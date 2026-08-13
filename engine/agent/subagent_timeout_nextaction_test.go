@@ -121,7 +121,7 @@ func TestWritableSubagentTimeoutGivesOneCombinedNextAction(t *testing.T) {
 	task := newWritableSubagent(t, writable, agent.WithSubagentStore(memstore.New()))
 
 	res, err := task.Execute(context.Background(),
-		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"loop forever","mode":"read-write","timeout_ms":120}`)), ws)
+		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"loop forever","mode":"read-write","timeout_ms":120}`)), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestBackgroundSubagentTimeoutAdvertisesResume(t *testing.T) {
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool())
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	collected := resultByCallID(evs)["p2"]

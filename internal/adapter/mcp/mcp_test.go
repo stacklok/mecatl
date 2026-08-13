@@ -183,7 +183,7 @@ func TestExecuteRoundTripsArgs(t *testing.T) {
 	echo := toolsByName(s.Tools())["mcp__fake__echo"]
 
 	call := session.NewToolCall("call-1", "mcp__fake__echo", json.RawMessage(`{"text":"hello"}`))
-	res, err := echo.Execute(context.Background(), call, nil)
+	res, err := echo.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestExecuteMapsIsError(t *testing.T) {
 	boom := toolsByName(s.Tools())["mcp__fake__boom"]
 
 	call := session.NewToolCall("call-2", "mcp__fake__boom", json.RawMessage(`{}`))
-	res, err := boom.Execute(context.Background(), call, nil)
+	res, err := boom.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute returned hard error, want tool error result: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestExecuteContextCancellation(t *testing.T) {
 	cancel() // cancel before executing
 
 	call := session.NewToolCall("call-3", "mcp__fake__echo", json.RawMessage(`{"text":"x"}`))
-	_, err := echo.Execute(ctx, call, nil)
+	_, err := echo.Execute(ctx, call, tool.Environment{})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
@@ -316,7 +316,7 @@ type fakeRegTool struct{ name string }
 
 func (f fakeRegTool) Spec() tool.ToolSpec { return tool.ToolSpec{Name: f.name} }
 func (fakeRegTool) ReadOnly() bool        { return true }
-func (fakeRegTool) Execute(context.Context, session.ToolCall, tool.Workspace) (session.ToolResult, error) {
+func (fakeRegTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
 	return session.ToolResult{}, nil
 }
 

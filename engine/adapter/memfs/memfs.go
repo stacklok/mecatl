@@ -410,9 +410,9 @@ func (r *CommandRunner) SetResult(res *tool.CommandResult, err error) {
 
 // Run returns the programmed canned result. memfs has no shell, so absent a
 // programmed result it returns ErrNoShell. It honors ctx cancellation. The
-// command string and workdir are ignored beyond being markers; this method
-// exists for deterministic Bash-tool stubbing, not real execution.
-func (r *CommandRunner) Run(ctx context.Context, _, _ string) (tool.CommandResult, error) {
+// command string is ignored beyond being a marker; this method exists for
+// deterministic Bash-tool stubbing, not real execution.
+func (r *CommandRunner) Run(ctx context.Context, _ string) (tool.CommandResult, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.CommandResult{}, err
 	}

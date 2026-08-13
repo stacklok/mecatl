@@ -17,7 +17,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -59,7 +58,7 @@ func newFakeBashStreamer() *fakeBashStreamer {
 }
 
 // Run is the foreground path: immediate, recorded, canned-success.
-func (f *fakeBashStreamer) Run(_ context.Context, command, _ string) (tool.CommandResult, error) {
+func (f *fakeBashStreamer) Run(_ context.Context, command string) (tool.CommandResult, error) {
 	f.mu.Lock()
 	f.fgRuns = append(f.fgRuns, command)
 	f.mu.Unlock()
@@ -71,7 +70,7 @@ func (f *fakeBashStreamer) Run(_ context.Context, command, _ string) (tool.Comma
 // drive stores the result right after; ctx-cancel → the drive records the
 // cancellation right after), which is the signal a parent anchor parks on to
 // sequence "the job's terminal has genuinely landed" before a turn boundary.
-func (f *fakeBashStreamer) RunStreaming(ctx context.Context, command, _ string, out io.Writer) (int, error) {
+func (f *fakeBashStreamer) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
 	h := &bgBashJobHandle{
 		started:   make(chan struct{}),
 		release:   make(chan struct{}),
@@ -146,7 +145,7 @@ func (*startThenReleaseTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "StartThenRelease", Description: "waits for the job then releases it", Schema: emptyObjSchema}
 }
 func (*startThenReleaseTool) ReadOnly() bool { return true }
-func (g *startThenReleaseTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (g *startThenReleaseTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	select {
 	case <-g.runner.started:
 	case <-ctx.Done():
@@ -161,10 +160,11 @@ func (g *startThenReleaseTool) Execute(ctx context.Context, in session.ToolCall,
 // genuinely reached its park" anchor scripted parent turns sequence on.
 
 // bashCatalogFor builds the main-engine catalog for these tests: the agent
-// BashTool over the fake runner + the BashStatus companion.
-func bashCatalogFor(t *testing.T, runner tool.CommandRunner, extra ...tool.Tool) *tool.Catalog {
+// BashTool + the BashStatus companion. (The runner is bound to the Environment
+// at Execute time now — issue #462 — so the catalog no longer captures it.)
+func bashCatalogFor(t *testing.T, extra ...tool.Tool) *tool.Catalog {
 	t.Helper()
-	tools := append([]tool.Tool{agent.NewBashTool(runner), agent.NewBashStatusTool()}, extra...)
+	tools := append([]tool.Tool{agent.NewBashTool(), agent.NewBashStatusTool()}, extra...)
 	return catalogWith(t, tools...)
 }
 
@@ -175,7 +175,7 @@ func bashCatalogFor(t *testing.T, runner tool.CommandRunner, extra ...tool.Tool)
 // (a second collect reports already-delivered).
 func TestBackgroundBashHappyPath(t *testing.T) {
 	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t, runner, &awaitSignalTool{ch: runner.started})
+	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("b1", "Bash", `{"command":"build","background":true}`)),
@@ -195,7 +195,7 @@ func TestBackgroundBashHappyPath(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", runner), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
 		// Release the job only once the RUNNING poll's result has been recorded:
@@ -278,7 +278,7 @@ func TestBackgroundBashHappyPath(t *testing.T) {
 // cancellation.
 func TestBackgroundBashCancel(t *testing.T) {
 	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t, runner, &awaitSignalTool{ch: runner.started})
+	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("b1", "Bash", `{"command":"slow","background":true}`)),
@@ -290,7 +290,7 @@ func TestBackgroundBashCancel(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", runner), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
@@ -327,7 +327,7 @@ func TestBackgroundBashCancel(t *testing.T) {
 // and the drain cancels the job (the fake saw its ctx fire).
 func TestBackgroundBashRunEndDrain(t *testing.T) {
 	runner := newFakeBashStreamer() // never released: the job outlives every parent turn
-	cat := bashCatalogFor(t, runner, &awaitSignalTool{ch: runner.started})
+	cat := bashCatalogFor(t, &awaitSignalTool{ch: runner.started})
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(
@@ -339,7 +339,7 @@ func TestBackgroundBashRunEndDrain(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", runner), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	// The pending nudge fired EXACTLY ONCE, the bash clause naming the job id.
@@ -367,7 +367,7 @@ func TestBackgroundBashRunEndDrain(t *testing.T) {
 // invocations before the Allow verdict, and the job spawns after it.
 func TestBackgroundBashPermissionGate(t *testing.T) {
 	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t, runner, &startThenReleaseTool{runner: runner})
+	cat := bashCatalogFor(t, &startThenReleaseTool{runner: runner})
 	policy := permpolicy.NewPolicy(nil, nil) // no rule → Ask on the Bash call
 
 	// Turn 1: the gated Bash call + a start-then-release anchor in the SAME read
@@ -386,7 +386,7 @@ func TestBackgroundBashPermissionGate(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: policy})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", runner), agent.RunRequest{Text: "go"})
 
 	var sawBashAsk bool
 	evs := drainObserving(t, r, func(ev session.Event) {
@@ -426,7 +426,7 @@ func TestBackgroundBashPermissionGate(t *testing.T) {
 // roster is empty).
 func TestBackgroundBashForegroundParity(t *testing.T) {
 	runner := newFakeBashStreamer()
-	cat := bashCatalogFor(t, runner)
+	cat := bashCatalogFor(t)
 
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("b1", "Bash", `{"command":"echo hi"}`)),
@@ -435,7 +435,7 @@ func TestBackgroundBashForegroundParity(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", runner), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 

@@ -484,7 +484,7 @@ func TestRegisterParallelToolThreadsSubagentModel(t *testing.T) {
 		t.Fatalf("workspace: %v", err)
 	}
 	call := session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["probe"],"join":"first"}`))
-	res, err := pt.Execute(context.Background(), call, ws)
+	res, err := pt.Execute(context.Background(), call, testEnvironment(ws, nil))
 	if err != nil {
 		t.Fatalf("Parallel.Execute: %v", err)
 	}
@@ -526,7 +526,7 @@ func TestRegisterParallelToolThreadsStore(t *testing.T) {
 		t.Fatalf("workspace: %v", err)
 	}
 	call := session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["probe"]}`))
-	res, err := pt.Execute(context.Background(), call, ws)
+	res, err := pt.Execute(context.Background(), call, testEnvironment(ws, nil))
 	if err != nil {
 		t.Fatalf("Parallel.Execute: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestRegisterParallelToolThreadsStore(t *testing.T) {
 	// 2. InspectSubagent (over the SAME store) loads the branch transcript by that id.
 	inspect := agent.NewInspectSubagentTool(store)
 	ires, err := inspect.Execute(context.Background(),
-		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"`+branchID+`"}`)), ws)
+		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"`+branchID+`"}`)), testEnvironment(ws, nil))
 	if err != nil {
 		t.Fatalf("InspectSubagent.Execute: %v", err)
 	}

@@ -13,17 +13,25 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
+)
+
+var testEnv = tool.MustEnvironment(
+	session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"},
+	memfs.NewWorkspace("/"),
+	nil,
 )
 
 func TestWebFetchSpecAndArguments(t *testing.T) {
 	t.Parallel()
-	tool := New()
-	if !tool.ReadOnly() {
+	webTool := New()
+	if !webTool.ReadOnly() {
 		t.Fatal("WebFetch must be read-only")
 	}
-	spec := tool.Spec()
+	spec := webTool.Spec()
 	if spec.Name != "WebFetch" || !json.Valid(spec.Schema) {
 		t.Fatalf("invalid spec: %+v", spec)
 	}
@@ -33,7 +41,7 @@ func TestWebFetchSpecAndArguments(t *testing.T) {
 		"blank":     `{"url":"  "}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			result, err := tool.Execute(context.Background(), session.NewToolCall("call", "WebFetch", json.RawMessage(args)), nil)
+			result, err := webTool.Execute(context.Background(), session.NewToolCall("call", "WebFetch", json.RawMessage(args)), testEnv)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -163,8 +171,8 @@ func TestWebFetchExecuteConvertsHTMLAndPreservesRedirectProvenance(t *testing.T)
 			return resp, nil
 		},
 	}
-	tool := newTool(transport)
-	result, err := tool.Execute(context.Background(), session.NewToolCall("call", "WebFetch", json.RawMessage(`{"url":"https://example.com/start"}`)), nil)
+	webTool := newTool(transport)
+	result, err := webTool.Execute(context.Background(), session.NewToolCall("call", "WebFetch", json.RawMessage(`{"url":"https://example.com/start"}`)), testEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +210,7 @@ func TestWebFetchExecuteRejectsStatusAndContentTypeWithoutBodyLeak(t *testing.T)
 					return resp, nil
 				},
 			}
-			result, err := newTool(transport).Execute(context.Background(), session.NewToolCall("call", "WebFetch", json.RawMessage(`{"url":"https://example.com"}`)), nil)
+			result, err := newTool(transport).Execute(context.Background(), session.NewToolCall("call", "WebFetch", json.RawMessage(`{"url":"https://example.com"}`)), testEnv)
 			if err != nil {
 				t.Fatal(err)
 			}

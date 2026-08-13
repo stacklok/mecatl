@@ -55,7 +55,7 @@ func TestRunStreamingInterleaved(t *testing.T) {
 	s := newStreamer(t, t.TempDir())
 
 	var out syncBuffer
-	code, err := s.RunStreaming(ctx, "(echo out-1; echo err-1 >&2; echo out-2; echo err-2 >&2)", "", &out)
+	code, err := s.RunStreaming(ctx, "(echo out-1; echo err-1 >&2; echo out-2; echo err-2 >&2)", &out)
 	if err != nil {
 		t.Fatalf("RunStreaming: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestRunStreamingNoRunnerCap(t *testing.T) {
 
 	// 4096 iterations x ~513 bytes ≈ 2 MiB > maxCommandOutput (1 MiB).
 	var out syncBuffer
-	code, err := s.RunStreaming(ctx, "i=0; while [ $i -lt 4096 ]; do printf '%0512d\\n' $i; i=$((i+1)); done", "", &out)
+	code, err := s.RunStreaming(ctx, "i=0; while [ $i -lt 4096 ]; do printf '%0512d\\n' $i; i=$((i+1)); done", &out)
 	if err != nil {
 		t.Fatalf("RunStreaming: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestRunStreamingExitCode(t *testing.T) {
 	s := newStreamer(t, t.TempDir())
 
 	var out syncBuffer
-	code, err := s.RunStreaming(ctx, "echo partial; exit 3", "", &out)
+	code, err := s.RunStreaming(ctx, "echo partial; exit 3", &out)
 	if err != nil {
 		t.Fatalf("RunStreaming returned harness error for a non-zero exit: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestRunStreamingCancel(t *testing.T) {
 	s := newStreamer(t, t.TempDir())
 
 	var out syncBuffer
-	_, err := s.RunStreaming(ctx, "echo hi", "", &out)
+	_, err := s.RunStreaming(ctx, "echo hi", &out)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunStreaming with cancelled ctx err = %v want context.Canceled", err)
 	}
@@ -129,7 +129,7 @@ func TestRunStreamingTimeout(t *testing.T) {
 	s := newStreamer(t, t.TempDir())
 
 	var out syncBuffer
-	_, err := s.RunStreaming(ctx, "sleep 5", "", &out)
+	_, err := s.RunStreaming(ctx, "sleep 5", &out)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("RunStreaming with expired deadline err = %v want context.DeadlineExceeded", err)
 	}
@@ -146,7 +146,7 @@ func TestRunStreamingCancelWithoutDeadline(t *testing.T) {
 	var out syncBuffer
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.RunStreaming(ctx, "sleep 30 & echo before; wait; echo after", "", &out)
+		_, err := s.RunStreaming(ctx, "sleep 30 & echo before; wait; echo after", &out)
 		done <- err
 	}()
 
@@ -192,7 +192,7 @@ func TestRunStreamingWaitDelayUnblocksGrandchildPipeWait(t *testing.T) {
 
 	var out syncBuffer
 	start := time.Now()
-	code, err := s.RunStreaming(context.Background(), "sleep 5 & echo started", "", &out)
+	code, err := s.RunStreaming(context.Background(), "sleep 5 & echo started", &out)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("a WaitDelay expiry on a successful command must be a success, got err = %v", err)

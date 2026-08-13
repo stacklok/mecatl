@@ -281,7 +281,8 @@ func TestPathEscapePosture_Scenario5_ChildEnginesNeverRelaxed(t *testing.T) {
 					if base == nil {
 						t.Fatalf("relaxed base workspace is nil at %s", posture)
 					}
-					childWS, cleanup, _, err := fk.Fork(context.Background(), base, "guard")
+					baseEnv := testEnvironment(base, nil)
+					childEnv, cleanup, _, err := fk.Fork(context.Background(), baseEnv, "guard")
 					if err != nil {
 						t.Fatalf("Fork: %v", err)
 					}
@@ -290,7 +291,7 @@ func TestPathEscapePosture_Scenario5_ChildEnginesNeverRelaxed(t *testing.T) {
 					// though its base was relaxed — the construction-level
 					// proof that the relaxed options never crossed into
 					// newForkWorkspace.
-					data, rerr := childWS.Read(context.Background(), f.target)
+					data, rerr := childEnv.Workspace().Read(context.Background(), f.target)
 					if rerr == nil {
 						t.Fatalf("%s child workspace (forked from a %s-relaxed base) served out-of-root read %.80q — the relaxed options crossed into newForkWorkspace", name, posture, data)
 					}

@@ -217,7 +217,7 @@ func TestPerSessionAssemblerMatchesShared(t *testing.T) {
 		Instructions: asm,
 	})
 	sess := session.New("sPerSession", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
-	run := eng.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hello"})
+	run := eng.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hello"})
 	for ev := range run.Events() {
 		_ = ev
 	}

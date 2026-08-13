@@ -136,7 +136,7 @@ func (Tool) ReadOnly() bool { return true }
 // available skill names so the model can recover, NOT a harness-level error —
 // and so is a failed activation (e.g. a driver bundle over the cap), naming
 // the skill and the available alternatives.
-func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args skillArgs
 	if msg, ok := ParseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

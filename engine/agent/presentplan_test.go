@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -82,7 +81,7 @@ func TestPresentPlanSpecIncludesPlanArg(t *testing.T) {
 func TestPresentPlanExecuteVestigial(t *testing.T) {
 	tl := NewPresentPlanTool()
 	call := session.NewToolCall("c1", presentPlanToolName, nil)
-	res, err := tl.Execute(context.Background(), call, memfs.NewWorkspace("/ws"))
+	res, err := tl.Execute(context.Background(), call, memEnv("/ws"))
 	if err != nil {
 		t.Fatalf("vestigial Execute must never return a harness error: %v", err)
 	}

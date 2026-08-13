@@ -221,7 +221,7 @@ func TestCommandRunnerExecutesAbsoluteScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCommandRunner: %v", err)
 	}
-	res, err := runner.Run(context.Background(), "sh "+script, "")
+	res, err := runner.Run(context.Background(), "sh "+script)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

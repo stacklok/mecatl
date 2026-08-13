@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/session"
@@ -58,7 +57,7 @@ func TestMemberRoutesAtAddMember(t *testing.T) {
 		seenPrompt = prompt
 		return "large", "big-model", "", true
 	}}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
 	if err := sup.AddMember(context.Background(),
 		MemberSpec{Name: "worker", InitialPrompt: "redesign the storage layer"}); err != nil {
@@ -95,7 +94,7 @@ func TestDefinedMemberSkipsRouter(t *testing.T) {
 		calls++
 		return "large", "big-model", "", true
 	}}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
 	if err := sup.AddMember(context.Background(),
 		MemberSpec{Name: "specialist", AgentType: "reviewer", InitialPrompt: "review"}); err != nil {
@@ -129,7 +128,7 @@ func TestMemberRouteMissInheritsDefault(t *testing.T) {
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		return "", "", RouterMissDegenerateInput, false
 	}}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
 	if err := sup.AddMember(context.Background(),
 		MemberSpec{Name: "worker", InitialPrompt: "do it"}); err != nil {
@@ -158,7 +157,7 @@ func TestMemberZeroCapsNoRouting(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	// No withParentCaps: the supervisor's caps is the zero value (routeTask nil).
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"), routingMemberFactory(tm, recorded, &mu))
+	sup := NewSupervisor(tm, memEnv("/ws"), routingMemberFactory(tm, recorded, &mu))
 	if err := sup.AddMember(context.Background(),
 		MemberSpec{Name: "worker", InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
@@ -185,7 +184,7 @@ func TestMemberRouteFallsBackToName(t *testing.T) {
 		seenPrompt = prompt
 		return "small", "tiny-model", "", true
 	}}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
 	if err := sup.AddMember(context.Background(), MemberSpec{Name: "scout"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
@@ -252,7 +251,7 @@ func TestMemberRoutesOncePerRun(t *testing.T) {
 		mu.Unlock()
 		return "large", "big-model", "", true
 	}}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := NewSupervisor(tm, memEnv("/ws"),
 		scriptedRoutingFactory(tm, providers, recorded, &mu), withParentCaps(caps), WithMaxRounds(10))
 	for _, name := range []string{"lead", "worker"} {
 		spec := MemberSpec{Name: name, InitialPrompt: "work " + name}
@@ -296,7 +295,7 @@ func TestMemberSessionIDUnaffectedByRouting(t *testing.T) {
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
 		return "large", "big-model", "", true
 	}}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps),
 		WithMemberSessionPrefix("team-xyz"))
 	if err := sup.AddMember(context.Background(),
@@ -359,7 +358,7 @@ func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {
 	args := `{"goal":"do work","members":[{"name":"lead","role":"` + secret + ` coordinate"}]}`
 	if _, err := teamTool.(childCapableTool).ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Team", json.RawMessage(args)),
-		memfs.NewWorkspace("/ws"), emit, caps); err != nil {
+		memEnv("/ws"), emit, caps); err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
 

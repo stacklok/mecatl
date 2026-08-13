@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -351,7 +350,7 @@ func TestBuildAgentSubagentEnginesResolvedModelOnRequest(t *testing.T) {
 	})
 	r := e.Run(context.Background(),
 		session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)),
-		memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+		memEnvironment("/ws"), agent.RunRequest{Text: "go"})
 	for range r.Events() {
 	}
 	if got := rec.lastModel(); got != "cheap-id" {

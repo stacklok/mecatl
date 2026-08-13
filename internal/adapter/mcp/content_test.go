@@ -11,6 +11,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // newContentServer stands up an in-process MCP server exposing a single tool
@@ -23,14 +24,14 @@ func newContentServer(t *testing.T, name string, outputSchema any, result *mcpsd
 	t.Helper()
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "content", Version: "v1"}, nil)
 
-	tool := &mcpsdk.Tool{
+	mcpTool := &mcpsdk.Tool{
 		Name:        name,
 		Description: "returns typed content for the mapper test",
 		// An object input schema is required by Server.AddTool.
 		InputSchema:  map[string]any{"type": "object"},
 		OutputSchema: outputSchema,
 	}
-	srv.AddTool(tool, func(_ context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	srv.AddTool(mcpTool, func(_ context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		return result, nil
 	})
 
@@ -50,7 +51,7 @@ func callTool(t *testing.T, url, serverName, toolName string) session.ToolResult
 		t.Fatalf("tool %q not advertised", toolName)
 	}
 	call := session.NewToolCall("call-1", "mcp__"+serverName+"__"+toolName, json.RawMessage(`{}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

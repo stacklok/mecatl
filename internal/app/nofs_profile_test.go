@@ -225,14 +225,14 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 		}
 	}
 	ot, ok := subTool.(interface {
-		ExecuteObserved(context.Context, session.ToolCall, tool.Workspace, func(session.Event)) (session.ToolResult, error)
+		ExecuteObserved(context.Context, session.ToolCall, tool.Environment, func(session.Event)) (session.ToolResult, error)
 	})
 	if !ok {
 		t.Fatal("Subagent tool does not implement ExecuteObserved")
 	}
 	res, err := ot.ExecuteObserved(ctx,
 		session.NewToolCall("t1", "Subagent", json.RawMessage(`{"prompt":"investigate without files","description":"nofs probe"}`)),
-		nofs.New(), emit)
+		testEnvironment(nofs.New(), nil), emit)
 	if err != nil {
 		t.Fatalf("ExecuteObserved: %v", err)
 	}

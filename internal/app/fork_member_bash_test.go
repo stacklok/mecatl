@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -78,7 +77,7 @@ func sawDispatchedTool(events []session.Event, callID session.ToolCallID) bool {
 func drainEngine(t *testing.T, eng *agent.Engine) []session.Event {
 	t.Helper()
 	sess := session.New("s", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	run := eng.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	run := eng.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go"})
 	var events []session.Event
 	for ev := range run.Events() {
 		events = append(events, ev)

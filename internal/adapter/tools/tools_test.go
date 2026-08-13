@@ -31,7 +31,8 @@ func call(t *testing.T, name string, m map[string]any) session.ToolCall {
 // exec runs a tool and fails the test on a harness-level (Go) error.
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace) session.ToolResult {
 	t.Helper()
-	res, err := tl.Execute(context.Background(), in, ws)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, nil)
+	res, err := tl.Execute(context.Background(), in, env)
 	if err != nil {
 		t.Fatalf("%s: unexpected harness error: %v", tl.Spec().Name, err)
 	}
@@ -63,7 +64,7 @@ func TestReadOnlyFlags(t *testing.T) {
 		}
 	}
 	// Bash is mutating.
-	if NewBashTool(memfs.NewCommandRunner()).ReadOnly() {
+	if NewBashTool().ReadOnly() {
 		t.Error("Bash.ReadOnly() = true, want false")
 	}
 }
@@ -124,8 +125,9 @@ func TestAllAndRegister(t *testing.T) {
 	if _, ok := cat.Lookup("Bash"); ok {
 		t.Error("Register added Bash; it must be opt-in via NewBashTool")
 	}
-	// Adding the optional Bash tool with a configured runner succeeds.
-	cat.MustRegister(NewBashTool(memfs.NewCommandRunner()))
+	// Adding the optional Bash tool succeeds (the runner is bound to the
+	// Environment at Execute time, so NewBashTool takes no runner now).
+	cat.MustRegister(NewBashTool())
 	if _, ok := cat.Lookup("Bash"); !ok {
 		t.Error("catalog missing Bash after explicit NewBashTool registration")
 	}

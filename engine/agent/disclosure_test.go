@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -51,7 +50,7 @@ func (d discTool) Advertised() tool.ToolSpec {
 	return tool.ToolSpec{Name: d.name, Description: d.name + " full"}
 }
 func (discTool) ReadOnly() bool { return true }
-func (discTool) Execute(context.Context, session.ToolCall, tool.Workspace) (session.ToolResult, error) {
+func (discTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
 	return session.ToolResult{}, nil
 }
 
@@ -71,7 +70,7 @@ func TestProgressiveToolsOffSendsFullSpecs(t *testing.T) {
 	cat := catalogWith(t, discTool{name: "Mcp"})
 	e := newEngine(agent.Deps{LLM: prov, Catalog: cat}) // ProgressiveTools defaults false
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
+	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 
 	if _, ok := cat.Lookup(tool.ToolSearchName); ok {
 		t.Fatalf("ToolSearch must NOT be registered when ProgressiveTools is off")
@@ -93,7 +92,7 @@ func TestProgressiveToolsOnSendsAdvertisedAndToolSearch(t *testing.T) {
 	cat := catalogWith(t, discTool{name: "Mcp"})
 	e := newEngine(agent.Deps{LLM: prov, Catalog: cat, ProgressiveTools: true})
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
+	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 
 	// ToolSearch must be registered and advertised.
 	if _, ok := cat.Lookup(tool.ToolSearchName); !ok {
@@ -114,7 +113,7 @@ func TestProgressiveToolsOnSendsAdvertisedAndToolSearch(t *testing.T) {
 	// The model can hydrate the full Mcp spec via ToolSearch.
 	ts, _ := cat.Lookup(tool.ToolSearchName)
 	call := session.NewToolCall("c1", tool.ToolSearchName, json.RawMessage(`{"query":"mcp"}`))
-	res, err := ts.Execute(context.Background(), call, memfs.NewWorkspace("/ws"))
+	res, err := ts.Execute(context.Background(), call, agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("ToolSearch.Execute: %v", err)
 	}

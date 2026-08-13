@@ -66,6 +66,23 @@ const noProgressExtractiveNudgeText = "Stop investigating now and do not run any
 	"if it is incomplete or uncertain — note any gaps briefly. Do not plan further " +
 	"steps; deliver what you have."
 
+// shellLessPostureNote is the SINGLE model-visible shell-less posture clause, appended
+// to the per-request system prompt's VOLATILE suffix by buildRequest when the LIVE
+// tool.Environment handed to Run has no CommandRunner (env.CommandRunner() == nil) and
+// is not the no-FS profile (whose noFSPostureNote already states "no shell"). It is the
+// ADR-0070 affordance for the shell-less default-FS posture: the model must learn from
+// the PROMPT that the Bash tool is absent (the spec is also dropped from the advertised
+// tools), not from a trail of unknown-tool errors, so it plans around the file tools and
+// its own reasoning instead of burning turns attempting a shell it cannot call. It is
+// the per-request, environment-capability-truthed analogue of composition's noFSPostureNote
+// (which covers the no-filesystem-at-all case): environment capability is per-run/per-turn,
+// so it rides the volatile suffix and is NOT baked into the cache-stable prefix. The
+// "NO shell" substring is a stable test key — do not change it.
+const shellLessPostureNote = "This session has NO shell: the Bash tool is not available. " +
+	"Do not attempt to run commands, build, test, or invoke git — work through the file " +
+	"tools (Read/Write/Edit/Grep/Glob), your other tools (MCP, memory, web fetch), and " +
+	"your own reasoning."
+
 // backgroundNoticeText renders the turn-boundary background-completion NOTICE
 // injected as a harness-framed user message at Step 2a of drive (A2 —
 // notice-only injection). It carries ONLY harness-authored metadata: child ids
@@ -855,9 +872,9 @@ func (r *Run) unregisterChildAsk(askID string) bool {
 // set only req.Text; for a multimodal prompt set req.Parts (and req.Text, which may be
 // empty). Command expansion and the UserPromptSubmit hook operate on the TEXT only; the
 // media parts pass through untouched and are recorded verbatim on the user message.
-func (e *Engine) Run(ctx context.Context, sess *session.Session, ws tool.Workspace, req RunRequest) *Run {
+func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
 	return e.startRun(ctx, sess, req, func(ctx context.Context, r *Run) {
-		e.drive(ctx, r, sess, ws, req.Text, req.Parts)
+		e.drive(ctx, r, sess, env, req.Text, req.Parts)
 	})
 }
 
@@ -886,9 +903,9 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, ws tool.Workspa
 // terminal EvResult (Stop == StopError, the Error field), exactly like any other
 // terminal — it never silently completes. The pending tool executes EXACTLY ONCE on
 // the allow path and NOT AT ALL on a precondition failure or a deny.
-func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, ws tool.Workspace, askID string, verdict session.ApprovalVerdict) *Run {
+func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run {
 	return e.startRun(ctx, sess, RunRequest{}, func(ctx context.Context, r *Run) {
-		e.driveFromAwaiting(ctx, r, sess, ws, askID, verdict)
+		e.driveFromAwaiting(ctx, r, sess, env, askID, verdict)
 	})
 }
 
@@ -1000,7 +1017,7 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 // drive runs the loop algorithm for one prompt. It always terminates the session
 // (Complete/Stop/Cancel/Fail) and emits exactly one terminal result Event. parts
 // carries any non-text media riding alongside userText (nil for a text prompt).
-func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content) {
+func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, userText string, parts []session.Content) {
 	// Step 0a: emit the run-open signal exactly once per run, before any other
 	// event. Telemetry adapters (tracing/metrics) switch on session.init as the
 	// signal to open a run span/counter; emitting it here makes that contract
@@ -1024,7 +1041,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, ws to
 	// (applying any mutation to the effective prompt), and only then records the
 	// final text into the aggregate. A Block (or hook error) ends the run before
 	// any model call; ok=false signals that without recording anything.
-	ok, reason, err := e.recordPrompt(ctx, r, sess, ws, userText, parts)
+	ok, reason, err := e.recordPrompt(ctx, r, sess, env, userText, parts)
 	if err != nil {
 		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
 		return
@@ -1039,7 +1056,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, ws to
 	// brake is evaluated against the AGGREGATE's cumulative Usage (sess.Usage) instead
 	// — which RecordUsage below keeps in lock-step and which the snapshot persists —
 	// so the budget survives reopen/restart while EvResult.Usage stays per-run.
-	e.runLoop(ctx, r, sess, ws, session.Usage{}, "")
+	e.runLoop(ctx, r, sess, env, session.Usage{}, "")
 }
 
 // runLoop is the SHARED turn-loop body driven by both the prompt entry (drive,
@@ -1054,7 +1071,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, ws to
 // the team supervisor sums stays accurate). lastText seeds the last meaningful
 // assistant text. The budget brake reads sess.Usage directly (persisted spend is
 // honoured), independent of total.
-func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws tool.Workspace, total session.Usage, lastText string) {
+func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, total session.Usage, lastText string) {
 	// no-progress nudge accounting (Workstream A). noProgressNudges counts the
 	// continuation messages injected this run; nudgeCap is the budget (defaulted in
 	// NewEngine to defaultNoProgressNudges; a negative cap DISABLES nudging).
@@ -1139,7 +1156,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		e.maybeCompact(ctx, r, sess, turnIdx)
 
 		// Step 4: build the request and consume the model stream.
-		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, sess, ws, turnIdx)
+		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, sess, env, turnIdx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 				e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
@@ -1219,7 +1236,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, ws 
 		}
 
 		// Step 6: dispatch the tool calls, then loop back to step 2.
-		results, cancelled := e.dispatch(ctx, r, sess, ws, turnIdx, asst.ToolCalls)
+		results, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, asst.ToolCalls)
 		if cancelled {
 			e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 			return
@@ -1571,8 +1588,8 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 // and the UserPromptSubmit hook see and may rewrite only the TEXT; the media is
 // neither expanded nor mutated by a hook and is recorded verbatim on the user
 // message via RecordUserPromptWithParts.
-func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session, ws tool.Workspace, userText string, parts []session.Content) (ok bool, reason string, err error) {
-	if expanded, exp, eerr := e.deps.CommandExpander.Expand(ctx, ws, userText); eerr == nil && exp {
+func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, userText string, parts []session.Content) (ok bool, reason string, err error) {
+	if expanded, exp, eerr := e.deps.CommandExpander.Expand(ctx, env.Workspace(), userText); eerr == nil && exp {
 		userText = expanded
 	}
 	// UserPromptSubmit fires on the expanded text before recording so a mutation
@@ -1742,8 +1759,8 @@ func (l *turnLatency) summary() turnTiming {
 // but is NOT a streamed token, so it never pollutes the gap series. A turn with
 // no observable output at all reports no TTFT; a turn with fewer than two
 // streaming content deltas reports no inter-token summary (there is no gap).
-func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, ws tool.Workspace, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
-	req := e.buildRequest(ctx, r, sess, ws)
+func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
+	req := e.buildRequest(ctx, r, sess, env)
 	seq, err := e.deps.LLM.Stream(ctx, req)
 	if err != nil {
 		return session.Message{}, session.Usage{}, session.StopNone, turnTiming{}, fmt.Errorf("agent: start stream: %w", err)
@@ -1872,7 +1889,7 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, ws 
 // rehydration paths (ADR 0043). Messages is a FRESH slice each call
 // (fragments ++ conversation); Conversation.Messages is never mutated. Assembling
 // once per run keeps the message prefix byte-stable within the run (prompt cache).
-func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session, ws tool.Workspace) port.LLMRequest {
+func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) port.LLMRequest {
 	cfg := e.deps.PromptConfig
 	// Progressive disclosure (pattern 9): when enabled, advertise lightweight
 	// specs (full spec for non-disclosable tools, including the ToolSearch tool
@@ -1903,6 +1920,38 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 			cfg.Tools = append(cfg.Tools, spec)
 		}
 	}
+	// Shell-less Environment (issue #462 review): the CAPABILITY TRUTH for whether
+	// this turn has a shell is the LIVE tool.Environment handed to Run, NOT the
+	// shared Engine's catalog/prompt (which were built once from server config and
+	// may advertise Bash the per-run Environment cannot serve). A shell-less
+	// Environment (env.CommandRunner() == nil) — an ACP/editor override, a --no-bash
+	// deployment, or a runner that could not be built — has NO Bash this turn, so:
+	// (a) DROP the Bash spec from the advertised tools so the model is not invited
+	// to call a shell it cannot reach (a stale/hallucinated Bash call the model
+	// makes anyway still resolves from the catalog and surfaces the honest
+	// bashNoShellResult "no shell available" tool error — it is never a silent pass),
+	// and (b) append ONE shell-less posture clause to the per-request system prompt
+	// (the ADR-0070 model-visible affordance) so the model learns from the PROMPT
+	// that Bash is absent, not from a trail of errors. The clause rides the VOLATILE
+	// suffix — environment capability is per-run/per-turn, so it must NOT be baked
+	// into the cache-stable prefix (that would be dishonest to the cache when an
+	// override changes it mid-session). The no-FS profile is EXCLUDED: its catalog
+	// already omits Bash AND its noFSPostureNote (baked by composition) already
+	// states "no shell", so a second clause here would duplicate/contradict. This is
+	// the SINGLE per-request choke point: ACP overrides, --no-bash deployments, and
+	// any future shell-less Environment all converge here, independent of the
+	// shared Engine's catalog.
+	shellLess := env.CommandRunner() == nil && env.Ref().Kind != session.EnvKindNoFS
+	if shellLess {
+		filtered := cfg.Tools[:0]
+		for _, ts := range cfg.Tools {
+			if ts.Name == tool.BashToolName {
+				continue
+			}
+			filtered = append(filtered, ts)
+		}
+		cfg.Tools = filtered
+	}
 	cfg.Env.Model = e.deps.Model
 	cfg.Env.Mode = string(sess.Mode)
 	if cfg.Env.Cwd == "" {
@@ -1923,7 +1972,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		if e.deps.Instructions == nil {
 			return
 		}
-		discovered, aerr := e.deps.Instructions.Assemble(ctx, ws)
+		discovered, aerr := e.deps.Instructions.Assemble(ctx, env.Workspace())
 		if aerr != nil {
 			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing without turn-0 fragments", "error", aerr)
 			return
@@ -1938,8 +1987,25 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		msgs = append(msgs, r.fragments...)
 		msgs = append(msgs, sess.Conversation.Messages...)
 	}
+	system := build(cfg)
+	// Append the shell-less posture clause to the VOLATILE suffix (issue #462
+	// review) ONLY when the loop owns the system prompt — i.e. the DEFAULT builder
+	// (prompt.Build) is in use. A host-supplied PromptBuilder fully owns the system
+	// prompt (issue #127: NONE of the coding-agent defaults may leak), so the loop
+	// must NOT inject harness-authored text the host did not write; the host still
+	// learns the capability truth from the advertised tool specs (Bash is dropped
+	// above regardless of builder). The clause follows the <env> block (the
+	// capability truth the model reads) and stays out of the cache-stable prefix.
+	// The "NO shell" substring is a stable test key.
+	if shellLess && e.deps.PromptBuilder == nil {
+		if system.VolatileSuffix == "" {
+			system.VolatileSuffix = shellLessPostureNote
+		} else {
+			system.VolatileSuffix = system.VolatileSuffix + "\n\n" + shellLessPostureNote
+		}
+	}
 	return port.LLMRequest{
-		System:   build(cfg),
+		System:   system,
 		Messages: msgs,
 		Tools:    cfg.Tools,
 		Model:    e.deps.Model,

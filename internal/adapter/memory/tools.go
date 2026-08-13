@@ -203,7 +203,7 @@ func (rt RememberTool) Spec() tool.ToolSpec {
 func (RememberTool) ReadOnly() bool { return false }
 
 // Execute saves the key/value to the store.
-func (rt RememberTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (rt RememberTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args rememberArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil
@@ -321,7 +321,7 @@ func (RecallTool) ReadOnly() bool { return true }
 
 // Execute looks up key: an exact hit returns its value; otherwise key is treated
 // as a prefix and matching entries are listed. A miss is a non-error result.
-func (rt RecallTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (rt RecallTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args recallArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil
@@ -417,7 +417,7 @@ func (SearchMemoryTool) ReadOnly() bool { return true }
 
 // Execute ranks entries against the query and renders the best matches as
 // "key — description" lines (values omitted; Recall a key to load its value).
-func (st SearchMemoryTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (st SearchMemoryTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args searchMemoryArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

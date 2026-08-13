@@ -104,27 +104,24 @@ Limits:
 // Statically non-read-only: whether a specific command is read-only is
 // governance's job, not this tool's.
 //
-// The runner is injected at construction (NewBashTool) rather than taken from
-// the Workspace, because command execution is optional: a deployment with no
-// shell simply never constructs a BashTool. Execute passes the per-call
-// Workspace.Root() to the runner as the working directory, so a SINGLE runner
-// serves both the main session (root == the configured workspace) and a forked
-// child (root == an isolated temp base): the command's DEFAULT cwd follows the
-// workspace the tool executes against, never the shared parent base.
-type BashTool struct {
-	runner tool.CommandRunner
-}
+// The runner is read off the tool.Environment at Execute time (issue #462),
+// NOT captured at construction: a bound runner is part of the per-namespace
+// Environment (main session, or a forked child whose runner is bound to the
+// child namespace), so the command's cwd always matches the workspace the tool
+// executes against, never a stale shared parent base. A namespace with no
+// shell (env.CommandRunner == nil) surfaces ErrNoShell honestly. The
+// composition root decides whether to REGISTER a Bash tool at all based on
+// runner availability; a shell-less catalog simply omits Bash.
+type BashTool struct{}
 
-// NewBashTool constructs the Bash tool bound to runner. The composition root
-// registers the returned tool ONLY when a runner is configured; without one,
-// the catalog has no Bash and the agent runs shell-less. runner must be
-// non-nil. Background calls additionally require runner to implement
-// tool.CommandStreamer (they decline honestly when it does not).
-func NewBashTool(runner tool.CommandRunner) tool.Tool {
-	if runner == nil {
-		panic("agent: NewBashTool requires a non-nil CommandRunner")
-	}
-	return BashTool{runner: runner}
+// NewBashTool constructs the Bash tool. The runner is NOT captured here — it
+// is read off the tool.Environment at Execute time (issue #462). The
+// composition root registers the returned tool ONLY when a runner is available
+// for the namespace; without one, the catalog has no Bash and the agent runs
+// shell-less. Background calls additionally require the bound runner to
+// implement tool.CommandStreamer (they decline honestly when it does not).
+func NewBashTool() tool.Tool {
+	return BashTool{}
 }
 
 // Compile-time assertions: BashTool is a tool.Tool with the childCapableTool
@@ -165,11 +162,20 @@ func (BashTool) Spec() tool.ToolSpec {
 // ReadOnly reports that Bash is statically treated as mutating.
 func (BashTool) ReadOnly() bool { return false }
 
+// bashNoShellResult is the SINGLE composer for a nil-runner (shell-less
+// namespace) site, so the no-shell message can never drift from
+// bashErrorTrailer's ErrNoShell wording. It mirrors the fstools Bash tool's
+// nil-runner path: an empty body + tool.ErrNoShell yields the standalone
+// "[command failed to run: no shell available]" byte-identically.
+func bashNoShellResult(callID session.ToolCallID) session.ToolResult {
+	return session.NewToolError(callID, bashErrorMessage("", tool.ErrNoShell, 0))
+}
+
 // Execute runs a FOREGROUND Bash call. A background:true call must arrive via
 // the childCapableTool seam (ExecuteWithParent), which owns the child
 // registry; on the plain Execute path it gets an honest error, never a silent
 // foreground fallback (the model was promised detached delivery).
-func (t BashTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (t BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	args, msg, ok := parseBashArgs(in)
 	if !ok {
 		return session.NewToolError(in.ID, msg), nil
@@ -178,7 +184,11 @@ func (t BashTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Work
 		return session.NewToolError(in.ID,
 			"Bash: `background` is not supported on this run (no child registry); omit it to run in the foreground"), nil
 	}
-	return t.runForeground(ctx, in.ID, args, ws), nil
+	runner := env.CommandRunner()
+	if runner == nil {
+		return bashNoShellResult(in.ID), nil
+	}
+	return t.runForeground(ctx, in.ID, args, runner), nil
 }
 
 // ExecuteWithParent is the childCapableTool seam. The foreground half is the
@@ -188,19 +198,26 @@ func (t BashTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Work
 // a background Bash job is not a delegation family; the started-result, the
 // registry (notice/status/collect), and the stored result are the only
 // channels.
-func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
+func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	args, msg, ok := parseBashArgs(in)
 	if !ok {
 		return session.NewToolError(in.ID, msg), nil
 	}
+	runner := env.CommandRunner()
 	if !args.Background {
-		return t.runForeground(ctx, in.ID, args, ws), nil
+		if runner == nil {
+			return bashNoShellResult(in.ID), nil
+		}
+		return t.runForeground(ctx, in.ID, args, runner), nil
 	}
 	if caps.children == nil {
 		return session.NewToolError(in.ID,
 			"Bash: `background` is not supported on this run (no child registry); omit it to run in the foreground"), nil
 	}
-	streamer, ok := t.runner.(tool.CommandStreamer)
+	if runner == nil {
+		return bashNoShellResult(in.ID), nil
+	}
+	streamer, ok := runner.(tool.CommandStreamer)
 	if !ok {
 		return session.NewToolError(in.ID,
 			"Bash: `background` is not supported by this command runner (it cannot stream output); omit it to run in the foreground"), nil
@@ -227,7 +244,7 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, ws
 	caps.attachChildOutputTail(jobID, tail)
 	caps.startChildRun(jobID)
 
-	go t.driveBackground(jobCtx, timeoutCtx, jobID, args.Command, ws, streamer, tail, cancelJob, cancelTimeout, caps)
+	go t.driveBackground(jobCtx, timeoutCtx, jobID, args.Command, streamer, tail, cancelJob, cancelTimeout, caps)
 
 	return session.NewToolResult(in.ID, fmt.Sprintf("background bash job started.\n\njob id: %s\n\n"+
 		"It keeps running while you continue; a note will tell you when it finishes. "+
@@ -240,8 +257,8 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, ws
 // is run-scoped: jobCtx derives from the parent run's, the run-end drain
 // cancels and joins it (doneCh closes in the deferred finishChildRunResult),
 // and it emits NOTHING — no events cross its goroutine boundary.
-func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID session.SessionID, command string, ws tool.Workspace, streamer tool.CommandStreamer, tail *tailBuffer, cancelJob, cancelTimeout context.CancelFunc, caps parentCaps) {
-	exitCode, err := streamer.RunStreaming(jobCtx, command, ws.Root(), tail)
+func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID session.SessionID, command string, streamer tool.CommandStreamer, tail *tailBuffer, cancelJob, cancelTimeout context.CancelFunc, caps parentCaps) {
+	exitCode, err := streamer.RunStreaming(jobCtx, command, tail)
 	caps.setChildExitCode(jobID, exitCode)
 
 	// Terminal classification, mirroring the Subagent background terminal
@@ -274,14 +291,14 @@ func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID sessio
 // byte-identical: timeout ctx → runner.Run → combined output → exit-code
 // error. It is re-implemented here (not imported) because engine/agent must
 // not import the fstools adapter.
-func (t BashTool) runForeground(ctx context.Context, callID session.ToolCallID, args bashArgs, ws tool.Workspace) session.ToolResult {
+func (BashTool) runForeground(ctx context.Context, callID session.ToolCallID, args bashArgs, runner tool.CommandRunner) session.ToolResult {
 	if args.TimeoutMS > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
 		defer cancel()
 	}
 
-	res, err := t.runner.Run(ctx, args.Command, ws.Root())
+	res, err := runner.Run(ctx, args.Command)
 	if err != nil {
 		// Surface command-execution failures (no shell, timeout, cancellation)
 		// to the model so it can adapt, preserving the runner's partial output

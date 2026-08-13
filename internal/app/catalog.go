@@ -80,7 +80,7 @@ type catalogAssets struct {
 	skillIndex     skillIndex
 	skillReadRoots []string
 	forkReaper     *agent.LRUForkReaper
-	// autoMerger is the ONE process-wide serializing tool.ForkMerger used by the
+	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
 	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
 	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a
 	// forker.SerializingMerger so concurrent merges across sessions are serialized
@@ -88,7 +88,7 @@ type catalogAssets struct {
 	// Built ONCE in Phase A like forkReaper, and only when Parallel is enabled. Nil
 	// on hand-rolled assets or with Parallel disabled (the option is then skipped,
 	// no auto-merge).
-	autoMerger tool.ForkMerger
+	autoMerger tool.EnvironmentMerger
 	// searchProvider is the process-wide tool.SearchProvider the WebSearch core
 	// tool is built over (issue #26). It is resolved ONCE in buildCatalog
 	// (buildSearchProvider): the operator-configured HTTP adapter when --websearch-url
@@ -321,7 +321,18 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		}
 		return
 	}
-	fk := forker.New(newForkWorkspace(a.skillReadRoots), forker.WithForceCopy())
+	// WithRunner (issue #462): the forker mints a BOUND runner for each branch
+	// namespace so a forked branch's Bash observes its OWN force-copy, never the
+	// parent base. The builder applies the SAME trust-UNGATED hardening
+	// buildForceCopyRunner does (force-copy forks do no fork-time git, so the
+	// trust gate does not apply — see the comment above).
+	fk := forker.New(newForkWorkspace(a.skillReadRoots), forker.WithForceCopy(),
+		forker.WithRunner(func(childRoot string) tool.CommandRunner {
+			if !forceCopyShellAvailable(cfg) {
+				return nil
+			}
+			return newHardenedRunnerForRoot(cfg, childRoot)
+		}))
 	// Parallel branches run Bash through the HARDENED, trust-UNGATED runner (issue
 	// #40) — the same construction as Mutating team members (buildForceCopyRunner).
 	// Ungated because a force-copy fork is created by a pure FS copy, with NO git
@@ -369,7 +380,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// merged back into the parent workspace after the run — a delegated
 	// implementer's edits land without a manual copy/merge step. Multi-branch runs
 	// NEVER auto-merge (the no-auto-merge boundary stays for fan-out). The merger
-	// is a composition-owned adapter injected as a tool.ForkMerger; engine/agent
+	// is a composition-owned adapter injected as a tool.EnvironmentMerger; engine/agent
 	// stays layering-clean (no forker import). The merger applies the security
 	// mitigations (git diff --no-textconv + .gitattributes-patch refusal) so an
 	// untrusted branch cannot repoint the parent's git drivers at merge time.

@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // captureFirstRequest builds a mockllm provider whose request observer records
@@ -49,6 +49,11 @@ func captureFirstRequest(t *testing.T, turns ...mockllm.Turn) (*mockllm.Provider
 // left nil MUST produce an LLMRequest.System byte-identical to prompt.Build
 // over the SAME Config the loop builds (catalog Specs + volatile Env filled per
 // turn). If the nil-resolution or the default ever drifts, this breaks.
+//
+// It runs against a SHELL-BEARING Environment (a stub runner) so the issue-#462
+// shell-less posture clause (appended by buildRequest only when
+// env.CommandRunner()==nil) does NOT fire — keeping this a pure prompt.Build pin.
+// The shell-less clause is pinned separately in shell_less_posture_test.go.
 func TestBuildRequestNilPromptBuilderIsByteIdenticalToDefault(t *testing.T) {
 	cat := catalogWith(t)
 	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("ok"))
@@ -60,7 +65,7 @@ func TestBuildRequestNilPromptBuilderIsByteIdenticalToDefault(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
+	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", stubShellRunner{}), agent.RunRequest{Text: "hi"})
 	drain(r)
 
 	got, ok := firstReq()
@@ -91,6 +96,17 @@ func TestBuildRequestNilPromptBuilderIsByteIdenticalToDefault(t *testing.T) {
 	}
 }
 
+// stubShellRunner is a no-op tool.CommandRunner for tests that need a
+// SHELL-BEARING Environment (env.CommandRunner() != nil) without running any
+// command. It exists so buildRequest's shell-less gate (issue #462 review) can
+// be held CLOSED in prompt-pinning tests that are not about the shell-less
+// posture.
+type stubShellRunner struct{}
+
+func (stubShellRunner) Run(context.Context, string) (tool.CommandResult, error) {
+	return tool.CommandResult{}, nil
+}
+
 // TestBuildRequestHostPromptBuilderOwnsSystemPrompt is the headline acceptance
 // criterion (issue #127): a host-supplied PromptBuilder produces a fully
 // host-owned system prompt with NONE of the coding-agent defaults
@@ -118,7 +134,7 @@ func TestBuildRequestHostPromptBuilderOwnsSystemPrompt(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "draft the weekly update"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "draft the weekly update"})
 	drain(r)
 
 	got, ok := firstReq()
@@ -181,7 +197,7 @@ func TestPromptBuilderHostCanStillUseInventoryAndEnv(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
 	drain(r)
 
 	got, ok := firstReq()
@@ -253,7 +269,7 @@ func TestPromptBuilderDoesNotRouteThroughCompactionSummarizer(t *testing.T) {
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	bigPrompt := strings.Repeat("word ", 200) // ~250 tokens >> threshold of 8
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: bigPrompt})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: bigPrompt})
 	drain(r)
 
 	mu.Lock()
@@ -336,7 +352,7 @@ func TestPromptBuilderAppliesEveryTurn(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "look at a.go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "look at a.go"})
 	drain(r)
 
 	mu.Lock()
@@ -376,7 +392,7 @@ func TestPromptBuilderEmptyLayeredIsHonoredNotBackfilled(t *testing.T) {
 	})
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
 	drain(r)
 
 	got, ok := firstReq()

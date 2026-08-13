@@ -578,7 +578,7 @@ func TestTeamRunStateMachineDeterministic(t *testing.T) {
 
 // TestSpawnTeammateErrorClassification asserts finding J: SpawnTeammate no longer
 // collapses every AddMember failure to InvalidArgument. A Mutating member spawned
-// into a Service with no WorkspaceForker is a server misconfiguration the client
+// into a Service with no EnvironmentForker is a server misconfiguration the client
 // cannot fix by changing its args, so it must surface as FailedPrecondition (not
 // InvalidArgument). A duplicate-name spawn stays InvalidArgument (a real bad
 // request), confirming the classifier discriminates rather than blanket-remapping.
@@ -954,5 +954,50 @@ func TestSpawnTeammateRaceWithRunTeam(t *testing.T) {
 		case spawnErr != nil && hasLate:
 			t.Fatalf("team #%d: spawn was rejected (%v) but member 'late' is on the roster", i, spawnErr)
 		}
+	}
+}
+
+// TestCreateTeamNilWorkspaceFactoryReturnsErrorNotPanic pins the issue-#462
+// review fix: CreateTeam must NEVER MustEnvironment on a client-derived
+// workspace. When the WorkspaceFactory returns nil (a misconfigured factory, a
+// bad root), CreateTeam returns an ErrInvalidArgument-wrapped error rather than
+// panicking inside MustEnvironment.
+func TestCreateTeamNilWorkspaceFactoryReturnsErrorNotPanic(t *testing.T) {
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
+		cat := tool.NewCatalog()
+		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(tl)
+		}
+		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
+			LLM:     mockllm.New(mockllm.TextTurn("x")),
+			Catalog: cat,
+			Policy:  allow,
+			Model:   "mock",
+		})}
+	}
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.TextTurn("x")),
+		Catalog: tool.NewCatalog(),
+		Policy:  allow,
+		Model:   "mock",
+	})
+	svc, err := server.NewService(server.Config{
+		Engine:       engine,
+		Store:        memstore.New(),
+		Workspaces:   func(_ string) tool.Workspace { return nil }, // nil factory return
+		Now:          func() time.Time { return time.Unix(0, 0) },
+		MemberEngine: memberEngine,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	_, _, createErr := svc.CreateTeam(context.Background(), "/repo", "t", "g", 0, nil)
+	if createErr == nil {
+		t.Fatal("CreateTeam with a nil-workspace factory must return an error")
+	}
+	if !errors.Is(createErr, server.ErrInvalidArgument) {
+		t.Fatalf("CreateTeam err = %v, want ErrInvalidArgument", createErr)
 	}
 }

@@ -60,7 +60,7 @@ func TestLoopEmitsToolResultWithParts(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "fetch the link"})
+	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "fetch the link"})
 	evs := drain(r)
 
 	// Find the EvToolResult event for the call and assert Parts carried through.

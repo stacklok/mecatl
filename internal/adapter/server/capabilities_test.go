@@ -25,11 +25,8 @@ import (
 // only needs the tool registered under its real catalog name so capabilities()
 // reports bash=true. Driving caps from the REAL tool constructors (rather than a
 // stub named "Bash") is what makes TestCapabilities a rename-drift backstop.
-type noopRunner struct{}
-
-func (noopRunner) Run(context.Context, string, string) (tool.CommandResult, error) {
-	return tool.CommandResult{}, nil
-}
+// (The runner is bound to the Environment at Execute time, so NewBashTool takes
+// no runner now — issue #462.)
 
 // noopMemStore is a do-nothing tool.MemoryStore used only to construct the real
 // Remember tool, so it registers under its real catalog name ("Remember").
@@ -202,7 +199,7 @@ func TestCapabilitiesAgentsFromSnapshot(t *testing.T) {
 func TestCapabilities(t *testing.T) {
 	remember := memory.NewRememberTool(noopMemStore{})
 	skill := skills.NewTool(nil, nil)
-	bash := tools.NewBashTool(noopRunner{})
+	bash := tools.NewBashTool()
 
 	tests := []struct {
 		name  string

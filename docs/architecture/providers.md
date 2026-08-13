@@ -348,7 +348,7 @@ for the duration of a turn; a mode switch (`SetMode`, rejected mid-turn) takes e
 the next **run-entry seam** — the SAME seam `rehydrateSession` already rebuilds a
 per-session engine on. The provider stays **fixed per session**: the plan slot only
 swaps the **model** within the session provider, never the provider. Two rebuild triggers
-live in the server (`engineAndWorkspaceFor`): a registered per-session engine whose
+live in the server (`engineAndEnvironmentFor`): a registered per-session engine whose
 `builtForMode` no longer matches the session's `Mode` is **rebuilt** (CASE 1), and a
 default-FS session whose mode would change the model — gated by the composition predicate
 `server.Config.ModeNeedsEngine` (nil unless a plan slot is active, the **byte-identical**

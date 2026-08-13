@@ -449,12 +449,12 @@ func TestSupervisorUntrustedGoalDefault(t *testing.T) {
 	base := memfs.NewWorkspace("/ws")
 	factory := func(MemberSpec, string) MemberBuild { return MemberBuild{} }
 
-	def := NewSupervisor(tm, base, factory, WithTeamGoal("g"))
+	def := NewSupervisor(tm, testEnvironment(base, nil), factory, WithTeamGoal("g"))
 	if def.untrustedGoal {
 		t.Fatalf("default supervisor must have a TRUSTED goal (untrustedGoal == false)")
 	}
 
-	optedIn := NewSupervisor(tm, base, factory, WithTeamGoal("g"), WithUntrustedGoal(true))
+	optedIn := NewSupervisor(tm, testEnvironment(base, nil), factory, WithTeamGoal("g"), WithUntrustedGoal(true))
 	if !optedIn.untrustedGoal {
 		t.Fatalf("WithUntrustedGoal(true) must set untrustedGoal")
 	}

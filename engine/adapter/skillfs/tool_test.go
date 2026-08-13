@@ -34,12 +34,41 @@ func call(t *testing.T, m map[string]any) session.ToolCall {
 // exec runs the tool and fails on a harness-level error.
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall) session.ToolResult {
 	t.Helper()
-	res, err := tl.Execute(context.Background(), in, nil)
+	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, stubWS{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := tl.Execute(context.Background(), in, env)
 	if err != nil {
 		t.Fatalf("Execute: unexpected harness error: %v", err)
 	}
 	return res
 }
+
+// stubWS is a minimal Workspace the skillfs Skill tool never touches (it reads
+// the skill source, not the workspace).
+type stubWS struct{}
+
+func (stubWS) Root() string                                 { return "/" }
+func (stubWS) Read(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
+func (stubWS) ReadVersion(context.Context, string) ([]byte, tool.FileVersion, error) {
+	return nil, tool.FileVersion{}, os.ErrNotExist
+}
+func (stubWS) CreateFile(context.Context, string, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, os.ErrPermission
+}
+func (stubWS) ReplaceFile(context.Context, string, tool.FileVersion, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, os.ErrPermission
+}
+func (stubWS) Stat(context.Context, string) (tool.FileInfo, error) {
+	return tool.FileInfo{}, os.ErrNotExist
+}
+func (stubWS) Glob(context.Context, string) ([]string, error) { return nil, nil }
+func (stubWS) Grep(context.Context, string, string) ([]tool.GrepMatch, error) {
+	return nil, nil
+}
+func (stubWS) RecordRead(string, tool.FileVersion)             {}
+func (stubWS) RecordedVersion(string) (tool.FileVersion, bool) { return tool.FileVersion{}, false }
 
 func TestToolSpecEnumeratesSkills(t *testing.T) {
 	tl := newToolOver(t, sampleSkills())

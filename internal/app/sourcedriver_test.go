@@ -735,7 +735,7 @@ func TestSessionEngineCommandExpanderUsesStashedDriverSource(t *testing.T) {
 		}
 		sess := session.New(session.SessionID(fmt.Sprintf("cmd-sess-%d", i)), session.ModeDefault, "/ws",
 			session.Limits{MaxTurns: 3}, time.Now())
-		drainRun(res.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "/driver-cmd fix-it", Parts: nil}))
+		drainRun(res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "/driver-cmd fix-it", Parts: nil}))
 		expanded := false
 		for _, m := range sess.Conversation.Messages {
 			if m.Role == session.RoleUser && m.Text == "DRIVER says fix-it" {

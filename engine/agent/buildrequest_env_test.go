@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
@@ -61,7 +60,7 @@ func TestBuildRequestThreadsVolatileEnvAndPlanReminder(t *testing.T) {
 
 	// A session in PLAN mode so buildRequest appends the plan-mode reminder.
 	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "make a plan"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "make a plan"})
 	drain(r)
 
 	mu.Lock()

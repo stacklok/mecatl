@@ -103,7 +103,7 @@ func (*BashStatusTool) ReadOnly() bool { return true }
 // Execute is the caps-less path (plain Execute, no parent run threaded): there
 // is no registry to read, which is an honest model-addressable error — this
 // tool is only meaningful inside a run that registers its children.
-func (*BashStatusTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (*BashStatusTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolError(call.ID,
 		"BashStatus: no live registry is available on this run"), nil
 }
@@ -111,14 +111,14 @@ func (*BashStatusTool) Execute(_ context.Context, call session.ToolCall, _ tool.
 // ExecuteWithParent is the childCapableTool seam: it receives the parent run's
 // capabilities and reads/collects/cancels through caps.children, filtered to
 // the bash-cmd family (bashCmdFamiliesOnly).
-func (t *BashStatusTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
+func (t *BashStatusTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args bashStatusArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "BashStatus: "+msg), nil
 	}
 	reg := caps.children
 	if reg == nil {
-		return t.Execute(ctx, call, ws)
+		return t.Execute(ctx, call, env)
 	}
 	id := strings.TrimSpace(args.JobID)
 

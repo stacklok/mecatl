@@ -24,7 +24,7 @@ func bashStatusCall(id string, args map[string]any) session.ToolCall {
 func execBashStatus(t *testing.T, reg *childRunRegistry, id string, args map[string]any) session.ToolResult {
 	t.Helper()
 	res, err := NewBashStatusTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashStatusCall(id, args), bashWS, nil, parentCaps{children: reg})
+		context.Background(), bashStatusCall(id, args), bashEnv, nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -34,7 +34,7 @@ func execBashStatus(t *testing.T, reg *childRunRegistry, id string, args map[str
 // TestBashStatusCapsLessError pins the honest no-registry error on the plain
 // Execute path (and on ExecuteWithParent with a nil registry).
 func TestBashStatusCapsLessError(t *testing.T) {
-	res, err := NewBashStatusTool().Execute(context.Background(), bashStatusCall("s1", nil), bashWS)
+	res, err := NewBashStatusTool().Execute(context.Background(), bashStatusCall("s1", nil), bashEnv)
 	if err != nil {
 		t.Fatalf("Execute err = %v", err)
 	}
@@ -42,7 +42,7 @@ func TestBashStatusCapsLessError(t *testing.T) {
 		t.Fatalf("res = %+v, want the no-registry error", res)
 	}
 	res, err = NewBashStatusTool().(childCapableTool).ExecuteWithParent(
-		context.Background(), bashStatusCall("s2", nil), bashWS, nil, parentCaps{})
+		context.Background(), bashStatusCall("s2", nil), bashEnv, nil, parentCaps{})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -230,8 +230,8 @@ func TestBashStatusWaitMsParkWake(t *testing.T) {
 	r := &fakeStreamingRunner{out: "woke\n", exitCode: 0, run: make(chan struct{}), started: make(chan struct{})}
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
-	if _, err := NewBashTool(r).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("w1", "block", 0, true), bashWS, nil, caps); err != nil {
+	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("w1", "block", 0, true), bashEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
 	select {
@@ -244,7 +244,7 @@ func TestBashStatusWaitMsParkWake(t *testing.T) {
 	done := make(chan outcome, 1)
 	go func() {
 		res, err := NewBashStatusTool().(childCapableTool).ExecuteWithParent(
-			context.Background(), bashStatusCall("s1", map[string]any{"job_id": "bashcmd-w1", "wait_ms": 30000}), bashWS, nil, caps)
+			context.Background(), bashStatusCall("s1", map[string]any{"job_id": "bashcmd-w1", "wait_ms": 30000}), bashEnv, nil, caps)
 		if err != nil {
 			t.Errorf("wait call err = %v", err)
 		}
@@ -272,8 +272,8 @@ func TestBashStatusWaitMsParkWake(t *testing.T) {
 	// A capped wait on a job that stays live reports the running state at the cap.
 	r2 := &fakeStreamingRunner{run: make(chan struct{}), started: make(chan struct{})}
 	defer close(r2.run)
-	if _, err := NewBashTool(r2).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("w2", "block", 0, true), bashWS, nil, caps); err != nil {
+	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("w2", "block", 0, true), bashEnvRunner(r2), nil, caps); err != nil {
 		t.Fatalf("start w2 err = %v", err)
 	}
 	<-r2.started
@@ -302,15 +302,15 @@ func TestBashStatusWaitAnyJob(t *testing.T) {
 
 	r := &fakeStreamingRunner{out: "later\n", exitCode: 0, run: make(chan struct{}), started: make(chan struct{})}
 	caps := parentCaps{children: reg}
-	if _, err := NewBashTool(r).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("any1", "block", 0, true), bashWS, nil, caps); err != nil {
+	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("any1", "block", 0, true), bashEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
 	<-r.started
 	done := make(chan session.ToolResult, 1)
 	go func() {
 		res, _ := NewBashStatusTool().(childCapableTool).ExecuteWithParent(
-			context.Background(), bashStatusCall("s2", map[string]any{"wait_ms": 30000}), bashWS, nil, caps)
+			context.Background(), bashStatusCall("s2", map[string]any{"wait_ms": 30000}), bashEnv, nil, caps)
 		done <- res
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -332,8 +332,8 @@ func TestBashStatusCancel(t *testing.T) {
 	r := &fakeStreamingRunner{run: make(chan struct{}), started: make(chan struct{}), sawCancel: make(chan struct{})}
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
-	if _, err := NewBashTool(r).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("c1", "sleep 100", 0, true), bashWS, nil, caps); err != nil {
+	if _, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("c1", "sleep 100", 0, true), bashEnvRunner(r), nil, caps); err != nil {
 		t.Fatalf("start err = %v", err)
 	}
 	select {

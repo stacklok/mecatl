@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -25,7 +24,7 @@ func runOneSubagent(t *testing.T, task tool.Tool, callID, argsJSON string) sessi
 	t.Helper()
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall(session.ToolCallID(callID), "Subagent", json.RawMessage(argsJSON)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Subagent.Execute returned a transport error: %v", err)
 	}
@@ -189,7 +188,7 @@ func TestInspectSubagentHappyPath(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(store)
 	res, err := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-p1"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("InspectSubagent.Execute transport error: %v", err)
 	}
@@ -210,7 +209,7 @@ func TestInspectSubagentUnknownIDErrors(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(memstore.New())
 	res, _ := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-nope"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if !res.IsError {
 		t.Fatalf("unknown id must be an error result, got %+v", res)
 	}
@@ -225,7 +224,7 @@ func TestInspectSubagentStoreFailureDistinct(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(failingStore{})
 	res, _ := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-x"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if !res.IsError {
 		t.Fatalf("store failure must be an error result, got %+v", res)
 	}
@@ -277,7 +276,7 @@ func TestParentDiscoversAgentIDFromResultAndInspects(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 
 	// 1. The Subagent result must surface the agentId (the discovery contract).
 	subBody, subErr, ok := toolResultForName(evs, "Subagent")
@@ -333,7 +332,7 @@ func TestInspectSubagentForgedIDCleanError(t *testing.T) {
 		argsJSON := fmt.Sprintf(`{"agent_id":%q}`, forged)
 		res, err := inspect.Execute(context.Background(),
 			session.NewToolCall("i1", "InspectSubagent", json.RawMessage(argsJSON)),
-			memfs.NewWorkspace("/ws"))
+			agent.MemEnv("/ws"))
 		if err != nil {
 			t.Fatalf("forged id %q produced a transport error (must be a clean tool error): %v", forged, err)
 		}
@@ -349,7 +348,7 @@ func TestInspectSubagentForgedIDCleanError(t *testing.T) {
 	// A well-formed but UNKNOWN subagent id passes the gate and is a clean not-found.
 	res, err := inspect.Execute(context.Background(),
 		session.NewToolCall("i2", "InspectSubagent", json.RawMessage(`{"agent_id":"subagent-zzz"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unknown subagent id produced a transport error: %v", err)
 	}

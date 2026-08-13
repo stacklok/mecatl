@@ -104,7 +104,7 @@ func (DraftTool) ReadOnly() bool { return false }
 // sanitization failure is returned as a model-addressable error result (never a
 // harness-level Go error), so the model can revise and retry. On success the
 // result names the quarantine path and any near-duplicate warnings.
-func (t DraftTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t DraftTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args draftArgs
 	if msg, ok := toolkit.ParseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

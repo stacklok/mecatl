@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
@@ -50,7 +49,7 @@ func TestRunRouteTaskRoutesPlainDelegation(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"deep work"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -72,7 +71,7 @@ func TestRunExplicitModelBeatsRouter(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","model":"explicit-model"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -100,7 +99,7 @@ func TestRunForkDoesNotRoute(t *testing.T) {
 	}
 	_, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","fork":true}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -129,7 +128,7 @@ func TestRunNamedAgentBeatsRouter(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","agent":"reviewer"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -182,7 +181,7 @@ func TestRunRoutableAgentRoutesViaFactory(t *testing.T) {
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -236,7 +235,7 @@ func TestRunRoutableAgentMissUsesPrebuilt(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
-		memfs.NewWorkspace("/ws"), emit, caps)
+		memEnv("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -268,7 +267,7 @@ func TestRunBackgroundMissCarriesRoutingReason(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","background":true}`)),
-		memfs.NewWorkspace("/ws"), emit, caps)
+		memEnv("/ws"), emit, caps)
 	if err != nil || res.IsError {
 		t.Fatalf("background start failed: %v %+v", err, res)
 	}
@@ -296,7 +295,7 @@ func TestRunRoutableAgentNoFactoryDoesNotSpendClassifier(t *testing.T) {
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -323,7 +322,7 @@ func TestRunRoutableAgentFactoryDeclineUsesPrebuilt(t *testing.T) {
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"review it","agent":"reviewer"}`)),
-		memfs.NewWorkspace("/ws"), emit, caps)
+		memEnv("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -357,7 +356,7 @@ func TestRunExplicitAgentModelBypassesRouter(t *testing.T) {
 	caps := parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","agent":"reviewer","model":"fast"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -582,7 +581,7 @@ func TestRunRouteTaskMissInheritsDefault(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -600,7 +599,7 @@ func TestRunNilRouteTaskNoRouting(t *testing.T) {
 	tl := routerTool()
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x"}`)),
-		memfs.NewWorkspace("/ws"), nil, parentCaps{children: newChildRunRegistry()}) // routeTask nil
+		memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()}) // routeTask nil
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -637,7 +636,7 @@ func TestRunWritableRoutesWhenFactoryWired(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -668,7 +667,7 @@ func TestRunWritableRoutedFactoryMissFailSoft(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
-		memfs.NewWorkspace("/ws"), emit, caps)
+		memEnv("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -705,7 +704,7 @@ func TestRunWritableDoesNotSpendClassifierWhenFactoryUnwired(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}

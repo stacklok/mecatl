@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/session"
@@ -41,7 +40,7 @@ func (*awaitChildrenDoneTool) Spec() tool.ToolSpec {
 		Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*awaitChildrenDoneTool) ReadOnly() bool { return true }
-func (a *awaitChildrenDoneTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (a *awaitChildrenDoneTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	select {
 	case <-a.holder.ready:
 	case <-ctx.Done():
@@ -106,7 +105,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 	e := NewEngine(Deps{LLM: parentLLM, Catalog: cat, Policy: allow, Model: "parent-model"})
 
 	sess := session.New("notice-batch", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, memEnv("/ws"), RunRequest{Text: "go"})
 	holder.run = r
 	close(holder.ready)
 

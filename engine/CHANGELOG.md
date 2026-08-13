@@ -144,6 +144,32 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   New exported identifiers are Added per COMPATIBILITY.md; the interface method
   changes and `FileSystem.Write` removal are the breaking half recorded below.
 
+- **In-process `tool.Environment` seam** (ADR 0105, issue #462 phase 2) — the
+  concrete, immutable execution environment a `Tool.Execute` runs against,
+  replacing the per-call `tool.Workspace` + (for Bash) the construction-time
+  `CommandRunner` with a single bound seam:
+  - `session.EnvironmentRef{Kind, ID}` — the cycle-safe, stdlib-only identity
+    value (a backend-family `Kind` + an opaque `ID`) an Environment carries;
+    `EnvironmentKind` (`EnvKindLocal`/`EnvKindMem`/`EnvKindNoFS`) is new in the
+    session package (so the ref can ride the snapshot/event log without pulling
+    tool types in). It is an IN-PROCESS identity in phase 2 — not yet a snapshot
+    field (persistence/remote transport deferred to phase 3).
+  - `tool.Environment` — the immutable `{Ref, Workspace, CommandRunner}` bundle
+    with `NewEnvironment`/`MustEnvironment` constructors and `Ref()`/`Workspace()`
+    /`CommandRunner()` accessors. The Workspace is non-nil; the
+    runner is optional (nil → Bash surfaces `ErrNoShell`).
+  - `tool.EnvironmentForker` replaces `tool.WorkspaceForker`: `Fork` returns a
+    COMPLETE child `Environment` (Workspace + a runner bound to the child
+    namespace + ref), so a forked child's Bash observes the SAME child
+    namespace its Read/Write do.
+  - `tool.EnvironmentMerger` replaces `tool.ForkMerger`: `Merge` receives the
+    child and parent `Environment`s (no `forkRoot` string crosses the core
+    interface).
+  New exported identifiers are Added per COMPATIBILITY.md; the `Tool.Execute`,
+  `CommandRunner`/`CommandStreamer`, `Engine.Run`/`ResumeApproval`, and forker/
+  merger signature changes are the breaking half recorded below. The removed
+  `WorkspaceForker`/`ForkMerger` interfaces are recorded under Removed.
+
 - **`session.ToValidUTF8` and `session.RepairToolResult`** (issue #402) — the
   UTF-8 repair primitives that close the Converse-stream kill. A tool can hand
   back arbitrary bytes (a command's stdout, a file's contents, an MCP server's
@@ -578,6 +604,41 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
 
 ### Changed
 
+- **`Tool.Execute`, the observed/parent seams, `Engine.Run`/`ResumeApproval`,
+  and `CommandRunner`/`CommandStreamer` now take `tool.Environment`** (ADR 0105,
+  issue #462 phase 2) — the per-call `tool.Workspace` parameter is replaced by
+  the bound `tool.Environment` on:
+  - `tool.Tool.Execute(ctx, in, env tool.Environment)` (was `ws tool.Workspace`);
+  - the agent-internal `observableTool`/`childCapableTool` seams
+    (`ExecuteObserved`/`ExecuteWithParent`) and the loop/dispatch/delegation
+    call sites;
+  - `agent.Engine.Run`/`Engine.ResumeApproval` (the `ws tool.Workspace`
+    parameter is now `env tool.Environment`);
+  - `tool.CommandRunner.Run`/`CommandStreamer.RunStreaming` LOSE the per-call
+    `workdir string` parameter — a runner is now BOUND to one namespace at
+    construction, so the command's cwd always matches the workspace the tool
+    executes against. `ErrNoShell` is surfaced honestly when a shell-less
+    Environment's Bash is called.
+  This is a breaking signature change on the exported engine/tool surface (the
+  `Tool.Execute`, `CommandRunner.Run`, `CommandStreamer.RunStreaming`,
+  `Engine.Run`, `Engine.ResumeApproval`, `NewBashTool`, `NewParallelTool`,
+  `NewSupervisor`, and the forker/merger/option constructors), classified
+  Changed per COMPATIBILITY.md; it is a parameter-type consolidation only —
+  every existing behaviour and invariant (read-parallel/mutate-serial,
+  envscrub/gitenv, trust gates, merge serialization, no-fs, path-escape,
+  skill read roots) is preserved. The in-repo callers and tests are updated.
+
+- **`tool.EnvironmentForker` and `tool.EnvironmentMerger` replace the removed
+  `tool.WorkspaceForker`/`tool.ForkMerger`** (ADR 0105, issue #462 phase 2) —
+  the two isolation seams are REPLACED (not maintained in parallel):
+  `WorkspaceForker.Fork(ctx, base Workspace, ...) (child Workspace, ...)` becomes
+  `EnvironmentForker.Fork(ctx, base Environment, ...) (child Environment, ...)`;
+  `ForkMerger.Merge(ctx, forkRoot string, parentWS Workspace)` becomes
+  `EnvironmentMerger.Merge(ctx, child, parent Environment)`. The forker now
+  returns a complete child Environment whose Workspace and runner share the
+  child namespace. The OLD interfaces are removed (see Removed); the new
+  interfaces are Added above.
+
 - **`tool.FileSystem.Write` removed** (ADR 0104, issue #462) — the
   unconditional-mutation seam is deleted from the `tool.FileSystem` interface.
   The agent-facing tools never used it: they go through the version-bearing
@@ -687,6 +748,19 @@ The covered surface is the seven core packages (`session`, `governance`, `tool`,
   Classified Changed per COMPATIBILITY.md (a widened constructor signature +
   narrowed verb surface; pre-v1 a minor bump). (schedule-tool plan, task 06
   repair)
+
+### Removed
+
+- **BREAKING:** `tool.WorkspaceForker` and `tool.ForkMerger` — removed (ADR 0105,
+  issue #462 phase 2). The two isolation seams are REPLACED by
+  `tool.EnvironmentForker` and `tool.EnvironmentMerger` (see Added); the old
+  interfaces are not maintained in parallel.
+  `WorkspaceForker.Fork(ctx, base Workspace, ...) (child Workspace, ...)` becomes
+  `EnvironmentForker.Fork(ctx, base Environment, ...) (child Environment, ...)`;
+  `ForkMerger.Merge(ctx, forkRoot string, parentWS Workspace)` becomes
+  `EnvironmentMerger.Merge(ctx, child, parent Environment)`. Removing exported
+  interfaces is breaking for implementors; under the pre-v1 policy it ships in a
+  minor bump. See ADR 0105.
 
 ### Added
 

@@ -1,4 +1,4 @@
-// Package forker implements the default tool.WorkspaceForker used by fork-join
+// Package forker implements the default tool.EnvironmentForker used by fork-join
 // parallelism (harness pattern 8). It isolates a forked child agent loop from
 // the shared base working tree so parallel children cannot race on, or mutate,
 // the base.
@@ -102,6 +102,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/envscrub"
 	"github.com/stacklok/mecatl/internal/adapter/gitenv"
@@ -113,13 +114,28 @@ import (
 // substitute a workspace constructor. The composition root passes osfs.NewWorkspace.
 type childRoot func(root string) (tool.Workspace, error)
 
-// Forker is the default tool.WorkspaceForker. It picks git-worktree isolation
+// childRunner is the constructor the forker uses to build a BOUND tool.CommandRunner
+// for an isolated child directory (issue #462). It is injected so this adapter does
+// not import the osfs adapter directly and so the composition root controls the
+// hardening (envscrub + gitenv) applied to a child's Bash. The runner is bound to
+// the child root — the command's cwd follows the forked workspace, never the parent
+// base. nil means "no shell for this child" (the child's Bash surfaces ErrNoShell).
+// The composition root passes a closure over osfs.NewCommandRunnerShell that applies
+// the same env-scrubbing the parent runner gets.
+type childRunner func(root string) tool.CommandRunner
+
+// Forker is the default tool.EnvironmentForker. It picks git-worktree isolation
 // when the base root is a git repo and falls back to a recursive directory copy
 // otherwise. It is safe for concurrent use: Fork holds no per-call state on the
 // Forker, and each call derives a uniquely-named child directory.
 type Forker struct {
 	// newWorkspace builds a child tool.Workspace over an isolated directory.
 	newWorkspace childRoot
+	// newRunner builds a child tool.CommandRunner bound to the isolated directory,
+	// or nil when the child namespace has no shell. nil (the field) means the
+	// forker was constructed without a runner builder, so EVERY forked child is
+	// shell-less (the composition root wires the builder only when Bash is on).
+	newRunner childRunner
 	// tmpBase is the parent directory under which child directories are created.
 	// Empty means os.MkdirTemp's default (os.TempDir()).
 	tmpBase string
@@ -199,6 +215,17 @@ func WithDirtyOverlay() Option {
 	return func(f *Forker) { f.dirtyOverlay = true }
 }
 
+// WithRunner injects the bound-command-runner builder the forker uses to mint a
+// child tool.CommandRunner for each forked directory (issue #462). The runner is
+// bound to the child root, so a forked child's Bash observes the SAME child
+// namespace its Read/Write do. nil (or unset) means forked children are shell-less
+// (the composition root wires the builder only when Bash is on). The builder is
+// called once per Fork with the isolated child directory; it returns nil when the
+// child namespace should have no shell (e.g. the trust gate withheld it).
+func WithRunner(r childRunner) Option {
+	return func(f *Forker) { f.newRunner = r }
+}
+
 // New constructs the default Forker. newWorkspace builds a child tool.Workspace
 // over an isolated directory (the composition root passes osfs.NewWorkspace);
 // it must be non-nil.
@@ -217,7 +244,7 @@ func New(newWorkspace func(root string) (tool.Workspace, error), opts ...Option)
 }
 
 // Compile-time assertion that Forker satisfies the seam.
-var _ tool.WorkspaceForker = (*Forker)(nil)
+var _ tool.EnvironmentForker = (*Forker)(nil)
 
 // Fork creates an isolated child workspace derived from base. It uses a git
 // worktree when base's root is a git repo, else a recursive copy. The returned
@@ -227,18 +254,18 @@ var _ tool.WorkspaceForker = (*Forker)(nil)
 // overlay DEGRADED (the base was dirty but its uncommitted state could not be
 // mirrored into the child, so the child sees committed HEAD only). Every other path
 // — force-copy, plain worktree, copy fallback, clean tree, no overlay — returns "".
-func (f *Forker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
-	if base == nil {
-		return nil, nil, "", errors.New("forker: Fork requires a non-nil base workspace")
+func (f *Forker) Fork(ctx context.Context, base tool.Environment, label string) (tool.Environment, func() error, string, error) {
+	if base.Workspace() == nil {
+		return tool.Environment{}, nil, "", errors.New("forker: Fork requires a base with a non-nil workspace")
 	}
-	baseRoot := base.Root()
+	baseRoot := base.Workspace().Root()
 	if baseRoot == "" {
-		return nil, nil, "", errors.New("forker: base workspace has no root")
+		return tool.Environment{}, nil, "", errors.New("forker: base workspace has no root")
 	}
 
 	childDir, err := f.childDir(label)
 	if err != nil {
-		return nil, nil, "", err
+		return tool.Environment{}, nil, "", err
 	}
 
 	// Force-copy mode: always take the full recursive copy (including .git), giving
@@ -247,7 +274,15 @@ func (f *Forker) Fork(ctx context.Context, base tool.Workspace, label string) (t
 	// the parent's dirty state verbatim, so there is never a degraded-fork advisory.
 	if f.forceCopy {
 		ws, cleanup, ferr := f.forkCopyInto(baseRoot, childDir)
-		return ws, cleanup, "", ferr
+		if ferr != nil {
+			return tool.Environment{}, nil, "", ferr
+		}
+		env, werr := f.childEnv(base, ws)
+		if werr != nil {
+			_ = cleanup()
+			return tool.Environment{}, nil, "", werr
+		}
+		return env, cleanup, "", nil
 	}
 
 	repoRoot, isRepo := gitRepoRoot(ctx, baseRoot)
@@ -255,15 +290,68 @@ func (f *Forker) Fork(ctx context.Context, base tool.Workspace, label string) (t
 		ws, cleanup, advisory, ferr := f.forkWorktree(ctx, repoRoot, childDir)
 		if ferr != nil {
 			// Worktree creation failed (e.g. dirty/odd repo state): fall back to a
-			// copy so a fork never hard-fails just because git refused.
+			// copy so a fork never hard-fails just because git refused. forkCopy
+			// mints a FRESH child directory (the reservation above was discarded),
+			// so Workspace/Ref/runner all derive from the copy root via childEnv —
+			// never from the discarded childDir.
 			_ = os.RemoveAll(childDir)
 			cws, ccleanup, cerr := f.forkCopy(baseRoot, label)
-			return cws, ccleanup, "", cerr
+			if cerr != nil {
+				return tool.Environment{}, nil, "", cerr
+			}
+			cenv, cwerr := f.childEnv(base, cws)
+			if cwerr != nil {
+				_ = ccleanup()
+				return tool.Environment{}, nil, "", cwerr
+			}
+			return cenv, ccleanup, "", nil
 		}
-		return ws, cleanup, advisory, nil
+		env, werr := f.childEnv(base, ws)
+		if werr != nil {
+			_ = cleanup()
+			return tool.Environment{}, nil, "", werr
+		}
+		return env, cleanup, advisory, nil
 	}
 	ws, cleanup, ferr := f.forkCopyInto(baseRoot, childDir)
-	return ws, cleanup, "", ferr
+	if ferr != nil {
+		return tool.Environment{}, nil, "", ferr
+	}
+	env, werr := f.childEnv(base, ws)
+	if werr != nil {
+		_ = cleanup()
+		return tool.Environment{}, nil, "", werr
+	}
+	return env, cleanup, "", nil
+}
+
+// childEnv wraps a forked child Workspace into a complete tool.Environment,
+// binding a CommandRunner to the child namespace when the forker was wired with a
+// runner builder (issue #462). The child Environment carries the SAME backend
+// Kind as the base (a local base forks into a local child) and a ref ID naming the
+// child namespace so the parent can identify the fork.
+//
+// AFFINITY (structural): the ref ID and the bound runner root are derived from
+// ws.Root() — NEVER from a separately threaded childDir. A Workspace opened over
+// an isolated directory is the single source of truth for the child namespace: its
+// root IS where the runner must be bound and what the ref ID names. Threading a
+// second childDir risks divergence on the worktree-failure→copy fallback path,
+// where forkCopy mints a FRESH directory distinct from the one Fork reserved
+// (git refused the worktree, so the reservation was discarded) — binding the
+// runner and ref to the discarded reservation would point Bash and identity at a
+// directory the child never executes in. Deriving both from ws.Root() makes that
+// impossible: Workspace, Ref, and runner always share the actual copy root.
+//
+// When no runner builder is wired (or it returns nil for this root) the child is
+// shell-less and its Bash surfaces ErrNoShell honestly.
+func (f *Forker) childEnv(base tool.Environment, ws tool.Workspace) (tool.Environment, error) {
+	root := ws.Root()
+	var runner tool.CommandRunner
+	if f.newRunner != nil {
+		runner = f.newRunner(root)
+	}
+	ref := session.EnvironmentRef{Kind: base.Ref().Kind, ID: root}
+	return tool.NewEnvironment(ref, ws, runner)
 }
 
 // childDir reserves (creates) a uniquely-named, empty directory for a child fork,
@@ -649,7 +737,7 @@ func sanitizeLabel(label string) string {
 	return s
 }
 
-// Merger is the tool.ForkMerger implementation: it merges a preserved winning
+// Merger is the tool.EnvironmentMerger implementation: it merges a preserved winning
 // fork's working-tree changes BACK into the parent workspace. It is the
 // composition-owned merge half of BOTH merge-back paths — a Parallel
 // single-branch winner (ADR 0039) AND a writable Subagent (mode:"read-write",
@@ -683,18 +771,29 @@ func sanitizeLabel(label string) string {
 // copied `.git/config` and attacker-named drivers cannot drive code here.
 type Merger struct{}
 
-// NewMerger constructs the default ForkMerger. It is stateless; the constructor
-// exists so composition can inject it as a tool.ForkMerger without the forker
+// NewMerger constructs the default EnvironmentMerger. It is stateless; the constructor
+// exists so composition can inject it as a tool.EnvironmentMerger without the forker
 // package needing to know about the tool port (the adapter meets the port at
 // construction).
 func NewMerger() *Merger { return &Merger{} }
 
-// Merge implements tool.ForkMerger. See the Merger type doc for the contract.
-func (*Merger) Merge(ctx context.Context, forkRoot string, parentWS tool.Workspace) error {
-	parentRoot := parentWS.Root()
+// Merge implements tool.EnvironmentMerger. See the Merger type doc for the contract.
+func (*Merger) Merge(ctx context.Context, child, parent tool.Environment) error {
+	// A zero-value Environment{} (nil Workspace) must surface a normal error,
+	// never a nil-pointer panic from dereferencing Workspace().Root(). This is
+	// the defense at the merger boundary: NewEnvironment/MustEnvironment enforce
+	// non-nil at construction, but a caller can still hand a zero value here.
+	if child.Workspace() == nil {
+		return errors.New("forker: merge requires a child Environment with a non-nil workspace")
+	}
+	if parent.Workspace() == nil {
+		return errors.New("forker: merge requires a parent Environment with a non-nil workspace")
+	}
+	parentRoot := parent.Workspace().Root()
 	if parentRoot == "" {
 		return fmt.Errorf("forker: merge requires a non-empty parent workspace root")
 	}
+	forkRoot := child.Workspace().Root()
 	if forkRoot == "" {
 		return fmt.Errorf("forker: merge requires a non-empty fork root")
 	}
@@ -816,9 +915,9 @@ func mergeForkInner(ctx context.Context, forkRoot, parentRoot string) error {
 }
 
 // Compile-time assertion that Merger satisfies the seam.
-var _ tool.ForkMerger = (*Merger)(nil)
+var _ tool.EnvironmentMerger = (*Merger)(nil)
 
-// SerializingMerger wraps an inner tool.ForkMerger with a single mutex so that
+// SerializingMerger wraps an inner tool.EnvironmentMerger with a single mutex so that
 // concurrent Merge calls are SERIALIZED — at most one fork's working-tree diff is
 // applied to a parent workspace at a time, process-wide.
 //
@@ -832,34 +931,34 @@ var _ tool.ForkMerger = (*Merger)(nil)
 // that is already a post-run, off-the-hot-path step.
 //
 // The decorator is composition-owned: ONE instance is built in Phase A (like the
-// fork reaper / shared MCP manager) and injected — as a tool.ForkMerger — into the
+// fork reaper / shared MCP manager) and injected — as a tool.EnvironmentMerger — into the
 // Parallel path (WithAutoMerge), so the SAME mutex serializes across every merge in
 // the process. A per-session instance would NOT serialize across sessions, defeating
 // the point. It owns its own sync.Mutex (zero-value-ready) and forwards the inner
 // result/error verbatim.
 type SerializingMerger struct {
 	mu    sync.Mutex
-	inner tool.ForkMerger
+	inner tool.EnvironmentMerger
 }
 
 // NewSerializingMerger wraps inner so its Merge calls are serialized process-wide
 // by a single mutex the returned decorator owns. Construct ONE instance in
 // composition and share it across every merge-driving tool.
-func NewSerializingMerger(inner tool.ForkMerger) *SerializingMerger {
+func NewSerializingMerger(inner tool.EnvironmentMerger) *SerializingMerger {
 	return &SerializingMerger{inner: inner}
 }
 
-// Merge implements tool.ForkMerger: it takes the decorator's mutex for the whole
+// Merge implements tool.EnvironmentMerger: it takes the decorator's mutex for the whole
 // duration of the inner Merge, so at most one merge runs at a time, then returns
 // the inner result verbatim.
-func (m *SerializingMerger) Merge(ctx context.Context, forkRoot string, parentWS tool.Workspace) error {
+func (m *SerializingMerger) Merge(ctx context.Context, child, parent tool.Environment) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.inner.Merge(ctx, forkRoot, parentWS)
+	return m.inner.Merge(ctx, child, parent)
 }
 
 // Compile-time assertion that SerializingMerger satisfies the seam.
-var _ tool.ForkMerger = (*SerializingMerger)(nil)
+var _ tool.EnvironmentMerger = (*SerializingMerger)(nil)
 
 // patchTouchesGitattributes reports whether the given unified-diff patch touches
 // any `.gitattributes` file (at the repo root or any subdirectory). It scans the

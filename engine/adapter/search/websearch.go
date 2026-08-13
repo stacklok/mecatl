@@ -192,7 +192,7 @@ func (WebSearchTool) ReadOnly() bool { return true }
 // returned as model-facing tool results (NewToolResult / NewToolError), never a
 // Go error — the Go error return is reserved for harness-level faults, of which
 // this tool has none.
-func (t WebSearchTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t WebSearchTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args webSearchArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -20,7 +19,7 @@ func subagentParentResults(t *testing.T, task tool.Tool, parentTurns ...mockllm.
 	t.Helper()
 	parentLLM := mockllm.New(parentTurns...)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	var results []*session.ToolResult
 	for _, ev := range evs {

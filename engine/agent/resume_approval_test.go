@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
@@ -26,9 +25,9 @@ import (
 // session, exactly what a different process would load from the store. The engine
 // (and its scripted mockllm cursor) is fully consumed by this; the caller resumes
 // with a FRESH engine.
-func driveToAwaiting(t *testing.T, e *agent.Engine, sess *session.Session, ws tool.Workspace, prompt string) (askID string, restored *session.Session) {
+func driveToAwaiting(t *testing.T, e *agent.Engine, sess *session.Session, env tool.Environment, prompt string) (askID string, restored *session.Session) {
 	t.Helper()
-	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: prompt})
+	r := e.Run(context.Background(), sess, env, agent.RunRequest{Text: prompt})
 	var snap sessnap.Snapshot
 	var snapErr error
 	for ev := range r.Events() {
@@ -103,7 +102,7 @@ func TestResumeApprovalExecutesPendingExactlyOnce(t *testing.T) {
 		Catalog: catalogWith(t, write1),
 		Policy:  policy,
 	})
-	askID, restored := driveToAwaiting(t, e1, sess, memfs.NewWorkspace("/ws"), "go")
+	askID, restored := driveToAwaiting(t, e1, sess, agent.MemEnv("/ws"), "go")
 
 	// Engine #2 (the "restarted process"): a FRESH engine over the restored session.
 	// Its mockllm needs only the CONTINUATION turn (the tool call already happened
@@ -119,7 +118,7 @@ func TestResumeApprovalExecutesPendingExactlyOnce(t *testing.T) {
 		Catalog: catalogWith(t, write2),
 		Policy:  policy,
 	})
-	r := e2.ResumeApproval(context.Background(), restored, memfs.NewWorkspace("/ws"), askID, session.VerdictAllowOnce)
+	r := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowOnce)
 	evs := resumeEvents(r)
 
 	if got := ran.Load(); got != 1 {
@@ -152,7 +151,7 @@ func TestResumeApprovalDenyDoesNotExecute(t *testing.T) {
 		Catalog: catalogWith(t, write1),
 		Policy:  policy,
 	})
-	askID, restored := driveToAwaiting(t, e1, sess, memfs.NewWorkspace("/ws"), "go")
+	askID, restored := driveToAwaiting(t, e1, sess, agent.MemEnv("/ws"), "go")
 
 	var ran atomic.Int64
 	write2 := &fakeTool{name: "Write", readOnly: false,
@@ -165,7 +164,7 @@ func TestResumeApprovalDenyDoesNotExecute(t *testing.T) {
 		Catalog: catalogWith(t, write2),
 		Policy:  policy,
 	})
-	r := e2.ResumeApproval(context.Background(), restored, memfs.NewWorkspace("/ws"), askID, session.VerdictDeny)
+	r := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictDeny)
 	evs := resumeEvents(r)
 
 	if got := ran.Load(); got != 0 {
@@ -195,7 +194,7 @@ func TestResumeApprovalNotAwaiting(t *testing.T) {
 		Catalog: catalogWith(t),
 		Policy:  policy,
 	})
-	r := e.ResumeApproval(context.Background(), sess, memfs.NewWorkspace("/ws"), "any:0:x:r1", session.VerdictAllowOnce)
+	r := e.ResumeApproval(context.Background(), sess, agent.MemEnv("/ws"), "any:0:x:r1", session.VerdictAllowOnce)
 	evs := resumeEvents(r)
 	rp := lastResult(t, evs)
 	if rp.Stop != session.StopError {
@@ -222,7 +221,7 @@ func TestResumeApprovalWrongAskID(t *testing.T) {
 		Catalog: catalogWith(t, write1),
 		Policy:  policy,
 	})
-	_, restored := driveToAwaiting(t, e1, sess, memfs.NewWorkspace("/ws"), "go")
+	_, restored := driveToAwaiting(t, e1, sess, agent.MemEnv("/ws"), "go")
 
 	write2 := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
@@ -234,7 +233,7 @@ func TestResumeApprovalWrongAskID(t *testing.T) {
 		Catalog: catalogWith(t, write2),
 		Policy:  policy,
 	})
-	r := e2.ResumeApproval(context.Background(), restored, memfs.NewWorkspace("/ws"), "stale:9:bogus:r99", session.VerdictAllowOnce)
+	r := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), "stale:9:bogus:r99", session.VerdictAllowOnce)
 	evs := resumeEvents(r)
 	if got := ran.Load(); got != 0 {
 		t.Fatalf("a wrong-askID resume executed the tool %d time(s), want 0", got)
@@ -284,7 +283,7 @@ func TestResumeApprovalMultiToolSiblingCloseOut(t *testing.T) {
 		Catalog: catalogWith(t, read("ReadA"), gate1, read("ReadB")),
 		Policy:  policy,
 	})
-	askID, restored := driveToAwaiting(t, e1, sess, memfs.NewWorkspace("/ws"), "go")
+	askID, restored := driveToAwaiting(t, e1, sess, agent.MemEnv("/ws"), "go")
 
 	var gateRan, readBRan atomic.Int64
 	read2 := func(name string, ctr *atomic.Int64) *fakeTool {
@@ -306,7 +305,7 @@ func TestResumeApprovalMultiToolSiblingCloseOut(t *testing.T) {
 		Catalog: catalogWith(t, read2("ReadA", nil), gate2, read2("ReadB", &readBRan)),
 		Policy:  policy,
 	})
-	r := e2.ResumeApproval(context.Background(), restored, memfs.NewWorkspace("/ws"), askID, session.VerdictAllowOnce)
+	r := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowOnce)
 	evs := resumeEvents(r)
 
 	// #2 (Gate) executed exactly once.
@@ -378,7 +377,7 @@ func TestPendingAskCarriesGatedCallID(t *testing.T) {
 		Catalog: catalogWith(t, write),
 		Policy:  policy,
 	})
-	ask := captureFirstAsk(t, e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	ask := captureFirstAsk(t, e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 	if ask.Call != "w1" {
 		t.Fatalf("PendingAsk.Call = %q, want the gated ToolCall.ID %q", ask.Call, "w1")
 	}
@@ -399,7 +398,7 @@ func TestRunRequestAskIDDiscriminatorReplacesSerial(t *testing.T) {
 		Catalog: catalogWith(t, write),
 		Policy:  policy,
 	})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"),
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"),
 		agent.RunRequest{Text: "go", AskIDDiscriminator: "run-42"})
 	ask := captureFirstAsk(t, r)
 	if !strings.HasSuffix(ask.AskID, ":run-42") {
@@ -434,7 +433,7 @@ func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
 			Catalog: catalogWith(t, write),
 			Policy:  policy,
 		})
-		r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"),
+		r := e.Run(context.Background(), sess, agent.MemEnv("/ws"),
 			agent.RunRequest{Text: "go", AskIDDiscriminator: discriminator})
 		return captureFirstAsk(t, r).AskID
 	}
@@ -466,7 +465,7 @@ func TestRunRequestAskIDDiscriminatorColonFallsBack(t *testing.T) {
 		Policy:      policy,
 		Diagnostics: diag,
 	})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"),
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"),
 		agent.RunRequest{Text: "go", AskIDDiscriminator: "a:b"})
 	ask := captureFirstAsk(t, r)
 	if strings.Contains(ask.AskID, ":a:b") {

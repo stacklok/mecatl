@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -305,7 +306,13 @@ func (a *Agent) handleSessionNew(ctx context.Context, params json.RawMessage) (a
 			// than silently falling back to disk under a client that asked for buffers.
 			return nil, newMethodErr(codeInvalidParams, "acp: session/new: "+werr.Error())
 		}
-		a.svc.SetSessionWorkspace(sess.ID, ws)
+		// Register a COMPLETE shell-less Environment: the ACP fsWorkspace is a
+		// real-filesystem workspace rooted at the session cwd (a local-kind
+		// namespace), but the editor provides NO shell, so the CommandRunner is
+		// nil (Bash surfaces ErrNoShell honestly). The ref ID is the session root
+		// so the parent can identify the namespace (issue #462 phase-2 finding #2).
+		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, nil)
+		a.svc.SetSessionEnvironment(sess.ID, env)
 		if len(specs) == 0 {
 			// Not already tracked via the MCP path; track now so the override is
 			// evicted on disconnect.

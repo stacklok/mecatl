@@ -139,7 +139,7 @@ func TestUntrustedSubagentNoForkerWired(t *testing.T) {
 
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall("c1", "Subagent", json.RawMessage(`{"prompt":"try to run a shell"}`)),
-		osfsWSForTest(t, cfg.Workspace))
+		osfsEnvironment(t, cfg.Workspace, nil))
 	if err != nil {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}
@@ -459,13 +459,13 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 		mockllm.ToolCallTurn(session.ToolCall{ID: "t1", Name: "Subagent", Args: json.RawMessage(`{"prompt":"investigate"}`)}),
 		mockllm.TextTurn("parent done"),
 	)
-	parentWS := osfsWSForTest(t, cfg.Workspace)
+	parentEnv := osfsEnvironment(t, cfg.Workspace, nil)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, cfg.Workspace, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
+	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	var sawResult bool
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" {
@@ -485,5 +485,94 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 		t.Fatal("probe file was written; the untrusted child must have NO shell (and so no worktree)")
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("unexpected error stating probe file: %v", err)
+	}
+}
+
+// TestSandboxedShellAvailableGateTable is the structural gate table for the
+// SANDBOXED (read-only worktree) child shell gate — sandboxedShellAvailable. It
+// pins the ONE boolean expression every sandboxed child runner builder + matching
+// Bash catalog registration gate consults, across the full (NoBash, Shell,
+// TrustProject) product, so the trust-gated read-only shell availability cannot
+// drift between the runner builder, the per-child forker builder, and the catalog
+// registration gate. The trust gate is load-bearing ONLY here (read-only worktree
+// shares the base repo's `.git`).
+func TestSandboxedShellAvailableGateTable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		noBash, trust bool
+		shell         string
+		want          bool
+	}{
+		"happy trusted":           {false, true, "/bin/sh", true},
+		"no-bash trusted":         {true, true, "/bin/sh", false},
+		"empty-shell trusted":     {false, true, "", false},
+		"no-bash empty trusted":   {true, true, "", false},
+		"untrusted":               {false, false, "/bin/sh", false},
+		"no-bash untrusted":       {true, false, "/bin/sh", false},
+		"empty-shell untrusted":   {false, false, "", false},
+		"no-bash empty untrusted": {true, false, "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := Config{NoBash: tc.noBash, Shell: tc.shell, TrustProject: tc.trust}
+			if got := sandboxedShellAvailable(cfg); got != tc.want {
+				t.Errorf("sandboxedShellAvailable(%+v) = %v, want %v", cfg, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestForceCopyShellAvailableGateTable is the structural gate table for the
+// FORCE-COPY (mutating fork) child shell gate — forceCopyShellAvailable. It pins
+// the ONE boolean expression every force-copy child runner builder consults,
+// across the full (NoBash, Shell) product, and proves the DELIBERATE ASYMMETRY:
+// trust is NOT consulted (a force-copy fork has no fork-time git invocation, so
+// the worktree-checkout RCE the sandboxed gate closes cannot fire). An untrusted
+// workspace with a shell STILL gets a force-copy shell — the accepted
+// main-session-parity residual (TestUntrustedMutatingMemberKeepsBash pins the
+// catalog-level consequence).
+func TestForceCopyShellAvailableGateTable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		noBash, trust bool
+		shell         string
+		want          bool
+	}{
+		"happy trusted":         {false, true, "/bin/sh", true},
+		"no-bash trusted":       {true, true, "/bin/sh", false},
+		"empty-shell trusted":   {false, true, "", false},
+		"no-bash empty trusted": {true, true, "", false},
+		// The asymmetry: trust is IRRELEVANT for force-copy.
+		"happy untrusted":         {false, false, "/bin/sh", true},
+		"no-bash untrusted":       {true, false, "/bin/sh", false},
+		"empty-shell untrusted":   {false, false, "", false},
+		"no-bash empty untrusted": {true, false, "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := Config{NoBash: tc.noBash, Shell: tc.shell, TrustProject: tc.trust}
+			if got := forceCopyShellAvailable(cfg); got != tc.want {
+				t.Errorf("forceCopyShellAvailable(%+v) = %v, want %v", cfg, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestShellGateHelpersMatchRunnerBuilders is the structural anti-drift pin: the
+// boolean gate helpers (sandboxedShellAvailable / forceCopyShellAvailable) must
+// agree with the runner builders (buildSandboxedCommandRunner /
+// buildForceCopyRunner) on EVERY row of the (NoBash, Shell, TrustProject) product
+// — a non-nil runner iff the gate is true. If a future change makes the gate and
+// the builder disagree (e.g. the builder gains a check the gate lacks), this test
+// fails, so the catalog registration gate and the runner builder cannot drift.
+func TestShellGateHelpersMatchRunnerBuilders(t *testing.T) {
+	for _, noBash := range []bool{false, true} {
+		for _, shell := range []string{"", "/bin/sh"} {
+			for _, trust := range []bool{false, true} {
+				cfg := Config{NoBash: noBash, Shell: shell, TrustProject: trust, Workspace: t.TempDir()}
+				if got := buildSandboxedCommandRunner(cfg) != nil; got != sandboxedShellAvailable(cfg) {
+					t.Errorf("sandboxed: runner nil-ness (%v) != gate (%v) for cfg %+v", got, sandboxedShellAvailable(cfg), cfg)
+				}
+				if got := buildForceCopyRunner(cfg) != nil; got != forceCopyShellAvailable(cfg) {
+					t.Errorf("force-copy: runner nil-ness (%v) != gate (%v) for cfg %+v", got, forceCopyShellAvailable(cfg), cfg)
+				}
+			}
+		}
 	}
 }

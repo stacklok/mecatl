@@ -107,7 +107,8 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 		r.engine.now(),
 	)
 
-	run := r.engine.Run(ctx, child, noopWorkspace{root: sess.Workspace}, RunRequest{Text: reviewPrompt(transcript)})
+	reviewEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "usermodel"}, noopWorkspace{root: sess.Workspace}, nil)
+	run := r.engine.Run(ctx, child, reviewEnv, RunRequest{Text: reviewPrompt(transcript)})
 	// Drain the child entirely (auto-denying any ask — the extraction child is
 	// non-interactive). We discard the summary text; the user-model writes are the
 	// only durable effect.

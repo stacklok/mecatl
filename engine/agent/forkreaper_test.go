@@ -85,7 +85,7 @@ func TestLRUForkReaperNilCleanupIgnored(t *testing.T) {
 	}
 }
 
-// uniqueForker is a WorkspaceForker whose every fork gets a globally-unique root
+// uniqueForker is an EnvironmentForker whose every fork gets a globally-unique root
 // (call-scoped, unlike labeledForker which reuses /fork/<label>), and which records
 // every root whose cleanup ran. It is the vehicle for the cross-call reaping assert:
 // after N judge Forks, only the cap-many most-recent winner roots should remain
@@ -98,7 +98,7 @@ type uniqueForker struct {
 
 func newUniqueForker() *uniqueForker { return &uniqueForker{cleaned: map[string]bool{}} }
 
-func (m *uniqueForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+func (m *uniqueForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
 	m.mu.Lock()
 	m.seq++
 	root := fmt.Sprintf("/fork/%s/%d", label, m.seq)
@@ -110,7 +110,7 @@ func (m *uniqueForker) Fork(_ context.Context, _ tool.Workspace, label string) (
 		m.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, "", nil
+	return agent.ForkEnv(ws), cleanup, "", nil
 }
 
 func (m *uniqueForker) wasCleaned(root string) bool {
@@ -143,7 +143,7 @@ func TestForkWinnerReaperBoundsPreservedForks(t *testing.T) {
 		res, err := fork.Execute(context.Background(),
 			session.NewToolCall(session.ToolCallID(fmt.Sprintf("c%d", i)), "Parallel",
 				json.RawMessage(`{"tasks":["do alpha","do beta"],"join":"judge","criteria":"pick beta"}`)),
-			memfs.NewWorkspace("/ws"))
+			agent.MemEnv("/ws"))
 		if err != nil || res.IsError {
 			t.Fatalf("call %d: err=%v res=%+v", i, err, res)
 		}

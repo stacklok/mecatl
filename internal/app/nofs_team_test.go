@@ -52,7 +52,7 @@ func noFSTeamWiring(t *testing.T, provider port.LLMProvider, a catalogAssets) (s
 		t.Fatalf("no-fs buildTeamWiring returned forkers (fk=%v roFk=%v), want nil/nil — a fork is a filesystem act", fk, roFk)
 	}
 	tm := team.New("nofs-team")
-	sup := agent.NewSupervisor(tm, nofs.New(),
+	sup := agent.NewSupervisor(tm, testEnvironment(nofs.New(), nil),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})

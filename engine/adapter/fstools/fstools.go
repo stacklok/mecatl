@@ -22,7 +22,7 @@
 //
 // The catalog is composed, not fixed. A consumer may:
 //   - take everything: register All() (Read/Edit/Write/Grep/Glob) via Register,
-//     then add NewBashTool(runner) only when a shell is configured;
+//     then add NewBashTool() only when a shell is configured;
 //   - take a subset: register only the tool values it wants;
 //   - swap a tool by name: register its own Tool under the same Spec().Name in
 //     place of one of these;
@@ -104,8 +104,8 @@ func All() []tool.Tool {
 // Register adds the always-available filesystem tools (everything in All(), i.e.
 // NOT Bash) to cat. It returns the first registration error (e.g. a name
 // collision) encountered, or nil on success. To enable command execution,
-// additionally register NewBashTool(runner), e.g.
-// cat.MustRegister(fstools.NewBashTool(runner)).
+// additionally register NewBashTool(), e.g.
+// cat.MustRegister(fstools.NewBashTool()).
 func Register(cat *tool.Catalog) error {
 	for _, t := range All() {
 		if err := cat.Register(t); err != nil {

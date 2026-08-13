@@ -93,10 +93,10 @@ func TestBuildSubagentToolWiresForkerWhenShell(t *testing.T) {
 	taskWS := t.TempDir() // known worktree base for the cleanup assertion
 	task := newSubagentToolForTest(t, cfg, childProvider, rec, taskWS)
 
-	parentWS := osfsWSForTest(t, repo)
+	parentEnv := osfsEnvironment(t, repo, nil)
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall("c1", "Subagent", json.RawMessage(`{"prompt":"run pwd"}`)),
-		parentWS)
+		parentEnv)
 	if err != nil {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	worktreeBase := t.TempDir() // scope worktrees here so we can assert cleanup
 	task := newSubagentToolForTest(t, cfg, childProvider, rec, worktreeBase)
 
-	parentWS := osfsWSForTest(t, repo)
+	parentEnv := osfsEnvironment(t, repo, nil)
 
 	// Drive a real parent engine that calls Subagent once.
 	parentProvider := mockllm.New(
@@ -216,7 +216,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
+	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 
 	var sawSubagentResult bool
 	for ev := range run.Events() {
@@ -315,13 +315,13 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 		mockllm.ToolCallTurn(session.ToolCall{ID: "t1", Name: "Subagent", Args: json.RawMessage(`{"prompt":"probe the workspace"}`)}),
 		mockllm.TextTurn("parent received the child report"),
 	)
-	parentWS := osfsWSForTest(t, repo)
+	parentEnv := osfsEnvironment(t, repo, nil)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
+	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)
@@ -387,13 +387,13 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 		mockllm.ToolCallTurn(session.ToolCall{ID: "t1", Name: "Subagent", Args: json.RawMessage(`{"prompt":"try to run a shell"}`)}),
 		mockllm.TextTurn("parent done"),
 	)
-	parentWS := osfsWSForTest(t, repo)
+	parentEnv := osfsEnvironment(t, repo, nil)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
+	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		_ = ev // drain to completion; the child's lack of Bash is asserted via the probe
 	}
@@ -438,7 +438,7 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 	worktreeBase := t.TempDir()
 	task := newSubagentToolForTestDirty(t, cfg, childProvider, rec, worktreeBase)
 
-	parentWS := osfsWSForTest(t, repo)
+	parentEnv := osfsEnvironment(t, repo, nil)
 	parentProvider := mockllm.New(
 		mockllm.ToolCallTurn(session.ToolCall{ID: "t1", Name: "Subagent", Args: json.RawMessage(`{"prompt":"report the uncommitted changes"}`)}),
 		mockllm.TextTurn("parent received the dirty-state report"),
@@ -448,7 +448,7 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, repo, session.Limits{MaxTurns: 6}, time.Now())
-	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})
+	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)
@@ -507,7 +507,7 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 	// agent.NewBashTool, mirroring the production child construction
 	// (readOnlyExplorerCatalog), so the test child exercises the same Bash the
 	// composition root hands real children.
-	childCat.MustRegister(agent.NewBashTool(runner))
+	childCat.MustRegister(agent.NewBashTool())
 	childEng := agent.NewEngine(agent.Deps{
 		LLM:              childProvider,
 		Catalog:          childCat,
@@ -517,7 +517,17 @@ func newSubagentToolForTestOpts(t *testing.T, cfg Config, childProvider *mockllm
 		Model:            cfg.Model,
 	})
 	opts := append([]forker.Option{forker.WithTempBase(worktreeBase)}, forkOpts...)
-	roFk := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) }, opts...)
+	// WithRunner (issue #462): the forker mints a BOUND runner for each child
+	// worktree so the forked subagent's Bash observes its OWN namespace. The
+	// builder applies the SAME trust-gated hardening buildSandboxedCommandRunner
+	// does (runner != nil above already proves the gate passed at build time).
+	roFk := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) },
+		append(opts, forker.WithRunner(func(childRoot string) tool.CommandRunner {
+			if cfg.NoBash || cfg.Shell == "" || !cfg.TrustProject {
+				return nil
+			}
+			return newHardenedRunnerForRoot(cfg, childRoot)
+		}))...)
 	return agent.NewSubagentTool(childEng, agent.WithChildForker(roFk))
 }
 

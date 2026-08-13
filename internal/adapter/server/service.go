@@ -178,6 +178,23 @@ type Config struct {
 	Store port.SessionStore
 	// Workspaces builds a Workspace for a session root. Required.
 	Workspaces WorkspaceFactory
+	// CommandRunner is the MAIN session's bound command runner (issue #462). It is
+	// the runner the main session's Environment binds when the session runs on the
+	// DEFAULT workspace; a session whose workspace DIFFERS (a worktree binding, an
+	// ACP buffer, a no-fs profile) builds its own runner via CommandRunnerFactory
+	// (below) bound to that root, or is shell-less when the factory returns nil.
+	// nil when Bash is disabled (the catalog omits Bash and the Environment's Bash
+	// surfaces ErrNoShell). The forker builds its OWN bound runners for forked
+	// children, so this is the main-session runner only.
+	CommandRunner tool.CommandRunner
+	// CommandRunnerFactory, when non-nil, builds a command runner BOUND to a
+	// session root that differs from the main workspace (issue #462): a worktree-
+	// bound session needs its Bash rooted at the worktree, not the launch root.
+	// It is the same env-scrubbed construction as CommandRunner, parameterised by
+	// the session root. nil (the default) means a differing workspace gets a
+	// shell-less Environment (Bash surfaces ErrNoShell) — acceptable for no-fs /
+	// ACP / cloud deployments. The factory returns nil when Bash is disabled.
+	CommandRunnerFactory func(root string) tool.CommandRunner
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
@@ -388,14 +405,14 @@ type Config struct {
 	TeamTokenBudget int
 	// Forker isolates a Mutating team member's workspace (force-copy: own `.git`).
 	// Optional; required only if a Mutating member is spawned.
-	Forker tool.WorkspaceForker
+	Forker tool.EnvironmentForker
 	// ReadOnlyForker isolates a read-only-isolated team member's workspace as a cheap
 	// git worktree (shares the base repo's `.git` ⇒ full history) so an inspect-only
 	// member can run a shell (git log/show, build, test) confined to a throwaway
 	// checkout. Optional; required only if the member factory marks any read-only
 	// member IsolateReadOnly (which the composition root does only when this is
 	// wired). When nil, read-only members base-share with no shell.
-	ReadOnlyForker tool.WorkspaceForker
+	ReadOnlyForker tool.EnvironmentForker
 	// SharedBaseWorkspace re-views a team's base workspace for a BASE-SHARING
 	// read-only member (the no-shell fallback tier) so it never inherits a relaxed
 	// base's out-of-root reach (the path-escape-posture Scenario 5 boundary —
@@ -685,15 +702,24 @@ type Service struct {
 	// Config.MaxSessionEngines (mirroring MaxTeams): createSession returns
 	// ErrTooManySessionEngines once the cap is reached, and CloseSession frees a slot.
 	sessionEngines map[session.SessionID]*sessionEngine
-	// sessionWorkspaces holds per-session Workspace OVERRIDES. When an entry is
-	// present for a session id, StartRun uses it instead of building one from the
-	// shared Workspaces factory. It mirrors sessionEngines exactly: registered by a
-	// surface adapter (the ACP adapter, to route file I/O through the editor's
-	// fs/* buffers), preferred by StartRun, and evicted by CloseSession (editor
-	// disconnect) / drained by Close (shutdown). It is bounded by connection
-	// lifetime, not a count — same rationale as sessionEngines. The gRPC/HTTP
-	// surfaces never register an override, so their behavior is unchanged.
-	sessionWorkspaces map[session.SessionID]tool.Workspace
+	// sessionEnvironments holds per-session Environment OVERRIDES. When an entry
+	// is present for a session id, StartRun uses it as the COMPLETE execution
+	// environment (Workspace + optional bound CommandRunner + accurate ref) instead
+	// of building one from the shared Workspaces + runner factories. It mirrors
+	// sessionEngines exactly: registered by a surface adapter (the ACP adapter,
+	// to route file I/O through the editor's fs/* buffers; the no-fs profile, to
+	// install the honest file-less workspace), preferred by StartRun, and evicted
+	// by CloseSession (editor disconnect) / drained by Close (shutdown). It is
+	// bounded by connection lifetime, not a count — same rationale as
+	// sessionEngines. The gRPC/HTTP surfaces never register an override, so their
+	// behavior is unchanged.
+	//
+	// An override is a COMPLETE shell-less (or shell-bearing) Environment the
+	// creator owns: the creator supplies the accurate ref (Kind/ID) and the
+	// correct CommandRunner (nil for a file-less/buffer namespace). The Service
+	// does NOT guess a ref or runner from the override's presence — every
+	// override carries its own truthful identity (issue #462 phase-2 finding #2).
+	sessionEnvironments map[session.SessionID]tool.Environment
 
 	// reservedIDs holds caller-chosen session ids (WithSessionID) that are
 	// mid-create: reserved under s.mu at the top of createSession and released
@@ -722,14 +748,14 @@ type Service struct {
 	// loser, on acquiring the lock, sees the now-registered live run via LookupRun and
 	// routes its verdict to that run's channel (the same-process path) — the pending
 	// tool executes EXACTLY ONCE. It is a keyedMutex, NOT s.mu, because the resume
-	// sequence itself takes s.mu (engineAndWorkspaceFor / register) and Go mutexes are
+	// sequence itself takes s.mu (engineAndEnvironmentFor / register) and Go mutexes are
 	// not reentrant; a per-session lock also keeps unrelated sessions' resumes
 	// concurrent. The keyedMutex frees a key once no caller holds it, so it never grows
 	// unbounded.
 	resumeMu keyedMutex
 
 	// runEntryMu serializes the per-session RUN-ENTRY critical section (ADR 0030
-	// Layer 3, the use-after-close guard): the engine-resolve (engineAndWorkspaceFor,
+	// Layer 3, the use-after-close guard): the engine-resolve (engineAndEnvironmentFor,
 	// which may REBUILD/promote a per-session engine) + run launch + register sequence
 	// is taken under this per-session lock by BOTH StartRunContent and (nested inside
 	// resumeMu) resumeFromAwaiting. It guarantees a mode→model rebuild that displaces a
@@ -856,7 +882,7 @@ type sessionEngine struct {
 	// builtForMode is the session PermissionMode this engine's model was RESOLVED FOR
 	// (ADR 0030 Layer 3). Stamped from SessionEngineResult.BuiltForMode at every
 	// construction site (create, rehydrate, mode-rebuild) — the SAME single source the
-	// composition factory echoes. engineAndWorkspaceFor compares it against the loaded
+	// composition factory echoes. engineAndEnvironmentFor compares it against the loaded
 	// session's current Mode: a mismatch means the session switched plan↔execute since
 	// the engine was built, so the model is stale and the engine is rebuilt through the
 	// shared buildAndRegisterSessionEngine path (the run-entry seam, between turns). The
@@ -975,16 +1001,16 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
-		cfg:               cfg,
-		shutdownCancel:    shutdownCancel,
-		runs:              make(map[session.SessionID]*runState),
-		teams:             make(map[string]*teamState),
-		sessionEngines:    make(map[session.SessionID]*sessionEngine),
-		sessionWorkspaces: make(map[session.SessionID]tool.Workspace),
-		reservedIDs:       make(map[session.SessionID]struct{}),
-		replayedApprovals: make(map[session.SessionID]struct{}),
-		heldLeases:        make(map[session.SessionID]*heldLease),
-		subscriptions:     make(map[session.SessionID]map[int64]chan session.Event),
+		cfg:                 cfg,
+		shutdownCancel:      shutdownCancel,
+		runs:                make(map[session.SessionID]*runState),
+		teams:               make(map[string]*teamState),
+		sessionEngines:      make(map[session.SessionID]*sessionEngine),
+		sessionEnvironments: make(map[session.SessionID]tool.Environment),
+		reservedIDs:         make(map[session.SessionID]struct{}),
+		replayedApprovals:   make(map[session.SessionID]struct{}),
+		heldLeases:          make(map[session.SessionID]*heldLease),
+		subscriptions:       make(map[session.SessionID]map[int64]chan session.Event),
 	}
 	// Seed the model inventory from the static snapshot. ListModels and the
 	// ModelSelection cap read this atomic so a later live-catalog SetModels swap is
@@ -1502,23 +1528,25 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		close:           closeFn,
 	}
 	if profile == ProfileNoFS {
-		// Register the no-FS Workspace as this session's per-session workspace
-		// OVERRIDE under the SAME lock as the engine registration, so the moment
-		// the session is visible StartRun resolves its workspace here and NEVER
-		// hands the empty root to the shared osfs Workspaces factory (which would
-		// MkdirAll/OpenRoot the server process's cwd — the exact hazard).
-		s.sessionWorkspaces[sess.ID] = nofs.New()
+		// Register the no-FS Environment as this session's per-session
+		// environment OVERRIDE under the SAME lock as the engine registration,
+		// so the moment the session is visible StartRun resolves its environment
+		// here and NEVER hands the empty root to the shared osfs Workspaces
+		// factory (which would MkdirAll/OpenRoot the server process's cwd — the
+		// exact hazard). It is a complete shell-less Environment with an honest
+		// nofs ref (no command runner: a file-less namespace has no shell).
+		s.sessionEnvironments[sess.ID] = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
 	}
 	s.mu.Unlock()
 
 	if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
 		// The engine was built and the slot reserved but the session could not be
-		// persisted: evict the reservation (engine slot AND any workspace
+		// persisted: evict the reservation (engine slot AND any environment
 		// override) and tear the per-session MCP manager down so a failed create
 		// leaks neither a slot nor a connection.
 		s.mu.Lock()
 		delete(s.sessionEngines, sess.ID)
-		delete(s.sessionWorkspaces, sess.ID)
+		delete(s.sessionEnvironments, sess.ID)
 		s.mu.Unlock()
 		if closeFn != nil {
 			_ = closeFn()
@@ -1605,17 +1633,21 @@ func (s *Service) CreateSessionWithMCP(ctx context.Context, workspace string, mo
 	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{})
 }
 
-// SetSessionWorkspace registers a per-session Workspace OVERRIDE for id, so a
-// subsequent StartRun uses ws instead of building one from the shared Workspaces
-// factory. It is the seam the ACP adapter uses to route a session's file I/O
-// through the editor's fs/* buffers. A second call for the same id replaces the
-// override. The override is evicted by CloseSession (and drained by Close), so
-// the caller MUST pair it with CloseSession on the owning connection's teardown
-// (the ACP adapter tracks the session and does this on disconnect). The
-// gRPC/HTTP surfaces never call this, so their workspace path is unchanged.
-func (s *Service) SetSessionWorkspace(id session.SessionID, ws tool.Workspace) {
+// SetSessionEnvironment registers a per-session Environment OVERRIDE for id, so a
+// subsequent StartRun uses env as the COMPLETE execution environment (Workspace +
+// optional bound CommandRunner + accurate ref) instead of building one from the
+// shared factories. It is the seam the ACP adapter uses to route a session's file
+// I/O through the editor's fs/* buffers: the ACP adapter constructs a complete
+// shell-less Environment (a real-filesystem Workspace rooted at the session cwd
+// with a local ref, but NO command runner — the editor provides no shell) and
+// registers it here. A second call for the same id replaces the override. The
+// override is evicted by CloseSession (and drained by Close), so the caller MUST
+// pair it with CloseSession on the owning connection's teardown (the ACP adapter
+// tracks the session and does this on disconnect). The gRPC/HTTP surfaces never
+// call this, so their environment path is unchanged (issue #462 phase-2 finding #2).
+func (s *Service) SetSessionEnvironment(id session.SessionID, env tool.Environment) {
 	s.mu.Lock()
-	s.sessionWorkspaces[id] = ws
+	s.sessionEnvironments[id] = env
 	s.mu.Unlock()
 }
 
@@ -1646,9 +1678,9 @@ func (s *Service) CloseSession(id session.SessionID) {
 	if ok {
 		delete(s.sessionEngines, id)
 	}
-	// Drop any per-session workspace override too: it closes over the (now
+	// Drop any per-session environment override too: it closes over the (now
 	// disconnecting) connection, so it must not outlive the session.
-	delete(s.sessionWorkspaces, id)
+	delete(s.sessionEnvironments, id)
 	// Drop the once-per-id approval-replay marker (cloud-native Phase 3b): the
 	// OnCloseSession above Forgot this session's learned rules, so a LATER reload of
 	// the same id in this process MUST be allowed to replay them from the durable log
@@ -1746,10 +1778,10 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	engines := s.sessionEngines
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
-	// Drop all per-session workspace overrides on shutdown; they hold no resources
+	// Drop all per-session environment overrides on shutdown; they hold no resources
 	// of their own (the underlying connection is closed separately) but must not
 	// linger past the Service.
-	s.sessionWorkspaces = make(map[session.SessionID]tool.Workspace)
+	s.sessionEnvironments = make(map[session.SessionID]tool.Environment)
 	// Close all per-session event subscriptions so subscriber goroutines can exit
 	// cleanly. Close owns both shutdown and channel closure while holding subMu: a
 	// publisher holds subMu.RLock through its send, so no send can race close.
@@ -2341,10 +2373,11 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		close:           res.Close,
 	}
 	if profile == ProfileNoFS {
-		// A no-fs session's workspace override is re-registered with the engine
+		// A no-fs session's environment override is re-registered with the engine
 		// under the same lock (the create-time discipline), so StartRun never
-		// consults the shared factory with the empty root.
-		s.sessionWorkspaces[id] = nofs.New()
+		// consults the shared factory with the empty root. It is a complete
+		// shell-less Environment with an honest nofs ref.
+		s.sessionEnvironments[id] = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
 	}
 	s.mu.Unlock()
 	return sess, nil
@@ -2459,11 +2492,11 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 			return nil, fmt.Errorf("server: persist abandoned session: %w", err)
 		}
 	}
-	engine, ws, err := s.engineAndWorkspaceFor(ctx, sess)
+	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
-	run := engine.Run(ctx, sess, ws, agent.RunRequest{Text: text, Parts: parts})
+	run := engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts})
 	s.register(id, run, sess)
 	return run, nil
 }
@@ -2485,7 +2518,7 @@ func isDelegationChildSessionID(id session.SessionID) bool {
 		strings.HasPrefix(s, agent.TeamSessionPrefix)
 }
 
-// engineAndWorkspaceFor resolves the engine + workspace a loaded session should run
+// engineAndEnvironmentFor resolves the engine + environment a loaded session should run
 // on, rehydrating a per-session engine when the session needs one but its in-memory
 // registration did not survive a restart. It is the SINGLE resolution point shared
 // by the prompt run-entry (StartRunContent) and the awaiting-approval re-entry
@@ -2512,12 +2545,12 @@ func isDelegationChildSessionID(id session.SessionID) bool {
 //     plan slot is active): PROMOTE the default-FS session to a per-session factory
 //     engine. ModeNeedsEngine is nil (no plan slot) ⇒ this never fires and the session
 //     keeps the shared engine — BYTE-IDENTICAL to pre-Phase-3.
-func (s *Service) engineAndWorkspaceFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Workspace, error) {
+func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, error) { //nolint:gocyclo // the per-session engine/environment resolution is inherently branched
 	id := sess.ID
 	engine := s.cfg.Engine
 	s.mu.Lock()
 	se, hasEngine := s.sessionEngines[id]
-	ws := s.sessionWorkspaces[id]
+	envOverride, hasEnvOverride := s.sessionEnvironments[id]
 	s.mu.Unlock()
 	switch {
 	case hasEngine && se.builtForMode != "" && se.builtForMode != sess.Mode:
@@ -2525,7 +2558,7 @@ func (s *Service) engineAndWorkspaceFor(ctx context.Context, sess *session.Sessi
 		// DIFFERENT mode than the session now holds — a plan↔execute switch re-resolved
 		// the model. Rebuild through the shared factory path, REPLACING the prior engine.
 		// This runs only between turns (loadAndReopen drove the session idle and SetMode
-		// is rejected mid-turn). The whole engineAndWorkspaceFor call is under the caller's
+		// is rejected mid-turn). The whole engineAndEnvironmentFor call is under the caller's
 		// per-session runEntryMu, and buildAndRegisterSessionEngine re-checks s.runs[id]
 		// UNDER s.mu before closing the displaced engine — that downstream check is the
 		// AUTHORITATIVE use-after-close guard. This cheap pre-check is only an early-out so
@@ -2534,29 +2567,29 @@ func (s *Service) engineAndWorkspaceFor(ctx context.Context, sess *session.Sessi
 		_, live := s.runs[id]
 		s.mu.Unlock()
 		if live {
-			return nil, nil, fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
+			return nil, tool.Environment{}, fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
 		}
 		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 		profile := profileForSession(sess)
 		rebuilt, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, profile, sess.Mode, true)
 		if err != nil {
-			return nil, nil, err
+			return nil, tool.Environment{}, err
 		}
 		se, hasEngine = rebuilt, true
-		// The workspace override may have been (re-)registered by the rebuild (no-fs).
+		// The environment override may have been (re-)registered by the rebuild (no-fs).
 		s.mu.Lock()
-		ws = s.sessionWorkspaces[id]
+		envOverride, hasEnvOverride = s.sessionEnvironments[id]
 		s.mu.Unlock()
 	case !hasEngine && !s.needsRehydration(sess) && s.cfg.ModeNeedsEngine != nil && s.cfg.SessionEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode):
 		// CASE 2 (ADR 0030 Layer 3): a DEFAULT-FS session that would otherwise ride the
 		// shared engine, but its mode (plan) resolves a DIFFERENT model — promote it to a
 		// per-session factory engine. A default-FS session has the empty selector + a real
-		// workspace, so no workspace override is registered (the run-entry seam builds it
+		// workspace, so no environment override is registered (the run-entry seam builds it
 		// from the shared factory below, unchanged).
 		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 		promoted, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, ProfileDefault, sess.Mode, false)
 		if err != nil {
-			return nil, nil, err
+			return nil, tool.Environment{}, err
 		}
 		se, hasEngine = promoted, true
 	}
@@ -2564,7 +2597,7 @@ func (s *Service) engineAndWorkspaceFor(ctx context.Context, sess *session.Sessi
 		// RESTART REHYDRATION (issue #55, widened in the cloud-native Phase 1): a
 		// PERSISTED session that needed a PER-SESSION engine — a non-default
 		// provider/model selector, OR the no-fs profile — has its engine + (for no-fs)
-		// its workspace override living only in process memory; after a restart both
+		// its environment override living only in process memory; after a restart both
 		// are gone. Without rehydration the session would silently DEGRADE onto the
 		// shared engine: a no-fs session would ESCALATE onto the full FS tools + Bash
 		// over a workspace built from the empty root, and a selector session would run
@@ -2577,30 +2610,85 @@ func (s *Service) engineAndWorkspaceFor(ctx context.Context, sess *session.Sessi
 		var err error
 		se, err = s.rehydrateSession(ctx, sess)
 		if err != nil {
-			return nil, nil, err
+			return nil, tool.Environment{}, err
 		}
 		hasEngine = true
 		if sess.Profile == string(ProfileNoFS) || sess.Workspace == "" {
-			ws = nofs.New()
+			// rehydrateSession re-registered the no-fs environment override (same as
+			// create); read it back so the resolution below uses the complete override.
+			s.mu.Lock()
+			envOverride, hasEnvOverride = s.sessionEnvironments[id]
+			s.mu.Unlock()
+			if !hasEnvOverride {
+				// Defensive: if the override somehow was not registered, install the
+				// honest file-less environment directly (the no-fs chokepoint).
+				envOverride = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
+				hasEnvOverride = true
+			}
 		}
 	}
 	if hasEngine {
 		engine = se.engine
 	}
-	if ws == nil {
-		if sess.Workspace == "" {
-			// DEFENSIVE CHOKEPOINT (issue #55): never hand an EMPTY root to the
-			// shared Workspaces factory — the osfs factory would MkdirAll/OpenRoot
-			// the server process's cwd. An empty persisted workspace is by
-			// construction a no-fs session, so the honest no-filesystem workspace
-			// is the only sound value here (normally unreachable: create and the
-			// rehydration above both register the override).
-			ws = nofs.New()
-		} else {
-			ws = s.cfg.Workspaces(sess.Workspace)
-		}
+	if hasEnvOverride {
+		// A per-session Environment override (ACP fs/* buffers, no-fs) is COMPLETE:
+		// the creator supplied the accurate ref and the correct (possibly nil)
+		// CommandRunner. Use it directly — never guess a ref or runner from the
+		// override's presence (issue #462 phase-2 finding #2).
+		return engine, envOverride, nil
 	}
-	return engine, ws, nil
+	// Default path: build the environment from the shared Workspace + runner
+	// factories. The workspace requirement is profile-aware: an empty persisted
+	// workspace is a no-fs session (the defensive chokepoint — normally
+	// unreachable, since create/rehydrate register the override).
+	var ws tool.Workspace
+	if sess.Workspace == "" {
+		// DEFENSIVE CHOKEPOINT (issue #55): never hand an EMPTY root to the
+		// shared Workspaces factory — the osfs factory would MkdirAll/OpenRoot
+		// the server process's cwd. An empty persisted workspace is by
+		// construction a no-fs session, so the honest no-filesystem workspace
+		// is the only sound value here (normally unreachable: create and the
+		// rehydration above both register the override).
+		ws = nofs.New()
+	} else {
+		ws = s.cfg.Workspaces(sess.Workspace)
+	}
+	env, err := s.buildSessionEnvironment(sess, ws)
+	if err != nil {
+		return nil, tool.Environment{}, err
+	}
+	return engine, env, nil
+}
+
+// buildSessionEnvironment wraps a session's resolved Workspace into a complete
+// tool.Environment for the DEFAULT (non-override) path, binding the command
+// runner appropriate to the session's namespace (issue #462). It is called ONLY
+// when no per-session Environment override is registered: the main session
+// (running on the DEFAULT workspace) binds the main CommandRunner; a session on
+// a DIFFERENT root (a worktree binding) builds a runner bound to that root via
+// CommandRunnerFactory when wired, else is shell-less; an empty persisted
+// workspace (a no-fs session that somehow reached the default path — normally
+// unreachable, since create/rehydrate register the override) is shell-less with
+// a nofs ref. The Environment carries the session's backend ref (local for an
+// osfs workspace, nofs for a no-fs profile). Override creators (ACP, no-fs)
+// supply their OWN complete Environment with an accurate ref via
+// SetSessionEnvironment — this function never guesses a ref or runner for an
+// override (issue #462 phase-2 finding #2).
+func (s *Service) buildSessionEnvironment(sess *session.Session, ws tool.Workspace) (tool.Environment, error) {
+	var runner tool.CommandRunner
+	kind := session.EnvKindLocal
+	if sess.Workspace == "" {
+		kind = session.EnvKindNoFS
+	} else if sess.Workspace == s.cfg.DefaultWorkspace {
+		runner = s.cfg.CommandRunner
+	} else if s.cfg.CommandRunnerFactory != nil {
+		// A worktree-bound session (or any root differing from the launch root):
+		// build a runner bound to the session root so Bash observes the session
+		// namespace, not the launch root.
+		runner = s.cfg.CommandRunnerFactory(sess.Workspace)
+	}
+	ref := session.EnvironmentRef{Kind: kind, ID: sess.Workspace}
+	return tool.NewEnvironment(ref, ws, runner)
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
@@ -2793,12 +2881,13 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 	}
 	s.sessionEngines[id] = se
 	if profile == ProfileNoFS {
-		// Re-register the no-fs workspace override under the SAME lock as the engine
+		// Re-register the no-fs environment override under the SAME lock as the engine
 		// (the create-time discipline), so the run below — and every later run —
-		// resolves its workspace here and never consults the shared factory with the
-		// empty root. A selector session with a real workspace needs no override: the
-		// run-entry seam builds its workspace from the shared factory as usual.
-		s.sessionWorkspaces[id] = nofs.New()
+		// resolves its environment here and never consults the shared factory with the
+		// empty root. It is a complete shell-less Environment with an honest nofs ref.
+		// A selector session with a real workspace needs no override: the run-entry
+		// seam builds its environment from the shared factory as usual.
+		s.sessionEnvironments[id] = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
 	}
 	s.mu.Unlock()
 	// On a clean replace, free the displaced prior engine's MCP manager OUTSIDE the lock
@@ -2854,7 +2943,7 @@ func (s *Service) SessionCapabilities(id session.SessionID) port.ProviderCapabil
 //
 // MODE→MODEL RE-EMIT (ADR 0030 Layer 3): the identity is read from the REGISTERED
 // per-session engine (se.providerID/se.modelID). After a plan↔execute switch
-// triggers the run-entry rebuild (engineAndWorkspaceFor swaps the registered engine
+// triggers the run-entry rebuild (engineAndEnvironmentFor swaps the registered engine
 // on the next StartRun), ResolvedModel AUTOMATICALLY returns the re-resolved model —
 // no change here. The ORDERING is deliberate: a SetMode response echoes the
 // still-CURRENT (pre-rebuild) model (the model is fixed per turn; the rebuild happens
@@ -3005,7 +3094,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 //   - if the session is NOT in StateAwaiting → ErrNoActiveRun (awaiting is the ONLY
 //     state that stops being terminal under Phase 2; idle/completed/cancelled/failed
 //     stay terminal, so a stale Approve cannot resurrect them);
-//   - if awaiting → rebuild the engine + workspace (the SAME engineAndWorkspaceFor
+//   - if awaiting → rebuild the engine + workspace (the SAME engineAndEnvironmentFor
 //     the prompt path uses, so the two cannot drift), call Engine.ResumeApproval to
 //     re-enter the loop AT the ask, register the resumed run, and return it.
 //
@@ -3015,7 +3104,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 // branch above instead of spawning a second run (spawn-then-cancel would be unsafe —
 // the loser goroutine could execute the tool before a Cancel landed). Registration
 // mirrors rehydrateSession's loser-teardown/MaxSessionEngines guard via
-// engineAndWorkspaceFor; the resumed run is registered into s.runs like any other so
+// engineAndEnvironmentFor; the resumed run is registered into s.runs like any other so
 // a concurrent Cancel/Approve reaches it and FinishRun cleans it up.
 func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict) (*agent.Run, error) {
 	unlock := s.resumeMu.lock(id)
@@ -3041,7 +3130,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		// stranded-for-Approve as before (last-write-wins / nothing to resume).
 		return nil, ErrNoActiveRun
 	}
-	// ADR 0030 Layer 3 note: engineAndWorkspaceFor's mode→model rebuild (CASE 1) is a
+	// ADR 0030 Layer 3 note: engineAndEnvironmentFor's mode→model rebuild (CASE 1) is a
 	// NO-OP here. SetMode is rejected from StateAwaiting by the aggregate, so a parked
 	// session's Mode cannot have changed since its engine was built — se.builtForMode ==
 	// sess.Mode always holds, and the stale-mode branch never fires. (A restart-parked
@@ -3059,11 +3148,11 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if err := s.acquireLease(ctx, id); err != nil {
 		return nil, err
 	}
-	engine, ws, err := s.engineAndWorkspaceFor(ctx, sess)
+	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
-	run := engine.ResumeApproval(ctx, sess, ws, askID, verdict)
+	run := engine.ResumeApproval(ctx, sess, env, askID, verdict)
 	s.register(id, run, sess)
 	return run, nil
 }
@@ -3091,7 +3180,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 //     the session stays in plan mode for the next prompt.)
 //  5. ATOMIC CONTINUATION (allow paths only): after the resumed run drains, a
 //     FRESH run is started via the SAME StartRunContent path (loadAndReopen →
-//     engineAndWorkspaceFor CASE 1 rebuild picks up the FLIPPED mode → execute
+//     engineAndEnvironmentFor CASE 1 rebuild picks up the FLIPPED mode → execute
 //     model) carrying the proceed message agent.PlanApprovedProceedText + an
 //     optional operator note. Both runs' events are relayed on the returned
 //     channel. On deny, NO continuation run starts (the session stays in plan
@@ -3166,7 +3255,7 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 			proceed = proceed + "\n\nOperator note: " + note
 		}
 		// (5a) Start the continuation run via the SAME path StartRunContent uses
-		// (loadAndReopen → engineAndWorkspaceFor CASE 1 rebuild on the flipped
+		// (loadAndReopen → engineAndEnvironmentFor CASE 1 rebuild on the flipped
 		// mode → execute model). The StopPlanApproved-completed session is
 		// reopened to idle by loadAndReopen.
 		cont, cerr := s.StartRunContent(ctx, id, proceed, nil)
@@ -3578,7 +3667,7 @@ func (s *Service) autoApproveContinuation(ctx context.Context, id session.Sessio
 		time.Sleep(autoApprovePollInterval)
 	}
 	// Start the continuation run via the SAME path StartRunContent uses
-	// (loadAndReopen → engineAndWorkspaceFor CASE 1 rebuild on the flipped
+	// (loadAndReopen → engineAndEnvironmentFor CASE 1 rebuild on the flipped
 	// mode → execute model). The StopPlanApproved-completed session is reopened
 	// to idle by loadAndReopen.
 	proceed := agent.PlanApprovedProceedText + "\n\nOperator note: auto-approved: no human reviewed this plan"
@@ -3621,7 +3710,7 @@ const autoApprovePollInterval = 10 * time.Millisecond
 // backend; fail loud rather than silently run two writers).
 //
 // HOLD-FOR-SESSION-LIFE is deliberate: once Acquire succeeds the lease is kept
-// even if the caller's subsequent run-launch (engineAndWorkspaceFor) fails — the
+// even if the caller's subsequent run-launch (engineAndEnvironmentFor) fails — the
 // lease is released ONLY by CloseSession / shutdown (releaseLease), never per-run.
 // A future reader must NOT "fix" this into a run-scoped release: that would drop
 // the lease between turns and let a competitor steal a session this process is

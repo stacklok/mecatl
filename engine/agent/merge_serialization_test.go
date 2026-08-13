@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -17,20 +16,20 @@ import (
 
 // testSerializingMerger is a local mirror of forker.SerializingMerger (engine/agent
 // is layering-forbidden from importing the internal forker adapter). It wraps an
-// inner tool.ForkMerger with a single mutex so concurrent Merge calls serialize —
+// inner tool.EnvironmentMerger with a single mutex so concurrent Merge calls serialize —
 // the SAME shape composition injects into both Parallel and the writable Subagent.
 type testSerializingMerger struct {
 	mu    sync.Mutex
-	inner tool.ForkMerger
+	inner tool.EnvironmentMerger
 }
 
-func (m *testSerializingMerger) Merge(ctx context.Context, forkRoot string, ws tool.Workspace) error {
+func (m *testSerializingMerger) Merge(ctx context.Context, child, parent tool.Environment) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.inner.Merge(ctx, forkRoot, ws)
+	return m.inner.Merge(ctx, child, parent)
 }
 
-// concurrentEntryDetector is an inner tool.ForkMerger that FLAGS overlapping
+// concurrentEntryDetector is an inner tool.EnvironmentMerger that FLAGS overlapping
 // entries: a non-serializing wrapper would let two merges enter at once and trip
 // the flag.
 type concurrentEntryDetector struct {
@@ -38,7 +37,7 @@ type concurrentEntryDetector struct {
 	overlap  atomic.Bool
 }
 
-func (d *concurrentEntryDetector) Merge(_ context.Context, _ string, _ tool.Workspace) error {
+func (d *concurrentEntryDetector) Merge(_ context.Context, _, _ tool.Environment) error {
 	if d.inFlight.Add(1) > 1 {
 		d.overlap.Store(true)
 	}
@@ -48,20 +47,21 @@ func (d *concurrentEntryDetector) Merge(_ context.Context, _ string, _ tool.Work
 }
 
 // mergingReadOnlyTool is a ReadOnly tool whose Execute drives a shared
-// tool.ForkMerger — modelling Parallel's auto-merge and the writable Subagent's
+// tool.EnvironmentMerger — modelling Parallel's auto-merge and the writable Subagent's
 // post-run merge, both of which call the SAME composition-injected (serialized)
 // merger from inside a ReadOnly tool's execution.
 type mergingReadOnlyTool struct {
 	name   string
-	merger tool.ForkMerger
+	merger tool.EnvironmentMerger
 }
 
 func (t *mergingReadOnlyTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: t.name, Description: t.name, Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*mergingReadOnlyTool) ReadOnly() bool { return true }
-func (t *mergingReadOnlyTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
-	if err := t.merger.Merge(ctx, "/fork/"+t.name, ws); err != nil {
+func (t *mergingReadOnlyTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	child := agent.MemEnv("/fork/" + t.name)
+	if err := t.merger.Merge(ctx, child, env); err != nil {
 		return session.NewToolError(in.ID, err.Error()), nil
 	}
 	return session.NewToolResult(in.ID, t.name+" merged"), nil
@@ -90,7 +90,7 @@ func TestSharedMergerSerializesAcrossReadParallelBatch(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	_ = drain(r)
 
 	if detector.overlap.Load() {

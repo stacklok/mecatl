@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -143,7 +142,7 @@ func TestCancelMemberMidDrive(t *testing.T) {
 		mockllm.TextTurn("worker: never reached"),
 	)
 	providers := map[string]port.LLMProvider{"lead": lead, "worker": worker}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		cancelMemberFactory(t, tm, providers, park),
 		agent.WithMaxRounds(6), agent.WithTeamGoal("fix the bug"))
 
@@ -214,7 +213,7 @@ func TestCancelMemberIdleBetweenRounds(t *testing.T) {
 	)
 	worker := mockllm.New(mockllm.TextTurn("worker: never reached"))
 	providers := map[string]port.LLMProvider{"lead": lead, "worker": worker}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		cancelMemberFactory(t, tm, providers),
 		agent.WithMaxRounds(6), agent.WithTeamGoal("fix the bug"))
 
@@ -250,7 +249,7 @@ func TestCancelMemberIdleBetweenRounds(t *testing.T) {
 // TestCancelMemberUnknownFalse pins the unknown-name contract.
 func TestCancelMemberUnknownFalse(t *testing.T) {
 	tm := team.New("demo")
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		cancelMemberFactory(t, tm, map[string]port.LLMProvider{}))
 	if sup.CancelMember("nobody") {
 		t.Fatalf("CancelMember(unknown) must return false")
@@ -297,7 +296,7 @@ func TestCancelChildReachesTeamMember(t *testing.T) {
 		mockllm.TextTurn("parent: got the report"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, teamTool)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	gotMember := make(chan string, 1)
 	var cancelOK bool

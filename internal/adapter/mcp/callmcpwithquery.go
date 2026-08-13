@@ -77,7 +77,7 @@ type callMcpWithQueryArgs struct {
 // JSON-parseable Text content block, else a loud error. A remote tool-level
 // error (IsError) is surfaced verbatim (truncated) without running jq — the
 // model asked to filter a failed call, so it is told the call failed.
-func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t callMcpWithQueryTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return session.ToolResult{}, err
 	}

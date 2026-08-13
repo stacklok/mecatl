@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -105,7 +104,7 @@ func TestWritableRouterMissLogsReasonAndFallsBack(t *testing.T) {
 	tl := writableRouterTool(true) // writable factory wired ⇒ a writable delegation DOES route
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"implement it","mode":"read-write"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}

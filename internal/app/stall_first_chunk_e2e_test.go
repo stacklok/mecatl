@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -55,7 +54,7 @@ func TestStallFirstChunkTimeoutTerminatesRunAsError(t *testing.T) {
 	eng := agent.NewEngine(agent.Deps{LLM: wrapped, Catalog: tool.NewCatalog()})
 
 	sess := session.New("stall-82", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Unix(0, 0))
-	run := eng.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do the task"})
+	run := eng.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "do the task"})
 
 	stop := session.StopNone
 	for ev := range run.Events() {

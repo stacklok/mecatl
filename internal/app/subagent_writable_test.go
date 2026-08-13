@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 )
 
-// recordingMerger is a tool.ForkMerger test double recording every Merge call. It is
+// recordingMerger is a tool.EnvironmentMerger test double recording every Merge call. It is
 // used to prove the Parallel single-branch path still consumes the shared
 // catalogAssets.autoMerger — the writable Subagent NO LONGER merges (direct-write,
 // ADR 0041), so it is the Parallel-only consumer now.
@@ -27,10 +27,10 @@ type recordingMerger struct {
 	calls []struct{ fork, parent string }
 }
 
-func (m *recordingMerger) Merge(_ context.Context, forkRoot string, parentWS tool.Workspace) error {
+func (m *recordingMerger) Merge(_ context.Context, child, parent tool.Environment) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.calls = append(m.calls, struct{ fork, parent string }{forkRoot, parentWS.Root()})
+	m.calls = append(m.calls, struct{ fork, parent string }{child.Workspace().Root(), parent.Workspace().Root()})
 	return nil
 }
 
@@ -75,10 +75,10 @@ func TestBuildSubagentToolWritableWritesParentDirectly(t *testing.T) {
 		defer func() { _ = closeFn() }()
 	}
 
-	parentWS := osfsWSForTest(t, repo)
+	parentEnv := osfsEnvironment(t, repo, buildCommandRunner(cfg))
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"implement the fix","mode":"read-write"}`)),
-		parentWS)
+		parentEnv)
 	if err != nil {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestNoFSSubagentToolRejectsWritable(t *testing.T) {
 
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"go","mode":"read-write"}`)),
-		nofs.New())
+		tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), nil))
 	if err != nil {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSharedMergerReachesParallel(t *testing.T) {
 
 	merger := &recordingMerger{}
 	assets := catalogAssets{autoMerger: merger, forkReaper: agent.NewLRUForkReaper(forkPreservedCap(cfg))}
-	parentWS := osfsWSForTest(t, repo)
+	parentEnv := osfsEnvironment(t, repo, nil)
 
 	parProvider := mockllm.New(mockllm.TextTurn("branch did work"))
 	cat := tool.NewCatalog()
@@ -161,7 +161,7 @@ func TestSharedMergerReachesParallel(t *testing.T) {
 	}
 	if r, err := par.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", []byte(`{"tasks":["implement X"],"join":"first"}`)),
-		parentWS); err != nil || r.IsError {
+		parentEnv); err != nil || r.IsError {
 		t.Fatalf("parallel single-branch failed: err=%v res=%q", err, r.Content)
 	}
 	if got := merger.count(); got != 1 {
@@ -190,5 +190,5 @@ func assertNoSiblingForkDir(t *testing.T, repo string) {
 	}
 }
 
-// compile-time: recordingMerger is a ForkMerger.
-var _ tool.ForkMerger = (*recordingMerger)(nil)
+// compile-time: recordingMerger is an EnvironmentMerger.
+var _ tool.EnvironmentMerger = (*recordingMerger)(nil)

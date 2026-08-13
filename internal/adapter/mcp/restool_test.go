@@ -130,7 +130,7 @@ func TestListResourcesToolFiltersByServer(t *testing.T) {
 	tl := listResourcesTool{provider: p}
 
 	call := session.NewToolCall("c1", listResourcesToolName, json.RawMessage(`{"server":"a"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestReadResourceToolText(t *testing.T) {
 	}}
 	tl := readResourceTool{provider: p}
 	call := session.NewToolCall("c1", readResourceToolName, json.RawMessage(`{"server":"a","uri":"test://x"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestReadResourceToolUnknownURIIsToolError(t *testing.T) {
 	p := &fakeProvider{readErr: errors.New("unknown resource")}
 	tl := readResourceTool{provider: p}
 	call := session.NewToolCall("c1", readResourceToolName, json.RawMessage(`{"server":"a","uri":"test://missing"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute returned hard error, want model-facing tool error: %v", err)
 	}
@@ -174,13 +174,13 @@ func TestReadResourceToolRequiresArgs(t *testing.T) {
 	tl := readResourceTool{provider: &fakeProvider{}}
 	// Missing uri.
 	call := session.NewToolCall("c1", readResourceToolName, json.RawMessage(`{"server":"a"}`))
-	res, _ := tl.Execute(context.Background(), call, nil)
+	res, _ := tl.Execute(context.Background(), call, tool.Environment{})
 	if !res.IsError {
 		t.Errorf("missing uri should be a tool error")
 	}
 	// Missing server.
 	call2 := session.NewToolCall("c2", readResourceToolName, json.RawMessage(`{"uri":"test://x"}`))
-	res2, _ := tl.Execute(context.Background(), call2, nil)
+	res2, _ := tl.Execute(context.Background(), call2, tool.Environment{})
 	if !res2.IsError {
 		t.Errorf("missing server should be a tool error")
 	}

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -22,8 +21,8 @@ type noopReadTool struct{}
 
 func (noopReadTool) Spec() tool.ToolSpec { return tool.ToolSpec{Name: "Noop", Description: "no-op"} }
 func (noopReadTool) ReadOnly() bool      { return true }
-func (noopReadTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
-	return session.NewToolResult(in.ID, "ok"), nil
+func (noopReadTool) Execute(_ context.Context, _ session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult("ok", "ok"), nil
 }
 
 // multiTurnMarkerEngine builds a branch child engine that runs MORE THAN ONE turn: turn 1
@@ -49,13 +48,13 @@ func multiTurnMarkerEngine(marker string) *Engine {
 // no-leak guarantee on the routed metadata — the seams the composition end-to-end test
 // cannot reach in isolation. It is the structural twin of modelrouter_internal_test.go.
 
-// routerForker is a minimal tool.WorkspaceForker for these tests: each Fork returns a
+// routerForker is a minimal tool.EnvironmentForker for these tests: each Fork returns a
 // fresh in-memory workspace and a no-op cleanup. (Branch isolation is irrelevant here; we
 // only care which engine each branch runs on.)
 type routerForker struct{}
 
-func (routerForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
-	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, "", nil
+func (routerForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
+	return memEnv("/fork/" + label), func() error { return nil }, "", nil
 }
 
 // routerParallelTool builds a Parallel tool whose shared branch child returns "DEFAULT"
@@ -86,7 +85,7 @@ func TestParallelRoutesBranchOnClassifiedModel(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("explore A", "explore B")),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -108,7 +107,7 @@ func TestParallelRouteMissInheritsDefault(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("explore A")),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -125,7 +124,7 @@ func TestParallelOffIsDefaultEngine(t *testing.T) {
 	tl := routerParallelTool(false)
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
-		memfs.NewWorkspace("/ws"), nil, parentCaps{children: newChildRunRegistry()})
+		memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry()})
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -143,7 +142,7 @@ func TestParallelOffIsDefaultEngine(t *testing.T) {
 	}}
 	res2, err := tl2.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p2", "Parallel", parallelArgsJSON("a")),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -176,7 +175,7 @@ func TestParallelRoutesEachBranchExactlyOnce(t *testing.T) {
 	}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON(tasks...)),
-		memfs.NewWorkspace("/ws"), nil, caps); err != nil {
+		memEnv("/ws"), nil, caps); err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
 	mu.Lock()
@@ -222,7 +221,7 @@ func TestParallelRoutesMultiTurnBranchExactlyOnce(t *testing.T) {
 	}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a multi-turn task")),
-		memfs.NewWorkspace("/ws"), emit, caps)
+		memEnv("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -260,7 +259,7 @@ func TestParallelBranchStartCarriesRoutedMetadata(t *testing.T) {
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
-		memfs.NewWorkspace("/ws"), emit, caps); err != nil {
+		memEnv("/ws"), emit, caps); err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
 	mu.Lock()
@@ -304,7 +303,7 @@ func TestParallelBranchStartEmptyRoutedOnMiss(t *testing.T) {
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
-		memfs.NewWorkspace("/ws"), emit, caps); err != nil {
+		memEnv("/ws"), emit, caps); err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
 	mu.Lock()
@@ -344,7 +343,7 @@ func TestParallelBranchStartFactoryDeclineIsNotReportedAsRouted(t *testing.T) {
 	}}
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("a")),
-		memfs.NewWorkspace("/ws"), emit, caps)
+		memEnv("/ws"), emit, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -405,7 +404,7 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 	}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON(tasks...)),
-		memfs.NewWorkspace("/ws"), nil, caps); err != nil {
+		memEnv("/ws"), nil, caps); err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
 	mu.Lock()
@@ -452,7 +451,7 @@ func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
 	}}
 	if _, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Parallel", parallelArgsJSON("benign task prompt")),
-		memfs.NewWorkspace("/ws"), emit, caps); err != nil {
+		memEnv("/ws"), emit, caps); err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
 	mu.Lock()

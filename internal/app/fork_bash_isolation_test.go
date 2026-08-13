@@ -77,18 +77,18 @@ func strconvQuote(s string) string {
 // recordingForker wraps the real osfs forker and records the child workspace roots
 // it hands out, so the test can read the marker from the exact fork directory.
 type recordingForker struct {
-	inner  tool.WorkspaceForker
+	inner  tool.EnvironmentForker
 	mu     sync.Mutex
 	childs []string
 }
 
-func (rf *recordingForker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+func (rf *recordingForker) Fork(ctx context.Context, base tool.Environment, label string) (tool.Environment, func() error, string, error) {
 	child, cleanup, advisory, err := rf.inner.Fork(ctx, base, label)
 	if err != nil {
-		return nil, nil, "", err
+		return tool.Environment{}, nil, "", err
 	}
 	rf.mu.Lock()
-	rf.childs = append(rf.childs, child.Root())
+	rf.childs = append(rf.childs, child.Workspace().Root())
 	rf.mu.Unlock()
 	return child, cleanup, advisory, nil
 }
@@ -127,7 +127,11 @@ func TestForkBashWritesIntoForkNotBase(t *testing.T) {
 
 	rf := &recordingForker{inner: forker.New(func(root string) (tool.Workspace, error) {
 		return osfs.NewWorkspace(root)
-	})}
+	}, forker.WithRunner(func(root string) tool.CommandRunner {
+		childCfg := cfg
+		childCfg.Workspace = root
+		return buildForceCopyRunner(childCfg)
+	}))}
 
 	provider := &bashWriteProvider{command: "echo hi > marker.txt", marker: "marker.txt"}
 	childEngine := buildParallelChildEngine(cfg, nil, provider, "", cfg.Model, runner)
@@ -138,7 +142,8 @@ func TestForkBashWritesIntoForkNotBase(t *testing.T) {
 
 	call := session.NewToolCall("c1", "Parallel",
 		json.RawMessage(`{"tasks":["write the marker"],"join":"first"}`))
-	res, err := fork.Execute(context.Background(), call, baseWS)
+	baseEnv := testEnvironment(baseWS, buildCommandRunner(cfg))
+	res, err := fork.Execute(context.Background(), call, baseEnv)
 	if err != nil {
 		t.Fatalf("Fork.Execute: %v", err)
 	}
@@ -203,7 +208,11 @@ func TestForkGitCommitDoesNotTouchBaseRepo(t *testing.T) {
 	// Mirror the composition root: mutating Fork branches get FULLY isolated forks.
 	rf := &recordingForker{inner: forker.New(func(root string) (tool.Workspace, error) {
 		return osfs.NewWorkspace(root)
-	}, forker.WithForceCopy())}
+	}, forker.WithForceCopy(), forker.WithRunner(func(root string) tool.CommandRunner {
+		childCfg := cfg
+		childCfg.Workspace = root
+		return buildForceCopyRunner(childCfg)
+	}))}
 
 	// The branch writes a file then commits it — all inside its fork.
 	provider := &bashWriteProvider{
@@ -217,7 +226,8 @@ func TestForkGitCommitDoesNotTouchBaseRepo(t *testing.T) {
 
 	call := session.NewToolCall("c1", "Parallel",
 		json.RawMessage(`{"tasks":["commit the work"],"join":"first"}`))
-	res, err := fork.Execute(context.Background(), call, baseWS)
+	baseEnv := testEnvironment(baseWS, buildCommandRunner(cfg))
+	res, err := fork.Execute(context.Background(), call, baseEnv)
 	if err != nil {
 		t.Fatalf("Fork.Execute: %v", err)
 	}
@@ -313,7 +323,7 @@ func TestParallelBranchRunnerIsHardened(t *testing.T) {
 	}
 	res, err := par.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["dump the env"],"join":"first"}`)),
-		baseWS)
+		testEnvironment(baseWS, buildCommandRunner(cfg)))
 	if err != nil {
 		t.Fatalf("Parallel.Execute: %v", err)
 	}

@@ -41,7 +41,7 @@ func (s *scriptTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: s.name, Description: s.name, Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (s *scriptTool) ReadOnly() bool { return s.readOnly }
-func (s *scriptTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (s *scriptTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, s.content), nil
 }
 

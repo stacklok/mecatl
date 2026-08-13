@@ -76,7 +76,7 @@ type matchedSpec struct {
 // Execute returns the full specs of catalog tools whose name or description
 // contains the query (case-insensitive substring). An empty query returns all
 // tools. ToolSearch never returns itself. Results are ordered by name.
-func (s *Search) Execute(_ context.Context, in session.ToolCall, _ Workspace) (session.ToolResult, error) {
+func (s *Search) Execute(_ context.Context, in session.ToolCall, _ Environment) (session.ToolResult, error) {
 	var args toolSearchArgs
 	if len(in.Args) > 0 {
 		if err := json.Unmarshal(in.Args, &args); err != nil {

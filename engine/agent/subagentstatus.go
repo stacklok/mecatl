@@ -110,21 +110,21 @@ func (*SubagentStatusTool) ReadOnly() bool { return true }
 // Execute is the caps-less path (plain Execute, no parent run threaded): there is
 // no registry to read, which is an honest model-addressable error — this tool is
 // only meaningful inside a run that registers its children.
-func (*SubagentStatusTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (*SubagentStatusTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolError(call.ID,
 		"SubagentStatus: no live subagent registry is available on this run"), nil
 }
 
 // ExecuteWithParent is the childCapableTool seam: it receives the parent run's
 // capabilities and reads/collects from caps.children.
-func (t *SubagentStatusTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
+func (t *SubagentStatusTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args subagentStatusArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "SubagentStatus: "+msg), nil
 	}
 	reg := caps.children
 	if reg == nil {
-		return t.Execute(ctx, call, ws)
+		return t.Execute(ctx, call, env)
 	}
 	id := strings.TrimSpace(args.AgentID)
 

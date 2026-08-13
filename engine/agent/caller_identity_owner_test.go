@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -109,7 +108,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 				// The run is driven under a context carrying BOB — a different
 				// principal from the parent session's owner.
 				ctx := session.WithPrincipal(context.Background(), ownerBob)
-				r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), RunRequest{Text: "go"})
+				r := e.Run(ctx, sess, memEnv("/ws"), RunRequest{Text: "go"})
 				drainRunEvents(t, r)
 
 				child, err := store.Load(context.Background(), path.childID)
@@ -144,12 +143,12 @@ func childEngineForOwnerTest(t *testing.T) *Engine {
 	})
 }
 
-// ownerTestForker is the minimal tool.WorkspaceForker the Parallel and Team
-// paths require: each fork is a fresh in-memory workspace, no git, no cleanup.
+// ownerTestForker is the minimal tool.EnvironmentForker the Parallel and Team
+// paths require: each fork is a fresh in-memory environment, no git, no cleanup.
 type ownerTestForker struct{}
 
-func (ownerTestForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
-	return memfs.NewWorkspace("/fork-" + label), func() error { return nil }, "", nil
+func (ownerTestForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
+	return memEnv("/fork-" + label), func() error { return nil }, "", nil
 }
 
 // ownerTestMemberFactory builds each team member's engine over its own scripted

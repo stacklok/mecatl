@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 )
 
@@ -67,7 +68,7 @@ func TestAllowedToolsDoesNotBypassPolicy(t *testing.T) {
 	// Precondition B: activation surfaces the advisory note — and it EXPLICITLY
 	// states calls still follow normal permission rules, so the model does NOT
 	// infer pre-approval from the field.
-	res, err := tl.Execute(ctx, session.NewToolCall("id", skills.ToolName, mustMarshalArgs(t, map[string]any{"name": "tooling"})), nil)
+	res, err := tl.Execute(ctx, session.NewToolCall("id", skills.ToolName, mustMarshalArgs(t, map[string]any{"name": "tooling"})), tool.Environment{})
 	if err != nil || res.IsError {
 		t.Fatalf("skill activation failed (res=%+v err=%v): the advisory note must render", res, err)
 	}

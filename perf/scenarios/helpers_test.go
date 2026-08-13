@@ -56,9 +56,11 @@ func scenarioSession(id string, limits session.Limits) *session.Session {
 	return session.New(session.SessionID(id), session.ModeDefault, scenarioWorkspaceRoot, limits, scenarioEpoch)
 }
 
-// scenarioWorkspace returns a fresh in-memory workspace mounted at the root.
-func scenarioWorkspace() tool.Workspace {
-	return memfs.NewWorkspace(scenarioWorkspaceRoot)
+// scenarioWorkspace returns a fresh shell-less in-memory Environment mounted at
+// the scenario root.
+func scenarioWorkspace() tool.Environment {
+	ws := memfs.NewWorkspace(scenarioWorkspaceRoot)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: scenarioWorkspaceRoot}, ws, nil)
 }
 
 // readTool is a deterministic read-only tool returning fixed content — the
@@ -70,7 +72,7 @@ func (readTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Read", Description: "read a file (perf scenario stand-in)", Schema: objectSchema}
 }
 func (readTool) ReadOnly() bool { return true }
-func (readTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (readTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, "package main\n\nfunc main() {}\n"), nil
 }
 

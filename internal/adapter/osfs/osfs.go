@@ -1356,24 +1356,21 @@ var (
 )
 
 // Run runs command via /bin/sh -c, capturing (and truncating) stdout/stderr and
-// the exit code. The working directory is workdir (the session/fork Workspace
-// root the Bash tool executes against); an EMPTY workdir falls back to the
-// runner's configured root, so the runner is usable standalone. workdir is used
-// as-is and is intentionally NOT confined to the runner's configured root: a
-// forked child lives under an isolated temp base OUTSIDE that root, and running
-// its Bash there (not in the shared parent base) is exactly what fork isolation
-// requires. Cancellation and timeout are governed by ctx; when ctx has no
-// deadline a default timeout is applied. On cancel/timeout the WHOLE process
-// group is SIGKILLed (POSIX; see procgroup.Configure), so a backgrounded
-// grandchild (e.g. `make`'s compiler children) dies with the shell instead of
-// being orphaned; WaitDelay stays the portable backstop. A non-zero exit is
-// reported via the returned CommandResult.ExitCode, not as an error.
-func (r *CommandRunner) Run(ctx context.Context, command, workdir string) (tool.CommandResult, error) {
+// the exit code. The working directory is the runner's BOUND root (issue #462):
+// the runner is bound to a single namespace at construction, so the command's
+// cwd always matches the workspace the tool executes against. Cancellation and
+// timeout are governed by ctx; when ctx has no deadline a default timeout is
+// applied. On cancel/timeout the WHOLE process group is SIGKILLed (POSIX; see
+// procgroup.Configure), so a backgrounded grandchild (e.g. `make`'s compiler
+// children) dies with the shell instead of being orphaned; WaitDelay stays the
+// portable backstop. A non-zero exit is reported via the returned
+// CommandResult.ExitCode, not as an error.
+func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
 	var stdout, stderr cappedBuffer
 	stdout.cap = maxCommandOutput
 	stderr.cap = maxCommandOutput
 
-	exitCode, err := r.run(ctx, command, workdir, &stdout, &stderr)
+	exitCode, err := r.run(ctx, command, &stdout, &stderr)
 	res := tool.CommandResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
@@ -1383,39 +1380,35 @@ func (r *CommandRunner) Run(ctx context.Context, command, workdir string) (tool.
 }
 
 // RunStreaming is the tool.CommandStreamer half of the runner: it runs command
-// exactly as Run does (same shell resolution, workdir rules, default timeout,
+// exactly as Run does (same shell resolution, bound-root cwd, default timeout,
 // process-group kill, WaitDelay backstop, env) but streams stdout and stderr
 // INTERLEAVED into out in the order the OS delivers them, instead of capturing
 // them into the capped buffers. The CALLER owns bounding (e.g. a bounded tail
 // ring for a background command's recent output); this path does NOT cap or
 // retain the stream itself. The returned exitCode replaces CommandResult for
 // this path: a non-zero exit is reported there, not as an error.
-func (r *CommandRunner) RunStreaming(ctx context.Context, command, workdir string, out io.Writer) (int, error) {
-	return r.run(ctx, command, workdir, out, out)
+func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
+	return r.run(ctx, command, out, out)
 }
 
 // run is the ONE spawn/wait tail Run and RunStreaming share, so the two cannot
-// drift: it applies the default timeout when ctx has no deadline, resolves the
-// workdir (empty → the runner's configured root), wires the given stdout/stderr
-// writers plus the process-group kill, WaitDelay backstop and env, and runs the
-// command to completion. The exit code is returned separately from the error: a
-// non-zero exit yields (code, nil); a ctx cancel/timeout yields (0, ctx.Err())
-// with whatever output the writers captured so far standing; and a WaitDelay
-// expiry on a successfully-exited shell is a SUCCESS carrying the partial
-// output (see the exec.ErrWaitDelay branch below), not a harness failure.
-func (r *CommandRunner) run(ctx context.Context, command, workdir string, stdout, stderr io.Writer) (exitCode int, err error) {
+// drift: it applies the default timeout when ctx has no deadline, runs in the
+// runner's BOUND root, wires the given stdout/stderr writers plus the
+// process-group kill, WaitDelay backstop and env, and runs the command to
+// completion. The exit code is returned separately from the error: a non-zero
+// exit yields (code, nil); a ctx cancel/timeout yields (0, ctx.Err()) with
+// whatever output the writers captured so far standing; and a WaitDelay expiry
+// on a successfully-exited shell is a SUCCESS carrying the partial output (see
+// the exec.ErrWaitDelay branch below), not a harness failure.
+func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr io.Writer) (exitCode int, err error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
 		defer cancel()
 	}
 
-	dir := workdir
-	if dir == "" {
-		dir = r.root
-	}
 	cmd := exec.CommandContext(ctx, r.shell, "-c", command)
-	cmd.Dir = dir
+	cmd.Dir = r.root
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	// Bound the post-exit/post-cancel pipe wait (A7): without it, a grandchild that

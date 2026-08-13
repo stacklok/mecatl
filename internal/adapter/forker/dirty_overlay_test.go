@@ -43,7 +43,7 @@ func forkDirty(t *testing.T, base, label string) (string, func() error) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace, forker.WithDirtyOverlay())
-	child, cleanup, advisory, err := f.Fork(context.Background(), baseWS, label)
+	child, cleanup, advisory, err := forkWorkspace(f, context.Background(), baseWS, label)
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestForkDirtyOverlayCleanTreeNoOp(t *testing.T) {
 	overlayCalls := forker.CountOverlayGitForTest(func() {
 		var child interface{ Root() string }
 		var c func() error
-		child, c, advisory, ferr = f.Fork(context.Background(), baseWS, "ro-clean")
+		child, c, advisory, ferr = forkWorkspace(f, context.Background(), baseWS, "ro-clean")
 		if ferr == nil {
 			childRoot = child.Root()
 			cleanup = c
@@ -331,7 +331,7 @@ func TestForkDirtyOverlayFailSoft(t *testing.T) {
 		return err
 	})
 
-	child, cleanup, advisory, ferr := f.Fork(context.Background(), baseWS, "ro-failsoft")
+	child, cleanup, advisory, ferr := forkWorkspace(f, context.Background(), baseWS, "ro-failsoft")
 	if ferr != nil {
 		t.Fatalf("Fork must succeed despite overlay failure, got: %v", ferr)
 	}
@@ -390,7 +390,7 @@ func TestForkDirtyOverlayUsesScrubbedEnv(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace, forker.WithDirtyOverlay())
-	child, cleanup, _, ferr := f.Fork(context.Background(), baseWS, "ro-scrub")
+	child, cleanup, _, ferr := forkWorkspace(f, context.Background(), baseWS, "ro-scrub")
 	if ferr != nil {
 		t.Fatalf("Fork: %v", ferr)
 	}
@@ -435,7 +435,7 @@ func TestForkDirtyOverlayConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			child, cleanup, _, ferr := f.Fork(context.Background(), baseWS, "conc")
+			child, cleanup, _, ferr := forkWorkspace(f, context.Background(), baseWS, "conc")
 			if ferr != nil {
 				errs[i] = ferr
 				return
@@ -497,7 +497,7 @@ func TestForkForceCopyWithDirtyOverlayIsInert(t *testing.T) {
 	overlayCalls := forker.CountOverlayGitForTest(func() {
 		var child interface{ Root() string }
 		var c func() error
-		child, c, advisory, ferr = f.Fork(context.Background(), baseWS, "fc-overlay")
+		child, c, advisory, ferr = forkWorkspace(f, context.Background(), baseWS, "fc-overlay")
 		if ferr == nil {
 			childRoot = child.Root()
 			cleanup = c

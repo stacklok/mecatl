@@ -25,7 +25,7 @@ func (d disclosableTool) Advertised() ToolSpec {
 	return ToolSpec{Name: d.name, Description: d.name + " full description"}
 }
 func (disclosableTool) ReadOnly() bool { return true }
-func (disclosableTool) Execute(context.Context, session.ToolCall, Workspace) (session.ToolResult, error) {
+func (disclosableTool) Execute(context.Context, session.ToolCall, Environment) (session.ToolResult, error) {
 	return session.ToolResult{}, nil
 }
 
@@ -84,7 +84,7 @@ func TestToolSearchHydratesFullSpec(t *testing.T) {
 	c.MustRegister(search)
 
 	call := session.NewToolCall("c1", ToolSearchName, json.RawMessage(`{"query":"mcp"}`))
-	res, err := search.Execute(context.Background(), call, nil)
+	res, err := search.Execute(context.Background(), call, testEnv())
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestToolSearchEmptyQueryReturnsAllExceptItself(t *testing.T) {
 	c.MustRegister(search)
 
 	call := session.NewToolCall("c1", ToolSearchName, json.RawMessage(`{}`))
-	res, _ := search.Execute(context.Background(), call, nil)
+	res, _ := search.Execute(context.Background(), call, testEnv())
 	var got []matchedSpec
 	if err := json.Unmarshal([]byte(res.Content), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)

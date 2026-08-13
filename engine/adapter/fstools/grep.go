@@ -67,7 +67,8 @@ func (GrepTool) Spec() tool.ToolSpec {
 func (GrepTool) ReadOnly() bool { return true }
 
 // Execute runs the search and returns capped, formatted matches.
-func (GrepTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (GrepTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	ws := env.Workspace()
 	var args grepArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

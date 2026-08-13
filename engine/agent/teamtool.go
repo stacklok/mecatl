@@ -153,12 +153,12 @@ type TeamTool struct {
 	// forker isolates a Mutating member's workspace (force-copy: own `.git`). Required
 	// only if any member is Mutating; a Mutating member without it yields a tool error
 	// (the model can retry with a read-only roster).
-	forker tool.WorkspaceForker
+	forker tool.EnvironmentForker
 	// roForker isolates a read-only member that the factory granted a shell, as a
 	// cheap git worktree. Required only if the factory marks a read-only member
 	// IsolateReadOnly (which the composition root does only when this is wired). When
 	// nil, read-only members base-share with no shell.
-	roForker tool.WorkspaceForker
+	roForker tool.EnvironmentForker
 	// sharedBaseWS re-views the parent workspace for a BASE-SHARING read-only
 	// member (the no-shell fallback tier) so it never inherits the main session's
 	// out-of-root relaxation (the path-escape-posture Scenario 5 boundary —
@@ -186,14 +186,14 @@ type TeamOption func(*TeamTool)
 // WithTeamToolForker injects the workspace forker used to isolate a Mutating
 // member's workspace (force-copy). It is required only if the model forms a Mutating
 // roster.
-func WithTeamToolForker(f tool.WorkspaceForker) TeamOption {
+func WithTeamToolForker(f tool.EnvironmentForker) TeamOption {
 	return func(t *TeamTool) { t.forker = f }
 }
 
 // WithTeamToolReadOnlyForker injects the workspace forker (the worktree-default mode)
 // used to isolate a read-only member that the factory granted a shell. It is required
 // only if the factory marks a read-only member IsolateReadOnly.
-func WithTeamToolReadOnlyForker(f tool.WorkspaceForker) TeamOption {
+func WithTeamToolReadOnlyForker(f tool.EnvironmentForker) TeamOption {
 	return func(t *TeamTool) { t.roForker = f }
 }
 
@@ -288,8 +288,8 @@ func (*TeamTool) ReadOnly() bool { return false }
 // Execute runs a team with no observability (the emit == nil path): the team's
 // member activity is not forwarded, only the lead's consolidated report is returned. Existing
 // non-observing callers are unaffected by the observability seam.
-func (t *TeamTool) Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
-	return t.run(ctx, call, ws, nil, parentCaps{})
+func (t *TeamTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	return t.run(ctx, call, env, nil, parentCaps{})
 }
 
 // ExecuteWithParent is the childCapableTool seam: it runs the team like ExecuteObserved
@@ -298,8 +298,8 @@ func (t *TeamTool) Execute(ctx context.Context, call session.ToolCall, ws tool.W
 // resolve is SURFACED to the human (interactive parent) or auto-denied with the accurate
 // message + operator diagnostic (headless). The in-loop Team tool's goal stays trusted;
 // only the ask resolution posture changes.
-func (t *TeamTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
-	return t.run(ctx, call, ws, emit, caps)
+func (t *TeamTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	return t.run(ctx, call, env, emit, caps)
 }
 
 // ExecuteObserved runs a team like Execute but, when emit is non-nil, forwards a
@@ -308,8 +308,8 @@ func (t *TeamTool) ExecuteWithParent(ctx context.Context, call session.ToolCall,
 // parent's Conversation, so member content still never enters the parent context
 // (only the lead's synthesis ToolResult does). It is the observableTool seam the
 // dispatcher calls.
-func (t *TeamTool) ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error) {
-	return t.run(ctx, call, ws, emit, parentCaps{})
+func (t *TeamTool) ExecuteObserved(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event)) (session.ToolResult, error) {
+	return t.run(ctx, call, env, emit, parentCaps{})
 }
 
 // run is the shared implementation behind Execute (emit == nil) and
@@ -318,7 +318,7 @@ func (t *TeamTool) ExecuteObserved(ctx context.Context, call session.ToolCall, w
 // projection of member activity, and returns the lead's consolidated synthesis
 // (or the labelled fallback) as the single ToolResult that folds back into the
 // parent conversation.
-func (t *TeamTool) run(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
+func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args teamArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "Team: "+msg), nil
@@ -372,7 +372,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, ws tool.Works
 	// member askIDs are child-namespaced (team-<teamID>-<member>), so the parent router
 	// routes a verdict back without a wire change.
 	opts = append(opts, withParentCaps(caps))
-	sup := NewSupervisor(tm, ws, factory, opts...)
+	sup := NewSupervisor(tm, env, factory, opts...)
 
 	roster := teamRoster(args.Members)
 	for i, spec := range memberSpecs(args.Members) {

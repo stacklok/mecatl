@@ -39,7 +39,7 @@ func (*countingEchoTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Echo", Description: "returns ok", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*countingEchoTool) ReadOnly() bool { return true }
-func (e *countingEchoTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (e *countingEchoTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	if e.count.Add(1) >= e.threshold {
 		e.once.Do(func() { close(e.reached) })
 	}
@@ -180,7 +180,7 @@ func TestCancelUnwedgesStalledTeamRun(t *testing.T) {
 		defer close(r.events)
 		defer r.children.seal()
 		defer cancel()
-		e.drive(ctx, r, sess, ws, "investigate", nil)
+		e.drive(ctx, r, sess, testEnvironment(ws, nil), "investigate", nil)
 	}()
 
 	// The consumer drains until the first team event, then STOPS FOREVER — the
@@ -413,7 +413,7 @@ func TestCancelMemberUnparksEvChSend(t *testing.T) {
 		match:        func(id session.SessionID) bool { return strings.HasSuffix(string(id), "-worker") },
 		saved:        make(chan struct{}),
 	}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
+	sup := NewSupervisor(tm, memEnv("/ws"), factory,
 		WithTeamGoal("investigate"),
 		// Raise the per-round limits so the worker's 40 Echo turns (~160 events)
 		// strictly exceed the evCh(64)+forwarder(1) capacity and it genuinely parks.

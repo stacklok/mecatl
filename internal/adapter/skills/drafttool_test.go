@@ -50,7 +50,7 @@ func TestDraftToolExecuteSuccess(t *testing.T) {
 		"name":        "deploy-to-staging",
 		"description": "How to deploy to staging.",
 		"body":        "1. Build.\nDone when: green.",
-	}), nil)
+	}), tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: unexpected harness error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestDraftToolSurfacesSimilarSkills(t *testing.T) {
 		"name":        "deploy-to-staging",
 		"description": "How to deploy to staging.",
 		"body":        "1. Build.\nDone when: green.",
-	}), nil)
+	}), tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestDraftToolSurfacesSimilarSkills(t *testing.T) {
 
 func TestDraftToolMalformedArgs(t *testing.T) {
 	tl := newDraftTool(t, t.TempDir(), nil)
-	res, err := tl.Execute(context.Background(), session.NewToolCall("id", DraftToolName, json.RawMessage("{bad")), nil)
+	res, err := tl.Execute(context.Background(), session.NewToolCall("id", DraftToolName, json.RawMessage("{bad")), tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: unexpected harness error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestDraftToolValidationErrorIsResultNotFault(t *testing.T) {
 		"name":        "Bad Name",
 		"description": "d",
 		"body":        "b",
-	}), nil)
+	}), tool.Environment{})
 	if err != nil {
 		t.Fatalf("a validation failure must NOT be a harness error, got: %v", err)
 	}

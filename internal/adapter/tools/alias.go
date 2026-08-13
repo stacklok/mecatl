@@ -39,11 +39,13 @@ type (
 // catalog for bash enablement by this constant rather than a literal.
 const BashToolName = fstools.BashToolName
 
-// NewBashTool constructs the Bash tool bound to runner (a thin wrapper over
-// fstools.NewBashTool). The composition root registers the returned tool ONLY
-// when a runner is configured; runner must be non-nil. It is a function, not a
-// re-exported var, so no other package can reassign the constructor.
-func NewBashTool(runner tool.CommandRunner) tool.Tool { return fstools.NewBashTool(runner) }
+// NewBashTool constructs the Bash tool (a thin wrapper over
+// fstools.NewBashTool). The runner is read off the tool.Environment at Execute
+// time (issue #462), so the constructor takes no runner. The composition root
+// registers the returned tool ONLY when a runner is available for the
+// namespace. It is a function, not a re-exported var, so no other package can
+// reassign the constructor.
+func NewBashTool() tool.Tool { return fstools.NewBashTool() }
 
 // WebSearchTool graduated into the importable engine module
 // (engine/adapter/search, issue #363). The body and its correctness/security

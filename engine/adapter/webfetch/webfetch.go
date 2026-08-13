@@ -82,7 +82,7 @@ func (Tool) Spec() tool.ToolSpec {
 func (Tool) ReadOnly() bool { return true }
 
 // Execute fetches, converts, bounds, and quarantines one public textual resource.
-func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t Tool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args webFetchArgs
 	if msg, ok := session.ParseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

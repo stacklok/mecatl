@@ -616,7 +616,7 @@ func (g *gateTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: g.name, Description: g.name + ": gated test tool", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*gateTool) ReadOnly() bool { return true }
-func (g *gateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (g *gateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	select {
 	case <-g.release:
 	case <-ctx.Done():

@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -73,7 +72,7 @@ func TestSupervisorRetriedMemberContributesInLaterRound(t *testing.T) {
 					mockllm.TextTurn("recovered and finished"),
 				},
 			}
-			sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+			sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 				recordingFactory(t, tm, rec, scripts),
 				agent.WithTeamGoal("goal"), agent.WithMaxRounds(5),
 				agent.WithMemberErrorRetries(tc.retries))
@@ -148,7 +147,7 @@ func TestSupervisorBenchesMemberAtErrorRetryCap(t *testing.T) {
 				turns = append(turns, mockllm.EmptyTurnWithStop(session.StopError))
 			}
 			prov := mockllm.New(turns...)
-			sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+			sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 				memberFactory(t, tm, map[string]*mockllm.Provider{"worker": prov}),
 				agent.WithMaxRounds(20), agent.WithMemberErrorRetries(retries))
 			mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
@@ -233,7 +232,7 @@ func TestSupervisorPermanentlyFailingMemberTerminates(t *testing.T) {
 			LLM: prov, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "mock",
 		})}
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory,
 		agent.WithMaxRounds(maxRounds)) // DEFAULT retry cap — the shipped configuration.
 	mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
 
@@ -277,7 +276,7 @@ func TestSupervisorRetriedMemberReleasesTaskForReclaim(t *testing.T) {
 		"alpha": mockllm.New(mockllm.EmptyTurnWithStop(session.StopError)),
 		"beta":  mockllm.New(mockllm.TextTurn("never scheduled in round 0")),
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers),
 		// ONE round: alpha claims, fails, is recovered and retried. The loop then stops
 		// before any re-claim, so what we inspect is the released state itself.
@@ -362,7 +361,7 @@ func TestSupervisorBudgetExhaustedMemberIsNeverRetried(t *testing.T) {
 		mockllm.EmptyTurnWithStop(session.StopError),
 		mockllm.EmptyTurnWithStop(session.StopError),
 	)
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, map[string]*mockllm.Provider{"worker": prov}),
 		agent.WithMaxRounds(5),
 		agent.WithMemberTurnBudget(1),
@@ -429,7 +428,7 @@ func TestSupervisorErrorRoundsIsIndependentOfTheTerminal(t *testing.T) {
 			LLM: prov, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "mock",
 		})}
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory,
 		agent.WithMaxRounds(5), agent.WithMemberErrorRetries(1))
 	mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
 
@@ -456,7 +455,7 @@ func TestWithMemberErrorRetriesIgnoresNegative(t *testing.T) {
 		mockllm.EmptyTurnWithStop(session.StopError),
 		mockllm.TextTurn("RECOVERED UNDER THE DEFAULT CAP"),
 	)
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, map[string]*mockllm.Provider{"worker": prov}),
 		agent.WithMaxRounds(5), agent.WithMemberErrorRetries(-1))
 	mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
@@ -521,7 +520,7 @@ func TestSupervisorCancelledMemberIsNeverRetried(t *testing.T) {
 			LLM: prov, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "mock",
 		})}
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory,
 		agent.WithMaxRounds(5)) // DEFAULT retry cap: a retry WOULD be available if the gate let it through.
 	mustAdd(t, sup, agent.MemberSpec{Name: "worker", InitialPrompt: "go"})
 

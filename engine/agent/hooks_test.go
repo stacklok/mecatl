@@ -71,7 +71,7 @@ func runWithHooks(t *testing.T, llm *mockllm.Provider, hooks *recordingHooks) []
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
-	return drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "hi"}))
+	return drain(e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "hi"}))
 }
 
 func okExec(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
@@ -208,7 +208,7 @@ func TestUserPromptSubmitMutationIsApplied(t *testing.T) {
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	e := newEngine(agent.Deps{LLM: prov, Catalog: cat, Hooks: hooks})
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "original prompt"}))
+	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "original prompt"}))
 
 	// The model must have received the mutated text, never the original.
 	var userTexts []string
@@ -262,7 +262,7 @@ func TestUserPromptSubmitBlockAbortsBeforeRecordingAndLLM(t *testing.T) {
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "blocked prompt"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "blocked prompt"}))
 
 	if llm.Calls() != 0 {
 		t.Fatalf("model was called %d times; want 0", llm.Calls())
@@ -291,7 +291,7 @@ func TestSessionStartBlockAbortsRun(t *testing.T) {
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 
 	if llm.Calls() != 0 {
 		t.Fatalf("model was called %d times; want 0 (SessionStart should abort)", llm.Calls())
@@ -359,7 +359,7 @@ func TestStopFiresOnLimitTermination(t *testing.T) {
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
 	sess := newSession(t, session.Limits{MaxTurns: 1})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
+	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 
 	if got := hooks.count(governance.PhaseStop); got != 1 {
 		t.Fatalf("Stop fired %d times on limit termination, want 1", got)
@@ -373,7 +373,7 @@ func TestNilHooksAreNoOp(t *testing.T) {
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat}) // Hooks left nil
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 	if res := lastResult(t, evs); res.Stop != session.StopEndTurn {
 		t.Fatalf("stop = %q, want end_turn", res.Stop)
 	}
@@ -401,7 +401,7 @@ func TestLoopUsesInjectedAssembler(t *testing.T) {
 	cat := catalogWith(t, &fakeTool{name: "Read", readOnly: true, exec: okExec})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Instructions: asm})
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi"}))
+	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 
 	if asm.called != 1 {
 		t.Fatalf("assembler invoked %d times, want 1", asm.called)
@@ -450,7 +450,7 @@ func TestTurn0InjectsMemoryIndexAfterAgentsMD(t *testing.T) {
 		t.Fatalf("seed AGENTS.md: %v", err)
 	}
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(ctx, sess, ws, agent.RunRequest{Text: "the user prompt"}))
+	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "the user prompt"}))
 
 	req, ok := firstReq()
 	if !ok {
@@ -516,7 +516,7 @@ func TestTurn0InjectsSoulAfterAgentsMD(t *testing.T) {
 		t.Fatalf("seed AGENTS.md: %v", err)
 	}
 	sess := newSession(t, session.Limits{})
-	drain(e.Run(ctx, sess, ws, agent.RunRequest{Text: "the user prompt"}))
+	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "the user prompt"}))
 
 	req, ok := firstReq()
 	if !ok {
@@ -564,7 +564,7 @@ func TestDefaultAssemblerWhenNil(t *testing.T) {
 	if err := ws.Write(context.Background(), "AGENTS.md", []byte("project rule")); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "hi"}))
+	drain(e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "hi"}))
 
 	req, ok := firstReq()
 	if !ok {

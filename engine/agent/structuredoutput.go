@@ -66,7 +66,7 @@ func (*submitResultTool) ReadOnly() bool { return true }
 // records the validation error (for the correction prompt) and returns a model-visible
 // error result naming the mismatch, so even within a single child turn the model sees
 // what was wrong. The args are the model's payload (the call's raw Args).
-func (s *submitResultTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (s *submitResultTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	payload := call.Args
 	if err := session.ValidateJSON(s.schema, payload); err != nil {
 		s.mu.Lock()

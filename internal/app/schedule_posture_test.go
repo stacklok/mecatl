@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -179,7 +178,7 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 
 	// Drive a one-turn run to trigger buildRequest → prompt.Build → captured system.
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
-	run := res.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
+	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range run.Events() {
 	}
 	if !invoked {
@@ -217,7 +216,7 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 	}
 	defer func() { _ = resNone.Close() }()
 	sessNone := session.New("s2", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
-	runNone := resNone.Engine.Run(ctx, sessNone, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
+	runNone := resNone.Engine.Run(ctx, sessNone, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range runNone.Events() {
 	}
 	if strings.Contains(capturedNone.StablePrefix, schedulePostureNote) {
@@ -269,7 +268,7 @@ func TestFireDelivery_ScheduleToolNoteLands(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
-	run := res.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
+	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range run.Events() {
 	}
 	if !invoked {
@@ -340,7 +339,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	if err := jstore.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	run := res.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "schedule the work", Parts: nil})
+	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "schedule the work", Parts: nil})
 	var results []session.ToolResult
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
@@ -441,7 +440,7 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	if err := jstore.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	run := res.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "schedule a nightly ci check and fire it once", Parts: nil})
+	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "schedule a nightly ci check and fire it once", Parts: nil})
 	var results []session.ToolResult
 	var stop session.StopReason
 	for ev := range run.Events() {

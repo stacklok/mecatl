@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// labeledForker is a test tool.WorkspaceForker that records, PER LABEL, whether a
+// labeledForker is a test tool.EnvironmentForker that records, PER LABEL, whether a
 // branch's fork was created and whether its cleanup ran. It is the primary vehicle
 // for the winner-preservation / loser-cleanup asserts: after a strategy runs, the
 // test reads cleaned[label] to prove the winner was PRESERVED (not cleaned) while
@@ -39,7 +39,7 @@ func newLabeledForker() *labeledForker {
 	}
 }
 
-func (m *labeledForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+func (m *labeledForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
 	m.mu.Lock()
 	m.seq++
 	m.created[label] = true
@@ -56,7 +56,7 @@ func (m *labeledForker) Fork(_ context.Context, _ tool.Workspace, label string) 
 		m.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, "", nil
+	return agent.ForkEnv(ws), cleanup, "", nil
 }
 
 func (m *labeledForker) wasCleaned(label string) bool {
@@ -187,7 +187,7 @@ func TestParallelJoinAllUnchanged(t *testing.T) {
 
 	exec := func(args string) string {
 		res, err := build().Execute(context.Background(),
-			session.NewToolCall("c1", "Parallel", json.RawMessage(args)), memfs.NewWorkspace("/ws"))
+			session.NewToolCall("c1", "Parallel", json.RawMessage(args)), agent.MemEnv("/ws"))
 		if err != nil {
 			t.Fatalf("unexpected harness error: %v", err)
 		}
@@ -219,7 +219,7 @@ func TestParallelJoinAllCleansEveryFork(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["task A","task B","task C"],"join":"all"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}
@@ -248,7 +248,7 @@ func TestParallelJoinJudgeSelectsWinnerPreservesFork(t *testing.T) {
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel",
 			json.RawMessage(`{"tasks":["do alpha","do beta","do gamma"],"join":"judge","criteria":"pick beta"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}
@@ -291,7 +291,7 @@ func TestParallelJoinBestAliasesJudge(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["do x","do y"],"join":"best"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}
@@ -313,7 +313,7 @@ func TestParallelJoinJudgeFallbackOnBadVerdict(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["do A","do B"],"join":"judge"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unexpected harness error: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestParallelJoinJudgeSingleSuccessSkipsJudge(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["do A","do B"],"join":"judge"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}
@@ -378,7 +378,7 @@ func TestParallelJoinJudgeNoSuccessAllFailedReport(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["do A","do B"],"join":"judge"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}
@@ -400,7 +400,7 @@ func TestParallelJoinJudgeUnavailable(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["a","b"],"join":"judge"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unexpected harness error: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestParallelJoinFirstReturnsFirstSuccessCancelsLosers(t *testing.T) {
 		res, _ := fork.Execute(context.Background(),
 			session.NewToolCall("c1", "Parallel",
 				json.RawMessage(`{"tasks":["slow one","FAST two","slow three"],"join":"first"}`)),
-			memfs.NewWorkspace("/ws"))
+			agent.MemEnv("/ws"))
 		done <- res
 	}()
 
@@ -493,7 +493,7 @@ func TestParallelJoinFirstAllFailDegrades(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["a","b"],"join":"first"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}
@@ -513,7 +513,7 @@ func TestParallelJoinUnknownStrategyErrors(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["a"],"join":"bogus"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unexpected harness error: %v", err)
 	}
@@ -561,18 +561,18 @@ type labelFailForker struct {
 	failAll   bool
 }
 
-func (m *labelFailForker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+func (m *labelFailForker) Fork(ctx context.Context, base tool.Environment, label string) (tool.Environment, func() error, string, error) {
 	if m.failAll || label == m.failLabel {
-		return nil, nil, "", fmt.Errorf("labelFailForker: scripted fork failure on %s", label)
+		return tool.Environment{}, nil, "", fmt.Errorf("labelFailForker: scripted fork failure on %s", label)
 	}
 	return m.inner.Fork(ctx, base, label)
 }
 
 // Compile-time assertions that the fakes satisfy the seams they stand in for.
 var (
-	_ tool.WorkspaceForker = (*labeledForker)(nil)
-	_ tool.WorkspaceForker = (*labelFailForker)(nil)
-	_ port.LLMProvider     = (*routingBranchProvider)(nil)
-	_ port.LLMProvider     = firstBranchProvider{}
-	_ agent.BranchJudge    = (*fakeJudge)(nil)
+	_ tool.EnvironmentForker = (*labeledForker)(nil)
+	_ tool.EnvironmentForker = (*labelFailForker)(nil)
+	_ port.LLMProvider       = (*routingBranchProvider)(nil)
+	_ port.LLMProvider       = firstBranchProvider{}
+	_ agent.BranchJudge      = (*fakeJudge)(nil)
 )

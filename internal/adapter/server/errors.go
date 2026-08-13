@@ -36,7 +36,7 @@ var (
 	// ErrFailedPrecondition signals the request is well-formed but the server is
 	// in a state that forbids it — typically a server-side misconfiguration the
 	// client cannot fix by changing its arguments (e.g. spawning a Mutating team
-	// member when no WorkspaceForker is wired, or a member catalog that violates
+	// member when no EnvironmentForker is wired, or a member catalog that violates
 	// the read-only-share invariant). Adapters map it to FailedPrecondition /
 	// HTTP 412, distinguishing it from a bad request (ErrInvalidArgument).
 	ErrFailedPrecondition = errors.New("server: failed precondition")

@@ -7,8 +7,8 @@
 // iter, encoding/json) and the domain packages (session, tool, prompt,
 // governance). Nothing else — no adapter, agent, api, os, or third-party import.
 //
-// Note (cycle resolution): FileSystem and Workspace are intentionally NOT defined
-// here. They live in engine/tool, the context that owns them, because port
-// already imports tool (LLMRequest.Tools is []tool.ToolSpec) and Tool.Execute
-// takes a Workspace — defining Workspace here would create a port↔tool cycle.
+// Note (cycle resolution): FileSystem, Workspace, and Environment are intentionally
+// NOT defined here. They live in engine/tool, the context that owns them, because
+// port already imports tool (LLMRequest.Tools is []tool.ToolSpec) and Tool.Execute
+// takes an Environment — defining it here would create a port↔tool cycle.
 package port

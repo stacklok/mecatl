@@ -89,7 +89,7 @@ var parallelSchema = json.RawMessage(`{
 
 // ParallelTool is the fork-join fan-out tool (harness pattern 8). When executed it
 // forks N ISOLATED child workspaces from the parent's workspace (via the injected
-// tool.WorkspaceForker), runs one CHILD agent loop per branch in PARALLEL (bounded
+// tool.EnvironmentForker), runs one CHILD agent loop per branch in PARALLEL (bounded
 // by a worker limit) over the injected child *Engine — each with its own fresh
 // Session, tighter Limits, and the child Engine's scoped catalog — drains every
 // child's Event stream internally, and JOINS the results into a SINGLE
@@ -127,7 +127,7 @@ type ParallelTool struct {
 	engineFactory func(model string) (*Engine, bool)
 
 	// forker isolates each branch's workspace from the shared base.
-	forker tool.WorkspaceForker
+	forker tool.EnvironmentForker
 
 	// limits bound a single child branch run. Defaults to defaultChildLimits.
 	limits session.Limits
@@ -175,8 +175,8 @@ type ParallelTool struct {
 	// MutatesParent (dispatch-serial — see parentMutatingCaller), so it never
 	// overlaps a sibling parent read. On a merge
 	// conflict Execute returns a tool error naming the conflict and the preserved
-	// fork path; the fork is left intact for manual resolution. See tool.ForkMerger.
-	autoMerger tool.ForkMerger
+	// fork path; the fork is left intact for manual resolution. See tool.EnvironmentMerger.
+	autoMerger tool.EnvironmentMerger
 
 	// store, when non-nil, best-effort persists each branch's child session after its
 	// run so the PULL InspectSubagent tool can later load its transcript by the
@@ -252,7 +252,7 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption {
 	return func(t *ParallelTool) { t.winnerReaper = s }
 }
 
-// WithAutoMerge injects the OPTIONAL tool.ForkMerger that auto-merges a
+// WithAutoMerge injects the OPTIONAL tool.EnvironmentMerger that auto-merges a
 // SINGLE-BRANCH join=first winner's diff back into the parent workspace after
 // the run. It is the composition-owned, opt-in (--parallel-auto-merge, default
 // OFF) capability that lets a delegated implementer's edits actually land
@@ -268,9 +268,9 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption {
 // parentMutatingCaller), so it never overlaps a sibling parent read, and
 // cross-run merge-vs-merge is serialized by the shared SerializingMerger. On a conflict Execute returns a
 // tool error naming the conflict and the preserved fork path; the fork is left
-// intact for manual resolution. See tool.ForkMerger and the forker.Merger
+// intact for manual resolution. See tool.EnvironmentMerger and the forker.Merger
 // adapter.
-func WithAutoMerge(m tool.ForkMerger) ParallelOption {
+func WithAutoMerge(m tool.EnvironmentMerger) ParallelOption {
 	return func(t *ParallelTool) { t.autoMerger = m }
 }
 
@@ -301,18 +301,18 @@ func WithParallelEngineFactory(f func(model string) (*Engine, bool)) ParallelOpt
 }
 
 // NewParallelTool constructs the Parallel fan-out tool over a pre-built child *Engine
-// and a WorkspaceForker. The composition root builds childEngine with the SCOPED
+// and an EnvironmentForker. The composition root builds childEngine with the SCOPED
 // child catalog and a non-interactive policy (see NewSubagentTool's guidance); the
 // child catalog MUST NOT contain Parallel or Subagent (so a branch cannot fan out
 // further). childEngine and forker must be non-nil; NewParallelTool panics otherwise,
 // because a Parallel tool with no child loop or no isolation seam is a composition-root
 // programming error.
-func NewParallelTool(childEngine *Engine, forker tool.WorkspaceForker, opts ...ParallelOption) tool.Tool {
+func NewParallelTool(childEngine *Engine, forker tool.EnvironmentForker, opts ...ParallelOption) tool.Tool {
 	if childEngine == nil {
 		panic("agent: NewParallelTool requires a non-nil child Engine")
 	}
 	if forker == nil {
-		panic("agent: NewParallelTool requires a non-nil WorkspaceForker")
+		panic("agent: NewParallelTool requires a non-nil EnvironmentForker")
 	}
 	t := &ParallelTool{
 		childEngine: childEngine,
@@ -427,9 +427,14 @@ func (t *ParallelTool) MutatesParent(call session.ToolCall) bool {
 
 // branchResult is the joined outcome of one branch.
 type branchResult struct {
-	index      int
-	label      string
-	childRoot  string
+	index     int
+	label     string
+	childRoot string
+	// childEnv is the forked child Environment (Workspace + bound runner), kept
+	// for the single-branch auto-merge fast path (EnvironmentMerger.Merge takes
+	// child + parent Environments). nil on a fork-failed / no-fork branch. Not
+	// serialized into the result text; orchestration state only.
+	childEnv   tool.Environment
 	summary    string
 	failed     bool
 	failReason string
@@ -485,8 +490,8 @@ func (t *ParallelTool) preserveWinner(w branchResult) {
 // it cancels every in-flight branch. A branch that fails is reported in the joined
 // summary without aborting the others; the call returns a harness-level error only
 // for a setup failure (invalid args / cap exceeded).
-func (t *ParallelTool) Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
-	return t.run(ctx, call, ws, nil, parentCaps{})
+func (t *ParallelTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	return t.run(ctx, call, env, nil, parentCaps{})
 }
 
 // ReadOnly stays true (each branch isolates its writes); see ReadOnly. ParallelTool
@@ -499,8 +504,8 @@ func (t *ParallelTool) Execute(ctx context.Context, call session.ToolCall, ws to
 // the parent emit closure — so a Parallel run projects its REDACTED parallel.* group
 // observability stream (start / per-branch / end) onto the parent event channel, exactly
 // as Subagent projects subagent.*.
-func (t *ParallelTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
-	return t.run(ctx, call, ws, emit, caps)
+func (t *ParallelTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	return t.run(ctx, call, env, emit, caps)
 }
 
 // branchEmitter carries the run-level emit closure + the parent Parallel call id so the
@@ -639,7 +644,7 @@ func (e branchEmitter) branchTool(i int) func(session.Event) {
 }
 
 // run is the shared implementation behind Execute (emit nil) and ExecuteWithParent.
-func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
+func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args parallelArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "Parallel: "+msg), nil
@@ -673,13 +678,13 @@ func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 
 	switch join {
 	case joinFirst:
-		return t.executeFirst(ctx, call.ID, tasks, args.Shared, ws, be, caps), nil
+		return t.executeFirst(ctx, call.ID, tasks, args.Shared, env, be, caps), nil
 	case joinJudge:
-		return t.executeJudge(ctx, call.ID, tasks, args.Shared, args.Criteria, ws, be, caps), nil
+		return t.executeJudge(ctx, call.ID, tasks, args.Shared, args.Criteria, env, be, caps), nil
 	default: // joinAll
 		// Today's behaviour, byte-for-byte: run every branch, clean EVERY fork,
 		// return the index-sorted per-branch summary.
-		results := t.runBranches(ctx, call.ID, tasks, args.Shared, ws, be, caps)
+		results := t.runBranches(ctx, call.ID, tasks, args.Shared, env, be, caps)
 		for _, r := range results {
 			r.runCleanup()
 		}
@@ -693,13 +698,13 @@ func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 // order, cancels the remaining in-flight branches, cleans every loser fork, and
 // PRESERVES the winner's fork (its cleanup is dropped). With no success it
 // degrades to the all-failed report (every fork cleaned).
-func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCallID, tasks []string, shared string, ws tool.Workspace, be branchEmitter, caps parentCaps) session.ToolResult {
+func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCallID, tasks []string, shared string, env tool.Environment, be branchEmitter, caps parentCaps) session.ToolResult {
 	// A per-call child context so we can cancel the losers the instant a winner
 	// finishes, without disturbing the parent ctx. Cancelled in all paths.
 	branchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	results, winner := t.runBranchesFirst(branchCtx, cancel, callID, tasks, shared, ws, be, caps)
+	results, winner := t.runBranchesFirst(branchCtx, cancel, callID, tasks, shared, env, be, caps)
 
 	if winner < 0 {
 		// No branch succeeded: clean everything and report the failures.
@@ -724,7 +729,7 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 	// a POST-RUN step (after preserveWinner, before be.end/return), so ReadOnly()
 	// stays true. On a conflict, surface a tool error naming the conflict + the
 	// preserved fork path; the fork is left intact for manual resolution.
-	autoMerged, errResult := t.autoMergeWinner(ctx, ws, results, winner, joinFirst, be, callID)
+	autoMerged, errResult := t.autoMergeWinner(ctx, env, results, winner, joinFirst, be, callID)
 	if errResult != nil {
 		return *errResult
 	}
@@ -741,11 +746,11 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 // merge (the no-auto-merge boundary stays for fan-out) and return (false, nil).
 // A nil merger (the no-merger test path) also returns (false, nil), so the
 // historical no-auto-merge behaviour is byte-identical when unwired.
-func (t *ParallelTool) autoMergeWinner(ctx context.Context, ws tool.Workspace, results []branchResult, winner int, join string, be branchEmitter, callID session.ToolCallID) (bool, *session.ToolResult) {
+func (t *ParallelTool) autoMergeWinner(ctx context.Context, env tool.Environment, results []branchResult, winner int, join string, be branchEmitter, callID session.ToolCallID) (bool, *session.ToolResult) {
 	if t.autoMerger == nil || len(results) != 1 || results[winner].childRoot == "" {
 		return false, nil
 	}
-	if merr := t.autoMerger.Merge(ctx, results[winner].childRoot, ws); merr != nil {
+	if merr := t.autoMerger.Merge(ctx, results[winner].childEnv, env); merr != nil {
 		be.end(join, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopError)
 		errRes := session.NewToolError(callID, fmt.Sprintf(
 			"Parallel: auto-merge of the winning branch into this workspace FAILED: %v "+
@@ -762,8 +767,8 @@ func (t *ParallelTool) autoMergeWinner(ctx context.Context, ws tool.Workspace, r
 // success → that branch wins with no judge call. The winner's fork is PRESERVED;
 // every loser's fork is cleaned. A misbehaving judge falls back to the first
 // successful branch — Parallel never hard-fails because the judge erred.
-func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCallID, tasks []string, shared, criteria string, ws tool.Workspace, be branchEmitter, caps parentCaps) session.ToolResult {
-	results := t.runBranches(ctx, callID, tasks, shared, ws, be, caps)
+func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCallID, tasks []string, shared, criteria string, env tool.Environment, be branchEmitter, caps parentCaps) session.ToolResult {
+	results := t.runBranches(ctx, callID, tasks, shared, env, be, caps)
 
 	// Successful branches in index order (so "first successful" is deterministic).
 	var succeeded []int
@@ -811,7 +816,7 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 	// AUTO-MERGE (default-on): a SINGLE-BRANCH join=judge winner's diff is merged
 	// back into the parent workspace, same as join=first. Multi-branch judge runs
 	// never auto-merge (the no-auto-merge boundary stays for fan-out).
-	autoMerged, errResult := t.autoMergeWinner(ctx, ws, results, winner, joinJudge, be, callID)
+	autoMerged, errResult := t.autoMergeWinner(ctx, env, results, winner, joinJudge, be, callID)
 	if errResult != nil {
 		return *errResult
 	}
@@ -843,7 +848,7 @@ func (t *ParallelTool) judgeWinner(ctx context.Context, results []branchResult, 
 // runBranches forks and runs every branch in parallel under a worker-limited
 // semaphore, returning the per-branch results in branch order. The caller owns
 // cleanup of every returned branchResult.cleanup (lifted out of runBranch).
-func (t *ParallelTool) runBranches(ctx context.Context, callID session.ToolCallID, tasks []string, shared string, ws tool.Workspace, be branchEmitter, caps parentCaps) []branchResult {
+func (t *ParallelTool) runBranches(ctx context.Context, callID session.ToolCallID, tasks []string, shared string, env tool.Environment, be branchEmitter, caps parentCaps) []branchResult {
 	results := make([]branchResult, len(tasks))
 	sem := make(chan struct{}, t.concurrency)
 	var wg sync.WaitGroup
@@ -852,7 +857,7 @@ func (t *ParallelTool) runBranches(ctx context.Context, callID session.ToolCallI
 		wg.Add(1)
 		go func(i int, task string) {
 			defer wg.Done()
-			results[i] = t.launchBranch(ctx, sem, callID, i, task, shared, ws, be, caps)
+			results[i] = t.launchBranch(ctx, sem, callID, i, task, shared, env, be, caps)
 		}(i, task)
 	}
 	wg.Wait()
@@ -869,7 +874,7 @@ func (t *ParallelTool) runBranches(ctx context.Context, callID session.ToolCallI
 // derives from the strategy ctx. The JUDGE's own run is NOT a registered child
 // (it is short and tool-less; the whole-run cancel covers it) — a documented v1
 // limitation.
-func (t *ParallelTool) launchBranch(ctx context.Context, sem chan struct{}, callID session.ToolCallID, i int, task, shared string, ws tool.Workspace, be branchEmitter, caps parentCaps) branchResult {
+func (t *ParallelTool) launchBranch(ctx context.Context, sem chan struct{}, callID session.ToolCallID, i int, task, shared string, env tool.Environment, be branchEmitter, caps parentCaps) branchResult {
 	branchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	childID := t.childSessionID(callID, i)
@@ -882,7 +887,7 @@ func (t *ParallelTool) launchBranch(ctx context.Context, sem chan struct{}, call
 		return cancelledBeforeStart(i, be, caps.childWasClientCancelled(childID))
 	}
 	caps.startChildRun(childID)
-	res, stop := t.runBranch(branchCtx, callID, i, task, shared, ws, be, caps)
+	res, stop := t.runBranch(branchCtx, callID, i, task, shared, env, be, caps)
 	caps.finishChildRun(childID, stop)
 	return res
 }
@@ -930,7 +935,7 @@ func sumBranchUsage(results []branchResult) session.Usage {
 // a loser cancelled mid-flight still returns its (possibly partial) branchResult
 // with its cleanup attached. The returned winner is the index of the first
 // successful branch, or -1 if none succeeded.
-func (t *ParallelTool) runBranchesFirst(ctx context.Context, cancel context.CancelFunc, callID session.ToolCallID, tasks []string, shared string, ws tool.Workspace, be branchEmitter, caps parentCaps) ([]branchResult, int) {
+func (t *ParallelTool) runBranchesFirst(ctx context.Context, cancel context.CancelFunc, callID session.ToolCallID, tasks []string, shared string, env tool.Environment, be branchEmitter, caps parentCaps) ([]branchResult, int) {
 	results := make([]branchResult, len(tasks))
 	sem := make(chan struct{}, t.concurrency)
 	done := make(chan int, len(tasks)) // carries the index of each finished branch
@@ -941,7 +946,7 @@ func (t *ParallelTool) runBranchesFirst(ctx context.Context, cancel context.Canc
 		go func(i int, task string) {
 			defer wg.Done()
 			defer func() { done <- i }()
-			results[i] = t.launchBranch(ctx, sem, callID, i, task, shared, ws, be, caps)
+			results[i] = t.launchBranch(ctx, sem, callID, i, task, shared, env, be, caps)
 		}(i, task)
 	}
 
@@ -983,7 +988,7 @@ func normalizeJoin(join string) string {
 // fork can survive the call. A fork or child failure is captured in the result,
 // never propagated as a harness error (one failing branch must not kill the
 // others).
-func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID, i int, task, shared string, ws tool.Workspace, be branchEmitter, caps parentCaps) (branchResult, session.StopReason) {
+func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID, i int, task, shared string, env tool.Environment, be branchEmitter, caps parentCaps) (branchResult, session.StopReason) {
 	label := branchLabel(i)
 	// childID is the branch's child session id, set up front so EVERY terminal (incl.
 	// fork-failed / errored / cancelled) carries the discoverable "branch id:" — the
@@ -1021,7 +1026,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// The Parallel branch forker is force-copy (copyTree carries the parent's dirty
 	// state verbatim), so the degraded-fork advisory is never set on this path —
 	// discard it. (A mutating branch is not the read-only-overlay case.)
-	child, cleanup, _, err := t.forker.Fork(ctx, ws, label)
+	childEnv, cleanup, _, err := t.forker.Fork(ctx, env, label)
 	if err != nil {
 		res.failed = true
 		// Neutralised for the same reason the summary below is, and HERE because this arm
@@ -1038,19 +1043,20 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		return res, session.StopError
 	}
 	res.cleanup = cleanup
-	res.childRoot = child.Root()
+	res.childRoot = childEnv.Workspace().Root()
+	res.childEnv = childEnv
 
 	childSess := session.New(
 		t.childSessionID(callID, i),
 		t.childMode,
-		child.Root(),
+		childEnv.Workspace().Root(),
 		t.limits,
 		branchEngine.now(),
 	)
 	// The branch is attributed to the PARENT session's owner (ADR 0100 decision 4).
 	caps.inheritOwner(childSess)
 
-	run := branchEngine.Run(ctx, childSess, child, RunRequest{Text: prompt})
+	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt})
 	// A Parallel branch always runs in its OWN isolated fork, so its Bash asks are eligible
 	// for the A2 worktree-safe auto-approve; the parent caps carry surface/headless
 	// posture (threaded from Execute → runBranches → runBranch). We REUSE

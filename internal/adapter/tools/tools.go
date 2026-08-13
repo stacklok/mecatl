@@ -11,7 +11,7 @@
 // Workspace — the fstools filesystem tools plus WebFetch and FetchMcpResource,
 // which need no extra dependency. Two tools are NOT in All() because they need an
 // injected dependency and are constructed/registered separately by the
-// composition root: Bash needs a tool.CommandRunner (NewBashTool(runner), an
+// composition root: Bash needs a tool.CommandRunner (NewBashTool(), an
 // alias for fstools.NewBashTool; a deployment with no shell simply omits it), and
 // WebSearch needs a search provider (NewWebSearchTool(provider)).
 //
@@ -73,8 +73,8 @@ func NoFS() []tool.Tool {
 // Register adds the always-available core tools (everything in All(), i.e. NOT
 // Bash) to cat. It returns the first registration error (e.g. a name collision)
 // encountered, or nil on success. To enable command execution, additionally
-// register NewBashTool(runner), e.g.
-// cat.MustRegister(tools.NewBashTool(runner)).
+// register NewBashTool(), e.g.
+// cat.MustRegister(tools.NewBashTool()).
 func Register(cat *tool.Catalog) error {
 	for _, t := range All() {
 		if err := cat.Register(t); err != nil {

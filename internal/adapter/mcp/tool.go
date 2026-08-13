@@ -17,7 +17,8 @@ import (
 
 // remoteTool adapts a single tool advertised by a remote MCP server into the
 // harness's tool.Tool interface. Execute proxies the call back over the live
-// MCP session; the Workspace argument is ignored because the tool runs remotely.
+// MCP session; the Environment is ignored because the tool runs remotely and
+// consumes neither its Workspace nor its CommandRunner.
 //
 // It holds the owning *Server (not a *ClientSession) so Execute can re-establish
 // a dropped session transparently via Server.withSession (see reconnect.go,
@@ -122,7 +123,7 @@ func (t *remoteTool) ReadOnly() bool { return t.readOnly }
 // (IsError) rather than a Go error, so the loop feeds it back to the model for
 // self-correction instead of aborting the turn; the Go error return is reserved
 // for cases the model genuinely cannot recover from (none here).
-func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	// Respect cancellation before doing any work.
 	if err := ctx.Err(); err != nil {
 		return session.ToolResult{}, err

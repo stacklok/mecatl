@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -29,7 +30,16 @@ func call(t *testing.T, name string, m map[string]any) session.ToolCall {
 // mirrors engine/adapter/fstools/fstools_test.go exec EXACTLY — keep byte-identical.
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace) session.ToolResult {
 	t.Helper()
-	res, err := tl.Execute(context.Background(), in, ws)
+	var env tool.Environment
+	if ws != nil {
+		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, nil)
+	} else {
+		// WebSearch never touches the workspace; a shell-less mem Environment over a
+		// stub root is an honest stand-in for the call sites that historically passed
+		// nil (issue #462).
+		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, memfs.NewWorkspace("/"), nil)
+	}
+	res, err := tl.Execute(context.Background(), in, env)
 	if err != nil {
 		t.Fatalf("%s: unexpected harness error: %v", tl.Spec().Name, err)
 	}

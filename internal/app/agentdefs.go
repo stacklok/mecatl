@@ -542,7 +542,7 @@ func baseSubagentTools(cfg Config) map[string]tool.Tool {
 		out[t.Spec().Name] = t
 	}
 	if runner := buildSandboxedCommandRunner(cfg); runner != nil {
-		bt := agent.NewBashTool(runner)
+		bt := agent.NewBashTool()
 		out[bt.Spec().Name] = bt
 	}
 	return out
@@ -847,7 +847,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 		// registers as-is. allowShell is true iff runner != nil, so this branch only
 		// fires with a non-nil runner.
 		if name == tools.BashToolName && runner != nil {
-			cat.MustRegister(agent.NewBashTool(runner))
+			cat.MustRegister(agent.NewBashTool())
 			continue
 		}
 		cat.MustRegister(base[name])

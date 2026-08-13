@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
@@ -27,9 +26,8 @@ func TestProviderRouteChunkEmitsEvent(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
-	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "hi"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 
 	var routes []session.Event
 	for _, ev := range evs {
@@ -59,9 +57,8 @@ func TestProviderRouteAbsentEmitsNoEvent(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("plain answer"))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
-	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "hi"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 	if containsType(evs, session.EvProviderRoute) {
 		t.Fatalf("EvProviderRoute emitted with no ChunkProviderRoute (evs=%v)", typesOf(evs))
 	}

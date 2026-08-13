@@ -515,7 +515,7 @@ for this direction would supersede them by new ADR, never by quiet edits.
   git-worktree sharing assumptions; a granted read-only view and a force-copy
   fork each need a different posture. This was already flagged as a
   domain-logic gap in the companion doc, and it lands here as a prerequisite.
-- **`WorkspaceForker` is absorbed into grant composition.** Fork label becomes
+- **`EnvironmentForker` is absorbed into grant composition.** Fork label becomes
   a descent spec: mounts with postures (an `immutable-snapshot` of the parent
   tree is a read-only fork; an `exclusive-write` overlay is a mutating one),
   a merge strategy, and a lease. The existing forkers become backends. The

@@ -11,7 +11,6 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
@@ -180,7 +179,7 @@ func TestDefMCPToolsInlineConnectsAndTearsDown(t *testing.T) {
 		}
 	}
 	call := session.NewToolCall("c1", "mcp__inline__echo", json.RawMessage(`{"text":"hi"}`))
-	if res, err := echo.Execute(context.Background(), call, nil); err != nil || res.IsError {
+	if res, err := echo.Execute(context.Background(), call, tool.Environment{}); err != nil || res.IsError {
 		t.Fatalf("echo before close should succeed, got res=%+v err=%v", res, err)
 	}
 
@@ -258,7 +257,7 @@ func TestMemberReadOnlyDefWithMCPAccepted(t *testing.T) {
 	prov := mockllm.New(mockllm.ToolCallTurn(mcpCall), mockllm.TextTurn("done"))
 	factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})
@@ -297,7 +296,7 @@ func TestMemberReadOnlyDefWithEditStillRejected(t *testing.T) {
 	tm := team.New("t")
 	factory := memberFactoryForTest(cfg, editCall(), hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})

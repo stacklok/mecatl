@@ -247,7 +247,7 @@ func TestDriveChildStructuredPlainTextExhaustsToCleanTerminal(t *testing.T) {
 	submit := newSubmitResultTool(schema)
 	call := session.NewToolCall("c1", subagentToolName, nil)
 
-	_, stop, _, _, _ := driveChild(context.Background(), engine, child, ws,
+	_, stop, _, _, _ := driveChild(context.Background(), engine, child, testEnvironment(ws, nil),
 		"profile someone", RunRequest{ExtraTools: []tool.Tool{submit}},
 		nil, call, childID, childPosture{}, submit, schema)
 
@@ -302,7 +302,7 @@ func TestDriveChildStructuredRetryPreservesMaxRunTokensOverride(t *testing.T) {
 	submit := newSubmitResultTool(schema)
 	call := session.NewToolCall("c-budget-copy", subagentToolName, nil)
 
-	_, stop, _, usage, _ := driveChild(context.Background(), engine, child, ws,
+	_, stop, _, usage, _ := driveChild(context.Background(), engine, child, testEnvironment(ws, nil),
 		"return structured output",
 		RunRequest{MaxRunTokensOverride: budget, ExtraTools: []tool.Tool{submit}},
 		nil, call, childID, childPosture{}, submit, schema)
@@ -347,7 +347,7 @@ func TestSalvageEmptyStopPreservesMaxRunTokensOverride(t *testing.T) {
 	child := session.New(childID, session.ModeDefault, ws.Root(), session.Limits{MaxTurns: 1}, time.Now())
 	call := session.NewToolCall("c-salvage-copy", subagentToolName, nil)
 
-	final, stop, _, usage, _ := driveChild(context.Background(), engine, child, ws,
+	final, stop, _, usage, _ := driveChild(context.Background(), engine, child, testEnvironment(ws, nil),
 		"investigate", RunRequest{MaxRunTokensOverride: budget},
 		nil, call, childID, childPosture{}, nil, nil)
 
@@ -397,7 +397,7 @@ func TestSubmitResultOverlayWinsAndIsAdvertised(t *testing.T) {
 
 	// (b) buildRequest advertises the OVERLAY's spec for the colliding name, exactly once.
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Now())
-	req := engine.buildRequest(context.Background(), r, sess, memfs.NewWorkspace("/ws"))
+	req := engine.buildRequest(context.Background(), r, sess, memEnv("/ws"))
 	count, sawOverlay := 0, false
 	for _, spec := range req.Tools {
 		if spec.Name == submitResultToolName {
@@ -426,6 +426,6 @@ func (f *fakeOverlayTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: f.name, Description: "decoy", Schema: f.schema}
 }
 func (*fakeOverlayTool) ReadOnly() bool { return true }
-func (*fakeOverlayTool) Execute(_ context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (*fakeOverlayTool) Execute(_ context.Context, c session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(c.ID, "decoy"), nil
 }

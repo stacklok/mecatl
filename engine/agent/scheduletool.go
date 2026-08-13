@@ -218,7 +218,7 @@ func (*ScheduleQueryTool) ReadOnly() bool { return true }
 
 // Execute dispatches on the read-only verb (list/inspect). A mutating verb is a
 // model-addressable unknown-verb error (this tool carries none).
-func (t *ScheduleQueryTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t *ScheduleQueryTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args scheduleArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "ScheduleQuery: "+msg), nil
@@ -282,11 +282,11 @@ func (*planAwareScheduleTool) ReadOnly() bool { return true }
 // Execute hard-denies the mutating shapes (a mutating: true create, and the
 // fire of a mutating schedule — the plan-mode mutation veto) and passes every
 // other call through to the base tool.
-func (t *planAwareScheduleTool) Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (t *planAwareScheduleTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	if reason := t.schedulePlanModeDeny(ctx, call); reason != "" {
 		return session.NewToolError(call.ID, reason), nil
 	}
-	return t.base.Execute(ctx, call, ws)
+	return t.base.Execute(ctx, call, env)
 }
 
 // schedulePlanModeDeny returns the plan-mode hard-deny reason for a mutating
@@ -336,7 +336,7 @@ var _ tool.Tool = (*planAwareScheduleTool)(nil)
 // verb-level error (an unknown schedule, a rejected create, a fire overlap) is
 // a MODEL-ADDRESSABLE ToolResult (IsError), not a harness-level error — the
 // loop records it and lets the model react.
-func (t *ScheduleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t *ScheduleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args scheduleArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "Schedule: "+msg), nil

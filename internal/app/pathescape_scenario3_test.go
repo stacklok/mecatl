@@ -358,7 +358,11 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		entered:   make(chan struct{}),
 		release:   make(chan struct{}),
 	}
-	built.Service.SetSessionWorkspace(sess.ID, gate)
+	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: f.workspace}, gate, nil)
+	if err != nil {
+		t.Fatalf("NewEnvironment: %v", err)
+	}
+	built.Service.SetSessionEnvironment(sess.ID, env)
 
 	run, err := built.Service.StartRun(context.Background(), sess.ID, "edit outside the workspace")
 	if err != nil {
@@ -518,8 +522,12 @@ func TestPathEscapePosture_Scenario3_WriteEscapeMutateSerial(t *testing.T) {
 	// reads its workspace at start). The 50ms entry pause makes a genuine
 	// overlap unmissable.
 	var inflight, maxSeen atomic.Int32
-	built.Service.SetSessionWorkspace(sess.ID,
-		newSerialProbeWorkspace(t, f.workspace, &inflight, &maxSeen, 50*time.Millisecond))
+	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: f.workspace},
+		newSerialProbeWorkspace(t, f.workspace, &inflight, &maxSeen, 50*time.Millisecond), nil)
+	if err != nil {
+		t.Fatalf("NewEnvironment: %v", err)
+	}
+	built.Service.SetSessionEnvironment(sess.ID, env)
 	run, err := built.Service.StartRun(context.Background(), sess.ID, "two writes outside the workspace")
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)

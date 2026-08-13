@@ -60,7 +60,7 @@ func TestBuildSubagentToolWritableModelOverrideE2E(t *testing.T) {
 	parentWS := osfsWSForTest(t, repo)
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"edit beta","mode":"read-write","model":"`+overrideModel+`"}`)),
-		parentWS)
+		testEnvironment(parentWS, buildCommandRunner(cfg)))
 	if err != nil {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}

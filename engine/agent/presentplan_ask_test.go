@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -52,7 +51,7 @@ func drivePlanAsk(t *testing.T, interactive bool, verdict session.ApprovalVerdic
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: interactive})
 	sess := newPlanSession(t)
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan a thing"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan a thing"})
 	for ev := range r.Events() {
 		evs = append(evs, ev)
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ask == nil {
@@ -97,7 +96,7 @@ func TestPlanApprovalAllowOnceFlipsModeAndTerminates(t *testing.T) {
 	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", `{"note":"x"}`)))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
 	sess := newPlanSession(t)
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
 	var sawAsk bool
 	var evs []session.Event
 	for ev := range r.Events() {
@@ -132,7 +131,7 @@ func TestPlanApprovalAllowAlwaysFlipsToAcceptEdits(t *testing.T) {
 	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", `{"note":"x"}`)))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
 	sess := newPlanSession(t)
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
 	var sawAsk bool
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -208,7 +207,7 @@ func TestPresentPlanAskCarriesPlanArgs(t *testing.T) {
 	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", args)))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
 	sess := newPlanSession(t)
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
 	var got []byte
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -240,7 +239,7 @@ func TestResumePlanApprovalAfterRestartExecutesAndFlips(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
 
 	// Drive to the awaiting ask, snapshot, then cancel (process death).
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
 	var askID string
 	var snap sessnap.Snapshot
 	var snapErr error
@@ -278,7 +277,7 @@ func TestResumePlanApprovalAfterRestartExecutesAndFlips(t *testing.T) {
 	// re-calling the model on the plan (the pending call is NOT re-presented).
 	cat2 := planCatalog(t)
 	e2 := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("should not be reached")), Catalog: cat2, Interactive: true})
-	rr := e2.ResumeApproval(context.Background(), restored, memfs.NewWorkspace("/ws"), askID, session.VerdictAllowOnce)
+	rr := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictAllowOnce)
 	evs := drain(rr)
 	res := lastResult(t, evs)
 	if res.Stop != session.StopPlanApproved {
@@ -305,7 +304,7 @@ func TestResumePlanApprovalDenyIteratesTerminates(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
 
 	// Drive to the awaiting ask, snapshot, then cancel (process death).
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
 	var askID string
 	var snap sessnap.Snapshot
 	var snapErr error
@@ -340,7 +339,7 @@ func TestResumePlanApprovalDenyIteratesTerminates(t *testing.T) {
 	// the revision).
 	cat2 := planCatalog(t)
 	e2 := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("should not be reached")), Catalog: cat2, Interactive: true})
-	rr := e2.ResumeApproval(context.Background(), restored, memfs.NewWorkspace("/ws"), askID, session.VerdictDeny)
+	rr := e2.ResumeApproval(context.Background(), restored, agent.MemEnv("/ws"), askID, session.VerdictDeny)
 	evs := drain(rr)
 	res := lastResult(t, evs)
 	if res.Stop != session.StopPlanIterate {
@@ -444,7 +443,7 @@ func TestPresentPlanAdvertisedOnlyInPlanMode(t *testing.T) {
 	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", `{"note":"x"}`)), mockllm.TextTurn("done"))
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: true})
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	// No EvPermissionAsk may fire outside plan mode (the dispatcher does not intercept).
 	for _, ev := range evs {
@@ -475,7 +474,7 @@ func TestPlanApprovedTargetIsRunScoped(t *testing.T) {
 	llm1 := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "PresentPlan", `{"note":"x"}`)))
 	e := newEngine(agent.Deps{LLM: llm1, Catalog: cat, Interactive: true})
 	sess := newPlanSession(t)
-	r1 := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan"})
+	r1 := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
 	for ev := range r1.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			r1.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
@@ -491,7 +490,7 @@ func TestPlanApprovedTargetIsRunScoped(t *testing.T) {
 	}
 	llm2 := mockllm.New(mockllm.TextTurn("done"))
 	e2 := newEngine(agent.Deps{LLM: llm2, Catalog: cat, Interactive: true})
-	r2 := e2.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r2 := e2.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r2)
 	res := lastResult(t, evs)
 	if res.Stop == session.StopPlanApproved {
@@ -516,7 +515,7 @@ func TestPresentPlanHeadlessNoAsk(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: false})
 	sess := newPlanSession(t)
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "plan"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
 	evs := drain(r)
 	for _, ev := range evs {
 		if ev.Type == session.EvPermissionAsk {

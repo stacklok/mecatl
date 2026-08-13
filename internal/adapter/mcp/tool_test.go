@@ -11,6 +11,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 
@@ -50,7 +51,7 @@ func TestMCPRemoteResultTruncatedToCap(t *testing.T) {
 	}
 
 	call := session.NewToolCall("call-1", "mcp__big__spew", json.RawMessage(`{}`))
-	res, err := spew.Execute(context.Background(), call, nil)
+	res, err := spew.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -103,13 +104,13 @@ func bigPlainText() string {
 func newOverCapStructuredServer(t *testing.T, name string, outputSchema any, result *mcpsdk.CallToolResult) string {
 	t.Helper()
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "overcap", Version: "v1"}, nil)
-	tool := &mcpsdk.Tool{
+	mcpTool := &mcpsdk.Tool{
 		Name:         name,
 		Description:  "returns an over-cap result",
 		InputSchema:  map[string]any{"type": "object"},
 		OutputSchema: outputSchema,
 	}
-	srv.AddTool(tool, func(_ context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	srv.AddTool(mcpTool, func(_ context.Context, _ *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		return result, nil
 	})
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
@@ -127,7 +128,7 @@ func overCapCall(t *testing.T, url, toolName string) session.ToolResult {
 		t.Fatalf("tool %q not advertised", toolName)
 	}
 	call := session.NewToolCall("call-1", "mcp__overcap__"+toolName, json.RawMessage(`{}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

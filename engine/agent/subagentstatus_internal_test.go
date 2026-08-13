@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -96,7 +95,7 @@ func TestStatusToolsDisjointProjections(t *testing.T) {
 	// SubagentStatus roster: the subagent, never the bash job.
 	res, err := NewSubagentStatusTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), session.ToolCall{ID: "s1", Name: subagentStatusToolName, Args: json.RawMessage(`{}`)},
-		bashWS, nil, parentCaps{children: reg})
+		bashEnv, nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -108,7 +107,7 @@ func TestStatusToolsDisjointProjections(t *testing.T) {
 	res, err = NewSubagentStatusTool().(childCapableTool).ExecuteWithParent(
 		context.Background(), session.ToolCall{ID: "s2", Name: subagentStatusToolName,
 			Args: json.RawMessage(`{"agent_id":"bashcmd-j"}`)},
-		bashWS, nil, parentCaps{children: reg})
+		bashEnv, nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -179,8 +178,8 @@ func TestChildRegistryRemoveSemantics(t *testing.T) {
 // tests' erroringForker).
 type failingForkerInt struct{}
 
-func (failingForkerInt) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, string, error) {
-	return nil, nil, "", errors.New("worktree add failed")
+func (failingForkerInt) Fork(_ context.Context, _ tool.Environment, _ string) (tool.Environment, func() error, string, error) {
+	return tool.Environment{}, nil, "", errors.New("worktree add failed")
 }
 
 // multiLineFailingForker fails Fork with a MULTI-LINE error, the shape a real `git worktree
@@ -189,8 +188,8 @@ func (failingForkerInt) Fork(_ context.Context, _ tool.Workspace, _ string) (too
 // two — see TestBackgroundPreRunFailureEmitsCause.
 type multiLineFailingForker struct{}
 
-func (multiLineFailingForker) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, string, error) {
-	return nil, nil, "", errors.New("worktree add failed:\n\tfatal: could not create leading directories\n\thint: check permissions")
+func (multiLineFailingForker) Fork(_ context.Context, _ tool.Environment, _ string) (tool.Environment, func() error, string, error) {
+	return tool.Environment{}, nil, "", errors.New("worktree add failed:\n\tfatal: could not create leading directories\n\thint: check permissions")
 }
 
 // TestSubagentForegroundForkFailureAbortsEntry pins the A5 foreground ghost fix:
@@ -208,7 +207,7 @@ func TestSubagentForegroundForkFailureAbortsEntry(t *testing.T) {
 
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x"}`)),
-		memfs.NewWorkspace("/ws"), nil, parentCaps{children: reg})
+		memEnv("/ws"), nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -239,7 +238,7 @@ func TestBackgroundForkFailureIsCollectible(t *testing.T) {
 
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","background":true}`)),
-		memfs.NewWorkspace("/ws"), nil, parentCaps{children: reg})
+		memEnv("/ws"), nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -299,7 +298,7 @@ func TestBackgroundPreRunFailureEmitsCause(t *testing.T) {
 
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","background":true}`)),
-		memfs.NewWorkspace("/ws"), emit, parentCaps{children: reg})
+		memEnv("/ws"), emit, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -365,7 +364,7 @@ func TestBackgroundGateFullAbortsPhantomAndListsIDs(t *testing.T) {
 
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p2", "Subagent", json.RawMessage(`{"prompt":"x","background":true}`)),
-		memfs.NewWorkspace("/ws"), nil, parentCaps{children: reg})
+		memEnv("/ws"), nil, parentCaps{children: reg})
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -443,7 +442,7 @@ func TestFailedResumeAttemptPreservesUndeliveredResult(t *testing.T) {
 	// Background child runs to completion; its result is stored, UNDELIVERED.
 	res, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x","background":true}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil || res.IsError {
 		t.Fatalf("background start failed: %v %+v", err, res)
 	}
@@ -461,7 +460,7 @@ func TestFailedResumeAttemptPreservesUndeliveredResult(t *testing.T) {
 	tl.childGate <- struct{}{}
 	res2, err := tl.ExecuteWithParent(context.Background(),
 		session.NewToolCall("p2", "Subagent", json.RawMessage(`{"prompt":"deeper","resume":"subagent-p1","background":true}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}

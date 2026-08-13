@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // TestMainCommandRunnerScrubsSecrets is the security oracle for "Finding B": the
@@ -28,7 +30,7 @@ func TestMainCommandRunnerScrubsSecrets(t *testing.T) {
 		t.Fatal("precondition: expected a non-nil main command runner with Shell set")
 	}
 
-	res, err := runner.Run(context.Background(), "env", cfg.Workspace)
+	res, err := runner.Run(context.Background(), "env")
 	if err != nil {
 		t.Fatalf("runner.Run(env): %v", err)
 	}
@@ -51,6 +53,62 @@ func TestMainCommandRunnerScrubsSecrets(t *testing.T) {
 	}
 }
 
+// TestCommandRunnerFactoryScrubsSecretsForAlternateRoot pins that the
+// CommandRunnerFactory path (a worktree-bound session runner built via
+// buildCommandRunnerForRoot with a root DISTINCT from cfg.Workspace) scrubs
+// secrets identically to the main-session runner (buildCommandRunner). Both
+// route through the ONE buildCommandRunnerForRoot, so the secret-scrubbing
+// cannot drift between the default-root and alternate-root paths (security
+// review "Finding B"). It mirrors the main-runner oracle but exercises the
+// factory closure as the Service would: an alternate root that is NOT
+// cfg.Workspace.
+//
+// MUTATION-TEST DISCIPLINE: if buildCommandRunnerForRoot is reverted to an
+// inline osfs.NewCommandRunnerShell(root, ...) WITHOUT envscrub.Scrub, this
+// test FAILS — it is not vacuous.
+func TestCommandRunnerFactoryScrubsSecretsForAlternateRoot(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "sk-or-MUST-NOT-LEAK")
+	t.Setenv("OPENAI_API_KEY", "sk-oa-MUST-NOT-LEAK")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-an-MUST-NOT-LEAK")
+	t.Setenv("MECATL_AUTH_TOKEN", "tok-MUST-NOT-LEAK")
+	t.Setenv("GH_TOKEN", "ghp-MUST-NOT-LEAK")
+
+	cfg := teamCfg(t)
+	// An alternate root distinct from cfg.Workspace — the worktree-session path.
+	altRoot := t.TempDir()
+	if altRoot == cfg.Workspace {
+		t.Fatal("precondition: alt root must differ from cfg.Workspace")
+	}
+	// The factory closure the Service holds (Config.CommandRunnerFactory).
+	factory := func(root string) tool.CommandRunner {
+		return buildCommandRunnerForRoot(cfg, root)
+	}
+	runner := factory(altRoot)
+	if runner == nil {
+		t.Fatal("precondition: expected a non-nil factory runner for the alternate root")
+	}
+
+	res, err := runner.Run(context.Background(), "env")
+	if err != nil {
+		t.Fatalf("runner.Run(env): %v", err)
+	}
+	env := res.Stdout
+
+	for _, secret := range []string{
+		"OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+		"MECATL_AUTH_TOKEN", "GH_TOKEN",
+	} {
+		if strings.Contains(env, secret+"=") || strings.Contains(env, "MUST-NOT-LEAK") {
+			t.Errorf("factory runner (alternate root) leaked secret %q to the child shell env:\n%s", secret, env)
+		}
+	}
+	for _, keep := range []string{"PATH=", "HOME="} {
+		if !strings.Contains(env, keep) {
+			t.Errorf("factory runner (alternate root) dropped toolchain var %q (would break builds); env:\n%s", keep, env)
+		}
+	}
+}
+
 // TestSandboxedCommandRunnerScrubsSecrets confirms the hardened (sandboxed
 // subagent/team-member/force-copy) runner is ALSO secret-safe — it was previously
 // only git-scrubbed (gitenv.Scrub drops GIT_*/PAGER, never secrets), so the same
@@ -67,7 +125,7 @@ func TestSandboxedCommandRunnerScrubsSecrets(t *testing.T) {
 		t.Fatal("precondition: expected a non-nil sandboxed runner (trusted workspace, shell set)")
 	}
 
-	res, err := runner.Run(context.Background(), "env", cfg.Workspace)
+	res, err := runner.Run(context.Background(), "env")
 	if err != nil {
 		t.Fatalf("runner.Run(env): %v", err)
 	}

@@ -29,7 +29,7 @@ func toolByName(t *testing.T, tools []tool.Tool, name string) tool.Tool {
 func call(t *testing.T, tl tool.Tool, argsJSON string) session.ToolResult {
 	t.Helper()
 	res, err := tl.Execute(context.Background(),
-		session.NewToolCall("c1", tl.Spec().Name, json.RawMessage(argsJSON)), nil)
+		session.NewToolCall("c1", tl.Spec().Name, json.RawMessage(argsJSON)), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("%s.Execute: harness error %v", tl.Spec().Name, err)
 	}

@@ -61,7 +61,8 @@ func TestWebFetchToolThroughAgentLoop(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 	})
 	sess := session.New("webfetch-e2e", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	run := engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "read the release notes"})
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
+	run := engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "read the release notes"})
 
 	var events []session.Event
 	for event := range run.Events() {

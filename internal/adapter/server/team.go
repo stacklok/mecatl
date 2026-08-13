@@ -7,7 +7,9 @@ import (
 	"sync"
 
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // ErrTeamsDisabled is returned by the team methods when no MemberEngine is wired
@@ -122,7 +124,27 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 	}
 
 	t := team.New(name)
-	base := s.cfg.Workspaces(workspace)
+	baseWS := s.cfg.Workspaces(workspace)
+	// Build the team's base Environment: bind the runner for the team's root
+	// (the main runner when it's the launch root, a root-bound runner otherwise,
+	// shell-less when no factory is wired for a differing root). The forker builds
+	// its OWN runners for forked members, so this is the base-sharing member
+	// runner only.
+	var baseRunner tool.CommandRunner
+	if workspace == s.cfg.DefaultWorkspace {
+		baseRunner = s.cfg.CommandRunner
+	} else if s.cfg.CommandRunnerFactory != nil {
+		baseRunner = s.cfg.CommandRunnerFactory(workspace)
+	}
+	// The workspace comes from the client-controlled CreateTeam request, so it
+	// MUST NOT panic on a nil return from the Workspaces factory (a misconfigured
+	// factory, a bad root, etc.). NewEnvironment rejects a nil Workspace with a
+	// normal error; wrap it as ErrInvalidArgument so the caller sees a bad-request
+	// status rather than a server crash.
+	base, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace}, baseWS, baseRunner)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: team workspace could not be built: %w", ErrInvalidArgument, err)
+	}
 	factory := func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 		return s.cfg.MemberEngine(t, spec, routedModel)
 	}

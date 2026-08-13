@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -110,7 +109,7 @@ func TestTurnEndLatencyMeasured(t *testing.T) {
 	}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -153,7 +152,7 @@ func TestTurnEndLatencyMaxIsFirstGap(t *testing.T) {
 	}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -187,7 +186,7 @@ func TestTurnEndLatencyReasoningCountsAsContent(t *testing.T) {
 	}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -217,7 +216,7 @@ func TestTurnEndLatencyOneContentChunk(t *testing.T) {
 	clk := &scriptedClock{times: []time.Time{at(0), at(5), at(25), at(50)}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -269,7 +268,7 @@ func TestTurnEndLatencyToolCallAnchorsTTFT(t *testing.T) {
 	}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, noop), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	// The FIRST turn.end is the tool-call-only turn: the tool call anchors TTFT,
@@ -302,7 +301,7 @@ func TestTurnEndLatencyReasoningItemAnchorsTTFT(t *testing.T) {
 	clk := &scriptedClock{times: []time.Time{at(0), at(5), at(20), at(50)}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -350,7 +349,7 @@ func TestTurnEndLatencyTwoToolCalls(t *testing.T) {
 	clk := &scriptedClock{times: []time.Time{at(5), at(10), at(30), at(90)}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, noop), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -396,7 +395,7 @@ func TestTurnEndLatencyTwoTextDeltasThenToolCall(t *testing.T) {
 	clk := &scriptedClock{times: []time.Time{at(5), at(10), at(30), at(70), at(120)}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, noop), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -441,7 +440,7 @@ func TestTurnEndLatencyReasoningDeltaThenToolCall(t *testing.T) {
 	clk := &scriptedClock{times: []time.Time{at(0), at(10), at(25), at(80)}}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, noop), Clock: clk})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -466,7 +465,7 @@ func TestTurnEndLatencyNoClock(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)}) // no Clock
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	te := turnEndOf(t, evs)
@@ -534,7 +533,7 @@ func TestDispatchQueueTimeMeasured(t *testing.T) {
 		LLM: llm, Catalog: catalogWith(t, first, second), Clock: clk, ToolCallRecorder: logger,
 	})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	_ = drain(r)
 
 	logger.mu.Lock()

@@ -59,7 +59,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### Core tools & shell
 - [0090 — Background Bash commands](./0090-background-bash.md)
-- [0104 — Execution environments and version-aware file mutation](./0104-execution-environment.md)
+- [0104 — Execution environments and version-aware file mutation](./0104-execution-environment.md) *(runtime-seam deferral superseded by 0105; version protocol authoritative)*
+- [0105 — Execution-environment runtime seam](./0105-execution-environment-runtime-seam.md) *(supersedes 0104 decisions 1–3)*
 
 ### Agents, teams & delegation
 - [0013 — Agent definitions](./0013-agent-definitions.md)

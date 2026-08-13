@@ -1,7 +1,7 @@
 // Package port — cycle note: LLMRequest references tool.ToolSpec and
 // prompt.Layered, so port imports tool and prompt (and session, governance).
-// FileSystem/Workspace deliberately live in engine/tool, not here, to avoid a
-// port↔tool import cycle (Tool.Execute takes a Workspace).
+// FileSystem/Workspace/Environment deliberately live in engine/tool, not here, to avoid a
+// port↔tool import cycle (Tool.Execute takes an Environment).
 package port
 
 import (

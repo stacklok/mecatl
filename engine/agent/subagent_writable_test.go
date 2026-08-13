@@ -15,16 +15,16 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// failingForker is a tool.WorkspaceForker that FAILS the test if Fork is ever
+// failingForker is a tool.EnvironmentForker that FAILS the test if Fork is ever
 // called. A direct-write (mode:"read-write") Subagent must NOT fork — it runs
 // against the real parent workspace (ADR 0041) — so wiring this as the read-only
 // childForker proves the writable path never forks.
 type failingForker struct{ t *testing.T }
 
-func (f *failingForker) Fork(_ context.Context, _ tool.Workspace, _ string) (tool.Workspace, func() error, string, error) {
+func (f *failingForker) Fork(_ context.Context, _ tool.Environment, _ string) (tool.Environment, func() error, string, error) {
 	f.t.Helper()
 	f.t.Fatal("a mode:\"read-write\" Subagent must NOT fork the workspace (direct-write, ADR 0041)")
-	return nil, nil, "", errors.New("unreachable")
+	return tool.Environment{}, nil, "", errors.New("unreachable")
 }
 
 // writableChildWriting scripts a child that calls a "Write" fakeTool (recording the
@@ -122,7 +122,7 @@ func TestSubagentWritableDirectWriteE2E(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), ws, agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.EnvForWS(ws, nil), agent.RunRequest{Text: "go"})
 
 	var sawChildContent bool
 	for _, ev := range drain(r) {
@@ -174,7 +174,7 @@ func TestSubagentWritablePartialEditSurvivesStopError(t *testing.T) {
 	task := newWritableSubagent(t, writable, agent.WithChildForker(&failingForker{t}))
 
 	res, err := task.Execute(context.Background(),
-		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"implement the fix","mode":"read-write"}`)), ws)
+		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"implement the fix","mode":"read-write"}`)), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestSubagentWritablePartialEditSurvivesStopCancelled(t *testing.T) {
 	done := make(chan out, 1)
 	go func() {
 		res, err := task.Execute(parentCtx,
-			session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"implement the fix","mode":"read-write"}`)), ws)
+			session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"implement the fix","mode":"read-write"}`)), agent.EnvForWS(ws, nil))
 		done <- out{res, err}
 	}()
 
@@ -276,7 +276,7 @@ func TestSubagentWritableTimeoutSurfacesTimeBudgetError(t *testing.T) {
 	task := newWritableSubagent(t, writable)
 
 	res, err := task.Execute(context.Background(),
-		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"loop forever","mode":"read-write","timeout_ms":120}`)), ws)
+		session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"loop forever","mode":"read-write","timeout_ms":120}`)), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestSubagentWritableNotIsolatedSkipsA2(t *testing.T) {
 	)
 	// newEngine ⇒ Interactive=false (headless): an unresolved ask auto-denies.
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -529,7 +529,7 @@ func runWritableForkWithParent(t *testing.T, task tool.Tool) session.ToolResult 
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	for _, ev := range drain(r) {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			return *ev.ToolResult

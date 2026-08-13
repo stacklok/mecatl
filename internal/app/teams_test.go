@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -290,10 +289,27 @@ func TestReadOnlyMemberRunsGitInWorktreeEndToEnd(t *testing.T) {
 
 	// Scope worktrees under a known dir so we can assert they are cleaned up.
 	worktreeBase := t.TempDir()
+	// WithRunner (issue #462): the forkers mint a BOUND runner for each child
+	// namespace so a forked member's Bash observes its OWN worktree/copy. The
+	// builder applies the SAME hardening buildSandboxedCommandRunner/
+	// buildForceCopyRunner do — trust-gated for the read-only worktree forker,
+	// ungated for the force-copy mutating forker.
+	sandboxedRunnerBuilder := func(childRoot string) tool.CommandRunner {
+		if cfg.NoBash || cfg.Shell == "" || !cfg.TrustProject {
+			return nil
+		}
+		return newHardenedRunnerForRoot(cfg, childRoot)
+	}
+	forceCopyRunnerBuilder := func(childRoot string) tool.CommandRunner {
+		if cfg.NoBash || cfg.Shell == "" {
+			return nil
+		}
+		return newHardenedRunnerForRoot(cfg, childRoot)
+	}
 	roFk := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) },
-		forker.WithTempBase(worktreeBase))
+		forker.WithTempBase(worktreeBase), forker.WithRunner(sandboxedRunnerBuilder))
 	mutatingFk := forker.New(func(root string) (tool.Workspace, error) { return osfs.NewWorkspace(root) },
-		forker.WithForceCopy())
+		forker.WithForceCopy(), forker.WithRunner(forceCopyRunnerBuilder))
 	runner := buildSandboxedCommandRunner(cfg)
 	if runner == nil {
 		t.Fatal("precondition: expected a non-nil sandboxed runner")
@@ -610,7 +626,7 @@ func TestAgencyDeltaReachesTeamMemberAndLead(t *testing.T) {
 		factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), agents.NewRegistry(nil), nil, nil, false, nil)
 
 		tm := team.New("t")
-		sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+		sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
 			func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 				return factory(tm, spec, routedModel)
 			})

@@ -304,7 +304,8 @@ func runEdit(t *testing.T, edit tools.EditTool, ws *fsWorkspace, path, oldS, new
 		args["replace_all"] = true
 	}
 	raw, _ := json.Marshal(args)
-	res, err := edit.Execute(context.Background(), session.ToolCall{ID: "c1", Name: "Edit", Args: raw}, ws)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, nil)
+	res, err := edit.Execute(context.Background(), session.ToolCall{ID: "c1", Name: "Edit", Args: raw}, env)
 	if err != nil {
 		t.Fatalf("edit returned hard error: %v", err)
 	}
@@ -629,7 +630,8 @@ func TestFSWorkspaceCreateAcceptsAnchoredNotFoundMessagesWithPath(t *testing.T) 
 func runWrite(t *testing.T, write tools.WriteTool, ws *fsWorkspace, path, content string) session.ToolResult {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]any{"path": path, "content": content})
-	res, err := write.Execute(context.Background(), session.ToolCall{ID: "w1", Name: "Write", Args: raw}, ws)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, nil)
+	res, err := write.Execute(context.Background(), session.ToolCall{ID: "w1", Name: "Write", Args: raw}, env)
 	if err != nil {
 		t.Fatalf("write returned hard error: %v", err)
 	}

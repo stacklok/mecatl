@@ -16,7 +16,7 @@ type fakeTool struct {
 
 func (f fakeTool) Spec() ToolSpec { return ToolSpec{Name: f.name} }
 func (f fakeTool) ReadOnly() bool { return f.readOnly }
-func (fakeTool) Execute(context.Context, session.ToolCall, Workspace) (session.ToolResult, error) {
+func (fakeTool) Execute(context.Context, session.ToolCall, Environment) (session.ToolResult, error) {
 	return session.ToolResult{}, nil
 }
 
@@ -106,7 +106,7 @@ type planOnlyTool struct {
 
 func (p planOnlyTool) Spec() ToolSpec { return ToolSpec{Name: p.name} }
 func (planOnlyTool) ReadOnly() bool   { return true }
-func (planOnlyTool) Execute(context.Context, session.ToolCall, Workspace) (session.ToolResult, error) {
+func (planOnlyTool) Execute(context.Context, session.ToolCall, Environment) (session.ToolResult, error) {
 	return session.ToolResult{}, nil
 }
 func (planOnlyTool) PlanOnlyTool() {}

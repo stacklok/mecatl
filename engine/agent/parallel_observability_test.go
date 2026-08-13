@@ -10,7 +10,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -53,7 +52,7 @@ func TestParallelEmitsObservabilityStreamAll(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	ps := collectParallel(evs)
 	if len(ps) == 0 {
@@ -133,7 +132,7 @@ func TestParallelEmitsWinnerJudge(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var end *session.ParallelPayload
@@ -175,7 +174,7 @@ func TestParallelEmitsWinnerFirst(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var end *session.ParallelPayload
@@ -221,7 +220,7 @@ func TestParallelBranchErrorRepresented(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 	ps := collectParallel(evs)
 
@@ -324,7 +323,7 @@ func TestParallelNoContentLeakBehavioral(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	saw := false
@@ -455,7 +454,7 @@ func TestParallelBranchIDIsNotBranchContent(t *testing.T) {
 
 	res, err := par.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["explore"]}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Parallel.Execute: %v", err)
 	}
@@ -476,7 +475,7 @@ func TestParallelBranchIDIsNotBranchContent(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(store)
 	ires, err := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"`+wantID+`"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("InspectSubagent.Execute: %v", err)
 	}
@@ -510,7 +509,7 @@ func TestParallelBranchCancelledBeforeStartRepresented(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(ctx, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	// Cancel once the first branch is in flight, so the queued branches are cancelled at
 	// the slot-acquire select (never run, never fork).
@@ -637,7 +636,7 @@ func TestParallelEndUsageIsBranchSum(t *testing.T) {
 		mockllm.TextTurn("done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var end *session.ParallelPayload

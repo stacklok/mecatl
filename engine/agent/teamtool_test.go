@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -112,7 +111,7 @@ func TestTeamToolFormsTeamAndIsolatesContent(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "fix the bug"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "fix the bug"})
 	evs := drain(r)
 
 	// --- team.start: roster the model formed -------------------------------
@@ -322,7 +321,7 @@ func TestTeamToolStreamsTaskSnapshots(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "fix the bug"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "fix the bug"})
 	evs := drain(r)
 
 	// Collect the task-snapshot projections (the first-class team.tasks event).
@@ -398,7 +397,7 @@ func TestTeamFindingsProjectedOnChangeAndOnEnd(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var snapshots [][]session.TeamFindingSnapshot
@@ -486,7 +485,7 @@ func teamResultContent(t *testing.T, leadSynthesis string) string {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate the auth path"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate the auth path"})
 	evs := drain(r)
 
 	var results []*session.ToolResult
@@ -599,7 +598,7 @@ func TestTeamEndCarriesMemberDispositions(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var end *session.TeamPayload
@@ -661,7 +660,7 @@ func TestTeamFindingsBodyClamped(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "g"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "g"}))
 
 	for _, ev := range evs {
 		if ev.Type == session.EvTeamFindings && len(ev.Team.Findings) > 0 {
@@ -695,7 +694,7 @@ func TestMemberSessionIDRoundTripsTeamToolPath(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate"}))
 
 	// Capture the EXACT published team id off EvTeamStart — the value a parent (or a
 	// human) would feed back into InspectMember.
@@ -792,7 +791,7 @@ func TestTeamToolBadRoster(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := tt.Execute(context.Background(),
-				toolCall("c1", "Team", tc.args), memfs.NewWorkspace("/ws"))
+				toolCall("c1", "Team", tc.args), agent.MemEnv("/ws"))
 			if err != nil {
 				t.Fatalf("Execute returned a harness error, want a tool error result: %v", err)
 			}
@@ -815,7 +814,7 @@ func TestTeamToolMutatingMemberNoForker(t *testing.T) {
 	res, err := tt.Execute(context.Background(),
 		toolCall("c1", "Team",
 			`{"goal":"g","members":[{"name":"lead","role":"do it","mutating":true}]}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute returned a harness error: %v", err)
 	}
@@ -859,7 +858,7 @@ func TestTeamToolReadOnlyMemberForksViaReadOnlyForker(t *testing.T) {
 
 	res, err := tt.Execute(context.Background(),
 		toolCall("c1", "Team", `{"goal":"inspect","members":[{"name":"lead","role":"inspect the history"}]}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute returned a harness error: %v", err)
 	}
@@ -908,7 +907,7 @@ func TestTeamToolParentCancelStops(t *testing.T) {
 
 	res, err := tt.Execute(ctx,
 		toolCall("c1", "Team", `{"goal":"g","members":[{"name":"lead","role":"loop"}]}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute returned a harness error on cancel: %v", err)
 	}
@@ -951,7 +950,7 @@ func TestTeamMemberResultCarriesCauseOnStopError(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var resultCauses []string
@@ -1016,7 +1015,7 @@ func TestTeamMemberResultNoCauseOnCleanStop(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	for _, ev := range evs {
@@ -1051,7 +1050,7 @@ func TestTeamRetriedMemberSurfacesCauseEachFailedRound(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate"})
 	evs := drain(r)
 
 	var resultCauses []string

@@ -73,14 +73,14 @@ func (s *Service) HasSessionEngineForTest(id session.SessionID) bool {
 }
 
 // DropSessionEngineForTest simulates a process restart by removing the
-// per-session engine registration for id (and its workspace override), WITHOUT
+// per-session engine registration for id (and its environment override), WITHOUT
 // closing the engine (the process is "gone"). It is the test seam for the
 // issue-#102 rehydration assertion: after it, a prompt run must rehydrate. The
 // session itself stays in the store (a restart re-reads it from SessionStore).
 func (s *Service) DropSessionEngineForTest(id session.SessionID) {
 	s.mu.Lock()
 	delete(s.sessionEngines, id)
-	delete(s.sessionWorkspaces, id)
+	delete(s.sessionEnvironments, id)
 	s.mu.Unlock()
 }
 

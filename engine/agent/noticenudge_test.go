@@ -14,7 +14,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -97,7 +96,7 @@ func TestBackgroundNoticeInjectedAtNextBoundary(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	// EXACT notice text: ids + stop labels only, one message (A2/A9). Exact
@@ -159,7 +158,7 @@ func TestBackgroundNoticeSkipsDeliveredResult(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
 		// Release the child only once the COLLECTING wait is dispatched, so the
@@ -207,7 +206,7 @@ func TestBackgroundPendingNudgeOneMoreTurn(t *testing.T) {
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
 		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p3" {
@@ -270,7 +269,7 @@ func TestBackgroundPendingNudgeIgnoredThenCancelledAtRunEnd(t *testing.T) {
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	if got := lastResult(t, evs); got.Stop != session.StopEndTurn {
@@ -311,7 +310,7 @@ func TestBackgroundPendingNudgeAbsentWithoutLiveChildren(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, &probeTool{})})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	if got := lastResult(t, evs); got.Stop != session.StopEndTurn {
@@ -358,7 +357,7 @@ func TestBackgroundPendingNudgeSkippedOnBudget(t *testing.T) {
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat, MaxRunTokens: 10})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	if got := lastResult(t, evs); got.Stop != session.StopBudget {
@@ -402,7 +401,7 @@ func TestBackgroundPendingNudgeSkippedOnCancel(t *testing.T) {
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: never})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	go func() {
 		<-gate.started // the background child is genuinely mid-flight
 		r.Cancel()
@@ -453,7 +452,7 @@ func TestBackgroundPendingNudgeSkippedOnErrorStopWithText(t *testing.T) {
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	if got := lastResult(t, evs); got.Stop != session.StopError {
@@ -525,7 +524,7 @@ func TestBackgroundNoticeDurableAcrossSave(t *testing.T) {
 	spy := &noticeSpyStore{inner: memstore.New()}
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool()), Store: spy})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	drainObserving(t, r, nil)
 
 	spy.mu.Lock()
@@ -569,7 +568,7 @@ func TestBackgroundNudgeRespectsMaxTurns(t *testing.T) {
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
 	sess := newSession(t, session.Limits{MaxTurns: 2})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	if got := lastResult(t, evs); got.Stop != session.StopMaxTurns {
@@ -618,7 +617,7 @@ func TestNoProgressPrecedesBackgroundPendingNudge(t *testing.T) {
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	noProgIdx := userMessagesContaining(sess.Conversation.Messages, "Make concrete progress on the task")
@@ -662,7 +661,7 @@ func TestNoProgressGiveUpDoesNotBackgroundNudge(t *testing.T) {
 	// Nudging disabled: the empty turn gives up immediately with StopNoProgress.
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat, MaxNoProgressNudges: -1})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	if got := lastResult(t, evs); got.Stop != session.StopNoProgress {

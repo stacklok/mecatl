@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -34,7 +33,7 @@ func (*bgGateTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Gate", Description: "parks until released", Schema: emptyObjSchema}
 }
 func (*bgGateTool) ReadOnly() bool { return true }
-func (g *bgGateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (g *bgGateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	g.once.Do(func() { close(g.started) })
 	select {
 	case <-g.release:
@@ -61,7 +60,7 @@ func (*probeTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Probe", Description: "returns a canned probe result", Schema: emptyObjSchema}
 }
 func (*probeTool) ReadOnly() bool { return true }
-func (p *probeTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (p *probeTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	out := p.out
 	if out == "" {
 		out = "probe-ok"
@@ -80,7 +79,7 @@ func (*awaitSignalTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "AwaitChild", Description: "parks until the child signals", Schema: emptyObjSchema}
 }
 func (*awaitSignalTool) ReadOnly() bool { return true }
-func (a *awaitSignalTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (a *awaitSignalTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	select {
 	case <-a.ch:
 		return session.NewToolResult(in.ID, "child parked"), nil
@@ -124,7 +123,7 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool(), &probeTool{})})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawBackgroundStart bool
 	var sawEnd bool
@@ -228,7 +227,7 @@ func TestBackgroundSubagentAlreadyDelivered(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
@@ -266,7 +265,7 @@ func TestSubagentStatusPollBeforeDone(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
 		// Release the child only AFTER the roster poll (p2) has produced its result,
@@ -323,7 +322,7 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: gate.started})
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	// The run completed CLEANLY despite the live child (cancelled at end, not an
@@ -367,7 +366,7 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
 	sess2 := session.New("s2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r2 := e2.Run(context.Background(), sess2, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r2 := e2.Run(context.Background(), sess2, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs2 := drainObserving(t, r2, nil)
 	resumed := resultByCallID(evs2)["q1"]
 	if resumed == nil || resumed.IsError || !strings.Contains(resumed.Content, "resumed fine") {
@@ -395,7 +394,7 @@ func TestBackgroundChildSurfacedAskAnsweredMidRun(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var surfaced bool
 	evs := drainObserving(t, r, func(ev session.Event) {
@@ -442,7 +441,7 @@ func TestBackgroundChildCancelledWhileParkedOnAsk(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var retracts []string
 	evs := drainObserving(t, r, func(ev session.Event) {
@@ -503,7 +502,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool(), &awaitSignalTool{ch: askSeen})
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: cat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var askID string
 	var askOnce sync.Once
@@ -564,7 +563,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
 	sess2 := session.New("s2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	r2 := e2.Run(context.Background(), sess2, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r2 := e2.Run(context.Background(), sess2, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs2 := drainObserving(t, r2, nil)
 	resumed := resultByCallID(evs2)["q1"]
 	if resumed == nil || resumed.IsError || !strings.Contains(resumed.Content, "child resumed fine") {
@@ -595,7 +594,7 @@ func TestBackgroundGateFullFailFast(t *testing.T) {
 		mockllm.TextTurn("parent really done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
@@ -644,7 +643,7 @@ func TestBackgroundStructuredOutput(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	collected := resultByCallID(evs)["p2"]
@@ -683,7 +682,7 @@ func TestCompactionDuringLiveBackgroundChild(t *testing.T) {
 		ContextWindow: func() int { return 200 }, // threshold 160 tokens ≈ 640 chars: trips after one big probe
 	})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var sawCompaction bool
 	evs := drainObserving(t, r, func(ev session.Event) {
@@ -726,7 +725,7 @@ func TestSubagentStatusWaitRespectsRunCancel(t *testing.T) {
 		mockllm.TextTurn("never reached"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainObserving(t, r, func(ev session.Event) {
 		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p2" {
@@ -759,7 +758,7 @@ func TestBackgroundComposesWithResume(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 	results := resultByCallID(evs)
 
@@ -778,7 +777,7 @@ func TestBackgroundComposesWithResume(t *testing.T) {
 func TestSubagentBackgroundWithoutRegistryErrors(t *testing.T) {
 	task := agent.NewSubagentTool(childEngineWith(mockllm.New(mockllm.TextTurn("x")), catalogWith(t)))
 	res, err := task.Execute(context.Background(),
-		toolCall("p1", "Subagent", `{"prompt":"x","background":true}`), memfs.NewWorkspace("/ws"))
+		toolCall("p1", "Subagent", `{"prompt":"x","background":true}`), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("transport error: %v", err)
 	}
@@ -814,7 +813,7 @@ func TestBackgroundSubagentFailureCarriesCause(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	// (a) The OBSERVABILITY channel: exactly one subagent.end, carrying the stop AND the why.
@@ -872,7 +871,7 @@ func TestBackgroundSubagentFailureAdvertisesResume(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
 	collected := resultByCallID(evs)["p2"]

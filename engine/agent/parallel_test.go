@@ -68,7 +68,7 @@ func (p *branchProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.
 	}, nil
 }
 
-// memForker is a test tool.WorkspaceForker: each Fork returns a fresh, distinct
+// memForker is a test tool.EnvironmentForker: each Fork returns a fresh, distinct
 // in-memory workspace (isolated by construction — memfs stores are independent)
 // and a cleanup that records it ran. It tracks how many forks were created and
 // how many were cleaned up.
@@ -80,14 +80,14 @@ type memForker struct {
 	forkSeq     int
 }
 
-func (m *memForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+func (m *memForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
 	m.mu.Lock()
 	m.forkSeq++
 	seq := m.forkSeq
 	m.forks++
 	m.mu.Unlock()
 	if m.failOnLabel != "" && label == m.failOnLabel {
-		return nil, nil, "", fmt.Errorf("memForker: scripted failure on %s", label)
+		return tool.Environment{}, nil, "", fmt.Errorf("memForker: scripted failure on %s", label)
 	}
 	ws := memfs.NewWorkspace(fmt.Sprintf("/fork/%s/%d", label, seq))
 	cleanup := func() error {
@@ -96,7 +96,7 @@ func (m *memForker) Fork(_ context.Context, _ tool.Workspace, label string) (too
 		m.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, "", nil
+	return agent.ForkEnv(ws), cleanup, "", nil
 }
 
 func (m *memForker) counts() (forks, cleaned int) {
@@ -129,7 +129,7 @@ func TestParallelJoinsAllBranches(t *testing.T) {
 		mockllm.TextTurn("parent joined the branches"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	var parentResults []*session.ToolResult
@@ -197,7 +197,7 @@ func TestParallelFailingBranchDoesNotKillOthers(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drain(r)
 
 	res := firstToolResult(t, evs)
@@ -258,7 +258,7 @@ func TestParallelRunsInParallel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 		drain(r)
 		close(done)
 	}()
@@ -306,7 +306,7 @@ func TestParallelConcurrencyCapBounded(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	drain(r)
 
 	mu.Lock()
@@ -326,7 +326,7 @@ func TestParallelFanOutCapEnforced(t *testing.T) {
 
 	tasks, _ := json.Marshal(map[string]any{"tasks": []string{"a", "b", "c"}})
 	res, err := fork.Execute(context.Background(),
-		session.NewToolCall("c1", "Parallel", tasks), memfs.NewWorkspace("/ws"))
+		session.NewToolCall("c1", "Parallel", tasks), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unexpected harness error: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestParallelRejectsEmptyTasks(t *testing.T) {
 
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel", json.RawMessage(`{"tasks":["  ",""]}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unexpected harness error: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestParallelParentCancelPropagates(t *testing.T) {
 
 	done := make(chan []session.Event, 1)
 	go func() {
-		r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+		r := e.Run(ctx, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 		done <- drain(r)
 	}()
 
@@ -430,9 +430,9 @@ func firstToolResult(t *testing.T, evs []session.Event) *session.ToolResult {
 	return nil
 }
 
-// fakeMerger is a tool.ForkMerger test double: it records every Merge call and
-// can be scripted to return a conflict error (errOnCall == the 1-based call
-// index) to exercise the conflict-surfacing path.
+// fakeMerger is a tool.EnvironmentMerger test double: it records every Merge
+// call and can be scripted to return a conflict error (errOnCall == the 1-based
+// call index) to exercise the conflict-surfacing path.
 type fakeMerger struct {
 	mu        sync.Mutex
 	calls     []fakeMergeCall
@@ -440,13 +440,19 @@ type fakeMerger struct {
 }
 
 type fakeMergeCall struct {
+	ChildRef   session.EnvironmentRef
+	ParentRef  session.EnvironmentRef
 	ForkRoot   string
 	ParentRoot string
 }
 
-func (m *fakeMerger) Merge(_ context.Context, forkRoot string, parentWS tool.Workspace) error {
+func (m *fakeMerger) Merge(_ context.Context, child, parent tool.Environment) error {
+	forkRoot := child.Workspace().Root()
 	m.mu.Lock()
-	m.calls = append(m.calls, fakeMergeCall{ForkRoot: forkRoot, ParentRoot: parentWS.Root()})
+	m.calls = append(m.calls, fakeMergeCall{
+		ChildRef: child.Ref(), ParentRef: parent.Ref(),
+		ForkRoot: forkRoot, ParentRoot: parent.Workspace().Root(),
+	})
 	n := len(m.calls)
 	m.mu.Unlock()
 	if m.errOnCall > 0 && n == m.errOnCall {

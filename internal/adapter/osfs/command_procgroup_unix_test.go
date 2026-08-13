@@ -50,7 +50,7 @@ func TestCommandRunnerCancelKillsProcessGroup(t *testing.T) {
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		_, err := r.Run(ctx, "sleep 30 & echo $! > "+pidFile+"; wait", "")
+		_, err := r.Run(ctx, "sleep 30 & echo $! > "+pidFile+"; wait")
 		done <- err
 	}()
 
@@ -98,7 +98,7 @@ func TestCommandRunnerTimeoutKillsProcessGroup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := r.Run(ctx, "sleep 30 & echo $! > "+pidFile+"; wait", "")
+		_, err := r.Run(ctx, "sleep 30 & echo $! > "+pidFile+"; wait")
 		done <- err
 	}()
 

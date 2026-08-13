@@ -76,9 +76,9 @@ var (
 	// from team.ErrMemberExists at the aggregate layer). It is a bad-request error.
 	ErrMemberAlreadyAdded = errors.New("agent: member already added")
 	// ErrNoForker is returned by AddMember when a Mutating member is requested but
-	// no WorkspaceForker is configured. This is a server MISCONFIGURATION (the
+	// no EnvironmentForker is configured. This is a server MISCONFIGURATION (the
 	// composition root did not wire a forker), not a bad client request.
-	ErrNoForker = errors.New("agent: Mutating member requires a configured WorkspaceForker")
+	ErrNoForker = errors.New("agent: Mutating member requires a configured EnvironmentForker")
 	// ErrForkWorkspace wraps a failure to fork a Mutating member's workspace. It is
 	// an I/O / internal fault.
 	ErrForkWorkspace = errors.New("agent: fork member workspace")
@@ -98,7 +98,7 @@ var (
 	// should-never-happen server MIS-WIRE assertion: the composition layer only sets
 	// IsolateReadOnly when the read-only forker is wired, so this guards the two from
 	// drifting apart.
-	ErrReadOnlyShellNoForker = errors.New("agent: read-only-isolated member requires a configured read-only WorkspaceForker")
+	ErrReadOnlyShellNoForker = errors.New("agent: read-only-isolated member requires a configured read-only EnvironmentForker")
 )
 
 // defaultMaxRounds bounds a team Run so a non-converging team cannot loop forever.
@@ -274,15 +274,15 @@ type MemberEngine func(spec MemberSpec, routedModel string) MemberBuild
 // members with AddMember (before Run), then call Run.
 type Supervisor struct {
 	team   *team.Team
-	base   tool.Workspace
-	forker tool.WorkspaceForker
+	base   tool.Environment
+	forker tool.EnvironmentForker
 	// roForker forks a read-only-isolated member's workspace as a cheap git WORKTREE
 	// (the forker's default mode — shares the base repo's `.git` ⇒ full history). It
 	// is distinct from forker (force-copy, for Mutating members): a worktree is the
 	// right isolation for an inspect-only member that may run git but never edits.
 	// Nil when no read-only forker is wired (then read-only members base-share with
 	// no shell).
-	roForker tool.WorkspaceForker
+	roForker tool.EnvironmentForker
 	// sharedBaseWS, when non-nil, re-views the base workspace for a BASE-SHARING
 	// read-only member (the fallback tier above — no shell). Without it the
 	// base-share fallback returns s.base VERBATIM, so a base built with
@@ -365,7 +365,7 @@ type Supervisor struct {
 type memberRT struct {
 	spec    MemberSpec
 	engine  *Engine
-	ws      tool.Workspace
+	env     tool.Environment
 	cleanup func() error
 	sess    *session.Session
 	// isolated reports that this member runs in its OWN isolated workspace (a Mutating
@@ -467,7 +467,7 @@ type SupervisorOption func(*Supervisor)
 
 // WithForker injects the workspace-isolation seam used to fork a Mutating member's
 // workspace (force-copy: own `.git`). It is required only if any member is Mutating.
-func WithForker(f tool.WorkspaceForker) SupervisorOption {
+func WithForker(f tool.EnvironmentForker) SupervisorOption {
 	return func(s *Supervisor) { s.forker = f }
 }
 
@@ -477,7 +477,7 @@ func WithForker(f tool.WorkspaceForker) SupervisorOption {
 // inspect-only member gets full history cheaply. It is required only if the factory
 // marks any read-only member IsolateReadOnly; without it such a member trips
 // ErrReadOnlyShellNoForker.
-func WithReadOnlyForker(f tool.WorkspaceForker) SupervisorOption {
+func WithReadOnlyForker(f tool.EnvironmentForker) SupervisorOption {
 	return func(s *Supervisor) { s.roForker = f }
 }
 
@@ -660,11 +660,11 @@ func WithMemberSessionPrefix(p string) SupervisorOption {
 // NewSupervisor constructs a team supervisor over a shared team, a base workspace,
 // and a per-member engine factory. team, base, and factory must be non-nil;
 // NewSupervisor panics otherwise (a composition-root programming error).
-func NewSupervisor(t *team.Team, base tool.Workspace, factory MemberEngine, opts ...SupervisorOption) *Supervisor {
+func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, opts ...SupervisorOption) *Supervisor {
 	if t == nil {
 		panic("agent: NewSupervisor requires a non-nil team")
 	}
-	if base == nil {
+	if base.Workspace() == nil {
 		panic("agent: NewSupervisor requires a non-nil base workspace")
 	}
 	if factory == nil {
@@ -794,7 +794,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
-	sess := session.New(s.sessionID(spec.Name), mode, ws.Root(), limits, build.Engine.now())
+	sess := session.New(s.sessionID(spec.Name), mode, ws.Workspace().Root(), limits, build.Engine.now())
 	// The member is attributed to the PARENT session's owner (ADR 0100 decision 4).
 	s.caps.inheritOwner(sess)
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)
@@ -817,7 +817,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// done means de-scheduled (see childFamilyTeamMember's caution).
 	s.caps.startChildRun(sess.ID)
 
-	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, ws: ws, cleanup: cleanup, sess: sess,
+	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, env: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
 		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason}
 	s.order = append(s.order, spec.Name)
@@ -924,11 +924,11 @@ func (s *Supervisor) CancelMember(name string) bool {
 // required-but-missing forker returns the matching sentinel (ErrNoForker /
 // ErrReadOnlyShellNoForker); a fork I/O failure wraps ErrForkWorkspace. The caller
 // owns roster/Close teardown on error.
-func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec, build MemberBuild) (tool.Workspace, func() error, error) {
+func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec, build MemberBuild) (tool.Environment, func() error, error) {
 	switch {
 	case spec.Mutating:
 		if s.forker == nil {
-			return nil, nil, fmt.Errorf("%w (member %q)", ErrNoForker, spec.Name)
+			return tool.Environment{}, nil, fmt.Errorf("%w (member %q)", ErrNoForker, spec.Name)
 		}
 		return forkOrWrap(ctx, s.forker, s.base, spec.Name)
 	case build.IsolateReadOnly:
@@ -936,7 +936,7 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 		// should-never-happen mis-wire (composition only sets IsolateReadOnly when the
 		// forker is wired), so it is a server misconfiguration, not a bad request.
 		if s.roForker == nil {
-			return nil, nil, fmt.Errorf("%w (member %q)", ErrReadOnlyShellNoForker, spec.Name)
+			return tool.Environment{}, nil, fmt.Errorf("%w (member %q)", ErrReadOnlyShellNoForker, spec.Name)
 		}
 		return forkOrWrap(ctx, s.roForker, s.base, spec.Name)
 	default:
@@ -945,13 +945,30 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 		// a relaxed base must never hand the shell-less member the main
 		// session's out-of-root reach (the path-escape-posture Scenario 5
 		// boundary). A nil view (or no wired re-view) keeps the historical
-		// verbatim base.
+		// verbatim base. The member Environment carries a NIL runner as
+		// defense-in-depth (issue #462 review): a base-sharing read-only
+		// member has NO shell — its catalog has no Bash (the composition root
+		// gates Bash registration on a runner being wired for the member), so
+		// a nil runner here is belt-and-suspenders that a future mis-wire
+		// cannot hand the member the PARENT's shell via the base Environment.
+		// It MUST NOT reuse s.base.CommandRunner() (the parent runner), even
+		// though the base Environment may carry one.
 		if s.sharedBaseWS != nil {
-			if memberWS := s.sharedBaseWS(s.base.Root()); memberWS != nil {
-				return memberWS, nil, nil
+			if memberWS := s.sharedBaseWS(s.base.Workspace().Root()); memberWS != nil {
+				memberEnv, err := tool.NewEnvironment(s.base.Ref(), memberWS, nil)
+				if err != nil {
+					return tool.Environment{}, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, spec.Name, err)
+				}
+				return memberEnv, nil, nil
 			}
 		}
-		return s.base, nil, nil
+		// No re-view: return a fresh Environment over the base workspace with
+		// a nil runner — NOT s.base verbatim, which may carry the parent runner.
+		memberEnv, err := tool.NewEnvironment(s.base.Ref(), s.base.Workspace(), nil)
+		if err != nil {
+			return tool.Environment{}, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, spec.Name, err)
+		}
+		return memberEnv, nil, nil
 	}
 }
 
@@ -964,10 +981,10 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 // it through the member-engine prompt assembly is a separate, intentional follow-up,
 // not a silent omission. The mutating-member forker (s.forker) is force-copy and never
 // degrades, so for it the discard is correct unconditionally.
-func forkOrWrap(ctx context.Context, f tool.WorkspaceForker, base tool.Workspace, name string) (tool.Workspace, func() error, error) {
+func forkOrWrap(ctx context.Context, f tool.EnvironmentForker, base tool.Environment, name string) (tool.Environment, func() error, error) {
 	child, cl, _, err := f.Fork(ctx, base, name)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, name, err)
+		return tool.Environment{}, nil, fmt.Errorf("%w for %q: %w", ErrForkWorkspace, name, err)
 	}
 	return child, cl, nil
 }
@@ -1471,7 +1488,7 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		stopWatch := context.AfterFunc(m.ctx, cancelDrive)
 		defer stopWatch()
 	}
-	run := m.engine.Run(driveCtx, m.sess, m.ws, RunRequest{Text: prompt})
+	run := m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
 	posture := childPosture{isolated: m.isolated, caps: s.caps, role: m.spec.Name,
 		// childID is the member SESSION id (MemberSessionID — NOT the member name role
 		// carries), the uniform ask-ownership/cancel handle (A6): a CancelChild for

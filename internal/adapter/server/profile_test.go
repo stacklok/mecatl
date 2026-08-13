@@ -166,8 +166,8 @@ func TestHTTPCreateSessionProfileRoundTrip(t *testing.T) {
 	}
 }
 
-// TestNoFSSessionUsesWorkspaceOverride is the SetSessionWorkspace mutation
-// guard (issue #55): a no-fs session's run must resolve its workspace from the
+// TestNoFSSessionUsesWorkspaceOverride is the create-time environment-override
+// guard (issue #55): a no-fs session's run must resolve its environment from the
 // per-session override registered AT CREATE TIME — the shared Workspaces
 // factory must NEVER be consulted for it (dropping the override registration in
 // createSession hands "" to the osfs factory, which would MkdirAll/OpenRoot the

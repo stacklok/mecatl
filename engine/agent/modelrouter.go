@@ -187,7 +187,7 @@ func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) 
 	// A tool-less in-memory session under the zero (headless) child posture: the
 	// classifier scores text and calls no tools, so judgeWorkspace{} keeps it
 	// isolated and its own (non-existent) asks auto-deny — no nesting, no surfacing.
-	run := engine.Run(ctx, sess, judgeWorkspace{}, RunRequest{Text: buildModelRoutePrompt(req)})
+	run := engine.Run(ctx, sess, judgeEnvironment, RunRequest{Text: buildModelRoutePrompt(req)})
 	final, stop := drainChild(run, childPosture{role: "model-router"})
 	switch stop {
 	case session.StopError:

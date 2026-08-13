@@ -72,7 +72,7 @@ func RunScenario(ctx context.Context, provider port.LLMProvider, model string) (
 		time.Now(),
 	)
 
-	run := engine.Run(ctx, sess, ws, agent.RunRequest{Text: "Read greeting.txt and then save a note, then summarize."})
+	run := engine.Run(ctx, sess, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: demoWorkspaceRoot}, ws, nil), agent.RunRequest{Text: "Read greeting.txt and then save a note, then summarize."})
 
 	var events []session.Event
 	for ev := range run.Events() {
@@ -207,7 +207,8 @@ func RunTeamScenario(ctx context.Context) (agent.TeamOutcome, error) {
 		})}
 	}
 
-	sup := agent.NewSupervisor(tm, base, factory,
+	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: demoWorkspaceRoot}, base, nil)
+	sup := agent.NewSupervisor(tm, baseEnv, factory,
 		agent.WithTeamGoal("verify the demo greeting file is intact"),
 		agent.WithMemberStore(memstore.New()),
 		agent.WithMemberSessionPrefix("team-demo"),
@@ -292,7 +293,8 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 		session.Limits{MaxTurns: 8, MaxToolCalls: 16, MaxConsecutiveFailures: 3},
 		time.Now(),
 	)
-	run := engine.Run(ctx, sess, memfs.NewWorkspace(demoWorkspaceRoot),
+	bgWS := memfs.NewWorkspace(demoWorkspaceRoot)
+	run := engine.Run(ctx, sess, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: demoWorkspaceRoot}, bgWS, nil),
 		agent.RunRequest{Text: "Verify the greeting in the background, then report."})
 
 	var events []session.Event

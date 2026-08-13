@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -36,7 +35,7 @@ func TestE2E_SurfacedAskAllowed(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainApproving(r, session.VerdictAllowOnce, nil)
 
@@ -78,7 +77,7 @@ func TestE2E_SurfacedChildAskCarriesChildGatedCallID(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var surfaced *session.PendingAsk
 	drainApproving(r, session.VerdictAllowOnce, func(ev session.Event) {
@@ -112,7 +111,7 @@ func TestE2E_SurfacedAskDenied(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	evs := drainApproving(r, session.VerdictDeny, nil)
 
@@ -147,7 +146,7 @@ func TestE2E_HeadlessAutoDeny(t *testing.T) {
 	)
 	// newEngine ⇒ Interactive=false (headless).
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task), Diagnostics: diag})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -185,7 +184,7 @@ func TestE2E_AdversarialSubstitutionHidesDestructiveStillDenied(t *testing.T) {
 	)
 	// Headless: no surface, so A2 is the ONLY thing that could clear it — and it must not.
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	_ = drainWithTimeout(t, r)
 
 	if got := bash.ran(); len(got) != 0 {
@@ -236,7 +235,7 @@ func TestE2E_SurfacedTeamMemberAskDoesNotBlockPeers(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, tt)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	// T6: pin CONCURRENCY, not just convergence. We HOLD the lead's surfaced ask until the
 	// WORKER has produced one of its own events, then approve. If the supervisor drained
@@ -383,7 +382,7 @@ func TestE2E_TwoConcurrentSurfacedAsksBothResolved(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, tt)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	// HOLD every surfaced ask until BOTH have been observed; only then approve. Until
 	// the second ask arrives neither is answered, so when the threshold trips both
@@ -453,7 +452,7 @@ func TestE2E_HeadlessTeamMemberDeniedResultIsAccurate(t *testing.T) {
 	)
 	// Headless parent (newEngine ⇒ Interactive=false) so the member ask auto-denies.
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, tt)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
 	var sawAccurate, sawMisleading bool

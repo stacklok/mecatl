@@ -75,7 +75,7 @@ func call(t *testing.T, m map[string]any) session.ToolCall {
 // exec runs the tool and fails on a harness-level error.
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall) session.ToolResult {
 	t.Helper()
-	res, err := tl.Execute(context.Background(), in, nil)
+	res, err := tl.Execute(context.Background(), in, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: unexpected harness error: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestSourceActivatorFailureIsModelAddressable(t *testing.T) {
 	mat := NewAssetMaterializer(src, t.TempDir())
 	tl := NewTool(metas, NewSourceActivator(src, mat))
 
-	res, err := tl.Execute(context.Background(), call(t, map[string]any{"name": "evil"}), nil)
+	res, err := tl.Execute(context.Background(), call(t, map[string]any{"name": "evil"}), tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute must not surface a harness error, got %v", err)
 	}

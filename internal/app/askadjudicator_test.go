@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
@@ -247,7 +246,7 @@ func (*appFakeBash) Spec() tool.ToolSpec {
 		Schema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`)}
 }
 func (*appFakeBash) ReadOnly() bool { return false }
-func (b *appFakeBash) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (b *appFakeBash) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args struct {
 		Command string `json:"command"`
 	}
@@ -263,12 +262,12 @@ func (b *appFakeBash) ran() []string {
 	return append([]string(nil), b.executed...)
 }
 
-// appFakeForker hands out in-memory fork workspaces (the engine test fixture's
+// appFakeForker hands out in-memory fork environments (the engine test fixture's
 // shape) so a read-only member can carry Bash.
 type appFakeForker struct{}
 
-func (appFakeForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
-	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, "", nil
+func (appFakeForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
+	return memEnvironment("/fork/" + label), func() error { return nil }, "", nil
 }
 
 // TestAskReviewerE2EHeadlessTeamAllow drives the WHOLE wired chain offline: a
@@ -324,7 +323,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 	engine := agent.NewEngine(deps) // headless: Interactive false
 
 	sess := session.New("e2e-ask-reviewer", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	run := engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "inspect the tree"})
+	run := engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "inspect the tree"})
 
 	deadline := time.After(15 * time.Second)
 	var last *session.ResultPayload

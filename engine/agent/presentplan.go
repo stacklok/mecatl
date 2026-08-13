@@ -94,7 +94,7 @@ func (*presentPlanTool) PlanOnlyTool() {}
 // PresentPlan call by name and surfaces it as an operator ask before reaching here;
 // Execute exists only so a misrouted call (e.g. PresentPlan invoked outside plan mode)
 // produces an honest model-addressable result rather than a silent no-op.
-func (*presentPlanTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (*presentPlanTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(call.ID, "PresentPlan: awaiting operator approval."), nil
 }
 

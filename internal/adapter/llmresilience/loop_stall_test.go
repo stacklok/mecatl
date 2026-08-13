@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
 )
 
@@ -56,7 +57,9 @@ func TestLoopMidStreamStallTerminatesAsError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	r := e.Run(ctx, newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	r := e.Run(ctx, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	type drained struct {
 		evs []session.Event

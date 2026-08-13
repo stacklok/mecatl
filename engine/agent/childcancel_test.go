@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -32,7 +31,7 @@ func (*parkingTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Wait", Description: "parks until cancelled", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*parkingTool) ReadOnly() bool { return true }
-func (p *parkingTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (p *parkingTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	p.once.Do(func() { close(p.started) })
 	<-ctx.Done()
 	return session.NewToolResult(in.ID, "interrupted"), nil
@@ -101,7 +100,7 @@ func TestCancelChildMidDrive(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelOK bool
@@ -165,7 +164,7 @@ func TestCancelChildWhileParkedOnAsk(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	type askInfo struct{ askID, childID string }
 	askCh := make(chan askInfo, 1)
@@ -247,7 +246,7 @@ func TestChildTimeoutRetractsSurfacedAskMidRun(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var askID string
 	var retracts []string
@@ -313,7 +312,7 @@ func TestCancelChildAfterDoneAndUnknownNoOp(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainWithTimeout(t, r)
 
 	if got := lastResult(t, evs); got.Stop == session.StopError {
@@ -350,7 +349,7 @@ func TestCancelChildPersistResumeRoundTrip(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	go func() {
@@ -411,7 +410,7 @@ func TestCancelChildNaturalCompletionRace(t *testing.T) {
 			mockllm.TextTurn("parent: done"),
 		)
 		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-		r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+		r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 		started := make(chan struct{}, 1)
 		done := make(chan struct{})
@@ -476,7 +475,7 @@ func TestParentRunCancelNoClientNoteOnStream(t *testing.T) {
 		mockllm.TextTurn("parent: never reached"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	go func() {
 		<-park.started
@@ -526,7 +525,7 @@ func TestResumeWithinRunReRegistersAndIsCancellable(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var cancelOK bool
 	var cancelDone sync.WaitGroup
@@ -596,7 +595,7 @@ func TestStaleVerdictAfterCancelResumeDoesNotResolveNewAsk(t *testing.T) {
 		mockllm.TextTurn("parent: done"),
 	)
 	e := interactiveEngine(t, agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var oldAskID, newAskID string
 	asks := 0

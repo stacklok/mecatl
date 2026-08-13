@@ -79,7 +79,8 @@ func runTeamFanout(ctx context.Context) agent.TeamOutcome {
 		return agent.MemberBuild{Engine: buildEngine(agent.Deps{LLM: prov, Catalog: cat})}
 	}
 
-	sup := agent.NewSupervisor(tm, base, factory,
+	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: scenarioWorkspaceRoot}, base, nil)
+	sup := agent.NewSupervisor(tm, baseEnv, factory,
 		agent.WithTeamGoal("verify every slice of the codebase reads cleanly"),
 		agent.WithMemberStore(memstore.New()),
 		agent.WithMemberSessionPrefix("perf-team"),

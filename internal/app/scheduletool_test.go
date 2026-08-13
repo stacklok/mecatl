@@ -53,7 +53,7 @@ func execSchedule(t *testing.T, cat *tool.Catalog, argsJSON string) session.Tool
 	if !ok {
 		t.Fatalf("Schedule tool not in the catalog")
 	}
-	res, err := tl.Execute(context.Background(), scheduleCall(argsJSON), memfs.NewWorkspace("/ws"))
+	res, err := tl.Execute(context.Background(), scheduleCall(argsJSON), memEnvironment("/ws"))
 	if err != nil {
 		t.Fatalf("Execute returned a harness-level error (want a model-addressable ToolResult): %v", err)
 	}
@@ -68,7 +68,7 @@ func execScheduleQuery(t *testing.T, cat *tool.Catalog, argsJSON string) session
 	if !ok {
 		t.Fatalf("ScheduleQuery tool not in the catalog")
 	}
-	res, err := tl.Execute(context.Background(), scheduleQueryCall(argsJSON), memfs.NewWorkspace("/ws"))
+	res, err := tl.Execute(context.Background(), scheduleQueryCall(argsJSON), memEnvironment("/ws"))
 	if err != nil {
 		t.Fatalf("Execute returned a harness-level error (want a model-addressable ToolResult): %v", err)
 	}
@@ -452,7 +452,7 @@ func TestScheduleTool_ReadOnlyPartition(t *testing.T) {
 	// The query tool carries ONLY the read verbs — a mutating verb must be a
 	// model-addressable unknown-verb error, never a mutation.
 	for _, mut := range []string{"create", "pause", "resume", "delete", "fire"} {
-		res, err := query.Execute(context.Background(), scheduleCall(`{"verb":"`+mut+`","name":"x"}`), memfs.NewWorkspace("/ws"))
+		res, err := query.Execute(context.Background(), scheduleCall(`{"verb":"`+mut+`","name":"x"}`), memEnvironment("/ws"))
 		if err != nil {
 			t.Fatalf("query tool mutating verb %q returned a harness error: %v", mut, err)
 		}

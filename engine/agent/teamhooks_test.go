@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -144,7 +143,7 @@ func TestSupervisorFiresTeammateIdle(t *testing.T) {
 	tm := team.New("t")
 	providers := map[string]*mockllm.Provider{"solo": mockllm.New(mockllm.TextTurn("done"))}
 	hooks := &teamHooks{}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), memberFactory(t, tm, providers),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), memberFactory(t, tm, providers),
 		agent.WithTeamHooks(hooks), agent.WithMaxRounds(5))
 
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "solo", InitialPrompt: "do it"}); err != nil {

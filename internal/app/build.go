@@ -1484,10 +1484,21 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		Store:            store,
 		Workspaces:       osfsWorkspaceFactory(cfg.diag(), assets.skillReadRoots),
 		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
-		Worktrees:        buildWorktreeLister(cfg),
-		DefaultLimits:    defaultLimits(),
-		MCPProvider:      mcpProvider,
-		MCPSources:       mcpInventory,
+		// CommandRunner (issue #462): the MAIN session's bound runner — the
+		// Environment seam hands it to Tool.Execute so Bash observes the session
+		// namespace. nil when Bash is disabled (the catalog omits Bash and the
+		// Environment's Bash surfaces ErrNoShell). CommandRunnerFactory builds a
+		// runner bound to a DIFFERENT session root (a worktree binding) with the
+		// SAME env-scrub the main runner gets, so a worktree session's Bash
+		// observes its own root, not the launch root.
+		CommandRunner: buildCommandRunner(cfg),
+		CommandRunnerFactory: func(root string) tool.CommandRunner {
+			return buildCommandRunnerForRoot(cfg, root)
+		},
+		Worktrees:     buildWorktreeLister(cfg),
+		DefaultLimits: defaultLimits(),
+		MCPProvider:   mcpProvider,
+		MCPSources:    mcpInventory,
 		// Schedule manager (ADR 0076): the pre-Service store-shaped schedule
 		// seam, constructed by buildEngine from the store (the eager bind —
 		// the SAME manager the shared catalog's Schedule tool factory
@@ -2076,6 +2087,18 @@ func sessionEngineFactory(
 		// has no tool, so the note is withheld (the model is never told about a
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
+		// front there is no filesystem — and stop the prompt <env> claiming the
+		// SERVER's cwd/shell/git state, none of which this session can touch. The
+		// shell-less default-FS posture is NOT handled here: it is truthed per-request
+		// against the LIVE tool.Environment in engine/agent.buildRequest (issue #462
+		// review), so an ACP override or any shell-less Environment converges there
+		// regardless of the shared engine's catalog/prompt — baking it into the
+		// cache-stable Role here would duplicate that clause and disagree with an
+		// override that changes the capability mid-session.
+		if noFS {
+			deps.PromptConfig = applyNoFSPosture(deps.PromptConfig, noFSPostureNote)
+		}
 		// Guardrails (issue #27), RE-DERIVED per session so a FRESH per-session checker
 		// budget is built: decorate THIS session's main hooks with the LLM-backed
 		// content checker, over the session's resolved provider/model. OFF-by-default
@@ -2094,13 +2117,6 @@ func sessionEngineFactory(
 		// engine uses — the classifier compacts/counts on the session's provider, never a
 		// clone-and-swap. nil (the field stays nil) when the router is OFF.
 		deps.SubagentModelRouter = buildModelRouterTask(cfg, reg, utilityProvider, resolvedProviderID, resolvedModel)
-		if noFS {
-			// MODEL-VISIBLE POSTURE (mandatory discoverability, the #40 pattern):
-			// tell the model up front there is no filesystem — and stop the prompt
-			// <env> claiming the SERVER's cwd/shell/git state, none of which this
-			// session can touch.
-			deps.PromptConfig = applyNoFSPosture(deps.PromptConfig, noFSPostureNote)
-		}
 		return server.SessionEngineResult{
 			Engine:       agent.NewEngine(deps),
 			Capabilities: sessionCaps,
@@ -2850,6 +2866,15 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// a per-session engine; a store that backs no ScheduleStore withholds the
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+	// The shell-less default-FS posture is NOT baked into the shared engine's
+	// prompt here: it is truthed per-request against the LIVE tool.Environment in
+	// engine/agent.buildRequest (issue #462 review). The shared engine's
+	// catalog/prompt are built once from server config and may advertise Bash a
+	// per-run Environment override (ACP/editor, --no-bash) cannot serve; buildRequest
+	// drops the Bash spec and appends the shell-less clause to the volatile suffix
+	// when env.CommandRunner() == nil, so a no-Bash deployment AND an ACP override
+	// converge at the single capability-truth point. Baking it into the cache-stable
+	// Role here would duplicate that clause and disagree with an override.
 	// Fire-result delivery drain (ADR 0075): the loop's Step 2a drain reads
 	// pending fire-result notes for the running session off the durable queue.
 	// nil (no schedule-capable store) is the byte-identical no-delivery path.
@@ -4023,7 +4048,7 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 		// background jobs — is registered iff Bash is, both through the SAME
 		// registerCoreTools seam so the shared and per-session catalogs cannot
 		// drift on the pair.
-		cat.MustRegister(agent.NewBashTool(runner))
+		cat.MustRegister(agent.NewBashTool())
 		cat.MustRegister(agent.NewBashStatusTool())
 		if log {
 			cfg.diag().Log(context.Background(), port.LevelInfo, "Bash tool ENABLED", "shell", cfg.Shell, "cwd", cfg.Workspace)
@@ -4136,7 +4161,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	// enabled, mirroring forkReaper just above — the writable Subagent no longer
 	// merges (it writes the parent tree directly, ADR 0041), so Parallel is the sole
 	// consumer.
-	var autoMerger tool.ForkMerger
+	var autoMerger tool.EnvironmentMerger
 	if cfg.EnableParallel {
 		autoMerger = forker.NewSerializingMerger(forker.NewMerger())
 	}
@@ -4758,6 +4783,18 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 // against, rooted at the workspace. It returns nil when command execution is
 // disabled (NoBash, or an empty Shell), in which case Bash is not registered.
 func buildCommandRunner(cfg Config) tool.CommandRunner {
+	return buildCommandRunnerForRoot(cfg, cfg.Workspace)
+}
+
+// buildCommandRunnerForRoot is the ONE implementation of the no-bash/shell
+// gate + envscrub.Scrub(os.Environ()) + osfs constructor, parameterised by the
+// root the runner is bound to. buildCommandRunner (the main-session runner,
+// bound to cfg.Workspace) and Config.CommandRunnerFactory (a worktree-bound
+// session runner) both route through here, so the secret-scrubbing cannot
+// drift between the default-root and alternate-root paths (security review
+// "Finding B"). It returns nil when command execution is disabled
+// (NoBash or an empty Shell); on a construction error it WARNs and returns nil.
+func buildCommandRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	if cfg.NoBash || cfg.Shell == "" {
 		return nil
 	}
@@ -4771,9 +4808,9 @@ func buildCommandRunner(cfg Config) tool.CommandRunner {
 	// (gitenv) — the operator's own hooks/pager are honoured here, only the secrets
 	// are removed.
 	env := envscrub.Scrub(os.Environ())
-	runner, err := osfs.NewCommandRunnerShell(cfg.Workspace, cfg.Shell, osfs.WithCommandEnvList(env))
+	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, osfs.WithCommandEnvList(env))
 	if err != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build command runner; Bash tool disabled", "workspace", cfg.Workspace, "err", err)
+		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build command runner; Bash tool disabled", "workspace", root, "err", err)
 		return nil
 	}
 	return runner
@@ -4829,11 +4866,34 @@ func buildCommandRunner(cfg Config) tool.CommandRunner {
 // the repo's `.git`). The decision is NOT logged
 // here — this builder runs per session/per assembly; the build-once INFO is emitted
 // in logBuildConfigFacts.
+// sandboxedShellAvailable is the ONE gate for the SANDBOXED (read-only worktree)
+// child shell: Bash is enabled (not --no-bash, a non-empty shell) AND the workspace
+// is trusted (the operator vouches for the repo's `.git` — issue #40). It is the
+// boolean form of buildSandboxedCommandRunner's gate and the single expression every
+// child runner builder + matching Bash catalog registration gate consults, so the
+// trust-gated read-only shell availability cannot drift between the runner builder,
+// the per-child forker builder, and the catalog registration gate. A read-only
+// worktree child shares the base repo's `.git`, so the trust gate is load-bearing
+// (the fork-time checkout RCE vector); a nil sandboxed runner ⇒ no forker wired ⇒
+// the child degrades to Bash-less Read/Grep/Glob.
+func sandboxedShellAvailable(cfg Config) bool {
+	return !cfg.NoBash && cfg.Shell != "" && cfg.TrustProject
+}
+
+// forceCopyShellAvailable is the ONE gate for the FORCE-COPY (mutating fork) child
+// shell: Bash is enabled (not --no-bash, a non-empty shell), with NO trust gate —
+// the deliberate asymmetry (issue #40). A force-copy fork is created by a pure FS
+// copy with NO fork-time git invocation (the worktree-checkout RCE the sandboxed
+// gate closes cannot fire), so the trust gate does not apply; the run-time git over
+// the COPIED untrusted `.git` is the accepted main-session-parity residual. It is
+// the boolean form of buildForceCopyRunner's gate and the single expression every
+// force-copy child runner builder consults.
+func forceCopyShellAvailable(cfg Config) bool {
+	return !cfg.NoBash && cfg.Shell != ""
+}
+
 func buildSandboxedCommandRunner(cfg Config) tool.CommandRunner {
-	if cfg.NoBash || cfg.Shell == "" {
-		return nil
-	}
-	if !cfg.TrustProject {
+	if !sandboxedShellAvailable(cfg) {
 		return nil
 	}
 	return newHardenedCommandRunner(cfg)
@@ -4864,7 +4924,7 @@ func buildSandboxedCommandRunner(cfg Config) tool.CommandRunner {
 // children, which would auto-fire without the model or operator running anything.
 // nil when Bash is disabled.
 func buildForceCopyRunner(cfg Config) tool.CommandRunner {
-	if cfg.NoBash || cfg.Shell == "" {
+	if !forceCopyShellAvailable(cfg) {
 		return nil
 	}
 	return newHardenedCommandRunner(cfg)
@@ -4873,16 +4933,33 @@ func buildForceCopyRunner(cfg Config) tool.CommandRunner {
 // newHardenedCommandRunner constructs the env-scrubbed runner shared by
 // buildSandboxedCommandRunner and buildForceCopyRunner (see the former for the
 // hardening rationale). It assumes the caller already applied the NoBash/empty-shell
-// (and, where applicable, trust) gates.
+// (and, where applicable, trust) gates. The runner is bound to cfg.Workspace.
 func newHardenedCommandRunner(cfg Config) tool.CommandRunner {
+	return newHardenedRunnerForRoot(cfg, cfg.Workspace)
+}
+
+// newHardenedRunnerForRoot constructs an env-scrubbed runner bound to root (an
+// isolated child namespace), applying the SAME secret-scrub + git-neutralise
+// hardening as newHardenedCommandRunner. It is the forker's bound-runner
+// builder (issue #462): a forked child's Bash observes the SAME child namespace
+// its Read/Write do, never the parent base. It assumes the caller already
+// applied the NoBash/empty-shell (and, where applicable, trust) gates; on a
+// construction error it returns nil (the child degrades to shell-less, matching
+// newHardenedCommandRunner's WARN-then-nil shape, but a per-child builder has no
+// session-correlated diagnostics handle, so it returns nil silently — the
+// member/subagent catalog already gated Bash registration on the parent runner
+// being non-nil, so a nil here only ever reaches a child whose catalog has Bash
+// but whose isolated namespace could not open a shell, a rare FS-permission
+// case the child's Bash surfaces as ErrNoShell).
+func newHardenedRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// SECRET SCRUB then GIT NEUTRALISE: drop the harness credentials first
 	// (envscrub — "Finding B"; gitenv only ever removed GIT_*/PAGER, never secrets),
 	// then layer the git-neutralising env on the secret-free base so a sandboxed
 	// child sees neither the operator's secrets nor an untrusted repo's git hooks.
 	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
-	runner, err := osfs.NewCommandRunnerShell(cfg.Workspace, cfg.Shell, osfs.WithCommandEnvList(env))
+	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, osfs.WithCommandEnvList(env))
 	if err != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build sandboxed member command runner; team-member Bash disabled", "workspace", cfg.Workspace, "err", err)
+		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build sandboxed member command runner; team-member Bash disabled", "workspace", root, "err", err)
 		return nil
 	}
 	return runner
@@ -4896,7 +4973,9 @@ func newHardenedCommandRunner(cfg Config) tool.CommandRunner {
 // note (WithSubagentShellDisabledNote) so the model-facing text and the gate
 // cannot drift.
 func subagentShellUntrustedReason(cfg Config) string {
-	if cfg.NoBash || cfg.Shell == "" || cfg.TrustProject {
+	// --no-bash / an empty shell disable the shell regardless of trust (and must
+	// NOT read as an untrust problem), and a trusted workspace has no note.
+	if !forceCopyShellAvailable(cfg) || cfg.TrustProject {
 		return ""
 	}
 	return "no shell on this workspace because it is untrusted (run with --trust-project " +
@@ -5188,7 +5267,7 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
 		// at the child's run end). The child deliberately gets NO BashStatus —
 		// the collection channel stays main-catalog-only, mirroring the
 		// SubagentStatus rule (never in child catalogs).
-		cat.MustRegister(agent.NewBashTool(runner))
+		cat.MustRegister(agent.NewBashTool())
 	}
 	return cat
 }
@@ -5256,8 +5335,9 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
 	// Start from the read-only explorer surface (Read/Grep/Glob + sandboxed Bash) then
 	// LAYER Edit/Write on top — a Parallel branch MAY mutate its OWN fork. Bash is
-	// workspace-aware (BashTool.Execute passes the per-branch forked Workspace.Root() as
-	// workdir), so a branch's Bash runs in its OWN fork. (Subagent/Parallel/ToolSearch stay
+	// workspace-aware (BashTool reads its runner from the per-branch Environment bound to
+	// the branch's fork workspace at construction — no per-call workdir passed), so a
+	// branch's Bash runs in its OWN fork. (Subagent/Parallel/ToolSearch stay
 	// excluded — readOnlyExplorerCatalog never adds them — so a branch can't recurse.)
 	childCat := readOnlyExplorerCatalog(runner)
 	childCat.MustRegister(tools.EditTool{})
@@ -5653,13 +5733,26 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		// sees what the operator sees — a plain HEAD checkout would show a clean tree
 		// and empty diff, hiding the operator's in-progress work. Best-effort and a
 		// no-op on a clean tree (zero overhead on the common path).
-		taskForker := forker.New(newForkWorkspace(skillReadRoots), forker.WithDirtyOverlay())
+		//
+		// WithRunner (issue #462): the forker mints a BOUND runner for each child
+		// namespace so a forked subagent's Bash observes its OWN worktree, never the
+		// parent base. The builder applies the SAME trust-gated hardening
+		// buildSandboxedCommandRunner does (sandboxedRunner != nil already proves the
+		// gate passed at build time; the per-child builder re-checks it so a future
+		// per-session trust change cannot hand a shell to an untrusted child).
+		taskForker := forker.New(newForkWorkspace(skillReadRoots), forker.WithDirtyOverlay(),
+			forker.WithRunner(func(childRoot string) tool.CommandRunner {
+				if !sandboxedShellAvailable(cfg) {
+					return nil
+				}
+				return newHardenedRunnerForRoot(cfg, childRoot)
+			}))
 		opts = append(opts, agent.WithChildForker(taskForker))
 	}
 	// PATH-ESCAPE POSTURE (Scenario 5, AC5.1b): a BASE-SHARING child must never
 	// inherit the main session's relaxed workspace. Two child paths share the
 	// parent base verbatim: the SHELL-LESS read-only explorer (no sandboxed
-	// runner ⇒ no forker wired above — forkChildWorkspace returns the parent ws
+	// runner ⇒ no forker wired above — forkChildEnvironment returns the parent ws
 	// unchanged) and the mode:"read-write" direct-write child (ADR 0041 — it
 	// runs against the REAL parent tree by design). At auto/yolo the main
 	// session's workspace is relaxed (WithRelaxedReads/WithRelaxedWrites), so a
@@ -5734,7 +5827,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	//     child's Bash must resolve exactly as the main session's does under the
 	//     operator's posture/policy, so it uses the SAME runner the main session uses.
 	//   - no forker: the writable child passes a nil forker (prepareChildSession), so
-	//     forkChildWorkspace returns the parent ws directly.
+	//     forkChildEnvironment returns the parent ws directly.
 	//   - no merger: there is nothing to merge — the child already wrote the parent
 	//     tree. (The shared autoMerger stays for Parallel single-branch auto-merge.)
 	// Skipped under no-FS (buildNoFSSubagentTool, above, wires no writable path).
@@ -6046,7 +6139,7 @@ func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *p
 // both are filesystem acts), NO shell runners, and every member gets the no-FS
 // child surface (see buildMemberEngine's noFS branch). `a` carries the catalog
 // assets the no-FS member surface registers over; it is read only when noFS.
-func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillReadRoots []string, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, tool.WorkspaceForker, tool.WorkspaceForker, func(string) tool.Workspace, port.HookRunner) {
+func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillReadRoots []string, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, tool.EnvironmentForker, tool.EnvironmentForker, func(string) tool.Workspace, port.HookRunner) {
 	// A single hooks runner shared by the supervisor and the member coordination
 	// tools. hookexec.New(nil) matches buildEngine's default: the configured-hook map
 	// is not yet wired from cfg anywhere, so this is an inert (no-op) runner today,
@@ -6077,8 +6170,29 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 	// deliberately NOT trust-gated (buildForceCopyRunner) — the asymmetry
 	// TestUntrustedMutatingMemberKeepsBash pins. The main session keeps its own
 	// unhardened runner elsewhere.
-	fk := forker.New(newForkWorkspace(skillReadRoots), forker.WithForceCopy())
-	roFk := forker.New(newForkWorkspace(skillReadRoots), forker.WithDirtyOverlay())
+	// fkRunnerBuilder / roRunnerBuilder are the bound-runner builders the forkers
+	// use to mint a child tool.CommandRunner for each isolated directory (issue
+	// #462): a forked child's Bash observes the SAME child namespace its Read/Write
+	// do. roFk (read-only worktree) gets the SANDBOXED (trust-gated) builder; fk
+	// (force-copy mutating) gets the non-trust-gated builder — the SAME asymmetry
+	// buildSandboxedCommandRunner/buildForceCopyRunner carry. A builder returns nil
+	// when the gate withholds the shell (Bash disabled / untrusted workspace for
+	// roFk), so the child Environment is shell-less and its Bash surfaces ErrNoShell
+	// honestly — matching the historical shell-less degrade.
+	roRunnerBuilder := func(childRoot string) tool.CommandRunner {
+		if !sandboxedShellAvailable(cfg) {
+			return nil
+		}
+		return newHardenedRunnerForRoot(cfg, childRoot)
+	}
+	fkRunnerBuilder := func(childRoot string) tool.CommandRunner {
+		if !forceCopyShellAvailable(cfg) {
+			return nil
+		}
+		return newHardenedRunnerForRoot(cfg, childRoot)
+	}
+	fk := forker.New(newForkWorkspace(skillReadRoots), forker.WithForceCopy(), forker.WithRunner(fkRunnerBuilder))
+	roFk := forker.New(newForkWorkspace(skillReadRoots), forker.WithDirtyOverlay(), forker.WithRunner(roRunnerBuilder))
 	memberRunner := buildSandboxedCommandRunner(cfg)
 	mutatingRunner := buildForceCopyRunner(cfg)
 	roIsolationAvailable := memberRunner != nil && roFk != nil
@@ -6302,8 +6416,9 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 		if defined {
 			// Scope the def over the member's AVAILABLE base, allowing mutating tools
 			// (Edit/Write/Bash) only for a Mutating member — it runs in an isolated
-			// fork, and Bash is now workspace-aware (BashTool passes the member's
-			// forked Workspace.Root() to the runner as workdir), so a def MAY scope
+			// fork, and Bash is now workspace-aware (BashTool reads its runner from the
+			// member Environment bound to the fork at construction — no per-call workdir
+			// passed), so a def MAY scope
 			// Bash in for a Mutating member and it runs in the member's fork, not the
 			// shared parent base. For a read-only member that we can isolate in a
 			// worktree (allowShell), scopedToolNamesMode keeps Bash but still drops
@@ -6316,7 +6431,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// ungated runner: a def allow-listing Bash for a Mutating member keeps it
 			// under untrust, consistent with the default-member tier.
 			if spec.Mutating && mutatingRunner != nil {
-				bt := agent.NewBashTool(mutatingRunner)
+				bt := agent.NewBashTool()
 				base[bt.Spec().Name] = bt
 			}
 			// allowShell: a non-mutating member may keep Bash ONLY when a runner is
@@ -6340,7 +6455,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 				// the env scrub is load-bearing there too, not moot).
 				if name == tools.BashToolName {
 					if memberBash := memberBashRunner(spec.Mutating, runner, mutatingRunner); memberBash != nil {
-						cat.MustRegister(agent.NewBashTool(memberBash))
+						cat.MustRegister(agent.NewBashTool())
 					}
 					continue
 				}
@@ -6400,8 +6515,9 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// inspection (git log/show, build, test) confined to its throwaway worktree,
 			// while a base-sharing read-only member (no forker) still gets NO shell, so
 			// the read-only-share isolation guarantee holds. Bash is workspace-aware
-			// (BashTool.Execute passes the member's forked Workspace.Root() to the runner
-			// as workdir), so an isolated member's Bash runs in its OWN fork/worktree,
+			// (BashTool reads its runner from the member Environment bound to the member's
+			// own fork scope at construction — no per-call workdir), so an isolated
+			// member's Bash runs in its OWN fork/worktree,
 			// not the shared parent base. (Bash can still escape its cwd via absolute
 			// paths / `cd`, the inherent Bash trust model; isolation is the boundary.)
 			isolateReadOnly = registerDefaultMemberTools(cat, spec, runner, mutatingRunner, roIsolationAvailable)
@@ -6450,7 +6566,7 @@ func registerDefaultMemberTools(cat *tool.Catalog, spec agent.MemberSpec, runner
 		cat.MustRegister(tools.WriteTool{})
 	}
 	if memberBash := memberBashRunner(spec.Mutating, runner, mutatingRunner); memberBash != nil && (spec.Mutating || roIsolationAvailable) {
-		cat.MustRegister(agent.NewBashTool(memberBash))
+		cat.MustRegister(agent.NewBashTool())
 		isolateReadOnly = !spec.Mutating && roIsolationAvailable
 	}
 	return isolateReadOnly
@@ -6867,7 +6983,7 @@ func gitSnapshot(workspace, shell string, trustProject bool) string {
 	defer cancel()
 
 	run := func(command string) string {
-		res, err := runner.Run(ctx, command, workspace)
+		res, err := runner.Run(ctx, command)
 		if err != nil || res.ExitCode != 0 {
 			return ""
 		}
@@ -7331,10 +7447,14 @@ func buildWorktreeLister(cfg Config) server.WorktreeLister {
 	return gitWorktreeLister{shell: cfg.Shell}
 }
 
-// gitWorktreeLister is the osfs-backed WorktreeLister. The runner is built once
-// (over the launch root, but CommandRunner.Run honors the per-call workdir, so
-// one runner serves every session workspace). The scrubbed env is applied via
-// osfs.WithCommandEnvList, the same seam every agent-facing shell uses.
+// gitWorktreeLister is the osfs-backed WorktreeLister. Each List call shells
+// out explicitly against the requested root through its OWN code path — it
+// builds a fresh CommandRunner per call (osfs.NewCommandRunnerShell(root, ...))
+// and never reuses a per-session or per-workspace bound runner. The lister is
+// therefore SEPARATE from bound agent CommandRunner semantics (the Bash tool's
+// runner, the forker's runner, etc.) and has no per-call workdir ambiguity: the
+// runner it builds is rooted directly at the requested root and the command
+// runs against that exact tree.
 // It holds no diagnostics sink: the discovery path is intentionally fail-soft
 // (every error yields (nil, nil) so the overlay renders empty rather than
 // surfacing an error) — a noisy WARN on a non-repo root or a missing git binary
@@ -7360,7 +7480,7 @@ func (g gitWorktreeLister) List(ctx context.Context, root string) ([]server.Work
 	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	res, err := runner.Run(cctx, "git worktree list --porcelain", root)
+	res, err := runner.Run(cctx, "git worktree list --porcelain")
 	if err != nil || res.ExitCode != 0 {
 		return nil, nil // not a repo / git unavailable — fail-soft
 	}

@@ -19,7 +19,7 @@ import (
 // (--no-bash / an empty shell / the issue-#40 untrusted-workspace gate nils the
 // sandboxed runner) — must NOT inherit the main session's relaxed workspace.
 // Before the fix the child ran against the parent's escapeWorkspace verbatim
-// (forkChildWorkspace returns the parent ws unchanged for a nil forker), so a
+// (forkChildEnvironment returns the parent ws unchanged for a nil forker), so a
 // shell-less child silently gained the main session's out-of-root reach. The
 // fix gives the base-sharing child a NON-relaxed view over the same root.
 

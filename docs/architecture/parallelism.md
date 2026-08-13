@@ -2,15 +2,17 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
-**What this covers:** the `tool.WorkspaceForker` isolation seam, the `Parallel` fan-out tool (branch isolation, join modes, auto-merge), agent-team member workspace policy (force-copy mutating / worktree read-only / sandboxed runners), the team-wide token budget, and worktree binding (operator-owned existing worktrees).
+**What this covers:** the `tool.EnvironmentForker` isolation seam, the `Parallel` fan-out tool (branch isolation, join modes, auto-merge), agent-team member workspace policy (force-copy mutating / worktree read-only / sandboxed runners), the team-wide token budget, and worktree binding (operator-owned existing worktrees).
 
 **Prerequisites:** [subagents & teams](subagents-and-teams.md) — the sibling delegation family (Subagent children, team-member workspaces share the same forker/seam).
 
 **Follow-on:** [deployment & hardening](deployment-and-hardening.md) — workspace trust gates and posture ladder interact with forker isolation.
 
-`tool.WorkspaceForker` (`engine/tool/isolation.go`) is the workspace-isolation seam:
-`Fork(ctx, base, label)` returns an isolated child `Workspace` plus a cleanup
-func. The default `internal/adapter/forker` picks its strategy per base —
+`tool.EnvironmentForker` (`engine/tool/isolation.go`) is the environment-isolation
+seam: `Fork(ctx, base Environment, label)` returns an isolated child
+`Environment` (a complete `Workspace` + a `CommandRunner` bound to the child
+namespace + a child ref) plus a cleanup func. The default
+`internal/adapter/forker` picks its strategy per base —
 a **git worktree** (`git worktree add --detach … HEAD`) when the root is inside a
 repo, else a **recursive copy** — so a child can never write back into the
 parent's tree. `agent.NewParallelTool(childEngine, forker, …)` is the fan-out tool
@@ -31,7 +33,7 @@ transcript pulls, NOT workspace paths — the forks are gone); for `join=first` 
 is reported. A SINGLE-BRANCH `join=first`/`join=judge` winner is auto-merged back
 into the parent workspace BY DEFAULT (no flag; see
 [ADR 0039](../adr/0039-parallel-auto-merge.md)): the winner's diff is applied via
-`tool.ForkMerger` (the `forker.Merger` adapter — `git diff --no-textconv HEAD`
+`tool.EnvironmentMerger` (the `forker.Merger` adapter — `git diff --no-textconv HEAD`
 from the fork piped to `git apply` in the parent, plus untracked-file copy; the
 merge refuses `.gitattributes`-touching patches and runs `--no-textconv` to close
 attacker-named `diff.*.textconv`/`filter.*.smudge` RCE from an untrusted fork

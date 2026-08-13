@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -36,7 +35,7 @@ func TestParallelFailedBranchReportsCauseNotLastChatLine(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	res := firstToolResult(t, drain(r))
 	if !strings.Contains(res.Content, "branch-1 [FAILED]") {
@@ -79,7 +78,7 @@ func TestParallelFailedBranchWithNoTextReportsCause(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	res := firstToolResult(t, drain(r))
 	if !strings.Contains(res.Content, causeText) {
@@ -114,7 +113,7 @@ func TestParallelSucceededBranchSummaryIsNeutralised(t *testing.T) {
 		mockllm.TextTurn("parent done"),
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, fork)})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	res := firstToolResult(t, drain(r))
 	// Positive control FIRST: the harness's own section header must be in the report, or the
@@ -172,7 +171,7 @@ func TestParallelJudgeRationaleIsNeutralised(t *testing.T) {
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel",
 			json.RawMessage(`{"tasks":["do alpha","do beta"],"join":"judge"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}
@@ -214,9 +213,9 @@ type forgingForker struct {
 	msg       string
 }
 
-func (f *forgingForker) Fork(ctx context.Context, base tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+func (f *forgingForker) Fork(ctx context.Context, base tool.Environment, label string) (tool.Environment, func() error, string, error) {
 	if label == f.failLabel {
-		return nil, nil, "", errors.New(f.msg)
+		return tool.Environment{}, nil, "", errors.New(f.msg)
 	}
 	return f.inner.Fork(ctx, base, label)
 }
@@ -240,7 +239,7 @@ func TestParallelForkFailureReasonIsNeutralised(t *testing.T) {
 	res, err := fork.Execute(context.Background(),
 		session.NewToolCall("c1", "Parallel",
 			json.RawMessage(`{"tasks":["do alpha","do beta"],"join":"all"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("unexpected: err=%v res=%+v", err, res)
 	}

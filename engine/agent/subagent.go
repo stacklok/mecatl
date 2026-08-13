@@ -65,7 +65,7 @@ const childPersistTimeout = 5 * time.Second
 // touches the parent's session.Conversation — so this observability is orthogonal
 // to the context-isolation guarantee (gauntlet #7).
 type observableTool interface {
-	ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error)
+	ExecuteObserved(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event)) (session.ToolResult, error)
 }
 
 // parentCaps carries the PARENT run's interactivity and the surface seam down to a
@@ -277,7 +277,7 @@ func (c parentCaps) childWasClientCancelled(childID session.SessionID) bool {
 // pass; one that does not falls back to ExecuteObserved/Execute with the legacy headless
 // posture. Subagent/Team/Fork implement it.
 type childCapableTool interface {
-	ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
+	ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
 }
 
 // defaultChildLimits are the (deliberately tight) stop conditions a subagent run
@@ -623,7 +623,7 @@ type SubagentTool struct {
 	// this path is a tool error, NOT a silent fallback to the shared ws: the child's
 	// catalog has Bash precisely because isolation was available, so running it in the
 	// shared base would be the exact hazard isolation exists to prevent.
-	childForker tool.WorkspaceForker
+	childForker tool.EnvironmentForker
 
 	// sharedChildWS, when non-nil, re-views the parent workspace for a
 	// BASE-SHARING child (a nil-forker read-only child — no shell — and the
@@ -994,7 +994,7 @@ func WithChildSessionPrefix(p string) SubagentOption {
 // worktree: shares the base repo's `.git` ⇒ full history for git log/show). When the
 // forker is nil (the default), the child runs against the parent workspace exactly as
 // before. A fork failure on this path is a tool error, not a silent fallback.
-func WithChildForker(f tool.WorkspaceForker) SubagentOption {
+func WithChildForker(f tool.EnvironmentForker) SubagentOption {
 	return func(t *SubagentTool) { t.childForker = f }
 }
 
@@ -1482,11 +1482,11 @@ func (t *SubagentTool) MutatesParent(call session.ToolCall) bool {
 // child. Any permission ask the child raises is auto-denied so the child is
 // non-interactive. When the child finishes, the SubagentStop hook fires
 // best-effort.
-func (t *SubagentTool) Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (t *SubagentTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	// The plain Execute path forwards nothing: a nil emit makes the run silent, so
 	// existing callers (and the team supervisor's reuse of the drain contract) are
 	// unaffected by the observability seam.
-	return t.run(ctx, call, ws, nil, parentCaps{})
+	return t.run(ctx, call, env, nil, parentCaps{})
 }
 
 // ExecuteObserved runs the subagent like Execute but, when emit is non-nil,
@@ -1495,8 +1495,8 @@ func (t *SubagentTool) Execute(ctx context.Context, call session.ToolCall, ws to
 // and channels events; it never touches the parent's Conversation, so this is
 // orthogonal to context isolation (gauntlet #7): the child's CONTENT still never
 // enters the parent context. It is the observableTool seam the dispatcher calls.
-func (t *SubagentTool) ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error) {
-	return t.run(ctx, call, ws, emit, parentCaps{})
+func (t *SubagentTool) ExecuteObserved(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event)) (session.ToolResult, error) {
+	return t.run(ctx, call, env, emit, parentCaps{})
 }
 
 // ExecuteWithParent is the childCapableTool seam: it runs the subagent like
@@ -1504,8 +1504,8 @@ func (t *SubagentTool) ExecuteObserved(ctx context.Context, call session.ToolCal
 // back-channel) into the child posture, so a child Bash ask that A1/A2 did not
 // auto-resolve is SURFACED to the human (interactive) or auto-denied with the accurate
 // message + operator diagnostic (headless).
-func (t *SubagentTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
-	return t.run(ctx, call, ws, emit, caps)
+func (t *SubagentTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	return t.run(ctx, call, env, emit, caps)
 }
 
 // run is the shared implementation behind Execute (emit == nil) and
@@ -2137,7 +2137,7 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 // broken store) FAIL FAST without paying a fork/unfork round-trip; the recovered
 // session is re-homed AFTER the fork, once the fresh root exists (see
 // buildChildSession). A fork failure is a tool error, never a silent fallback
-// (forkChildWorkspace). The returned cleanup is ALWAYS non-nil (a no-op when
+// (forkChildEnvironment). The returned cleanup is ALWAYS non-nil (a no-op when
 // nothing survives) so the caller can defer it unconditionally; on a
 // session-build failure the just-created fork is torn down here.
 //
@@ -2145,7 +2145,7 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 // still on disk — because this is the only place that sees the resumed session's
 // PERSISTED workspace before buildChildSession re-homes it. See editsSurvived's
 // doc-comment on the named result below and resumeWritableNote.
-func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, ws tool.Workspace, args subagentArgs, resuming, writable bool, childID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runWS tool.Workspace, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
 	// priorWorkspace is the resumed child's PERSISTED workspace root, captured here
@@ -2156,7 +2156,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	if resuming {
 		loaded, errRes, rok := t.resolveResumeSession(ctx, call.ID, childID, args)
 		if !rok {
-			return nil, nil, noop, "", false, errRes, false
+			return nil, tool.Environment{}, noop, "", false, errRes, false
 		}
 		resumedChild = loaded
 		priorWorkspace = loaded.Workspace
@@ -2164,16 +2164,16 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// A mode:"read-write" child runs DIRECTLY against the parent workspace (no fork —
 	// ADR 0077): its Edit/Write/Bash mutate the real tree in place, exactly as the
 	// main agent does, and git is the rollback layer. So a writable call passes NO
-	// forker (nil) — forkChildWorkspace then returns the parent ws directly. A
+	// forker (nil) — forkChildEnvironment then returns the parent ws directly. A
 	// read-only child still uses t.childForker (a throwaway git worktree when it has a
 	// shell, else the shared parent ws — read-parallel-safe via worktree isolation).
 	forker := t.childForker
 	if writable {
 		forker = nil
 	}
-	runWS, cleanupWS, advisory, errRes, fok := t.forkChildWorkspace(ctx, call.ID, ws, subagentGoal(args), forker)
+	runEnv, cleanupWS, advisory, errRes, fok := t.forkChildEnvironment(ctx, call.ID, env, subagentGoal(args), forker)
 	if !fok {
-		return nil, nil, noop, "", false, errRes, false
+		return nil, tool.Environment{}, noop, "", false, errRes, false
 	}
 	// editsSurvived: this call is writable AND the prior run executed in the very tree
 	// this call runs in, so any file edits it made are still there. `writable` ALONE is
@@ -2185,11 +2185,11 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// that worktree, so it may genuinely have applied edits that are now GONE: telling it
 	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
 	// The path comparison is the honest test and needs no new persisted field.
-	editsSurvived = writable && priorWorkspace != "" && priorWorkspace == ws.Root()
-	child, errRes, bok := t.buildChildSession(call.ID, childID, resumedChild, runWS.Root(), limits, forkHistory)
+	editsSurvived = writable && priorWorkspace != "" && priorWorkspace == env.Workspace().Root()
+	child, errRes, bok := t.buildChildSession(call.ID, childID, resumedChild, runEnv.Workspace().Root(), limits, forkHistory)
 	if !bok {
 		_ = cleanupWS()
-		return nil, nil, noop, "", false, errRes, false
+		return nil, tool.Environment{}, noop, "", false, errRes, false
 	}
 	// RESUME-START persist (issue #38): children otherwise persist only at their
 	// TERMINAL, so a resumed child loaded for a new long run would keep its OLD
@@ -2201,10 +2201,10 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	if resuming {
 		t.persistChild(ctx, child)
 	}
-	return child, runWS, cleanupWS, advisory, editsSurvived, session.ToolResult{}, true
+	return child, runEnv, cleanupWS, advisory, editsSurvived, session.ToolResult{}, true
 }
 
-func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
+func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args subagentArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "Subagent: "+msg), nil
@@ -2311,7 +2311,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// BACKGROUND (D7/D8): fail-fast gate, synchronous start event, detach the drive.
 	if args.Background {
 		return t.startBackground(ctx, backgroundChild{
-			call: call, ws: ws, emit: emit, caps: caps, args: args,
+			call: call, env: env, emit: emit, caps: caps, args: args,
 			engine: engine, limits: limits, resuming: resuming, childID: childID,
 			forkHistory:    forkHistory,
 			routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
@@ -2363,7 +2363,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// Resume load + fork + session build (see prepareChildSession). The cleanup is
 	// always non-nil and tears the worktree down after the child fully drains (the
 	// run is drained below in this call), so a deferred cleanup is correct.
-	child, runWS, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, ws, args, resuming, writable, childID, limits, forkHistory)
+	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, limits, forkHistory)
 	if !ok {
 		return errResult, nil
 	}
@@ -2371,7 +2371,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	caps.inheritOwner(child)
 	// Tear down the run workspace after the child fully drains. For a writable
 	// (direct-write) child this is a no-op — cleanupWS is the no-op returned by
-	// forkChildWorkspace for a nil forker (the child ran against the parent ws, which
+	// forkChildEnvironment for a nil forker (the child ran against the parent ws, which
 	// the parent owns); for a read-only worktree child it tears the throwaway
 	// checkout down.
 	defer func() { _ = cleanupWS() }()
@@ -2421,7 +2421,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, ws tool.W
 	// the redacted subagent.* metadata. The structured-output retry loop re-drives the
 	// SAME child session (Reopen) with a correction prompt on a validation miss; the
 	// free-text path runs exactly one drive.
-	final, stop, cause, usage, toolCount := driveChild(ctx, engine, child, runWS, prompt, runReq, emit, call, childID, posture, submit, args.OutputSchema)
+	final, stop, cause, usage, toolCount := driveChild(ctx, engine, child, runEnv, prompt, runReq, emit, call, childID, posture, submit, args.OutputSchema)
 	terminalStop = stop
 
 	// Persist the terminal failure CAUSE on the child snapshot (issue #332): the
@@ -2547,7 +2547,7 @@ const backgroundStartedBody = "subagent started in the background.\n\n" +
 // whose ownership the synchronous path TRANSFERS to the goroutine.
 type backgroundChild struct {
 	call     session.ToolCall
-	ws       tool.Workspace
+	env      tool.Environment
 	emit     func(session.Event)
 	caps     parentCaps
 	args     subagentArgs
@@ -2692,13 +2692,13 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	}
 	// Background is read-only only (mode:"read-write"+background is rejected in
 	// validateMode), so the background path always forks the read-only worktree.
-	runWS, cleanupWS, forkAdvisory, errResult, ok := t.forkChildWorkspace(ctx, b.call.ID, b.ws, goal, t.childForker)
+	runEnv, cleanupWS, forkAdvisory, errResult, ok := t.forkChildEnvironment(ctx, b.call.ID, b.env, goal, t.childForker)
 	if !ok {
 		endOnError(errResult)
 		return
 	}
 	defer func() { _ = cleanupWS() }()
-	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.resumed, runWS.Root(), b.limits, b.forkHistory)
+	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.resumed, runEnv.Workspace().Root(), b.limits, b.forkHistory)
 	if !ok {
 		endOnError(errResult)
 		return
@@ -2721,7 +2721,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		askLabel: fmt.Sprintf("subagent %q", goal)}
 
 	start := b.engine.now()
-	final, st, cause, usage, toolCount := driveChild(ctx, b.engine, child, runWS, prompt, runReq, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
+	final, st, cause, usage, toolCount := driveChild(ctx, b.engine, child, runEnv, prompt, runReq, b.emit, b.call, b.childID, posture, submit, b.args.OutputSchema)
 	stop = st
 
 	// Persist the terminal failure CAUSE on the child snapshot BEFORE persistChild
@@ -3438,7 +3438,7 @@ func renderSubagentTrailer(childID session.SessionID, body string) string {
 // StopStructuredOutput. The retry is a SEPARATE bounded loop owned here (NOT a change
 // to finishTurnNoTools — that hot shared path stays Subagent-agnostic, decision D2), and
 // uses NO tool_choice forcing (incompatible with the reasoning paths).
-func driveChild(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, prompt string, runReq RunRequest, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture, submit *submitResultTool, schema json.RawMessage) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
+func driveChild(ctx context.Context, engine *Engine, child *session.Session, runEnv tool.Environment, prompt string, runReq RunRequest, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture, submit *submitResultTool, schema json.RawMessage) (finalText string, stop session.StopReason, cause string, usage session.Usage, toolCount int) {
 	drivePrompt := prompt
 	// attempts = 1 (initial) + defaultStructuredOutputRetries corrections, but only the
 	// structured path retries; the free-text path runs once.
@@ -3464,7 +3464,7 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 		// structured-output retry loop or the free-text salvage re-drive.
 		driveReq := runReq
 		driveReq.Text = drivePrompt
-		run := engine.Run(ctx, child, runWS, driveReq)
+		run := engine.Run(ctx, child, runEnv, driveReq)
 		text, st, c, u, tc := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
 		finalText, stop, cause = text, st, c
 		usage = usage.Add(u)
@@ -3474,7 +3474,7 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 		// ended on an empty terminal (turn/tool-call limit, token budget, no-progress, or
 		// an empty clean end) without producing any text (issue #48 / #152).
 		if submit == nil {
-			finalText, usage = salvageEmptyStop(ctx, engine, child, runWS, finalText, stop, usage, runReq, emit, call, childID, posture)
+			finalText, usage = salvageEmptyStop(ctx, engine, child, runEnv, finalText, stop, usage, runReq, emit, call, childID, posture)
 			// Last-resort digest: if the bounded salvage drive ALSO produced nothing
 			// (e.g. the model emitted another empty/reasoning-only turn), recover the
 			// child's last non-empty assistant text from its own history so the parent
@@ -3600,7 +3600,7 @@ func digestChildActivity(child *session.Session) string {
 // stopped: ended without a final summary]" note. If the wrap-up errors or yields
 // nothing, the caller's last-resort digest (digestChildActivity) runs next, and only
 // then the empty placeholder stands.
-func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Session, runWS tool.Workspace, finalText string, stop session.StopReason, usage session.Usage, runReq RunRequest, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture) (string, session.Usage) {
+func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Session, runEnv tool.Environment, finalText string, stop session.StopReason, usage session.Usage, runReq RunRequest, emit func(session.Event), call session.ToolCall, childID session.SessionID, posture childPosture) (string, session.Usage) {
 	if !isEmptyTerminalStop(stop) {
 		return finalText, usage
 	}
@@ -3645,7 +3645,7 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	// tighten-only MaxRunTokensOverride and run-scoped ExtraTools survive the salvage drive.
 	salvageReq := runReq
 	salvageReq.Text = salvageWrapUpPrompt
-	run := engine.Run(ctx, child, runWS, salvageReq)
+	run := engine.Run(ctx, child, runEnv, salvageReq)
 	text, _, _, u, _ := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
 	// Sum the salvage turn's usage (mirror the structured-output usage accumulation);
 	// the caller's usage already excludes this drive, so there is no double-count.
@@ -3798,7 +3798,7 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 	return loaded, session.ToolResult{}, true
 }
 
-// forkChildWorkspace selects the workspace one child run executes against, using the
+// forkChildEnvironment selects the environment one child run executes against, using the
 // supplied forker (the caller passes t.childForker for a read-only child — a git
 // worktree — or nil for a mode:"read-write" child, which runs DIRECTLY against the
 // parent workspace, ADR 0077). When the forker is wired (a read-only child catalog
@@ -3816,29 +3816,32 @@ func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.
 // be mirrored into the child's checkout, so the child sees committed HEAD only. The
 // caller prepends it to the child's prompt so the child reasons honestly about the
 // degradation instead of silently reporting "nothing to review".
-func (t *SubagentTool) forkChildWorkspace(ctx context.Context, callID session.ToolCallID, ws tool.Workspace, label string, forker tool.WorkspaceForker) (runWS tool.Workspace, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) forkChildEnvironment(ctx context.Context, callID session.ToolCallID, env tool.Environment, label string, forker tool.EnvironmentForker) (runEnv tool.Environment, cleanup func() error, advisory string, errResult session.ToolResult, ok bool) {
 	if forker == nil {
 		// Base-sharing child (a shell-less read-only explorer, or the writable
 		// direct-write child): re-view the parent ws through the NON-relaxed
 		// child workspace when composition wired one — a relaxed parent base
 		// must never hand the child the main session's out-of-root reach (the
 		// path-escape-posture Scenario 5 boundary). A nil view (or no wired
-		// re-view) keeps the historical verbatim parent ws.
+		// re-view) keeps the historical verbatim parent env. The child
+		// Environment reuses the PARENT's bound runner so a direct-write child's
+		// Bash still observes the parent namespace (issue #462).
 		if t.sharedChildWS != nil {
-			if childWS := t.sharedChildWS(ws.Root()); childWS != nil {
-				return childWS, func() error { return nil }, "", session.ToolResult{}, true
+			if childWS := t.sharedChildWS(env.Workspace().Root()); childWS != nil {
+				childEnv := tool.MustEnvironment(env.Ref(), childWS, env.CommandRunner())
+				return childEnv, func() error { return nil }, "", session.ToolResult{}, true
 			}
 		}
-		return ws, func() error { return nil }, "", session.ToolResult{}, true
+		return env, func() error { return nil }, "", session.ToolResult{}, true
 	}
-	forkWS, forkCleanup, advisory, err := forker.Fork(ctx, ws, label)
+	forkEnv, forkCleanup, advisory, err := forker.Fork(ctx, env, label)
 	if err != nil {
-		return nil, nil, "", session.NewToolError(callID, "Subagent: workspace isolation failed: "+err.Error()), false
+		return tool.Environment{}, nil, "", session.NewToolError(callID, "Subagent: workspace isolation failed: "+err.Error()), false
 	}
 	if forkCleanup == nil {
 		forkCleanup = func() error { return nil }
 	}
-	return forkWS, forkCleanup, advisory, session.ToolResult{}, true
+	return forkEnv, forkCleanup, advisory, session.ToolResult{}, true
 }
 
 // buildChildSession produces the session one child run drives. On a FRESH call

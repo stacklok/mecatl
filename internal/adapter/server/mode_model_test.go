@@ -701,7 +701,7 @@ func TestModeRebuildCrossSessionConcurrentNoRace(t *testing.T) {
 }
 
 // TestEngineAndWorkspaceForResolutionMatrix is the explicit decision-table test for
-// Service.engineAndWorkspaceFor (internal/adapter/server/service.go). It names and
+// Service.engineAndEnvironmentFor (internal/adapter/server/service.go). It names and
 // pins every resolution branch so a regression changes an assertion rather than
 // silently disappearing into incidental coverage.
 //
@@ -871,7 +871,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 		//  3. SetMode(plan) — StateCompleted allows mode changes — makes the engine
 		//     stale: builtForMode=ModeDefault, sess.Mode=plan.
 		//  4. Run2 tries StartRun → loadAndReopen reopens (StateCompleted→idle) →
-		//     engineAndWorkspaceFor → CASE 1 (builtForMode != sess.Mode) → liveness
+		//     engineAndEnvironmentFor → CASE 1 (builtForMode != sess.Mode) → liveness
 		//     pre-check: s.runs[id] still has run1 → ErrInvalidArgument, no factory build.
 		//  5. Cleanup: FinishRun(run1) so the registry is clean for goroutine-leak gate.
 		{
@@ -1198,7 +1198,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 			},
 		},
 		// ── REHYDRATE via the AWAITING-RESUME caller (cross-caller drift guard) ────
-		// engineAndWorkspaceFor is the SHARED resolution point for BOTH StartRunContent
+		// engineAndEnvironmentFor is the SHARED resolution point for BOTH StartRunContent
 		// AND resumeFromAwaiting (its doc comment, ~service.go:1338-1342). Every row
 		// above drives the StartRun caller; this row drives the OTHER caller so the two
 		// cannot drift unnoticed — the exact risk the shared function exists to prevent.
@@ -1208,7 +1208,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 		// se.builtForMode==sess.Mode always holds; ~service.go:1875-1883). But the
 		// REHYDRATE branch IS live and DISTINCT: a SELECTOR session that parked awaiting
 		// and whose process died has no per-session engine after a restart, so the resume
-		// caller must rehydrate it through engineAndWorkspaceFor — the same branch the
+		// caller must rehydrate it through engineAndEnvironmentFor — the same branch the
 		// StartRun rehydrate row exercises, but reached via Approve→resumeFromAwaiting.
 		//
 		// Sequence (offline, two-Build restart — the resume_awaiting_test.go convention):
@@ -1218,7 +1218,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 		//     overwrite the awaiting snapshot (the parking-service discipline).
 		//  2. svc2 over the SAME store (restart: empty in-memory registries). Its factory
 		//     returns a CONTINUATION engine. Approve → no live run → resumeFromAwaiting →
-		//     engineAndWorkspaceFor → REHYDRATE (selector, no engine) → factory called ONCE.
+		//     engineAndEnvironmentFor → REHYDRATE (selector, no engine) → factory called ONCE.
 		//  3. Assert: svc2 factory called exactly once (REHYDRATE via the resume caller),
 		//     HasSessionEngine true, the pending Write executed exactly once, run completes.
 		{
@@ -1296,7 +1296,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				return func() {
 					// REHYDRATE reached via the resume caller: svc2 factory called exactly once.
 					if calls2.Load() != 1 {
-						t.Errorf("awaiting-resume-caller: svc2 factory calls = %d, want 1 (engineAndWorkspaceFor REHYDRATE via resumeFromAwaiting)", calls2.Load())
+						t.Errorf("awaiting-resume-caller: svc2 factory calls = %d, want 1 (engineAndEnvironmentFor REHYDRATE via resumeFromAwaiting)", calls2.Load())
 					}
 					if !svc2.HasSessionEngineForTest(sess.ID) {
 						t.Errorf("awaiting-resume-caller: svc2 HasSessionEngine = false, want true (rehydrated on resume)")

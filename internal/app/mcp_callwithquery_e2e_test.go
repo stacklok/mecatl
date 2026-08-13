@@ -12,7 +12,6 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -142,7 +141,7 @@ func TestCallMcpWithQueryE2EFailClosedThenRecovery(t *testing.T) {
 	}
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 10}, time.Now())
-	run := res.Engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go", Parts: nil})
+	run := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 
 	// Collect the two tool results by CallID; approve any permission ask (the direct
 	// mcp__fake__bigjson call is not a floor-Allow tool, so it asks; CallMcpWithQuery

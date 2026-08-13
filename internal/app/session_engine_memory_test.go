@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -164,7 +163,7 @@ func TestSelectorSessionMemoryPromptHasMatchingTools(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Now())
-	drainRun(res.Engine.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
+	drainRun(res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 
 	if len(captured) == 0 {
 		t.Fatal("no LLM request captured — the selector engine never called its provider")

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 
@@ -28,7 +29,7 @@ func callFetchTool(t *testing.T, t2 FetchMcpResourceTool, uri string) session.To
 	t.Helper()
 	args, _ := json.Marshal(map[string]string{"uri": uri})
 	res, err := t2.Execute(context.Background(),
-		session.NewToolCall("call-1", "FetchMcpResource", args), nil)
+		session.NewToolCall("call-1", "FetchMcpResource", args), tool.Environment{})
 	if err != nil {
 		t.Fatalf("FetchMcpResource returned a Go error (reserved for harness faults): %v", err)
 	}

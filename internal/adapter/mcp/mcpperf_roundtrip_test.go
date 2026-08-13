@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 )
@@ -70,13 +71,13 @@ func TestMcpperfRoundTripResourceLinkPreserved(t *testing.T) {
 	// Connect the mecatl MCP client — this exercises the real adapter path
 	// (newRemoteTool, mapContent).
 	s := connectTest(t, ServerConfig{Name: "mcpperf", URL: httpSrv.URL})
-	tool := toolsByName(s.Tools())["mcp__mcpperf__capture_flight_recorder"]
-	if tool == nil {
+	tl := toolsByName(s.Tools())["mcp__mcpperf__capture_flight_recorder"]
+	if tl == nil {
 		t.Fatalf("capture_flight_recorder tool not advertised; got %v", keys(toolsByName(s.Tools())))
 	}
 
 	call := session.NewToolCall("call-223", "mcp__mcpperf__capture_flight_recorder", json.RawMessage(`{}`))
-	res, err := tool.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

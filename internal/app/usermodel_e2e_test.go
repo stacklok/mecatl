@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -83,7 +82,7 @@ func TestUserModelE2E(t *testing.T) {
 		"value":       "Prefers terse, direct answers with no preamble.",
 		"description": "communication style",
 	})
-	res, err := remember.Execute(ctx, session.NewToolCall("c1", memory.RememberUserToolName, rememberArgs), nil)
+	res, err := remember.Execute(ctx, session.NewToolCall("c1", memory.RememberUserToolName, rememberArgs), memEnvironment("/ws"))
 	if err != nil || res.IsError {
 		t.Fatalf("RememberUser write: err=%v isError=%v content=%q", err, res.IsError, res.Content)
 	}
@@ -116,7 +115,7 @@ func TestUserModelE2E(t *testing.T) {
 	})
 
 	sess := session.New("sB", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Now())
-	run := eng.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hello"})
+	run := eng.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hello"})
 	for ev := range run.Events() {
 		_ = ev
 	}

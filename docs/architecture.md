@@ -160,7 +160,7 @@ flowchart LR
   subgraph DOMAIN["domain (no infra imports)"]
     sess["engine/session\nSession · Conversation · Event\nToolCall · ToolResult · Usage\n(inert labels: Profile · ProviderID · ModelID · ReasoningEffort · Title)"]
     gov["engine/governance\nEffect · Decision · Rule · Scope\nHookEvent · Evaluator · bash.go"]
-    tl["engine/tool\nTool · ToolSpec · Catalog · Disclosable\nFileSystem · Workspace · CommandRunner\nMemoryStore · WorkspaceForker · ToolSearch"]
+    tl["engine/tool\nTool · ToolSpec · Catalog · Disclosable\nFileSystem · Workspace · Environment · CommandRunner\nMemoryStore · EnvironmentForker · EnvironmentMerger · ToolSearch"]
     pr["engine/prompt\nLayered · Build · Env · toolDisciplineHints\nInstructionAssembler · SoulSource · RulesSource · CommandExpander\n(model-neutral; per-model agencyDelta lives in internal/app)"]
   end
 
@@ -299,15 +299,19 @@ Two deliberate cycle-breaks worth noting, documented in code:
 - `port` imports `tool` and `prompt` (because `LLMRequest` carries
   `[]tool.ToolSpec` and `prompt.Layered`) — see the package note at the top of
   `engine/port/llm.go`.
-- `FileSystem`/`Workspace` live in `engine/tool`, **not** `engine/port`,
-  because `port` already imports `tool` while `tool.Tool.Execute` takes a
-  `Workspace`; defining them in `port` would form a `port↔tool` cycle. See the
-  package note in `engine/tool/tool.go`. Workspace file mutation is version-aware:
+- `FileSystem`/`Workspace`/`Environment` live in `engine/tool`, **not**
+  `engine/port`, because `port` already imports `tool` while
+  `tool.Tool.Execute` takes an `Environment`; defining them in `port` would form
+  a `port↔tool` cycle. See the package note in `engine/tool/tool.go`.
+  `Environment` bundles a `Workspace`, an optional bound `CommandRunner`, and a
+  backend identity `EnvironmentRef`. FS tools obtain `env.Workspace()`; the Bash
+  tool obtains `env.CommandRunner()`. Workspace file mutation is version-aware:
   agent-facing Read records an opaque `FileVersion`, new-file Write is create-only,
   and Edit/existing-file Write finish with conditional replace. Public Workspace
-  exposes no unconditional mutation; its ledger belongs to the live instance and
-  resets whenever the default Service factory rebuilds it. See
-  [ADR 0104](adr/0104-execution-environment.md) and the
+  exposes no unconditional mutation; its ledger belongs to the live
+  Environment instance and resets whenever the default Service factory rebuilds it.
+  See [ADR 0104](adr/0104-execution-environment.md),
+  [ADR 0105](adr/0105-execution-environment-runtime-seam.md), and the
   [ports chapter](architecture/ports.md).
 - `governance` does **not** import `session` (so `session` can import
   `governance` without a cycle); the `Evaluator` works on primitive args, and

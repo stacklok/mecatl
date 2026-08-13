@@ -250,7 +250,7 @@ func TestPathEscapePosture_Scenario5_IsolatedMembersUnchanged(t *testing.T) {
 // SharedBaseWorkspace re-view: this helper exists for the ISOLATED tiers only
 // (worktree IsolateReadOnly + Mutating force-copy, AC5.1e), which never
 // consult the re-view.
-func runTeamWithForkers(t *testing.T, base tool.Workspace, factory server.MemberEngineFactory, roFk, mutatingFk tool.WorkspaceForker, spec agent.MemberSpec, sink func(agent.TeamEvent)) {
+func runTeamWithForkers(t *testing.T, base tool.Workspace, factory server.MemberEngineFactory, roFk, mutatingFk tool.EnvironmentForker, spec agent.MemberSpec, sink func(agent.TeamEvent)) {
 	t.Helper()
 	svc, err := server.NewService(server.Config{
 		Engine:         noopEngine(),
@@ -278,7 +278,7 @@ func runTeamWithForkers(t *testing.T, base tool.Workspace, factory server.Member
 // newForkWorkspace constructor (worktree + dirty overlay for the read-only
 // tier, force-copy for the Mutating tier) — the SAME shapes buildTeamWiring
 // wires.
-func teamTestForker(t *testing.T, _ Posture, _ string, forceCopy bool) tool.WorkspaceForker {
+func teamTestForker(t *testing.T, _ Posture, _ string, forceCopy bool) tool.EnvironmentForker {
 	t.Helper()
 	if forceCopy {
 		return forker.New(newForkWorkspace(nil), forker.WithForceCopy())

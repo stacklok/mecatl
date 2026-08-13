@@ -76,7 +76,7 @@ func (rt resumeTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: rt.name, Description: rt.name, Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (rt resumeTool) ReadOnly() bool { return rt.readOnly }
-func (resumeTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (resumeTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, "executed"), nil
 }
 
@@ -120,7 +120,9 @@ func TestFoldedAwaitingSessionIsDrivable(t *testing.T) {
 		Model:   "test-model",
 	})
 
-	r := e.ResumeApproval(context.Background(), folded, memfs.NewWorkspace("/ws"), askID, session.VerdictAllowOnce)
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	r := e.ResumeApproval(context.Background(), folded, env, askID, session.VerdictAllowOnce)
 	var result *session.ResultPayload
 	for ev := range r.Events() {
 		if ev.Type == session.EvResult {
@@ -172,7 +174,9 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	})
 	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "think"})
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	r := e.Run(ctx, sess, env, agent.RunRequest{Text: "think"})
 	for ev := range r.Events() {
 		if err := log.Append(ctx, sessID, ev); err != nil {
 			t.Fatalf("append: %v", err)
@@ -358,7 +362,9 @@ func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {
 	})
 	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do work"})
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	r := e.Run(ctx, sess, env, agent.RunRequest{Text: "do work"})
 	sawArchive := false
 	for ev := range r.Events() {
 		if ev.Type == session.EvCompactionArchive {

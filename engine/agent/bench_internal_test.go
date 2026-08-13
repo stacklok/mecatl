@@ -62,7 +62,7 @@ func BenchmarkBuildRequest(b *testing.B) {
 	ws := memfs.NewWorkspace("/ws")
 	b.ReportAllocs()
 	for b.Loop() {
-		sinkRequest = e.buildRequest(ctx, r, sess, ws)
+		sinkRequest = e.buildRequest(ctx, r, sess, testEnvironment(ws, nil))
 	}
 }
 
@@ -141,6 +141,6 @@ func (t *benchTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: t.name, Description: t.name + ": bench tool."}
 }
 func (*benchTool) ReadOnly() bool { return true }
-func (*benchTool) Execute(_ context.Context, _ session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (*benchTool) Execute(_ context.Context, _ session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.ToolResult{}, nil
 }

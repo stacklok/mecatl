@@ -181,19 +181,20 @@ func TestSkillReadRootsThreadedThroughTeamWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open base workspace: %v", err)
 	}
+	baseEnv := testEnvironment(base, nil)
 	for _, tc := range []struct {
 		name string
-		fk   tool.WorkspaceForker
+		fk   tool.EnvironmentForker
 	}{
 		{"mutating force-copy forker", fk},
 		{"read-only forker", roFk},
 	} {
-		child, cleanup, _, err := tc.fk.Fork(ctx, base, "readroots-pin")
+		child, cleanup, _, err := tc.fk.Fork(ctx, baseEnv, "readroots-pin")
 		if err != nil {
 			t.Fatalf("%s: Fork: %v", tc.name, err)
 		}
 		t.Cleanup(func() { _ = cleanup() })
-		if got, err := child.Read(ctx, absFile); err != nil || string(got) != "BODY" {
+		if got, err := child.Workspace().Read(ctx, absFile); err != nil || string(got) != "BODY" {
 			t.Errorf("%s: forked member Read(skill abs path) = %q, %v; want BODY (roots not threaded at the call site)", tc.name, got, err)
 		}
 	}

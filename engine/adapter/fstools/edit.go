@@ -82,7 +82,8 @@ func (EditTool) ReadOnly() bool { return false }
 
 // Execute enforces the three Edit invariants and writes the modified file via a
 // conditional replace (ADR 0103).
-func (EditTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (EditTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	ws := env.Workspace()
 	var args editArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

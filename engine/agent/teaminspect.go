@@ -95,7 +95,7 @@ func (*InspectMemberTool) ReadOnly() bool { return true }
 // MemberSessionID helper, so it cannot drift from the supervisor's save id) and
 // renders a bounded transcript. An unknown id is a model-addressable error (the team
 // may not have run, or the member never started).
-func (t *InspectMemberTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t *InspectMemberTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args inspectMemberArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "InspectMember: "+msg), nil

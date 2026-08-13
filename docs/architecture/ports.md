@@ -68,7 +68,7 @@ never be conflated. `ChunkPhase` follows the same opaque-replay discipline.
 type Tool interface {
     Spec() ToolSpec
     ReadOnly() bool
-    Execute(ctx context.Context, in session.ToolCall, ws Workspace) (session.ToolResult, error)
+    Execute(ctx context.Context, in session.ToolCall, env Environment) (session.ToolResult, error)
 }
 ```
 
@@ -78,9 +78,15 @@ name→Tool registry with `Register`/`MustRegister`/`Lookup`/`Tools`. Its
 `Specs(mode)` and `Available(mode)` apply **plan-mode filtering at the catalog
 level**: in `ModePlan` only `ReadOnly()` tools are exposed, ordered by name.
 
-`FileSystem` and `Workspace` live here (not in `port`) to break the
-`port↔tool` cycle. `Workspace` is the session-scoped seam every tool executes
-against: it scopes all paths to one root (rejecting `../` escapes), exposes the
+`FileSystem`, `Workspace`, and `Environment` live here (not in `port`) to break
+the `port↔tool` cycle. `Tool.Execute` takes a `tool.Environment` (ADR 0105) — an
+immutable, per-namespace capability bundle carrying a `Workspace`
+(`env.Workspace()`), an optional bound `CommandRunner` (`env.CommandRunner()`; nil
+when the namespace has no shell), and a backend identity ref
+(`env.Ref()`). File-system tools (Read, Edit, Write, Grep, Glob) obtain
+`env.Workspace()`; the Bash tool obtains `env.CommandRunner()` and surfaces
+`ErrNoShell` when it is nil. `Workspace` scopes all paths to one root (rejecting
+`../` escapes), exposes the
 read-only `Root/Read/Stat` surface plus `Glob/Grep`, and carries the version-aware
 mutation protocol from [ADR 0104](../adr/0104-execution-environment.md).
 `ReadVersion` returns content plus an opaque `FileVersion`; `RecordRead` stores
@@ -93,9 +99,13 @@ Write compare the recorded version with a current version-bearing read, then
 finish with conditional `ReplaceFile`; new-file Write uses create-only
 `CreateFile`. Public `Workspace` has no unconditional Write capability. Concrete
 adapters may retain bootstrap/setup writers outside the interface. The ledger is
-scoped to the live Workspace instance; the default Service factory rebuilds that
-instance per run, while existing no-fs/ACP overrides retain their owner-defined
-lifetime.
+scoped to the live Environment instance (which owns the Workspace); the default
+Service factory builds a fresh Environment per run, while existing no-fs/ACP
+overrides (registered via `SetSessionEnvironment`) retain their owner-defined
+lifetime. Restarting the process loses in-memory overrides; a restarted session
+re-derives its Environment through the same rehydration path (no-fs profile,
+ACP adapter reconnect) — snapshot persistence of `EnvironmentRef` is deferred to
+phase 3 (ADR 0105).
 
 `CreateFile` and the compare-plus-mutation in `ReplaceFile` are atomic for
 concurrent calls through the same live Workspace/backend handle. ACP's
@@ -110,26 +120,29 @@ anchored normalized absence shapes; generic and structured non-absence failures
 fail closed. A future remote backend must
 provide true backend CAS.
 
-**Command execution is a separate seam, not part of `Workspace`.**
+**Command execution is a separate seam, bound to one namespace at construction.**
 `tool.CommandRunner` (`Run(ctx, command) (CommandResult, error)`) is the only
 chokepoint for shell execution; the agent loop never references it, and only the
-Bash tool depends on it. That makes Bash — and therefore *all* command
-execution — optional in the catalog: `NewBashTool(runner)` is registered only
-when a runner is configured (it panics on a nil runner), and `tools.Register`
+Bash tool depends on it. A runner is BOUND to a single namespace at construction
+(no per-call `workdir` — the command's cwd always matches the `Workspace` the tool
+executes against). That makes Bash — and therefore *all* command
+execution — optional in the catalog: `NewBashTool()` is registered only
+when a runner is configured, and `tools.Register`
 deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
 `CommandRunner` (output-capped, context-bounded, process-group-killed on
 cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
 shell-less deployment simply omits Bash, and an OS sandbox would wrap this seam.
-[ADR 0104](../adr/0104-execution-environment.md) records the migration direction:
-a coding agent ultimately runs in an execution environment whose Workspace and
-bound CommandRunner address one namespace. The future minimal `tool.Environment`
-will carry identity plus those two capabilities; durable identity will live
-cycle-safely in `session.EnvironmentRef`, while `WorkspaceForker`/`ForkMerger`
-remain separate and governance remains outside. Those types and remote transport
-are deliberately deferred — this PR implements only the version-aware file
-foundation.
+[ADR 0105](../adr/0105-execution-environment-runtime-seam.md) implements the
+runtime seam: a coding agent runs in an execution environment (`tool.Environment`)
+whose `Workspace` and bound `CommandRunner` address one namespace. The
+`tool.Environment` carries identity (`session.EnvironmentRef`) plus those two
+capabilities; the forker/merger are `tool.EnvironmentForker`/
+`tool.EnvironmentMerger` (returning/receiving complete `Environment`s), and
+governance remains outside. `EnvironmentRef` is an in-process identity in phase 2
+— snapshot persistence and remote transport are deferred to phase 3. The
+version-aware file-mutation foundation is [ADR 0104](../adr/0104-execution-environment.md).
 
-`tool.MemoryStore` and `tool.WorkspaceForker` live alongside it for the same
+`tool.MemoryStore` and `tool.EnvironmentForker` live alongside it for the same
 layering reason (the tools that need them depend on the interface, not a
 `port`).
 
@@ -153,7 +166,7 @@ signals the job's context. Permissions are identical to foreground Bash (the
 start is the ask; nothing re-asks mid-run), and a job still live at run end is
 cancelled and joined by the same drain the background subagents use — a job is
 RUN-scoped, never session-scoped. Streaming the job's output is the OPTIONAL
-`tool.CommandStreamer` capability (`RunStreaming(ctx, command, workdir, out
+`tool.CommandStreamer` capability (`RunStreaming(ctx, command, out
 io.Writer) (exitCode int, err error)` — the osfs runner implements it over the
 same spawn/wait tail as `Run`; a runner without it declines background calls
 honestly): the job streams interleaved stdout+stderr into a bounded 64 KiB tail

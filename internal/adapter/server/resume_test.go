@@ -194,7 +194,7 @@ func (*blockingTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Read", Description: "Read: test tool", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*blockingTool) ReadOnly() bool { return true }
-func (b *blockingTool) Execute(ctx context.Context, _ session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (b *blockingTool) Execute(ctx context.Context, _ session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	close(b.started)
 	<-ctx.Done()
 	return session.ToolResult{}, ctx.Err()
@@ -390,7 +390,7 @@ func (*echoTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Read", Description: "Read: test tool", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*echoTool) ReadOnly() bool { return true }
-func (*echoTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (*echoTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, "file contents"), nil
 }
 

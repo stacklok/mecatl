@@ -32,8 +32,8 @@ still unscoped.
 
 ## 1. The shared-handle problem
 
-The filesystem (`tool.FileSystem`/`Workspace`), the workspace forker
-(`tool.WorkspaceForker`), and the command runner (`tool.CommandRunner`) are
+The filesystem (`tool.FileSystem`/`Workspace`), the environment forker
+(`tool.EnvironmentForker`), and the command runner (`tool.CommandRunner`) are
 independently swappable interfaces already — each is a real port met by an adapter
 only in composition. But all three quietly assume a workspace "root" is a *local
 mountable path*, and the moment tool execution becomes a separate service that
@@ -130,10 +130,10 @@ into the open.
 
 ## 2. Forking as environment descent
 
-`tool.WorkspaceForker.Fork(ctx, base, label) (child, cleanup, advisory, err)` — two
+`tool.EnvironmentForker.Fork(ctx, base Environment, label) (child Environment, cleanup, advisory, err)` — two
 working implementations exist today (git-worktree default, force-copy for mutating
 forks), proving the interface is genuinely swappable. Merge-back is **not**
-hardwired to discard across the board any more: a diff-apply `tool.ForkMerger`
+hardwired to discard across the board any more: a diff-apply `tool.EnvironmentMerger`
 (`internal/adapter/forker.Merger`, wrapped in a process-wide `SerializingMerger`)
 promotes a preserved fork's changes into the parent, default-on when wired
 ([ADR 0039](adr/0039-parallel-auto-merge.md)) — but it is scoped narrowly, to

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -36,7 +35,7 @@ func TestReasoningTokensPropagateAndDoNotInflateBudget(t *testing.T) {
 	)
 	propEngine := newEngine(agent.Deps{LLM: propLLM, Catalog: catalogWith(t, loopTool()), MaxRunTokens: 0})
 	propSess := newSession(t, session.Limits{})
-	propEvs := drain(propEngine.Run(context.Background(), propSess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	propEvs := drain(propEngine.Run(context.Background(), propSess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 	propRes := lastResult(t, propEvs)
 	if propRes.Usage.ReasoningTokens != 30 {
 		t.Errorf("propagation: ResultPayload.Usage.ReasoningTokens = %d, want 30", propRes.Usage.ReasoningTokens)
@@ -58,7 +57,7 @@ func TestReasoningTokensPropagateAndDoNotInflateBudget(t *testing.T) {
 	runawayLLM := &runawayProvider{perTurn: perTurn}
 	runawayEngine := newEngine(agent.Deps{LLM: runawayLLM, Catalog: catalogWith(t, loopTool()), MaxRunTokens: budget})
 	runawaySess := newSession(t, session.Limits{})
-	runawayEvs := drain(runawayEngine.Run(context.Background(), runawaySess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "run forever"}))
+	runawayEvs := drain(runawayEngine.Run(context.Background(), runawaySess, agent.MemEnv("/ws"), agent.RunRequest{Text: "run forever"}))
 	runawayRes := lastResult(t, runawayEvs)
 	if runawayRes.Stop != session.StopBudget {
 		t.Fatalf("terminal stop = %q, want %q (reasoning must not inflate the budget — StopBudget fires on input+output only)",

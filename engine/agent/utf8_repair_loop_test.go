@@ -8,7 +8,6 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -62,7 +61,7 @@ func TestLoopRepairsInvalidUTF8ToolResult(t *testing.T) {
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "run it"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "run it"})
 	evs := drain(r)
 
 	// 1. The emitted EvToolResult is repaired.
@@ -202,7 +201,7 @@ func TestPreToolUseHookOutputIsRepaired(t *testing.T) {
 				Hooks: utf8HookRunner{mutate: tc.mutate},
 			})
 			sess := newSession(t, session.Limits{})
-			evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+			evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 			tc.want(t, sess, evs, rec)
 		})
 	}

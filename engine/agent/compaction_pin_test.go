@@ -178,7 +178,7 @@ func TestTurn0FragmentsEphemeralAcrossReopen(t *testing.T) {
 	ws := memfs.NewWorkspace("/ws")
 
 	// Fresh run: fragments are sent (prepended) but NOT persisted.
-	drain(e.Run(ctx, sess, ws, agent.RunRequest{Text: "first prompt"}))
+	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "first prompt"}))
 	if asm.called != 1 {
 		t.Fatalf("fresh run: assembler called %d times, want 1 (once-per-run cache)", asm.called)
 	}
@@ -194,7 +194,7 @@ func TestTurn0FragmentsEphemeralAcrossReopen(t *testing.T) {
 	if err := sess.Reopen(); err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
-	drain(e.Run(ctx, sess, ws, agent.RunRequest{Text: "second prompt"}))
+	drain(e.Run(ctx, sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "second prompt"}))
 	if asm.called != 2 {
 		t.Fatalf("after Reopen: assembler called %d times, want 2 (once per run, re-assembled on resume)", asm.called)
 	}
@@ -266,7 +266,7 @@ func TestTurn0FragmentAssembleErrorIsFailSoft(t *testing.T) {
 	})
 
 	sess := newSession(t, session.Limits{})
-	run := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do the thing"})
+	run := e.Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "do the thing"})
 
 	// The run must COMPLETE despite the assemble error.
 	var terminal *session.Event

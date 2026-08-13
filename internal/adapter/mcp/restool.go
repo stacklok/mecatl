@@ -56,7 +56,7 @@ type listResourcesArgs struct {
 	Server string `json:"server"`
 }
 
-func (t listResourcesTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t listResourcesTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return session.ToolResult{}, err
 	}
@@ -139,7 +139,7 @@ type readResourceArgs struct {
 	URI    string `json:"uri"`
 }
 
-func (t readResourceTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t readResourceTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return session.ToolResult{}, err
 	}

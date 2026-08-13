@@ -76,7 +76,8 @@ func (WriteTool) ReadOnly() bool { return false }
 // EXISTING file requires a recorded version, re-reads the current version, and
 // finishes with a conditional replace against that current version. No
 // unconditional operation is used by the agent-facing Write tool.
-func (WriteTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (WriteTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	ws := env.Workspace()
 	var args writeArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

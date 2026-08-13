@@ -109,7 +109,7 @@ func call(t *testing.T, name string, m map[string]any) session.ToolCall {
 // exec runs a tool and fails on a harness-level error.
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall) session.ToolResult {
 	t.Helper()
-	res, err := tl.Execute(context.Background(), in, nil)
+	res, err := tl.Execute(context.Background(), in, tool.Environment{})
 	if err != nil {
 		t.Fatalf("%s: unexpected harness error: %v", tl.Spec().Name, err)
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -118,7 +117,7 @@ func TestRunTurnCancelledMemberCapturesTurnsUsed(t *testing.T) {
 			LLM: prov, Catalog: cat, Policy: allow, Hooks: noopHookRunner{}, Model: "mock",
 		})}
 	}
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory, WithMaxRounds(5))
+	sup := NewSupervisor(tm, memEnv("/ws"), factory, WithMaxRounds(5))
 	if err := sup.AddMember(context.Background(), MemberSpec{Name: "worker", InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
 	}
@@ -168,7 +167,7 @@ func TestCleanupAllAttributesIdleClientCancel(t *testing.T) {
 		})}
 	}
 	reg := newChildRunRegistry()
-	sup := NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
+	sup := NewSupervisor(tm, memEnv("/ws"), factory,
 		withParentCaps(parentCaps{children: reg}))
 	ctx := context.Background()
 	if err := sup.AddMember(ctx, MemberSpec{Name: "lead", Lead: true}); err != nil {
@@ -207,5 +206,54 @@ func TestCleanupAllAttributesIdleClientCancel(t *testing.T) {
 	reg.mu.Unlock()
 	if leadPresent {
 		t.Fatalf("a never-driven, never-cancelled member must be REMOVED at cleanupAll (A5), not left as a done entry")
+	}
+}
+
+// fakeRunner is a minimal tool.CommandRunner for supervisor tests that need a
+// non-nil runner on the base Environment.
+type fakeRunner struct{}
+
+func (fakeRunner) Run(context.Context, string) (tool.CommandResult, error) {
+	return tool.CommandResult{}, nil
+}
+
+// TestBaseSharingReadOnlyMemberIsShellless proves the issue-#462 review fix: a
+// base-sharing (default read-only) member's Environment carries a NIL runner as
+// defense-in-depth, even when the parent (base) Environment has a bound runner.
+// It MUST NOT reuse the parent runner — a base-sharing member has no shell, and
+// a future mis-wire must not hand it the parent's shell via the base Environment.
+func TestBaseSharingReadOnlyMemberIsShellless(t *testing.T) {
+	tm := team.New("t")
+	// Build a base Environment WITH a runner — the parent has a shell.
+	base := memEnvRunner("/ws", fakeRunner{})
+	if base.CommandRunner() == nil {
+		t.Fatal("precondition: base Environment must carry a runner")
+	}
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	factory := func(_ MemberSpec, _ string) MemberBuild {
+		cat := tool.NewCatalog()
+		for _, tl := range MemberTools(tm, "ro", nil) {
+			cat.MustRegister(tl)
+		}
+		return MemberBuild{Engine: NewEngine(Deps{
+			LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: cat, Policy: allow, Model: "mock",
+		})}
+	}
+	// No forker wired → the member base-shares (no IsolateReadOnly, no Mutating).
+	sup := NewSupervisor(tm, base, factory)
+	if err := sup.AddMember(context.Background(), MemberSpec{Name: "ro"}); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	m, ok := sup.members["ro"]
+	if !ok {
+		t.Fatalf("member %q not found", "ro")
+	}
+	if m.env.CommandRunner() != nil {
+		t.Errorf("base-sharing read-only member env has a non-nil runner %T — "+
+			"it must carry nil as defense-in-depth (must not reuse the parent runner)", m.env.CommandRunner())
+	}
+	// The base Environment is untouched — the parent runner survives.
+	if base.CommandRunner() == nil {
+		t.Error("the base Environment's runner was lost — the member must not mutate the base")
 	}
 }

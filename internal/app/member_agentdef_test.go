@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -40,7 +39,7 @@ func TestMemberMutatingDefKeepsEditWhenMutating(t *testing.T) {
 	tm := team.New("t")
 	factory := memberFactoryForTest(cfg, editCall(), hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		},
@@ -69,7 +68,7 @@ func TestMemberReadOnlyDefDropsMutating(t *testing.T) {
 	tm := team.New("t")
 	factory := memberFactoryForTest(cfg, editCall(), hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})
@@ -146,7 +145,7 @@ func TestMemberReadOnlyAllowlistedToolDispatches(t *testing.T) {
 	)
 	factory := memberFactoryForTest(cfg, grepCall, hookexec.New(nil), regOf(def), nil, nil, false, nil)
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})
@@ -179,7 +178,7 @@ func TestMemberUnknownAgentTypeFallsBack(t *testing.T) {
 		t.Fatalf("unknown AgentType mode = %q, want empty (team default)", build.Mode)
 	}
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 			return factory(tm, spec, routedModel)
 		})
@@ -227,10 +226,10 @@ func sawToolDispatched(events []agent.TeamEvent, member, toolName string) bool {
 	return false
 }
 
-// memfsForker forks a memfs workspace for a Mutating member (a deterministic,
+// memfsForker forks a memfs environment for a Mutating member (a deterministic,
 // offline isolation seam for the tests — it just roots a fresh memfs under a label).
 type memfsForker struct{}
 
-func (memfsForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
-	return memfs.NewWorkspace("/fork/" + label), func() error { return nil }, "", nil
+func (memfsForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
+	return memEnvironment("/fork/" + label), func() error { return nil }, "", nil
 }

@@ -81,7 +81,8 @@ func (ReadTool) ReadOnly() bool { return true }
 
 // Execute reads the file, returns it with line-number prefixes, and records the
 // read in the Workspace ledger.
-func (ReadTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (ReadTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	ws := env.Workspace()
 	var args readArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

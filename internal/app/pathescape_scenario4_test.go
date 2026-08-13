@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -47,7 +48,12 @@ func installRelaxedWorkspace(t *testing.T, built *Built, sessID session.SessionI
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	built.Service.SetSessionWorkspace(sessID, newEscapeWorkspace(base, clf))
+	env, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root},
+		newEscapeWorkspace(base, clf), nil)
+	if err != nil {
+		t.Fatalf("NewEnvironment: %v", err)
+	}
+	built.Service.SetSessionEnvironment(sessID, env)
 }
 
 // TestPathEscapePosture_Scenario4_FactoryServesApprovedEscape pins the
@@ -56,7 +62,7 @@ func installRelaxedWorkspace(t *testing.T, built *Built, sessID session.SessionI
 // escape-capable workspace at EVERY posture — at strict/trusted it is what
 // lets an APPROVED escape ask execute; without it the ask is approved and the
 // tool body still dead-ends on ErrPathEscape. A default Build at strict +
-// CreateSession (no SetSessionWorkspace override) runs the escape read on an
+// CreateSession (no SetSessionEnvironment override) runs the escape read on an
 // allow verdict and the contents MUST come back.
 func TestPathEscapePosture_Scenario4_FactoryServesApprovedEscape(t *testing.T) {
 	t.Parallel()
@@ -70,7 +76,7 @@ func TestPathEscapePosture_Scenario4_FactoryServesApprovedEscape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	// NO SetSessionWorkspace: the run rides the factory-built workspace.
+	// NO SetSessionEnvironment: the run rides the factory-built workspace.
 	run, err := built.Service.StartRun(context.Background(), sess.ID, "read the file outside the workspace")
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)

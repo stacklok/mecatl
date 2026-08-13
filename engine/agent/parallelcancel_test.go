@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
@@ -53,7 +52,7 @@ func (p *namedParkTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: p.name, Description: p.name + ": parks until cancelled", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*namedParkTool) ReadOnly() bool { return true }
-func (p *namedParkTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (p *namedParkTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	p.once.Do(func() { close(p.started) })
 	<-ctx.Done()
 	p.cancOnce.Do(func() { close(p.cancelled) })
@@ -73,7 +72,7 @@ func (g *gateTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: g.name, Description: g.name + ": waits for the test gate", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*gateTool) ReadOnly() bool { return true }
-func (g *gateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (g *gateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	select {
 	case <-g.release:
 		return session.NewToolResult(in.ID, "gate released"), nil
@@ -137,7 +136,7 @@ func (p *cancelRoutingProvider) Stream(ctx context.Context, req port.LLMRequest)
 
 // parallelEngineFor wires a parent engine whose catalog carries ONE Parallel tool
 // over the given child engine, scripted to fan out the given tasks under join.
-func parallelEngineFor(t *testing.T, childEngine *agent.Engine, mf tool.WorkspaceForker, join string, tasks []string, opts ...agent.ParallelOption) *agent.Engine {
+func parallelEngineFor(t *testing.T, childEngine *agent.Engine, mf tool.EnvironmentForker, join string, tasks []string, opts ...agent.ParallelOption) *agent.Engine {
 	t.Helper()
 	fork := agent.NewParallelTool(childEngine, mf, opts...)
 	args, err := json.Marshal(map[string]any{"tasks": tasks, "join": join})
@@ -192,7 +191,7 @@ func TestCancelParallelBranchJoinAll(t *testing.T) {
 	}}
 	childEngine := childEngineWith(prov, catalogWith(t, park))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "all", []string{"fast one", "PARK two", "fast three"})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelOK bool
@@ -262,7 +261,7 @@ func TestCancelParallelBranchJoinFirstWinnerNeverCancelled(t *testing.T) {
 	}}
 	childEngine := childEngineWith(prov, catalogWith(t, park, gate))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "first", []string{"PARK one", "GATE two"})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	branch0Ended := make(chan struct{})
@@ -327,7 +326,7 @@ func TestCancelParallelBranchJudgeExcluded(t *testing.T) {
 	childEngine := childEngineWith(prov, catalogWith(t, park))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "judge",
 		[]string{"PARK one", "fast two"}, agent.WithParallelJudge(judge))
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelDone sync.WaitGroup
@@ -387,7 +386,7 @@ func TestCancelParallelBranchJudgeOnlySuccessCancelled(t *testing.T) {
 	mf := &memForker{failOnLabel: "branch-2"}
 	e := parallelEngineFor(t, childEngine, mf, "judge",
 		[]string{"PARK one", "doomed two"}, agent.WithParallelJudge(judge))
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	gotChild := make(chan string, 1)
 	var cancelDone sync.WaitGroup
@@ -442,7 +441,7 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 	childEngine := childEngineWith(prov, catalogWith(t, park1, park2))
 	e := parallelEngineFor(t, childEngine, &memForker{}, "all",
 		[]string{"PARK-A one", "PARK-B two"}, agent.WithParallelConcurrency(1))
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var cancelDone sync.WaitGroup
 	cancelDone.Add(1)

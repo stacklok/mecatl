@@ -554,7 +554,7 @@ func (*blockTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Block", Description: "blocks for tests", Schema: []byte(`{"type":"object"}`)}
 }
 func (*blockTool) ReadOnly() bool { return false }
-func (b *blockTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (b *blockTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	b.ensure()
 	select {
 	case <-b.release:

@@ -37,7 +37,7 @@ func (f *fakeTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: f.name, Description: f.name, Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (f *fakeTool) ReadOnly() bool { return f.readOnly }
-func (f *fakeTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (f *fakeTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return f.exec(in), nil
 }
 
@@ -126,7 +126,9 @@ func TestBashDefaultRuleModelSeesLocalWriteSafeRubric(t *testing.T) {
 	cat := tool.NewCatalog()
 	cat.MustRegister(bt)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
-	drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"}))
 
 	if chk.prompt == "" {
 		t.Fatal("the mutating Bash write must have reached the checker")
@@ -213,7 +215,9 @@ func runBashGuardrail(t *testing.T, chk modelhook.VerdictChecker, rule modelhook
 	deps.Catalog = cat
 	deps.Hooks = hooks
 	e := newEngine(deps)
-	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"}))
 	return ran, evs
 }
 
@@ -275,7 +279,9 @@ func TestGuardrailBashCheckerErrorFailsOpen(t *testing.T) {
 	cat := tool.NewCatalog()
 	cat.MustRegister(bt)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
-	drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"}))
 	if !ran {
 		t.Fatal("fail-open: a checker error must NOT block (the tool runs)")
 	}
@@ -340,7 +346,9 @@ func TestGuardrailPreBlockReachesLoop(t *testing.T) {
 	cat := tool.NewCatalog()
 	cat.MustRegister(wf)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
-	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"}))
 
 	if executed {
 		t.Fatal("a Pre-blocked tool must NOT execute")
@@ -375,7 +383,9 @@ func TestGuardrailPostBlockRewritesResultInLoop(t *testing.T) {
 	cat := tool.NewCatalog()
 	cat.MustRegister(wf)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
-	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"}))
 
 	// The result the CLIENT sees (EvToolResult) must be the rewritten error, NOT the
 	// raw injected page — the effective-payload agreement.
@@ -416,7 +426,9 @@ func TestGuardrailSafeContentUnchanged(t *testing.T) {
 	cat := tool.NewCatalog()
 	cat.MustRegister(wf)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks})
-	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	evs := drain(e.Run(context.Background(), session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"}))
 
 	for _, ev := range evs {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil &&
@@ -446,7 +458,9 @@ func runBashGuardrailInteractive(t *testing.T, waiver *modelhook.WaiverHolder, d
 	cat := tool.NewCatalog()
 	cat.MustRegister(bt)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Hooks: hooks, Interactive: true})
-	r := e.Run(context.Background(), session.New(session.SessionID(sessionID), session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	r := e.Run(context.Background(), session.New(session.SessionID(sessionID), session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)), env, agent.RunRequest{Text: "go"})
 	for ev := range r.Events() {
 		evs = append(evs, ev)
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && !asked {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -63,7 +65,7 @@ func TestEditToolAbsoluteSkillPathRefused(t *testing.T) {
 	// as an error — either way the mutation must not happen.
 	res, err := EditTool{}.Execute(t.Context(), call(t, "Edit", map[string]any{
 		"path": bundled, "old_string": "line one", "new_string": "mutated",
-	}), ws)
+	}), tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, nil))
 	switch {
 	case err != nil:
 		if !strings.Contains(err.Error(), "escapes workspace root") {

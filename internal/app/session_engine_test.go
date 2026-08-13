@@ -222,7 +222,7 @@ func runFactoryEngine(t *testing.T, factory server.SessionEngineFactory, sel ser
 	defer func() { _ = closeFn() }()
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
 	ws := memfs.NewWorkspace("/ws")
-	return drainRun(eng.Run(context.Background(), sess, ws, agent.RunRequest{Text: "hi", Parts: nil}))
+	return drainRun(eng.Run(context.Background(), sess, testEnvironment(ws, nil), agent.RunRequest{Text: "hi", Parts: nil}))
 }
 
 // TestSessionEngineFactoryUnknownProvider: an unknown/unavailable provider id is a
@@ -288,7 +288,7 @@ func TestSessionEngineFactoryModelPassthrough(t *testing.T) {
 	eng, closeFn := res.Engine, res.Close
 	defer func() { _ = closeFn() }()
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	drainRun(eng.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
+	drainRun(eng.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 
 	if gotModel != unknownModel {
 		t.Fatalf("provider saw model %q, want the verbatim passthrough %q (factory dropped/overrode sel.ModelID)", gotModel, unknownModel)
@@ -505,7 +505,7 @@ func TestSessionEngineFactorySelectorMCPCoexist(t *testing.T) {
 	defer func() { _ = closeFn() }()
 	// The bound provider is the SELECTED one (openrouter), not the default.
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	if got := drainRun(eng.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "hi", Parts: nil})); got != "OPENROUTER-REPLY" {
+	if got := drainRun(eng.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})); got != "OPENROUTER-REPLY" {
 		t.Fatalf("sel+specs turn routed to %q, want the selected (openrouter) provider's reply", got)
 	}
 }

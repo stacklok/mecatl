@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -140,7 +142,8 @@ func TestAbsoluteOutOfRootThroughRealTools(t *testing.T) {
 	// the test on a harness-level error.
 	writeCall := call(t, "Write", map[string]any{"path": other, "content": "x"})
 	writeTool := WriteTool{}
-	if _, err := writeTool.Execute(context.Background(), writeCall, ws); err == nil || !strings.Contains(err.Error(), "escapes workspace root") {
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root()}, ws, nil)
+	if _, err := writeTool.Execute(context.Background(), writeCall, env); err == nil || !strings.Contains(err.Error(), "escapes workspace root") {
 		t.Fatalf("Write(out-of-root absolute) must surface the escape error, got %v", err)
 	}
 

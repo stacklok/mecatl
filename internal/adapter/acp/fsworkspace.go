@@ -54,7 +54,7 @@ const fsCallTimeout = 30 * time.Second
 //     buffer as a new file and clobber it with no read-before-overwrite check.
 //
 // It is registered per-session on the shared *server.Service via
-// SetSessionWorkspace and evicted on editor disconnect; concurrent read-only
+// SetSessionEnvironment and evicted on editor disconnect; concurrent read-only
 // dispatch may fire several Read (hence fs/read_text_file) calls at once, which
 // the ACP Conn handles safely, and the local ledger has its OWN mutex.
 type fsWorkspace struct {

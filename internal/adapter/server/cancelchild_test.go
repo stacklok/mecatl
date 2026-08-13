@@ -248,7 +248,7 @@ func (*parkTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Park", Description: "parks until cancelled", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*parkTool) ReadOnly() bool { return true }
-func (p *parkTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (p *parkTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	p.once.Do(func() { close(p.started) })
 	<-ctx.Done()
 	return session.NewToolResult(in.ID, "interrupted"), nil

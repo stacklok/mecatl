@@ -143,7 +143,7 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 	tl := agent.NewScheduleTool(mgr)
 	ws := memfs.NewWorkspace("/ws")
 	run := func(argsJSON string) session.ToolResult {
-		res, err := tl.Execute(context.Background(), scheduleCall(t, argsJSON), ws)
+		res, err := tl.Execute(context.Background(), scheduleCall(t, argsJSON), agent.EnvForWS(ws, nil))
 		if err != nil {
 			t.Fatalf("Execute harness-level error: %v", err)
 		}
@@ -224,7 +224,7 @@ func TestScheduleTool_FireRendersIDs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
-	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"nightly"}`), memfs.NewWorkspace("/ws"))
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"nightly"}`), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestScheduleTool_FireOverlapSurfaces(t *testing.T) {
 	mgr := newStubScheduleManager()
 	mgr.fireErr = errors.New("scheduler: fire-now skipped (prior fire still running)")
 	tl := agent.NewScheduleTool(mgr)
-	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"nightly"}`), memfs.NewWorkspace("/ws"))
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"nightly"}`), agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute harness-level error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestScheduleTool_PauseResumeDelete(t *testing.T) {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
 	run := func(a string) session.ToolResult {
-		res, err := tl.Execute(context.Background(), scheduleCall(t, a), ws)
+		res, err := tl.Execute(context.Background(), scheduleCall(t, a), agent.EnvForWS(ws, nil))
 		if err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
@@ -314,7 +314,7 @@ func TestScheduleTool_InspectRendersFires(t *testing.T) {
 	if _, err := mgr.FireNow(context.Background(), "nightly"); err != nil {
 		t.Fatalf("FireNow: %v", err)
 	}
-	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	if !plan.ReadOnly() {
 		t.Fatal("the plan-aware Schedule tool must report ReadOnly()==true so the plan-mode catalog projection advertises it (the read-leaning verbs it admits do not mutate the workspace)")
 	}
-	res, err := plan.Execute(context.Background(), scheduleCall(t, mutCreate), ws)
+	res, err := plan.Execute(context.Background(), scheduleCall(t, mutCreate), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("plan Execute: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 		t.Fatalf("plan-mode mutating create reached the manager (%d creates), want 0 (denied before the base tool)", len(mgr.created))
 	}
 
-	res, err = plan.Execute(context.Background(), scheduleCall(t, roCreate), ws)
+	res, err = plan.Execute(context.Background(), scheduleCall(t, roCreate), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("plan Execute (read-leaning): %v", err)
 	}
@@ -402,7 +402,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	}
 	firesBefore := len(mgr.fires["mutsched"]) + len(mgr.fires["rosched"])
 
-	res, err = plan.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"mutsched"}`), ws)
+	res, err = plan.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"mutsched"}`), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("plan Execute (fire mutating): %v", err)
 	}
@@ -413,7 +413,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 		t.Fatal("plan-mode fire of a mutating schedule reached the manager, want denied before it")
 	}
 
-	res, err = plan.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"rosched"}`), ws)
+	res, err = plan.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"rosched"}`), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("plan Execute (fire read-leaning): %v", err)
 	}
@@ -432,10 +432,10 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	if def.ReadOnly() {
 		t.Fatal("the default Schedule tool must report ReadOnly()==false (the read/mutate serialization contract — unchanged by the plan-aware variant)")
 	}
-	if res, err := def.Execute(context.Background(), scheduleCall(t, mutCreate), ws); err != nil || res.IsError {
+	if res, err := def.Execute(context.Background(), scheduleCall(t, mutCreate), agent.EnvForWS(ws, nil)); err != nil || res.IsError {
 		t.Fatalf("default-mode mutating create = (%v, %q), want allowed", err, res.Content)
 	}
-	if res, err := def.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"mutsched"}`), ws); err != nil || res.IsError {
+	if res, err := def.Execute(context.Background(), scheduleCall(t, `{"verb":"fire","name":"mutsched"}`), agent.EnvForWS(ws, nil)); err != nil || res.IsError {
 		t.Fatalf("default-mode fire of a mutating schedule = (%v, %q), want allowed (no plan-mode gate outside plan mode)", err, res.Content)
 	}
 }
@@ -476,7 +476,7 @@ func TestScheduleTool_InspectRendersInFlightFire(t *testing.T) {
 	s.State.FireDeadline = deadline
 	mgr.scheds["nightly"] = s
 
-	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -517,7 +517,7 @@ func TestScheduleTool_InspectRendersClaimedPending(t *testing.T) {
 	s.State.LastFireSessionID = "pending"
 	mgr.scheds["nightly"] = s
 
-	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestScheduleTool_InspectRendersNoFiresForNeverFired(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
-	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestScheduleTool_InspectRendersTerminalFire(t *testing.T) {
 	}
 	mgr.fires["nightly"] = append(mgr.fires["nightly"], terminalFire)
 
-	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), ws)
+	res, err := tl.Execute(context.Background(), scheduleCall(t, `{"verb":"inspect","name":"nightly"}`), agent.EnvForWS(ws, nil))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

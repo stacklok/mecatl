@@ -101,7 +101,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | 10 command risk classification | ✅ | layer-1 rules + layer-2 `permclassify` |
 | 12 lifecycle hooks | ✅ | all phases fire |
 | 5 progressive compaction | ✅ | `Compactor` seam + `HeuristicCompactor` (default) and `CascadeCompactor` (tiered) |
-| 8 fork-join parallelism | ✅ | `tool.WorkspaceForker` + `internal/adapter/forker` (git-worktree/copy isolation) + `agent.NewParallelTool` (parallel isolated branches, join); wired in `mecated` (`--enable-parallel`) |
+| 8 fork-join parallelism | ✅ | `tool.EnvironmentForker` + `internal/adapter/forker` (git-worktree/copy isolation) + `agent.NewParallelTool` (parallel isolated branches, join); wired in `mecated` (`--enable-parallel`) |
 | **3 tiered memory** | ✅ | `tool.MemoryStore` seam + file-backed `internal/adapter/memory` (Remember/Recall/SearchMemory tools, per-project, conservative descriptions); ON by default per-project (`MEMORY-DEFAULTS.md`) — only consolidation stays opt-in |
 | 4 dream/sleep consolidation | ✅ | `internal/adapter/dream` — conservative MemoryStore+LLM consolidator (merge dupes / drop stale, never invents keys, fail-safe), `RunPeriodically`; opt-in via `--memory-consolidate-interval` |
 

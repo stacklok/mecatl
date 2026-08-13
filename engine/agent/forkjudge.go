@@ -129,7 +129,7 @@ func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, cri
 		j.engine.now(),
 	)
 
-	run := j.engine.Run(ctx, sess, judgeWorkspace{}, RunRequest{Text: buildJudgePrompt(candidates, criteria)})
+	run := j.engine.Run(ctx, sess, judgeEnvironment, RunRequest{Text: buildJudgePrompt(candidates, criteria)})
 	// The judge child is tool-less and non-interactive; the zero childPosture (headless
 	// auto-deny) is correct — it can never raise a Bash ask.
 	final, stop := drainChild(run, childPosture{role: "judge"})
@@ -268,3 +268,11 @@ var (
 	_ BranchJudge    = (*engineJudge)(nil)
 	_ tool.Workspace = judgeWorkspace{}
 )
+
+// judgeEnvironment is the EMPTY, shell-less Environment the judge / ask-reviewer
+// / guardrail-checker / model-router child engines run against (issue #462): it
+// wraps judgeWorkspace with no CommandRunner so a tool-less, read-only child
+// scores text without touching the parent tree. Built once via MustEnvironment
+// (a process-wide var is safe — the Environment is immutable and carries no
+// per-run state).
+var judgeEnvironment = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "judge"}, judgeWorkspace{}, nil)

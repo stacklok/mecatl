@@ -43,7 +43,7 @@ func TestCommandRunnerRun(t *testing.T) {
 	ctx := context.Background()
 	r := newRunner(t, t.TempDir())
 
-	res, err := r.Run(ctx, "echo hi && echo err >&2", "")
+	res, err := r.Run(ctx, "echo hi && echo err >&2")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestCommandRunnerRun(t *testing.T) {
 func TestCommandRunnerExitCode(t *testing.T) {
 	ctx := context.Background()
 	r := newRunner(t, t.TempDir())
-	res, err := r.Run(ctx, "exit 3", "")
+	res, err := r.Run(ctx, "exit 3")
 	if err != nil {
 		t.Fatalf("Run returned harness error for non-zero exit: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCommandRunnerWorkingDir(t *testing.T) {
 		t.Fatalf("seed marker: %v", err)
 	}
 	r := newRunner(t, root)
-	res, err := r.Run(ctx, "ls", "")
+	res, err := r.Run(ctx, "ls")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -86,52 +86,57 @@ func TestCommandRunnerWorkingDir(t *testing.T) {
 	}
 }
 
-// TestCommandRunnerWorkdirOverride proves the runner runs in the per-call workdir
-// when one is supplied — including a workdir OUTSIDE the runner's configured root
-// (which is exactly the fork case: a fork lives under a temp base, not under the
-// configured workspace). It must NOT confine/reject the out-of-root workdir, and
-// an EMPTY workdir must fall back to the configured root.
-func TestCommandRunnerWorkdirOverride(t *testing.T) {
+// TestCommandRunnerBoundNamespace proves the runner is BOUND to a single
+// namespace root at construction (issue #462): a runner minted against a
+// directory runs its commands there, and a SEPARATE runner minted against a
+// different directory runs its commands THERE — never the two crossing via a
+// per-call workdir. This is the fork-isolation property the Environment seam
+// relies on: a forked child gets its OWN runner bound to the child namespace,
+// so its Bash observes the child tree (not the parent's), and a relative write
+// lands in the runner's bound root.
+func TestCommandRunnerBoundNamespace(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	if err := os.WriteFile(filepath.Join(base, "base.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed base marker: %v", err)
 	}
-	// A SEPARATE directory, not under base — the runner's configured root is base.
+	// A SEPARATE directory, not under base.
 	other := t.TempDir()
 	if err := os.WriteFile(filepath.Join(other, "other.txt"), []byte("y"), 0o644); err != nil {
 		t.Fatalf("seed other marker: %v", err)
 	}
-	r := newRunner(t, base)
 
-	// Workdir == the out-of-root "other" dir: the command must run there.
-	res, err := r.Run(ctx, "ls", other)
+	// A runner bound to base runs in base.
+	baseR := newRunner(t, base)
+	res, err := baseR.Run(ctx, "ls")
 	if err != nil {
-		t.Fatalf("Run with out-of-root workdir: %v", err)
+		t.Fatalf("base runner Run: %v", err)
+	}
+	if !strings.Contains(res.Stdout, "base.txt") || strings.Contains(res.Stdout, "other.txt") {
+		t.Errorf("base runner ls = %q; want base.txt (not other.txt)", res.Stdout)
+	}
+
+	// A relative write through the base runner lands in base, never leaking
+	// into other — the fork-isolation property: each runner's writes stay in
+	// its bound namespace.
+	if _, err := baseR.Run(ctx, "echo hi > written.txt"); err != nil {
+		t.Fatalf("base runner write: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "written.txt")); err != nil {
+		t.Errorf("relative write did not land in the bound root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "written.txt")); !os.IsNotExist(err) {
+		t.Errorf("relative write leaked into the other namespace")
+	}
+
+	// A SEPARATE runner bound to other runs in other (the fork child case).
+	otherR := newRunner(t, other)
+	res, err = otherR.Run(ctx, "ls")
+	if err != nil {
+		t.Fatalf("other runner Run: %v", err)
 	}
 	if !strings.Contains(res.Stdout, "other.txt") || strings.Contains(res.Stdout, "base.txt") {
-		t.Errorf("ls in out-of-root workdir = %q; want other.txt (not base.txt) — workdir not honored", res.Stdout)
-	}
-
-	// Writing a relative-path marker via the out-of-root workdir lands in THAT dir,
-	// not the configured root — the fork-isolation property the Bash fix needs.
-	if _, err := r.Run(ctx, "echo hi > written.txt", other); err != nil {
-		t.Fatalf("Run write in out-of-root workdir: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(other, "written.txt")); err != nil {
-		t.Errorf("relative write did not land in the supplied workdir: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(base, "written.txt")); !os.IsNotExist(err) {
-		t.Errorf("relative write leaked into the configured root (escaped the workdir)")
-	}
-
-	// Empty workdir falls back to the configured root.
-	res, err = r.Run(ctx, "ls", "")
-	if err != nil {
-		t.Fatalf("Run with empty workdir: %v", err)
-	}
-	if !strings.Contains(res.Stdout, "base.txt") {
-		t.Errorf("empty workdir did not fall back to the configured root: %q", res.Stdout)
+		t.Errorf("other runner ls = %q; want other.txt (not base.txt) — bound namespace not honored", res.Stdout)
 	}
 }
 
@@ -139,7 +144,7 @@ func TestCommandRunnerCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 	r := newRunner(t, t.TempDir())
-	_, err := r.Run(ctx, "echo hi", "")
+	_, err := r.Run(ctx, "echo hi")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run with cancelled ctx err = %v want context.Canceled", err)
 	}
@@ -149,7 +154,7 @@ func TestCommandRunnerTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	r := newRunner(t, t.TempDir())
-	_, err := r.Run(ctx, "sleep 5", "")
+	_, err := r.Run(ctx, "sleep 5")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Run with expired deadline err = %v want context.DeadlineExceeded", err)
 	}
@@ -168,7 +173,7 @@ func TestCommandRunnerWaitDelayUnblocksGrandchildPipeWait(t *testing.T) {
 		t.Fatalf("NewCommandRunnerShell: %v", err)
 	}
 	start := time.Now()
-	res, err := r.Run(context.Background(), "sleep 5 & echo started", "")
+	res, err := r.Run(context.Background(), "sleep 5 & echo started")
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("a WaitDelay expiry on a successful command must be a success, got err = %v", err)
@@ -205,7 +210,7 @@ func TestCommandRunnerWithCommandEnvList(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	res, err := r.Run(ctx, "printf '%s' \"$GIT_PAGER\"", "")
+	res, err := r.Run(ctx, "printf '%s' \"$GIT_PAGER\"")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -215,7 +220,7 @@ func TestCommandRunnerWithCommandEnvList(t *testing.T) {
 
 	// GIT_EXTERNAL_DIFF was inherited but is NOT in the supplied list: replacement
 	// semantics mean it must be GONE (an append-only env could not have removed it).
-	res, err = r.Run(ctx, "printf '%s' \"$GIT_EXTERNAL_DIFF\"", "")
+	res, err = r.Run(ctx, "printf '%s' \"$GIT_EXTERNAL_DIFF\"")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -224,7 +229,7 @@ func TestCommandRunnerWithCommandEnvList(t *testing.T) {
 	}
 
 	// A var present in the list IS set; a var NOT present is unset (replacement).
-	res, err = r.Run(ctx, "printf '%s' \"$PATH\"", "")
+	res, err = r.Run(ctx, "printf '%s' \"$PATH\"")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -301,7 +306,7 @@ func TestSandboxedRunnerConfigOverride(t *testing.T) {
 	}
 
 	// fsmonitor: env-injected core.fsmonitor=false must override .git/config.
-	if _, err := r.Run(context.Background(), "git status", repo); err != nil {
+	if _, err := r.Run(context.Background(), "git status"); err != nil {
 		t.Fatalf("Run status: %v", err)
 	}
 	if _, statErr := os.Stat(fsmonSentinel); statErr == nil {
@@ -309,7 +314,7 @@ func TestSandboxedRunnerConfigOverride(t *testing.T) {
 	}
 
 	// pager: env-injected core.pager=cat (+ GIT_PAGER=cat) must override .git/config.
-	if _, err := r.Run(context.Background(), "git --paginate log", repo); err != nil {
+	if _, err := r.Run(context.Background(), "git --paginate log"); err != nil {
 		t.Fatalf("Run log: %v", err)
 	}
 	if _, statErr := os.Stat(pagerSentinel); statErr == nil {

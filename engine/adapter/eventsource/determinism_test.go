@@ -24,7 +24,7 @@ func (readTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Read", Description: "read a file", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (readTool) ReadOnly() bool { return true }
-func (readTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (readTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, "file contents"), nil
 }
 
@@ -77,7 +77,9 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 
 	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "look at a.go"})
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	r := e.Run(ctx, sess, env, agent.RunRequest{Text: "look at a.go"})
 
 	// Mimic the relay: append EVERY observed event to the durable log in order.
 	for ev := range r.Events() {

@@ -93,7 +93,7 @@ func (*InspectSubagentTool) ReadOnly() bool { return true }
 // Execute loads the subagent's persisted session by its agent id (the id IS the session
 // id, verbatim — no derivation) and renders a bounded transcript. An unknown id is a
 // model-addressable error (the subagent may not have run yet).
-func (t *InspectSubagentTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t *InspectSubagentTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args inspectSubagentArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "InspectSubagent: "+msg), nil

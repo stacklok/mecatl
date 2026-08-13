@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -88,7 +87,7 @@ func (*sleepThenLoopTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Slow", Description: "slow", Schema: []byte(`{"type":"object"}`)}
 }
 func (*sleepThenLoopTool) ReadOnly() bool { return true }
-func (s *sleepThenLoopTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (s *sleepThenLoopTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	s.calls.Add(1)
 	select {
 	case <-time.After(s.sleep):
@@ -137,7 +136,7 @@ func (*signalThenBlockTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Block", Description: "block", Schema: []byte(`{"type":"object"}`)}
 }
 func (*signalThenBlockTool) ReadOnly() bool { return true }
-func (b *signalThenBlockTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (b *signalThenBlockTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	b.entered <- struct{}{}
 	<-ctx.Done()
 	return session.NewToolResult(in.ID, "blocked ok"), nil
@@ -170,7 +169,7 @@ func TestSubagentParentCancelWithTimeoutIsNotTimeBudget(t *testing.T) {
 	go func() {
 		res, err := task.Execute(parentCtx,
 			session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"block","timeout_ms":600000}`)),
-			memfs.NewWorkspace("/base"))
+			agent.MemEnv("/base"))
 		done <- out{res, err}
 	}()
 

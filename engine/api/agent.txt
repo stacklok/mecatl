@@ -4,26 +4,26 @@
     ifacemethod func (PreservedForkStore).Preserve(root string, cleanup func() error)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
-    method func (*BashStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
-    method func (*BashStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*BashStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
+    method func (*BashStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*BashStatusTool).ReadOnly() bool
     method func (*BashStatusTool).Spec() tool.ToolSpec
     method func (*Engine).Capabilities() port.ProviderCapabilities
     method func (*Engine).ContextWindow() int
     method func (*Engine).HasTool(name string) bool
     method func (*Engine).Model() string
-    method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, ws tool.Workspace, askID string, verdict session.ApprovalVerdict) *Run
-    method func (*Engine).Run(ctx context.Context, sess *session.Session, ws tool.Workspace, req RunRequest) *Run
-    method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run
+    method func (*Engine).Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run
+    method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*InspectMemberTool).ReadOnly() bool
     method func (*InspectMemberTool).Spec() tool.ToolSpec
-    method func (*InspectSubagentTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*InspectSubagentTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*InspectSubagentTool).ReadOnly() bool
     method func (*InspectSubagentTool).Spec() tool.ToolSpec
     method func (*LRUForkReaper).Len() int
     method func (*LRUForkReaper).Preserve(root string, cleanup func() error)
-    method func (*ParallelTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
-    method func (*ParallelTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*ParallelTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
+    method func (*ParallelTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*ParallelTool).MutatesParent(call session.ToolCall) bool
     method func (*ParallelTool).ReadOnly() bool
     method func (*ParallelTool).Spec() tool.ToolSpec
@@ -31,19 +31,19 @@
     method func (*Run).Cancel()
     method func (*Run).CancelChild(childID string) bool
     method func (*Run).Events() <-chan session.Event
-    method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleQueryTool).ReadOnly() bool
     method func (*ScheduleQueryTool).Spec() tool.ToolSpec
-    method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
+    method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleTool).ReadOnly() bool
     method func (*ScheduleTool).Spec() tool.ToolSpec
-    method func (*SubagentStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error)
-    method func (*SubagentStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*SubagentStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
+    method func (*SubagentStatusTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*SubagentStatusTool).ReadOnly() bool
     method func (*SubagentStatusTool).Spec() tool.ToolSpec
-    method func (*SubagentTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
-    method func (*SubagentTool).ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error)
-    method func (*SubagentTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*SubagentTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
+    method func (*SubagentTool).ExecuteObserved(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event)) (session.ToolResult, error)
+    method func (*SubagentTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*SubagentTool).MutatesParent(call session.ToolCall) bool
     method func (*SubagentTool).ReadOnly() bool
     method func (*SubagentTool).Spec() tool.ToolSpec
@@ -52,14 +52,14 @@
     method func (*Supervisor).MemberModel(name string) string
     method func (*Supervisor).MemberRouting(name string) (category string, model string, reason string)
     method func (*Supervisor).Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome
-    method func (*TeamTool).Execute(ctx context.Context, call session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
-    method func (*TeamTool).ExecuteObserved(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event)) (session.ToolResult, error)
-    method func (*TeamTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, ws tool.Workspace, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (*TeamTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
+    method func (*TeamTool).ExecuteObserved(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event)) (session.ToolResult, error)
+    method func (*TeamTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*TeamTool).ReadOnly() bool
     method func (*TeamTool).Spec() tool.ToolSpec
     method func (*UserModelReviewer).Review(ctx context.Context, sessionID string) error
-    method func (BashTool).Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error)
-    method func (BashTool).ExecuteWithParent(ctx context.Context, in session.ToolCall, ws tool.Workspace, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
+    method func (BashTool).Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error)
+    method func (BashTool).ExecuteWithParent(ctx context.Context, in session.ToolCall, env tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (BashTool).ReadOnly() bool
     method func (BashTool).Spec() tool.ToolSpec
     method func (CascadeCompactor).Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error)
@@ -94,21 +94,21 @@ func MemberToolNames() map[string]struct{}
 func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool
 func NeutraliseFraming(s string) string
 func NewBashStatusTool() tool.Tool
-func NewBashTool(runner tool.CommandRunner) tool.Tool
+func NewBashTool() tool.Tool
 func NewEngine(deps Deps) *Engine
 func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
 func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge
 func NewInspectMemberTool(store port.SessionStore) tool.Tool
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool
 func NewLRUForkReaper(capacity int) *LRUForkReaper
-func NewParallelTool(childEngine *Engine, forker tool.WorkspaceForker, opts ...ParallelOption) tool.Tool
+func NewParallelTool(childEngine *Engine, forker tool.EnvironmentForker, opts ...ParallelOption) tool.Tool
 func NewPlanAwareScheduleTool(base tool.Tool, mgr port.ScheduleManager) tool.Tool
 func NewPresentPlanTool() tool.Tool
 func NewScheduleQueryTool(mgr port.ScheduleManager) tool.Tool
 func NewScheduleTool(mgr port.ScheduleManager) tool.Tool
 func NewSubagentStatusTool() tool.Tool
 func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool
-func NewSupervisor(t *team.Team, base tool.Workspace, factory MemberEngine, opts ...SupervisorOption) *Supervisor
+func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, opts ...SupervisorOption) *Supervisor
 func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
 func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error)
@@ -120,12 +120,12 @@ func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOpti
 func WithAgentModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
 func WithAgentWritableEngineFactory(f func(agentName string) (*Engine, bool)) SubagentOption
 func WithAskReviewPolicy(p string) EngineAskReviewerOption
-func WithAutoMerge(m tool.ForkMerger) ParallelOption
-func WithChildForker(f tool.WorkspaceForker) SubagentOption
+func WithAutoMerge(m tool.EnvironmentMerger) ParallelOption
+func WithChildForker(f tool.EnvironmentForker) SubagentOption
 func WithChildLimits(l session.Limits) SubagentOption
 func WithChildMode(m session.PermissionMode) SubagentOption
 func WithChildSessionPrefix(p string) SubagentOption
-func WithForker(f tool.WorkspaceForker) SupervisorOption
+func WithForker(f tool.EnvironmentForker) SupervisorOption
 func WithJudgeLimits(l session.Limits) EngineJudgeOption
 func WithJudgeSessionPrefix(p string) EngineJudgeOption
 func WithMaxBranches(n int) ParallelOption
@@ -144,7 +144,7 @@ func WithParallelJudge(j BranchJudge) ParallelOption
 func WithParallelStore(store port.SessionStore) ParallelOption
 func WithParallelSubagentStopHook(h port.HookRunner) ParallelOption
 func WithPinnedAgents(names []string) SubagentOption
-func WithReadOnlyForker(f tool.WorkspaceForker) SupervisorOption
+func WithReadOnlyForker(f tool.EnvironmentForker) SupervisorOption
 func WithRoutableAgents(names []string) SubagentOption
 func WithSharedChildWorkspace(f func(root string) tool.Workspace) SubagentOption
 func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
@@ -159,9 +159,9 @@ func WithTeamLimits(l session.Limits) SupervisorOption
 func WithTeamMode(m session.PermissionMode) SupervisorOption
 func WithTeamSharedBaseWorkspace(f func(root string) tool.Workspace) SupervisorOption
 func WithTeamTokenBudget(n int) SupervisorOption
-func WithTeamToolForker(f tool.WorkspaceForker) TeamOption
+func WithTeamToolForker(f tool.EnvironmentForker) TeamOption
 func WithTeamToolHooks(h port.HookRunner) TeamOption
-func WithTeamToolReadOnlyForker(f tool.WorkspaceForker) TeamOption
+func WithTeamToolReadOnlyForker(f tool.EnvironmentForker) TeamOption
 func WithTeamToolSharedBaseWorkspace(f func(root string) tool.Workspace) TeamOption
 func WithTeamToolStore(s port.SessionStore) TeamOption
 func WithTeamToolTokenBudget(n int) TeamOption

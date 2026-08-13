@@ -84,7 +84,7 @@ func TestSupervisorTwoMemberFlow(t *testing.T) {
 
 	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
 	base := memfs.NewWorkspace("/ws")
-	sup := agent.NewSupervisor(tm, base, memberFactory(t, tm, providers), agent.WithMaxRounds(10))
+	sup := agent.NewSupervisor(tm, agent.EnvForWS(base, nil), memberFactory(t, tm, providers), agent.WithMaxRounds(10))
 
 	ctx := context.Background()
 	if err := sup.AddMember(ctx, agent.MemberSpec{
@@ -178,7 +178,7 @@ func TestSupervisorStuckTaskQuiescesNoSpin(t *testing.T) {
 
 	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
 	maxRounds := 8
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers), agent.WithMaxRounds(maxRounds))
 
 	ctx := context.Background()
@@ -245,7 +245,7 @@ func TestSupervisorMemberHoldsAtMostOneTask(t *testing.T) {
 	// A sink that, after each round's events, checks the team never has two
 	// in_progress tasks assigned to the worker. Run serialises sink calls.
 	var maxInProgress int
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers), agent.WithMaxRounds(6))
 
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "worker"}); err != nil {
@@ -308,7 +308,7 @@ func TestSupervisorMemberTurnBudgetStops(t *testing.T) {
 
 	const maxRounds = 30
 	const budget = 5 // lifetime turns; ~2 turns/round → stops after ~3 rounds
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers),
 		agent.WithMaxRounds(maxRounds),
 		agent.WithMemberTurnBudget(budget),
@@ -377,7 +377,7 @@ func (*barrierMemberTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Barrier", Description: "barrier", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*barrierMemberTool) ReadOnly() bool { return true }
-func (b *barrierMemberTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (b *barrierMemberTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	b.mu.Lock()
 	b.live++
 	if b.live > b.peak {
@@ -389,7 +389,7 @@ func (b *barrierMemberTool) Execute(_ context.Context, in session.ToolCall, _ to
 	b.mu.Lock()
 	b.live--
 	b.mu.Unlock()
-	return session.NewToolResult(in.ID, "ok"), nil
+	return session.NewToolResult(call.ID, "ok"), nil
 }
 func (b *barrierMemberTool) peakLive() int {
 	b.mu.Lock()
@@ -425,7 +425,7 @@ func TestSupervisorRoundConcurrencyBounded(t *testing.T) {
 		}
 	}
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory,
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory,
 		agent.WithMaxRounds(1),
 		agent.WithTeamConcurrency(concurrency),
 	)
@@ -484,7 +484,7 @@ func TestSupervisorMemberLimitsBindSession(t *testing.T) {
 	workerProv := mockllm.New(turns...)
 	providers := map[string]*mockllm.Provider{"worker": workerProv}
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		limitedMemberFactory(t, tm, providers, session.Limits{MaxTurns: 2, MaxToolCalls: 40, MaxConsecutiveFailures: 3}),
 		agent.WithMaxRounds(1),
 		// A deliberately LOOSE team default, so the per-member override (2) is what bites.
@@ -515,7 +515,7 @@ func TestSupervisorMemberZeroLimitsUsesTeamDefault(t *testing.T) {
 	workerProv := mockllm.New(turns...)
 	providers := map[string]*mockllm.Provider{"worker": workerProv}
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		limitedMemberFactory(t, tm, providers, session.Limits{}), // zero => team default
 		agent.WithMaxRounds(1),
 		agent.WithTeamLimits(session.Limits{MaxTurns: 3, MaxToolCalls: 200, MaxConsecutiveFailures: 5}),
@@ -545,7 +545,7 @@ func TestSupervisorMemberPartialLimitsMergePerField(t *testing.T) {
 	workerProv := mockllm.New(turns...)
 	providers := map[string]*mockllm.Provider{"worker": workerProv}
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		limitedMemberFactory(t, tm, providers, session.Limits{MaxTurns: 2}), // only MaxTurns pinned
 		agent.WithMaxRounds(1),
 		agent.WithTeamLimits(session.Limits{MaxTurns: 9, MaxToolCalls: 200, MaxConsecutiveFailures: 5}),
@@ -561,7 +561,7 @@ func TestSupervisorMemberPartialLimitsMergePerField(t *testing.T) {
 	}
 }
 
-// recordingForker is a fake tool.WorkspaceForker that hands out in-memory
+// recordingForker is a fake tool.EnvironmentForker that hands out in-memory
 // workspaces and records the fork labels and cleanup calls.
 type recordingForker struct {
 	mu       sync.Mutex
@@ -569,7 +569,7 @@ type recordingForker struct {
 	cleanups int
 }
 
-func (f *recordingForker) Fork(_ context.Context, _ tool.Workspace, label string) (tool.Workspace, func() error, string, error) {
+func (f *recordingForker) Fork(_ context.Context, _ tool.Environment, label string) (tool.Environment, func() error, string, error) {
 	f.mu.Lock()
 	f.labels = append(f.labels, label)
 	f.mu.Unlock()
@@ -580,7 +580,7 @@ func (f *recordingForker) Fork(_ context.Context, _ tool.Workspace, label string
 		f.mu.Unlock()
 		return nil
 	}
-	return ws, cleanup, "", nil
+	return agent.ForkEnv(ws), cleanup, "", nil
 }
 
 // TestSupervisorMutatingMemberForksWorkspace asserts a Mutating member runs in an
@@ -591,7 +591,7 @@ func TestSupervisorMutatingMemberForksWorkspace(t *testing.T) {
 	base := memfs.NewWorkspace("/ws")
 	ff := &recordingForker{}
 
-	sup := agent.NewSupervisor(tm, base, memberFactory(t, tm, providers),
+	sup := agent.NewSupervisor(tm, agent.EnvForWS(base, nil), memberFactory(t, tm, providers),
 		agent.WithForker(ff), agent.WithMaxRounds(5))
 
 	ctx := context.Background()
@@ -621,7 +621,7 @@ func TestSupervisorMutatingMemberForksWorkspace(t *testing.T) {
 func TestSupervisorRequiresForkerForMutatingMember(t *testing.T) {
 	tm := team.New("t")
 	providers := map[string]*mockllm.Provider{"impl": mockllm.New(mockllm.TextTurn("x"))}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), memberFactory(t, tm, providers))
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), memberFactory(t, tm, providers))
 	err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "impl", Mutating: true})
 	if err == nil {
 		t.Fatal("AddMember of a Mutating member without a forker should fail")
@@ -638,8 +638,8 @@ func (f fakeMutatingTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: f.name, Description: f.name, Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (fakeMutatingTool) ReadOnly() bool { return false }
-func (fakeMutatingTool) Execute(_ context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
-	return session.NewToolResult(c.ID, "ok"), nil
+func (fakeMutatingTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, "ok"), nil
 }
 
 // catalogFactory builds a member Engine whose catalog is exactly the supplied
@@ -670,7 +670,7 @@ func catalogFactory(t *testing.T, tm *team.Team, extra ...tool.Tool) agent.Membe
 // base-sharing member corrupt the shared workspace.
 func TestSupervisorRejectsReadOnlyMemberWithMutatingTool(t *testing.T) {
 	tm := team.New("t")
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		catalogFactory(t, tm, fakeMutatingTool{name: "Edit"}))
 	err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro"})
 	if err == nil {
@@ -690,7 +690,7 @@ func TestSupervisorRejectsReadOnlyMemberWithMutatingTool(t *testing.T) {
 // state, so a read-only member carrying just those is ACCEPTED.
 func TestSupervisorAcceptsReadOnlyMemberWithCoordinationTools(t *testing.T) {
 	tm := team.New("t")
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), catalogFactory(t, tm))
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), catalogFactory(t, tm))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro"}); err != nil {
 		t.Fatalf("read-only member with only coordination tools should be accepted: %v", err)
 	}
@@ -700,7 +700,7 @@ func TestSupervisorAcceptsReadOnlyMemberWithCoordinationTools(t *testing.T) {
 // which runs in its own isolated fork — MAY carry the same workspace-mutating tool.
 func TestSupervisorAcceptsMutatingMemberWithMutatingTool(t *testing.T) {
 	tm := team.New("t")
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		catalogFactory(t, tm, fakeMutatingTool{name: "Edit"}),
 		agent.WithForker(&recordingForker{}))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "impl", Mutating: true}); err != nil {
@@ -720,7 +720,7 @@ func TestSupervisorAcceptsReadOnlyMemberWithMCPTool(t *testing.T) {
 		b.MCPToolNames = []string{"mcp__remote__do"}
 		return b
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory)
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory)
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro"}); err != nil {
 		t.Fatalf("read-only member holding an exempt MCP tool should be accepted: %v", err)
 	}
@@ -736,7 +736,7 @@ func TestSupervisorStillRejectsRealMutatingDespiteMCPExempt(t *testing.T) {
 		b.MCPToolNames = []string{"mcp__remote__do"} // exempt the MCP tool only
 		return b
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory)
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory)
 	err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro"})
 	if err == nil || !strings.Contains(err.Error(), "Edit") {
 		t.Fatalf("read-only member with a real mutating tool must still be rejected naming Edit, got %v", err)
@@ -763,7 +763,7 @@ func TestSupervisorReadOnlyIsolatedMemberForksViaReadOnlyForker(t *testing.T) {
 	tm := team.New("t")
 	mutatingFk := &recordingForker{}
 	roFk := &recordingForker{}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), roShellFactory(t, tm),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), roShellFactory(t, tm),
 		agent.WithForker(mutatingFk), agent.WithReadOnlyForker(roFk))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro"}); err != nil {
 		t.Fatalf("read-only-isolated member with a read-only forker should be accepted: %v", err)
@@ -785,7 +785,7 @@ func TestSupervisorReadOnlyIsolatedMemberForksViaReadOnlyForker(t *testing.T) {
 // mis-wire sentinel.
 func TestSupervisorReadOnlyIsolatedMemberNeedsReadOnlyForker(t *testing.T) {
 	tm := team.New("t")
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), roShellFactory(t, tm))
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), roShellFactory(t, tm))
 	err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro"})
 	if !errors.Is(err, agent.ErrReadOnlyShellNoForker) {
 		t.Fatalf("AddMember of an IsolateReadOnly member without a read-only forker = %v, want ErrReadOnlyShellNoForker", err)
@@ -803,7 +803,7 @@ func TestSupervisorBaseSharingMemberWithBashStillRejected(t *testing.T) {
 	tm := team.New("t")
 	// A read-only forker IS wired, but the factory did NOT mark IsolateReadOnly, so
 	// this member would base-share — the backstop must still catch its Bash.
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		catalogFactory(t, tm, fakeMutatingTool{name: "Bash"}),
 		agent.WithReadOnlyForker(&recordingForker{}))
 	err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro"})
@@ -835,7 +835,7 @@ func TestSupervisorMemberDispositionError(t *testing.T) {
 	// session is nonetheless recovered and remains drivable (issue #318).
 	prov := mockllm.New(mockllm.EmptyTurnWithStop(session.StopError))
 	providers := map[string]*mockllm.Provider{"worker": prov}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers), agent.WithMaxRounds(5),
 		agent.WithMemberErrorRetries(0))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "worker", InitialPrompt: "go"}); err != nil {
@@ -868,7 +868,7 @@ func TestSupervisorMemberDispositionBudget(t *testing.T) {
 	}
 	prov := mockllm.New(turns...)
 	providers := map[string]*mockllm.Provider{"worker": prov}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers), agent.WithMaxRounds(30), agent.WithMemberTurnBudget(5))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "worker", InitialPrompt: "loop"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
@@ -904,7 +904,7 @@ func TestSupervisorMemberDispositionCancelled(t *testing.T) {
 			LLM: prov, Catalog: cat, Policy: allow, Hooks: noopHooks{}, Model: "mock",
 		})}
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory, agent.WithMaxRounds(5))
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory, agent.WithMaxRounds(5))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "worker", InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
 	}
@@ -921,7 +921,7 @@ func TestSupervisorMemberDispositionDone(t *testing.T) {
 	tm := team.New("t")
 	prov := mockllm.New(mockllm.TextTurn("all done"))
 	providers := map[string]*mockllm.Provider{"worker": prov}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers), agent.WithMaxRounds(5))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "worker", InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
@@ -955,7 +955,7 @@ func TestSupervisorMemberDispositionNoProgressIsDone(t *testing.T) {
 			MaxNoProgressNudges: -1,
 		})}
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory, agent.WithMaxRounds(5))
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory, agent.WithMaxRounds(5))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "worker", InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
 	}
@@ -983,7 +983,7 @@ func TestSupervisorRunsMemberCloseOnCleanup(t *testing.T) {
 		b.Close = func() error { closed++; return nil }
 		return b
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory)
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory)
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "ro", InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
 	}
@@ -1018,7 +1018,7 @@ func TestSupervisorRelaysMemberContextWindow(t *testing.T) {
 			ContextWindow: func() int { return window },
 		})}
 	}
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), factory, agent.WithMaxRounds(2))
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory, agent.WithMaxRounds(2))
 	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "go"}); err != nil {
 		t.Fatalf("AddMember: %v", err)
 	}

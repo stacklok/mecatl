@@ -17,6 +17,14 @@ func (f *Forker) RunGitForTest() func(ctx context.Context, dir string, args ...s
 	return f.runGit
 }
 
+// GitForTest runs a real git subcommand in dir with the forker's scrubbed env, for
+// test setup (initialising a repo, committing a seed). It is the exported wrapper
+// around the package-level runGit so an external _test package can set up a repo
+// without re-implementing the env scrubbing. Test-only.
+func GitForTest(ctx context.Context, dir string, args ...string) error {
+	return runGit(ctx, dir, args...)
+}
+
 // CountOverlayGitForTest wraps the package-level runGitCapture (the overlay's git
 // runner) with a counting + arg-recording wrapper for the duration of fn, restoring
 // the original afterwards. It returns the captured invocations (each as its args

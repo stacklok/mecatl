@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/session"
@@ -407,7 +406,7 @@ func TestCancelChildMidGateWait(t *testing.T) {
 	go func() {
 		res, _ := tl.ExecuteWithParent(context.Background(),
 			session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"queued work"}`)),
-			memfs.NewWorkspace("/ws"), nil, caps)
+			memEnv("/ws"), nil, caps)
 		resCh <- res
 	}()
 
@@ -787,7 +786,7 @@ func (*parkingToolInt) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Wait", Description: "parks until cancelled", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*parkingToolInt) ReadOnly() bool { return true }
-func (p *parkingToolInt) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (p *parkingToolInt) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	p.once.Do(func() { close(p.started) })
 	<-ctx.Done()
 	return session.NewToolResult(in.ID, "interrupted"), nil
@@ -828,7 +827,7 @@ func TestParentRunCancelKeepsUnNotedRendering(t *testing.T) {
 	}()
 	res, err := tl.ExecuteWithParent(ctx,
 		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"x"}`)),
-		memfs.NewWorkspace("/ws"), nil, caps)
+		memEnv("/ws"), nil, caps)
 	if err != nil {
 		t.Fatalf("ExecuteWithParent transport error: %v", err)
 	}

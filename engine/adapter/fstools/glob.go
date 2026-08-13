@@ -64,7 +64,8 @@ func (GlobTool) Spec() tool.ToolSpec {
 func (GlobTool) ReadOnly() bool { return true }
 
 // Execute runs the glob and returns capped, sorted paths.
-func (GlobTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+func (GlobTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	ws := env.Workspace()
 	var args globArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

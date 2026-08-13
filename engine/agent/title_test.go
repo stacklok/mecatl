@@ -27,7 +27,7 @@ func TestTitleSeededOnceFromFirstGenuinePrompt(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	evs := drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "Fix the flaky CI job"}))
+	evs := drain(e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "Fix the flaky CI job"}))
 
 	// The run nudged then progressed (the empty turn was synthetic, not a
 	// termination): exactly one no-progress nudge user message was recorded.
@@ -56,7 +56,7 @@ func TestTitleSeededOnceFromFirstGenuinePrompt(t *testing.T) {
 	}
 	llm2 := mockllm.New(mockllm.TextTurn("ok"))
 	e2 := newEngine(agent.Deps{LLM: llm2, Catalog: catalogWith(t)})
-	drain(e2.Run(context.Background(), sess, ws, agent.RunRequest{Text: "A completely different second prompt"}))
+	drain(e2.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "A completely different second prompt"}))
 
 	if got, want := sess.Title, "Fix the flaky CI job"; got != want {
 		t.Fatalf("after second genuine prompt Title = %q, want %q (set-once — second prompt must not overwrite)", got, want)
@@ -76,7 +76,7 @@ func TestTitleEmptyForMultimodalOnlyPrompt(t *testing.T) {
 	parts := []session.Content{
 		{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte("fakepng")},
 	}
-	r := e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "", Parts: parts})
+	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "", Parts: parts})
 	drain(r)
 
 	if sess.Title != "" {
@@ -92,7 +92,7 @@ func TestTitleSeededOnReopenRun(t *testing.T) {
 	sess := newSession(t, session.Limits{})
 	ws := memfs.NewWorkspace("/ws")
 
-	drain(e.Run(context.Background(), sess, ws, agent.RunRequest{Text: "the original goal"}))
+	drain(e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "the original goal"}))
 	if got, want := sess.Title, "the original goal"; got != want {
 		t.Fatalf("Title after first run = %q, want %q", got, want)
 	}

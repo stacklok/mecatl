@@ -125,7 +125,7 @@ func (sendMessageTool) Spec() tool.ToolSpec {
 
 func (sendMessageTool) ReadOnly() bool { return false }
 
-func (t sendMessageTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t sendMessageTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args sendMessageArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, msg), nil
@@ -177,7 +177,7 @@ func (addTaskTool) Spec() tool.ToolSpec {
 
 func (addTaskTool) ReadOnly() bool { return false }
 
-func (t addTaskTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t addTaskTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args addTaskArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, msg), nil
@@ -231,7 +231,7 @@ func (claimTaskTool) Spec() tool.ToolSpec {
 
 func (claimTaskTool) ReadOnly() bool { return false }
 
-func (t claimTaskTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t claimTaskTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args claimTaskArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, msg), nil
@@ -282,7 +282,7 @@ func (completeTaskTool) Spec() tool.ToolSpec {
 
 func (completeTaskTool) ReadOnly() bool { return false }
 
-func (t completeTaskTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t completeTaskTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args completeTaskArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, msg), nil
@@ -319,7 +319,7 @@ func (listTasksTool) Spec() tool.ToolSpec {
 
 func (listTasksTool) ReadOnly() bool { return true }
 
-func (t listTasksTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t listTasksTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	tasks := t.team.Tasks()
 	if len(tasks) == 0 {
 		return session.NewToolResult(call.ID, "The team task list is empty."), nil
@@ -380,7 +380,7 @@ func (recordFindingTool) Spec() tool.ToolSpec {
 
 func (recordFindingTool) ReadOnly() bool { return false }
 
-func (t recordFindingTool) Execute(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t recordFindingTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args recordFindingArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, msg), nil

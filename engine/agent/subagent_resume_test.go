@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -504,7 +503,7 @@ func TestSubagentConcurrentResumeGuard(t *testing.T) {
 	go func() {
 		res, err := task.Execute(ctx,
 			session.NewToolCall("a1", "Subagent", json.RawMessage(resumeArgs("subagent-p1", "first"))),
-			memfs.NewWorkspace("/ws"))
+			agent.MemEnv("/ws"))
 		results <- out{res, err}
 	}()
 
@@ -518,7 +517,7 @@ func TestSubagentConcurrentResumeGuard(t *testing.T) {
 	// Second concurrent resume on the SAME id must be rejected immediately.
 	second, err := task.Execute(context.Background(),
 		session.NewToolCall("a2", "Subagent", json.RawMessage(resumeArgs("subagent-p1", "second"))),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("second resume transport error: %v", err)
 	}
@@ -692,7 +691,7 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 
 	// Collect BOTH Subagent tool results in order.
 	var subResults []*session.ToolResult

@@ -144,7 +144,7 @@ func (FetchMcpResourceTool) ReadOnly() bool { return true }
 // (a missing uri, a rejected SSRF target, a non-https scheme, a fetch error)
 // are returned as model-facing tool errors (NewToolError), never a Go error —
 // the Go error return is reserved for harness-level faults (ctx cancellation).
-func (t FetchMcpResourceTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (t FetchMcpResourceTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args fetchMcpResourceArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil

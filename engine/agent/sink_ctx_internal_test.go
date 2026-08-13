@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -68,7 +67,7 @@ func TestEngineEmitForwardsRunCtxToSink(t *testing.T) {
 	// Engine.Run wraps ctx in context.WithCancel but PRESERVES values, so the
 	// marker must survive into the sink if the run forwards its own ctx.
 	ctx := context.WithValue(context.Background(), ctxMarkerKey{}, "from-request")
-	r := e.Run(ctx, sess, memfs.NewWorkspace("/ws"), RunRequest{Text: "go"})
+	r := e.Run(ctx, sess, memEnv("/ws"), RunRequest{Text: "go"})
 	for range r.Events() { //nolint:revive // drain to completion
 	}
 

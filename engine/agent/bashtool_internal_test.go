@@ -22,14 +22,12 @@ type fakeBashRunner struct {
 
 	mu      sync.Mutex
 	command string
-	workdir string
 }
 
-func (f *fakeBashRunner) Run(_ context.Context, command, workdir string) (tool.CommandResult, error) {
+func (f *fakeBashRunner) Run(_ context.Context, command string) (tool.CommandResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.command = command
-	f.workdir = workdir
 	return f.res, f.err
 }
 
@@ -49,11 +47,11 @@ type fakeStreamingRunner struct {
 
 var _ tool.CommandStreamer = (*fakeStreamingRunner)(nil)
 
-func (*fakeStreamingRunner) Run(context.Context, string, string) (tool.CommandResult, error) {
+func (*fakeStreamingRunner) Run(context.Context, string) (tool.CommandResult, error) {
 	return tool.CommandResult{}, errors.New("fakeStreamingRunner: foreground Run not expected")
 }
 
-func (f *fakeStreamingRunner) RunStreaming(ctx context.Context, _, _ string, out io.Writer) (int, error) {
+func (f *fakeStreamingRunner) RunStreaming(ctx context.Context, _ string, out io.Writer) (int, error) {
 	if f.started != nil {
 		// Close at most once: a table row may reuse one runner for the call,
 		// and a started channel shared across rows must never double-close.
@@ -85,6 +83,16 @@ func (f *fakeStreamingRunner) RunStreaming(ctx context.Context, _, _ string, out
 // bashWS is the workspace every fake runs against (only Root() is read).
 var bashWS = memfs.NewWorkspace("/ws")
 
+// bashEnv wraps bashWS into a shell-less Environment (the background-Bash tests
+// inject a streaming runner via the Environment's runner, not the workspace).
+var bashEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, bashWS, nil)
+
+// bashEnvRunner wraps bashWS into an Environment bound to runner (the
+// background-Bash tests pass a streaming runner this way, issue #462).
+func bashEnvRunner(runner tool.CommandRunner) tool.Environment {
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, bashWS, runner)
+}
+
 func bashCall(id, command string, timeoutMS int, background bool) session.ToolCall {
 	args := map[string]any{"command": command}
 	if timeoutMS != 0 {
@@ -104,7 +112,7 @@ func bashCall(id, command string, timeoutMS int, background bool) session.ToolCa
 
 func TestBashToolForegroundSuccess(t *testing.T) {
 	r := &fakeBashRunner{res: tool.CommandResult{Stdout: "hello\n", ExitCode: 0}}
-	res, err := NewBashTool(r).Execute(context.Background(), bashCall("c1", "echo hello", 0, false), bashWS)
+	res, err := NewBashTool().Execute(context.Background(), bashCall("c1", "echo hello", 0, false), bashEnvRunner(r))
 	if err != nil {
 		t.Fatalf("Execute err = %v", err)
 	}
@@ -114,14 +122,14 @@ func TestBashToolForegroundSuccess(t *testing.T) {
 	if got, want := res.Content, "hello\n[exit code: 0]"; got != want {
 		t.Fatalf("content = %q, want %q", got, want)
 	}
-	if r.command != "echo hello" || r.workdir != "/ws" {
-		t.Fatalf("runner got (%q, %q), want (echo hello, /ws)", r.command, r.workdir)
+	if r.command != "echo hello" {
+		t.Fatalf("runner got %q, want echo hello", r.command)
 	}
 }
 
 func TestBashToolForegroundNonZeroExit(t *testing.T) {
 	r := &fakeBashRunner{res: tool.CommandResult{Stdout: "boom\n", Stderr: "bad\n", ExitCode: 3}}
-	res, _ := NewBashTool(r).Execute(context.Background(), bashCall("c1", "false", 0, false), bashWS)
+	res, _ := NewBashTool().Execute(context.Background(), bashCall("c1", "false", 0, false), bashEnvRunner(r))
 	if !res.IsError {
 		t.Fatal("IsError = false on non-zero exit")
 	}
@@ -131,7 +139,7 @@ func TestBashToolForegroundNonZeroExit(t *testing.T) {
 }
 
 func TestBashToolForegroundArgValidation(t *testing.T) {
-	bt := NewBashTool(&fakeBashRunner{})
+	bt := NewBashTool()
 	for _, tc := range []struct {
 		name string
 		call session.ToolCall
@@ -141,7 +149,7 @@ func TestBashToolForegroundArgValidation(t *testing.T) {
 		{"negative timeout", bashCall("c1", "true", -5, false), `"timeout_ms" must be non-negative`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, _ := bt.Execute(context.Background(), tc.call, bashWS)
+			res, _ := bt.Execute(context.Background(), tc.call, bashEnv)
 			if !res.IsError || !strings.Contains(res.Content, tc.want) {
 				t.Fatalf("res = %+v, want error containing %q", res, tc.want)
 			}
@@ -149,7 +157,7 @@ func TestBashToolForegroundArgValidation(t *testing.T) {
 	}
 	// Malformed JSON is a tool error, not a Go error.
 	bad := session.ToolCall{ID: "c1", Name: tool.BashToolName, Args: json.RawMessage(`{"command": 42}`)}
-	res, _ := bt.Execute(context.Background(), bad, bashWS)
+	res, _ := bt.Execute(context.Background(), bad, bashEnv)
 	if !res.IsError {
 		t.Fatalf("malformed args: IsError = false, body %q", res.Content)
 	}
@@ -157,7 +165,7 @@ func TestBashToolForegroundArgValidation(t *testing.T) {
 
 func TestBashToolForegroundTimeoutTrailer(t *testing.T) {
 	r := &fakeBashRunner{res: tool.CommandResult{Stdout: "partial\n"}, err: context.DeadlineExceeded}
-	res, _ := NewBashTool(r).Execute(context.Background(), bashCall("c1", "sleep 99", 50, false), bashWS)
+	res, _ := NewBashTool().Execute(context.Background(), bashCall("c1", "sleep 99", 50, false), bashEnvRunner(r))
 	if !res.IsError {
 		t.Fatal("IsError = false on timeout")
 	}
@@ -182,7 +190,7 @@ func TestBashToolForegroundCancelAndNoShellTrailers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &fakeBashRunner{err: tc.err}
-			res, _ := NewBashTool(r).Execute(context.Background(), bashCall("c1", "x", 0, false), bashWS)
+			res, _ := NewBashTool().Execute(context.Background(), bashCall("c1", "x", 0, false), bashEnvRunner(r))
 			if !res.IsError || res.Content != tc.want {
 				t.Fatalf("res = %+v, want error %q", res, tc.want)
 			}
@@ -195,7 +203,7 @@ func TestBashToolForegroundTimeoutTrailerSurvivesHugeOutput(t *testing.T) {
 		res: tool.CommandResult{Stdout: strings.Repeat("x", 3*bashToolMaxOutputBytes)},
 		err: context.DeadlineExceeded,
 	}
-	res, _ := NewBashTool(r).Execute(context.Background(), bashCall("c1", "x", 10, false), bashWS)
+	res, _ := NewBashTool().Execute(context.Background(), bashCall("c1", "x", 10, false), bashEnvRunner(r))
 	if !res.IsError {
 		t.Fatal("IsError = false on timeout")
 	}
@@ -210,7 +218,7 @@ func TestBashToolForegroundTimeoutTrailerSurvivesHugeOutput(t *testing.T) {
 
 func TestBashToolForegroundOutputCap(t *testing.T) {
 	r := &fakeBashRunner{res: tool.CommandResult{Stdout: strings.Repeat("y", bashToolMaxOutputBytes+100)}}
-	res, _ := NewBashTool(r).Execute(context.Background(), bashCall("c1", "x", 0, false), bashWS)
+	res, _ := NewBashTool().Execute(context.Background(), bashCall("c1", "x", 0, false), bashEnvRunner(r))
 	if !strings.HasSuffix(res.Content, bashToolTruncationMarker) {
 		t.Fatal("truncation marker missing")
 	}
@@ -219,12 +227,46 @@ func TestBashToolForegroundOutputCap(t *testing.T) {
 	}
 }
 
+// TestBashToolNilRunnerSurfacesNoShellFromEverySite pins that every nil-runner
+// site (foreground Execute, foreground ExecuteWithParent, background
+// ExecuteWithParent) routes through the ONE bashNoShellResult composer, so the
+// no-shell message can never drift from bashErrorTrailer's ErrNoShell wording.
+func TestBashToolNilRunnerSurfacesNoShellFromEverySite(t *testing.T) {
+	const want = "[command failed to run: no shell available]"
+	bt := NewBashTool()
+
+	// Foreground via Execute.
+	res, _ := bt.Execute(context.Background(), bashCall("c1", "echo hi", 0, false), bashEnv)
+	if !res.IsError || res.Content != want {
+		t.Fatalf("Execute nil-runner: res = %+v, want error %q", res, want)
+	}
+
+	// Foreground via ExecuteWithParent (background:false).
+	res2, _ := bt.(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("c2", "echo hi", 0, false), bashEnv, nil, parentCaps{})
+	if !res2.IsError || res2.Content != want {
+		t.Fatalf("ExecuteWithParent fg nil-runner: res = %+v, want error %q", res2, want)
+	}
+
+	// Background via ExecuteWithParent (background:true, with a child registry so
+	// the no-registry decline does not fire first).
+	reg := newChildRunRegistry()
+	res3, _ := bt.(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("c3", "echo hi", 0, true), bashEnv, nil, parentCaps{children: reg})
+	if !res3.IsError || res3.Content != want {
+		t.Fatalf("ExecuteWithParent bg nil-runner: res = %+v, want error %q", res3, want)
+	}
+	if got := reg.statusSnapshot(); len(got) != 0 {
+		t.Fatalf("registry = %+v, want empty (no phantom entry for a nil-runner decline)", got)
+	}
+}
+
 func TestBashToolSpec(t *testing.T) {
-	spec := NewBashTool(&fakeBashRunner{}).Spec()
+	spec := NewBashTool().Spec()
 	if spec.Name != tool.BashToolName {
 		t.Fatalf("name = %q, want %q", spec.Name, tool.BashToolName)
 	}
-	if NewBashTool(&fakeBashRunner{}).ReadOnly() {
+	if NewBashTool().ReadOnly() {
 		t.Fatal("ReadOnly = true, want false")
 	}
 	s := string(spec.Schema)
@@ -262,8 +304,8 @@ func TestBashToolBackgroundStartAndTerminalResult(t *testing.T) {
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
 
-	res, err := NewBashTool(r).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("bg1", "make serve", 0, true), bashWS, nil, caps)
+	res, err := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("bg1", "make serve", 0, true), bashEnvRunner(r), nil, caps)
 	if err != nil {
 		t.Fatalf("ExecuteWithParent err = %v", err)
 	}
@@ -310,14 +352,13 @@ func TestBashToolBackgroundStartAndTerminalResult(t *testing.T) {
 }
 
 func TestBashToolBackgroundNoRegistry(t *testing.T) {
-	r := &fakeStreamingRunner{}
-	res, _ := NewBashTool(r).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("bg1", "x", 0, true), bashWS, nil, parentCaps{})
+	res, _ := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("bg1", "x", 0, true), bashEnv, nil, parentCaps{})
 	if !res.IsError || !strings.Contains(res.Content, "not supported on this run") {
 		t.Fatalf("res = %+v, want not-supported error", res)
 	}
 	// The plain Execute path declines identically.
-	res, _ = NewBashTool(r).Execute(context.Background(), bashCall("bg2", "x", 0, true), bashWS)
+	res, _ = NewBashTool().Execute(context.Background(), bashCall("bg2", "x", 0, true), bashEnv)
 	if !res.IsError || !strings.Contains(res.Content, "not supported on this run") {
 		t.Fatalf("Execute res = %+v, want not-supported error", res)
 	}
@@ -325,8 +366,9 @@ func TestBashToolBackgroundNoRegistry(t *testing.T) {
 
 func TestBashToolBackgroundRunnerNotStreamer(t *testing.T) {
 	reg := newChildRunRegistry()
-	res, _ := NewBashTool(&fakeBashRunner{}).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("bg1", "x", 0, true), bashWS, nil, parentCaps{children: reg})
+	r := &fakeBashRunner{}
+	res, _ := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("bg1", "x", 0, true), bashEnvRunner(r), nil, parentCaps{children: reg})
 	if !res.IsError || !strings.Contains(res.Content, "not supported by this command runner") {
 		t.Fatalf("res = %+v, want runner-not-streamer error", res)
 	}
@@ -338,14 +380,15 @@ func TestBashToolBackgroundRunnerNotStreamer(t *testing.T) {
 func TestBashToolBackgroundJobCountGate(t *testing.T) {
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
-	bt := NewBashTool(&fakeStreamingRunner{}).(childCapableTool)
+	streamer := &fakeStreamingRunner{}
+	bt := NewBashTool().(childCapableTool)
 
 	// Fill the gate with maxBackgroundBashJobs LIVE background entries.
 	for i := 0; i < maxBackgroundBashJobs; i++ {
 		id := session.SessionID(BashCmdJobPrefix + strings.Repeat("x", 1) + string(rune('a'+i)))
 		reg.register(string(id), childFamilyBashCmd, "live", context.CancelFunc(func() {}), true)
 	}
-	res, _ := bt.ExecuteWithParent(context.Background(), bashCall("bg9", "ninth", 0, true), bashWS, nil, caps)
+	res, _ := bt.ExecuteWithParent(context.Background(), bashCall("bg9", "ninth", 0, true), bashEnvRunner(streamer), nil, caps)
 	if !res.IsError {
 		t.Fatalf("9th background start succeeded: %q", res.Content)
 	}
@@ -364,7 +407,7 @@ func TestBashToolBackgroundJobCountGate(t *testing.T) {
 
 	// A DONE background entry does not count toward the gate.
 	reg.markDone(BashCmdJobPrefix+"xa", session.StopEndTurn)
-	res, _ = bt.ExecuteWithParent(context.Background(), bashCall("bg9", "ninth", 0, true), bashWS, nil, caps)
+	res, _ = bt.ExecuteWithParent(context.Background(), bashCall("bg9", "ninth", 0, true), bashEnvRunner(streamer), nil, caps)
 	if res.IsError {
 		t.Fatalf("start after a terminal still gated: %q", res.Content)
 	}
@@ -418,7 +461,7 @@ func TestBashToolBackgroundTerminalClassification(t *testing.T) {
 			caps := parentCaps{children: reg}
 			runner := *tc.runner
 			runner.started = make(chan struct{})
-			bt := NewBashTool(&runner).(childCapableTool)
+			bt := NewBashTool().(childCapableTool)
 
 			ctx := context.Background()
 			cancelCtx, cancelRun := context.WithCancel(ctx)
@@ -430,7 +473,7 @@ func TestBashToolBackgroundTerminalClassification(t *testing.T) {
 				ctx = cancelCtx
 			}
 
-			res, _ := bt.ExecuteWithParent(ctx, bashCall("bg1", "cmd", timeoutMS, true), bashWS, nil, caps)
+			res, _ := bt.ExecuteWithParent(ctx, bashCall("bg1", "cmd", timeoutMS, true), bashEnvRunner(&runner), nil, caps)
 			if res.IsError {
 				t.Fatalf("start failed: %q", res.Content)
 			}
@@ -473,8 +516,8 @@ func TestBashToolBackgroundTerminalClassification(t *testing.T) {
 func TestBashToolBackgroundTruncatedTailFlag(t *testing.T) {
 	r := &fakeStreamingRunner{out: strings.Repeat("z", maxBashJobTailBytes+10), exitCode: 0, started: make(chan struct{})}
 	reg := newChildRunRegistry()
-	res, _ := NewBashTool(r).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("bg1", "flood", 0, true), bashWS, nil, parentCaps{children: reg})
+	res, _ := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("bg1", "flood", 0, true), bashEnvRunner(r), nil, parentCaps{children: reg})
 	if res.IsError {
 		t.Fatalf("start failed: %q", res.Content)
 	}
@@ -495,9 +538,9 @@ func TestBashToolBackgroundFinishSafeWhenSealed(t *testing.T) {
 	r := &fakeStreamingRunner{run: make(chan struct{}), started: make(chan struct{})}
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
-	bt := NewBashTool(r).(childCapableTool)
+	bt := NewBashTool().(childCapableTool)
 
-	res, _ := bt.ExecuteWithParent(context.Background(), bashCall("bg1", "cmd", 0, true), bashWS, nil, caps)
+	res, _ := bt.ExecuteWithParent(context.Background(), bashCall("bg1", "cmd", 0, true), bashEnvRunner(r), nil, caps)
 	if res.IsError {
 		t.Fatalf("start failed: %q", res.Content)
 	}
@@ -523,9 +566,9 @@ func TestBashToolBackgroundRunEndDrainCancelsJob(t *testing.T) {
 	r := &fakeStreamingRunner{run: make(chan struct{}), started: make(chan struct{}), sawCancel: sawCancel}
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
-	bt := NewBashTool(r).(childCapableTool)
+	bt := NewBashTool().(childCapableTool)
 
-	res, _ := bt.ExecuteWithParent(context.Background(), bashCall("bg1", "sleep 99", 0, true), bashWS, nil, caps)
+	res, _ := bt.ExecuteWithParent(context.Background(), bashCall("bg1", "sleep 99", 0, true), bashEnvRunner(r), nil, caps)
 	if res.IsError {
 		t.Fatalf("start failed: %q", res.Content)
 	}
@@ -562,8 +605,8 @@ func TestBashToolBackgroundLabelClamped(t *testing.T) {
 	reg := newChildRunRegistry()
 	caps := parentCaps{children: reg}
 	r := &fakeStreamingRunner{out: "", exitCode: 0}
-	res, _ := NewBashTool(r).(childCapableTool).ExecuteWithParent(
-		context.Background(), bashCall("bg1", long, 0, true), bashWS, nil, caps)
+	res, _ := NewBashTool().(childCapableTool).ExecuteWithParent(
+		context.Background(), bashCall("bg1", long, 0, true), bashEnvRunner(r), nil, caps)
 	if res.IsError {
 		t.Fatalf("start failed: %q", res.Content)
 	}

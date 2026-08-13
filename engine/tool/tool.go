@@ -1,8 +1,8 @@
-// Package tool — cycle note: FileSystem and Workspace are defined here, in the
+// Package tool — cycle note: FileSystem, Workspace, and Environment are defined here, in the
 // Tooling context that owns them (ARCHITECTURE.md §2), rather than in
 // engine/port. This breaks the port↔tool import cycle that would form because
 // port already imports tool (LLMRequest.Tools is []tool.ToolSpec) while
-// Tool.Execute takes a Workspace.
+// Tool.Execute takes an Environment.
 package tool
 
 import (
@@ -40,7 +40,8 @@ type ToolSpec struct {
 
 // Tool is the contract every tool implements. ReadOnly drives the loop's
 // read-parallel / mutate-serial dispatch. Execute runs the tool against a
-// session-scoped Workspace and returns a domain ToolResult.
+// session-scoped Environment (Workspace + optional bound CommandRunner + ref)
+// and returns a domain ToolResult.
 type Tool interface {
 	// Spec returns the model-facing specification of the tool.
 	Spec() ToolSpec
@@ -49,10 +50,11 @@ type Tool interface {
 	// (which must run serially).
 	ReadOnly() bool
 	// Execute runs the tool. ctx carries cancellation; in is the model's call;
-	// ws is the session-scoped filesystem/command seam. It returns a ToolResult
-	// (with IsError set on a tool-level failure that should be fed back to the
-	// model) and a non-nil error only for harness-level failures.
-	Execute(ctx context.Context, in session.ToolCall, ws Workspace) (session.ToolResult, error)
+	// env is the session-scoped Environment (Workspace + optional bound
+	// CommandRunner + backend ref). It returns a ToolResult (with IsError set
+	// on a tool-level failure that should be fed back to the model) and a
+	// non-nil error only for harness-level failures.
+	Execute(ctx context.Context, in session.ToolCall, env Environment) (session.ToolResult, error)
 }
 
 // Disclosable is the OPTIONAL capability a Tool MAY implement to participate in
@@ -123,20 +125,20 @@ const BashToolName = "Bash"
 // agent loop never references this type — only the Bash tool depends on it,
 // which is what makes the Bash tool (and therefore any command execution)
 // optional in the catalog.
+//
+// BOUND RUNNER (issue #462). A CommandRunner is bound to a single namespace at
+// construction: it privately stores its root and Run executes against it. The
+// per-call workdir parameter is GONE — a runner serves exactly one Environment
+// (the main session, or a forked child whose runner is bound to the child
+// namespace), so the command's cwd always matches the workspace the tool
+// executes against. A runner that can no longer serve a shell returns
+// ErrNoShell.
 type CommandRunner interface {
 	// Run executes command and returns its result. A non-zero exit is reported
 	// via CommandResult.ExitCode (not error); error is for execution faults
-	// (cancellation, timeout, or a missing shell — see ErrNoShell).
-	//
-	// workdir is the absolute working directory the command runs in — the
-	// session/fork Workspace root the tool executes against, so a SINGLE runner
-	// can serve both the main session (rooted at the configured workspace) and a
-	// forked child (rooted at an isolated temp base OUTSIDE that configured root).
-	// Implementations MUST honor a workdir outside their configured root and MUST
-	// NOT confine/reject it — fork isolation depends on this. An EMPTY workdir
-	// falls back to the runner's own configured root, so a runner can still be
-	// used standalone.
-	Run(ctx context.Context, command, workdir string) (CommandResult, error)
+	// (cancellation, timeout, or a missing shell — see ErrNoShell). The command
+	// runs in the runner's bound namespace root.
+	Run(ctx context.Context, command string) (CommandResult, error)
 }
 
 // CommandStreamer is an OPTIONAL CommandRunner capability for callers that need
@@ -148,13 +150,11 @@ type CommandRunner interface {
 // declines, and the caller must fail soft (an honest "not supported by this
 // runner"), never fall back to Run and silently lose the tail.
 type CommandStreamer interface {
-	// RunStreaming runs command under the same shell and workdir rules as
-	// CommandRunner.Run — an EMPTY workdir falls back to the runner's
-	// configured root, and a workdir OUTSIDE that root MUST be honored, never
-	// confined/rejected — with stdout and stderr written INTERLEAVED into out
-	// in the order the OS delivers them. The CALLER owns bounding (e.g. a tail
-	// ring): the runner writes everything it receives and does NOT also buffer
-	// or cap the stream.
+	// RunStreaming runs command under the same shell rules as CommandRunner.Run
+	// — the runner's BOUND namespace root, no per-call workdir (issue #462) —
+	// with stdout and stderr written INTERLEAVED into out in the order the OS
+	// delivers them. The CALLER owns bounding (e.g. a tail ring): the runner
+	// writes everything it receives and does NOT also buffer or cap the stream.
 	//
 	// Cancellation and timeout semantics match Run: governed by ctx, with the
 	// runner's default timeout applied when ctx has no deadline, and a
@@ -163,7 +163,7 @@ type CommandStreamer interface {
 	// via exitCode, which replaces CommandResult for this path; err is
 	// reserved for execution faults (cancellation, timeout, or a missing
 	// shell — see ErrNoShell).
-	RunStreaming(ctx context.Context, command, workdir string, out io.Writer) (exitCode int, err error)
+	RunStreaming(ctx context.Context, command string, out io.Writer) (exitCode int, err error)
 }
 
 // CommandResult is the outcome of a CommandRunner.Run invocation.

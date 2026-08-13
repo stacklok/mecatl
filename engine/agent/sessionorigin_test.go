@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -32,7 +31,7 @@ func TestFireDelivery_Scenario1_CreateCapturesOriginSession(t *testing.T) {
 	tl := agent.NewScheduleTool(mgr)
 	res, err := tl.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *","workspace":"/repo"}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -51,7 +50,7 @@ func TestFireDelivery_Scenario1_CreateCapturesOriginSession(t *testing.T) {
 	ctx = agent.WithSessionOrigin(context.Background(), session.SessionID("s2"))
 	res, err = tl.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"daily","prompt":"check ci","cron":"0 9 * * *","workspace":"/repo"}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -69,7 +68,7 @@ func TestFireDelivery_Scenario1_CreateCapturesOriginSession(t *testing.T) {
 	tl2 := agent.NewScheduleTool(mgr2)
 	res, err = tl2.Execute(context.Background(), scheduleCall(t,
 		`{"verb":"create","name":"orphan","prompt":"x","cron":"@every 1h","workspace":"/r"}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unbound Execute: %v", err)
 	}
@@ -110,7 +109,7 @@ func TestFireDelivery_Scenario1_OriginNotModelForgeable(t *testing.T) {
 	tl2 := agent.NewScheduleTool(mgr)
 	res, err := tl2.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *","workspace":"/repo","origin":"evil-session"}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -140,7 +139,7 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 	tl := agent.NewScheduleTool(mgr)
 	res, err := tl.Execute(ctx, scheduleCall(t,
 		`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *","workspace":"/repo"}`),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -182,7 +181,7 @@ func TestFireDelivery_Scenario1_OriginIDNotModelVisible(t *testing.T) {
 
 	sess := session.New(originID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	// Run the engine to trigger the tool call and capture the system prompt.
-	run := eng.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "create a schedule"})
+	run := eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "create a schedule"})
 	drain(run)
 
 	if capturedSystem == "" {
@@ -274,7 +273,7 @@ func TestScheduleTool_ConcurrentSharedEngineRunsDoNotCrossStamp(t *testing.T) {
 		Catalog: cat,
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 	})
-	ws := memfs.NewWorkspace("/ws")
+	ws := agent.MemEnv("/ws")
 	sessA := session.New("session-a", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	sessB := session.New("session-b", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 

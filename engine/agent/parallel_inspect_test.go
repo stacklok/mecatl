@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -23,7 +22,7 @@ func runParallel(t *testing.T, par tool.Tool, callID, argsJSON string) session.T
 	t.Helper()
 	res, err := par.Execute(context.Background(),
 		session.NewToolCall(session.ToolCallID(callID), "Parallel", json.RawMessage(argsJSON)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("Parallel.Execute returned a transport error: %v", err)
 	}
@@ -301,7 +300,7 @@ func TestInspectSubagentAcceptsParallelPrefix(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(store)
 	res, err := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"parallel-c1-0"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("InspectSubagent.Execute transport error: %v", err)
 	}
@@ -324,7 +323,7 @@ func TestInspectSubagentRejectsTeamPrefix(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(store)
 	res, err := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"team-p1-worker"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("team id produced a transport error (must be a clean tool error): %v", err)
 	}
@@ -344,7 +343,7 @@ func TestInspectParallelBranchUnknownIDErrors(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(memstore.New())
 	res, err := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"parallel-nope-0"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if err != nil {
 		t.Fatalf("unknown parallel id produced a transport error: %v", err)
 	}
@@ -363,7 +362,7 @@ func TestInspectParallelBranchStoreFailureDistinct(t *testing.T) {
 	inspect := agent.NewInspectSubagentTool(failingStore{})
 	res, _ := inspect.Execute(context.Background(),
 		session.NewToolCall("i1", "InspectSubagent", json.RawMessage(`{"agent_id":"parallel-x-0"}`)),
-		memfs.NewWorkspace("/ws"))
+		agent.MemEnv("/ws"))
 	if !res.IsError {
 		t.Fatalf("store failure must be an error result, got %+v", res)
 	}
@@ -419,7 +418,7 @@ func TestParentDiscoversBranchIDFromResultAndInspects(t *testing.T) {
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
 
-	evs := drain(e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"}))
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 
 	// 1. The Parallel result must surface a discoverable branch id.
 	parBody, parErr, ok := toolResultForName(evs, "Parallel")

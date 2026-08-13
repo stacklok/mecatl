@@ -31,7 +31,7 @@ func (*writeAskTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Write", Description: "Write: test tool", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*writeAskTool) ReadOnly() bool { return false }
-func (w *writeAskTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (w *writeAskTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	w.ran.Add(1)
 	return session.NewToolResult(in.ID, "wrote"), nil
 }

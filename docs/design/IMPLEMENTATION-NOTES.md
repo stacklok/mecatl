@@ -629,7 +629,7 @@ swap is total. The factory echoes back the mode as `SessionEngineResult.BuiltFor
 The **run-entry trigger** lives in the server (`internal/adapter/server/service.go`). The
 `sessionEngine` struct gains `builtForMode session.PermissionMode`, stamped from
 `SessionEngineResult.BuiltForMode` at EVERY construction site (create, `LoadSessionWithMCP`,
-rehydrate, mode-rebuild). `engineAndWorkspaceFor` (the SINGLE engine/workspace resolution point, shared
+rehydrate, mode-rebuild). `engineAndEnvironmentFor` (the SINGLE engine/environment resolution point, shared
 by `StartRunContent` and `resumeFromAwaiting`) gains two cases, both routed through the ONE shared
 `buildAndRegisterSessionEngine(ctx, sess, sel, profile, mode, replace)` helper extracted from
 `rehydrateSession`:
@@ -1198,7 +1198,7 @@ session-store transcript, NOT the filesystem, so a torn-down fork does not
 invalidate it); it prints an honest one-line note that branch workspaces were
 torn down after the join and how to keep changes next time. The Parallel spec
 text was updated to say `join=all` tears down every fork. (2) **Auto-merge
-(ADR 0039):** a `tool.ForkMerger` (`forker.Merger` — `git diff --no-ext-diff
+(ADR 0039):** a `tool.EnvironmentMerger` (`forker.Merger` — `git diff --no-ext-diff
 --no-textconv --binary HEAD` from the fork piped to `git apply` in the parent,
 plus untracked-file copy, same scrubbed env as `overlayDirty`) is wired into the
 Parallel tool via `WithAutoMerge` UNCONDITIONALLY (default-on, NO operator flag —
@@ -1239,7 +1239,7 @@ repo, so it must resolve as the main session's does under the operator's
 posture/policy, not the trust-ungated force-copy runner). It is DEFAULT-wired (no
 flag, no `Config`; the no-FS profile excludes it); the per-call default stays
 read-only. `prepareChildSession` passes a NIL forker for the writable path, so
-`forkChildWorkspace` returns the parent workspace directly. There is NO
+`forkChildEnvironment` returns the parent environment directly. There is NO
 post-run merge step — `finishForegroundRun` renders the time-budget error first, then
 `renderWritableSubagentResult` adds an honest DIRECT-WRITE capability note: the child
 had direct write access to the real workspace, and the parent should inspect any changes
@@ -1811,7 +1811,7 @@ when this run ends" honesty. A caps-less plain-`Execute` background call, or a r
 without the streaming capability, is an honest model-addressable error — never a
 silent foreground fallback. **CommandStreamer (D6):** `engine/tool/tool.go`
 (`CommandStreamer`) is an OPTIONAL `CommandRunner` capability
-(`RunStreaming(ctx, command, workdir, out io.Writer) (exitCode int, err error)`) —
+(`RunStreaming(ctx, command, out io.Writer) (exitCode int, err error)`) —
 same shell/workdir/timeout/cancel rules as `Run`, but stdout+stderr stream
 INTERLEAVED into a caller-owned sink the runner never caps (the caller owns
 bounding); the `exitCode` return replaces `CommandResult` for this path. Discovered
@@ -1854,7 +1854,7 @@ now configures it unconditionally, so a backgrounded grandchild (`sleep 30 &`,
 grandchild orphans for FOREGROUND Bash too, and load-bearing here because cancel is a
 background job's primary lifecycle (a run-end drain or `BashStatus` cancel that left
 grandchildren would leak processes at scale). **Catalog wiring:** the composition
-root registers `agent.NewBashTool(runner)` + `agent.NewBashStatusTool()` together in
+root registers `agent.NewBashTool()` + `agent.NewBashStatusTool()` together in
 `internal/app/build.go` (`registerCoreTools`) under the ONE shell gate (the pair
 cannot drift apart; pinned by `TestBackgroundBashCatalogWiring`), and swaps EVERY
 other Bash construction to the agent tool — the read-only explorer catalog
@@ -2020,7 +2020,7 @@ non-ignored path, SKIPPING symlinks / irregular files via `os.Lstat` (a symlink 
 base — `copyTree`'s discipline). On ANY error the overlay resets the worktree to pristine HEAD
 (`git checkout -- .` + `git clean -fd`) — a partial overlay is worse than the clean-HEAD floor —
 AND returns a non-empty advisory (`degradedOverlayAdvisory`). The failure is SURFACED, not silent:
-`tool.WorkspaceForker.Fork` now returns an OPTIONAL generic degraded-fork advisory (empty on a
+`tool.EnvironmentForker.Fork` now returns an OPTIONAL generic degraded-fork advisory (empty on a
 clean tree / successful overlay / non-overlay path), and `SubagentTool` PREPENDS it to the child
 LLM's prompt (in `buildSubagentRunRequest`, composing with the resume-staleness note) so a
 read-only explorer reasons honestly ("the diff looks clean but the operator has uncommitted work I
@@ -3318,7 +3318,7 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   (`internal/adapter/server/service.go` (`planVerdictForMode`): `ModeDefault`→allow-once,
   `ModeAccept`→allow-always, `ModePlan`/zero→deny); `resumeFromAwaiting` re-enters the loop
   AT the ask; on Allow a FRESH continuation run starts via `StartRunContent`
-  (`loadAndReopen` → `engineAndWorkspaceFor` CASE 1 rebuild on the flipped mode → execute
+  (`loadAndReopen` → `engineAndEnvironmentFor` CASE 1 rebuild on the flipped mode → execute
   model) carrying `PlanApprovedProceedText` + an optional note. `forwardRunEvents` relays
   BOTH runs' events on the one channel. On deny, NO continuation runs — the resumed run
   terminates `StopPlanIterate` (the iterate pause), so the operator's next typed
@@ -4968,15 +4968,28 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
   files are body-only in a no-fs session: the body injects fine, asset reads fail honestly
   with not-exist through the nofs workspace (and the posture note tells the model so).
 
-### Version-aware Workspace mutation and execution-environment direction (ADR 0104)
+### Version-aware Workspace mutation and the execution-environment seam (ADR 0104 + ADR 0105)
 
 A coding agent ultimately needs one execution environment whose filesystem and command namespace are
 affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0104 fixes the
-future layering without prematurely adding that seam. Durable identity will live cycle-safely in
-`session.EnvironmentRef`; the future minimal `tool.Environment` will carry that identity plus a
-Workspace and bound CommandRunner. `WorkspaceForker`/`ForkMerger` stay separate capabilities,
-governance stays outside, and remote transport is deferred. No Environment type or Engine-signature
-migration is in this PR.
+layering and the version protocol; ADR 0105 IMPLEMENTS the runtime seam (issue #462). Durable identity
+lives cycle-safely in `session.EnvironmentRef{Kind, ID}` (stdlib-only, so it CAN ride the
+snapshot/event log without pulling tool types in — but in phase 2 it is an IN-PROCESS identity only,
+NOT yet a snapshot field; persistence/remote transport are deferred to phase 3); the minimal immutable
+`tool.Environment` carries that ref plus a NON-NULL `Workspace`
+and an OPTIONAL bound `CommandRunner`. `Tool.Execute`, the observed/parent seams, `Engine.Run`/
+`ResumeApproval`, the loop/dispatch, and delegation now take `tool.Environment` (not `tool.Workspace`);
+narrow policy/prompt/hook APIs still receive `env.Workspace`/`WorkspaceReader`. `CommandRunner.Run`/
+`CommandStreamer.RunStreaming` LOST the per-call workdir — a runner is BOUND to one namespace at
+construction, so the command's cwd always matches the workspace the tool executes against; a nil
+runner surfaces `ErrNoShell`. `tool.EnvironmentForker` REPLACES `tool.WorkspaceForker` (Fork returns a
+complete child Environment whose Workspace and runner share the child namespace) and
+`tool.EnvironmentMerger` REPLACES `tool.ForkMerger` (Merge receives child/parent Environments, no
+forkRoot string). A direct-write Subagent uses the PARENT Environment; read-only/copy/worktree branches
+and Team use the CHILD Environment. Composition wires the forker's bound-runner builder
+(`forker.WithRunner`, the same envscrub/gitenv hardening as the parent runner); the Service binds the
+main `CommandRunner` + a `CommandRunnerFactory` for worktree-bound sessions. No production remote
+transport yet (phase 3); governance stays outside.
 
 The first migration stage is the version protocol in `engine/tool/tool.go` (`FileVersion`,
 `Workspace`). Plain Read remains for non-agent consumers, but public Workspace exposes no
@@ -5020,11 +5033,19 @@ instances over an arbitrary backend are not claimed to be globally serialized. A
 POSIX process bypassing Workspace does not participate; local osfs is not claimed as kernel-level CAS.
 A future remote backend owes true backend CAS.
 
-The ledger belongs to the live Workspace/environment instance. The default Service path continues to
-construct a fresh Workspace per run; `internal/adapter/server/service.go` (`sessionWorkspaces`)
-remains limited to the existing no-fs/ACP overrides. Rebuilding a default Workspace — including the
-next user run — resets its ledger, so Edit/overwrite is refused until Read records a version through
-that instance. No new Service registry or os.Root retention lifecycle is introduced.
+The ledger belongs to the live Environment instance. The default Service path constructs a
+fresh Environment per run (Workspace + bound CommandRunner + EnvironmentRef);
+`internal/adapter/server/service.go` (`sessionEnvironments`)
+is the per-session override map: a surface adapter (the ACP editor-buffer adapter, the
+no-fs profile) registers a COMPLETE Environment override via `SetSessionEnvironment`
+that carries an accurate ref (Kind/ID) and the correct CommandRunner (nil for a
+file-less/buffer namespace). An override is preferred over a fresh factory build and is
+evicted on `CloseSession` / editor disconnect. Rebuilding a default Environment —
+including the next user run — resets its ledger, so Edit/overwrite is refused until Read
+records a version through that instance. The overrides are in-memory (restart loses them);
+a restarted session re-derives its Environment through the same rehydration path (no-fs
+profile, ACP adapter reconnect). Snapshot persistence of `EnvironmentRef` is deferred to
+phase 3 (ADR 0105).
 
 ### Path-escape posture (`docs/acceptance/path-escape-posture.md` + ADR 0080)
 
@@ -5279,8 +5300,8 @@ ledger row 5).
   `loadAndReopen`, whose job is to drive completed/cancelled/failed to idle for a NEW
   prompt, exactly the terminal states this seam REJECTS), gates `State ==
   StateAwaiting` (everything else → `ErrNoActiveRun`, so idle/completed/cancelled/
-  failed stay terminal), resolves engine+workspace via the SHARED
-  `internal/adapter/server/service.go` (`engineAndWorkspaceFor`) (factored out of
+  failed stay terminal), resolves engine+environment via the SHARED
+  `internal/adapter/server/service.go` (`engineAndEnvironmentFor`) (factored out of
   `StartRunContent`, so the prompt path and the awaiting path rebuild the SAME engine
   for a rehydrated selector/no-fs session), calls `ResumeApproval`, registers the
   resumed run, and returns it. `ApproveRun` returns the run so the HTTP relay can

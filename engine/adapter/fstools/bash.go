@@ -62,17 +62,19 @@ Limits:
   Prefer a direct command for inspection (run the inner command first, then use its
   output) when a substitution is not essential.`
 
-// BashTool runs a shell command via an injected tool.CommandRunner. It is
-// statically classified as non-read-only: deciding whether a specific command is
+// BashTool runs a shell command via the CommandRunner bound to the
+// tool.Environment it executes against (issue #462). It is statically
+// classified as non-read-only: deciding whether a specific command is
 // read-only is governance's job, not this tool's.
 //
-// The runner is injected at construction (NewBashTool) rather than taken from
-// the Workspace, because command execution is optional: a deployment with no
-// shell simply never constructs a BashTool. Execute passes the per-call
-// Workspace.Root() to the runner as the working directory, so a SINGLE runner
-// serves both the main session (root == the configured workspace) and a forked
-// child (root == an isolated temp base): the command's DEFAULT cwd follows the
-// workspace the tool executes against, never the shared parent base.
+// The runner is read off the Environment at Execute time, NOT captured at
+// construction: a bound runner is part of the per-namespace Environment (main
+// session, or a forked child whose runner is bound to the child namespace), so
+// the command's cwd always matches the workspace the tool executes against,
+// never a stale shared parent base. A namespace with no shell (env.CommandRunner
+// == nil) surfaces ErrNoShell honestly rather than aborting. The composition
+// root decides whether to REGISTER a Bash tool at all based on runner
+// availability; a shell-less catalog simply omits Bash.
 //
 // Residual: this fixes the runner's working DIRECTORY, not Bash's trust model.
 // Unlike path-scoped Edit/Write (confined by os.Root), Bash can still escape its
@@ -80,20 +82,14 @@ Limits:
 // as in the main session. The fix removes the ACCIDENTAL shared-base mutation
 // (a fork branch's relative-path Bash landing in the parent base), which is what
 // ParallelTool.ReadOnly() / the read-only-share / mutating-fork isolation needs.
-type BashTool struct {
-	runner tool.CommandRunner
-}
+type BashTool struct{}
 
-// NewBashTool constructs the Bash tool bound to runner, which performs the actual
-// command execution (locally via osfs.NewCommandRunner, in a remote environment,
-// or refusing with tool.ErrNoShell). The composition root registers the returned
-// tool ONLY when a runner is configured; without one, the catalog has no Bash and
-// the agent runs shell-less. runner must be non-nil.
-func NewBashTool(runner tool.CommandRunner) tool.Tool {
-	if runner == nil {
-		panic("tools: NewBashTool requires a non-nil CommandRunner")
-	}
-	return BashTool{runner: runner}
+// NewBashTool constructs the Bash tool. The runner is NOT captured here — it is
+// read off the tool.Environment at Execute time (issue #462). The composition
+// root registers the returned tool ONLY when a runner is available for the
+// namespace; without one, the catalog has no Bash and the agent runs shell-less.
+func NewBashTool() tool.Tool {
+	return BashTool{}
 }
 
 // Compile-time assertion that BashTool implements tool.Tool.
@@ -130,8 +126,9 @@ func (BashTool) Spec() tool.ToolSpec {
 func (BashTool) ReadOnly() bool { return false }
 
 // Execute runs the command, honoring an optional timeout, and returns combined
-// output with the exit code.
-func (bt BashTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
+// output with the exit code. The runner is read off env; a shell-less namespace
+// (nil runner) surfaces ErrNoShell.
+func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	var args bashArgs
 	if msg, ok := parseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil
@@ -142,6 +139,14 @@ func (bt BashTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Wor
 	if args.TimeoutMS < 0 {
 		return session.NewToolError(in.ID, "\"timeout_ms\" must be non-negative"), nil
 	}
+	runner := env.CommandRunner()
+	if runner == nil {
+		// Route through the SAME composer every runner-error path uses, so the
+		// no-shell message can never drift from bashErrorTrailer's ErrNoShell
+		// wording. An empty body + tool.ErrNoShell yields the standalone
+		// "[command failed to run: no shell available]" byte-identically.
+		return session.NewToolError(in.ID, bashErrorMessage("", tool.ErrNoShell, 0)), nil
+	}
 
 	if args.TimeoutMS > 0 {
 		var cancel context.CancelFunc
@@ -149,7 +154,7 @@ func (bt BashTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Wor
 		defer cancel()
 	}
 
-	res, err := bt.runner.Run(ctx, args.Command, ws.Root())
+	res, err := runner.Run(ctx, args.Command)
 	if err != nil {
 		// Surface command-execution failures (no shell, timeout, cancellation)
 		// to the model so it can adapt, rather than aborting the harness. The

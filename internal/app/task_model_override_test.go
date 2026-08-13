@@ -5,7 +5,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -171,7 +170,7 @@ func TestBuildSubagentToolAgentPlusModelWiring(t *testing.T) {
 
 	res, err := subTool.Execute(ctx,
 		session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"review it","agent":"reviewer","model":"fast"}`)),
-		memfs.NewWorkspace("/ws"))
+		memEnvironment("/ws"))
 	if err != nil {
 		t.Fatalf("Subagent.Execute: %v", err)
 	}

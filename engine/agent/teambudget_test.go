@@ -93,7 +93,7 @@ func TestTeamTokenBudgetTripsAfterRoundInFlightCompletes(t *testing.T) {
 	// (round-0 already overshot it), and the round-0 turns above are all consumed.
 	const budget = 1500
 	base := memfs.NewWorkspace("/ws")
-	sup := agent.NewSupervisor(tm, base, memberFactory(t, tm, providers),
+	sup := agent.NewSupervisor(tm, agent.EnvForWS(base, nil), memberFactory(t, tm, providers),
 		agent.WithMaxRounds(10),
 		agent.WithTeamTokenBudget(budget),
 	)
@@ -175,7 +175,7 @@ func TestTeamTokenBudgetSynthesisUsageAccumulates(t *testing.T) {
 	providers := map[string]*mockllm.Provider{"lead": leadProv}
 
 	const budget = 400 // round-0 lead spend (500) already exceeds it → trips at round 1
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers),
 		agent.WithMaxRounds(10),
 		agent.WithTeamTokenBudget(budget),
@@ -235,7 +235,7 @@ func TestTeamTokenBudgetZeroDisabledIdenticalScheduling(t *testing.T) {
 		if withZeroOption {
 			opts = append(opts, agent.WithTeamTokenBudget(0))
 		}
-		sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), memberFactory(t, tm, providers), opts...)
+		sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), memberFactory(t, tm, providers), opts...)
 		ctx := context.Background()
 		if err := sup.AddMember(ctx, agent.MemberSpec{Name: "lead", Lead: true, InitialPrompt: "delegate then synthesise"}); err != nil {
 			t.Fatalf("AddMember(lead): %v", err)
@@ -293,7 +293,7 @@ func TestTeamTokenBudgetZeroUsageNeverTrips(t *testing.T) {
 	)
 	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
 
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"), memberFactory(t, tm, providers),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), memberFactory(t, tm, providers),
 		agent.WithMaxRounds(10),
 		agent.WithTeamTokenBudget(1), // smallest possible positive budget
 	)
@@ -334,7 +334,7 @@ func TestTeamTokenBudgetSmallerThanOneRound(t *testing.T) {
 	providers := map[string]*mockllm.Provider{"lead": leadProv}
 
 	const budget = 1 // smaller than one round's spend (1000)
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers),
 		agent.WithMaxRounds(10),
 		agent.WithTeamTokenBudget(budget),
@@ -415,7 +415,7 @@ func TestTeamToolTokenBudgetReportsStop(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "investigate forever"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "investigate forever"})
 	evs := drain(r)
 
 	// --- the Team ToolResult: budget header AND the Team id line -----------
@@ -518,7 +518,7 @@ func TestTeamToolTokenBudgetTightenOnly(t *testing.T) {
 			)
 			e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 			sess := newSession(t, session.Limits{})
-			r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+			r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 			evs := drain(r)
 
 			var summary string
@@ -552,7 +552,7 @@ func TestTeamTokenBudgetExactBoundaryTrips(t *testing.T) {
 			usageTurn("CONSOLIDATED report", 0, 0), // synthesis (zero usage: keeps the gate input exact)
 		)
 		providers := map[string]*mockllm.Provider{"lead": leadProv}
-		sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+		sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 			memberFactory(t, tm, providers),
 			agent.WithMaxRounds(10),
 			agent.WithTeamTokenBudget(budget),
@@ -605,7 +605,7 @@ func TestTeamTokenBudgetTripBeforePlanRoundSideEffects(t *testing.T) {
 	providers := map[string]*mockllm.Provider{"lead": leadProv, "worker": workerProv}
 
 	const budget = 500 // round-0 spends 600 → trips at the round-1 boundary
-	sup := agent.NewSupervisor(tm, memfs.NewWorkspace("/ws"),
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"),
 		memberFactory(t, tm, providers),
 		agent.WithMaxRounds(10),
 		agent.WithTeamTokenBudget(budget),
@@ -674,7 +674,7 @@ func TestTeamToolTokenBudgetTier1ForcedHeader(t *testing.T) {
 	)
 	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: parentCat})
 	sess := newSession(t, session.Limits{})
-	r := e.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "do one round"})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "do one round"})
 	evs := drain(r)
 
 	var summary string

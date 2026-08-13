@@ -38,8 +38,8 @@ func (f *fakeTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: f.name, Description: f.name + ": test tool", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (f *fakeTool) ReadOnly() bool { return f.readOnly }
-func (f *fakeTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Workspace) (session.ToolResult, error) {
-	return f.exec(ctx, in, ws)
+func (f *fakeTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	return f.exec(ctx, in, env.Workspace())
 }
 
 func toolCall(id, name string, args string) session.ToolCall {
@@ -103,7 +103,9 @@ func TestPreToolUseHookBlocks(t *testing.T) {
 		mockllm.TextTurn("ok"),
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, write), Hooks: hooks})
-	r := e.Run(context.Background(), newSession(t, session.Limits{}), memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go"})
+	ws := memfs.NewWorkspace("/ws")
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	evs := drain(r)
 

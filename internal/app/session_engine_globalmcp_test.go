@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -97,7 +96,7 @@ func TestSessionEngineFactoryMountsGlobalMCPToolsForSelector(t *testing.T) {
 	defer func() { _ = close2() }()
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	run := eng2.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go", Parts: nil})
+	run := eng2.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var echoed bool
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -230,7 +229,7 @@ func runSelectorSubagentRefAndCheckEcho(t *testing.T, globalMgr *mcp.Manager, sp
 	defer func() { _ = res.Close() }()
 
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 8}, time.Now())
-	run := res.Engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go", Parts: nil})
+	run := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var resolved bool
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -329,7 +328,7 @@ func TestSelectorClientToolCollisionGlobalWins(t *testing.T) {
 	// answered. "client:hi" here means the client tool shadowed the global one —
 	// the precedence inverted even though both names registered.
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
-	run := res.Engine.Run(context.Background(), sess, memfs.NewWorkspace("/ws"), agent.RunRequest{Text: "go", Parts: nil})
+	run := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var got string
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {

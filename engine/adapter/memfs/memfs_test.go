@@ -91,7 +91,7 @@ func TestGlobDeterministic(t *testing.T) {
 func TestCommandRunnerNoShell(t *testing.T) {
 	ctx := context.Background()
 	r := memfs.NewCommandRunner()
-	_, err := r.Run(ctx, "echo hi", "")
+	_, err := r.Run(ctx, "echo hi")
 	if !errors.Is(err, memfs.ErrNoShell) {
 		t.Fatalf("Run err = %v want ErrNoShell", err)
 	}
@@ -105,7 +105,7 @@ func TestCommandRunnerCanned(t *testing.T) {
 	ctx := context.Background()
 	r := memfs.NewCommandRunner()
 	r.SetResult(&tool.CommandResult{Stdout: "canned", ExitCode: 7}, nil)
-	res, err := r.Run(ctx, "anything", "")
+	res, err := r.Run(ctx, "anything")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestCommandRunnerCannedError(t *testing.T) {
 	r := memfs.NewCommandRunner()
 	sentinel := errors.New("boom")
 	r.SetResult(nil, sentinel)
-	if _, err := r.Run(ctx, "x", ""); !errors.Is(err, sentinel) {
+	if _, err := r.Run(ctx, "x"); !errors.Is(err, sentinel) {
 		t.Fatalf("Run err = %v want sentinel", err)
 	}
 }
@@ -129,7 +129,7 @@ func TestCommandRunnerCancel(t *testing.T) {
 	cancel()
 	r := memfs.NewCommandRunner()
 	r.SetResult(&tool.CommandResult{Stdout: "x"}, nil)
-	if _, err := r.Run(ctx, "x", ""); !errors.Is(err, context.Canceled) {
+	if _, err := r.Run(ctx, "x"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run cancelled = %v want context.Canceled", err)
 	}
 }

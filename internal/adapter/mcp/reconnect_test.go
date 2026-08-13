@@ -214,7 +214,7 @@ func callEcho(ctx context.Context, t *testing.T, s *Server, text string) session
 		t.Fatalf("echo tool not found")
 	}
 	call := session.NewToolCall("c", "mcp__rs__echo", jsonRaw(`{"text":"`+text+`"}`))
-	res, err := rt.Execute(ctx, call, nil)
+	res, err := rt.Execute(ctx, call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("echo Execute returned Go error (expected a ToolResult): %v", err)
 	}
@@ -421,7 +421,7 @@ func TestCallAfterCloseDoesNotDial(t *testing.T) {
 		t.Fatalf("echo tool not found after close")
 	}
 	call := session.NewToolCall("c", "mcp__rs__echo", jsonRaw(`{"text":"after"}`))
-	res, err := rt.Execute(context.Background(), call, nil)
+	res, err := rt.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("post-close Execute returned Go error %v, want a ToolResult (IsError)", err)
 	}
@@ -684,7 +684,7 @@ func TestIsErrorDoesNotTriggerReconnect(t *testing.T) {
 		t.Fatalf("echo tool not found")
 	}
 	call := session.NewToolCall("c", "mcp__rs__echo", jsonRaw(`{"text":"x"}`))
-	res, err := rt.Execute(context.Background(), call, nil)
+	res, err := rt.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute Go error: %v", err)
 	}

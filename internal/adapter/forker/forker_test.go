@@ -36,7 +36,7 @@ func TestForkGitWorktree(t *testing.T) {
 	}
 
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "idea-a")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "idea-a")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestForkNeutralizesRepoHooks(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "ro-member")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "ro-member")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestForkCopyFallback(t *testing.T) {
 	}
 
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "copy idea!")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "copy idea!")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestForkConcurrentCopiesAreDistinct(t *testing.T) {
 	done := make(chan int, n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
-			child, cleanup, _, err := f.Fork(context.Background(), baseWS, "x")
+			child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "x")
 			if err != nil {
 				errs[i] = err
 			} else {
@@ -246,7 +246,7 @@ func TestForkForceCopyIsFullyIsolatedRepo(t *testing.T) {
 	}
 
 	f := forker.New(osfsWorkspace, forker.WithForceCopy())
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "mutating-branch")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "mutating-branch")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestForkWorktreeSharesObjectDB(t *testing.T) {
 
 	// Default forker (no WithForceCopy) → worktree path for a repo.
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "wt")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "wt")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestMergerAppliesForkDiffToParent(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "impl")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "impl")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -436,7 +436,7 @@ func TestMergerAppliesForkDiffToParent(t *testing.T) {
 
 	// Merge the fork's diff back into the parent.
 	m := forker.NewMerger()
-	if err := m.Merge(context.Background(), childRoot, baseWS); err != nil {
+	if err := mergeRoot(m, context.Background(), childRoot, baseWS); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
 
@@ -473,7 +473,7 @@ func TestMergerCleanForkIsNoOp(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "clean")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "clean")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestMergerCleanForkIsNoOp(t *testing.T) {
 
 	// No edits in the fork — it's a clean checkout of HEAD.
 	m := forker.NewMerger()
-	if err := m.Merge(context.Background(), child.Root(), baseWS); err != nil {
+	if err := mergeWorkspaces(m, context.Background(), child, baseWS); err != nil {
 		t.Fatalf("Merge of a clean fork must be a no-op, got: %v", err)
 	}
 }
@@ -503,7 +503,7 @@ func TestMergerConflictSurfacesError(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "conflict")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "conflict")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestMergerConflictSurfacesError(t *testing.T) {
 	}
 
 	m := forker.NewMerger()
-	err = m.Merge(context.Background(), child.Root(), baseWS)
+	err = mergeWorkspaces(m, context.Background(), child, baseWS)
 	if err == nil {
 		t.Fatal("Merge of a conflicting fork must return an error, got nil")
 	}
@@ -566,7 +566,7 @@ func TestMergerMultiFileConflictLeavesCleanFileUntouched(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace)
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "multiconflict")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "multiconflict")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestMergerMultiFileConflictLeavesCleanFileUntouched(t *testing.T) {
 	}
 
 	m := forker.NewMerger()
-	if err := m.Merge(context.Background(), child.Root(), baseWS); err == nil {
+	if err := mergeWorkspaces(m, context.Background(), child, baseWS); err == nil {
 		t.Fatal("a multi-file merge with a conflicting file must return an error, got nil")
 	}
 
@@ -636,7 +636,7 @@ func TestMergerRefusesGitattributesPatch(t *testing.T) {
 	}
 	// Force-copy: the fork has its own .git the branch can write to.
 	f := forker.New(osfsWorkspace, forker.WithForceCopy())
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "attrs")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "attrs")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -659,7 +659,7 @@ func TestMergerRefusesGitattributesPatch(t *testing.T) {
 	}
 
 	m := forker.NewMerger()
-	err = m.Merge(context.Background(), childRoot, baseWS)
+	err = mergeRoot(m, context.Background(), childRoot, baseWS)
 	if err == nil {
 		t.Fatal("Merge of a .gitattributes-touching fork must be refused, got nil")
 	}
@@ -700,7 +700,7 @@ func TestMergerRefusesUntrackedGitattributes(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace, forker.WithForceCopy())
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "untracked-attrs")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "untracked-attrs")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -717,7 +717,7 @@ func TestMergerRefusesUntrackedGitattributes(t *testing.T) {
 	}
 
 	m := forker.NewMerger()
-	err = m.Merge(context.Background(), childRoot, baseWS)
+	err = mergeRoot(m, context.Background(), childRoot, baseWS)
 	if err == nil {
 		t.Fatal("Merge of a fork with an untracked .gitattributes must be refused, got nil")
 	}
@@ -753,7 +753,7 @@ func TestMergerTextconvDoesNotFire(t *testing.T) {
 		t.Fatalf("base workspace: %v", err)
 	}
 	f := forker.New(osfsWorkspace, forker.WithForceCopy())
-	child, cleanup, _, err := f.Fork(context.Background(), baseWS, "textconv")
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "textconv")
 	if err != nil {
 		t.Fatalf("Fork: %v", err)
 	}
@@ -781,7 +781,7 @@ func TestMergerTextconvDoesNotFire(t *testing.T) {
 	}
 
 	m := forker.NewMerger()
-	if err := m.Merge(context.Background(), childRoot, baseWS); err != nil {
+	if err := mergeRoot(m, context.Background(), childRoot, baseWS); err != nil {
 		t.Fatalf("Merge (textconv test) failed: %v", err)
 	}
 	// The sentinel must NOT exist — the textconv did NOT fire under --no-textconv.

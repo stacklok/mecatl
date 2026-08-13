@@ -273,7 +273,8 @@ func driveSubagentWithRoleMetrics(t *testing.T) []*dto.MetricFamily {
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, ws, session.Limits{MaxTurns: 5}, time.Now())
-	run := parentEng.Run(context.Background(), sess, osfsWSForTest(t, ws), agent.RunRequest{Text: "go"})
+	parentWS := osfsWSForTest(t, ws)
+	run := parentEng.Run(context.Background(), sess, testEnvironment(parentWS, nil), agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "t1" && ev.ToolResult.IsError {
 			t.Fatalf("Subagent tool result is an error: %q", ev.ToolResult.Content)

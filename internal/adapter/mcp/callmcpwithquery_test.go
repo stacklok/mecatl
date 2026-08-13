@@ -75,7 +75,7 @@ func TestCallMcpWithQueryFiltersSubset(t *testing.T) {
 		{filter: `.items[0].name`, want: `"a"`},
 	} {
 		call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(`{"server":"fake","tool":"struct","jq_filter":`+quoteJSON(tc.filter)+`}`))
-		res, err := tl.Execute(context.Background(), call, nil)
+		res, err := tl.Execute(context.Background(), call, tool.Environment{})
 		if err != nil {
 			t.Fatalf("filter %q: unexpected Go error: %v", tc.filter, err)
 		}
@@ -105,7 +105,7 @@ func TestCallMcpWithQueryStructuredContentPrecedence(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"struct","jq_filter":".only_here"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestCallMcpWithQueryTextContentJSON(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"jsontext","jq_filter":".items|length"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestCallMcpWithQueryTextContentJSONFirstParseable(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"mixed","jq_filter":".n"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestCallMcpWithQueryNonJSONLoudError(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"plain","jq_filter":"."}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestCallMcpWithQueryParseError(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"struct","jq_filter":".a |"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestCallMcpWithQueryJqDeadline(t *testing.T) {
 		json.RawMessage(`{"server":"fake","tool":"struct","jq_filter":"def f: f; f"}`))
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	res, err := tl.Execute(ctx, call, nil)
+	res, err := tl.Execute(ctx, call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestCallMcpWithQueryRemoteErrorSurfaced(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"boom","jq_filter":".items"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestCallMcpWithQueryOversizedInput(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"big","jq_filter":"."}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestCallMcpWithQueryMissingArgs(t *testing.T) {
 		`{"server":"fake","tool":"x","jq_filter":""}`, // empty jq_filter
 	} {
 		call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(args))
-		res, err := tl.Execute(context.Background(), call, nil)
+		res, err := tl.Execute(context.Background(), call, tool.Environment{})
 		if err != nil {
 			t.Fatalf("args %s: unexpected Go error: %v", args, err)
 		}
@@ -324,7 +324,7 @@ func TestCallMcpWithQueryCallError(t *testing.T) {
 	tl := callMcpWithQueryTool{provider: &fakeCallProvider{err: errors.New("transport boom")}}
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"x","jq_filter":"."}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestCallMcpWithQueryCallErrorUnavailable(t *testing.T) {
 	tl := callMcpWithQueryTool{provider: &fakeCallProvider{err: fmt.Errorf("%w: dial failed", errReconnectFailed)}}
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"x","jq_filter":"."}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestCallMcpWithQueryContextCancelled(t *testing.T) {
 	cancel()
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"struct","jq_filter":"."}`))
-	_, err := tl.Execute(ctx, call, nil)
+	_, err := tl.Execute(ctx, call, tool.Environment{})
 	if err == nil {
 		t.Fatalf("expected a Go error from a cancelled context, got nil")
 	}
@@ -403,7 +403,7 @@ func TestCallMcpWithQueryOutputFailClosedOversized(t *testing.T) {
 	})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"struct","jq_filter":".items"}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestCallMcpWithQueryFiltersArrayStructuredContent(t *testing.T) {
 		{filter: `.[0].name`, want: `"a"`},
 	} {
 		call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(`{"server":"fake","tool":"structarray","jq_filter":`+quoteJSON(tc.filter)+`}`))
-		res, err := tl.Execute(context.Background(), call, nil)
+		res, err := tl.Execute(context.Background(), call, tool.Environment{})
 		if err != nil {
 			t.Fatalf("filter %q: unexpected Go error: %v", tc.filter, err)
 		}
@@ -455,7 +455,7 @@ func TestCallMcpWithQueryFiltersPrimitiveStructuredContent(t *testing.T) {
 	tl := scriptedCallTool(CallResult{Server: "fake", Tool: "structprim", StructuredContent: structured})
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"structprim","jq_filter":"."}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -488,7 +488,7 @@ func TestCallMcpWithQueryArgsAsObject(t *testing.T) {
 	tl := callMcpWithQueryTool{provider: prov}
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"t","args":{"owner":"stacklok","repo":"toolhive"},"jq_filter":"."}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -517,7 +517,7 @@ func TestCallMcpWithQueryArgsStringEncodedObjectRecovered(t *testing.T) {
 	// "args" is the JSON string  "{\"owner\":\"stacklok\"}"  (an object-as-string).
 	call := session.NewToolCall("c", callMcpWithQueryToolName,
 		json.RawMessage(`{"server":"fake","tool":"t","args":"{\"owner\":\"stacklok\"}","jq_filter":"."}`))
-	res, err := tl.Execute(context.Background(), call, nil)
+	res, err := tl.Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestCallMcpWithQueryArgsUnrecoverableString(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(argsJSON))
-			res, err := tl.Execute(context.Background(), call, nil)
+			res, err := tl.Execute(context.Background(), call, tool.Environment{})
 			if err != nil {
 				t.Fatalf("unexpected Go error: %v", err)
 			}
@@ -574,7 +574,7 @@ func TestCallMcpWithQueryArgsAbsentOrEmpty(t *testing.T) {
 			}}}
 			tl := callMcpWithQueryTool{provider: prov}
 			call := session.NewToolCall("c", callMcpWithQueryToolName, json.RawMessage(argsJSON))
-			res, err := tl.Execute(context.Background(), call, nil)
+			res, err := tl.Execute(context.Background(), call, tool.Environment{})
 			if err != nil {
 				t.Fatalf("unexpected Go error: %v", err)
 			}

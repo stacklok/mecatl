@@ -52,7 +52,7 @@ func (loopServerTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "Loop", Description: "loop", Schema: []byte(`{"type":"object"}`)}
 }
 func (loopServerTool) ReadOnly() bool { return true }
-func (loopServerTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (loopServerTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult(in.ID, "ok"), nil
 }
 

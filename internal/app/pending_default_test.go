@@ -109,7 +109,7 @@ func driveOneTurn(t *testing.T, eng *agent.Engine) string {
 	t.Helper()
 	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
 	ws := memfs.NewWorkspace("/ws")
-	return drainRun(eng.Run(context.Background(), sess, ws, agent.RunRequest{Text: "hi", Parts: nil}))
+	return drainRun(eng.Run(context.Background(), sess, testEnvironment(ws, nil), agent.RunRequest{Text: "hi", Parts: nil}))
 }
 
 // The sessionNeedsPerFactory/needsRehydration table extensions for the
