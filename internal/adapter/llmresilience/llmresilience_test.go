@@ -466,20 +466,36 @@ func TestStreamIdleTimeoutDisabledWhenZero(t *testing.T) {
 	}
 }
 
+// goroutineStackMarkerCount returns how many currently-live goroutines have
+// marker somewhere in their stack trace. Unlike runtime.NumGoroutine(), this is
+// immune to unrelated background goroutines (GC workers, the race detector's own
+// bookkeeping, runtime housekeeping) that fluctuate independently of the code
+// under test — that noise is exactly what made a raw NumGoroutine() differential
+// flake under -race on a loaded CI runner (issue: disabled==armed was observed
+// in CI despite the mechanism being correct). Naming the goroutine we're
+// actually looking for is a direct, non-statistical witness instead.
+func goroutineStackMarkerCount(marker string) int {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	return strings.Count(string(buf[:n]), marker)
+}
+
 // TestStreamIdleDisabledSpawnsNoWatchdogGoroutine proves the StreamIdleTimeout<=0
-// path takes the goroutine-FREE rest loop: it samples the live goroutine count at
-// a deterministic point mid-stream (the SECOND chunk, which is read inside the
-// rest loop) for both the disabled (0) and armed (>0) configs over the identical
-// scenario. The armed path keeps a helper goroutine in flight during that read; the
-// disabled path drives next() inline on the caller goroutine. The disabled count
-// must therefore be strictly LESS than the armed count — a direct, robust witness
-// that disabling spawns no watchdog goroutine (and no time.NewTimer). Sampling a
-// DIFFERENTIAL at the same scenario point avoids depending on any absolute count.
+// path takes the goroutine-FREE rest loop. restSeqIdleBounded (llmresilience.go)
+// is the ONLY place that spawns a per-iteration helper goroutine; restSeqUnbounded
+// (the StreamIdleTimeout<=0 path) never does. Both sample at the same
+// deterministic point mid-stream (the SECOND chunk, read inside the rest loop) by
+// taking a full stack dump and counting frames naming restSeqIdleBounded — the
+// disabled config must show ZERO (a different function, restSeqUnbounded, is on
+// the stack instead) and the armed config must show at least one (its own
+// blocked-in-select frame plus the in-flight helper goroutine reading next()).
 func TestStreamIdleDisabledSpawnsNoWatchdogGoroutine(t *testing.T) {
-	// sampleRestChunkGoroutines drives a 3-chunk turn and returns the live
-	// goroutine count captured while the SECOND chunk (a rest-loop read) is being
-	// produced by the inner provider.
-	sampleRestChunkGoroutines := func(idleTimeout time.Duration) int {
+	const watchdogMarker = "restSeqIdleBounded"
+
+	// sampleRestChunkMarkerCount drives a 3-chunk turn and returns the
+	// watchdogMarker stack-frame count captured while the SECOND chunk (a
+	// rest-loop read) is being produced by the inner provider.
+	sampleRestChunkMarkerCount := func(idleTimeout time.Duration) int {
 		var sampled int
 		f := &fakeProvider{}
 		f.steps = []step{{
@@ -488,7 +504,7 @@ func TestStreamIdleDisabledSpawnsNoWatchdogGoroutine(t *testing.T) {
 				// idx 0 is the first chunk (pulled in establish, inline either way);
 				// idx 1 is read inside the rest loop — the path that differs.
 				if idx == 1 {
-					sampled = runtime.NumGoroutine()
+					sampled = goroutineStackMarkerCount(watchdogMarker)
 				}
 			},
 		}}
@@ -503,14 +519,15 @@ func TestStreamIdleDisabledSpawnsNoWatchdogGoroutine(t *testing.T) {
 		return sampled
 	}
 
-	// Settle so a prior test's teardown does not skew either sample.
+	// Settle so a prior test's teardown does not leave a stray goroutine in
+	// flight when the disabled sample is taken.
 	waitNoExtraGoroutines(t, runtime.NumGoroutine())
 
-	disabled := sampleRestChunkGoroutines(0)
-	armed := sampleRestChunkGoroutines(50 * time.Millisecond)
-
-	if disabled >= armed {
-		t.Fatalf("rest-chunk goroutine count: disabled=%d armed=%d; disabled must be strictly fewer (no watchdog goroutine when StreamIdleTimeout<=0)", disabled, armed)
+	if disabled := sampleRestChunkMarkerCount(0); disabled != 0 {
+		t.Fatalf("disabled config: found %d restSeqIdleBounded stack frame(s), want 0 (no watchdog goroutine when StreamIdleTimeout<=0)", disabled)
+	}
+	if armed := sampleRestChunkMarkerCount(50 * time.Millisecond); armed < 1 {
+		t.Fatalf("armed config: found %d restSeqIdleBounded stack frame(s), want >= 1", armed)
 	}
 }
 

@@ -63,11 +63,10 @@ func TestAbsoluteInRootReadWriteStat(t *testing.T) {
 	}
 }
 
-// TestAbsoluteInRootEditLedgerCrossForm pins the ledger key normalization: a
-// file read by absolute path and checked by relative path (and the reverse)
-// share ONE ledger entry, so Edit's read-before-edit-and-unchanged invariant
-// holds across the two path forms. A mutation via either form flips
-// WasReadUnchanged to false for both.
+// TestAbsoluteInRootEditLedgerCrossForm pins I/O-free lexical normalization: an
+// ordinary absolute <root>/<rel> and relative <rel> (in either direction) share
+// one ledger entry without physical resolution. A mutation via either form mints
+// a new current version that no longer matches the recorded one.
 func TestAbsoluteInRootEditLedgerCrossForm(t *testing.T) {
 	root := t.TempDir()
 	ws, err := NewWorkspace(root)
@@ -82,30 +81,51 @@ func TestAbsoluteInRootEditLedgerCrossForm(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	// Read by ABSOLUTE, check by RELATIVE → unchanged.
-	ws.RecordRead(abs, "")
-	if ok, err := ws.WasReadUnchanged(ctx, rel); err != nil || !ok {
-		t.Fatalf("read abs / check rel: (%v,%v), want (true,nil)", ok, err)
+	// Read by ABSOLUTE, look up by RELATIVE → the recorded version matches.
+	_, absVer, err := ws.ReadVersion(ctx, abs)
+	if err != nil {
+		t.Fatalf("ReadVersion(abs): %v", err)
 	}
-	// Mutate by RELATIVE → check by ABSOLUTE → changed.
+	ws.RecordRead(abs, absVer)
+	got, ok := ws.RecordedVersion(rel)
+	if !ok {
+		t.Fatalf("read abs / lookup rel: not recorded — cross-form ledger keying regressed")
+	}
+	if !got.Equal(absVer) {
+		t.Fatal("read abs / lookup rel returned a different version")
+	}
+	// Mutate by RELATIVE → a fresh ReadVersion by ABSOLUTE mints a different
+	// version, so the recorded-vs-current comparison detects the change.
 	if err := ws.Write(ctx, rel, []byte("mutated")); err != nil {
 		t.Fatalf("Write change: %v", err)
 	}
-	if ok, err := ws.WasReadUnchanged(ctx, abs); err != nil || ok {
-		t.Fatalf("after relative mutation, check abs: (%v,%v), want (false,nil)", ok, err)
+	if _, cur, err := ws.ReadVersion(ctx, abs); err != nil {
+		t.Fatalf("ReadVersion(abs) after mutation: %v", err)
+	} else if cur.Equal(absVer) {
+		t.Fatalf("after relative mutation, current abs version still equals the recorded one")
 	}
 
-	// Reverse: read by RELATIVE, check by ABSOLUTE → unchanged.
-	ws.RecordRead(rel, "")
-	if ok, err := ws.WasReadUnchanged(ctx, abs); err != nil || !ok {
-		t.Fatalf("read rel / check abs: (%v,%v), want (true,nil)", ok, err)
+	// Reverse: read by RELATIVE, look up by ABSOLUTE → the recorded version matches.
+	_, relVer, err := ws.ReadVersion(ctx, rel)
+	if err != nil {
+		t.Fatalf("ReadVersion(rel): %v", err)
 	}
-	// Mutate by ABSOLUTE → check by RELATIVE → changed.
+	ws.RecordRead(rel, relVer)
+	got, ok = ws.RecordedVersion(abs)
+	if !ok {
+		t.Fatalf("read rel / lookup abs: not recorded — cross-form ledger keying regressed")
+	}
+	if !got.Equal(relVer) {
+		t.Fatal("read rel / lookup abs returned a different version")
+	}
+	// Mutate by ABSOLUTE → a fresh ReadVersion by RELATIVE mints a different version.
 	if err := ws.Write(ctx, abs, []byte("mutated again")); err != nil {
 		t.Fatalf("Write change (abs): %v", err)
 	}
-	if ok, err := ws.WasReadUnchanged(ctx, rel); err != nil || ok {
-		t.Fatalf("after absolute mutation, check rel: (%v,%v), want (false,nil)", ok, err)
+	if _, cur, err := ws.ReadVersion(ctx, rel); err != nil {
+		t.Fatalf("ReadVersion(rel) after mutation: %v", err)
+	} else if cur.Equal(relVer) {
+		t.Fatalf("after absolute mutation, current rel version still equals the recorded one")
 	}
 }
 

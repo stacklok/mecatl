@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,11 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
+
+// errSimulatedRead is a sentinel read error used to prove the Edit/Write tools
+// surface a ReadVersion failure as a model-visible "cannot read" error rather
+// than the changed-since-read refusal.
+var errSimulatedRead = errors.New("simulated read failure")
 
 // call builds a ToolCall with JSON args marshalled from m.
 func call(t *testing.T, name string, m map[string]any) session.ToolCall {
@@ -146,12 +152,15 @@ func TestReadRecordsReadForEdit(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	seed(t, ws, "a.txt", "hello\n")
 	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "a.txt"}), ws)
-	ok, err := ws.WasReadUnchanged(context.Background(), "a.txt")
-	if err != nil {
-		t.Fatalf("WasReadUnchanged: %v", err)
-	}
+	ver, ok := ws.RecordedVersion("a.txt")
 	if !ok {
-		t.Error("Read did not record the read in the ledger")
+		t.Fatal("Read did not record the read in the ledger")
+	}
+	// The recorded version must match the file's current version (it did not change).
+	if _, cur, err := ws.ReadVersion(context.Background(), "a.txt"); err != nil {
+		t.Fatalf("ReadVersion: %v", err)
+	} else if !cur.Equal(ver) {
+		t.Error("recorded version differed from current version after an unchanged Read")
 	}
 }
 
@@ -288,6 +297,42 @@ func TestWriteNewFileNoReadNeeded(t *testing.T) {
 	}
 }
 
+// createConflictWorkspace injects a create after Write's not-exist Stat but
+// before its create-only operation, deterministically exercising the
+// model-visible create-conflict path.
+type createConflictWorkspace struct {
+	tool.Workspace
+	injected bool
+}
+
+func (w *createConflictWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
+	if !w.injected {
+		w.injected = true
+		if _, err := w.Workspace.CreateFile(ctx, path, []byte("concurrent\n")); err != nil {
+			return tool.FileVersion{}, err
+		}
+	}
+	return w.Workspace.CreateFile(ctx, path, data)
+}
+
+func TestWriteCreateOnlyRejectsConcurrentCreate(t *testing.T) {
+	base := memfs.NewWorkspace("/")
+	ws := &createConflictWorkspace{Workspace: base}
+	res := exec(t, WriteTool{}, call(t, "Write", map[string]any{
+		"path": "new.txt", "content": "agent\n",
+	}), ws)
+	if !res.IsError || !strings.Contains(res.Content, "already exists") {
+		t.Fatalf("Write create conflict result = (error=%v, content=%q), want model-visible create refusal", res.IsError, res.Content)
+	}
+	data, err := base.Read(context.Background(), "new.txt")
+	if err != nil {
+		t.Fatalf("Read final file: %v", err)
+	}
+	if string(data) != "concurrent\n" {
+		t.Fatalf("final file = %q, want concurrent create preserved", data)
+	}
+}
+
 func TestWriteOverwriteUnreadRejected(t *testing.T) {
 	ws := memfs.NewWorkspace("/")
 	seed(t, ws, "a.txt", "old\n")
@@ -304,6 +349,202 @@ func TestWriteOverwriteUnreadRejected(t *testing.T) {
 	}), ws)
 	if res.IsError {
 		t.Fatalf("overwrite after Read should succeed, got: %s", res.Content)
+	}
+}
+
+// replaceConflictWorkspace injects one cooperating mutation at the final
+// ReplaceFile call. The built-in tool has already completed its current
+// ReadVersion by then, so this deterministically proves the final conditional
+// replace is load-bearing rather than relying on scheduler timing.
+type replaceConflictWorkspace struct {
+	tool.Workspace
+	base     *memfs.Workspace
+	injected bool
+}
+
+func (w *replaceConflictWorkspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
+	if !w.injected {
+		w.injected = true
+		if err := w.base.Write(ctx, path, []byte("concurrent\n")); err != nil {
+			return tool.FileVersion{}, err
+		}
+	}
+	return w.Workspace.ReplaceFile(ctx, path, old, data)
+}
+
+func TestEditConditionalReplaceRejectsConcurrentChange(t *testing.T) {
+	base := memfs.NewWorkspace("/")
+	seed(t, base, "a.txt", "old\n")
+	ws := &replaceConflictWorkspace{Workspace: base, base: base}
+	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "a.txt"}), ws)
+
+	res := exec(t, EditTool{}, call(t, "Edit", map[string]any{
+		"path": "a.txt", "old_string": "old", "new_string": "edited",
+	}), ws)
+	if !res.IsError || !strings.Contains(res.Content, "changed since you read it") {
+		t.Fatalf("Edit CAS conflict result = (error=%v, content=%q), want model-visible changed-since refusal", res.IsError, res.Content)
+	}
+	data, err := base.Read(context.Background(), "a.txt")
+	if err != nil {
+		t.Fatalf("Read final file: %v", err)
+	}
+	if string(data) != "concurrent\n" {
+		t.Fatalf("final file = %q, want concurrent mutation preserved", data)
+	}
+}
+
+func TestWriteConditionalReplaceRejectsConcurrentChange(t *testing.T) {
+	base := memfs.NewWorkspace("/")
+	seed(t, base, "a.txt", "old\n")
+	ws := &replaceConflictWorkspace{Workspace: base, base: base}
+	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "a.txt"}), ws)
+
+	res := exec(t, WriteTool{}, call(t, "Write", map[string]any{
+		"path": "a.txt", "content": "overwritten\n",
+	}), ws)
+	if !res.IsError || !strings.Contains(res.Content, "changed since you read it") {
+		t.Fatalf("Write CAS conflict result = (error=%v, content=%q), want model-visible changed-since refusal", res.IsError, res.Content)
+	}
+	data, err := base.Read(context.Background(), "a.txt")
+	if err != nil {
+		t.Fatalf("Read final file: %v", err)
+	}
+	if string(data) != "concurrent\n" {
+		t.Fatalf("final file = %q, want concurrent mutation preserved", data)
+	}
+}
+
+// --- cause-first read errors & deleted-after-read ---
+
+// readErrorWorkspace is a fake that returns a fixed error from ReadVersion (for a
+// recorded path) so the Edit/Write tools hit the re-read branch and must surface
+// a model-visible "cannot read" error rather than the changed-since-read refusal.
+type readErrorWorkspace struct {
+	tool.Workspace
+	readErr error
+}
+
+func (w *readErrorWorkspace) ReadVersion(context.Context, string) ([]byte, tool.FileVersion, error) {
+	return nil, tool.FileVersion{}, w.readErr
+}
+
+// TestEditReadVersionErrorIsCauseFirst pins that a non-nil ReadVersion error in
+// Edit surfaces a model-visible "cannot read %q: %v" error, NOT the
+// changed-since-read retry message. A read failure (deletion, unreadable path,
+// escape rejection) is not "changed since you read it"; the model needs the real
+// cause to act on it.
+func TestEditReadVersionErrorIsCauseFirst(t *testing.T) {
+	base := memfs.NewWorkspace("/")
+	seed(t, base, "a.txt", "hello\n")
+	// Satisfy the read-before-edit precondition via the REAL workspace first, so
+	// the only failing step in the Edit under test is the re-ReadVersion.
+	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "a.txt"}), base)
+	ws := &readErrorWorkspace{Workspace: base, readErr: errSimulatedRead}
+
+	res := exec(t, EditTool{}, call(t, "Edit", map[string]any{
+		"path": "a.txt", "old_string": "hello", "new_string": "hi",
+	}), ws)
+	if !res.IsError {
+		t.Fatal("Edit with a ReadVersion error must be a tool error")
+	}
+	if strings.Contains(res.Content, "changed since you read it") {
+		t.Fatalf("Edit ReadVersion error must not be the changed-since refusal: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "cannot read") || !strings.Contains(res.Content, "a.txt") {
+		t.Fatalf("Edit ReadVersion error must be model-visible 'cannot read %q': %q", "a.txt", res.Content)
+	}
+}
+
+// TestWriteReadVersionErrorIsCauseFirst pins the same cause-first behavior for
+// the existing-file Write path.
+func TestWriteReadVersionErrorIsCauseFirst(t *testing.T) {
+	base := memfs.NewWorkspace("/")
+	seed(t, base, "a.txt", "old\n")
+	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "a.txt"}), base)
+	ws := &readErrorWorkspace{Workspace: base, readErr: errSimulatedRead}
+
+	res := exec(t, WriteTool{}, call(t, "Write", map[string]any{
+		"path": "a.txt", "content": "new\n",
+	}), ws)
+	if !res.IsError {
+		t.Fatal("Write with a ReadVersion error must be a tool error")
+	}
+	if strings.Contains(res.Content, "changed since you read it") {
+		t.Fatalf("Write ReadVersion error must not be the changed-since refusal: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "cannot read") || !strings.Contains(res.Content, "a.txt") {
+		t.Fatalf("Write ReadVersion error must be model-visible 'cannot read %q': %q", "a.txt", res.Content)
+	}
+}
+
+// deletedAfterReadWorkspace injects a deletion at the final ReplaceFile call:
+// the tool has already done its current ReadVersion (succeeding), so this
+// deterministically proves a concurrent delete-after-read surfaces as a
+// model-visible "deleted since you read it" refusal, not a harness-level error
+// and not the changed-since-read message.
+type deletedAfterReadWorkspace struct {
+	tool.Workspace
+	base     *memfs.Workspace
+	injected bool
+}
+
+func (w *deletedAfterReadWorkspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
+	if !w.injected {
+		w.injected = true
+		// memfs has no delete; overwrite-then-read-error approximates a
+		// concurrent delete by making the path unreadable for the CAS read the
+		// underlying ReplaceFile performs. We instead model the delete by
+		// returning fs.ErrNotExist directly, mirroring an adapter whose
+		// ReplaceFile observes the file vanished between the current read and
+		// the conditional write.
+		return tool.FileVersion{}, fmt.Errorf("memfs: replace %q: %w", path, fs.ErrNotExist)
+	}
+	return w.Workspace.ReplaceFile(ctx, path, old, data)
+}
+
+// TestEditDeletedAfterReadIsModelVisible pins that a concurrent delete after the
+// current read but before the conditional replace surfaces as a model-visible
+// "deleted since you read it" refusal in Edit, distinct from a concurrent change
+// (the file is GONE, not changed) and not a harness-level error.
+func TestEditDeletedAfterReadIsModelVisible(t *testing.T) {
+	base := memfs.NewWorkspace("/")
+	seed(t, base, "a.txt", "hello\n")
+	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "a.txt"}), base)
+	ws := &deletedAfterReadWorkspace{Workspace: base, base: base}
+
+	res := exec(t, EditTool{}, call(t, "Edit", map[string]any{
+		"path": "a.txt", "old_string": "hello", "new_string": "hi",
+	}), ws)
+	if !res.IsError {
+		t.Fatal("Edit with a concurrent delete must be a tool error")
+	}
+	if strings.Contains(res.Content, "changed since you read it") {
+		t.Fatalf("Edit delete-after-read must not be the changed-since refusal: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "deleted since you read it") || !strings.Contains(res.Content, "a.txt") {
+		t.Fatalf("Edit delete-after-read must be model-visible 'deleted since you read it': %q", res.Content)
+	}
+}
+
+// TestWriteDeletedAfterReadIsModelVisible pins the same delete-after-read
+// behavior for the existing-file Write path.
+func TestWriteDeletedAfterReadIsModelVisible(t *testing.T) {
+	base := memfs.NewWorkspace("/")
+	seed(t, base, "a.txt", "old\n")
+	exec(t, ReadTool{}, call(t, "Read", map[string]any{"path": "a.txt"}), base)
+	ws := &deletedAfterReadWorkspace{Workspace: base, base: base}
+
+	res := exec(t, WriteTool{}, call(t, "Write", map[string]any{
+		"path": "a.txt", "content": "new\n",
+	}), ws)
+	if !res.IsError {
+		t.Fatal("Write with a concurrent delete must be a tool error")
+	}
+	if strings.Contains(res.Content, "changed since you read it") {
+		t.Fatalf("Write delete-after-read must not be the changed-since refusal: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "deleted since you read it") || !strings.Contains(res.Content, "a.txt") {
+		t.Fatalf("Write delete-after-read must be model-visible 'deleted since you read it': %q", res.Content)
 	}
 }
 

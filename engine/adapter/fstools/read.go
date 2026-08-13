@@ -93,15 +93,15 @@ func (ReadTool) Execute(ctx context.Context, in session.ToolCall, ws tool.Worksp
 		return session.NewToolError(in.ID, "\"offset\" and \"limit\" must be non-negative"), nil
 	}
 
-	data, err := ws.Read(ctx, args.Path)
+	data, ver, err := ws.ReadVersion(ctx, args.Path)
 	if err != nil {
 		return session.NewToolError(in.ID, fmt.Sprintf("cannot read %q: %v", args.Path, err)), nil
 	}
 
-	// Record the read so Edit/Write can assert read-before-edit. The adapter
-	// computes its own authoritative content fingerprint, so the version token
-	// passed here is irrelevant; "" is fine.
-	ws.RecordRead(args.Path, "")
+	// Record the read with the ADAPTER-MINTED authoritative version (ReadVersion
+	// returned it). RecordRead is a pure in-memory store with NO I/O; it stores
+	// this exact token so a later Edit/Write can assert read-before-mutate.
+	ws.RecordRead(args.Path, ver)
 
 	content := string(data)
 	lines := strings.Split(content, "\n")

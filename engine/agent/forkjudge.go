@@ -242,7 +242,15 @@ func (judgeWorkspace) Root() string { return "/" }
 func (judgeWorkspace) Read(context.Context, string) ([]byte, error) {
 	return nil, fs.ErrNotExist
 }
-func (judgeWorkspace) Write(context.Context, string, []byte) error { return fs.ErrPermission }
+func (judgeWorkspace) ReadVersion(context.Context, string) ([]byte, tool.FileVersion, error) {
+	return nil, tool.FileVersion{}, fs.ErrNotExist
+}
+func (judgeWorkspace) CreateFile(context.Context, string, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, fs.ErrPermission
+}
+func (judgeWorkspace) ReplaceFile(context.Context, string, tool.FileVersion, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, fs.ErrPermission
+}
 func (judgeWorkspace) Stat(context.Context, string) (tool.FileInfo, error) {
 	return tool.FileInfo{}, fs.ErrNotExist
 }
@@ -250,9 +258,9 @@ func (judgeWorkspace) Glob(context.Context, string) ([]string, error) { return n
 func (judgeWorkspace) Grep(context.Context, string, string) ([]tool.GrepMatch, error) {
 	return nil, nil
 }
-func (judgeWorkspace) RecordRead(string, string) {}
-func (judgeWorkspace) WasReadUnchanged(context.Context, string) (bool, error) {
-	return false, nil
+func (judgeWorkspace) RecordRead(string, tool.FileVersion) {}
+func (judgeWorkspace) RecordedVersion(string) (tool.FileVersion, bool) {
+	return tool.FileVersion{}, false
 }
 
 // Compile-time assertions.

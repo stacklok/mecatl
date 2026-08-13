@@ -291,7 +291,13 @@ Two deliberate cycle-breaks worth noting, documented in code:
 - `FileSystem`/`Workspace` live in `engine/tool`, **not** `engine/port`,
   because `port` already imports `tool` while `tool.Tool.Execute` takes a
   `Workspace`; defining them in `port` would form a `port↔tool` cycle. See the
-  package note in `engine/tool/tool.go`.
+  package note in `engine/tool/tool.go`. Workspace file mutation is version-aware:
+  agent-facing Read records an opaque `FileVersion`, new-file Write is create-only,
+  and Edit/existing-file Write finish with conditional replace. Public Workspace
+  exposes no unconditional mutation; its ledger belongs to the live instance and
+  resets whenever the default Service factory rebuilds it. See
+  [ADR 0104](adr/0104-execution-environment.md) and the
+  [ports chapter](architecture/ports.md).
 - `governance` does **not** import `session` (so `session` can import
   `governance` without a cycle); the `Evaluator` works on primitive args, and
   the `permpolicy` adapter bridges `session` types into it.

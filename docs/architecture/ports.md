@@ -80,12 +80,35 @@ level**: in `ModePlan` only `ReadOnly()` tools are exposed, ordered by name.
 
 `FileSystem` and `Workspace` live here (not in `port`) to break the
 `port↔tool` cycle. `Workspace` is the session-scoped seam every tool executes
-against: it scopes all paths to one root (rejecting `../` escapes), exposes
-`Root/Read/Write/Stat/Glob/Grep`, and carries the Edit **read-ledger**
-via `RecordRead(path, version)` / `WasReadUnchanged(ctx, path)`. The
-read-before-edit invariant is enforced inside the Edit tool against this ledger
-(`internal/adapter/tools/edit.go`: invariant #1 via `WasReadUnchanged`, #2
-exact match, #3 uniqueness unless `replace_all`).
+against: it scopes all paths to one root (rejecting `../` escapes), exposes the
+read-only `Root/Read/Stat` surface plus `Glob/Grep`, and carries the version-aware
+mutation protocol from [ADR 0104](../adr/0104-execution-environment.md).
+`ReadVersion` returns content plus an opaque `FileVersion`; `RecordRead` stores
+that exact version with no I/O, and `RecordedVersion` is the I/O-free ledger
+lookup. Ledger keys use lexical Clean/Rel only: ordinary absolute-root/relative
+forms converge, cleaned out-of-root absolutes converge, and physical symlink
+aliases may safely miss and force another Read. Agent-facing Read records the
+returned version. Edit and existing-file
+Write compare the recorded version with a current version-bearing read, then
+finish with conditional `ReplaceFile`; new-file Write uses create-only
+`CreateFile`. Public `Workspace` has no unconditional Write capability. Concrete
+adapters may retain bootstrap/setup writers outside the interface. The ledger is
+scoped to the live Workspace instance; the default Service factory rebuilds that
+instance per run, while existing no-fs/ACP overrides retain their owner-defined
+lifetime.
+
+`CreateFile` and the compare-plus-mutation in `ReplaceFile` are atomic for
+concurrent calls through the same live Workspace/backend handle. ACP's
+instance-local mutex satisfies that base contract. osfs deliberately provides a
+stronger process-wide guarantee: it canonicalizes the physical target (or the
+physical parent plus basename for a missing create), so symlink aliases share a
+lock stripe across Workspace instances, and performs create through confined
+`O_CREATE|O_EXCL`. Arbitrary POSIX writers that bypass the Workspace seam do not
+participate, so local osfs is not kernel-level atomic replacement. ACP removes
+the exact confined requested path from structured editor errors, then accepts only
+anchored normalized absence shapes; generic and structured non-absence failures
+fail closed. A future remote backend must
+provide true backend CAS.
 
 **Command execution is a separate seam, not part of `Workspace`.**
 `tool.CommandRunner` (`Run(ctx, command) (CommandResult, error)`) is the only
@@ -97,6 +120,15 @@ deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
 `CommandRunner` (output-capped, context-bounded, process-group-killed on
 cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
 shell-less deployment simply omits Bash, and an OS sandbox would wrap this seam.
+[ADR 0104](../adr/0104-execution-environment.md) records the migration direction:
+a coding agent ultimately runs in an execution environment whose Workspace and
+bound CommandRunner address one namespace. The future minimal `tool.Environment`
+will carry identity plus those two capabilities; durable identity will live
+cycle-safely in `session.EnvironmentRef`, while `WorkspaceForker`/`ForkMerger`
+remain separate and governance remains outside. Those types and remote transport
+are deliberately deferred — this PR implements only the version-aware file
+foundation.
+
 `tool.MemoryStore` and `tool.WorkspaceForker` live alongside it for the same
 layering reason (the tools that need them depend on the interface, not a
 `port`).

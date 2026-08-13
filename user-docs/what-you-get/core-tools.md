@@ -23,8 +23,8 @@ These tools are always present in a default session (no extra configuration requ
 | Catalog name | Purpose | Read-only? |
 |---|---|---|
 | `Read` | Read a file from the workspace by path. The primary way the model loads source code, config, and data files. | Yes |
-| `Write` | Write a file to the workspace (create or overwrite). | No |
-| `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). Safer than Write for targeted changes. | No |
+| `Write` | Write a file to the workspace (create or overwrite). Creating a new file requires no prior read; overwriting an existing file requires a prior Read and that the file is unchanged since — so a concurrent change is never silently clobbered. A concurrent creation of a new path surfaces as a create-conflict refusal (read the now-existing file first, then overwrite). | No |
+| `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). The file must be unchanged since it was read; a concurrent change or deletion since the read surfaces as a model-visible refusal to re-read and retry. Safer than Write for targeted changes. | No |
 | `Bash` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below). | No |
 | `BashStatus` | Check on the background commands `Bash` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Bash` is. | Yes |
 | `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree. | Yes |

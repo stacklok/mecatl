@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // Finding 2: a symlink created INSIDE the workspace (the model can do this via
@@ -106,12 +108,12 @@ func TestInRootFileStillWorks(t *testing.T) {
 	}
 }
 
-// fingerprint (the read-before-edit ledger seam) must also refuse to follow an
-// escaping symlink.
-func TestFingerprintThroughSymlinkEscapesRejected(t *testing.T) {
+// The version-bearing read (the read-before-edit ledger seam) must also refuse
+// to follow an escaping symlink.
+func TestReadVersionThroughSymlinkEscapesRejected(t *testing.T) {
 	ws, _ := newSymlinkWorkspace(t)
-	if _, err := ws.fingerprint("evil"); !errors.Is(err, ErrPathEscape) {
-		t.Errorf("fingerprint(evil) error = %v, want ErrPathEscape", err)
+	if _, _, err := ws.ReadVersion(context.Background(), "evil"); !errors.Is(err, ErrPathEscape) {
+		t.Errorf("ReadVersion(evil) error = %v, want ErrPathEscape", err)
 	}
 }
 
@@ -145,5 +147,102 @@ func TestGlobAndGrepDoNotFollowEscapingSymlinks(t *testing.T) {
 		if len(hits) != 0 {
 			t.Errorf("Grep(pathGlob=%q) followed escaping symlink, got %d hits", pathGlob, len(hits))
 		}
+	}
+}
+
+// --- agent-reachable CreateFile/ReplaceFile path-escape coverage -------------
+
+// TestCreateFileRejectsSymlinkEscapes pins that the agent-reachable CreateFile
+// (the new-file Write path) refuses an in-root escaping symlink, a ".." climb,
+// and an out-of-root absolute path — the same confinement the old bootstrap
+// Write coverage asserted, now exercised directly through the mutation seam the
+// model actually reaches. A create must NEVER silently follow an escaping link
+// and plant a file outside the root.
+func TestCreateFileRejectsSymlinkEscapes(t *testing.T) {
+	ws, root := newSymlinkWorkspace(t)
+	ctx := context.Background()
+
+	for _, p := range []string{"evil", "up/escape.txt", "/etc/escape"} {
+		if _, err := ws.CreateFile(ctx, p, []byte("pwned")); !errors.Is(err, ErrPathEscape) {
+			t.Errorf("CreateFile(%q) error = %v, want ErrPathEscape", p, err)
+		}
+	}
+	// The escaping symlink target must remain untouched.
+	if _, err := os.Lstat(filepath.Join(root, "evil")); err != nil {
+		t.Fatalf("evil link vanished after CreateFile: %v", err)
+	}
+}
+
+// TestReplaceFileRejectsSymlinkEscapes pins the same for ReplaceFile. A replace
+// requires a recorded version; here we use a deliberately-zero FileVersion (the
+// "never an overwrite sentinel" guard) so the escape rejection must fire at the
+// resolve step BEFORE any version comparison — proving confinement is checked
+// first, not gated on a valid version.
+func TestReplaceFileRejectsSymlinkEscapes(t *testing.T) {
+	ws, _ := newSymlinkWorkspace(t)
+	ctx := context.Background()
+
+	for _, p := range []string{"evil", "up/escape.txt", "/etc/escape"} {
+		if _, err := ws.ReplaceFile(ctx, p, tool.FileVersion{}, []byte("pwned")); !errors.Is(err, ErrPathEscape) {
+			t.Errorf("ReplaceFile(%q) error = %v, want ErrPathEscape", p, err)
+		}
+	}
+}
+
+// TestRelaxedWriteCreateFileReplaceFileRejectAbsoluteSymlinkLeaf pins the
+// relaxed-write symlink-leaf containment (AC3.5) directly through the
+// agent-reachable CreateFile/ReplaceFile, not only through the bootstrap Write.
+// A LEAF symlink inside an out-of-root relaxed target whose own target escapes
+// FURTHER must be refused — the serving *os.Root on the vetted parent refuses
+// the traversal, never silently following the link and writing the third dir.
+func TestRelaxedWriteCreateFileReplaceFileRejectAbsoluteSymlinkLeaf(t *testing.T) {
+	if testing.Short() {
+		t.Skip("symlink fixture")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	outside := filepath.Join(base, "outside")
+	third := filepath.Join(base, "third")
+	for _, d := range []string{root, outside, third} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", d, err)
+		}
+	}
+	thirdTarget := filepath.Join(third, "planted.txt")
+	if err := os.WriteFile(thirdTarget, []byte("third-original"), 0o644); err != nil {
+		t.Fatalf("WriteFile(third): %v", err)
+	}
+	leafLink := filepath.Join(outside, "leaflink")
+	if err := os.Symlink(thirdTarget, leafLink); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	ws, err := NewWorkspace(root, WithRelaxedWrites())
+	if err != nil {
+		t.Fatalf("NewWorkspace(relaxed): %v", err)
+	}
+	ctx := context.Background()
+
+	// CreateFile through the escaping leaf symlink must be refused. The serving
+	// *os.Root on the vetted parent either refuses to follow the symlink
+	// (ErrPathEscape) or O_EXCL short-circuits on the existing link entry
+	// (fs.ErrExist) WITHOUT following it — both are safe refusals. The load-bearing
+	// assertion is that the THIRD target stays untouched: a bare os.Create would
+	// have followed the link and clobbered it.
+	if _, err := ws.CreateFile(ctx, leafLink, []byte("must-never-land")); err == nil {
+		t.Fatal("relaxed CreateFile through escaping leaf symlink succeeded — it must be refused")
+	}
+	data, err := os.ReadFile(thirdTarget)
+	if err != nil || string(data) != "third-original" {
+		t.Fatalf("third content = %q, %v — a direct CreateFile through the leaf symlink would have FOLLOWED it; the serving *os.Root must refuse", data, err)
+	}
+
+	// ReplaceFile reads through the symlink to mint the current version; the
+	// serving *os.Root refuses that read, surfacing as ErrPathEscape.
+	if _, err := ws.ReplaceFile(ctx, leafLink, tool.FileVersion{}, []byte("must-never-land")); !errors.Is(err, ErrPathEscape) {
+		t.Fatalf("relaxed ReplaceFile through escaping leaf symlink = %v, want ErrPathEscape", err)
+	}
+	data, err = os.ReadFile(thirdTarget)
+	if err != nil || string(data) != "third-original" {
+		t.Fatalf("third content after ReplaceFile = %q, %v — must remain untouched", data, err)
 	}
 }

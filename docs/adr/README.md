@@ -58,6 +58,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### Core tools & shell
 - [0090 — Background Bash commands](./0090-background-bash.md)
+- [0104 — Execution environments and version-aware file mutation](./0104-execution-environment.md)
 
 ### Agents, teams & delegation
 - [0013 — Agent definitions](./0013-agent-definitions.md)

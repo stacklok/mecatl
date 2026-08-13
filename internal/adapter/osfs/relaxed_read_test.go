@@ -316,12 +316,12 @@ func TestRelaxedWrites_ParentMustExist(t *testing.T) {
 	}
 }
 
-// TestRelaxedWrites_LedgerKeysCanonicalAbsolute pins AC3.3's osfs half: the
-// Edit read-ledger keys an out-of-root path by its CANONICAL ABSOLUTE form —
-// a RecordRead through the canonical path matches a WasReadUnchanged through
-// a `..`-carrying alias (and the reverse) — while in-root cross-form matching
-// (absolute vs relative) is unregressed.
-func TestRelaxedWrites_LedgerKeysCanonicalAbsolute(t *testing.T) {
+// TestRelaxedWrites_LedgerKeysCleanAbsolute pins AC3.3's osfs half: the
+// I/O-free ledger keys an out-of-root absolute path by filepath.Clean, so a
+// `..`-carrying lexical alias matches in both directions. Ordinary in-root
+// absolute/relative forms also converge. Physical symlink aliases deliberately
+// need not match; that safe false-negative forces another Read.
+func TestRelaxedWrites_LedgerKeysCleanAbsolute(t *testing.T) {
 	t.Parallel()
 	root, outside, _ := setupRelaxedFS(t)
 	relaxed, err := osfs.NewWorkspace(root, osfs.WithRelaxedReads(), osfs.WithRelaxedWrites())
@@ -331,37 +331,66 @@ func TestRelaxedWrites_LedgerKeysCanonicalAbsolute(t *testing.T) {
 	target := filepath.Join(outside, "out.txt")
 	alias := filepath.Join(outside, "deep", "..", "out.txt")
 
-	// Read canonical, check via the `..` alias.
-	relaxed.RecordRead(target, "")
-	ok, err := relaxed.WasReadUnchanged(t.Context(), alias)
-	if err != nil || !ok {
-		t.Fatalf("WasReadUnchanged(alias) = %v, %v — the ledger must key out-of-root paths canonically", ok, err)
+	// Read canonical (via ReadVersion), record, look up via the `..` alias.
+	_, targetVer, rerr := relaxed.ReadVersion(t.Context(), target)
+	if rerr != nil {
+		t.Fatalf("ReadVersion(target): %v", rerr)
+	}
+	relaxed.RecordRead(target, targetVer)
+	got, ok := relaxed.RecordedVersion(alias)
+	if !ok {
+		t.Fatalf("RecordedVersion(alias) not recorded — out-of-root absolute keys must use lexical cleaning")
+	}
+	if !got.Equal(targetVer) {
+		t.Fatal("RecordedVersion(alias) did not return the canonical-read version")
 	}
 
-	// Read via the alias, check canonical.
+	// Read via the alias, look up canonical.
 	other := filepath.Join(outside, "deep", "d.txt")
 	otherAlias := filepath.Join(outside, "deep", "..", "deep", "d.txt")
-	relaxed.RecordRead(otherAlias, "")
-	ok, err = relaxed.WasReadUnchanged(t.Context(), other)
-	if err != nil || !ok {
-		t.Fatalf("WasReadUnchanged(canonical) after RecordRead(alias) = %v, %v — cross-form must match in BOTH directions", ok, err)
+	_, otherVer, rerr := relaxed.ReadVersion(t.Context(), otherAlias)
+	if rerr != nil {
+		t.Fatalf("ReadVersion(otherAlias): %v", rerr)
+	}
+	relaxed.RecordRead(otherAlias, otherVer)
+	got, ok = relaxed.RecordedVersion(other)
+	if !ok {
+		t.Fatalf("RecordedVersion(canonical) after RecordRead(alias) not recorded — cross-form must match in BOTH directions")
+	}
+	if !got.Equal(otherVer) {
+		t.Fatal("RecordedVersion(canonical) did not return the alias-read version")
 	}
 
-	// Changed-since-read must still trip on the out-of-root path.
+	// Changed-since-read must still trip on the out-of-root path: a fresh
+	// ReadVersion after a behind-the-back change mints a different version.
 	if err := os.WriteFile(target, []byte("changed"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	ok, err = relaxed.WasReadUnchanged(t.Context(), target)
-	if err != nil || ok {
-		t.Fatalf("WasReadUnchanged after a behind-the-back change = %v, %v — unchanged-since must reject", ok, err)
+	if _, cur, err := relaxed.ReadVersion(t.Context(), target); err != nil {
+		t.Fatalf("ReadVersion(target) after change: %v", err)
+	} else if cur.Equal(targetVer) {
+		t.Fatalf("current version still equals recorded after a behind-the-back change — unchanged-since must reject")
 	}
 
 	// In-root cross-form matching is unregressed: read by absolute in-root
-	// path, check by relative.
-	inAbs := filepath.Join(root, "in.txt")
-	relaxed.RecordRead(inAbs, "")
-	ok, err = relaxed.WasReadUnchanged(t.Context(), "in.txt")
-	if err != nil || !ok {
-		t.Fatalf("in-root cross-form WasReadUnchanged = %v, %v — the canonical-absolute keying must not regress in-root matching", ok, err)
+	// path, look up by relative. Derive the absolute operand from the RESOLVED
+	// root (relaxed.Root(), already EvalSymlinks-resolved at construction) —
+	// NOT the unresolved t.TempDir()-based `root` fixture path, which on
+	// macOS (/var -> /private/var) would not canonicalize inside the resolved
+	// root and would fail the in-root acceptance. tool.LedgerKey promises only
+	// lexical convergence under the resolved root, so the operand must share
+	// that resolved root.
+	inAbs := filepath.Join(relaxed.Root(), "in.txt")
+	_, inVer, rerr := relaxed.ReadVersion(t.Context(), inAbs)
+	if rerr != nil {
+		t.Fatalf("ReadVersion(inAbs): %v", rerr)
+	}
+	relaxed.RecordRead(inAbs, inVer)
+	got, ok = relaxed.RecordedVersion("in.txt")
+	if !ok {
+		t.Fatalf("in-root cross-form RecordedVersion not recorded — the canonical-absolute keying must not regress in-root matching")
+	}
+	if !got.Equal(inVer) {
+		t.Fatal("in-root cross-form RecordedVersion returned a different version")
 	}
 }

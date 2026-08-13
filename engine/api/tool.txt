@@ -5,7 +5,6 @@
     ifacemethod func (FileSystem).Glob(ctx context.Context, pattern string) ([]string, error)
     ifacemethod func (FileSystem).Read(ctx context.Context, path string) ([]byte, error)
     ifacemethod func (FileSystem).Stat(ctx context.Context, path string) (FileInfo, error)
-    ifacemethod func (FileSystem).Write(ctx context.Context, path string, data []byte) error
     ifacemethod func (ForkMerger).Merge(ctx context.Context, forkRoot string, parentWS Workspace) error
     ifacemethod func (MemoryStore).Forget(ctx context.Context, key string) error
     ifacemethod func (MemoryStore).Index(ctx context.Context) ([]MemoryEntry, error)
@@ -22,11 +21,13 @@
     ifacemethod func (Tool).Execute(ctx context.Context, in session.ToolCall, ws Workspace) (session.ToolResult, error)
     ifacemethod func (Tool).ReadOnly() bool
     ifacemethod func (Tool).Spec() ToolSpec
+    ifacemethod func (Workspace).CreateFile(ctx context.Context, path string, data []byte) (FileVersion, error)
     ifacemethod func (Workspace).Glob(ctx context.Context, pattern string) ([]string, error)
     ifacemethod func (Workspace).Grep(ctx context.Context, pattern string, pathGlob string) ([]GrepMatch, error)
-    ifacemethod func (Workspace).RecordRead(path string, version string)
-    ifacemethod func (Workspace).WasReadUnchanged(ctx context.Context, path string) (bool, error)
-    ifacemethod func (Workspace).Write(ctx context.Context, path string, data []byte) error
+    ifacemethod func (Workspace).ReadVersion(ctx context.Context, path string) ([]byte, FileVersion, error)
+    ifacemethod func (Workspace).RecordRead(path string, version FileVersion)
+    ifacemethod func (Workspace).RecordedVersion(path string) (version FileVersion, ok bool)
+    ifacemethod func (Workspace).ReplaceFile(ctx context.Context, path string, old FileVersion, data []byte) (FileVersion, error)
     ifacemethod func (WorkspaceForker).Fork(ctx context.Context, base Workspace, label string) (child Workspace, cleanup func() error, advisory string, err error)
     ifacemethod func (WorkspaceReader).Read(ctx context.Context, path string) ([]byte, error)
     ifacemethod func (WorkspaceReader).Root() string
@@ -41,7 +42,10 @@
     method func (*Search).Execute(_ context.Context, in session.ToolCall, _ Workspace) (session.ToolResult, error)
     method func (*Search).ReadOnly() bool
     method func (*Search).Spec() ToolSpec
+    method func (*VersionMismatchError).Error() string
     method func (AgentMCPServer).IsReference() bool
+    method func (FileVersion).Equal(o FileVersion) bool
+    method func (FileVersion).Token() (token string, ok bool)
 const AgentOriginDriver AgentOrigin = "driver"
 const AgentOriginExplicit AgentOrigin = "explicit"
 const AgentOriginProject AgentOrigin = "project"
@@ -54,7 +58,9 @@ const SkillOriginExplicit SkillOrigin = "explicit"
 const SkillOriginProject SkillOrigin = "project"
 const SkillOriginUser SkillOrigin = "user"
 const ToolSearchName untyped string = "ToolSearch"
+func LedgerKey(root string, path string) string
 func NewCatalog() *Catalog
+func NewFileVersion(token string) FileVersion
 func NewToolSearch(cat *Catalog) *Search
 func ValidSkillAssetName(name string) bool
 type AgentDef struct{Name string; Description string; Tools []string; DisallowedTools []string; Model string; Provider string; PermissionMode string; MaxTurns int; MaxToolCalls int; Color string; Skills []string; MCPServers []AgentMCPServer; Hooks map[string]string; Memory string; Body string; Origin AgentOrigin}
@@ -67,7 +73,8 @@ type CommandRunner interface{Run(ctx context.Context, command string, workdir st
 type CommandStreamer interface{RunStreaming(ctx context.Context, command string, workdir string, out io.Writer) (exitCode int, err error)}
 type Disclosable interface{Advertised() ToolSpec; Tool}
 type FileInfo struct{Name string; Size int64; Mode fs.FileMode; ModTime time.Time; IsDir bool}
-type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, error); Read(ctx context.Context, path string) ([]byte, error); Stat(ctx context.Context, path string) (FileInfo, error); Write(ctx context.Context, path string, data []byte) error}
+type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, error); Read(ctx context.Context, path string) ([]byte, error); Stat(ctx context.Context, path string) (FileInfo, error)}
+type FileVersion struct{}
 type ForkMerger interface{Merge(ctx context.Context, forkRoot string, parentWS Workspace) error}
 type GrepMatch struct{Path string; Line int; Text string}
 type MemoryEntry struct{Key string; Value string; Description string; UpdatedAt time.Time}
@@ -83,7 +90,8 @@ type SkillOrigin string
 type SkillSource interface{ListSkillAssets(ctx context.Context, name string) ([]SkillAsset, error); ListSkills(ctx context.Context) ([]SkillMeta, error); ReadSkillAsset(ctx context.Context, skill string, asset string) ([]byte, error); SkillBody(ctx context.Context, name string) (string, error)}
 type Tool interface{Execute(ctx context.Context, in session.ToolCall, ws Workspace) (session.ToolResult, error); ReadOnly() bool; Spec() ToolSpec}
 type ToolSpec struct{Name string; Description string; Schema json.RawMessage}
-type Workspace interface{Glob(ctx context.Context, pattern string) ([]string, error); Grep(ctx context.Context, pattern string, pathGlob string) ([]GrepMatch, error); RecordRead(path string, version string); WasReadUnchanged(ctx context.Context, path string) (bool, error); Write(ctx context.Context, path string, data []byte) error; WorkspaceReader}
+type VersionMismatchError struct{Path string}
+type Workspace interface{CreateFile(ctx context.Context, path string, data []byte) (FileVersion, error); Glob(ctx context.Context, pattern string) ([]string, error); Grep(ctx context.Context, pattern string, pathGlob string) ([]GrepMatch, error); ReadVersion(ctx context.Context, path string) ([]byte, FileVersion, error); RecordRead(path string, version FileVersion); RecordedVersion(path string) (version FileVersion, ok bool); ReplaceFile(ctx context.Context, path string, old FileVersion, data []byte) (FileVersion, error); WorkspaceReader}
 type WorkspaceForker interface{Fork(ctx context.Context, base Workspace, label string) (child Workspace, cleanup func() error, advisory string, err error)}
 type WorkspaceReader interface{Read(ctx context.Context, path string) ([]byte, error); Root() string; Stat(ctx context.Context, path string) (FileInfo, error)}
 var ErrDuplicateTool error

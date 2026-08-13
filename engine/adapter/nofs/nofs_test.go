@@ -17,7 +17,7 @@ import (
 // nothing exists that can be lost (the explicit not-memfs decision).
 func TestNoFSWorkspaceContract(t *testing.T) {
 	ctx := context.Background()
-	var ws tool.Workspace = nofs.New()
+	ws := nofs.New()
 
 	if got := ws.Root(); got != "" {
 		t.Errorf("Root() = %q, want \"\" (a no-FS session has no session root)", got)
@@ -37,20 +37,31 @@ func TestNoFSWorkspaceContract(t *testing.T) {
 		t.Errorf("Grep = (%v, %v), want empty with no error", matches, err)
 	}
 
-	err := ws.Write(ctx, "new.txt", []byte("data"))
-	if !errors.Is(err, nofs.ErrNoFilesystem) {
-		t.Errorf("Write error = %v, want ErrNoFilesystem", err)
+	// The unconditional Write seam was removed from the no-FS workspace (the
+	// agent-facing tools use CreateFile/ReplaceFile); CreateFile is the
+	// model-reachable create and must fail loudly.
+	if _, err := ws.CreateFile(ctx, "new.txt", []byte("data")); !errors.Is(err, nofs.ErrNoFilesystem) {
+		t.Errorf("CreateFile error = %v, want ErrNoFilesystem", err)
 	}
-	if err == nil || err.Error() == "" {
-		t.Error("Write must return a non-empty, model-readable refusal")
+	if err := nofs.ErrNoFilesystem; err.Error() == "" {
+		t.Error("ErrNoFilesystem must be a non-empty, model-readable refusal")
 	}
 
-	// The Edit read-ledger surface is inert: recording is a no-op and the
-	// read-before-edit precondition can never hold.
-	ws.RecordRead("a.txt", "v1")
-	ok, err := ws.WasReadUnchanged(ctx, "a.txt")
-	if err != nil || ok {
-		t.Errorf("WasReadUnchanged = (%v, %v), want (false, nil)", ok, err)
+	// The version-bearing reads and the explicit mutations are inert too: a
+	// read fails as not-exist, create/replace fail loudly, and the read-ledger
+	// surface (RecordRead/RecordedVersion) records nothing and looks up nothing.
+	if _, _, err := ws.ReadVersion(ctx, "a.txt"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("ReadVersion error = %v, want errors.Is(_, fs.ErrNotExist)", err)
+	}
+	if _, err := ws.CreateFile(ctx, "a.txt", []byte("data")); !errors.Is(err, nofs.ErrNoFilesystem) {
+		t.Errorf("CreateFile error = %v, want ErrNoFilesystem", err)
+	}
+	if _, err := ws.ReplaceFile(ctx, "a.txt", tool.FileVersion{}, []byte("data")); !errors.Is(err, nofs.ErrNoFilesystem) {
+		t.Errorf("ReplaceFile error = %v, want ErrNoFilesystem", err)
+	}
+	ws.RecordRead("a.txt", tool.NewFileVersion("v1"))
+	if _, ok := ws.RecordedVersion("a.txt"); ok {
+		t.Error("RecordedVersion reported ok=true; the ledger must be inert in a no-FS session")
 	}
 }
 

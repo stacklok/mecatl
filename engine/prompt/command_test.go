@@ -12,8 +12,8 @@ import (
 
 func writeFile(t *testing.T, ws tool.Workspace, path, content string) {
 	t.Helper()
-	if err := ws.Write(context.Background(), path, []byte(content)); err != nil {
-		t.Fatalf("write %s: %v", path, err)
+	if _, err := ws.CreateFile(context.Background(), path, []byte(content)); err != nil {
+		t.Fatalf("create %s: %v", path, err)
 	}
 }
 

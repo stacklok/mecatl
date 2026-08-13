@@ -107,7 +107,7 @@ func TestWritableSubagentTimeoutGivesOneCombinedNextAction(t *testing.T) {
 	block := &signalThenBlockTool{entered: make(chan struct{}, 1)}
 	writeTool := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, w tool.Workspace) (session.ToolResult, error) {
-			if err := w.Write(context.Background(), "timed-out.txt", []byte("first edit landed\n")); err != nil {
+			if _, err := w.CreateFile(context.Background(), "timed-out.txt", []byte("first edit landed\n")); err != nil {
 				return session.NewToolError(in.ID, "write failed: "+err.Error()), nil
 			}
 			return session.NewToolResult(in.ID, "wrote timed-out.txt"), nil

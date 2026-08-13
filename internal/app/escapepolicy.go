@@ -374,9 +374,10 @@ func (p *escapePolicy) isEscapeCall(c session.ToolCall) bool {
 // The wrapper's job is the pseudo-fs hard-deny at the TOOL-BODY boundary: the
 // policy Evaluate already refuses pseudo-fs before dispatch, so a tool body
 // hitting the wrapper's refusal is defense-in-depth. Glob/Grep delegate
-// unchanged (they never resolve paths); the Edit read-ledger
-// (RecordRead/WasReadUnchanged) is OVERRIDDEN with the same guard — the inner
-// osfs fingerprint read would otherwise bypass it (AC-W2-F1), and the guarded
+// unchanged (they never resolve paths); the version-bearing reads + the
+// conditional mutations (ReadVersion/CreateFile/ReplaceFile) and the read-ledger
+// (RecordRead/RecordedVersion) are OVERRIDDEN with the same guard — the inner
+// osfs read/replace would otherwise bypass it (AC-W2-F1), and the guarded
 // record/check are fail-safe no-ops so a pseudo-fs Edit can never validate
 // its read-before-edit invariant through this wrapper.
 type escapeWorkspace struct {
@@ -402,6 +403,15 @@ func (w *escapeWorkspace) Read(ctx context.Context, path string) ([]byte, error)
 	return w.Workspace.Read(ctx, path)
 }
 
+// ReadVersion consults the escape classifier then delegates to the relaxed osfs
+// version-bearing read.
+func (w *escapeWorkspace) ReadVersion(ctx context.Context, path string) ([]byte, tool.FileVersion, error) {
+	if err := w.refusePseudoFS(path); err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	return w.Workspace.ReadVersion(ctx, path)
+}
+
 // Stat consults the escape classifier (pseudo-fs hard-deny) then delegates.
 func (w *escapeWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, error) {
 	if err := w.refusePseudoFS(path); err != nil {
@@ -410,43 +420,46 @@ func (w *escapeWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo,
 	return w.Workspace.Stat(ctx, path)
 }
 
-// Write consults the escape classifier (pseudo-fs hard-deny — /proc, /sys,
-// /dev are never WRITTEN at any posture either, the same never-relaxed
-// category the policy refuses) then delegates to the relaxed osfs Write. An
-// ordinary in-root path and a policy-authorized out-of-root escape flow
-// through unchanged.
-func (w *escapeWorkspace) Write(ctx context.Context, path string, data []byte) error {
+// CreateFile consults the escape classifier (pseudo-fs hard-deny) then delegates
+// to the relaxed osfs create-only mutation.
+func (w *escapeWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
 	if err := w.refusePseudoFS(path); err != nil {
-		return err
+		return tool.FileVersion{}, err
 	}
-	return w.Workspace.Write(ctx, path, data)
+	return w.Workspace.CreateFile(ctx, path, data)
+}
+
+// ReplaceFile consults the escape classifier (pseudo-fs hard-deny) then delegates
+// to the relaxed osfs conditional replace.
+func (w *escapeWorkspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
+	if err := w.refusePseudoFS(path); err != nil {
+		return tool.FileVersion{}, err
+	}
+	return w.Workspace.ReplaceFile(ctx, path, old, data)
 }
 
 // RecordRead consults the SAME pseudo-fs guard before delegating to the inner
-// workspace's ledger record (AC-W2-F1): the inner osfs.Workspace.fingerprint
-// reads via w.fs.Read, bypassing this wrapper's refusePseudoFS, so without
-// this override the Edit read-ledger would be the ONE tool-body read site the
-// pseudo-fs defense-in-depth forgot. A pseudo-fs RecordRead is a NO-OP (the
-// fingerprint is never recorded), which is fail-safe: the edit then fails the
-// ordinary read-before-edit check instead of validating a pseudo-fs read.
-func (w *escapeWorkspace) RecordRead(path string, version string) {
+// workspace's ledger record (AC-W2-F1): the record is now a pure in-memory store
+// of the caller-supplied version (no inner fingerprint read), but the guard
+// still keeps a pseudo-fs path out of the ledger. A pseudo-fs RecordRead is a
+// NO-OP (the version is never recorded), which is fail-safe: the edit then fails
+// the ordinary read-before-edit check instead of validating a pseudo-fs read.
+func (w *escapeWorkspace) RecordRead(path string, version tool.FileVersion) {
 	if w.refusePseudoFS(path) != nil {
 		return
 	}
 	w.Workspace.RecordRead(path, version)
 }
 
-// WasReadUnchanged consults the SAME pseudo-fs guard before delegating (the
-// check half re-reads the file through the same inner fingerprint path, so it
-// needs the guard independently of the record half). A pseudo-fs check
-// answers (false, nil) — never read — so an Edit relying on even a PLANTED
-// pseudo-fs ledger entry can never pass the read-before-edit-and-unchanged
+// RecordedVersion consults the SAME pseudo-fs guard before delegating. A
+// pseudo-fs check answers (zero, false) — never read — so an Edit relying on
+// even a PLANTED pseudo-fs ledger entry can never pass the read-before-edit
 // invariant through this wrapper.
-func (w *escapeWorkspace) WasReadUnchanged(ctx context.Context, path string) (bool, error) {
+func (w *escapeWorkspace) RecordedVersion(path string) (tool.FileVersion, bool) {
 	if w.refusePseudoFS(path) != nil {
-		return false, nil
+		return tool.FileVersion{}, false
 	}
-	return w.Workspace.WasReadUnchanged(ctx, path)
+	return w.Workspace.RecordedVersion(path)
 }
 
 // refusePseudoFS returns the hard-deny error when path classifies pseudo-fs
