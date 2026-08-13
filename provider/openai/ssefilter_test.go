@@ -58,22 +58,24 @@ func filtered(r io.Reader) io.Reader {
 	return ssefilter.New(io.NopCloser(r))
 }
 
-// TestKeepalivePingKillsUnfilteredStream is the ORACLE for the Responses half: it
-// pins the upstream SDK defect using Responses-shaped event/data frames with the
-// EXACT keepalive comment captured from OpenCode Go on the wire. If openai-go
-// ever grows an empty-payload guard this test fails, which is the signal that the
-// filter is no longer load-bearing on this adapter either.
-func TestKeepalivePingKillsUnfilteredStream(t *testing.T) {
+// TestSDKNowGuardsEmptyPayload is the SENTINEL for the Responses half, replacing
+// the former ORACLE (which asserted the opposite: that the unfiltered stream
+// crashed on the keepalive frame). openai-go >= v3.50.0 added its own
+// data.Len()==0 guard in packages/ssestream, so the unfiltered decode of this
+// EXACT keepalive comment captured from OpenCode Go on the wire now succeeds —
+// this test pins that fact. ssefilter itself is UNCHANGED and stays wired: it
+// also bounds a stuck reader (maxZeroReads) and mirrors the SDK's frame-size cap,
+// neither of which the SDK provides on its own, so it remains load-bearing
+// independent of this upstream fix. If this test ever fails again, the SDK
+// regressed the empty-payload guard and the filter's crash workaround is back to
+// being the only thing standing between a keepalive and a killed stream.
+func TestSDKNowGuardsEmptyPayload(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "stream_keepalive_ping.sse"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-	_, derr := decodeSSEStream(bytes.NewReader(data))
-	if derr == nil {
-		t.Fatal("want the unfiltered stream to FAIL on the keepalive frame, got nil error")
-	}
-	if !strings.Contains(derr.Error(), "unexpected end of JSON input") {
-		t.Fatalf("want 'unexpected end of JSON input', got %v", derr)
+	if _, derr := decodeSSEStream(bytes.NewReader(data)); derr != nil {
+		t.Fatalf("want the unfiltered stream to decode cleanly (SDK empty-payload guard), got %v", derr)
 	}
 }
 

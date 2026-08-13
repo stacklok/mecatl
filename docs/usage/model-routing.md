@@ -34,6 +34,9 @@ models:
     ask-reviewer: quick
     plan: heavy            # plan-mode turns swap to the heavy model
     router: quick          # the classifier itself
+  context_windows:         # exact final provider/model IDs → total context tokens
+    openrouter:
+      z-ai/glm-5.2: 200000
   router:                  # pick a subagent's model per task (a taxonomy enables it; ADR 0042)
     # disabled: true        # optional kill-switch: keep the taxonomy but turn routing off
     default-category: medium
@@ -54,6 +57,15 @@ Defining the `models.router:` taxonomy above is all it takes to enable the route
 turn routing off, set `models.router.disabled: true` or launch with
 `mecated serve --subagent-model-router=false` (the kill-switch). With no `models.router:` block
 at all, every call keeps the session model — the default is byte-identical.
+
+`models.context_windows` ([ADR 0104](../adr/0104-context-window-overrides.md)) is
+operator-tier only and maps an exact provider ID to an
+exact final model/routing ID and its total context-token limit. Alias and slot routing
+finish before lookup, so the map never performs fuzzy, reverse, or cross-provider
+matching. It takes precedence over live provider metadata and the models.dev catalog;
+the global `--context-window-override` remains the highest-priority override. Empty
+keys and non-positive or over-2,000,000 values fail parsing. A project-tier map is
+removed with an operator warning and cannot influence compaction or displayed limits.
 
 **Verifying it's wired.** On startup mecated logs one build-once fact per active slot
 (`model slot ACTIVE`) and, when the router is enabled, `subagent model router ACTIVE`

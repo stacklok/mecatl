@@ -6,7 +6,8 @@
       "object": "model",
       "created": 1752000000,
       "owned_by": "toolhive",
-      "display_name": "Claude Sonnet 4.6"
+      "display_name": "Claude Sonnet 4.6",
+      "context_window": 1000000
     },
     {
       "id": "gpt-5",

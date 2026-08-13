@@ -158,6 +158,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`). Overridden per session by the `/models` picker |
 | `--default-provider` | – | **embedded** server: deployment-wide default provider id (e.g. `openai`, `openrouter`, `anthropic`); overrides the built-in provider preference for zero-selector sessions, while a client-side selection still wins. An unknown/unavailable provider **fails startup** |
 | `--default-model` | – | **embedded** server: deployment-wide default model for the default provider; sits below client-side defaults and above the per-provider built-in. A model not catalogued for the default provider **fails startup** |
+| `--context-window-override` | `0` | **embedded** server: global context-window token override for both compaction and the footer denominator. `0` keeps exact operator `models.context_windows` → live metadata → models.dev catalog → 128K fallback resolution. Rejected in `connect` mode; configure the external `mecated` instead |
 | `--subagent-model` | – (inherits `--model`) | **embedded** server: global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (the `CLAUDE_CODE_SUBAGENT_MODEL` analogue); the Parallel judge stays on the session model. Same provider as the session; an unresolvable id **fails startup** |
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
@@ -741,10 +742,13 @@ inventory.
 
 ### Remapping keys
 
-Every action in mecatui's keymap is rebindable. Two override surfaces exist, and
-they resolve to the same map — the **CLI flag wins per action** when both name it:
+Every action in mecatui's keymap is rebindable. Three override layers exist,
+and they resolve to the same map **per action** — a higher layer rebinds only
+the actions it names. Precedence, lowest to highest: the legacy server file
+< the client file < the **CLI flag wins**:
 
-- **`~/.config/mecatl/settings.yaml`** (operator-tier, shared with `mecated`) —
+- **`~/.config/mecatui/settings.yaml`** (client-owned, mecatui's own settings
+  file, strictly parsed — an unknown top-level key is a startup error) —
   a `keymap:` map of action name → comma-separated chord string:
 
   ```yaml
@@ -755,6 +759,11 @@ they resolve to the same map — the **CLI flag wins per action** when both name
 
 - **`--keymap Action=chord[,chord2]`** — repeatable CLI flag; each occurrence
   rebinds one action and overrides the YAML entry for that action.
+
+  The `keymap:` setting was migrated from `~/.config/mecatl/settings.yaml`
+  (the server-shared operator file) — the legacy location still works but is
+  **deprecated** (a startup warning names the new home), and the client file
+  wins on conflict.
 
 Settings are read **once at startup** — restart mecatui to apply a change (live
 reload is a planned follow-up, issue #456).
@@ -1072,9 +1081,10 @@ every model switch and on `GetSession`, and — for a session on a *live-only* m
 real window the curated catalog lacks — self-healed once the background live-catalog
 swap lands: the server resolves the window *live-first at the point of use* for both the
 engine's compaction trigger and this echoed denominator, so the next snapshot read fills
-it in, issue #66). There is no client-side override; the operator escape-hatch is
-mecated's `-context-window-override`, which moves the engine trigger **and** this echoed
-denominator together. When the window is unknown the meter degrades to the bare current
+it in, issue #66). Embedded mode can set `--context-window-override`, which moves
+the engine trigger **and** this echoed denominator together; in `connect` mode set the
+same flag on the external `mecated`. Without that global override, operator-tier
+`models.context_windows` exact provider/model entries precede live and catalog metadata. When the window is unknown the meter degrades to the bare current
 size (`ctx 40K`, no bar) — including briefly on a fresh session for a live-only
 model, until the live window resolves and the bar fills in. As the
 context fills the bar **darkens** to signal pressure — `▒` ok, `▓` past ~60%, `█` plus a

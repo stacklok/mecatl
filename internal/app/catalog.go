@@ -340,7 +340,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// main-session parity — see buildForceCopyRunner.
 	forceCopyRunner := buildForceCopyRunner(cfg)
 	parallelChild := buildParallelChildEngine(cfg, reg, s.provider, s.providerID, s.model, forceCopyRunner)
-	judge := agent.NewEngineJudge(buildParallelJudgeEngine(modelCfgFor(cfg, s.model), s.provider))
+	judge := agent.NewEngineJudge(buildParallelJudgeEngine(modelCfgFor(cfg, s.model), reg, s.providerID, s.provider))
 	opts := []agent.ParallelOption{
 		agent.WithParallelSubagentStopHook(hooks),
 		agent.WithParallelJudge(judge),

@@ -5279,15 +5279,31 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   logged event body).
 - **The jsonlstore adapter (the local reference).**
   `internal/adapter/store/jsonlstore/jsonlstore.go` (`Store`) — the ONE instance that
-  already serves `SessionStore` + `ToolCallRecorder` — now also implements `EventLog`
-  over a `.events.jsonl` sidecar PARALLEL to (not subsuming) `.session.jsonl` /
-  `.tools.jsonl`. `Append` writes a per-record format-tagged line
+  serves `SessionStore` + `ToolCallRecorder` + `EventLog` — stores one family as
+  `<store>/sid-v1/<sid-v1-token>.session.jsonl` plus parallel `.tools.jsonl` and
+  `.events.jsonl` sidecars. The owner-only version directory makes canonical names
+  physically disjoint from root-level legacy and schedule names.
+  `internal/adapter/store/jsonlstore/resolve.go` (`sessionResolver`) is the single
+  physical-name authority: `sid-v1-` + strict raw URL-base64 reversibly encodes the
+  complete opaque valid-UTF-8 id (the JSON/protobuf string boundary), while the logical
+  id is always read from stored snapshot data, never inferred from a filename. Reads are canonical-first and read-only. A
+  lossy legacy-name family is eligible for snapshot/event fallback, migration, or
+  deletion only when its latest snapshot embeds the exact requested id; mismatches
+  leave every legacy byte untouched. The first write migrates a verified legacy family
+  by renaming tools/events first and snapshot last, preserving bytes and append order.
+  Canonical+legacy coexistence never concatenates histories: canonical is authoritative;
+  List/MetaList deduplicate by embedded logical id and use canonical metadata/mtime;
+  Delete removes canonical sidecars/snapshot and additionally removes only an
+  ownership-verified legacy family, preventing resurrection without deleting a
+  colliding session.
+
+  `Append` writes a per-record format-tagged line
   `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via the shared `mu`/`appendLine`;
   `Read` scans ALL lines cumulatively (NOT latest-line-wins like the snapshot read),
   decodes each, and yields in append order, rejecting an unknown format tag as an infra
-  error (a forward-incompatible log fails loud, not silently skips). `Delete` removes the
-  `.events.jsonl` sidecar too, ordered BEFORE the session file (the session file stays
-  enumerated last, preserving the partial-failure-stays-visible invariant). The composition
+  error (a forward-incompatible log fails loud, not silently skips). `Delete` removes
+  sidecars before each family snapshot, preserving the partial-failure-stays-visible
+  invariant. The composition
   layer (`internal/app/build.go` (`buildStore`)) wires the jsonlstore `Store` as both
   `SessionStore` and `EventLog`; the memstore default supplies an in-memory
   `engine/adapter/memstore/eventlog.go` (`EventLog`) sibling so the seam is never nil
@@ -5745,7 +5761,12 @@ The fix:
   compaction (preserving the old "zero disables"). `engine/agent` imports no adapter — the
   closure is stdlib, built only in composition.
 - **`reg.windowResolver(cfg, providerID, model)` (`internal/app/livemeta.go`)** is the ONE
-  place the **override → live → catalog → 128k-floor** precedence lives. It is threaded
+  place the **global CLI override → exact operator-configured provider/model → live →
+  catalog → 128k-floor** precedence lives. `models.context_windows` is parsed strictly
+  by `internal/adapter/permconfig/schema.go`, is operator-tier only (project values are
+  stripped with a WARN), and is consulted against the final model ID after alias/slot
+  routing — never fuzzily or across providers. The configured and live values share the
+  same 2,000,000-token sane upper bound. The resolver is threaded
   onto EVERY engine: the shared engine (`baseEngineDeps`), per-session selector engines
   (`sessionEngineFactory`), and child engines (`childEngineDepsForProvider`,
   `childWindowFor`, `childWindowResolver`). `engineDepsForProvider` takes a `windowFn
@@ -5755,8 +5776,8 @@ The fix:
   injected `Config.ResolveContextWindow`, which is the SAME `reg.windowResolver` wrapped
   to `int64`. The `sessionEngine`/`SessionEngineResult` `ContextWindow` scalar is GONE —
   identity (`providerID`/`modelID`) is stored, the window is resolved at echo time. So the
-  echo and the running engine read one source and are byte-identical including the operator
-  `--context-window-override`.
+  echo, running engine, and `ListModels.context_limit` read the same resolution core and
+  are byte-identical including operator YAML and the global `--context-window-override`.
 
 A post-`Build` live `Swap` therefore self-corrects the SAME shared/selector engine on the
 next turn with **no rehydration and no rebuild** — `defaultSessionNeedsLiveWindow` is
@@ -5955,14 +5976,16 @@ grew without bound. Split mechanism from policy:
   not support retention; disabling child GC") and STICKILY disables further sweeps —
   graceful degradation without a recurring WARN, verified by test on both sides. The
   harness client maps a Delete NOT_FOUND to success.
-- **Adapters.** memstore: `savedAt` map + injectable `WithNow` clock. jsonlstore: List
-  decodes the REAL id from each `*.session.jsonl`'s latest snapshot line (`safeName` is
-  NOT invertible — a filename-derived id would be mangled; cost is O(store bytes), fine
-  for a startup/hourly sweep), `ModifiedAt` = file mtime; Delete removes BOTH files —
-  tools sidecar FIRST, session file LAST, so a partial failure leaves the List entry
-  (the session file) and the next sweep retries the pair instead of leaking an
-  invisible orphaned `.tools.jsonl` (a PRE-EXISTING orphan sidecar is invisible to List
-  and never swept — accepted). grpcdriver client+server wrapper round trip the seam;
+- **Adapters.** memstore: `savedAt` map + injectable `WithNow` clock. jsonlstore:
+  List/MetaList scan canonical snapshots under `sid-v1/` plus legacy snapshots at the
+  root, decode opaque logical ids from each latest line, sort bytewise, deduplicate
+  canonical/legacy coexistence, and prefer canonical metadata/mtime; filenames are never
+  the identity source. Delete removes canonical tools/events before the snapshot, then
+  removes a legacy family in the same order only after its latest snapshot proves exact
+  id ownership. A mismatch is idempotent success and leaves the colliding legacy family
+  byte-exact; deleting both matching families prevents legacy resurrection. A
+  pre-existing sidecar with no ownership-proving snapshot remains unreachable and is
+  never claimed. grpcdriver client+server wrapper round trip the seam;
   the wrapper type-asserts its backend (UNIMPLEMENTED for plain stores). Conformance:
   `storeconformance.RunPrunable` (mechanism only — including ModifiedAt STABILITY
   across reads, killing a stamp-Now()-at-List adapter that would neuter the age pass),

@@ -222,7 +222,7 @@ func TestReadLastLineLargeFileTailRead(t *testing.T) {
 	}
 	// Verify the file is larger than the seek window (so the tail-read path is
 	// exercised, not the small-file full-read path).
-	path := filepath.Join(dir, string(s.ID)+".session.jsonl")
+	path := canonicalSnapshotPath(dir, s.ID)
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
@@ -257,7 +257,7 @@ func TestReadLastLineLargeFileTailRead(t *testing.T) {
 // import).
 func touchSessionFile(t *testing.T, dir string, id session.SessionID, mtime time.Time) {
 	t.Helper()
-	path := filepath.Join(dir, string(id)+".session.jsonl")
+	path := canonicalSnapshotPath(dir, id)
 	if err := os.Chtimes(path, mtime, mtime); err != nil {
 		t.Fatalf("Chtimes %s: %v", path, err)
 	}

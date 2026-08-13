@@ -395,11 +395,19 @@ Enable JSONL persistence by pointing `--store-dir` at a directory:
 mecated serve --store-dir /var/lib/mecatl/sessions
 ```
 
-The store writes one JSONL file per session as a snapshot, plus a `.events.jsonl`
-sidecar for the durable event log (reasoning, approval pairs, delegation lifecycle).
-Completed sessions are immediately readable by the event-sourced rehydration path
-(`internal/adapter/eventsource`); in-flight sessions are rehydrated from the snapshot
-on restart.
+Each session gets three files sharing one stem under a `sid-v1` subdirectory: a
+`.session.jsonl` snapshot log, a `.tools.jsonl` audit sidecar, and a
+`.events.jsonl` durable event log (reasoning, approval pairs, delegation
+lifecycle). Completed sessions are immediately readable by the event-sourced
+rehydration path (`internal/adapter/eventsource`); in-flight sessions are
+rehydrated from the snapshot on restart.
+
+The stem is derived from the session id but is **not** reversible, so locate a
+session by reading the id out of the file (`tail -n1 … | jq -r .id`) rather than
+from the filename — see [Session store](../extension-points/session-store.md) for
+the layout and a ready-made loop. A store directory written by an older version
+keeps its files directly under `--store-dir`; they stay readable and move into
+`sid-v1/` on that session's next write, so no migration step is needed.
 
 :::note[Kubernetes and persistent volumes]
 

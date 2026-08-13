@@ -462,7 +462,7 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 	parentWS := osfsWSForTest(t, cfg.Workspace)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, cfg.Workspace, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentWS, agent.RunRequest{Text: "go"})

@@ -20,6 +20,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+func fixedDefaultWindow() int { return defaultContextWindowTokens }
+
 // depsTestFixture builds the shared (non-provider) collaborators the two
 // Deps-constructing paths consume, so a test can compare baseEngineDeps against
 // engineDepsForProvider on equal footing. All offline (mockllm/memstore).
@@ -201,7 +203,7 @@ func TestEngineDepsCarryWallClock(t *testing.T) {
 	// the default Subagent explorer, Parallel branch/judge, usermodel-review
 	// children) builds its own Deps literal — assert its Clock too, or deleting
 	// the field there would pass the suite while silently zeroing child latency.
-	defChild := childEngineDeps(cfg, "explorer", provider, tool.NewCatalog(), cfg.Model, promptConfig(cfg, ""), nil)
+	defChild := childEngineDeps(cfg, "explorer", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
 	if defChild.Clock == nil {
 		t.Fatal("childEngineDeps Deps.Clock is nil (default child engines must carry the wall clock)")
 	}

@@ -124,9 +124,36 @@ log   := memstore.NewEventLog()
 
 ### internal/adapter/store/jsonlstore — JSONL on disk
 
-The default backend for `mecated`. A single store directory holds one `<id>.json` file per session (the snapshot) plus a `<id>.events.jsonl` sidecar (one event per line, tagged with `eventlog-json/1`). The same package triples as `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder`. `Delete` removes both files atomically.
+The default backend for `mecated`. The same package triples as `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder`.
 
-Select it with `--store-dir <path>`. The directory is created if it does not exist. The JSONL sidecar is read cumulatively by `Read` — a `Delete` removes the sidecar before the session file.
+Each session owns **three** files under a `sid-v1` subdirectory of the store directory, sharing one stem:
+
+```
+<store-dir>/sid-v1/sid-v1-<token>.session.jsonl   one snapshot per Save (latest line wins)
+<store-dir>/sid-v1/sid-v1-<token>.tools.jsonl     one record per tool call
+<store-dir>/sid-v1/sid-v1-<token>.events.jsonl    one record per relayed event (eventlog-json/1)
+```
+
+**The filename is not the session id.** `<token>` is a sanitized, truncated
+excerpt of the id plus a hash — bounded so a session id of any length names a
+valid file, and deliberately not reversible. To find a session on disk, read the
+id out of the file rather than inferring it from the name:
+
+```sh
+for f in "$STORE_DIR"/sid-v1/*.session.jsonl; do
+  printf '%s\t%s\n' "$(tail -n1 "$f" | jq -r .id)" "$f"
+done
+```
+
+`Delete` removes the sidecars **before** the snapshot, and is not atomic across
+the three. That order is deliberate: listing enumerates only `*.session.jsonl`,
+so a partial delete leaves the session still visible and the next retention sweep
+retries it. The reverse order could orphan a sidecar no sweep could find.
+
+Select it with `--store-dir <path>`. The directory is created if it does not
+exist, owner-only (`0700`) — it holds plaintext transcripts. A store written by an
+older version keeps its files directly under `<store-dir>`; those are read as-is
+and moved into `sid-v1/` the next time that session is written.
 
 ### internal/adapter/redisstore — Redis-backed
 

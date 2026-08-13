@@ -440,6 +440,49 @@ func TestSharedAndSelectorEngineResolveSameSource(t *testing.T) {
 	}
 }
 
+// TestConfiguredContextWindowReachesSharedSelectorAndExplorerEngines exercises the
+// production constructors for the shared engine, a selector-created per-session
+// engine, and the common anonymous Subagent explorer. All three must retain the
+// exact configured provider/model window as their live compaction resolver.
+func TestConfiguredContextWindowReachesSharedSelectorAndExplorerEngines(t *testing.T) {
+	const (
+		model  = "vendor/final-routing-id"
+		window = 654_321
+	)
+	cfg := Config{
+		Model:          model,
+		contextWindows: map[string]map[string]int{providerOpenAI: {model: window}},
+	}
+	provider := mockllm.New(mockllm.TextTurn("REPLY"))
+	reg := &providerRegistry{
+		entries:      map[string]providerEntry{providerOpenAI: {id: providerOpenAI, provider: provider, available: true}},
+		defaultID:    providerOpenAI,
+		defaultModel: model,
+		meta:         newLiveMetaStore(),
+	}
+	store := memstore.New()
+	policy := permpolicy.NewPolicy(defaultRules(), nil)
+
+	shared := agent.NewEngine(baseEngineDeps(cfg, reg, provider, store, policy, hookexec.New(nil), nil, prompt.RootAssembler{}))
+	factory := sessionEngineFactory(cfg, reg, provider, store, policy, hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+	res, err := factory(context.Background(), server.ProviderSelector{ProviderID: providerOpenAI, ModelID: model}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("factory(selector): %v", err)
+	}
+	defer func() { _ = res.Close() }()
+	explorer := buildChildEngine(cfg, reg, provider, providerOpenAI, model, nil)
+
+	if got := shared.ContextWindow(); got != window {
+		t.Fatalf("shared engine ContextWindow() = %d, want configured %d", got, window)
+	}
+	if got := res.Engine.ContextWindow(); got != window {
+		t.Fatalf("selector engine ContextWindow() = %d, want configured %d", got, window)
+	}
+	if got := explorer.ContextWindow(); got != window {
+		t.Fatalf("explorer engine ContextWindow() = %d, want configured %d", got, window)
+	}
+}
+
 // TestSessionEngineFactorySelectorMCPCoexist: a non-default selector AND a
 // (best-effort, offline) spec list resolve in ONE factory call — the engine binds
 // the SELECTED provider and the call returns a usable engine + close (the MCP path

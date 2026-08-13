@@ -7,6 +7,8 @@ title: The agent loop
 
 When you call `Engine.Run`, the loop starts immediately in a background goroutine and returns a `*Run` handle. The goroutine drives turns — LLM call, tool dispatch, record, repeat — until the session reaches a terminal state. You do not poll or drive the loop yourself; you observe it through the event channel and send verdicts when the loop asks for approval.
 
+The server keeps compaction and client context meters aligned through one context-window resolution path. Operators can declare exact final provider/model limits in user-global `settings.yaml` under `models.context_windows`; a global `--context-window-override` wins, followed by the exact configured value, live provider metadata, the models.dev catalog, and the 128K fallback. Project repositories cannot set these limits.
+
 ---
 
 ## The event stream

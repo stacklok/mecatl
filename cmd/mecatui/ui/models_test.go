@@ -1427,8 +1427,8 @@ func TestHeaderProviderRouteSuffix(t *testing.T) {
 	if !strings.Contains(header, "kimi-k3/Google") {
 		t.Errorf("header should show the model + routed downstream as 'kimi-k3/Google', got:\n%s", header)
 	}
-	if status := stripANSIstr(m.statusMsg); !strings.Contains(status, "via Google") {
-		t.Errorf("route arrival should show transient footer status, got %q", status)
+	if statusText := stripANSIstr(m.statusMsg); !strings.Contains(statusText, "via Google") {
+		t.Errorf("route arrival should show transient footer status, got %q", statusText)
 	}
 
 	// A subsequent route updates the suffix (e.g. a fallback kicked in).

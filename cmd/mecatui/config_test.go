@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,24 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/app"
 )
+
+// TestContextWindowOverrideFlagWiring pins the embedded-only flag's parse, config
+// mapping, and connect-mode rejection.
+func TestContextWindowOverrideFlagWiring(t *testing.T) {
+	cfg, err := parseFlags([]string{"--context-window-override", "321000"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.contextWindowOverride != 321000 {
+		t.Fatalf("parsed override = %d, want 321000", cfg.contextWindowOverride)
+	}
+	if got := embeddedConfig(cfg, port.NopDiagnostics{}).ContextWindowOverride; got != 321000 {
+		t.Fatalf("embedded override = %d, want 321000", got)
+	}
+	if _, _, err := parseTransportFlags(modeConnect, io.Discard, []string{"--context-window-override", "1"}); err == nil {
+		t.Fatal("connect mode accepted embedded-only context-window override")
+	}
+}
 
 // TestEmbeddedConfigEnablesAgentDefs asserts the embedded server enables conventional
 // agent-definition discovery (consistent with EnableTeams/EnableParallel; inert until a

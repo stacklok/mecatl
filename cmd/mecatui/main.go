@@ -219,9 +219,9 @@ func run(argv []string) error {
 		// model (the server owns provider config); for an embedded server it is
 		// authoritative. The footer context-meter denominator is the SERVER-resolved
 		// per-model window echoed on session create (and refreshed on GetSession), now
-		// live-first server-side — there is no client-side override (the operator
-		// escape-hatch is mecated's -context-window-override, which moves both the
-		// engine trigger and this echoed denominator).
+		// live/config-first server-side — never recomputed by the client. Embedded mode's
+		// --context-window-override and an external mecated's flag both move the engine
+		// trigger and this echoed denominator.
 		Model:     cfg.model,
 		Workspace: cfg.workspace,
 		Mode:      cfg.mode,
@@ -557,22 +557,23 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// (RouterDisabled); a bare flag / =true is a harmless no-op (the router stays
 		// governed by the taxonomy); unset leaves routing governed by the operator-tier
 		// models.router: taxonomy. Idempotent: safe to compute on both calls.
-		RouterDisabled:       cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
-		UseMock:              cfg.mock,
-		Shell:                "/bin/sh",
-		NoBash:               cfg.noBash,
-		Compaction:           "heuristic",
-		Tokenizer:            "heuristic",
-		LLMMaxAttempts:       3,
-		LLMPerAttemptTimeout: cfg.llmPerAttemptTimeout,
-		LLMStreamIdleTimeout: cfg.llmStreamIdleTimeout,
-		PromptCacheDisabled:  cfg.noPromptCache,
-		AnthropicCacheTTL:    cfg.anthropicCacheTTL,
-		LLMBreakerThreshold:  5,
-		LLMBreakerCooldown:   30 * time.Second,
-		EnableParallel:       true,
-		EnableTeams:          true,
-		AgentsConventional:   true,
+		RouterDisabled:        cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
+		UseMock:               cfg.mock,
+		Shell:                 "/bin/sh",
+		NoBash:                cfg.noBash,
+		Compaction:            "heuristic",
+		Tokenizer:             "heuristic",
+		LLMMaxAttempts:        3,
+		LLMPerAttemptTimeout:  cfg.llmPerAttemptTimeout,
+		LLMStreamIdleTimeout:  cfg.llmStreamIdleTimeout,
+		ContextWindowOverride: cfg.contextWindowOverride,
+		PromptCacheDisabled:   cfg.noPromptCache,
+		AnthropicCacheTTL:     cfg.anthropicCacheTTL,
+		LLMBreakerThreshold:   5,
+		LLMBreakerCooldown:    30 * time.Second,
+		EnableParallel:        true,
+		EnableTeams:           true,
+		AgentsConventional:    true,
 		// Memory is ON by default, per-project. MemoryConsolidateInterval is left
 		// at 0 (off) deliberately: the "dream" distiller spawns a goroutine that
 		// calls the real provider on a timer, so a default-on interval would

@@ -61,13 +61,15 @@ A Subagent card adds delegation visibility: while the child runs, its collapsed 
 
 ## Remapping keys
 
-Every mecatui action is rebindable — and the `?` help overlay always shows your **live** bindings, so a remap is reflected in the help you see, not just in the keys that fire. Two override surfaces exist, and they merge: the repeatable `--keymap Action=chord[,chord2]` CLI flag wins per action over the `keymap:` map in `~/.config/mecatl/settings.yaml`:
+Every mecatui action is rebindable — and the `?` help overlay always shows your **live** bindings, so a remap is reflected in the help you see, not just in the keys that fire. Three override layers merge **per action**: the repeatable `--keymap Action=chord[,chord2]` CLI flag wins, over the `keymap:` map in `~/.config/mecatui/settings.yaml` (mecatui's own client settings file), over the deprecated legacy location:
 
 ```yaml
 keymap:
   Agents: ctrl+f12
   Effort: ctrl+f5
 ```
+
+The `keymap:` setting used to live in `~/.config/mecatl/settings.yaml` (the server-shared file) — that location still works but is deprecated; the client file wins on conflict.
 
 The classic use case is **getting readline-style editing back in the prompt**. By default `ctrl+a` opens the agents overlay and `ctrl+e` opens the effort picker — which means the usual line-start / line-end chords never reach the input box. The prompt input is a standard readline-style editor with its own fixed editing keys (word jumps on `alt+f`/`alt+b`, `ctrl+w` delete-word, `ctrl+k`/`ctrl+u` kill-line, `home`/`end`, and `ctrl+a`/`ctrl+e` for line start/end); those editing keys are the input widget's own and can't be rebound. But remapping the mecatui actions off those chords — as in the YAML above — frees `ctrl+a` and `ctrl+e` to reach the input as line-start / line-end again.
 

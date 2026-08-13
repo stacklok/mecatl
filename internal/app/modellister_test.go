@@ -49,6 +49,27 @@ func TestOpenCodeListerStampsImageModality(t *testing.T) {
 	}
 }
 
+func TestGatewayListerPropagatesContextWindow(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[{"id":"gpt-5.6","context_window":1050000}]}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	rows, err := gatewayLister{inner: openaicompat.NewLister("https://gateway.example/v1", "k", client)}.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if got := rows[0].ContextLimit; got != 1_050_000 {
+		t.Errorf("ContextLimit = %d, want 1050000", got)
+	}
+}
+
 // fixtureClient serves the trimmed openrouter fixture for the whole-Build e2e.
 func fixtureClient(t *testing.T) *http.Client {
 	t.Helper()

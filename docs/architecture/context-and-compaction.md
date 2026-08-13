@@ -8,7 +8,14 @@
 
 **Follow-on:** return to the [reading map](../READING.md) and choose another topic branch. **Related:** [memory](memory.md) covers cross-session recall, which is independent of compaction.
 
-Two seams keep a long run inside the model's context window:
+Two seams keep a long run inside the model's context window. Composition resolves that
+window once per use through one provider/model-exact precedence chain: the global
+`--context-window-override`, operator-tier `models.context_windows`, positive live
+metadata, the models.dev catalog, then the 128K fallback. Alias and slot routing happen
+first, so configuration keys are final provider/model IDs; the same resolver feeds
+compaction, engine introspection, session echoes, model listings, per-session engines,
+and provider-bound children. The operator-owned exact-map decision is recorded in
+[ADR 0104](../adr/0104-context-window-overrides.md).
 
 - **`TokenCounter`** (`engine/agent/tokencount.go`) estimates message-slice token cost.
   The default `HeuristicTokenCounter` (≈chars/4) needs no dependencies; the
