@@ -1404,6 +1404,38 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 	}
 }
 
+// TestHeaderProviderRouteSuffix proves the routed downstream provider appears as a
+// "/ <name>" suffix on the header model segment (issue #480) ONLY once a route has
+// been reported this session, and is absent before any routed turn (no stale or
+// fabricated suffix).
+func TestHeaderProviderRouteSuffix(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "moonshotai/kimi-k3"}
+	m.phase = phaseIdle // a bound session, so the model segment renders
+	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
+
+	// Before any provider.route event: the bare model segment, no "/" suffix.
+	header := stripANSIstr(m.renderHeader())
+	if strings.Contains(header, "kimi-k3/") {
+		t.Fatalf("no route yet — header must NOT show a downstream suffix, got:\n%s", header)
+	}
+
+	// A provider.route event arrives (the openrouter entry routed to Google).
+	m = applyAll(m, client.ProviderRouteMsg{Text: "Google"})
+	header = stripANSIstr(m.renderHeader())
+	if !strings.Contains(header, "kimi-k3/Google") {
+		t.Errorf("header should show the model + routed downstream as 'kimi-k3/Google', got:\n%s", header)
+	}
+
+	// A subsequent route updates the suffix (e.g. a fallback kicked in).
+	m = applyAll(m, client.ProviderRouteMsg{Text: "Amazon Bedrock"})
+	header = stripANSIstr(m.renderHeader())
+	if !strings.Contains(header, "kimi-k3/Amazon Bedrock") {
+		t.Errorf("header should track the latest routed downstream, got:\n%s", header)
+	}
+}
+
 // --- goldens ---------------------------------------------------------------
 
 // TestModelsPickerGolden locks the populated, grouped picker with an active marker

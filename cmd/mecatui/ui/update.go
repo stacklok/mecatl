@@ -836,10 +836,13 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(noticeLine(msg))
 		return m.afterEvent()
 	case client.ProviderRouteMsg:
-		// The routed downstream provider (issue #480) is TRANSIENT: a per-turn
-		// routing notice, not a durable fact, so it rides the footer status like
-		// NoProgressMsg and leaves no scrollback residue. Absent on a cache hit —
-		// the footer simply doesn't move.
+		// The routed downstream provider (issue #480). Two surfaces: (1) the header
+		// model segment gains a persistent "/ <name>" suffix so the operator sees the
+		// routed downstream next to the model id; (2) a TRANSIENT footer status, like
+		// NoProgressMsg. Absent on a cache hit — neither surface moves (the header
+		// keeps the last routed value; a stale suffix is honest because a cache hit
+		// means the SAME downstream served from cache).
+		m.providerRoute = msg.Text
 		m.statusMsg = m.deps.Theme.Style("muted").Render("via " + msg.Text)
 		return m.afterEvent()
 	case client.RecoverNoticeMsg:
