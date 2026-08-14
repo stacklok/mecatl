@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/authn/oidc
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/stacklok/mecatl/engine v0.10.0

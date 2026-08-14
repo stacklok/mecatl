@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/provider/ssefilter
 
-go 1.26.5
+go 1.26.6
 
 require github.com/openai/openai-go/v3 v3.50.0
 

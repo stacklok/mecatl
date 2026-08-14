@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/provider/openai
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/openai/openai-go/v3 v3.37.0
