@@ -91,6 +91,10 @@ func (m Model) sessionDetails() sessionDetailsView {
 	}
 }
 
+// ActiveSessionID returns the currently bound opaque session ID. The process
+// entry point reads it only after Bubble Tea has restored the terminal.
+func (m Model) ActiveSessionID() string { return m.sessionID }
+
 func (m Model) sessionCopyTarget() string {
 	if m.sessionID == "" || !utf8.ValidString(m.sessionID) {
 		return ""

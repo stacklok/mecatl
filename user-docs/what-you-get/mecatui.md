@@ -42,7 +42,21 @@ The first new prompt still goes through the server's atomic attachment and lease
 If that fails, the prior transcript remains read-only and no fallback chat is created:
 press `r` to retry the preserved prompt, or `esc` to go Back and edit it. You can combine
 a resume selector with `--prompt` or `--prompt-file`; mecatui adopts the old transcript
-first, then sends the seed exactly once as the next turn. See the
+first, then sends the seed exactly once as the next turn.
+
+While mecatui is open, `/session` then `c` is the quickest way to copy the exact active
+ID. If you quit normally instead, mecatui restores the terminal and then prints one stable
+line to stderr:
+
+```text
+mecatui: final-session-id="01JOPAQUESESSIONID"
+```
+
+Everything after `=` is a JSON string. Decode it with a JSON decoder to recover the
+byte-exact final active ID, including after you continued another chat, changed model or
+effort, or switched worktrees. Save that ID and pass it to `--resume` next time. The line
+is deliberately absent if no session was established, startup/the TUI failed, or a signal
+interrupted or forced the exit; normal stdout remains available to scripts. See the
 [`docs/tui.md` startup continuation reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#continue-a-chat-at-startup).
 
 ## Changing completed-trajectory learning (`/learning`)

@@ -164,6 +164,22 @@ fallback session is created: press `r` to retry the preserved prompt or `esc` to
 Back and edit it. Combining a resume selector with `--prompt` or `--prompt-file`
 adopts the transcript first and then submits the seed exactly once as the next turn.
 
+On an ordinary clean exit, after the terminal has left the alternate screen and cleanup
+has completed, mecatui writes exactly one handoff line to **stderr**:
+
+```text
+mecatui: final-session-id="01JOPAQUESESSIONID"
+```
+
+The value after `=` is a JSON string, not display text: a JSON decoder recovers the
+byte-exact valid-UTF-8 ID even when it contains spaces, quotes, or line separators. The ID
+is the final active chat after any startup continuation, `/sessions` continuation, model
+carryover, effort fork, or worktree switch—not necessarily the ID created at startup. The
+line is absent when no session was established, startup or the TUI failed, or a signal
+interrupted/forced exit. stdout is unchanged. This makes the normal workflow: copy the ID
+inside `/session` with `c` while the TUI is open, or retain this stderr line and pass its
+decoded value to `--resume` later.
+
 ### Seeding an initial prompt
 
 `-p`/`--prompt` (or `--prompt-file` for a longer body) launches the session with
@@ -271,7 +287,10 @@ Exiting mecatui (double Ctrl+C on an empty prompt, or an OS `SIGINT`/`SIGTERM`)
 runs a **bounded** graceful shutdown — it cannot hang indefinitely on an in-flight
 scheduled fire, a stuck MCP server, or a wedged gRPC stream (issue #388). The first
 signal quits Bubble Tea and starts cleanup; a **second** signal during cleanup forces
-an immediate hard exit (`os.Exit(130)`).
+an immediate hard exit (`os.Exit(130)`). Signal-driven exits print no final-session handoff.
+After an ordinary clean keyboard exit, mecatui first restores the normal screen and finishes
+cleanup, then emits the JSON-safe `mecatui: final-session-id=<JSON string>` line documented
+under [Continue a chat at startup](#continue-a-chat-at-startup).
 
 Cleanup is bounded at each layer (mirroring the `mecak8s` bounded-shutdown
 precedent), worst case ≈ 45s:

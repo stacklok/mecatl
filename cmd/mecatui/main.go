@@ -270,12 +270,14 @@ func run(argv []string) error {
 	}
 
 	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
-	_, runErr := prog.Run()
+	finalModel, runErr := prog.Run()
+	interrupted := ctx.Err() != nil
 
 	runCleanup(forceExit, func() {
 		_ = cl.Close()
 		transCleanup()
 	})
+	maybeWriteFinalSessionHandoff(os.Stderr, finalModel, runErr, interrupted)
 	return runErr
 }
 

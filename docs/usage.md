@@ -66,7 +66,13 @@ awaiting, scheduled, child, unknown, and transcript-unavailable rows. The first 
 prompt still enters the normal atomic run funnel. If attachment fails, the transcript
 stays visible and the preserved prompt can be retried with `r` or returned to with
 `esc`; no fallback chat is created. A `--prompt`/`--prompt-file` seed is submitted only
-after adoption. See the [full TUI reference](tui.md#continue-a-chat-at-startup).
+after adoption. While the TUI is open, `/session` + `c` copies the exact ID. On an
+ordinary clean exit, mecatui leaves the alternate screen and then writes one stderr line
+of the stable form `mecatui: final-session-id=<JSON string>`; JSON-decoding the value
+recovers the byte-exact final active ID after any rebind. Keep it to launch
+`mecatui --resume SESSION_ID` later. No handoff is claimed when setup fails, no session
+exists, the TUI fails, or a signal interrupts/forces exit; stdout is unchanged. See the
+[full TUI reference](tui.md#continue-a-chat-at-startup).
 
 ## Scheduled tasks
 

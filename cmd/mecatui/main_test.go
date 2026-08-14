@@ -16,11 +16,14 @@ import (
 	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
 
-// TestMain dispatches to run([]string{}) when the MECATUI_TEST_SIGNAL_HANDLER env
-// var is set (child-process signal-test harness). Otherwise it runs the normal test
-// suite.
+// TestMain dispatches to the subprocess harnesses when their environment variables
+// are set. Otherwise it runs the normal isolated test suite.
 func TestMain(m *testing.M) {
 	os.Exit(testhome.Run("mecatui", func() int {
+		if id, ok := os.LookupEnv("MECATUI_TEST_EXIT_HANDOFF_ID"); ok {
+			runExitHandoffProcessHarness(id)
+			return 0
+		}
 		if os.Getenv("MECATUI_TEST_SIGNAL_HANDLER") != "" {
 			run([]string{})
 			return 0
