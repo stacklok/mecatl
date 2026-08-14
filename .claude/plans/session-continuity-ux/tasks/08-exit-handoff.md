@@ -2,8 +2,8 @@
 id: 08-exit-handoff
 title: Final session ID exit handoff
 blocked_by: [06-active-session-details, 07-startup-resume]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-continuity-ux/08-exit-handoff"
 worktree: ".scratch/worktrees/session-continuity-ux-task-08"
 issue: "473"
 retries: 0
