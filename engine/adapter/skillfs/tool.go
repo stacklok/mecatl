@@ -155,15 +155,20 @@ func (t Tool) readAsset(ctx context.Context, callID session.ToolCallID, skill, a
 	if listed.Size < 0 {
 		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q has an invalid advertised size", asset, skill))
 	}
-	if listed.Size > maxSkillAssetBytes {
-		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q is too large (%d bytes; limit %d bytes)", asset, skill, listed.Size, maxSkillAssetBytes))
+	header := fmt.Sprintf("Skill asset: %s / %s\n\n", skill, asset)
+	maxPayloadBytes := MaxOutputBytes - len(header)
+	if maxPayloadBytes < 0 {
+		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q cannot fit in the tool output limit", asset, skill))
+	}
+	if listed.Size > int64(maxPayloadBytes) {
+		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q is too large (%d bytes; payload limit %d bytes after the %d-byte result header)", asset, skill, listed.Size, maxPayloadBytes, len(header)))
 	}
 	data, err := t.src.ReadSkillAsset(ctx, skill, asset)
 	if err != nil {
 		return session.NewToolError(callID, sourceError(fmt.Sprintf("reading asset %q for skill %q failed", asset, skill), err))
 	}
-	if len(data) > maxSkillAssetBytes {
-		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q is too large (limit %d bytes); no content returned", asset, skill, maxSkillAssetBytes))
+	if len(data) > maxPayloadBytes {
+		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q is too large (payload limit %d bytes after the %d-byte result header); no content returned", asset, skill, maxPayloadBytes, len(header)))
 	}
 	if !utf8.Valid(data) {
 		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q is not valid UTF-8", asset, skill))
@@ -171,7 +176,7 @@ func (t Tool) readAsset(ctx context.Context, callID session.ToolCallID, skill, a
 	if bytes.IndexByte(data, 0) >= 0 {
 		return session.NewToolError(callID, fmt.Sprintf("asset %q for skill %q contains NUL bytes and is not textual", asset, skill))
 	}
-	return session.NewToolResult(callID, fmt.Sprintf("Skill asset: %s / %s\n\n%s", skill, asset, data))
+	return session.NewToolResult(callID, header+string(data))
 }
 
 func validateAssetInventory(assets []tool.SkillAsset) error {

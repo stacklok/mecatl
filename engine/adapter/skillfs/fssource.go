@@ -228,9 +228,9 @@ func skillBaseDir(path string) string {
 	if path == "" {
 		return ""
 	}
-	dir := filepath.Dir(path)
-	if resolved, err := resolveRoot(dir); err == nil {
-		return resolved
+	dir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return ""
 	}
 	return filepath.Clean(dir)
 }

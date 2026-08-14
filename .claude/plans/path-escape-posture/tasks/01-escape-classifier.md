@@ -14,19 +14,19 @@ accumulator: acc/path-escape-posture
 # Task brief
 
 Land the composition-layer escape classifier — a pure function answering "is
-this FS-tool call an out-of-root escape?" — reusing BOTH osfs algorithms so it
+this FS-tool call an out-of-root escape?" — reusing osfs canonicalization so it
 can never disagree with the tool body. No behaviour change in this wave: the
 classifier is consumed by a wrapping policy later, but here it only needs to
-exist and be proven correct against `resolveInRoot` / `allowedReadRoot`.
+exist and be proven correct against `resolveInRoot`.
 
 Read `.claude/agents/tdd-worker.md` first. Layering: the classifier is
 COMPOSITION (`internal/app`), not domain — `engine/tool` keeps `FileSystem`/
 `Workspace` (the port↔tool cycle gotcha). You will likely need a canonicalize-
 only helper exported from `internal/adapter/osfs` that reports the
-in-root/read-root/escape verdict WITHOUT opening an `*os.Root` (sharing
-`resolveInRoot`'s stat-based ancestor resolution and `allowedReadRoot`'s lexical
-match). Pseudo-filesystem paths (`/proc`, `/sys`, `/dev`) classify as a distinct
-never-relaxed category. Cite ADR-0047 (docs/adr/0047-absolute-path-resolution.md)
+in-root/escape verdict WITHOUT opening an `*os.Root` (sharing
+`resolveInRoot`'s stat-based ancestor resolution). Pseudo-filesystem paths
+(`/proc`, `/sys`, `/dev`) classify as a distinct never-relaxed category. Cite
+ADR-0047 (docs/adr/0047-absolute-path-resolution.md)
 — it governs `resolveInRoot`, the ledger key normalization, and the Glob/Grep
 no-change rule.
 
@@ -37,11 +37,6 @@ no-change rule.
   outside classify as escape — matching `resolveInRoot`'s verdict on the same
   inputs.
   - verify: `TestPathEscapePosture_Scenario1_ClassifierMatchesResolveInRoot`
-- AC1.2: an absolute path under a configured `WithReadRoots` read-only root
-  classifies as read-root (readable, not writable), distinct from both in-root
-  and escape — using `allowedReadRoot`'s lexical match so a symlinked absolute
-  path classifies identically to the tool body.
-  - verify: `TestPathEscapePosture_Scenario1_ReadRootClassification`
 - AC1.3: a symlink inside the workspace whose target escapes classifies as
   escape (the canonicalize-then-reject path is exercised, not bypassed).
   - verify: `TestPathEscapePosture_Scenario1_SymlinkEscapeIsEscape`

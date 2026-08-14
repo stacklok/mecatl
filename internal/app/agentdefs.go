@@ -1114,8 +1114,7 @@ func safeAgentMemoryDir(root, name string) (string, bool) {
 // must return true so the ordinary os.ReadFile miss path produces ("",false), NOT a
 // containment rejection. Any OTHER EvalSymlinks error, or a resolved path that escapes
 // the resolved root, returns false. The root is canonicalized through osfs.ResolveRoot
-// (the SAME abs+EvalSymlinks resolver the Workspace read-root allowlist is keyed on) so
-// the comparison matches the enforcement layer on a symlinked home (/home → /var/home).
+// so the comparison matches the enforcement layer on a symlinked home (/home → /var/home).
 func memoryPathContained(root, path string) bool {
 	resolvedRoot, err := osfs.ResolveRoot(root)
 	if err != nil {

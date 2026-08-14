@@ -391,7 +391,7 @@ func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier) tool.Wo
 }
 
 // Read consults the escape classifier (pseudo-fs hard-deny) then delegates to
-// the relaxed osfs Read. An ordinary in-root/read-root path is untouched.
+// the relaxed osfs Read. An ordinary in-root path is untouched.
 func (w *escapeWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
 	if err := w.refusePseudoFS(path); err != nil {
 		return nil, err

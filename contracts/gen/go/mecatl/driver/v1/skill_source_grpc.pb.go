@@ -25,10 +25,11 @@
 //     invalid name MUST be INVALID_ARGUMENT — never content (the harness-
 //     provided Go server wrapper pre-validates via tool.ValidSkillAssetName).
 //
-// CAPACITY: ReadSkillAsset is unary and rides the protocol's 64 MiB required
-// minimum message capacity (internal/adapter/grpcdriver.MaxSnapshotBytes). The
-// harness reads one asset on demand and applies its smaller model-facing tool-
-// output bound before returning textual content.
+// CAPACITY: asset inventory and payload calls are unary but use dedicated,
+// surface-sized client receive caps plus wrapper-side count/size guards. They do
+// not inherit the much larger session-snapshot ceiling. The harness reads one
+// asset on demand and rejects a whole payload that cannot fit the model-facing
+// tool result; successful assets are never truncated.
 //
 // Validation: required-field annotations are authored with `buf.validate.field`
 // for documentation and future runtime enforcement; V1 enforces them in the Go

@@ -8,8 +8,6 @@ package skillfs
 
 import (
 	"encoding/json"
-	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,55 +161,4 @@ func UserConfigDir(env ResolveEnv) string {
 		return filepath.Join(home, ".config")
 	}
 	return ""
-}
-
-// resolveRoot makes root absolute and evaluates symlinks where possible so that
-// later escape checks compare canonical paths. When the path itself does not
-// exist yet (e.g. a SkillsDraftDir validated before it is created), EvalSymlinks
-// fails on the leaf; we then resolve the deepest EXISTING ancestor and re-append
-// the non-existent tail. Without this, a non-existent path under a symlinked
-// root (macOS /var/folders -> /private/var/folders) keeps the unresolved form
-// while an existing sibling resolves through the symlink, so two paths referring
-// to the same on-disk location compare unequal — defeating the dirsOverlap
-// containment check in validateSkillDraftConfig (a security-boundary bypass).
-func resolveRoot(root string) (string, error) {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved, nil
-	}
-	// The leaf does not exist (or is otherwise unresolvable). Canonicalize the
-	// longest existing prefix and re-append the non-existent tail, so a
-	// not-yet-created dir under a symlinked root lands in the same canonical
-	// form as its existing parent.
-	existing := abs
-	var tail []string
-	for {
-		if _, err := os.Lstat(existing); err == nil {
-			break
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			// An ambiguous stat error: best-effort — fall back to the cleaned
-			// absolute form rather than failing (resolveRoot has no error
-			// sentinel for "unverifiable" and callers treat error as fatal).
-			return filepath.Clean(abs), nil
-		}
-		parent := filepath.Dir(existing)
-		if parent == existing {
-			// Reached the filesystem root without an existing ancestor; nothing
-			// to canonicalize against. Cleaned abs is the best we can do.
-			return filepath.Clean(abs), nil
-		}
-		tail = append([]string{filepath.Base(existing)}, tail...)
-		existing = parent
-	}
-	resolved, err := filepath.EvalSymlinks(existing)
-	if err != nil {
-		return filepath.Clean(abs), nil
-	}
-	if len(tail) == 0 {
-		return resolved, nil
-	}
-	return filepath.Join(append([]string{resolved}, tail...)...), nil
 }

@@ -6,10 +6,7 @@
 //   - ABSOLUTE paths that canonicalize INSIDE the workspace root (the same
 //     physical file a relative path would reach, addressed by its absolute
 //     alias) — accepted by all five FS tools (Read/Write/Stat and, via the Edit
-//     read-ledger, Edit/Glob/Grep's callers); and
-//   - for Read/Stat ONLY, an absolute path under an explicit READ-ONLY allowed
-//     root (WithReadRoots) — in practice the per-skill directories of discovered
-//     skills, which may live outside the workspace (~/.claude/skills/…).
+//     read-ledger, Edit/Glob/Grep's callers).
 //
 // Every other path is rejected as a correctness invariant: an absolute path that
 // resolves OUTSIDE the workspace root, any ".." traversal that climbs out, and a
@@ -26,13 +23,6 @@
 // accept the path is reduced to its slash-separated root-relative form and flows
 // through the SAME *os.Root as a relative path, so the os.Root symlink
 // containment for in-root paths is preserved.
-//
-// The ONE other carve-out is the explicit READ-ONLY allowed roots
-// (WithReadRoots) described above: each gets its own os.Root, so symlinks inside
-// it that escape it are refused exactly like workspace escapes. Write, Glob,
-// Grep, and the Edit ledger's mutation path stay workspace-only (Glob/Grep never
-// route patterns through absolute resolution — patterns are not paths; a leading
-// "/" in a pattern is stripped as before).
 //
 // The Workspace also carries the per-session version ledger
 // (RecordRead/RecordedVersion) and mints sha256 content versions from
@@ -90,9 +80,8 @@ const maxCommandOutput = 1 << 20 // 1 MiB
 
 // FileSystem implements tool.FileSystem over the real OS filesystem, rooted at a
 // session workspace directory. The canonical path forms its methods accept are
-// session-relative paths, absolute paths that resolve inside the workspace root
-// (reduced to their root-relative form via resolveInRoot), and — for Read/Stat
-// only — absolute paths under an explicit read-only allowed root.
+// session-relative paths and absolute paths that resolve inside the workspace
+// root (reduced to their root-relative form via resolveInRoot).
 //
 // Every file operation goes through an *os.Root opened on the workspace root,
 // which refuses both lexical ".." escapes and symlink traversal that would leave
@@ -103,11 +92,6 @@ const maxCommandOutput = 1 << 20 // 1 MiB
 type FileSystem struct {
 	root string
 	r    *os.Root
-	// readRoots are the explicit READ-ONLY allowed roots (WithReadRoots), each
-	// canonicalized at construction and served through its OWN *os.Root so the same
-	// symlink containment that confines the workspace root applies inside each
-	// allowed root. Only Read and Stat consult them; Write/Glob/Grep never do.
-	readRoots []allowedRoot
 	// relaxedReads enables the WithRelaxedReads out-of-root absolute read
 	// carve-out (default off) — see relaxedReadRoot.
 	relaxedReads bool
@@ -116,45 +100,19 @@ type FileSystem struct {
 	relaxedWrites bool
 }
 
-// allowedRoot is one canonicalized read-only allowed root plus the os.Root it is
-// served through.
-type allowedRoot struct {
-	path string
-	r    *os.Root
-}
-
 // Option configures a FileSystem (and the Workspace composing it) at
 // construction.
 type Option func(*fsOptions)
 
 // fsOptions collects the construction-time options.
 type fsOptions struct {
-	readRoots     []string
 	relaxedReads  bool
 	relaxedWrites bool
 }
 
-// WithReadRoots adds explicit READ-ONLY allowed roots: absolute directories that
-// Read and Stat — and ONLY Read and Stat — may serve by absolute path even though
-// they lie outside the workspace root. The composition root derives them from the
-// DISCOVERED skills (one directory per skill, never a whole source tree), so the
-// skills carve-out inherits the workspace-trust gate by construction. Each
-// directory is canonicalized (abs + EvalSymlinks) and opened as its own os.Root
-// at construction; a directory that does not exist is SKIPPED (a skill dir
-// deleted after discovery must not brick workspace construction — Read of its
-// files then fails with the ordinary escape error), while a present-but-
-// unopenable directory is a construction error. Write, Glob, Grep, and the Edit
-// mutation path remain workspace-only regardless of these roots.
-func WithReadRoots(dirs ...string) Option {
-	return func(o *fsOptions) {
-		o.readRoots = append(o.readRoots, dirs...)
-	}
-}
-
 // WithRelaxedReads lets Read and Stat — and ONLY Read and Stat — serve an
-// ABSOLUTE path that canonicalizes OUTSIDE the workspace root and outside
-// every WithReadRoots read-only root. It is an EXPLICIT construction option,
-// DEFAULT OFF: the zero-value workspace keeps the ordinary
+// ABSOLUTE path that canonicalizes OUTSIDE the workspace root. It is an
+// EXPLICIT construction option, DEFAULT OFF: the zero-value workspace keeps the
 // canonicalize-then-reject behaviour (ErrPathEscape). The composition layer
 // enables it for the MAIN session's workspace only, at the yolo/auto operator
 // postures where Bash already reads the same bytes (the honesty fix —
@@ -176,9 +134,8 @@ func WithRelaxedReads() Option {
 }
 
 // WithRelaxedWrites lets Write — and, through it, the Edit tool's mutation
-// path — serve an ABSOLUTE path that canonicalizes OUTSIDE the workspace root
-// (never a WithReadRoots read-only root: those stay read-only at every
-// posture). It is an EXPLICIT construction option, DEFAULT OFF: the
+// path — serve an ABSOLUTE path that canonicalizes OUTSIDE the workspace root.
+// It is an EXPLICIT construction option, DEFAULT OFF: the
 // zero-value workspace keeps the ordinary canonicalize-then-reject behaviour
 // (ErrPathEscape). The composition layer enables it for the MAIN session's
 // workspace only, at the yolo/auto operator postures (never a child engine),
@@ -205,7 +162,6 @@ func WithRelaxedWrites() Option {
 // NewFileSystem returns a FileSystem rooted at the given directory. The root is
 // resolved to an absolute, symlink-evaluated path, created if missing, then
 // opened as an *os.Root so all subsequent operations are confined to it.
-// Optional read-only allowed roots are attached via WithReadRoots.
 func NewFileSystem(root string, opts ...Option) (*FileSystem, error) {
 	var o fsOptions
 	for _, opt := range opts {
@@ -224,36 +180,7 @@ func NewFileSystem(root string, opts ...Option) (*FileSystem, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &FileSystem{root: abs, r: r, relaxedReads: o.relaxedReads, relaxedWrites: o.relaxedWrites}
-	// Dedup canonical roots; the workspace root itself never needs an allowlist
-	// entry (relative paths already reach it; absolute aliases of it are still
-	// outside the contract).
-	seen := map[string]bool{abs: true}
-	for _, dir := range o.readRoots {
-		if dir == "" {
-			continue
-		}
-		canon, rerr := resolveRoot(dir)
-		if rerr != nil {
-			return nil, fmt.Errorf("osfs: read root %q: %w", dir, rerr)
-		}
-		if seen[canon] {
-			continue
-		}
-		rr, rerr := os.OpenRoot(canon)
-		if rerr != nil {
-			// Absent dir (deleted between discovery and construction): skip — the
-			// carve-out simply does not open, and reads under it fail with the
-			// ordinary escape error. Anything else (e.g. permissions) is loud.
-			if errors.Is(rerr, fs.ErrNotExist) {
-				continue
-			}
-			return nil, fmt.Errorf("osfs: read root %q: %w", dir, rerr)
-		}
-		seen[canon] = true
-		f.readRoots = append(f.readRoots, allowedRoot{path: canon, r: rr})
-	}
-	return f, nil
+	return &FileSystem{root: abs, r: r, relaxedReads: o.relaxedReads, relaxedWrites: o.relaxedWrites}, nil
 }
 
 // Root returns the absolute workspace root.
@@ -266,10 +193,6 @@ func (f *FileSystem) Root() string { return f.root }
 // is canonicalized by resolveInRoot: if it resolves inside the workspace root it
 // is reduced to its root-relative form; otherwise it fails with ErrPathEscape
 // (out-of-root absolute paths, including escaping symlinks addressed absolutely).
-//
-// Read/Stat consult the read-only allowed roots (WithReadRoots) for absolute
-// paths that resolve OUTSIDE the workspace root — see resolveRead, which layers
-// that carve-out on top of resolvePath.
 func (f *FileSystem) resolvePath(path string) (string, error) {
 	if path == "" {
 		return ".", nil
@@ -367,22 +290,14 @@ func (f *FileSystem) Read(_ context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
-// resolveRead maps a Read/Stat path onto the os.Root that serves it. It tries
-// resolvePath first: a relative path, and an absolute path that resolves INSIDE
-// the workspace root, both land on the workspace os.Root. An absolute path that
-// resolves OUTSIDE the workspace root may still be served by an explicit
-// read-only allowed root (WithReadRoots) — the skills carve-out — so on a
-// resolvePath error resolveRead falls through to allowedReadRoot. Only if that
-// too declines is the original escape error returned. Read and Stat are the ONLY
-// callers; Write routes through resolvePath directly (in-root absolute only, no
-// allowed-root carve-out for writes), and Glob/Grep never resolve paths at all.
+// resolveRead maps a Read/Stat path onto the os.Root that serves it. Relative
+// paths and absolute paths that resolve inside the workspace use the workspace
+// root. WithRelaxedReads may serve an out-of-root absolute path; otherwise the
+// original escape error is returned.
 func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 	rel, err := f.resolvePath(path)
 	if err == nil {
 		return f.r, rel, nil
-	}
-	if r, sub, ok := f.allowedReadRoot(path); ok {
-		return r, sub, nil
 	}
 	if r, sub, ok := f.relaxedReadRoot(path); ok {
 		return r, sub, nil
@@ -409,11 +324,10 @@ func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 //     jumps outside the directory reached before it. Canonicalizing only the
 //     whole path would resolve to the target and launder that escape.
 //
-// It only ever fires after resolvePath AND allowedReadRoot declined, so the
-// target is provably outside the workspace root and every read root. An
-// unverifiable ancestor or an unopenable parent fails safe with no root (the
-// caller returns the original escape error). Only Read/Stat consult it (via
-// resolveRead); writes never do.
+// It only ever fires after resolvePath declined, so the target is provably
+// outside the workspace root. An unverifiable ancestor or unopenable parent
+// fails safe with no root (the caller returns the original escape error). Only
+// Read/Stat consult it (via resolveRead); writes never do.
 func (f *FileSystem) relaxedReadRoot(path string) (*os.Root, string, bool) {
 	if !f.relaxedReads || !filepath.IsAbs(path) {
 		return nil, "", false
@@ -482,61 +396,6 @@ func pathAtOrBelow(base, candidate string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// normalizeTopLevelAlias resolves only the first component below the volume
-// root, then re-appends the remaining lexical path. This makes OS-provided
-// aliases such as macOS /var -> /private/var comparable with canonical roots
-// without resolving a nested caller-controlled symlink and laundering it into
-// an allowed read root.
-func normalizeTopLevelAlias(path string) (string, bool) {
-	cleaned := filepath.Clean(path)
-	if !filepath.IsAbs(cleaned) {
-		return "", false
-	}
-	volume := filepath.VolumeName(cleaned)
-	root := volume + string(filepath.Separator)
-	rel, err := filepath.Rel(root, cleaned)
-	if err != nil {
-		return "", false
-	}
-	if rel == "." {
-		return root, true
-	}
-	components := strings.Split(rel, string(filepath.Separator))
-	canonicalTop, err := Canonicalize("", filepath.Join(root, components[0]))
-	if err != nil {
-		return "", false
-	}
-	if len(components) == 1 {
-		return canonicalTop, true
-	}
-	return filepath.Join(append([]string{canonicalTop}, components[1:]...)...), true
-}
-
-// allowedReadRoot tests an absolute path against the explicit read-only allowed
-// roots and, on a match, returns that root's os.Root plus the root-relative
-// remainder ("." for the root itself). Matching is lexical after resolving
-// only a top-level system alias, so macOS /var paths match roots stored as
-// /private/var while a nested symlink is still handed verbatim to os.Root and
-// refused there if it escapes.
-func (f *FileSystem) allowedReadRoot(path string) (*os.Root, string, bool) {
-	if len(f.readRoots) == 0 || !filepath.IsAbs(path) {
-		return nil, "", false
-	}
-	cleaned, ok := normalizeTopLevelAlias(path)
-	if !ok {
-		return nil, "", false
-	}
-	for _, ar := range f.readRoots {
-		if cleaned == ar.path {
-			return ar.r, ".", true
-		}
-		if strings.HasPrefix(cleaned, ar.path+string(filepath.Separator)) {
-			return ar.r, cleaned[len(ar.path)+1:], true
-		}
-	}
-	return nil, "", false
-}
-
 // Write is intentionally NOT a method of osfs.FileSystem: the agent-facing tools
 // use the version-bearing Workspace mutations (CreateFile/ReplaceFile) on the
 // composed Workspace. The unconditional write survives only as the
@@ -557,17 +416,11 @@ func (f *FileSystem) allowedReadRoot(path string) (*os.Root, string, bool) {
 // Unlike relaxedReadRoot it additionally requires the verbatim parent to EXIST:
 // out-of-root writes create the LEAF only, never ancestor directories (the
 // in-root Write's MkdirAll has no relaxed analogue — mkdir-ing a host path is a
-// strictly wider mutation the Scenario 3 relax does not grant). A path under a
-// WithReadRoots read-only root is EXPLICITLY refused (the lexical allowedReadRoot
-// match): read roots stay read-only at every posture — the relax never turns the
-// skills carve-out writable. Only Write consults it; Glob/Grep never resolve
-// paths at all.
+// strictly wider mutation the Scenario 3 relax does not grant). Only Write
+// consults it; Glob/Grep never resolve paths at all.
 func (f *FileSystem) relaxedWriteRoot(path string) (*os.Root, string, bool) {
 	if !f.relaxedWrites || !filepath.IsAbs(path) {
 		return nil, "", false
-	}
-	if f.readRootContainsOrUnverifiable(path) {
-		return nil, "", false // a READ-ONLY root never serves a write, relaxed or not
 	}
 	cleaned := filepath.Clean(path)
 	parent, leaf := filepath.Dir(cleaned), filepath.Base(cleaned)
@@ -588,29 +441,7 @@ func (f *FileSystem) relaxedWriteRoot(path string) (*os.Root, string, bool) {
 	return rr, leaf, true
 }
 
-// readRootContainsOrUnverifiable protects canonical read roots from a relaxed
-// write whose lexical spelling traverses a system symlink (for example macOS
-// /var when the stored root is /private/var). A failed canonicalization also
-// refuses the write: with read roots configured, ambiguity must not turn a
-// read-only carve-out writable.
-func (f *FileSystem) readRootContainsOrUnverifiable(path string) bool {
-	if len(f.readRoots) == 0 {
-		return false
-	}
-	canon, err := Canonicalize("", path)
-	if err != nil {
-		return true
-	}
-	for _, ar := range f.readRoots {
-		if pathAtOrBelow(ar.path, canon) {
-			return true
-		}
-	}
-	return false
-}
-
-// Stat returns metadata for the file at the session-relative path (or, like
-// Read, an absolute path under an explicit read-only allowed root).
+// Stat returns metadata for the file at the session-relative path.
 func (f *FileSystem) Stat(_ context.Context, path string) (tool.FileInfo, error) {
 	r, rel, err := f.resolveRead(path)
 	if err != nil {
@@ -785,10 +616,9 @@ func ResolveRoot(path string) (string, error) { return resolveRoot(path) }
 // non-ErrNotExist stat error) fails safe with an ErrPathEscape error, matching
 // resolveInRoot. The only I/O is the Lstat/EvalSymlinks ancestor resolution
 // resolveInRoot itself performs. The path-escape-posture composition
-// classifier consumes this (plus LocalizeInRoot and MatchReadRoot) so its
-// in-root/escape verdict is single-sourced with the tool body
-// (docs/acceptance/path-escape-posture.md Scenario 1) instead of
-// reimplementing the algorithms.
+// classifier consumes this with LocalizeInRoot so its in-root/escape verdict is
+// single-sourced with the tool body (docs/acceptance/path-escape-posture.md
+// Scenario 1) instead of reimplementing the algorithms.
 func Canonicalize(base, path string) (string, error) {
 	abs := path
 	if !filepath.IsAbs(abs) {
@@ -840,28 +670,6 @@ func LocalizeInRoot(path string) (string, bool) {
 		return "", false
 	}
 	return rel, true
-}
-
-// MatchReadRoot reports whether the ABSOLUTE path lies under one of the
-// CANONICAL read-only roots, using the exact top-level-alias-normalized lexical
-// match allowedReadRoot performs for Read/Stat. It recognizes macOS /var and
-// /private/var as the same system location without resolving nested symlinks.
-// No *os.Root is opened; whether a matched path may actually be served
-// (Read/Stat only) stays the tool body's business.
-func MatchReadRoot(path string, readRoots []string) bool {
-	if len(readRoots) == 0 || !filepath.IsAbs(path) {
-		return false
-	}
-	cleaned, ok := normalizeTopLevelAlias(path)
-	if !ok {
-		return false
-	}
-	for _, root := range readRoots {
-		if cleaned == root || strings.HasPrefix(cleaned, root+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
 }
 
 // pathLocks is a fixed process-wide set of striped mutexes. Hashing a physical
@@ -918,8 +726,7 @@ type Workspace struct {
 
 // NewWorkspace returns a Workspace rooted at the given directory. The root is
 // created if it does not already exist (NewFileSystem creates it before opening
-// the os.Root). Options (e.g. WithReadRoots) are passed through to the
-// underlying FileSystem.
+// the os.Root). Options are passed through to the underlying FileSystem.
 func NewWorkspace(root string, opts ...Option) (*Workspace, error) {
 	fsys, err := NewFileSystem(root, opts...)
 	if err != nil {
@@ -1044,8 +851,8 @@ func (w *Workspace) resolveWriteAbs(path string) (canon string, rel string, root
 		return "", "", nil, "", fmt.Errorf("%w: %q", ErrPathEscape, path)
 	}
 	// Out-of-root relaxed write path (WithRelaxedWrites), preserving the existing
-	// lexical-parent vet and read-root exclusion. canon remains the physical lock
-	// identity so aliases converge across Workspace instances.
+	// lexical-parent vet. canon remains the physical lock identity so aliases
+	// converge across Workspace instances.
 	if r, relaxedLeaf, ok := w.fs.relaxedWriteRoot(path); ok {
 		return canon, "", r, relaxedLeaf, nil
 	}

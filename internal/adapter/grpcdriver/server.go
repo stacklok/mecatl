@@ -419,8 +419,16 @@ func (s *skillSourceServer) ListSkillAssets(ctx context.Context, req *driverv1.L
 	if err != nil {
 		return nil, sourceStatus(err)
 	}
+	if len(assets) > maxSkillInventoryEntries {
+		return nil, status.Errorf(codes.ResourceExhausted, "skill asset inventory has %d entries, limit %d", len(assets), maxSkillInventoryEntries)
+	}
 	out := make([]*driverv1.SkillAsset, len(assets))
+	nameBytes := 0
 	for i, a := range assets {
+		nameBytes += len(a.Name)
+		if nameBytes > maxSkillInventoryNameBytes {
+			return nil, status.Errorf(codes.ResourceExhausted, "skill asset inventory names exceed %d bytes", maxSkillInventoryNameBytes)
+		}
 		if !tool.ValidSkillAssetName(a.Name) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid logical asset name %q", a.Name)
 		}
@@ -448,6 +456,9 @@ func (s *skillSourceServer) ReadSkillAsset(ctx context.Context, req *driverv1.Re
 	data, err := s.src.ReadSkillAsset(ctx, req.GetSkill(), req.GetAsset())
 	if err != nil {
 		return nil, sourceStatus(err)
+	}
+	if len(data) > maxSkillAssetDataBytes {
+		return nil, status.Errorf(codes.ResourceExhausted, "skill asset payload is %d bytes, limit %d", len(data), maxSkillAssetDataBytes)
 	}
 	return &driverv1.ReadSkillAssetResponse{Data: data}, nil
 }

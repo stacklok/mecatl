@@ -17,12 +17,10 @@ import (
 // the layering rule: the escape *decision* is a posture/policy concern, while
 // engine/tool keeps FileSystem/Workspace (the port↔tool cycle gotcha).
 //
-// It NEVER reimplements the osfs algorithms: the in-root/escape verdict is built
-// from osfs.Canonicalize / osfs.LocalizeInRoot / osfs.MatchReadRoot — the SAME
-// canonicalize-then-reject (resolveInRoot, ADR-0047) and lexical read-root match
-// (allowedReadRoot) primitives the tool body runs, over the same canonicalized
-// root + read roots. A symlinked absolute path therefore classifies identically
-// to the tool body by construction.
+// It NEVER reimplements the osfs algorithms: the verdict is built from
+// osfs.Canonicalize and osfs.LocalizeInRoot, the same canonicalize-then-reject
+// primitives the tool body runs. A symlinked absolute path therefore classifies
+// identically to the tool body by construction.
 
 // escapeKind is the classification of one FS-tool call's path.
 type escapeKind int
@@ -31,12 +29,7 @@ const (
 	// escapeInRoot — the path resolves inside the workspace root (or the call
 	// carries no workspace path at all): never an escape decision.
 	escapeInRoot escapeKind = iota
-	// escapeReadRoot — the path lies under a configured WithReadRoots
-	// read-only root: readable, never writable, distinct from both in-root
-	// and escape (matched LEXICALLY, exactly as allowedReadRoot serves it).
-	escapeReadRoot
-	// escapeEscape — the path resolves outside the workspace root and outside
-	// every read root (resolveInRoot's ErrPathEscape verdict).
+	// escapeEscape — the path resolves outside the workspace root.
 	escapeEscape
 	// escapePseudoFS — the path is under /proc, /sys, or /dev: a NEVER-RELAXED
 	// category, distinct from a regular escape at every posture, because an
@@ -51,8 +44,6 @@ func (k escapeKind) String() string {
 	switch k {
 	case escapeInRoot:
 		return "in-root"
-	case escapeReadRoot:
-		return "read-root"
 	case escapeEscape:
 		return "escape"
 	case escapePseudoFS:
@@ -66,30 +57,16 @@ func (k escapeKind) String() string {
 // I/O classify performs is the Lstat/EvalSymlinks ancestor canonicalization
 // resolveInRoot itself performs (via osfs.Canonicalize).
 type escapeClassifier struct {
-	root      string
-	readRoots []string
+	root string
 }
 
-// newEscapeClassifier canonicalizes root and readRoots exactly as
-// osfs.NewFileSystem does (via osfs.ResolveRoot), so the
-// classifier's comparisons are canonical-to-canonical with the tool body's.
-func newEscapeClassifier(root string, readRoots ...string) (*escapeClassifier, error) {
-	c := &escapeClassifier{}
-	var err error
-	if c.root, err = osfs.ResolveRoot(root); err != nil {
+// newEscapeClassifier canonicalizes root exactly as osfs.NewFileSystem does.
+func newEscapeClassifier(root string) (*escapeClassifier, error) {
+	canonical, err := osfs.ResolveRoot(root)
+	if err != nil {
 		return nil, err
 	}
-	for _, dir := range readRoots {
-		if dir == "" {
-			continue
-		}
-		canon, rerr := osfs.ResolveRoot(dir)
-		if rerr != nil {
-			return nil, rerr
-		}
-		c.readRoots = append(c.readRoots, canon)
-	}
-	return c, nil
+	return &escapeClassifier{root: canonical}, nil
 }
 
 // pseudoFSRoots are the pseudo-filesystem mount points that classify as the
@@ -136,9 +113,7 @@ type fsPathArg struct {
 // or missing path arg also classifies in-root (the tool body's own arg
 // validation rejects it; the escape decision never invents a path).
 //
-// The verdict order mirrors the tool body's resolution EXACTLY (resolveRead /
-// resolvePath / allowedReadRoot, ADR-0047), so it can never disagree with the
-// osfs workspace over the same root:
+// The verdict order mirrors the tool body's resolution exactly:
 //
 //  1. pseudo-fs on the VERBATIM path — never-relaxed at every posture;
 //  2. a RELATIVE path: lexical-only. A ".." traversal that climbs out of the
@@ -149,11 +124,8 @@ type fsPathArg struct {
 //     containment: an in-root symlink whose target escapes → escape (pseudo-fs
 //     if the target is a pseudo-fs mount); everything else → in-root;
 //  3. an ABSOLUTE path: resolveInRoot's canonicalize-then-reject — resolves
-//     inside the root → in-root; outside → allowedReadRoot's LEXICAL
-//     read-root match on the verbatim form (a symlinked absolute path
-//     classifies identically to the tool body, which serves or rejects the
-//     lexical form) → read-root; else → escape (pseudo-fs when the CANONICAL
-//     target is a pseudo-fs mount).
+//     inside the root → in-root; otherwise → escape (pseudo-fs when the
+//     canonical target is a pseudo-fs mount).
 func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escapeKind {
 	switch toolName {
 	case "Read", "Write", "Edit":
@@ -165,8 +137,7 @@ func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escap
 		return escapeInRoot
 	}
 	path := a.Path
-	// (1) pseudo-fs on the verbatim form, before any relax applies — a
-	// misconfigured read root pointing at /proc must not relax it.
+	// (1) pseudo-fs on the verbatim form, before any relax applies.
 	if isPseudoFSPath(path) {
 		return escapePseudoFS
 	}
@@ -189,17 +160,13 @@ func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escap
 		}
 		return escapeInRoot
 	}
-	// (3) absolute path: resolveInRoot's canonicalize-then-reject, then the
-	// lexical read-root match — the exact resolveRead fall-through order.
+	// (3) absolute path: resolveInRoot's canonicalize-then-reject.
 	canon, err := osfs.Canonicalize("", path)
 	if err != nil {
 		return escapeEscape // unverifiable ancestor: resolveInRoot fails safe
 	}
 	if underRoot(canon, c.root) {
 		return escapeInRoot
-	}
-	if osfs.MatchReadRoot(path, c.readRoots) {
-		return escapeReadRoot
 	}
 	if isPseudoFSPath(canon) {
 		return escapePseudoFS

@@ -350,6 +350,78 @@ func TestSkillSourceListAssetsSortsHostileOrder(t *testing.T) {
 	}
 }
 
+func TestSkillSourceAssetRPCReceiveCaps(t *testing.T) {
+	t.Run("advertised small actual oversize payload", func(t *testing.T) {
+		server := &hostileSkillServer{
+			skillAssets:        map[string][]*driverv1.SkillAsset{"bundle": {{Name: "references/data.txt", Size: 1}}},
+			readSkillAssetData: []byte(strings.Repeat("x", maxSkillAssetRPCResponseBytes*2)),
+		}
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSkillSourceServiceServer(gs, server)
+		})
+		src := NewSkillSource(conn)
+		assets, err := src.ListSkillAssets(context.Background(), "bundle")
+		if err != nil || len(assets) != 1 || assets[0].Size != 1 {
+			t.Fatalf("advertised inventory = %+v, %v", assets, err)
+		}
+		data, err := src.ReadSkillAsset(context.Background(), "bundle", "references/data.txt")
+		if err == nil || len(data) != 0 || status.Code(err) != codes.ResourceExhausted {
+			t.Fatalf("oversize ReadSkillAsset = %d bytes, %v; want transport ResourceExhausted", len(data), err)
+		}
+	})
+
+	t.Run("oversize inventory", func(t *testing.T) {
+		assets := make([]*driverv1.SkillAsset, maxSkillInventoryEntries)
+		for i := range assets {
+			assets[i] = &driverv1.SkillAsset{Name: fmt.Sprintf("references/%04d-%s.txt", i, strings.Repeat("x", 80)), Size: 1}
+		}
+		server := &hostileSkillServer{skillAssets: map[string][]*driverv1.SkillAsset{"bundle": assets}}
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSkillSourceServiceServer(gs, server)
+		})
+		got, err := NewSkillSource(conn).ListSkillAssets(context.Background(), "bundle")
+		if err == nil || got != nil || status.Code(err) != codes.ResourceExhausted {
+			t.Fatalf("oversize ListSkillAssets = %d assets, %v; want transport ResourceExhausted", len(got), err)
+		}
+	})
+}
+
+type oversizedAssetSource struct {
+	tool.SkillSource
+	assets []tool.SkillAsset
+	data   []byte
+}
+
+func (s oversizedAssetSource) ListSkillAssets(context.Context, string) ([]tool.SkillAsset, error) {
+	return s.assets, nil
+}
+
+func (s oversizedAssetSource) ReadSkillAsset(context.Context, string, string) ([]byte, error) {
+	return s.data, nil
+}
+
+func TestSkillSourceServerWrapperBoundsAssets(t *testing.T) {
+	base := sourceconformance.NewFixtureSource()
+	t.Run("inventory count", func(t *testing.T) {
+		assets := make([]tool.SkillAsset, maxSkillInventoryEntries+1)
+		for i := range assets {
+			assets[i] = tool.SkillAsset{Name: fmt.Sprintf("references/%d.txt", i), Size: 1}
+		}
+		srv := NewSkillSourceServer(oversizedAssetSource{SkillSource: base, assets: assets})
+		_, err := srv.ListSkillAssets(context.Background(), &driverv1.ListSkillAssetsRequest{Name: "review"})
+		if status.Code(err) != codes.ResourceExhausted {
+			t.Fatalf("ListSkillAssets error = %v, want ResourceExhausted", err)
+		}
+	})
+	t.Run("payload size", func(t *testing.T) {
+		srv := NewSkillSourceServer(oversizedAssetSource{SkillSource: base, data: make([]byte, maxSkillAssetDataBytes+1)})
+		_, err := srv.ReadSkillAsset(context.Background(), &driverv1.ReadSkillAssetRequest{Skill: "review", Asset: "references/checklist.md"})
+		if status.Code(err) != codes.ResourceExhausted {
+			t.Fatalf("ReadSkillAsset error = %v, want ResourceExhausted", err)
+		}
+	})
+}
+
 func TestSkillSourceListAssetsRejectsControlName(t *testing.T) {
 	src := newHostileSkillClientWithAssets(t, []*driverv1.SkillMeta{{Name: "bundle", Description: "x", HasAssets: true}}, map[string][]*driverv1.SkillAsset{
 		"bundle": {&driverv1.SkillAsset{Name: "references/good\nforged.md"}},

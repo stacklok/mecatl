@@ -238,35 +238,6 @@ func TestRelaxedWrites_OutOfRootWriteServed(t *testing.T) {
 	}
 }
 
-// TestRelaxedWrites_ReadRootsStayReadOnly pins that a WithRelaxedWrites
-// workspace NEVER writes into a WithReadRoots read-only root: the skills
-// carve-out stays read-only at every posture (resolvePath only consults read
-// roots on the READ path, and relaxedWriteRoot requires an absolute escape —
-// a read-root path is neither).
-func TestRelaxedWrites_ReadRootsStayReadOnly(t *testing.T) {
-	t.Parallel()
-	root, outside, _ := setupRelaxedFS(t)
-	target := filepath.Join(outside, "skill-out.txt")
-	relaxed, err := osfs.NewWorkspace(root, osfs.WithReadRoots(outside), osfs.WithRelaxedWrites())
-	if err != nil {
-		t.Fatalf("NewWorkspace: %v", err)
-	}
-	if err := relaxed.Write(t.Context(), target, []byte("nope")); !errors.Is(err, osfs.ErrPathEscape) {
-		t.Fatalf("Write into the read root = %v, want ErrPathEscape (read roots stay read-only at every posture)", err)
-	}
-	if _, err := os.Stat(target); err == nil {
-		t.Fatalf("Write created %q inside a READ-ONLY root", target)
-	}
-	canonicalTarget, err := filepath.EvalSymlinks(outside)
-	if err != nil {
-		t.Fatalf("EvalSymlinks(%q): %v", outside, err)
-	}
-	canonicalTarget = filepath.Join(canonicalTarget, "skill-canonical.txt")
-	if err := relaxed.Write(t.Context(), canonicalTarget, []byte("nope")); !errors.Is(err, osfs.ErrPathEscape) {
-		t.Fatalf("Write into canonical read root = %v, want ErrPathEscape", err)
-	}
-}
-
 // TestRelaxedWrites_SymlinkedLeafRefused pins AC3.5's osfs half: the relaxed
 // write flows through a fresh *os.Root on the target's vetted parent, so an
 // existing LEAF SYMLINK inside the parent whose target escapes FURTHER (to a

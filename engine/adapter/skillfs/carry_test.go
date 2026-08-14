@@ -10,9 +10,9 @@ import (
 // agentfs twin: the #328 panel rejected a shared helpers package, so agentfs,
 // skillfs, and rulesfs each carry a copy of the SAME bodies — a silent
 // divergence would fork the frontmatter semantics three adapters share.
-// skillfs's carry.go is a SUPERSET (it also carries the tool-output cluster
-// and resolveRoot, which agentfs does not need), so the pin is scoped to the
-// six shared declarations, extracted line-wise and compared body-for-body.
+// skillfs's carry.go is a SUPERSET (it also carries the tool-output cluster),
+// so the pin is scoped to the six shared declarations, extracted line-wise and
+// compared body-for-body.
 // rulesfs/carry_test.go holds the same pin for rulesfs; the two tests close
 // the four-way ring (toolkit is the root-module origin the pinning comments
 // already name).

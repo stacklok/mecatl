@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -113,6 +114,32 @@ func TestAssetRequestReadsExactlyOneListedTextAsset(t *testing.T) {
 	}
 }
 
+func TestAssetRequestExactRenderedOutputBoundary(t *testing.T) {
+	const asset = "references/checklist.md"
+	header := fmt.Sprintf("Skill asset: review / %s\n\n", asset)
+	payload := strings.Repeat("x", MaxOutputBytes-len(header))
+	source := &stubSkillSource{
+		assets: map[string][]tool.SkillAsset{"review": {{Name: asset, Size: int64(len(payload))}}},
+		data:   map[string][]byte{"review/" + asset: []byte(payload)},
+	}
+	res := exec(t, newSourceTool(source), call(t, map[string]any{"name": "review", "asset": asset}))
+	if res.IsError {
+		t.Fatalf("exact-bound asset rejected: %s", res.Content)
+	}
+	if got := len(res.Content); got != MaxOutputBytes {
+		t.Fatalf("rendered output length = %d, want exact cap %d", got, MaxOutputBytes)
+	}
+	if !strings.HasSuffix(res.Content, payload) {
+		t.Fatal("successful exact-bound asset was truncated")
+	}
+
+	source.assets["review"][0].Size++
+	res = exec(t, newSourceTool(source), call(t, map[string]any{"name": "review", "asset": asset}))
+	if !res.IsError || source.reads != 1 {
+		t.Fatalf("advertised cap+1 result = %#v, total reads=%d; want pre-read rejection", res, source.reads)
+	}
+}
+
 func TestAssetRequestRejectsBeforeRead(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -122,6 +149,7 @@ func TestAssetRequestRejectsBeforeRead(t *testing.T) {
 	}{
 		{"invalid", "../secret", nil, "invalid logical asset"},
 		{"unknown", "references/missing.md", nil, "unknown asset"},
+		{"negative advertised size", "references/bad.md", []tool.SkillAsset{{Name: "references/bad.md", Size: -1}}, "invalid advertised size"},
 		{"advertised oversize", "references/big.md", []tool.SkillAsset{{Name: "references/big.md", Size: maxSkillAssetBytes + 1}}, "too large"},
 	}
 	for _, tc := range tests {

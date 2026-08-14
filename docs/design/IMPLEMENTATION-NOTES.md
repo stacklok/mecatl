@@ -5106,8 +5106,8 @@ the scoped WRITE path is deferred** (see below).
   follows symlinks, so a committed `MEMORY.md` that is a SYMLINK to an out-of-tree secret
   (`~/.ssh/id_rsa`, `/etc/passwd`) would be read and injected into the prompt — an exfiltration path
   even in a TRUSTED workspace (a contributor may not scrutinise a committed symlink). After the path
-  is computed, both root and path are resolved through symlinks (`osfs.ResolveRoot` for the root — the
-  SAME resolver the Workspace read-root allowlist is keyed on — and `filepath.EvalSymlinks` for the
+  is computed, both root and path are resolved through symlinks (`osfs.ResolveRoot` for the root and
+  `filepath.EvalSymlinks` for the
   file) and the resolved real path is asserted to STILL live under the resolved root; an escape is a
   fail-soft `("", false)` + one WARN. It is fail-soft on a MISSING file (`EvalSymlinks` ENOENT ⇒
   `os.IsNotExist` ⇒ true, so the ordinary `os.ReadFile` miss handles the cold-start case); any other
@@ -5317,15 +5317,15 @@ tool body, never re-opens it after).
 **Decision in composition, serving in osfs.** Two halves, deliberately split:
 
 - `internal/app/escapeclassifier.go` (`escapeClassifier`) — a pure composition-layer
-  predicate answering "is this Read/Write/Edit call an out-of-root escape?" into four
-  kinds: in-root / read-root / escape / pseudo-fs. It NEVER reimplements the osfs
-  algorithms — it is built from `internal/adapter/osfs/osfs.go` (`Canonicalize`) and its
-  sibling exported helpers `LocalizeInRoot`, `MatchReadRoot`, and `ResolveRoot` — the SAME
-  canonicalize-then-reject and lexical read-root primitives the tool body runs over the
-  same canonicalized root, so a symlinked absolute path classifies identically to the
-  tool body by construction. Only the three path-carrying FS tools classify: Bash is
-  gated by its own classifiers, Glob/Grep route patterns and stay workspace-confined at
-  every posture (ADR-0047 point 5), and a malformed path arg classifies in-root (the
+  predicate answering "is this Read/Write/Edit call an out-of-root escape?" into three
+  kinds: in-root / escape / pseudo-fs. It NEVER reimplements the osfs algorithms — it is
+  built from `internal/adapter/osfs/osfs.go` (`Canonicalize`) and its sibling exported
+  helpers `LocalizeInRoot` and `ResolveRoot` — the SAME canonicalize-then-reject primitives
+  the tool body runs over the same canonicalized root, so a symlinked absolute path
+  classifies identically to the tool body by construction. Only the three path-carrying
+  FS tools classify: Bash is gated by its own classifiers, Glob/Grep route patterns and
+  stay workspace-confined at every posture (ADR-0047 point 5), and a malformed path arg
+  classifies in-root (the
   tool body's own validation rejects it — the escape decision never invents a path).
 - `internal/app/escapepolicy.go` (`escapePolicy`) — a root-aware wrapping
   `port.PermissionPolicy` (a permpolicy sibling over the same seam) that layers ONLY the
@@ -6465,8 +6465,9 @@ The settled decisions, condensed:
 - **C — Aux assets: path-free, textual, and on demand (issue #540; ADR 0108).**
   `Skill({name})` reads the body and lists a bounded, sorted logical inventory without reading
   payload bytes. `Skill({name,asset})` validates the logical name, requires it to appear in the
-  source inventory, reads only that payload through `ReadSkillAsset`, caps both advertised and
-  actual size at the shared tool-output bound, and rejects invalid UTF-8 or NUL bytes before
+  source inventory, reads only that payload through `ReadSkillAsset`, reserves the exact rendered
+  header from the shared tool-output bound, and rejects an advertised or actual payload that cannot
+  fit whole. Successful assets are never truncated. Invalid UTF-8 or NUL bytes are rejected before
   returning text. FS and driver skills therefore render identically. There is NO
   `AssetMaterializer`, temp cache, `FSSource.AssetDir(s)`, base-directory header, workspace
   read-root threading, executable-bit application, or implicit execution. Bash requiring real
@@ -6480,7 +6481,8 @@ The settled decisions, condensed:
   renderer supplies slash-command post-expansion metadata, so placeholder substitution cannot
   rewrite logical names and a slash command still directs asset retrieval through `Skill`.
 - **H — Wire + client discipline.** `SkillSourceService{ListSkills,GetSkillBody,
-  ListSkillAssets,ReadSkillAsset}` (unary; rides the 64 MiB ceiling; origin is a string
+  ListSkillAssets,ReadSkillAsset}` (unary with dedicated per-call receive caps sized to the
+  inventory/payload surface, not the 64 MiB snapshot ceiling; origin is a string
   passthrough, no proto enum) and `SoulSourceService{LoadSoul}`. Server wrappers
   (`NewSkillSourceServer(tool.SkillSource)` / `NewSoulSourceServer(prompt.SoulSource)`)
   pre-validate blank names and logical names (`ValidSkillAssetName` → `INVALID_ARGUMENT`,

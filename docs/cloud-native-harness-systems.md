@@ -65,8 +65,8 @@ Sub-questions worth scoping, roughly in order of how directly they gate the rest
   Plan 9 namespaces, FUSE) would route path prefixes to backend filesystems — a
   git-backed project repo, a read-only reference tree, a writable scratch area, a
   synthetic FS over MCP resources or memory. Earlier mecatl skill assets used
-  `osfs.WithReadRoots` as an ad-hoc special case; ADR 0108 removed that coupling
-  in favor of logical on-demand reads through `Skill`.
+  a workspace read-root carve-out as an ad-hoc special case; ADR 0108 removed
+  that coupling in favor of logical on-demand reads through `Skill`.
 - **The capability surface is past POSIX already, unevenly.** `Grep` is minimal
   (pattern + path only — no output modes, context lines, case control, type
   filters); there's no directory manipulation as first-class tools (mkdir / rename

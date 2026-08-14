@@ -16,8 +16,8 @@ harness can demonstrate, not which packages exist on disk.
 
 ## Why these scope cuts
 
-- [`AGENTS.md` — the osfs / `WithReadRoots` gotcha](../../AGENTS.md) — the containment
-  is an `*os.Root` + canonicalize-then-reject invariant, not a permission lookup;
+- [`AGENTS.md` — the filesystem gotcha](../../AGENTS.md) — the containment is an
+  `*os.Root` + canonicalize-then-reject invariant, not a permission lookup;
   the relax must consult policy *before* the tool body, never strip the vetting.
 - [ADR-0047](../adr/0047-absolute-path-resolution.md) — the frozen decision that
   defines `resolveInRoot`, the canonicalize-then-reject serving contract, and the
@@ -74,12 +74,8 @@ body about what is an escape. It is consumed by a wrapping permission policy but
 changes no decision yet (the wrapper returns the inner decision verbatim in this
 wave). This lands the shared, tested predicate both later waves build on, per
 the layering rule that the escape *decision* is composition, not domain —
-[`AGENTS.md` — the layering rule](../../AGENTS.md). It must reuse BOTH osfs
-algorithms, not one: `resolveInRoot`'s symlink-aware canonicalization for the
-in-root/escape decision AND `allowedReadRoot`'s lexical prefix-match for the
-read-root third state — they differ on a symlinked absolute path whose target is
-inside a read-root but whose lexical form is outside it, and a classifier that
-only canonicalizes would drift from the tool body
+[`AGENTS.md` — the layering rule](../../AGENTS.md). It reuses
+`resolveInRoot`'s symlink-aware canonicalization for the in-root/escape decision
 ([ADR-0047](../adr/0047-absolute-path-resolution.md)). It also classifies
 pseudo-filesystem paths (`/proc`,`/sys`,`/dev`) as a distinct never-relaxed
 category (see the scope cuts).
@@ -91,9 +87,9 @@ category (see the scope cuts).
   (resolve-then-report, no `*os.Root` open) the composition classifier reuses so
   the escape definition is single-sourced with `resolveInRoot`
   ([`internal/adapter/osfs/osfs.go`](../../internal/adapter/osfs/osfs.go)).
-- composition (`internal/app`): the `escapeClassifier` (call → in-root /
-  read-root / escape, with the absolute-vs-relative and symlink-aware semantics
-  of `resolveInRoot`).
+- composition (`internal/app`): the `escapeClassifier` (call → in-root / escape /
+  pseudo-fs, with the absolute-vs-relative and symlink-aware semantics of
+  `resolveInRoot`).
 
 **Acceptance:**
 - AC1.1: a relative path and an absolute path that canonicalize inside the
@@ -101,11 +97,6 @@ category (see the scope cuts).
   outside classify as escape — matching `resolveInRoot`'s verdict on the same
   inputs.
   - verify: `TestPathEscapePosture_Scenario1_ClassifierMatchesResolveInRoot`
-- AC1.2: an absolute path under a configured `WithReadRoots` read-only root
-  classifies as read-root (readable, not writable), distinct from both in-root
-  and escape — using `allowedReadRoot`'s lexical match so a symlinked absolute
-  path classifies identically to the tool body.
-  - verify: `TestPathEscapePosture_Scenario1_ReadRootClassification`
 - AC1.3: a symlink inside the workspace whose target escapes classifies as
   escape (the canonicalize-then-reject path is exercised, not bypassed).
   - verify: `TestPathEscapePosture_Scenario1_SymlinkEscapeIsEscape`

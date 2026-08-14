@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -157,8 +159,41 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 		t.Fatalf("buildCatalog(skill driver): %v", err)
 	}
 	defer closeFn()
-	if _, ok := defaultCat.Lookup(skills.ToolName); !ok {
+	defaultSkill, ok := defaultCat.Lookup(skills.ToolName)
+	if !ok {
 		t.Fatal("default catalog is missing the remote-backed Skill tool")
+	}
+	assertSkillSpec := func(profile string, tl tool.Tool) {
+		t.Helper()
+		spec := tl.Spec()
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+			Required   []string                   `json:"required"`
+		}
+		if err := json.Unmarshal(spec.Schema, &schema); err != nil {
+			t.Fatalf("%s Skill schema: %v", profile, err)
+		}
+		if _, ok := schema.Properties["asset"]; !ok || !slices.Equal(schema.Required, []string{"name"}) {
+			t.Fatalf("%s Skill schema does not make asset optional: %s", profile, spec.Schema)
+		}
+		for _, want := range []string{"Call with {name}", "call again with {name, asset}"} {
+			if !strings.Contains(spec.Description, want) {
+				t.Errorf("%s Skill description missing %q: %q", profile, want, spec.Description)
+			}
+		}
+		for _, forbidden := range []string{"path", "Read", "Bash", "base director"} {
+			if strings.Contains(spec.Description, forbidden) {
+				t.Errorf("%s Skill description contains retired guidance %q: %q", profile, forbidden, spec.Description)
+			}
+		}
+	}
+	assertSkillSpec("default", defaultSkill)
+	readTool, ok := defaultCat.Lookup("Read")
+	if !ok {
+		t.Fatal("default catalog is missing Read")
+	}
+	if schema := string(readTool.Spec().Schema); strings.Contains(schema, "activated skill") || strings.Contains(schema, "base director") {
+		t.Fatalf("production Read schema advertises retired skill roots: %s", schema)
 	}
 
 	noFSCat, noFSClose := assembleCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), memstore.New(), hookexec.New(nil), &assets, catalogSession{
@@ -170,34 +205,57 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 			t.Fatalf("no-fs catalog contains %s", name)
 		}
 	}
-	skillTool, ok := noFSCat.Lookup(skills.ToolName)
+	noFSSkill, ok := noFSCat.Lookup(skills.ToolName)
 	if !ok {
 		t.Fatal("no-fs catalog is missing the remote-backed Skill tool")
 	}
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), nil)
+	assertSkillSpec("no-fs", noFSSkill)
 
-	activated, err := skillTool.Execute(ctx, session.NewToolCall("activate", skills.ToolName, []byte(`{"name":"review"}`)), env)
-	if err != nil || activated.IsError {
-		t.Fatalf("activate remote skill: result=%+v err=%v", activated, err)
+	profiles := []struct {
+		name string
+		tl   tool.Tool
+		env  tool.Environment
+	}{
+		{"default", defaultSkill, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "default"}, memfs.NewWorkspace("/workspace"), nil)},
+		{"no-fs", noFSSkill, tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "no-fs"}, nofs.New(), nil)},
 	}
-	if got := source.assetReads.Load(); got != 0 {
-		t.Fatalf("activation called ReadSkillAsset %d times, want zero", got)
-	}
-	for _, forbidden := range []string{"Base directory", "absolute path", "Read tool", "via Bash"} {
-		if strings.Contains(activated.Content, forbidden) {
-			t.Errorf("activation leaked path-based guidance %q: %q", forbidden, activated.Content)
-		}
-	}
+	for _, profile := range profiles {
+		t.Run(profile.name, func(t *testing.T) {
+			before := source.assetReads.Load()
+			activated, err := profile.tl.Execute(ctx, session.NewToolCall("activate", skills.ToolName, []byte(`{"name":"review"}`)), profile.env)
+			if err != nil || activated.IsError {
+				t.Fatalf("activate remote skill: result=%+v err=%v", activated, err)
+			}
+			if got := source.assetReads.Load(); got != before {
+				t.Fatalf("activation called ReadSkillAsset %d times, want zero", got-before)
+			}
+			for _, forbidden := range []string{"Base directory", "absolute path", "Read tool", "via Bash"} {
+				if strings.Contains(activated.Content, forbidden) {
+					t.Errorf("activation leaked path-based guidance %q: %q", forbidden, activated.Content)
+				}
+			}
 
-	asset, err := skillTool.Execute(ctx, session.NewToolCall("asset", skills.ToolName, []byte(`{"name":"review","asset":"references/checklist.md"}`)), env)
-	if err != nil || asset.IsError {
-		t.Fatalf("read remote skill asset: result=%+v err=%v", asset, err)
-	}
-	if got := source.assetReads.Load(); got != 1 {
-		t.Fatalf("logical asset request called ReadSkillAsset %d times, want exactly one", got)
-	}
-	if !strings.Contains(asset.Content, "correctness first") {
-		t.Fatalf("logical asset content missing: %q", asset.Content)
+			for _, assetCase := range []struct {
+				name string
+				want string
+			}{
+				{"references/checklist.md", "correctness first"},
+				{"scripts/lint.sh", "echo lint"},
+			} {
+				before = source.assetReads.Load()
+				args := fmt.Sprintf(`{"name":"review","asset":%q}`, assetCase.name)
+				asset, err := profile.tl.Execute(ctx, session.NewToolCall("asset", skills.ToolName, []byte(args)), profile.env)
+				if err != nil || asset.IsError {
+					t.Fatalf("read remote skill asset %q: result=%+v err=%v", assetCase.name, asset, err)
+				}
+				if got := source.assetReads.Load(); got != before+1 {
+					t.Fatalf("asset %q called ReadSkillAsset %d times, want exactly one", assetCase.name, got-before)
+				}
+				if !strings.Contains(asset.Content, assetCase.want) {
+					t.Fatalf("asset %q content missing: %q", assetCase.name, asset.Content)
+				}
+			}
+		})
 	}
 }
 

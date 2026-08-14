@@ -6,7 +6,7 @@
   path resolution of the five filesystem tools (Read/Write/Edit/Glob/Grep via the
   `tool.Workspace` port).
 - Supersedes: none
-- Superseded by: none
+- Superseded by: [ADR 0108](./0108-on-demand-logical-skill-assets.md) — ONLY the skill read-root carve-out; the canonicalize-then-reject absolute-path decision remains authoritative
 
 ## Context
 

@@ -253,7 +253,7 @@ backslash, no NUL. `tool.ValidSkillAssetName` is the single shared validator
 wrapper, materializer) calls it; nobody re-derives the grammar.
 
 **Materializer caps and latch semantics**
-(the former `assetcache.go`). Driver skill payloads materialize
+(`internal/adapter/skills/assetcache.go`). <!-- lint:not-a-citation: frozen ADR historical path removed by ADR 0108 --> Driver skill payloads materialize
 lazily into a build-scoped temp cache on FIRST activation (a never-activated
 skill transfers zero bytes): per-asset 16 MiB, per-bundle 64 MiB, enforced on
 the ACTUAL bytes; name validation + post-Clean containment; executable →

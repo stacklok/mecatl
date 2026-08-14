@@ -406,10 +406,10 @@ marked (see below).
 The mount table lives in composition, where the workspace factory lives today.
 A session's view, a child's view, and a tool-call's view are all compositions
 over the same backends: a git-backed project tree, a scratch area, a read-only
-reference tree, remote governed stores later. The existing
-`osfs.WithReadRoots` skills carve-out is already an ad-hoc single case of this
-(read-only extra roots grafted beside a workspace); the mount table is that
-idea made first-class.
+reference tree, remote governed stores later. Skill assets deliberately do not
+ride this namespace: ADR 0108 keeps them logical and on-demand through `Skill`.
+The mount table is therefore a general namespace capability, not a skill-assets
+replacement.
 
 Prefix routing is the whole v1 composition model: the mount table maps path
 prefixes to backends, and two mounts never claim the same path. Same-path

@@ -255,10 +255,7 @@ func (f FileVersion) Token() (token string, ok bool) {
 // ReplaceFile on the full Workspace, NOT this plain Read.
 //
 // Workspace embeds it, so any *Workspace is usable where a WorkspaceReader is
-// expected. All paths are session-relative; the adapter rejects escapes, EXCEPT
-// for any explicit READ-ONLY allowed roots the adapter was constructed with
-// (the activated-skill base-directory carve-out — see osfs.WithReadRoots),
-// which Read/Stat may serve by absolute path.
+// expected. Paths are session-relative and adapters reject escapes.
 type WorkspaceReader interface {
 	// Root returns the absolute session root all paths are scoped to.
 	Root() string
@@ -275,11 +272,7 @@ type WorkspaceReader interface {
 // Edit/Write tools enforce their invariants through (ADR 0103).
 //
 // All paths are relative to the session root unless documented otherwise;
-// adapters must reject any path that resolves outside the root. The ONE
-// sanctioned exception is read-only: an adapter may carry explicit allowed
-// roots (osfs.WithReadRoots — the per-skill directories of discovered skills)
-// that Read/Stat/ReadVersion serve by absolute path. CreateFile, ReplaceFile,
-// Glob, and Grep are workspace-only always.
+// adapters must reject any path that resolves outside the root.
 //
 // VERSION PROTOCOL (ADR 0103). The Workspace capability exposes only the
 // explicit create-only / conditional-replace-by-version pair, so a tool mutation

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-14
 - Scope: skill activation, bundled assets, filesystem exposure, and remote skill sources
-- Supersedes: [ADR 0005](./0005-driver-seams.md) — ONLY the skill-asset materialization/read-root decision; ADR 0005's driver seams, wire contract, snapshot semantics, trust posture, and all other decisions remain authoritative
+- Supersedes: [ADR 0005](./0005-driver-seams.md) and [ADR 0047](./0047-absolute-path-resolution.md) — ONLY their skill-asset materialization/read-root carve-out; all other driver and absolute-path decisions remain authoritative
 - Superseded by: none
 
 ## Context

@@ -37,6 +37,14 @@ type SkillSource struct {
 // compile-time assertion that SkillSource satisfies the port.
 var _ tool.SkillSource = (*SkillSource)(nil)
 
+const (
+	maxSkillAssetDataBytes        = 25_000
+	maxSkillAssetRPCResponseBytes = 26 << 10
+	maxSkillInventoryRPCBytes     = 64 << 10
+	maxSkillInventoryEntries      = 1_024
+	maxSkillInventoryNameBytes    = 32 << 10
+)
+
 // NewSkillSource wraps an established driver connection (see Dial) as a
 // tool.SkillSource.
 func NewSkillSource(conn grpc.ClientConnInterface) *SkillSource {
@@ -99,7 +107,7 @@ func (s *SkillSource) SkillBody(ctx context.Context, name string) (string, error
 // ListSkillAssets returns the named skill's payload descriptors. A driver
 // NOT_FOUND wraps tool.ErrSkillNotFound.
 func (s *SkillSource) ListSkillAssets(ctx context.Context, name string) ([]tool.SkillAsset, error) {
-	resp, err := s.client.ListSkillAssets(ctx, &driverv1.ListSkillAssetsRequest{Name: name})
+	resp, err := s.client.ListSkillAssets(ctx, &driverv1.ListSkillAssetsRequest{Name: name}, grpc.MaxCallRecvMsgSize(maxSkillInventoryRPCBytes))
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return nil, fmt.Errorf("%w: %q", tool.ErrSkillNotFound, name)
@@ -107,8 +115,16 @@ func (s *SkillSource) ListSkillAssets(ctx context.Context, name string) ([]tool.
 		return nil, rpcErr(ctx, "list skill assets", err)
 	}
 	wire := resp.GetAssets()
+	if len(wire) > maxSkillInventoryEntries {
+		return nil, fmt.Errorf("list skill assets: inventory has %d entries, limit %d", len(wire), maxSkillInventoryEntries)
+	}
 	out := make([]tool.SkillAsset, 0, len(wire))
+	nameBytes := 0
 	for _, a := range wire {
+		nameBytes += len(a.GetName())
+		if nameBytes > maxSkillInventoryNameBytes {
+			return nil, fmt.Errorf("list skill assets: inventory names exceed %d bytes", maxSkillInventoryNameBytes)
+		}
 		if !tool.ValidSkillAssetName(a.GetName()) {
 			return nil, fmt.Errorf("list skill assets: invalid logical asset name %q", a.GetName())
 		}
@@ -129,14 +145,18 @@ func (s *SkillSource) ReadSkillAsset(ctx context.Context, skill, asset string) (
 	if !tool.ValidSkillAssetName(asset) {
 		return nil, fmt.Errorf("read skill asset: invalid logical asset name %q", asset)
 	}
-	resp, err := s.client.ReadSkillAsset(ctx, &driverv1.ReadSkillAssetRequest{Skill: skill, Asset: asset})
+	resp, err := s.client.ReadSkillAsset(ctx, &driverv1.ReadSkillAssetRequest{Skill: skill, Asset: asset}, grpc.MaxCallRecvMsgSize(maxSkillAssetRPCResponseBytes))
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return nil, fmt.Errorf("%w: %q/%q", tool.ErrSkillAssetNotFound, skill, asset)
 		}
 		return nil, rpcErr(ctx, "read skill asset", err)
 	}
-	return resp.GetData(), nil
+	data := resp.GetData()
+	if len(data) > maxSkillAssetDataBytes {
+		return nil, fmt.Errorf("read skill asset: payload is %d bytes, limit %d", len(data), maxSkillAssetDataBytes)
+	}
+	return data, nil
 }
 
 // singleLine enforces the port's single-line Description promise on wire
