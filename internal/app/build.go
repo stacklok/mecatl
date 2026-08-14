@@ -4434,8 +4434,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 			memDriverClose()
 		}
 	}
-	// Fold the skill seam's teardown (driver branch only: asset-cache RemoveAll
-	// + its once-guarded conn close) into the same chain.
+	// Fold the skill driver's once-guarded connection close into the same chain.
 	if seam.close != nil {
 		prev := mcpClose
 		mcpClose = func() {
@@ -7714,9 +7713,8 @@ func parseWorktreePorcelain(out string) []server.Worktree {
 }
 
 // newForkWorkspace returns the ONE workspace constructor every fork family
-// (Subagent worktree, team member force-copy/worktree, Parallel branch) hands its
-// forker, so the per-skill read-only allowed roots reach ISOLATED worktrees too —
-// a single helper, not four closures that could drift on the allowlist.
+// (Subagent worktree, team member force-copy/worktree, Parallel branch) uses, so
+// their isolated workspaces cannot drift in construction semantics.
 func newForkWorkspace() func(string) (tool.Workspace, error) {
 	return func(root string) (tool.Workspace, error) {
 		return osfs.NewWorkspace(root)
