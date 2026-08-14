@@ -2,8 +2,8 @@
 id: 09-review-server-contract
 title: Repair server contract findings from panel review
 blocked_by: [08-exit-handoff]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-continuity-ux/09-review-server-contract"
 worktree: ".scratch/worktrees/session-continuity-ux-repair-09"
 issue: "471"
 retries: 0
