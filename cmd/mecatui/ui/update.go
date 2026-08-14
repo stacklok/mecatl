@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -272,12 +271,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onResize(msg)
 
 	case tea.ResumeMsg:
-		// Returned from a ctrl+z suspend (issue #504): Bubble Tea has already
-		// re-entered the alt screen, re-captured the mouse, and repainted (its
-		// RestoreTerminal + checkResize sends a fresh WindowSizeMsg too). Our only
-		// job is to re-sync the render so any frames buffered while suspended flush.
-		m.refreshView()
-		return m, nil
+		return m.onResume()
 
 	case tea.ColorProfileMsg:
 		return m.onColorProfile(msg)
@@ -1444,24 +1438,61 @@ func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 	return m, m.quitDisarmCmd(m.quitArmGen)
 }
 
-// onSuspend suspends the whole TUI process to the shell (ctrl+z, issue #504). It
-// writes a ONE-LINE leave-behind notice to STDERR before returning tea.Suspend —
-// stderr is the reliable channel because tea.Println/Printf are SUPPRESSED while
-// the alt screen is active (and the alt screen, which is exited on suspend, is what
-// preserves the line in scrollback above the shell prompt). The notice names the
-// engine-keeps-running contract: suspending the TUI does NOT stop the embedded
-// mecated or an in-flight run, so the operator knows work continues while the UI is
-// stopped. tea.Suspend then drives Bubble Tea's suspend (release the terminal, exit
-// the alt screen, SIGTSTP the process group); on fg/SIGCONT Bubble Tea restores the
+// onSuspend suspends the whole TUI process to the shell (ctrl+z, issue #504).
+// A pre-suspend leave-behind notice is NOT printed: it landed either in the
+// alt-screen buffer (direct write — discarded on the suspend's alt-screen exit)
+// or was frozen before Bubble Tea could flush its deferred-print queue
+// (tea.Println is only drained on a render-tick, which the SIGTSTP freeze
+// precludes). Instead we RECORD the phase we suspend from, and the ResumeMsg
+// reducer emits an honest "you suspended mid-X" notice into the conversation on
+// return — the operator sees it at the only moment they can act on it (after
+// fg). tea.Suspend drives Bubble Tea's suspend (release the terminal, exit the
+// alt screen, SIGTSTP the process group); on fg/SIGCONT Bubble Tea restores the
 // terminal (re-enter alt screen, re-capture the mouse, repaint, fresh
 // WindowSizeMsg) and delivers a ResumeMsg.
 func (m Model) onSuspend() (tea.Model, tea.Cmd) {
-	sid := m.sessionID
+	m.suspendedFrom = m.phase
+	m.suspendedAtID = m.sessionID
+	return m, tea.Suspend
+}
+
+// onResume handles tea.ResumeMsg — the model resumed from a ctrl+z suspend (issue
+// #504). Bubble Tea has already re-entered the alt screen, re-captured the mouse,
+// and repainted (its RestoreTerminal + checkResize sends a fresh WindowSizeMsg
+// too). Surface the leave-behind notice NOW — the only moment the operator can
+// read it — as an in-conversation notice naming what was suspended. (We could not
+// print it pre-suspend: a direct write landed in the discarded alt-screen buffer,
+// and tea.Println's deferred queue never gets a flush tick before SIGTSTP freezes
+// the process.)
+func (m Model) onResume() (tea.Model, tea.Cmd) {
+	if m.suspendedAtID != "" || m.suspendedFrom != phaseConnecting {
+		m.conv.addNotice(m.resumeNotice())
+		m.suspendedFrom = phaseConnecting
+		m.suspendedAtID = ""
+	}
+	m.refreshView()
+	return m, nil
+}
+
+// resumeNotice builds the "you suspended; the engine kept running" notice shown on
+// resume from a ctrl+z suspend (issue #504). It names the session captured at
+// suspend time and what the phase was, so a mid-run suspend's continuation is
+// explicit.
+func (m Model) resumeNotice() string {
+	sid := m.suspendedAtID
 	if sid == "" {
 		sid = "connecting"
 	}
-	fmt.Fprintf(os.Stderr, "mecatui: suspended — the mecatl engine is still running (session %s). Run 'fg' to return.\n", sid)
-	return m, tea.Suspend
+	what := "idle"
+	switch m.suspendedFrom {
+	case phaseRunning:
+		what = "a running turn"
+	case phaseAwaitingApproval:
+		what = "a pending permission ask"
+	case phaseReplay:
+		what = "a session replay"
+	}
+	return "Resumed from suspend — the mecatl engine kept running while the UI was suspended (session " + sid + ", was " + what + ")."
 }
 
 // onQuitDKey implements the ctrl+d double-press quit (issue #504) — the unix

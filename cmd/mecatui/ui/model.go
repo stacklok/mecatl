@@ -445,6 +445,14 @@ type Model struct {
 	quitArmed  bool
 	quitArmGen int
 
+	// suspendedFrom records the phase the model was in when a ctrl+z suspend fired
+	// (issue #504) plus the session id captured at that instant (the session could
+	// roll over while suspended). Set in onSuspend, read by the ResumeMsg reducer to
+	// explain what the suspension left running, then cleared. suspendedAtSet is the
+	// "did a ctrl+z suspend just resume" flag.
+	suspendedFrom phase
+	suspendedAtID string
+
 	// quitDArmed / quitDArmGen are the ctrl+d double-press guard — the unix
 	// EOF-habit quit. They are INDEPENDENT of quitArmed/quitArmGen (a ctrl+c arms
 	// only the Quit guard, a ctrl+d only the QuitD guard; validator rule 6 forbids

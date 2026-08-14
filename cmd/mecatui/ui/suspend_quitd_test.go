@@ -187,3 +187,39 @@ func TestResumeMsgRefreshes(t *testing.T) {
 		t.Error("ResumeMsg should return the model")
 	}
 }
+
+// TestSuspendResumeEmitsNotice pins the resume-side notice contract: a ctrl+z
+// suspend records the phase + session id, and the ResumeMsg on fg emits an
+// in-conversation notice naming what was suspended (the pre-suspend print was
+// discarded with the alt screen, so the notice is honest only on resume).
+func TestSuspendResumeEmitsNotice(t *testing.T) {
+	m := quitModel(t)
+	m.phase = phaseRunning
+	m.sessionID = "sess-abc"
+	m, _ = pressKey(m, ctrlZ())
+	if m.suspendedAtID != "sess-abc" {
+		t.Errorf("suspend should record the session id, got %q", m.suspendedAtID)
+	}
+	if m.suspendedFrom != phaseRunning {
+		t.Errorf("suspend should record phaseRunning, got %v", m.suspendedFrom)
+	}
+	blocksBefore := len(m.conv.blocks)
+	mm, _ := m.Update(tea.ResumeMsg{})
+	m = mm.(Model)
+	if len(m.conv.blocks) != blocksBefore+1 {
+		t.Fatalf("resume should append one notice block, got %d (was %d)", len(m.conv.blocks), blocksBefore)
+	}
+	if m.suspendedAtID != "" {
+		t.Error("resume should clear the suspended marker")
+	}
+}
+
+// TestSuspendIdleResumeNoticeOmitsPhase covers the idle case: suspending from
+// idle names "idle" (no mid-flight work to surface).
+func TestSuspendIdleResumeNoticeOmitsPhase(t *testing.T) {
+	m := quitModel(t)
+	m, _ = pressKey(m, ctrlZ())
+	if m.suspendedFrom != phaseIdle {
+		t.Errorf("idle suspend should record phaseIdle, got %v", m.suspendedFrom)
+	}
+}
