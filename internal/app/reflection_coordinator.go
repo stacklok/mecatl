@@ -98,6 +98,7 @@ type reflectionCoordinator struct {
 	notify       chan struct{}
 	receipts     map[string]*reflectionReceiptState
 	receiptOrder []string
+	attempt      uint64
 	workers      sync.WaitGroup
 	started      bool
 	closeOnce    sync.Once
@@ -245,9 +246,15 @@ func reflectionJobID(key string) string {
 	return "reflection-" + hex.EncodeToString(sum[:8])
 }
 
-// Enqueue admits a job without waiting for model or storage work. A duplicate
-// returns the original bounded id. Capacity rejection records the same
-// content-free id/count receipt that diagnostics report.
+func (c *reflectionCoordinator) nextAttemptIDLocked(key string) string {
+	c.attempt++
+	return fmt.Sprintf("%s-%016x", reflectionJobID(key), c.attempt)
+}
+
+// Enqueue admits a job without waiting for model or storage work. An in-flight
+// duplicate joins the original attempt; a rerun after completion gets a fresh id.
+// Capacity rejection records the same content-free id/count receipt that
+// diagnostics report.
 func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, error) {
 	if c == nil {
 		return reflectionReceipt{Disposition: reflectionClosed}, errReflectionCoordinatorClosed
@@ -265,12 +272,12 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 	sum := sha256.Sum256(material)
 	digest := hex.EncodeToString(sum[:])
 	key := job.principal + "\x00" + string(job.input.Trajectory.SessionID) + "\x00" + digest
-	id := reflectionJobID(key)
+	baseID := reflectionJobID(key)
 
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return reflectionReceipt{ID: id, Disposition: reflectionClosed}, nil
+		return reflectionReceipt{ID: baseID, Disposition: reflectionClosed}, nil
 	}
 	if existing, ok := c.pending[key]; ok {
 		queued := c.queued
@@ -279,11 +286,19 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 		return reflectionReceipt{ID: existing, Disposition: reflectionDuplicate, Queued: queued}, nil
 	}
 	principalQueued := len(c.queues[job.principal]) + c.running[job.principal]
-	if c.queued >= c.cfg.Capacity || principalQueued >= c.cfg.PrincipalCapacity || c.queuedBytes+len(material) > c.cfg.QueueBytes || !c.reserveReceiptLocked(id) {
+	if c.queued >= c.cfg.Capacity || principalQueued >= c.cfg.PrincipalCapacity || c.queuedBytes+len(material) > c.cfg.QueueBytes {
+		queued := c.queued
+		receipt := reflectionReceipt{ID: baseID, Disposition: reflectionQueueFull, Queued: queued, Err: errReflectionQueueFull.Error()}
+		c.mu.Unlock()
+		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection queue full", "job_id", baseID, "queued", queued, "principal_queued", principalQueued)
+		return receipt, nil
+	}
+	id := c.nextAttemptIDLocked(key)
+	if !c.reserveReceiptLocked(id) {
 		queued := c.queued
 		receipt := reflectionReceipt{ID: id, Disposition: reflectionQueueFull, Queued: queued, Err: errReflectionQueueFull.Error()}
 		c.mu.Unlock()
-		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection queue full", "job_id", id, "queued", queued, "principal_queued", principalQueued)
+		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection receipt capacity full", "job_id", id, "queued", queued, "principal_queued", principalQueued)
 		return receipt, nil
 	}
 	if len(c.queues[job.principal]) == 0 && c.running[job.principal] == 0 {

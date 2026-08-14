@@ -133,7 +133,7 @@ func TestLearningHTTPRejectsDuplicateKeysRecursivelyOnEveryMutation(t *testing.T
 	for name, request := range map[string]*http.Request{
 		"reflect":  httptest.NewRequest(http.MethodPost, "/v1/sessions/s/reflect", strings.NewReader(`{"x":{"a":1,"a":2}}`)),
 		"decision": httptest.NewRequest(http.MethodPost, "/v1/learning/proposals/p/decision", strings.NewReader(`{"decision":"reject","decision":"approve"}`)),
-		"undo":     httptest.NewRequest(http.MethodPost, "/v1/learning/proposals/p/undo", strings.NewReader(`{"project":{"x":1,"x":2}}`)),
+		"undo":     httptest.NewRequest(http.MethodPost, "/v1/learning/proposals/p/undo", strings.NewReader(`{"expected_version":"v1","expected_version":"v2"}`)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			res := httptest.NewRecorder()

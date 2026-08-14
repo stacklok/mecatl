@@ -19,6 +19,27 @@ type testReflector struct {
 	release <-chan struct{}
 }
 
+type attemptBarrierReflector struct {
+	started  chan int
+	releases []chan struct{}
+	mu       sync.Mutex
+	calls    int
+}
+
+func (r *attemptBarrierReflector) Reflect(ctx context.Context, _ learning.Input) (learning.Outcome, error) {
+	r.mu.Lock()
+	attempt := r.calls
+	r.calls++
+	r.mu.Unlock()
+	r.started <- attempt
+	select {
+	case <-r.releases[attempt]:
+		return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	case <-ctx.Done():
+		return learning.Outcome{}, ctx.Err()
+	}
+}
+
 func (r *testReflector) Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, in.Trajectory.SessionID)
@@ -172,45 +193,92 @@ func TestReflectionCoordinatorReservesReceiptBeforeAdmission(t *testing.T) {
 	c.Close()
 }
 
-func TestReflectionCoordinatorReplaysReceiptsAndRerunsDeterministicID(t *testing.T) {
+func TestReflectionCoordinatorDuplicateWaitersBeforeAndAfterCompletion(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan session.SessionID, 1)
 	c := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1})
 	t.Cleanup(c.Close)
-	job := testJob("owner", "same", &testReflector{})
+	job := testJob("owner", "same", &testReflector{start: started, release: release})
 	first, err := c.Enqueue(job)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	const waiters = 3
-	results := make(chan reflectionReceipt, waiters)
-	for range waiters {
-		go func() {
-			receipt, waitErr := c.Wait(context.Background(), first.ID)
-			if waitErr != nil {
-				results <- reflectionReceipt{Err: waitErr.Error()}
-				return
-			}
-			results <- receipt
-		}()
+	<-started
+	duplicate, err := c.Enqueue(job)
+	if err != nil || duplicate.ID != first.ID || duplicate.Disposition != reflectionDuplicate {
+		t.Fatalf("in-flight duplicate = %+v, %v", duplicate, err)
 	}
-	for range waiters {
-		receipt := <-results
-		if receipt.ID != first.ID || receipt.Disposition != reflectionCompleted || !receipt.Abstained {
-			t.Fatalf("duplicate waiter receipt = %+v", receipt)
+
+	before := make(chan reflectionReceipt, 1)
+	go func() {
+		receipt, waitErr := c.Wait(context.Background(), duplicate.ID)
+		if waitErr != nil {
+			receipt.Err = waitErr.Error()
 		}
+		before <- receipt
+	}()
+	close(release)
+	if receipt := <-before; receipt.ID != first.ID || receipt.Disposition != reflectionCompleted || !receipt.Abstained || receipt.Err != "" {
+		t.Fatalf("waiter registered before completion = %+v", receipt)
 	}
-	late, err := c.Wait(context.Background(), first.ID)
+	late, err := c.Wait(context.Background(), duplicate.ID)
 	if err != nil || late.ID != first.ID || late.Disposition != reflectionCompleted || !late.Abstained {
-		t.Fatalf("late receipt = %+v, %v", late, err)
+		t.Fatalf("duplicate waiter after completion = %+v, %v", late, err)
+	}
+}
+
+func TestReflectionCoordinatorRerunCannotStealEarlierAttemptReceipt(t *testing.T) {
+	releases := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	reflector := &attemptBarrierReflector{started: make(chan int, 2), releases: releases}
+	c := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1, Capacity: 1, Receipts: 1})
+	t.Cleanup(c.Close)
+	job := testJob("owner", "same", reflector)
+
+	first, err := c.Enqueue(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempt := <-reflector.started; attempt != 0 {
+		t.Fatalf("first started attempt = %d", attempt)
+	}
+	c.mu.Lock()
+	firstDone := c.receipts[first.ID].done
+	c.mu.Unlock()
+	close(releases[0])
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("first attempt did not publish its receipt")
 	}
 
-	rerun, err := c.Enqueue(job)
-	if err != nil || rerun.ID != first.ID || rerun.Disposition != reflectionQueued {
-		t.Fatalf("deterministic rerun = %+v, %v", rerun, err)
+	second, err := c.Enqueue(job)
+	if err != nil || second.Disposition != reflectionQueued || second.ID == first.ID {
+		t.Fatalf("second attempt = %+v, %v; first=%+v", second, err, first)
 	}
-	done, err := c.Wait(context.Background(), rerun.ID)
-	if err != nil || done.ID != first.ID || done.Disposition != reflectionCompleted || !done.Abstained {
-		t.Fatalf("rerun receipt = %+v, %v", done, err)
+	if attempt := <-reflector.started; attempt != 1 {
+		t.Fatalf("second started attempt = %d", attempt)
+	}
+
+	waited := make(chan reflectionReceipt, 1)
+	go func() {
+		receipt, waitErr := c.Wait(context.Background(), first.ID)
+		if waitErr != nil {
+			receipt.Err = waitErr.Error()
+		}
+		waited <- receipt
+	}()
+	select {
+	case receipt := <-waited:
+		if receipt.ID != first.ID || receipt.Disposition != reflectionCompleted || !receipt.Abstained || receipt.Err != "" {
+			t.Fatalf("first receipt after second started = %+v", receipt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first attempt waiter was redirected to the blocked second attempt")
+	}
+	close(releases[1])
+	secondDone, err := c.Wait(context.Background(), second.ID)
+	if err != nil || secondDone.ID != second.ID || secondDone.Disposition != reflectionCompleted || !secondDone.Abstained {
+		t.Fatalf("second receipt = %+v, %v", secondDone, err)
 	}
 }
 
