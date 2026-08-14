@@ -45,6 +45,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h := &HTTPHandler{svc: svc, mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST /v1/sessions", h.createSession)
 	h.mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
+	h.mux.HandleFunc("GET /v1/sessions/{id}/transcript", h.getSessionTranscript)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/mode", h.setMode)
 	h.mux.HandleFunc("DELETE /v1/sessions/{id}", h.closeSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/prompt", h.prompt)
@@ -366,6 +367,16 @@ func (h *HTTPHandler) getSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeSession(w, http.StatusOK, sess)
+}
+
+// getSessionTranscript handles GET /v1/sessions/{id}/transcript.
+func (h *HTTPHandler) getSessionTranscript(w http.ResponseWriter, r *http.Request) {
+	transcript, err := h.svc.GetTranscript(r.Context(), session.SessionID(r.PathValue("id")))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoTranscript(transcript))
 }
 
 // setMode handles POST /v1/sessions/{id}/mode.

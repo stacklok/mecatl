@@ -228,6 +228,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"CreateSessionWithProfile":  {KindCallerOwned, "atomic owner bind at creation (reserveSessionID); ForkSession/carryover sources are authorized via authorizeSession before copying history"},
 	"CreateSessionWithMCP":      {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
 	"GetSession":                {KindCallerOwned, "authorizeSession: owner mismatch or absence both return ErrNotFound"},
+	"GetTranscript":             {KindCallerOwned, "one SessionStore.Load followed by authorizeSession; no run-entry side effects"},
 	"LoadSession":               {KindCallerOwned, "authorizeSession before rehydration"},
 	"LoadSessionWithMCP":        {KindCallerOwned, "delegates to LoadSession's authorizeSession before mounting client MCP"},
 	"SetMode":                   {KindCallerOwned, "authorizes via GetSession before changing the session's permission mode"},

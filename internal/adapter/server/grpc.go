@@ -97,6 +97,18 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	return &mecatlv1.GetSessionResponse{Session: proto}, nil
 }
 
+// GetSessionTranscript returns the owned session's snapshot-derived transcript.
+func (h *HarnessServer) GetSessionTranscript(ctx context.Context, req *mecatlv1.GetSessionTranscriptRequest) (*mecatlv1.GetSessionTranscriptResponse, error) {
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	transcript, err := h.svc.GetTranscript(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoTranscript(transcript), nil
+}
+
 // SetMode changes the permission posture of the requested session.
 func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeRequest) (*mecatlv1.SetModeResponse, error) {
 	if req.GetSessionId() == "" {

@@ -37,6 +37,10 @@ service HarnessService {
   // GetSession returns a snapshot of an existing session.
   rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
 
+  // GetSessionTranscript returns the authoritative, snapshot-derived human
+  // transcript for one owned session. It is read-only and does not use EventLog.
+  rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
+
   // SetMode changes an existing session's permission posture. The session aggregate
   // remains authoritative: a mid-turn change is rejected with InvalidArgument, so
   // clients that want "next prompt" semantics must defer and retry once idle.
@@ -587,6 +591,39 @@ message GetSessionRequest {
 message GetSessionResponse {
   // session is the snapshot of the requested session.
   Session session = 1;
+}
+
+// GetSessionTranscriptRequest names the owned session whose current aggregate
+// conversation is requested.
+message GetSessionTranscriptRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ActivityReplayStatus describes the optional EventLog activity plane. It is
+// deliberately independent of transcript completeness: EventLog append can gap,
+// read can fail, and EOF carries no completeness attestation.
+message ActivityReplayStatus {
+  // available reports whether this deployment configured an EventLog reader.
+  bool available = 1;
+  // complete is false in v1 because EventLog has no completeness attestation.
+  bool complete = 2;
+  // authoritative is always false: activity never attests model context.
+  bool authoritative = 3;
+}
+
+// GetSessionTranscriptResponse is one coherent SessionStore snapshot projection.
+// messages are the loaded aggregate's current Conversation.Messages in order.
+message GetSessionTranscriptResponse {
+  // session_id is copied from the same loaded aggregate as messages.
+  string session_id = 1;
+  // messages contains human-displayable message fields. Provider-private replay
+  // fields on ConversationMessage are always omitted from this surface.
+  repeated ConversationMessage messages = 2;
+  // complete is true even for a genuinely empty conversation: a successful load
+  // is the completeness attestation, never EventLog EOF.
+  bool complete = 3;
+  // activity reports the separate, optional, non-authoritative replay plane.
+  ActivityReplayStatus activity = 4;
 }
 
 // StreamSessionEventsRequest names the session whose durable event log is replayed.
