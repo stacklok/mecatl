@@ -70,7 +70,9 @@ If your current model doesn't support reasoning effort, the picker warns you tha
 
 Every session persists to disk as append-only JSONL — the conversation, the tool-call history, and the event timeline — under a per-workspace directory, mode `0700` (owner-only; it stores the raw conversation in plaintext). Quit mecatui and come back later and your work is still there.
 
-`/sessions` opens a picker over past sessions in the current workspace. Each row shows a relative timestamp, the turn count, a title (taken from your first prompt, or the session id if there isn't one yet), and the model it ran on. Opening one replays its durable history — this is a pure read of what already happened, not a live reconnect, so a session that's still `running` or parked awaiting your approval can't be opened this way (mecatui tells you so rather than showing you a partial, misleading transcript).
+`/sessions` opens a searchable inventory in three tabs: **Chats**, **Scheduled runs**, and **Child runs**. Rows show state, time, turns, title, model, and a short digest handle; the chat you are currently using is marked **`[current]`**. The search applies to the selected tab and matches the row's title, model, workspace, digest, and available relationship details.
+
+Press `enter` on a Chat to **Continue** it when the server says it is publicly continuable. mecatui loads the authoritative snapshot transcript first, then makes that chat the active prompt target. Scheduled and Child runs are normally **Inspect** instead: their same authoritative snapshot transcript opens read-only, without changing your active chat. This is deliberately non-destructive — `esc` is **Back** to the inventory. If a transcript cannot be loaded completely, mecatui does not continue it; the error view offers **`r` Retry** or **Back**. The durable event log may help live delivery catch-up, but it is not used as the conversation transcript or as proof that a transcript is complete.
 
 ## Suspending and quitting like a terminal app
 

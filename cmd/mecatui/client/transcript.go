@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	tea "charm.land/bubbletea/v2"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -50,4 +52,25 @@ func transcriptMessagesFromProto(in []*mecatlv1.ConversationMessage) []Conversat
 		messages[i].ReasoningItemID = ""
 	}
 	return messages
+}
+
+// SessionTranscripter is the authoritative snapshot-derived conversation seam
+// used for both continuation and non-destructive inspection.
+type SessionTranscripter interface {
+	GetSessionTranscript(ctx context.Context, id string) (SessionTranscript, error)
+}
+
+// SessionTranscriptMsg carries one correlated transcript load result.
+type SessionTranscriptMsg struct {
+	SessionID  string
+	Transcript SessionTranscript
+	Err        error
+}
+
+// GetSessionTranscriptCmd returns a command that loads one authoritative transcript.
+func GetSessionTranscriptCmd(ctx context.Context, loader SessionTranscripter, id string) tea.Cmd {
+	return func() tea.Msg {
+		transcript, err := loader.GetSessionTranscript(ctx, id)
+		return SessionTranscriptMsg{SessionID: id, Transcript: transcript, Err: err}
+	}
 }

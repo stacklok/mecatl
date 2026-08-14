@@ -80,7 +80,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.agents, action: "agents overlay (subagents / parallel / teams · " + hk.nextTab + " to switch)"},
 		{key: hk.effort, action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
 		{key: "/schedule", action: "browse & manage scheduled tasks", available: caps.Scheduling, gated: true},
-		{key: "/sessions", action: "open a stored session (read-only transcript)"},
+		{key: "/sessions", action: "continue chats or inspect scheduled and child runs"},
 		{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
 		{key: hk.expandTools, action: "expand/collapse details"},
 	})

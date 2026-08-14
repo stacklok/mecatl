@@ -367,12 +367,8 @@ func TestPaletteSkillsRowGatedOnWiredAndCap(t *testing.T) {
 }
 
 // TestPaletteSessionsRowGatedOnWiredCollaborators verifies the /sessions
-// built-in row surfaces in the palette when BOTH the session lister AND the
-// replayer are wired (m.deps.Sessions/m.deps.Replayer != nil, no caps bit — P1
-// regression: the palette's hand-rolled wiredCollaborators literal once omitted
-// Sessions, so /sessions never appeared in autocomplete even though the actual
-// dispatch path (runSelectedBuiltin/submitPrompt) built it correctly. All three
-// sites now build the struct via the single Model.wiredCollaborators() method).
+// built-in row surfaces in the palette when both the session lister and the
+// authoritative transcript loader are wired (no caps bit).
 func TestPaletteSessionsRowGatedOnWiredCollaborators(t *testing.T) {
 	hasSessions := func(m Model) bool {
 		for _, r := range m.builtinRows() {
@@ -385,14 +381,14 @@ func TestPaletteSessionsRowGatedOnWiredCollaborators(t *testing.T) {
 
 	m := newPaletteModel(t, nil)
 	m.deps.Sessions = &fakeSessionLister{}
-	m.deps.Replayer = &fakeSessionReplayer{}
+	m.deps.Transcript = &fakeSessionTranscriptLoader{}
 	if !hasSessions(m) {
-		t.Error("/sessions should appear when both the lister and the replayer are wired")
+		t.Error("/sessions should appear when both the lister and transcript loader are wired")
 	}
 
 	m2 := newPaletteModel(t, nil)
 	m2.deps.Sessions = nil
-	m2.deps.Replayer = &fakeSessionReplayer{}
+	m2.deps.Transcript = &fakeSessionTranscriptLoader{}
 	if hasSessions(m2) {
 		t.Error("/sessions should NOT appear without a session lister")
 	}

@@ -206,6 +206,7 @@ func run(argv []string) error {
 		Worktrees:           cl,
 		Sched:               cl,
 		Sessions:            cl,
+		Transcript:          cl,
 		Replayer:            cl,
 		LiveStream:          cl,
 		SelectionStore:      store,

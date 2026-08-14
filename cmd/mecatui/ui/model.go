@@ -126,15 +126,15 @@ type Deps struct {
 	// (issue #245 Phase 2); nil disables it (the overlay is honestly absent). It is
 	// the lister the picker calls to enumerate stored sessions. Unlike the
 	// caps-gated overlays it is NOT gated on a ServerCapabilities bit — the picker
-	// is available whenever a lister + replayer are wired (a no-FS/cloud server
-	// with a durable SessionStore still has stored sessions to list).
+	// is available whenever a lister + authoritative transcript loader are wired
+	// (a no-FS/cloud server with a durable SessionStore still has stored sessions).
 	Sessions client.SessionLister
-	// Replayer is the durable-event-log replay surface for the /sessions transcript
-	// viewer (issue #245 Phase 2/3, cloud-native Phase 3a read-back); nil disables
-	// the /sessions overlay (the picker needs BOTH a lister AND a replayer — gating
-	// on both keeps the overlay honest: a lister without a replayer could list
-	// sessions it cannot open). The ui holds the interface (not a *Client) so it is
-	// injectable with a fake for offline tests.
+	// Transcript is the authoritative snapshot-derived conversation surface used
+	// by /sessions for both continuation and read-only inspection. Event replay is
+	// optional activity and never substitutes for this seam.
+	Transcript client.SessionTranscripter
+	// Replayer is the optional durable-event-log activity surface used by live
+	// delivery catch-up. It never attests conversation completeness.
 	Replayer client.SessionReplayer
 	// LiveStream is the LIVE per-session event feed (ADR 0075 Scenario 5): the server
 	// pushes fire-result delivery notes for the active session as they occur. The ui

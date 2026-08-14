@@ -583,17 +583,15 @@ func TestRunScheduleNotIdle(t *testing.T) {
 	}
 }
 
-// newScheduleModelWithReplayer builds a schedule model that ALSO wires a
-// session lister + replayer (so the jump-to-fire shortcut's switchToSession
-// handoff has a replayer to call). Mirrors newScheduleModel + newSessionsModel.
-func newScheduleModelWithReplayer(t *testing.T, conv *fakeConv, fs *fakeScheduleLister, caps client.Capabilities, fr *fakeSessionReplayer) Model {
+// newScheduleModelWithTranscript builds a schedule model that also wires the
+// authoritative transcript loader used by the jump-to-fire inspection path.
+func newScheduleModelWithTranscript(t *testing.T, conv *fakeConv, fs *fakeScheduleLister, caps client.Capabilities, loader *fakeSessionTranscriptLoader) Model {
 	t.Helper()
 	deps := Deps{
 		Session:     conv,
 		Conv:        conv,
 		Sched:       fs,
 		Sessions:    &fakeSessionLister{},
-		Replayer:    fr,
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Workspace:   "/workspace",
 		Mode:        "default",
@@ -601,8 +599,8 @@ func newScheduleModelWithReplayer(t *testing.T, conv *fakeConv, fs *fakeSchedule
 		Ctx:         context.Background(),
 		NoAltScreen: true,
 	}
-	if fr == nil {
-		deps.Replayer = nil
+	if loader != nil {
+		deps.Transcript = loader
 	}
 	m := New(deps)
 	m = applyAll(
@@ -631,11 +629,9 @@ func openInspectWithFires(t *testing.T, m Model, fs *fakeScheduleLister) Model {
 	return m
 }
 
-// TestScheduleInspectJumpToFireTranscript asserts enter on a fire cursor row
-// jumps to the fire's session: since a fire session id is top-level, the
-// continue-by-default handoff opens the replay stream (loading the prior
-// conversation) with continueOnLoad set, and on stream close transitions to
-// phaseIdle (live/interactive). The schedule overlay is cleared (scheduleNone).
+// TestScheduleInspectJumpToFireTranscript asserts Enter on a fire cursor row
+// loads the authoritative transcript for read-only inspection without rebinding
+// the active chat. The schedule overlay is cleared.
 func TestScheduleInspectJumpToFireTranscript(t *testing.T) {
 	fs := &fakeScheduleLister{
 		schedules: []client.Schedule{sampleSchedule("nightly")},
@@ -645,45 +641,44 @@ func TestScheduleInspectJumpToFireTranscript(t *testing.T) {
 			{ID: "fire-2", ScheduleName: "nightly", SessionID: "sess-fire-2", Stop: "end_turn"},
 		},
 	}
-	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{
+		SessionID: "sess-fire-2", Complete: true,
+		Messages: []client.ConversationMessage{{Role: "assistant", Text: "scheduled output"}},
+	}}
 	conv := newScheduleConv(scheduleCaps())
-	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), fr)
+	m := newScheduleModelWithTranscript(t, conv, fs, scheduleCaps(), loader)
+	activeSessionID := m.sessionID
 	m = openInspectWithFires(t, m, fs)
 
-	// Move cursor down to fire-2, then enter → jump.
+	// Move cursor down to fire-2, then enter → inspect.
 	mm, _, _ := m.onScheduleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mm.(Model)
 	if m.schedule.fireCursor != 1 {
 		t.Fatalf("fireCursor = %d, want 1", m.schedule.fireCursor)
 	}
-	mm, _, _ = m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ := m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	// A fire session id is top-level → continue-by-default → opens the replay
-	// stream (loading) with continueOnLoad set.
 	if m.phase != phaseReplay {
-		t.Fatalf("phase = %v, want phaseReplay (loading history)", m.phase)
+		t.Fatalf("phase = %v, want phaseReplay", m.phase)
 	}
-	if !m.sessions.continueOnLoad {
-		t.Error("continueOnLoad should be true (top-level fire session)")
-	}
-	if m.sessionID != "sess-fire-2" {
-		t.Fatalf("sessionID = %q, want sess-fire-2", m.sessionID)
+	if m.sessionID != activeSessionID {
+		t.Fatalf("active sessionID = %q, want preserved %q", m.sessionID, activeSessionID)
 	}
 	if m.schedule.view != scheduleNone {
-		t.Fatalf("schedule view = %v, want scheduleNone (cleared on jump)", m.schedule.view)
+		t.Fatalf("schedule view = %v, want scheduleNone", m.schedule.view)
 	}
-	if fr.calls != 1 || fr.lastID != "sess-fire-2" {
-		t.Fatalf("replayer calls=%d lastID=%q, want 1/sess-fire-2", fr.calls, fr.lastID)
+	if cmd == nil {
+		t.Fatal("jump did not start transcript load")
 	}
-
-	// Stream closes → carry transcript → phaseIdle (continue).
-	mm, _ = m.updateReplayMsg(replayMsg{gen: m.sessions.replayGen, msg: client.StreamClosedMsg{}})
-	m = mm.(Model)
-	if m.phase != phaseIdle {
-		t.Fatalf("after StreamClosed: phase = %v, want phaseIdle (continue-by-default)", m.phase)
+	m = applyAll(m, cmd())
+	if len(loader.calls) != 1 || loader.calls[0] != "sess-fire-2" {
+		t.Fatalf("transcript calls=%q, want [sess-fire-2]", loader.calls)
 	}
-	if m.sessionID != "sess-fire-2" {
-		t.Fatalf("sessionID = %q, want sess-fire-2 (kept)", m.sessionID)
+	if m.phase != phaseReplay || m.sessions.loading || m.sessions.loadErr != nil {
+		t.Fatalf("loaded inspection state: phase=%v loading=%v err=%v", m.phase, m.sessions.loading, m.sessions.loadErr)
+	}
+	if m.sessionID != activeSessionID {
+		t.Fatalf("loaded inspection rebound sessionID = %q, want %q", m.sessionID, activeSessionID)
 	}
 }
 
@@ -698,9 +693,9 @@ func TestScheduleInspectJumpToFireNoSessionID(t *testing.T) {
 			{ID: "fire-1", ScheduleName: "nightly", SessionID: "", Stop: "end_turn"},
 		},
 	}
-	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	loader := &fakeSessionTranscriptLoader{}
 	conv := newScheduleConv(scheduleCaps())
-	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), fr)
+	m := newScheduleModelWithTranscript(t, conv, fs, scheduleCaps(), loader)
 	m = openInspectWithFires(t, m, fs)
 
 	mm, _, _ := m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -711,8 +706,8 @@ func TestScheduleInspectJumpToFireNoSessionID(t *testing.T) {
 	if m.schedule.view != scheduleInspect {
 		t.Fatalf("view = %v, want scheduleInspect (stayed)", m.schedule.view)
 	}
-	if fr.calls != 0 {
-		t.Errorf("replayer should NOT be called, got %d calls", fr.calls)
+	if len(loader.calls) != 0 {
+		t.Errorf("transcript loader should NOT be called, got %d calls", len(loader.calls))
 	}
 	got := stripANSIstr(m.statusMsg)
 	if !strings.Contains(got, "no session id") {
@@ -720,10 +715,10 @@ func TestScheduleInspectJumpToFireNoSessionID(t *testing.T) {
 	}
 }
 
-// TestScheduleInspectJumpToFireNoReplayer asserts that with no Replayer wired,
-// enter/t is a no-op (no jump, no statusMsg) and the footer hint does NOT
-// advertise the transcript action.
-func TestScheduleInspectJumpToFireNoReplayer(t *testing.T) {
+// TestScheduleInspectJumpToFireNoTranscriptLoader asserts that without the
+// authoritative transcript loader, Enter/t is a no-op and the footer does not
+// advertise transcript inspection.
+func TestScheduleInspectJumpToFireNoTranscriptLoader(t *testing.T) {
 	fs := &fakeScheduleLister{
 		schedules: []client.Schedule{sampleSchedule("nightly")},
 		sched:     sampleSchedule("nightly"),
@@ -732,13 +727,14 @@ func TestScheduleInspectJumpToFireNoReplayer(t *testing.T) {
 		},
 	}
 	conv := newScheduleConv(scheduleCaps())
-	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), nil) // no replayer
+	m := newScheduleModelWithTranscript(t, conv, fs, scheduleCaps(), nil) // no transcript loader
 	m = openInspectWithFires(t, m, fs)
+	beforePhase := m.phase
 
 	mm, _, _ := m.onScheduleInspectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if m.phase != phaseIdle {
-		t.Fatalf("phase = %v, want phaseIdle (no-op)", m.phase)
+	if m.phase != beforePhase {
+		t.Fatalf("phase = %v, want preserved %v", m.phase, beforePhase)
 	}
 	if m.schedule.view != scheduleInspect {
 		t.Fatalf("view = %v, want scheduleInspect (stayed)", m.schedule.view)
@@ -751,7 +747,7 @@ func TestScheduleInspectJumpToFireNoReplayer(t *testing.T) {
 	}
 	out := stripANSIstr(m.View().Content)
 	if strings.Contains(out, "open transcript") {
-		t.Errorf("footer hint should NOT advertise the transcript action without a replayer:\n%s", out)
+		t.Errorf("footer hint should NOT advertise the transcript action without a transcript loader:\n%s", out)
 	}
 	if !strings.Contains(out, "esc: back") {
 		t.Errorf("footer hint should still show 'esc: back':\n%s", out)
@@ -771,9 +767,9 @@ func TestScheduleInspectFireCursorNavigation(t *testing.T) {
 			{ID: "fire-3", ScheduleName: "nightly", SessionID: "sess-3", Stop: "end_turn"},
 		},
 	}
-	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream()}
+	loader := &fakeSessionTranscriptLoader{}
 	conv := newScheduleConv(scheduleCaps())
-	m := newScheduleModelWithReplayer(t, conv, fs, scheduleCaps(), fr)
+	m := newScheduleModelWithTranscript(t, conv, fs, scheduleCaps(), loader)
 	m = openInspectWithFires(t, m, fs)
 	if m.schedule.fireCursor != 0 {
 		t.Fatalf("initial fireCursor = %d, want 0", m.schedule.fireCursor)

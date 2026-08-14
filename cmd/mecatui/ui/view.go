@@ -118,7 +118,7 @@ func (m Model) renderBody() string {
 	case m.worktrees.view != worktreesNone:
 		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.schedule.view != scheduleNone:
-		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Replayer != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
+		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Transcript != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.sessions.view != sessionsNone:
 		return renderSessionsOverlay(m.deps.Theme, m.sessions, m.caps, m.sessionID, m.rend.vpView(m.vp), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:

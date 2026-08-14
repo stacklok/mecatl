@@ -39,7 +39,7 @@ type wiredCollaborators struct {
 	Models      bool // mirrors client.Capabilities.ModelSelection
 	Worktrees   bool
 	Scheduling  bool
-	Sessions    bool // /sessions picker — gated on the lister + replayer being wired (NO caps bit)
+	Sessions    bool // /sessions picker — gated on inventory + authoritative transcript
 	Learning    bool // /learning operator-settings enum
 }
 
@@ -55,7 +55,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Reflections: m.deps.Reflections != nil,
 		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
-		Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
+		Sessions: m.deps.Sessions != nil && m.deps.Transcript != nil,
 		Learning: m.deps.Learning != nil,
 	}
 }
@@ -172,15 +172,12 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runSchedule,
 		})
 	}
-	// /sessions opens the stored-session picker (issue #245 Phase 3a). Gated on the
-	// lister + replayer being wired (w.Sessions) — NO caps bit: a no-FS/cloud server
-	// with a durable SessionStore still has stored sessions to list, so the picker is
-	// available whenever the lister + replayer are wired. The Enter handoff opens a
-	// READ-ONLY transcript replay; continue-interactive is out of scope.
+	// /sessions is available when inventory and authoritative transcript clients
+	// are wired. Chats can be continued; scheduled and child runs are inspected.
 	if w.Sessions {
 		out = append(out, builtin{
 			name: "sessions",
-			desc: "open a stored session (read-only transcript)",
+			desc: "continue chats or inspect scheduled and child runs",
 			run:  Model.runSessions,
 		})
 	}
@@ -319,9 +316,8 @@ func (m Model) runSchedule() (tea.Model, tea.Cmd) {
 	return m.openSchedule()
 }
 
-// runSessions opens the /sessions overlay (issue #245 Phase 3a). Only registered
-// when the session lister + replayer are wired, so openSessions's own nil/idle
-// guards are belt-and-braces here.
+// runSessions opens the capability-driven session inventory. It is registered
+// only when the inventory and authoritative transcript clients are wired.
 func (m Model) runSessions() (tea.Model, tea.Cmd) {
 	return m.openSessions()
 }

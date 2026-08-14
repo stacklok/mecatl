@@ -789,7 +789,7 @@ func TestSessionsOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	t.Run("panel", func(t *testing.T) {
-		st := sessionsState{view: sessionsPanel, filtered: []client.SessionListItem{{ID: "s1", State: "idle"}}}
+		st := sessionsState{view: sessionsPanel, filtered: []client.SessionListItem{{ID: "s1", State: "idle", Capabilities: client.SessionInventoryCapabilities{PublicChat: true}}}}
 		got := stripANSIstr(renderSessionsOverlay(th, st, client.Capabilities{}, "sess", "", hk, 100, 30))
 		if !strings.Contains(got, "ctrl+f17: continue  ctrl+f18: switch  ctrl+f16: close") {
 			t.Errorf("sessions panel hint should carry live continue/switch/close: %q", got)
@@ -801,7 +801,7 @@ func TestSessionsOverlayHintsReflectKeyOverride(t *testing.T) {
 	t.Run("transcript", func(t *testing.T) {
 		st := sessionsState{view: sessionsTranscript, replayClosed: true}
 		got := stripANSIstr(renderSessionsOverlay(th, st, client.Capabilities{}, "sess", "content", hk, 100, 30))
-		if !strings.Contains(got, "ctrl+f16: back") {
+		if !strings.Contains(got, "ctrl+f16: Back") {
 			t.Errorf("transcript hint should carry live close/back: %q", got)
 		}
 		if strings.Contains(got, "esc: back") {

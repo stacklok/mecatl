@@ -1,18 +1,12 @@
- mecatui  ·  session sess-aaa  ·  mock-model  ·  mode default
+ mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-session sess-aaa · read-only transcript
+Inspecting Nightly checks · read-only
  ▌ you
- │ read the greeting file
+ │ run checks
 
  ● mecatl
 
-   Reading the greeting file.
-
- ╭───────────────────────────────────────────────────────────────────────────────────────────────╮
- │ ✓ Read                                                                                        │
- │ path: "greeting.txt"                                                                          │
- │ hello from the mecatl demo workspace                                                          │
- ╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+   All checks passed.
 
 
 
@@ -30,7 +24,13 @@ session sess-aaa · read-only transcript
 
 
 
-                                                                                                    esc: back
+
+
+
+
+
+
+                                                                                                    esc: Back
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

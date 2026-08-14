@@ -3146,20 +3146,17 @@ func compactionArchiveNotice(msg client.CompactionArchiveMsg) string {
 	return "history compacted — " + plural(n, "turn") + " archived"
 }
 
-// onReplayKey routes keys while a read-only transcript replay is open
-// (phaseReplay — reached for CHILD sessions opened from the Children tab, and
-// transiently for TOP-LEVEL sessions while their history loads before the
-// phaseIdle handoff). Esc closes the transcript view
-// (closeSessionsTranscript): stop the replay, clear replay state, resetSession,
-// return to idle with NO live session — read-only inspection ends honestly.
-// The bare `c` key / continueSession have been REMOVED: top-level sessions
-// continue by default (loading history then transitioning to phaseIdle), and a
-// child session cannot be continued as a top-level live session (no parent
-// context), so there is no Continue action to offer. Any key other than esc is
-// swallowed.
+// onReplayKey routes keys while an authoritative transcript is loading or being
+// inspected. Escape returns to the inventory without changing the active chat;
+// retry reloads the same opaque session id after a failed request.
 func (m Model) onReplayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeSessionsTranscript()
+	}
+	if msg.String() == "r" && m.sessions.loadErr != nil && m.deps.Transcript != nil {
+		m.sessions.loading = true
+		m.sessions.loadErr = nil
+		return m, client.GetSessionTranscriptCmd(m.deps.Ctx, m.deps.Transcript, m.sessions.selected.ID)
 	}
 	return m, nil
 }

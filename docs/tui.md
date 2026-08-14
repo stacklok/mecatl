@@ -1078,12 +1078,43 @@ prompt preview, selector, mode, mutating, singleton, misfire, timezone,
 max_fires) + the durable state (enabled, fire_count, next/last fire,
 last_fire_session) + the fire records (id, fired_at, stop, err); `esc` returns
 to the panel. In the inspect sub-view the fire records are cursor-navigable
-(`↑`/`↓`, clamped): **`enter`** or **`t`** on a fire jumps straight to that
-fire's read-only transcript (issue #235) — a fire is just a top-level
-`sched--` session, so this reuses the `/sessions` replay handoff. The
-jump-to-fire footer hint (`↑↓: select fire  enter/t: open transcript  esc:
-back`) appears only when a session replayer is wired; a fire whose
-`SessionID` is empty reports "fire has no session id" and stays in inspect.
+(`↑`/`↓`, clamped): **`enter`** or **`t`** on a fire opens that fire's
+read-only authoritative transcript. The jump-to-fire footer hint (`↑↓: select
+fire  enter/t: open transcript  esc: back`) appears only when the transcript
+client is wired; a fire whose `SessionID` is empty reports "fire has no session
+id" and stays in inspect.
+
+**`/sessions` (session continuity).** The session inventory has three tabs:
+**Chats**, **Scheduled runs**, and **Child runs**. `tab` switches tabs; the
+search box filters the current tab. Search matches the title, full session ID,
+its terminal-safe digest handle, model, workspace, and the available
+relationship metadata (parent/call, schedule/origin, team/member). This keeps
+scheduled fires and delegation children discoverable without making their IDs
+part of the UI contract.
+
+Each row shows a state badge, relative modification time, turn count, title,
+digest handle, and model. The active chat is explicitly marked **`[current]`**;
+a team member row also identifies its member. The digest is a lowercase SHA-256
+prefix (`#…`): it starts at eight hex characters and expands only if another
+visible row collides, while the full opaque ID remains what the client sends
+back to the server.
+
+Pressing `enter` follows server-authored capabilities. A public Chat is
+**Continue**: mecatui first loads the authoritative snapshot-derived
+conversation, then rebinds the prompt to that session so the next text adds a
+turn. Scheduled and Child runs are normally **Inspect**: their authoritative
+snapshot transcript is displayed read-only, and the active chat is left
+unchanged. A row with neither capability explains why it is unavailable (for
+example, awaiting approval, active elsewhere, unavailable transcript, or
+unavailable environment).
+
+The snapshot transcript is the conversation source of truth. Durable event
+replay may support live delivery catch-up, but is not used to establish a
+conversation's completeness or to reconstruct it for Continue/Inspect. An
+inspection is non-destructive: `esc` is **Back** to the inventory, never a
+session reset or rebind. If the authoritative load fails or is incomplete,
+continuation stays disabled and the transcript view offers **`r` Retry** and
+**Back**.
 
 **Create form (Phase 3b).** The **`c`** action key opens an in-overlay Create
 form (peer of the inspect/confirm sub-views): fields for name, prompt, trigger
@@ -1099,26 +1130,6 @@ arrival). `esc` returns to the panel without creating. The form is a
 common-path authoring surface — the REST/gRPC `CreateSchedule` API (and the
 in-chat `Schedule` tool) covers the full flag surface (provider/model, mode,
 max-fires, misfire, timezone, singleton, limits); the form keeps it simple.
-
-**Row format.** Each `/sessions` picker row renders as
-`<state-badge> <relative-time> <turns>t <label> (<model-id>)`, where `<label>`
-is the session **title** (seeded once from the first genuine user prompt, clamped
-to 120 runes) and falls back to the session id when no title is set. The
-confirm card keeps the session id (precise identification) and shows the title
-when present. A session with no genuine prompt yet (e.g. a freshly-created,
-still-empty session, which is also excluded from the list) shows the id.
-
-**State gate (open-a-session).** The `/sessions` picker and the schedule
-jump-to-fire both open a session via the replay RPC (`StreamSessionEvents`),
-which is a **pure durable-log read with no live-tail** — it streams what has
-been appended so far and ends at the log's current tail. Opening a session
-that is currently **`running`** or **`awaiting`** (parked on a permission ask)
-would therefore show a *partial* transcript with no terminal result, so the
-UI **blocks** it with a "session <id> is currently <state> — cannot open
-read-only while active" notice. This is a best-effort client-side gate: a
-session that transitions to running between the `ListSessions` call and the
-open will still replay successfully (a partial transcript ending at the log's
-current tail).
 
 **v1 limits.** The overlay lists/inspects/manages schedules and creates them
 in-overlay (the `c` Create form + NL→cron compiler), but the gRPC/REST API
