@@ -552,6 +552,27 @@ linters:
           deny:
             - pkg: os
               desc: 'scheduleconformance drives the abstract ScheduleStore contract (a test-helper, it may use cronparse to compute expected next fires); it must not touch the real OS'
+        # MCP OAuth persistence is adapter-local and delegates protocol behavior to
+        # the official SDK. Keep it isolated from composition, logging, and host I/O.
+        internal-adapter-mcp-oauth:
+          list-mode: strict
+          files:
+            - '**/internal/adapter/mcp/oauth*.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/modelcontextprotocol/go-sdk/auth
+            - github.com/modelcontextprotocol/go-sdk/oauthex
+            - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/internal/adapter/credentialstore
+            - golang.org/x/oauth2
+          deny:
+            - pkg: os
+              desc: 'the MCP OAuth persistence core receives explicit clients and stores and must not touch the host OS'
+            - pkg: os/exec
+              desc: 'the MCP OAuth persistence core never launches browsers or credential helpers'
+            - pkg: log/slog
+              desc: 'OAuth failures cross only the safe typed error projection'
         # Host-internal opaque credential CAS boundary. Production is deliberately
         # stdlib-only except for the already-direct flock dependency; it must never
         # acquire credentials or configuration.

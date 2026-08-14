@@ -6957,6 +6957,43 @@ to extract a shared `ChildActivity` value object — not before** (recorded in t
   footer (a `⑂` segment). Default-tab precedence (plan Q5): `teamLive > parallelLive > haveSubagents >
   haveParallel > haveTeam > Subagents`. Rendered from relayed Events ONLY (no internal/proto import).
 
+## MCP OAuth controller (ADR 0110)
+
+`internal/adapter/mcp/oauth.go` (`OAuthController`) is an optional adapter-local
+`auth.OAuthHandler`. `ServerConfig.OAuth` constructs one controller before the first dial;
+`internal/adapter/mcp/mcp.go` (`Server.dial`) attaches that same official SDK handler to
+every initial/reconnect transport. The controller owns no browser or callback listener.
+A nil presenter closes the challenge response and returns typed login-required.
+
+The credential key frames profile, principal, canonical resource, exact issuer,
+registration kind, and client ID before SHA-256. The strict v1 envelope stores token and
+refresh configuration but never a client secret. New grants, refresh rotation,
+`invalid_grant`, and `ResetCredential` use bounded CAS/reload/delete transitions in
+`internal/adapter/mcp/oauth_tokensource.go`; a conflict adopts the validated winner rather
+than overwriting it. One controller-local authorization flight coalesces concurrent and
+late-arriving equivalent 401s: its completed safe outcome remains keyed by SHA-256 digests
+of the request credential and response challenge/status, never raw credentials. A changed
+credential/challenge or `ResetCredential` replaces that outcome. Waiter contexts remain
+independently cancellable; the first live caller after a cancelled leader replaces it and
+peers join that replacement.
+
+OAuth endpoints use `internal/adapter/mcp/oauth_http.go`: a separate no-proxy client with
+an exact origin allowlist, all-answer IP screening through `session.ValidateResolvedIP`,
+DNS-pinned dialing, exact private-origin opt-in, TLS/time/header bounds, and same-origin
+GET/HEAD-only redirects that reject POST or credential-bearing redirects. Resource and
+additional origins may serve credential-free discovery GETs, but only the canonical
+configured issuer origin may receive an OAuth protocol POST, authorization header, code,
+refresh token, client assertion, or token exchange. The presenter applies the same origin
+gate before handing a URL to host code. Preregistered confidential token requests require
+Basic and form `client_secret` is rejected before dialing. The MCP resource client uses a
+separate exact-resource marker for its audience-bound bearer, remains no-proxy/DNS-pinned,
+and rejects cleartext except for an exact private-origin opt-in; an allowlist entry alone
+never grants credential egress. Static `Authorization` and OAuth are mutually exclusive.
+Preregistered confidential and CIMD clients are the only supported registrations; DCR and a
+broad production claim remain blocked on ADR 0109's official-SDK hooks. Construction and
+credential restore inherit the caller's `Connect` cancellation; `Close` cancels and joins
+all controller operations before releasing owned transport state.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it

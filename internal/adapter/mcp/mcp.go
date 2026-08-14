@@ -73,6 +73,9 @@ type ServerConfig struct {
 	// Headers are extra HTTP headers sent on every request to the server, such
 	// as "Authorization: Bearer ...". Optional.
 	Headers map[string]string
+	// OAuth enables the adapter-local authorization-code controller. It is
+	// mutually exclusive with a static Authorization header.
+	OAuth *OAuthOptions
 	// Timeout bounds the connect handshake and tool listing. If zero,
 	// defaultConnectTimeout is used. It does not bound later tool calls, which
 	// are governed by the per-call context.
@@ -172,10 +175,7 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 // per-server headers may ride on a request — a redirected cross-origin hop yields a
 // different origin and so receives none of the injected headers.
 func requestOrigin(u *url.URL) string {
-	if u == nil {
-		return ""
-	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	return urlOrigin(u)
 }
 
 // Server is a live connection to one remote MCP server. It owns the SDK client
@@ -209,6 +209,7 @@ type Server struct {
 	cfg        ServerConfig
 	diag       port.Diagnostics
 	httpClient *http.Client
+	oauth      *OAuthController
 	mu         sync.Mutex
 	dropped    bool // set by a dial failure (retry flag) OR Close (terminal); cleared on a successful dial ONLY when not closed
 	closed     bool // set ONLY by Close; terminal — a post-close call never dials. Distinct from dropped (the retry flag).
@@ -237,6 +238,52 @@ type Server struct {
 	promptsGen     uint64
 }
 
+func prepareOAuthServerConfig(ctx context.Context, cfg ServerConfig) (ServerConfig, *OAuthController, error) {
+	if cfg.OAuth == nil {
+		return cfg, nil, nil
+	}
+	for name := range cfg.Headers {
+		if strings.EqualFold(name, "Authorization") {
+			return cfg, nil, errors.New("mcp: static Authorization and OAuth are mutually exclusive")
+		}
+	}
+	canonical, err := canonicalOAuthResource(cfg.URL)
+	if err != nil {
+		return cfg, nil, err
+	}
+	cfg.URL = canonical
+	controller, err := NewOAuthController(ctx, cfg.URL, *cfg.OAuth)
+	return cfg, controller, err
+}
+
+func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
+	client := &http.Client{}
+	if oauth != nil {
+		resourceURL, _ := url.Parse(cfg.URL)
+		client.CheckRedirect = mcpOAuthRedirectPolicy(requestOrigin(resourceURL))
+		// Resource requests carrying restored or refreshed bearer tokens must use
+		// the same no-proxy, DNS-pinned destination policy as OAuth endpoints.
+		client.Transport = oauthResourceRoundTripper{base: oauth.transport}
+	}
+	if len(cfg.Headers) == 0 {
+		return client
+	}
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	headers := make(map[string]string, len(cfg.Headers))
+	for key, value := range cfg.Headers {
+		headers[key] = value
+	}
+	origin := ""
+	if parsed, err := url.Parse(cfg.URL); err == nil {
+		origin = requestOrigin(parsed)
+	}
+	client.Transport = &headerRoundTripper{base: base, headers: headers, origin: origin}
+	return client
+}
+
 // Connect establishes a Streamable HTTP session to the configured MCP server,
 // performs the initialize handshake, lists the server's tools, and returns a
 // Server whose Tools() are ready to register into a catalog.
@@ -258,10 +305,8 @@ func Connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("mcp: server %q requires a URL", cfg.Name)
 	}
-
-	// connectCtx bounds the one-time tool/resource/prompt listing at connect.
-	// dial applies its own establishment timeout (s.cfg.Timeout) on the passed
-	// ctx, so the handshake and the listings share this one bound.
+	// connectCtx bounds controller restoration, the handshake, and the one-time
+	// tool/resource/prompt listing.
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = defaultConnectTimeout
@@ -269,26 +314,14 @@ func Connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	connectCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	httpClient := &http.Client{}
-	if len(cfg.Headers) > 0 {
-		// Copy headers so later mutation of cfg can't affect the live client.
-		headers := make(map[string]string, len(cfg.Headers))
-		for k, v := range cfg.Headers {
-			headers[k] = v
-		}
-		// Scope the headers to the configured endpoint's origin so a cross-origin
-		// redirect never re-sends the auth header to an unvetted host. A malformed URL
-		// yields an empty origin, so the headers simply never match (fail-closed).
-		origin := ""
-		if u, perr := url.Parse(cfg.URL); perr == nil {
-			origin = requestOrigin(u)
-		}
-		httpClient.Transport = &headerRoundTripper{
-			base:    http.DefaultTransport,
-			headers: headers,
-			origin:  origin,
-		}
+	var oauthController *OAuthController
+	var err error
+	cfg, oauthController, err = prepareOAuthServerConfig(connectCtx, cfg)
+	if err != nil {
+		return nil, err
 	}
+
+	httpClient := newMCPHTTPClient(cfg, oauthController)
 
 	// srv is constructed early so dial can populate its session field; the config,
 	// diag, and httpClient are retained here because reconnect (reconnect.go) needs
@@ -298,12 +331,12 @@ func Connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 		cfg:        cfg,
 		diag:       diag,
 		httpClient: httpClient,
+		oauth:      oauthController,
 	}
 
-	// dial applies cfg.Timeout itself; pass the raw ctx so the handshake bound
-	// is owned in one place (the connect-time listings below share connectCtx).
-	sess, err := srv.dial(ctx)
+	sess, err := srv.dial(connectCtx)
 	if err != nil {
+		_ = oauthController.Close()
 		return nil, fmt.Errorf("mcp: connect to server %q: %w", cfg.Name, err)
 	}
 	srv.session = sess
@@ -311,6 +344,7 @@ func Connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Ser
 	tools, err := listTools(connectCtx, cfg.Name, srv, sess)
 	if err != nil {
 		_ = sess.Close()
+		_ = oauthController.Close()
 		return nil, fmt.Errorf("mcp: list tools on server %q: %w", cfg.Name, err)
 	}
 	srv.tools = tools
@@ -367,6 +401,9 @@ func (s *Server) dial(ctx context.Context) (*mcpsdk.ClientSession, error) {
 		// opens it after initialize and drains it on session.Close(), so a
 		// persistent goroutine per connected server is owned by the session and
 		// unwinds on Close (inventoried in ADR 0027 List 1).
+	}
+	if s.oauth != nil {
+		transport.OAuthHandler = s.oauth
 	}
 
 	// The three list-changed handlers are wired here — dial is the SINGLE
@@ -684,11 +721,13 @@ func (s *Server) Close() error {
 	s.closed = true
 	s.dropped = true
 	sess := s.session
+	oauthController := s.oauth
 	s.mu.Unlock()
-	if sess == nil {
-		return nil
+	var sessionErr error
+	if sess != nil {
+		sessionErr = sess.Close()
 	}
-	return sess.Close()
+	return errors.Join(sessionErr, oauthController.Close())
 }
 
 // Manager holds a set of connected MCP servers and presents their tools as a

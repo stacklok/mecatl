@@ -36,14 +36,25 @@ bounded reconnect attempt per call, serialized under a mutex — see
 snapshots (lazily re-listed on the next read); live catalog refresh is
 deferred to a later phase — see [ADR 0057](../adr/0057-mcp-server-notifications.md).
 
-The official MCP Go SDK's authorization-code client is covered by a hermetic
-public-API contract, but OAuth is **not wired into mecatl**. Qualification requires RFC
-9728 protected-resource metadata with exactly one authorization server, PKCE S256, RFC
-8707 resource binding, caller-owned scope policy, and a bounded origin-restricted HTTP
-client; preregistration or a client-ID metadata document is preferred over non-durable
-DCR. Browser/callback UX, credential persistence, and production composition remain
-future work. See [ADR 0109](../adr/0109-mcp-oauth-sdk-profile.md) for the constrained
-profile and pinned-SDK findings.
+The adapter optionally owns an authorization-code `OAuthController` when an embedding
+supplies `ServerConfig.OAuth`. One official SDK handler, durable credential source,
+authorization singleflight, and dedicated hardened HTTP client live for the whole
+`Server` lifetime and survive MCP session reconnects. Preregistered confidential and CIMD
+clients are supported; DCR is rejected by omission because the SDK exposes no durable
+registration hook. A nil presenter fails protected-server login immediately and no
+browser implementation, callback listener, CLI/config wiring, or production composition
+exists yet. OAuth traffic is exact-origin allowlisted, DNS-resolved and pinned, blocks
+private/link-local/metadata destinations unless that exact origin is opted in, ignores
+proxies, and follows only bounded same-origin safe redirects. Discovery GETs may reach the
+resource/additional origins, but the presenter and protocol transport permit codes, tokens,
+client authentication, and token exchanges only at the canonical configured issuer origin;
+preregistered confidential clients require Basic and `client_secret_post` is denied before
+network send. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
+cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
+Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static
+headers retain their existing origin-scoped behavior. See [ADR 0109](../adr/0109-mcp-oauth-sdk-profile.md)
+for the constrained dependency profile and [ADR 0110](../adr/0110-mcp-oauth-controller.md)
+for controller ownership and remaining blockers.
 
 **Progressive tool disclosure** (pattern 9) — a tool may optionally implement
 `tool.Disclosable`; the built-in `tool.Search` tool (catalog name `ToolSearch`,

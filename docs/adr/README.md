@@ -33,6 +33,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0104 — Operator-owned exact context-window overrides](./0104-context-window-overrides.md) *(the file's own heading says "ADR 0103" — a pre-existing origin/main title/filename mismatch, not introduced here; NUMBER COLLIDES with the other three entries)*
 - [0104 — Attribute schedule origins through the run context](./0104-schedule-origin-run-context.md) *(this branch's own ADR, superseding ADR 0075's origin-binding mechanism; NUMBER COLLIDES with the other three entries — renumber on merge)*
 - [0108 — Internal encrypted credential-store substrate](./0108-credential-store.md)
+- [0109 — Qualify the official MCP SDK authorization-code profile](./0109-mcp-oauth-sdk-profile.md)
+- [0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
