@@ -16,8 +16,8 @@
 // Policy (a precise DENYLIST, not an allowlist): the child environment is
 // os.Environ() MINUS
 //
-//   - the EXACT credential variable names the harness itself reads
-//     (DenyExact — the provider keys, the websearch keys, the auth tokens); and
+//   - every MECATL_* variable, including explicit harness credentials, so agent-facing
+//     shells cannot inherit harness-owned configuration or credentials (the MECATL_ prefix); and
 //   - any variable whose NAME matches a conservative secret-SHAPED pattern
 //     (DenyPattern — *_API_KEY / *_TOKEN / *_SECRET / *_PASSWORD / *_PASSWD /
 //     AWS_* / AZURE_* / GOOGLE_APPLICATION_CREDENTIALS) as defence-in-depth.
@@ -34,7 +34,9 @@ package envscrub
 import "strings"
 
 // DenyExact is the canonical set of EXACT environment-variable names the harness
-// reads as credentials. These are the keys WE inject, so there is no guessing.
+// reads as credentials or harness-owned configuration. These are the keys WE inject, so
+// there is no guessing. Every MECATL_* name is scrubbed by IsSecretName, including future
+// environment-backed credentials that are not individually listed here.
 // The provider keys are the same names internal/cliconfig.ReadProviderKeys reads;
 // the websearch/auth/driver-auth tokens are read by cmd/mecated. Keeping the list
 // here (a leaf with no cmd dependency) lets the composition root scrub them out of
@@ -82,9 +84,13 @@ var denyPatternPrefixes = []string{
 }
 
 // IsSecretName reports whether an environment-variable name should be scrubbed
-// from the agent shell: it is in DenyExact, matches a secret-shaped suffix or
-// prefix, or is one of the few fixed cloud-credential names that fit no pattern.
+// from the agent shell: it has the MECATL_ prefix, is in DenyExact, matches a
+// secret-shaped suffix or prefix, or is one of the few fixed cloud-credential names that
+// fit no pattern.
 func IsSecretName(name string) bool {
+	if strings.HasPrefix(name, "MECATL_") {
+		return true
+	}
 	if _, ok := DenyExact[name]; ok {
 		return true
 	}

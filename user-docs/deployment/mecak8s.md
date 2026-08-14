@@ -44,6 +44,23 @@ Kill any pod. The survivor acquires the lease and resumes interrupted sessions f
 
 The `--redis-url` flag exists **only on `cmd/mecak8s`**. `mecated` does not expose it. If you want Redis-backed state with `mecated`, you need `mecak8s`.
 
+:::note[MCP OAuth credentials from Kubernetes Secrets]
+
+The host-internal MCP OAuth adapter can now be embedded with an explicit read-only
+credential Reader backed by one base64 environment value. **`mecak8s` does not wire this
+source yet**: there is no flag, settings key, browser flow, or Kubernetes Secret writer in
+this release. The selected name must use the `MECATL_` prefix and the strict uppercase
+`[A-Z_][A-Z0-9_]{0,127}` grammar — for example,
+`MECATL_MCP_OAUTH_CREDENTIAL` — so the credential is removed from every agent-facing
+shell environment. A Secret projected as an environment variable is immutable for the running
+pod. An embedding that opts into this Reader can warm-restore a valid credential, but
+persistent rotation requires an external controller to update the Secret and restart the
+pod, or a future Secret backend using Kubernetes `resourceVersion` compare-and-swap.
+In-memory refresh is explicit and process-local; the default fails before refresh network
+when no writer exists.
+
+:::
+
 ---
 
 ## State topology

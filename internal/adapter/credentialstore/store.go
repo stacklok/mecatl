@@ -31,6 +31,8 @@ var (
 	ErrInvalidKey = errors.New("credentialstore: invalid key")
 	// ErrInvalidNamespace reports a namespace outside the documented grammar.
 	ErrInvalidNamespace = errors.New("credentialstore: invalid namespace")
+	// ErrInvalidEnvironment reports an invalid environment variable name or lookup.
+	ErrInvalidEnvironment = errors.New("credentialstore: invalid environment configuration")
 	// ErrCorrupt reports persisted data that cannot be safely authenticated or decoded.
 	ErrCorrupt = errors.New("credentialstore: corrupt store")
 	// ErrUnavailable reports a backend resource or operation that is unavailable.

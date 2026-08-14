@@ -59,14 +59,23 @@ capabilities, and lifecycle operations; `ConditionalWriter` provides create-only
 version-matched replace/delete; mutable `Store` embeds both. Mutability is represented
 by the implemented interface, not a capability bit that could disagree with it.
 
-The optional adapter-local MCP OAuth controller borrows an explicitly injected mutable
-Store for its credential envelope; it never constructs or closes a backend. The opt-in
-`mcp/oauthlogin` host runtime and `internal/app.LoginMCP` one-shot operation can populate
-that store by driving a real protected MCP initialize and tool listing through a random
-IPv4-loopback callback. They are not installed by default: no command, profile resolver,
-key-acquisition policy, daemon, or ACP surface wires them yet. Future environment or
-Kubernetes Secret-backed sources may satisfy Reader only; durable refresh rotation requires
-a mutable CAS Store. No environment source is implemented here.
+The optional adapter-local MCP OAuth controller borrows either one mutable Store or one
+read-only Reader. Those options are mutually exclusive, and no independently supplied
+writer is accepted, so reads and writes cannot cross CAS domains. It never constructs or
+closes a backend. The opt-in `mcp/oauthlogin` host runtime and `internal/app.LoginMCP`
+one-shot operation can populate a mutable store by driving a real protected MCP initialize
+and tool listing through a random IPv4-loopback callback. They are not installed by default:
+no command, profile resolver, key-acquisition policy, daemon, or ACP surface wires them yet.
+
+The explicit environment Reader maps one configured opaque key to one configured lookup
+function and strict base64 environment value. It does no global lookup, listing, or
+mutation. A read-only source supports warm restore; new authorization and reset require a
+mutable Store. Expired-token refresh fails before network by default. An explicit
+process-local mode may retain a refresh only in memory, without changing the source or
+claiming restart durability. Kubernetes Secret-backed environment variables are immutable
+for a running pod. Durable rotation therefore requires an external controller plus pod
+restart, or a future Secret backend using `resourceVersion` CAS; no Kubernetes API writer
+exists here.
 
 Memory and local encrypted storage are Store adapters. Encrypted-file consumers must
 explicitly inject an absolute root and an exact 32-byte key acquired elsewhere. Both

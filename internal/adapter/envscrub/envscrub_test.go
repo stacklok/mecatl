@@ -80,3 +80,30 @@ func TestScrubDropsSecretsKeepsToolchain(t *testing.T) {
 		}
 	}
 }
+
+func TestScrubDropsFutureMecatlNames(t *testing.T) {
+	const future = "MECATL_MCP_OAUTH_CREDENTIAL"
+	if _, listed := DenyExact[future]; listed {
+		t.Fatalf("test fixture %q must remain absent from DenyExact", future)
+	}
+	if !IsSecretName(future) {
+		t.Fatalf("IsSecretName(%q) = false, want true", future)
+	}
+
+	base := []string{
+		future + "=oauth-secret",
+		"PATH=/usr/bin:/bin",
+		"GOPATH=/home/agent/go",
+		"TERM=xterm-256color",
+	}
+	got := Scrub(base)
+
+	if slices.Contains(got, future+"=oauth-secret") {
+		t.Errorf("Scrub leaked future MECATL variable %q; got %v", future, got)
+	}
+	for _, keep := range []string{"PATH=/usr/bin:/bin", "GOPATH=/home/agent/go", "TERM=xterm-256color"} {
+		if !slices.Contains(got, keep) {
+			t.Errorf("Scrub dropped benign toolchain variable %q; got %v", keep, got)
+		}
+	}
+}

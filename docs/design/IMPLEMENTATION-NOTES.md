@@ -23,9 +23,15 @@ Prefer updating the relevant design doc + this file over re-growing CLAUDE.md.
 `engine/port` because the engine is not its consumer. `Reader` provides `Get`, backend
 capabilities, and `Close`; `ConditionalWriter` provides CAS `Put`/`Delete`; mutable
 `Store` embeds both. Mutability is represented by interface implementation, not a
-capability flag. Future environment or Kubernetes Secret-backed sources may implement
-Reader only, while any consumer that durably rotates refreshed credentials requires a
-mutable Store. Issue #519 implements no environment source.
+capability flag. `internal/adapter/credentialstore/environment.go` implements an explicit
+Reader for one namespace/key/environment-name/lookup tuple. Its name must start with
+`MECATL_` and otherwise follows the ASCII grammar `[A-Z_][A-Z0-9_]{0,127}`; its value is canonical padded base64 decoded under
+`MaxValueBytes`. Construction performs no lookup, `Get` serves only the exact configured
+opaque key with owned copies and a deterministic domain-separated version, and `Close` is
+idempotent. `Get` invokes the host lookup outside the lifecycle lock and rechecks closure
+before returning, so a blocking or reentrant lookup cannot delay `Close` and an in-flight
+read discards its result after closure. It has no list, mutation, logging, `os.LookupEnv`, or
+fallback path.
 
 The package does not import OAuth, MCP, provider, config, XDG, or composition packages.
 Logical stores are namespace-bound. Keys and values are arbitrary bytes with explicit
@@ -69,10 +75,13 @@ encrypted temporary file, which is ignored rather than swept.
 The posture is intentionally local: advisory flock/CAS is claimed only for cooperating
 processes on one supported local host/filesystem. Root and same-UID attackers, process
 memory, secure media erasure, valid-envelope rollback, lengths/access patterns, and
-network-filesystem semantics are not defended. No default consumer or key source ships
-in issue #519; OAuth integration, OS-keyring/HSM acquisition, remote/Kubernetes storage,
-and per-client routing remain separate work. See
-[ADR 0108](../adr/0108-credential-store.md).
+network-filesystem semantics are not defended. No default consumer or key source ships;
+OAuth integration remains explicit, and OS-keyring/HSM acquisition, remote/Kubernetes
+mutation, and per-client routing remain separate work. A Secret-backed environment is a
+read-only process snapshot: durable rotation needs an external controller and restart or
+a future Kubernetes Secret `resourceVersion` CAS backend. See
+[ADR 0108](../adr/0108-credential-store.md) and
+[ADR 0111](../adr/0111-read-only-credential-source.md).
 
 ---
 
@@ -6967,7 +6976,15 @@ A nil presenter closes the challenge response and returns typed login-required.
 
 The credential key frames profile, principal, canonical resource, exact issuer,
 registration kind, and client ID before SHA-256. The strict v1 envelope stores token and
-refresh configuration but never a client secret. New grants, refresh rotation,
+refresh configuration but never a client secret. Persistence accepts either one mutable
+Store, which supplies reads and conditional writes from the same CAS domain, or one
+read-only Reader; the options are mutually exclusive and no independent writer is
+accepted. Reader-only sources warm-restore valid credentials, while authorization and reset
+fail before side effects.
+An expired token fails before refresh network by default; explicit
+`AllowInMemoryRefresh` may retain a successful refresh only for the controller lifetime,
+never mutating the source or claiming restart durability. Reader-only `invalid_grant`
+clears memory and returns login-required. With a writer, new grants, refresh rotation,
 `invalid_grant`, and `ResetCredential` use bounded CAS/reload/delete transitions in
 `internal/adapter/mcp/oauth_tokensource.go`; a conflict adopts the validated winner rather
 than overwriting it. One controller-local authorization flight coalesces concurrent and

@@ -57,16 +57,24 @@ func (f OAuthPresenterFunc) PresentAuthorization(ctx context.Context, authorizat
 
 // OAuthOptions configures the persistence-capable SDK handler core.
 type OAuthOptions struct {
-	Subject             OAuthSubject
-	Issuer              string
-	Client              OAuthClientConfig
-	RedirectURL         string
-	Presenter           OAuthPresenter
-	CredentialStore     credentialstore.Store
-	Network             OAuthNetworkPolicy
-	RequestRefreshToken bool
-	AllowedScopes       []string
-	Timeout             time.Duration
+	Subject     OAuthSubject
+	Issuer      string
+	Client      OAuthClientConfig
+	RedirectURL string
+	Presenter   OAuthPresenter
+	// CredentialStore enables mutable restore, authorization, refresh rotation, and reset.
+	// It is mutually exclusive with CredentialReader so reads and writes cannot cross CAS domains.
+	CredentialStore credentialstore.Store
+	// CredentialReader restores an existing opaque credential without mutation.
+	// It is mutually exclusive with CredentialStore.
+	CredentialReader credentialstore.Reader
+	// AllowInMemoryRefresh permits a refreshed token from a read-only source to be
+	// used only for this controller lifetime. It does not provide restart durability.
+	AllowInMemoryRefresh bool
+	Network              OAuthNetworkPolicy
+	RequestRefreshToken  bool
+	AllowedScopes        []string
+	Timeout              time.Duration
 }
 
 type oauthRegistration struct {
@@ -75,6 +83,16 @@ type oauthRegistration struct {
 	clientSecret string
 	sdk          *oauthex.ClientCredentials
 	cimd         string
+}
+
+func oauthPersistence(opts OAuthOptions) (credentialstore.Reader, credentialstore.ConditionalWriter, error) {
+	if opts.CredentialStore != nil && opts.CredentialReader != nil {
+		return nil, nil, errors.New("OAuth credential store conflicts with credential reader")
+	}
+	if opts.CredentialStore != nil {
+		return opts.CredentialStore, opts.CredentialStore, nil
+	}
+	return opts.CredentialReader, nil, nil
 }
 
 func validateOAuthOptions(opts OAuthOptions) (oauthRegistration, map[string]struct{}, error) {
@@ -91,8 +109,12 @@ func validateOAuthOptions(opts OAuthOptions) (oauthRegistration, map[string]stru
 	if _, err := validateHTTPURL("OAuth redirect URL", opts.RedirectURL, false); err != nil {
 		return oauthRegistration{}, nil, err
 	}
-	if opts.CredentialStore == nil {
-		return oauthRegistration{}, nil, errors.New("OAuth credential store is required")
+	reader, _, err := oauthPersistence(opts)
+	if err != nil {
+		return oauthRegistration{}, nil, err
+	}
+	if reader == nil {
+		return oauthRegistration{}, nil, errors.New("OAuth credential reader is required")
 	}
 	if len(opts.AllowedScopes) == 0 {
 		return oauthRegistration{}, nil, errors.New("OAuth allowed scopes are required")
@@ -271,8 +293,12 @@ func newOAuthPersistenceCore(ctx context.Context, resource string, opts OAuthOpt
 	if err := validatePrivateOrigins(origins, opts.Network); err != nil {
 		return nil, nil, err
 	}
+	reader, writer, err := oauthPersistence(opts)
+	if err != nil {
+		return nil, nil, err
+	}
 	identity := oauthCredentialIdentity{Profile: opts.Subject.Profile, Principal: opts.Subject.Principal, Resource: canonical, Issuer: opts.Issuer, ClientKind: registration.kind, ClientID: registration.clientID}
-	state, err := restoreOAuthCredential(ctx, opts.CredentialStore, identity, registration, origins, client, opts.RequestRefreshToken)
+	state, err := restoreOAuthCredential(ctx, reader, writer, identity, registration, origins, client, opts.RequestRefreshToken, opts.AllowInMemoryRefresh)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -380,6 +406,9 @@ func NewOAuthController(ctx context.Context, resource string, opts OAuthOptions)
 }
 
 func (c *OAuthController) presentAuthorization(ctx context.Context, args *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
+	if c.state == nil || c.state.writer == nil {
+		return nil, projectOAuthError(ErrOAuthUnavailable)
+	}
 	if c.presenter == nil {
 		return nil, projectOAuthError(ErrOAuthLoginRequired)
 	}
@@ -433,12 +462,22 @@ func oauthAuthorizationChallengeKey(req *http.Request, resp *http.Response) auth
 	return key
 }
 
+func (c *OAuthController) authorizationAllowed(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.state == nil || c.state.writer == nil {
+		return projectOAuthError(ErrOAuthUnavailable)
+	}
+	return nil
+}
+
 // Authorize coalesces concurrent and late-arriving equivalent challenges for
 // this credential identity while leaving cancellation bounded by each caller's
 // context. A completed outcome remains attached to its challenge key until a
 // different credential/challenge arrives or ResetCredential invalidates it.
 func (c *OAuthController) Authorize(ctx context.Context, req *http.Request, resp *http.Response) error {
-	if err := ctx.Err(); err != nil {
+	if err := c.authorizationAllowed(ctx); err != nil {
 		closeOAuthResponse(resp)
 		return err
 	}

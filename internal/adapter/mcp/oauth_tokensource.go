@@ -14,13 +14,15 @@ import (
 
 type oauthCredentialState struct {
 	mu             sync.Mutex
-	store          credentialstore.Store
+	reader         credentialstore.Reader
+	writer         credentialstore.ConditionalWriter
 	key            []byte
 	identity       oauthCredentialIdentity
 	registration   oauthRegistration
 	origins        map[string]struct{}
 	client         *http.Client
 	requestRefresh bool
+	allowInMemory  bool
 	lifetime       context.Context
 
 	record   *credentialstore.Record
@@ -55,13 +57,13 @@ func (s *oauthCredentialState) operationContext(ctx context.Context) (context.Co
 	}
 }
 
-func restoreOAuthCredential(ctx context.Context, store credentialstore.Store, identity oauthCredentialIdentity, registration oauthRegistration, origins map[string]struct{}, client *http.Client, requestRefresh bool) (*oauthCredentialState, error) {
+func restoreOAuthCredential(ctx context.Context, reader credentialstore.Reader, writer credentialstore.ConditionalWriter, identity oauthCredentialIdentity, registration oauthRegistration, origins map[string]struct{}, client *http.Client, requestRefresh, allowInMemory bool) (*oauthCredentialState, error) {
 	key, err := oauthCredentialKey(identity)
 	if err != nil {
 		return nil, err
 	}
-	state := &oauthCredentialState{store: store, key: key, identity: identity, registration: registration, origins: origins, client: client, requestRefresh: requestRefresh}
-	record, err := store.Get(ctx, key)
+	state := &oauthCredentialState{reader: reader, writer: writer, key: key, identity: identity, registration: registration, origins: origins, client: client, requestRefresh: requestRefresh, allowInMemory: allowInMemory}
+	record, err := reader.Get(ctx, key)
 	if errors.Is(err, credentialstore.ErrNotFound) {
 		return state, nil
 	}
@@ -102,6 +104,9 @@ func (s *oauthCredentialState) newTokenSource(ctx context.Context, cfg *oauth2.C
 	if cfg == nil || token == nil {
 		return nil, projectOAuthError(ErrOAuthUnavailable)
 	}
+	if s.writer == nil {
+		return nil, projectOAuthError(ErrOAuthUnavailable)
+	}
 	cfg = cloneOAuthConfig(cfg)
 	token = cloneOAuthToken(token)
 	if err := s.validateConfig(cfg); err != nil {
@@ -123,7 +128,7 @@ func (s *oauthCredentialState) newTokenSource(ctx context.Context, cfg *oauth2.C
 		version := s.record.Version
 		expected = &version
 	}
-	record, err := s.store.Put(ctx, s.key, value, expected)
+	record, err := s.writer.Put(ctx, s.key, value, expected)
 	if err == nil {
 		s.installLocked(record, envelope, cfg, token)
 		return &persistentTokenSource{state: s}, nil
@@ -177,6 +182,9 @@ func (s *oauthCredentialState) tokenLocked(ctx context.Context, allowConflict bo
 	if s.token.RefreshToken == "" && !s.token.Valid() {
 		return nil, projectOAuthError(ErrOAuthLoginRequired)
 	}
+	if !s.token.Valid() && s.writer == nil && !s.allowInMemory {
+		return nil, projectOAuthError(ErrOAuthUnavailable)
+	}
 	old := cloneOAuthToken(s.token)
 	token, err := s.sourceLocked(ctx).Token()
 	if err != nil {
@@ -202,13 +210,21 @@ func (s *oauthCredentialState) sourceLocked(ctx context.Context) oauth2.TokenSou
 }
 
 func (s *oauthCredentialState) persistRefreshedLocked(ctx context.Context, token *oauth2.Token, allowConflict bool) (*oauth2.Token, error) {
+	if s.writer == nil {
+		if !s.allowInMemory {
+			return nil, projectOAuthError(ErrOAuthUnavailable)
+		}
+		s.envelope = newOAuthCredentialEnvelope(s.identity, s.config, token)
+		s.token = cloneOAuthToken(token)
+		return cloneOAuthToken(token), nil
+	}
 	envelope := newOAuthCredentialEnvelope(s.identity, s.config, token)
 	value, err := encodeOAuthCredential(envelope, s.identity, s.requestRefresh, s.origins)
 	if err != nil {
 		return nil, projectOAuthError(err)
 	}
 	version := s.record.Version
-	record, err := s.store.Put(ctx, s.key, value, &version)
+	record, err := s.writer.Put(ctx, s.key, value, &version)
 	if err == nil {
 		s.installLocked(record, envelope, s.config, token)
 		return cloneOAuthToken(token), nil
@@ -226,8 +242,12 @@ func (s *oauthCredentialState) persistRefreshedLocked(ctx context.Context, token
 }
 
 func (s *oauthCredentialState) invalidGrantLocked(ctx context.Context) (*oauth2.Token, error) {
+	if s.writer == nil {
+		s.clearLocked()
+		return nil, projectOAuthError(ErrOAuthLoginRequired)
+	}
 	failedVersion := s.record.Version
-	record, err := s.store.Get(ctx, s.key)
+	record, err := s.reader.Get(ctx, s.key)
 	if errors.Is(err, credentialstore.ErrNotFound) {
 		s.clearLocked()
 		return nil, projectOAuthError(ErrOAuthLoginRequired)
@@ -258,7 +278,7 @@ func (s *oauthCredentialState) invalidGrantLocked(ctx context.Context) (*oauth2.
 	}
 
 	version := s.record.Version
-	err = s.store.Delete(ctx, s.key, version)
+	err = s.writer.Delete(ctx, s.key, version)
 	if err == nil || errors.Is(err, credentialstore.ErrNotFound) {
 		s.clearLocked()
 		return nil, projectOAuthError(ErrOAuthLoginRequired)
@@ -276,7 +296,7 @@ func (s *oauthCredentialState) invalidGrantLocked(ctx context.Context) (*oauth2.
 }
 
 func (s *oauthCredentialState) reloadLocked(ctx context.Context) error {
-	record, err := s.store.Get(ctx, s.key)
+	record, err := s.reader.Get(ctx, s.key)
 	if err != nil {
 		if errors.Is(err, credentialstore.ErrNotFound) {
 			s.clearLocked()
@@ -325,12 +345,15 @@ func (s *oauthCredentialState) reset(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if s.writer == nil {
+		return projectOAuthError(ErrOAuthUnavailable)
+	}
 	if s.record == nil {
 		s.clearLocked()
 		return nil
 	}
 	version := s.record.Version
-	err := s.store.Delete(ctx, s.key, version)
+	err := s.writer.Delete(ctx, s.key, version)
 	if err == nil || errors.Is(err, credentialstore.ErrNotFound) {
 		s.clearLocked()
 		return nil

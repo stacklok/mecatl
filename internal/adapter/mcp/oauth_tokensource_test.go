@@ -248,7 +248,7 @@ func TestOAuthRestoreRejectsCorruptionAndUnavailableStoreSafely(t *testing.T) {
 		t.Fatal(err)
 	}
 	registration := oauthRegistration{kind: "preregistered", clientID: "client-id", clientSecret: testClientSecretCanary}
-	_, err = restoreOAuthCredential(context.Background(), store, identity, registration, testOAuthOrigins(), http.DefaultClient, true)
+	_, err = restoreOAuthCredential(context.Background(), store, store, identity, registration, testOAuthOrigins(), http.DefaultClient, true, false)
 	if !errors.Is(err, ErrOAuthUnavailable) || strings.Contains(err.Error(), "corrupt-record-canary") {
 		t.Fatalf("corrupt restore error = %v", err)
 	}
@@ -256,7 +256,7 @@ func TestOAuthRestoreRejectsCorruptionAndUnavailableStoreSafely(t *testing.T) {
 	unavailable := &oauthStoreWrapper{Store: store, get: func(context.Context, []byte) (credentialstore.Record, error) {
 		return credentialstore.Record{}, errors.New("store-unavailable-canary")
 	}}
-	_, err = restoreOAuthCredential(context.Background(), unavailable, identity, registration, testOAuthOrigins(), http.DefaultClient, true)
+	_, err = restoreOAuthCredential(context.Background(), unavailable, unavailable, identity, registration, testOAuthOrigins(), http.DefaultClient, true, false)
 	if !errors.Is(err, ErrOAuthUnavailable) || strings.Contains(err.Error(), "store-unavailable-canary") {
 		t.Fatalf("unavailable restore error = %v", err)
 	}
@@ -415,7 +415,7 @@ func newTestOAuthState(t *testing.T, store credentialstore.Store, client *http.C
 	if req, err := http.NewRequest(http.MethodGet, tokenURL, nil); err == nil && req.URL.Host != "" {
 		origins[urlOrigin(req.URL)] = struct{}{}
 	}
-	state, err := restoreOAuthCredential(context.Background(), store, identity, oauthRegistration{kind: "preregistered", clientID: "client-id", clientSecret: testClientSecretCanary}, origins, client, requestRefresh)
+	state, err := restoreOAuthCredential(context.Background(), store, store, identity, oauthRegistration{kind: "preregistered", clientID: "client-id", clientSecret: testClientSecretCanary}, origins, client, requestRefresh, false)
 	if err != nil {
 		t.Fatal(err)
 	}
