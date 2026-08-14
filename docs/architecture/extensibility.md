@@ -41,9 +41,15 @@ supplies `ServerConfig.OAuth`. One official SDK handler, durable credential sour
 authorization singleflight, and dedicated hardened HTTP client live for the whole
 `Server` lifetime and survive MCP session reconnects. Preregistered confidential and CIMD
 clients are supported; DCR is rejected by omission because the SDK exposes no durable
-registration hook. A nil presenter fails protected-server login immediately and no
-browser implementation, callback listener, CLI/config wiring, or production composition
-exists yet. OAuth traffic is exact-origin allowlisted, DNS-resolved and pinned, blocks
+registration hook. A nil presenter fails protected-server login immediately. An explicitly
+constructed stdlib-only `mcp/oauthlogin` runtime can instead own one serialized, random-path
+IPv4-loopback callback interaction. `internal/app.LoginMCP` bridges that runtime to a copy
+of one already-resolved OAuth `ServerConfig`, calls the real `mcp.Connect`, requires
+initialize and initial tool listing to succeed, and immediately closes the temporary
+server/controller while leaving the borrowed credential store open. The callback converts
+only code/state/issuer; the controller and official SDK retain their issuer/state checks,
+discovery, PKCE, exchange, and durable CAS. No browser runtime is installed by default, and
+there is no CLI/config, ACP, or production-daemon wiring yet. OAuth traffic is exact-origin allowlisted, DNS-resolved and pinned, blocks
 private/link-local/metadata destinations unless that exact origin is opted in, ignores
 proxies, and follows only bounded same-origin safe redirects. Discovery GETs may reach the
 resource/additional origins, but the presenter and protocol transport permit codes, tokens,
@@ -53,8 +59,9 @@ network send. The ordinary MCP client has an OAuth-mode-only exact-resource capa
 cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
 Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static
 headers retain their existing origin-scoped behavior. See [ADR 0109](../adr/0109-mcp-oauth-sdk-profile.md)
-for the constrained dependency profile and [ADR 0110](../adr/0110-mcp-oauth-controller.md)
-for controller ownership and remaining blockers.
+for the constrained dependency profile, [ADR 0110](../adr/0110-mcp-oauth-controller.md)
+for controller ownership, and [ADR 0112](../adr/0112-mcp-oauth-loopback-runtime.md) for the
+opt-in host runtime and remaining profile/CLI blockers.
 
 **Progressive tool disclosure** (pattern 9) — a tool may optionally implement
 `tool.Disclosable`; the built-in `tool.Search` tool (catalog name `ToolSearch`,

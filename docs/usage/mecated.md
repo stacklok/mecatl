@@ -392,6 +392,13 @@ window (retryable) and the **post-first-chunk** stream (terminal).
 | `--toolhive` | `true` | discover MCP servers from the **running ToolHive workloads** (the embedded ToolHive library lists already-running workloads and reads their HTTP proxy URLs; mecatl **never** starts or spawns a workload). Fails soft to zero servers when no container runtime is reachable. Same trust class as `--mcp-server`. |
 | `--toolhive-group` | `""` | ToolHive group to discover workloads from (empty → the `default` group). Only consulted with `--toolhive`. |
 
+The host library now contains an opt-in, random-loopback OAuth login runtime and a one-shot
+composition operation for an **already-resolved** OAuth server profile. It is not wired to
+`mecated`: there is currently **no `mecated mcp login` command**, OAuth profile loader, or
+credential-store key acquisition. Those arrive only after issue #523 provides one canonical
+profile path. Do not put OAuth endpoints or secrets on argv, and do not infer browser
+permission from ACP or daemon stdio. See [ADR 0112](../adr/0112-mcp-oauth-loopback-runtime.md).
+
 #### Security & transport (auth, TLS, rate limiting)
 
 All off by default (the loopback single-user posture); set them **before** any

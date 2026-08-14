@@ -78,6 +78,12 @@ linters:
           deny:
             - pkg: io/ioutil
               desc: deprecated; use io and os
+        oauthlogin-stdlib-only:
+          list-mode: strict
+          files:
+            - '**/mcp/oauthlogin/**.go'
+          allow:
+            - $gostd
         # Domain leaves: pure, no mecatl-core dependencies. (session is the pure
         # domain leaf; governance is the session-free leaf.)
         core-domain-leaf:
@@ -565,6 +571,7 @@ linters:
             - github.com/modelcontextprotocol/go-sdk/oauthex
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/internal/adapter/credentialstore
+            - github.com/stacklok/mecatl/mcp/oauthlogin
             - golang.org/x/oauth2
           deny:
             - pkg: os

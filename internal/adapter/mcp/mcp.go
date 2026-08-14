@@ -462,6 +462,13 @@ func listTools(ctx context.Context, serverName string, srv *Server, sess *mcpsdk
 	return tools, nil
 }
 
+// HasOAuthCredential reports whether this connected OAuth server restored or
+// durably stored a credential. It exposes readiness only and never reads or
+// returns token data.
+func (s *Server) HasOAuthCredential() bool {
+	return s != nil && s.oauth != nil && s.oauth.state.hasCredential()
+}
+
 // Name returns the server's configured name.
 func (s *Server) Name() string { return s.name }
 

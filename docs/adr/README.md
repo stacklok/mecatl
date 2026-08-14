@@ -35,6 +35,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0108 — Internal encrypted credential-store substrate](./0108-credential-store.md)
 - [0109 — Qualify the official MCP SDK authorization-code profile](./0109-mcp-oauth-sdk-profile.md)
 - [0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
+- [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)

@@ -198,6 +198,22 @@ the tool silently vanishing.
 
 ---
 
+## OAuth login status
+
+The host library includes an opt-in local loopback OAuth runtime and a one-shot operation
+for embeddings that already have a fully resolved OAuth server profile and credential
+store. It uses the existing MCP controller and official SDK for discovery, PKCE, exchange,
+refresh, and persistence; the browser callback only returns code, state, and issuer.
+
+This is **not wired into the shipped commands yet**. There is no `mecated mcp login`, no
+default browser launch in a daemon, and no ACP login operation. Issue #523 must first add
+one canonical profile resolver and credential-store key-acquisition policy. Until then,
+operators should continue using the static bearer-token path above; embedding hosts may opt
+into the library runtime only when they explicitly own a local interactive terminal. See
+[ADR 0112](https://github.com/stacklok/mecatl/blob/main/docs/adr/0112-mcp-oauth-loopback-runtime.md).
+
+---
+
 ## Global vs per-session MCP servers
 
 **Global servers** (`--mcp-server` / ToolHive discovery) are registered once at startup and shared across all sessions. Their tools are part of every session's catalog, including no-filesystem sessions. The global MCP manager is owned by the server process — it is never closed or reconnected per-session.

@@ -74,6 +74,12 @@ func restoreOAuthCredential(ctx context.Context, store credentialstore.Store, id
 	return state, nil
 }
 
+func (s *oauthCredentialState) hasCredential() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.record != nil && s.config != nil && s.token != nil
+}
+
 func (s *oauthCredentialState) initialTokenSource() oauth2.TokenSource {
 	return s.tokenSource(context.Background())
 }

@@ -59,12 +59,14 @@ capabilities, and lifecycle operations; `ConditionalWriter` provides create-only
 version-matched replace/delete; mutable `Store` embeds both. Mutability is represented
 by the implemented interface, not a capability bit that could disagree with it.
 
-The package is not wired by default: no command or provider constructs it. The optional
-adapter-local MCP OAuth controller borrows an explicitly injected mutable Store for its
-own credential envelope; it never constructs or closes a backend. Future environment or
-Kubernetes Secret-backed sources may satisfy Reader only. A consumer that durably rotates
-refreshed credentials requires a mutable CAS Store. No environment source is implemented
-here.
+The optional adapter-local MCP OAuth controller borrows an explicitly injected mutable
+Store for its credential envelope; it never constructs or closes a backend. The opt-in
+`mcp/oauthlogin` host runtime and `internal/app.LoginMCP` one-shot operation can populate
+that store by driving a real protected MCP initialize and tool listing through a random
+IPv4-loopback callback. They are not installed by default: no command, profile resolver,
+key-acquisition policy, daemon, or ACP surface wires them yet. Future environment or
+Kubernetes Secret-backed sources may satisfy Reader only; durable refresh rotation requires
+a mutable CAS Store. No environment source is implemented here.
 
 Memory and local encrypted storage are Store adapters. Encrypted-file consumers must
 explicitly inject an absolute root and an exact 32-byte key acquired elsewhere. Both

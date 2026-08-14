@@ -6994,6 +6994,41 @@ broad production claim remain blocked on ADR 0109's official-SDK hooks. Construc
 credential restore inherit the caller's `Connect` cancellation; `Close` cancels and joins
 all controller operations before releasing owned transport state.
 
+## MCP OAuth loopback login (ADR 0112)
+
+`mcp/oauthlogin` is a stdlib-only host runtime, not an engine port. `Runtime.Authorize`
+serializes the complete interaction per runtime instance, binds `tcp4` on
+`127.0.0.1:0`, derives a redirect with a fresh 32-byte random path segment, and starts a
+dedicated bounded `http.Server`. Its exact-path GET handler rejects request bodies,
+duplicate/empty/oversized query values, wrong Host, mismatched state (constant-time), and a
+non-canonical or unexpected issuer. It returns only code/state/issuer; static success and
+failure pages carry no provider values and set no-store, CSP, referrer, MIME-sniffing, and
+permissions headers. Sixteen invalid requests exhaust the flow.
+
+Presentation parses the official SDK's authorization URL and requires exactly one state.
+An injected `BrowserLauncher` receives the opaque URL, or explicit no-browser mode writes it
+once to a required host-owned writer. The default launcher uses fixed OS-specific argv and
+never a shell. Browser/callback values never enter diagnostics or returned error text.
+Cancellation, callback completion, browser failure, and authorization failure all converge
+on detached bounded HTTP shutdown, listener close, and `Serve` join before the serialization
+gate is released.
+
+`internal/adapter/mcp/oauth_login.go` (`OAuthLoginPresenter`) only converts the runtime's
+result into `auth.AuthorizationResult`; it does not reproduce protocol validation.
+`internal/app/mcplogin.go` (`LoginMCP`) rejects a nil runtime, non-OAuth config, preinstalled
+presenter/redirect, and static Authorization before binding. It copies the already-resolved
+config, closes over its exact issuer, installs the generated redirect/presenter, and calls
+`internal/adapter/mcp/mcp.go` (`Connect`). Success requires the authenticated initialize and
+initial tool listing plus the controller's durable credential CAS; the temporary `Server`
+and controller close on every path while the injected store stays caller-owned. Failures
+project to context/runtime categories or fixed `ErrMCPLoginConfig`/`ErrMCPLoginFailed`
+without endpoint or credential-bearing causes.
+
+No composition root constructs the runtime. There is no `mecated mcp login`, default browser,
+profile/key resolver, ACP operation, or Buzz-specific wiring in this slice; issue #523 must
+supply one canonical profile and key-acquisition path before a command can call `LoginMCP`.
+ADR 0109's metadata-profile blockers also remain open.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it
