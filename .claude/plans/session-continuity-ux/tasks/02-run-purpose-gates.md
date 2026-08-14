@@ -2,8 +2,8 @@
 id: 02-run-purpose-gates
 title: Kind-aware public chat and scheduler run-entry gates
 blocked_by: [01-session-taxonomy]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-continuity-ux/02-run-purpose-gates"
 worktree: ".scratch/worktrees/session-continuity-ux-task-02"
 issue: "471"
 retries: 0
