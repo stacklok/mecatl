@@ -36,6 +36,15 @@ bounded reconnect attempt per call, serialized under a mutex — see
 snapshots (lazily re-listed on the next read); live catalog refresh is
 deferred to a later phase — see [ADR 0057](../adr/0057-mcp-server-notifications.md).
 
+The official MCP Go SDK's authorization-code client is covered by a hermetic
+public-API contract, but OAuth is **not wired into mecatl**. Qualification requires RFC
+9728 protected-resource metadata with exactly one authorization server, PKCE S256, RFC
+8707 resource binding, caller-owned scope policy, and a bounded origin-restricted HTTP
+client; preregistration or a client-ID metadata document is preferred over non-durable
+DCR. Browser/callback UX, credential persistence, and production composition remain
+future work. See [ADR 0109](../adr/0109-mcp-oauth-sdk-profile.md) for the constrained
+profile and pinned-SDK findings.
+
 **Progressive tool disclosure** (pattern 9) — a tool may optionally implement
 `tool.Disclosable`; the built-in `tool.Search` tool (catalog name `ToolSearch`,
 `tool.NewToolSearch`) hydrates hidden tools on demand by searching the catalog. A
