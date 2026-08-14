@@ -234,7 +234,7 @@ func TestPromptBuilderDoesNotRouteThroughCompactionSummarizer(t *testing.T) {
 		mu       sync.Mutex
 		requests []port.LLMRequest
 	)
-	llm := mockllm.NewWith(
+	scriptedLLM := mockllm.NewWith(
 		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -246,6 +246,7 @@ func TestPromptBuilderDoesNotRouteThroughCompactionSummarizer(t *testing.T) {
 		mockllm.TextTurn("summary"), // summarizer turn (cascade.go summarize)
 		mockllm.TextTurn("done"),    // main loop turn after compaction
 	)
+	llm := &contextObservingProvider{inner: scriptedLLM}
 
 	// A REAL CascadeCompactor wired to the provider so summarize() actually
 	// fires a provider request we can observe. Tiny BudgetTokens forces tier-4
@@ -299,6 +300,11 @@ func TestPromptBuilderDoesNotRouteThroughCompactionSummarizer(t *testing.T) {
 		t.Fatalf("summarizer request not observed (compaction did not reach tier-4); "+
 			"saw %d requests, first prefix=%q", len(requests),
 			firstNonEmptyPrefix(requests))
+	}
+	for i, id := range llm.sessionIDs() {
+		if id != "s1" {
+			t.Errorf("provider call %d session id = %q, want parent session s1 (including compaction)", i, id)
+		}
 	}
 }
 

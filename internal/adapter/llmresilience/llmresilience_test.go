@@ -279,6 +279,43 @@ func tinyBackoffCfg(maxAttempts int) Config {
 	}
 }
 
+func TestSessionIDContextReachesEveryEstablishmentRetry(t *testing.T) {
+	conn := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+	var got []session.SessionID
+	f := &fakeProvider{
+		steps: []step{
+			{outerErr: conn},
+			{chunks: textTurn("ok")},
+		},
+		onAttempt: func(ctx context.Context, _ int) {
+			id, ok := port.SessionIDFromContext(ctx)
+			if !ok {
+				t.Error("session ID missing from retry context")
+				return
+			}
+			got = append(got, id)
+		},
+	}
+	p := Wrap(f, tinyBackoffCfg(2))
+	ctx := port.WithSessionID(context.Background(), "session-retry-exact")
+
+	seq, err := p.Stream(ctx, port.LLMRequest{})
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+	if _, err := drain(t, seq); err != nil {
+		t.Fatalf("drain error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("observed session IDs = %q, want one for each of 2 attempts", got)
+	}
+	for i, id := range got {
+		if id != "session-retry-exact" {
+			t.Errorf("attempt %d session ID = %q, want %q", i+1, id, "session-retry-exact")
+		}
+	}
+}
+
 func TestFailsThenSucceedsWithinMaxAttempts(t *testing.T) {
 	conn := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 	f := &fakeProvider{steps: []step{

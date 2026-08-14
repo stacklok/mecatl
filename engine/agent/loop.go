@@ -930,6 +930,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 // entry seams cannot drift in their concurrency setup.
 func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
+	ctx = port.WithSessionID(ctx, sess.ID)
 	ctx = withSessionOrigin(ctx, sess.ID)
 	attribution, _ := tool.MemoryAttributionFromContext(ctx)
 	if attribution.Writer == "" {

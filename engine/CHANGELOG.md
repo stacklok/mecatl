@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Per-model-call session identity context** (issue #543) —
+  `port.WithSessionID` and `port.SessionIDFromContext` carry the exact active
+  session identity through the existing provider call context without widening
+  `LLMRequest`. New exported functions: Added (a minor bump).
+
 - **Verified evidence previews (issue #509)** — `learning.EvidencePreview` exposes the
   bounded canonical projection of a digest-verified message or event while omitting
   reasoning, raw tool/permission arguments, binary bytes, controls, and secret-shaped
