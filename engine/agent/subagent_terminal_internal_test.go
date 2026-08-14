@@ -15,18 +15,20 @@ func TestRenderSubagentResultTerminalTaxonomy(t *testing.T) {
 		stop            session.StopReason
 		clientCancelled bool
 		want            string
+		wantAll         []string
+		forbidden       string
 		wantError       bool
 	}{
 		{name: "none", stop: session.StopNone, want: "stopped without a terminal reason"},
 		{name: "end turn", stop: session.StopEndTurn},
-		{name: "max turns", stop: session.StopMaxTurns, want: "reached its max-turns limit"},
-		{name: "max tool calls", stop: session.StopMaxToolCalls, want: "reached its max-tool-calls limit"},
+		{name: "max turns", stop: session.StopMaxTurns, want: "reached its max-turns limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
+		{name: "max tool calls", stop: session.StopMaxToolCalls, want: "reached its max-tool-calls limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
 		{name: "max consecutive failures", stop: session.StopMaxConsecutiveFailures, want: "reached its consecutive-tool-failure limit"},
 		{name: "cancelled by parent", stop: session.StopCancelled, want: "cancelled because its parent run ended — treat as partial/incomplete"},
 		{name: "cancelled by user", stop: session.StopCancelled, clientCancelled: true, want: "subagent cancelled by user"},
 		{name: "error", stop: session.StopError, want: "provider failed", wantError: true},
 		{name: "no progress", stop: session.StopNoProgress, want: "ended without a final summary"},
-		{name: "budget", stop: session.StopBudget, want: "reached its token budget"},
+		{name: "budget", stop: session.StopBudget, want: "reached its token budget", wantAll: []string{"max_run_tokens", "raise", "narrow", "fresh subagent"}, forbidden: "resume it with the agentId above"},
 		{name: "timeout", stop: session.StopTimeout, want: "reached its time limit"},
 		{name: "structured output", stop: session.StopStructuredOutput, want: "did not produce output matching the requested schema", wantError: true},
 		{name: "plan approved", stop: session.StopPlanApproved, want: "plan approval before completing the delegated work"},
@@ -47,6 +49,14 @@ func TestRenderSubagentResultTerminalTaxonomy(t *testing.T) {
 			}
 			if tc.want != "" && !strings.Contains(res.Content, tc.want) {
 				t.Errorf("content missing %q: %s", tc.want, res.Content)
+			}
+			for _, want := range tc.wantAll {
+				if !strings.Contains(res.Content, want) {
+					t.Errorf("content missing %q: %s", want, res.Content)
+				}
+			}
+			if tc.forbidden != "" && strings.Contains(res.Content, tc.forbidden) {
+				t.Errorf("content contains forbidden bare resume guidance %q: %s", tc.forbidden, res.Content)
 			}
 			if tc.stop == session.StopEndTurn {
 				const want = "agentId: child-1\n\nsummary"

@@ -336,18 +336,22 @@ func TestWritableTerminalClassificationSelectsCleanNoteOnlyForEndTurn(t *testing
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		stop      session.StopReason
-		final     string
-		submit    *submitResultTool
-		wantClean bool
-		want      string
+		name          string
+		stop          session.StopReason
+		final         string
+		submit        *submitResultTool
+		wantClean     bool
+		wantNoSummary bool
+		want          string
+		wantAll       []string
+		forbidden     string
 	}{
 		{name: "end turn is the only clean terminal", stop: session.StopEndTurn, final: "done", wantClean: true},
-		{name: "max turns", stop: session.StopMaxTurns, final: "partial", want: "max-turns limit"},
-		{name: "max tool calls", stop: session.StopMaxToolCalls, final: "partial", want: "max-tool-calls limit"},
+		{name: "max turns", stop: session.StopMaxTurns, final: "partial", want: "max-turns limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
+		{name: "max tool calls", stop: session.StopMaxToolCalls, final: "partial", want: "max-tool-calls limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
 		{name: "no progress", stop: session.StopNoProgress, final: "partial", want: "ended without a final summary"},
-		{name: "immediate budget with zero work", stop: session.StopBudget, want: "reached its token budget"},
+		{name: "budget", stop: session.StopBudget, final: "partial", want: "reached its token budget", wantAll: []string{"max_run_tokens", "raise", "narrow", "fresh subagent"}, forbidden: "resume it with the agentId above"},
+		{name: "immediate budget with zero work", stop: session.StopBudget, wantNoSummary: true, want: "reached its token budget"},
 		{name: "max consecutive failures", stop: session.StopMaxConsecutiveFailures, final: "partial", want: "consecutive-tool-failure limit"},
 		{name: "custom max tokens", stop: session.StopReason("max_tokens"), final: "partial", want: `unrecognized terminal reason "max_tokens"`},
 		{name: "cancelled", stop: session.StopCancelled, final: "partial"},
@@ -380,7 +384,15 @@ func TestWritableTerminalClassificationSelectsCleanNoteOnlyForEndTurn(t *testing
 			if tc.want != "" && !strings.Contains(res.Content, tc.want) {
 				t.Errorf("content missing %q:\n%s", tc.want, res.Content)
 			}
-			if tc.stop == session.StopBudget && !strings.Contains(res.Content, "subagent produced no summary") {
+			for _, want := range tc.wantAll {
+				if !strings.Contains(res.Content, want) {
+					t.Errorf("content missing %q:\n%s", want, res.Content)
+				}
+			}
+			if tc.forbidden != "" && strings.Contains(res.Content, tc.forbidden) {
+				t.Errorf("content contains forbidden bare resume guidance %q:\n%s", tc.forbidden, res.Content)
+			}
+			if tc.wantNoSummary && !strings.Contains(res.Content, "subagent produced no summary") {
 				t.Errorf("zero-work budget result lost its no-summary shape:\n%s", res.Content)
 			}
 		})

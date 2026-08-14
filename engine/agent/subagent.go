@@ -3211,13 +3211,13 @@ func subagentTerminalNote(stop session.StopReason) (note string, explicitlyCompl
 	case session.StopCancelled:
 		return "[subagent cancelled because its parent run ended — treat as partial/incomplete]", false
 	case session.StopMaxTurns:
-		return "[subagent stopped: reached its max-turns limit]", false
+		return "[subagent stopped: reached its max-turns limit — treat as partial; resume it with the agentId above to continue]", false
 	case session.StopMaxToolCalls:
-		return "[subagent stopped: reached its max-tool-calls limit]", false
+		return "[subagent stopped: reached its max-tool-calls limit — treat as partial; resume it with the agentId above to continue]", false
 	case session.StopMaxConsecutiveFailures:
 		return "[subagent stopped: reached its consecutive-tool-failure limit — treat as partial/incomplete]", false
 	case session.StopBudget:
-		return "[subagent stopped: reached its token budget]", false
+		return "[subagent stopped: reached its token budget — raise max_run_tokens if the inherited ceiling permits, or narrow the task's scope and delegate a fresh subagent]", false
 	case session.StopNoProgress:
 		return "[subagent stopped: ended without a final summary — treat as partial; resume it with the agentId above to continue]", false
 	case session.StopTimeout:
