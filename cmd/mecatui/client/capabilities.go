@@ -47,7 +47,9 @@ type Capabilities struct {
 	// tick loop: the overlay can create/inspect/pause/resume/fire-now on any
 	// store-backed server; auto-firing on a cadence is the server's tick loop
 	// (ON by default on a store-backed server, ADR 0073 — `--no-scheduler` opts out).
-	Scheduling bool
+	Scheduling        bool
+	Reflection        bool
+	LearningProposals bool
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -57,21 +59,23 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		return Capabilities{}
 	}
 	return Capabilities{
-		MCP:            c.GetMcp(),
-		SlashCommands:  c.GetSlashCommands(),
-		Memory:         c.GetMemory(),
-		Skills:         c.GetSkills(),
-		Teams:          c.GetTeams(),
-		Agents:         c.GetAgents(),
-		Bash:           c.GetBash(),
-		Soul:           c.GetSoul(),
-		UserModel:      c.GetUserModel(),
-		ModelSelection: c.GetModelSelection(),
-		Image:          c.GetImage(),
-		Audio:          c.GetAudio(),
-		Posture:        c.GetPosture(),
-		Worktrees:      c.GetWorktrees(),
-		Scheduling:     c.GetScheduling(),
+		MCP:               c.GetMcp(),
+		SlashCommands:     c.GetSlashCommands(),
+		Memory:            c.GetMemory(),
+		Skills:            c.GetSkills(),
+		Teams:             c.GetTeams(),
+		Agents:            c.GetAgents(),
+		Bash:              c.GetBash(),
+		Soul:              c.GetSoul(),
+		UserModel:         c.GetUserModel(),
+		ModelSelection:    c.GetModelSelection(),
+		Image:             c.GetImage(),
+		Audio:             c.GetAudio(),
+		Posture:           c.GetPosture(),
+		Worktrees:         c.GetWorktrees(),
+		Scheduling:        c.GetScheduling(),
+		Reflection:        c.GetReflection(),
+		LearningProposals: c.GetLearningProposals(),
 	}
 }
 

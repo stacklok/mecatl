@@ -22,7 +22,7 @@ func RunLifecycle(t *testing.T, newStore func(t *testing.T) (tool.MemoryStore, t
 		attributed := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{
 			Writer: tool.MemoryWriterModel,
 			Origin: tool.MemoryOriginExplicit,
-			Source: tool.MemorySource{SessionID: "session-1"},
+			Source: tool.MemorySource{SessionID: "session-1", ProposalID: "proposal-1"},
 		})
 		first, err := lifecycle.RememberVersioned(attributed, tool.MemoryEntry{Key: "profile/editor", Value: "helix", Description: "editor"}, "")
 		if err != nil {
@@ -31,7 +31,7 @@ func RunLifecycle(t *testing.T, newStore func(t *testing.T) (tool.MemoryStore, t
 		if first.Current.Version == "" || first.Current.Status != tool.MemoryStatusActive {
 			t.Fatalf("first current = %+v", first.Current)
 		}
-		if first.Current.Writer != tool.MemoryWriterModel || first.Current.Source.SessionID != "session-1" {
+		if first.Current.Writer != tool.MemoryWriterModel || first.Current.Source.SessionID != "session-1" || first.Current.Source.ProposalID != "proposal-1" {
 			t.Fatalf("first attribution = %+v", first.Current)
 		}
 		second, err := lifecycle.RememberVersioned(ctx, tool.MemoryEntry{Key: "profile/editor", Value: "vim"}, first.Current.Version)

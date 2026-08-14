@@ -25,7 +25,7 @@ type UserModelEntry struct {
 // UserModelRevision is one proto-free lifecycle revision for read-only display.
 type UserModelRevision struct {
 	Key, Value, Description, Version, Status, Writer, Origin string
-	SourceSessionID                                          string
+	SourceSessionID, SourceProposalID                        string
 	UpdatedAt                                                time.Time
 }
 
@@ -113,7 +113,7 @@ func mapUserModelRevision(in *mecatlv1.UserModelRevision) UserModelRevision {
 	if ts := in.GetUpdatedAt(); ts != nil && ts.IsValid() {
 		updated = ts.AsTime()
 	}
-	return UserModelRevision{Key: in.GetKey(), Value: in.GetValue(), Description: in.GetDescription(), Version: in.GetVersion(), Status: in.GetStatus(), Writer: in.GetWriter(), Origin: in.GetOrigin(), SourceSessionID: in.GetSourceSessionId(), UpdatedAt: updated}
+	return UserModelRevision{Key: in.GetKey(), Value: in.GetValue(), Description: in.GetDescription(), Version: in.GetVersion(), Status: in.GetStatus(), Writer: in.GetWriter(), Origin: in.GetOrigin(), SourceSessionID: in.GetSourceSessionId(), SourceProposalID: in.GetSourceProposalId(), UpdatedAt: updated}
 }
 
 // UserModelLister is the subset of *Client the ui's /usermodel panel needs.

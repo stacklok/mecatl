@@ -177,6 +177,41 @@ linters:
           deny:
             - pkg: os
               desc: 'memmemory is process-local reference memory; it must not touch the real OS'
+        engine-adapter-memproposal:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memproposal/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/learning
+          deny:
+            - pkg: os
+              desc: 'memproposal is the process-local proposal reference store; it must not touch the real OS'
+        engine-adapter-memorypromotion:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memorypromotion/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/learning
+            - github.com/stacklok/mecatl/engine/tool
+          deny:
+            - pkg: os
+              desc: 'memorypromotion is portable policy over injected proposal and memory ports; it must not touch the real OS'
+        engine-adapter-proposalconformance:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/proposalconformance/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/learning
+            - github.com/stacklok/mecatl/engine/session
+          deny:
+            - pkg: os
+              desc: 'proposalconformance drives the abstract repository contract; it must not touch the real OS'
         engine-adapter-memorytools:
           list-mode: strict
           files:
@@ -468,7 +503,7 @@ linters:
           deny:
             - pkg: os
               desc: 'scheduleconformance drives the abstract ScheduleStore contract (a test-helper, it may use cronparse to compute expected next fires); it must not touch the real OS'
-        # learning: optional completed-trajectory policy/snapshot domain; session + stdlib only.
+        # learning: reflection domain; reuses tool's canonical memory security helpers.
         core-learning:
           list-mode: strict
           files:
@@ -477,9 +512,10 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/engine/tool
           deny:
             - pkg: os
-              desc: 'learning is a pure engine domain seam; persistence and scheduling belong to hosts'
+              desc: 'learning is a pure reflection domain seam; persistence, scheduling, and I/O belong to hosts'
         # agent: the APPLICATION loop; imports domain + port + team + stdlib +
         # golang.org/x/sync/errgroup. Adapters are INJECTED, never imported.
         core-agent:

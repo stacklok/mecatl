@@ -41,7 +41,7 @@ func foldLearningMode(cfg Config) (Config, error) {
 func learningModeForWorkspace(cfg Config, root string) learning.Mode {
 	mode := cfg.operatorLearningMode
 	resolver, _ := cfg.permResolver.(*permconfig.Resolver)
-	if resolver == nil || root == "" || !projectIngestionAdmitted(cfg) {
+	if resolver == nil || !projectIngestionAdmittedForRoot(cfg, root) {
 		return mode
 	}
 	ws, err := osfs.NewWorkspace(root)

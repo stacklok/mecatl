@@ -375,6 +375,51 @@ func (h *HarnessServer) GetUserModel(ctx context.Context, req *mecatlv1.GetUserM
 	return resp, nil
 }
 
+// ReflectSession submits one caller-owned completed session to the bounded coordinator.
+func (h *HarnessServer) ReflectSession(ctx context.Context, req *mecatlv1.ReflectSessionRequest) (*mecatlv1.ReflectSessionResponse, error) {
+	receipt, err := h.svc.ReflectSession(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ReflectSessionResponse{Receipt: receipt}, nil
+}
+
+// ListLearningProposals returns one bounded proposal page for the caller partition.
+func (h *HarnessServer) ListLearningProposals(ctx context.Context, req *mecatlv1.ListLearningProposalsRequest) (*mecatlv1.ListLearningProposalsResponse, error) {
+	resp, err := h.svc.ListLearningProposals(ctx, req.GetStatus(), req.GetCursor(), int(req.GetLimit()), req.GetProject())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+
+// GetLearningProposal returns bounded detail for one caller-owned proposal.
+func (h *HarnessServer) GetLearningProposal(ctx context.Context, req *mecatlv1.GetLearningProposalRequest) (*mecatlv1.GetLearningProposalResponse, error) {
+	proposal, err := h.svc.GetLearningProposal(ctx, req.GetId(), req.GetProject())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetLearningProposalResponse{Proposal: proposal}, nil
+}
+
+// DecideLearningProposal applies a version-checked approve or reject decision.
+func (h *HarnessServer) DecideLearningProposal(ctx context.Context, req *mecatlv1.DecideLearningProposalRequest) (*mecatlv1.DecideLearningProposalResponse, error) {
+	proposal, err := h.svc.DecideLearningProposal(ctx, req.GetId(), req.GetExpectedVersion(), req.GetDecision(), req.GetReason(), req.GetProject())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.DecideLearningProposalResponse{Proposal: proposal}, nil
+}
+
+// UndoLearningPromotion applies a version-checked compensating promotion undo.
+func (h *HarnessServer) UndoLearningPromotion(ctx context.Context, req *mecatlv1.UndoLearningPromotionRequest) (*mecatlv1.UndoLearningPromotionResponse, error) {
+	proposal, err := h.svc.UndoLearningPromotion(ctx, req.GetId(), req.GetExpectedVersion(), req.GetProject())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.UndoLearningPromotionResponse{Proposal: proposal}, nil
+}
+
 // ListCommands returns the available slash commands for the requested workspace.
 func (h *HarnessServer) ListCommands(ctx context.Context, req *mecatlv1.ListCommandsRequest) (*mecatlv1.ListCommandsResponse, error) {
 	cmds, err := h.svc.ListCommands(ctx, req.GetWorkspace())
@@ -567,6 +612,10 @@ func toStatus(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, ErrChildNotFound):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrLearningUnavailable):
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrProposalConflict):
+		return status.Error(codes.Aborted, err.Error())
 	case errors.Is(err, ErrFailedPrecondition):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrNoActiveRun):

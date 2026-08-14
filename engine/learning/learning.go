@@ -1,6 +1,6 @@
-// Package learning defines the optional, host-driven completed-trajectory
-// observation seam. It owns policy and immutable snapshots only; persistence,
-// scheduling, extraction, and promotion remain host concerns.
+// Package learning defines host-driven completed-trajectory observation and
+// evidence-backed reflection values. It owns policy and bounded snapshots only;
+// persistence, scheduling, model transport, and promotion remain host concerns.
 package learning
 
 import (
@@ -17,9 +17,9 @@ type Mode uint8
 const (
 	// Off disables automatic completed-trajectory observation and is the zero value.
 	Off Mode = iota
-	// Review permits review-only observation; standard composition is inert until a review queue exists.
+	// Review permits signal-gated reflection and durable proposal staging without memory writes.
 	Review
-	// Auto permits an observer to write accepted learning state.
+	// Auto stages proposals and permits conservative eligible-fact promotion.
 	Auto
 )
 
@@ -70,6 +70,8 @@ type Trajectory struct {
 	Stop      session.StopReason
 	Usage     session.Usage
 	Messages  []session.Message
+	// Principal is a copied completed-session owner for host partitioning.
+	Principal *session.Principal
 }
 
 // NewTrajectory constructs an owned completed-run snapshot. Every mutable nested

@@ -105,8 +105,9 @@ type Store struct {
 }
 
 var (
-	_ tool.MemoryStore          = (*Store)(nil)
-	_ tool.MemoryLifecycleStore = (*Store)(nil)
+	_ tool.MemoryStore            = (*Store)(nil)
+	_ tool.MemoryLifecycleStore   = (*Store)(nil)
+	_ tool.MemoryConvergenceStore = (*Store)(nil)
 )
 
 // New constructs a file-backed Store rooted at dir, creating dir (and parents)
@@ -453,6 +454,32 @@ func (s *Store) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, e
 	return out, err
 }
 
+// RememberIfCurrent performs a presence-and-version CAS in the same flocked transaction.
+func (s *Store) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if err := tool.ValidateMemoryEntryWrite(entry, attribution); err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var out tool.MemoryRecord
+	err := s.withExclusiveLock(lctx, func(data *persisted) error {
+		actual, exists := data.current(entry.Key)
+		if exists != expected.Exists || exists && actual != expected.Version {
+			return &tool.MemoryVersionConflictError{Key: entry.Key, Expected: expected.Version, Actual: actual}
+		}
+		data.materializeLegacy(entry.Key)
+		r := record{Value: entry.Value, Description: strings.TrimSpace(entry.Description), UpdatedAt: time.Now().UTC()}
+		data.Entries[entry.Key] = r
+		if err := data.appendActive(ctx, entry.Key, r, tool.MemoryOriginExplicit); err != nil {
+			return err
+		}
+		out = data.snapshot(entry.Key)
+		return nil
+	})
+	return out, err
+}
+
 // Inspect returns the current state and complete history, including deleted
 // tombstones. Legacy flat records are projected as a stable imported baseline
 // without rewriting memory.json.
@@ -561,14 +588,19 @@ func (data *persisted) compare(key string, expected tool.MemoryVersion) error {
 	return nil
 }
 
-func (data *persisted) currentVersion(key string) tool.MemoryVersion {
+func (data *persisted) current(key string) (tool.MemoryVersion, bool) {
 	if history := data.History[key]; len(history) != 0 {
-		return history[len(history)-1].Version
+		return history[len(history)-1].Version, true
 	}
 	if current, ok := data.Entries[key]; ok {
-		return legacyRevision(key, current).Version
+		return legacyRevision(key, current).Version, true
 	}
-	return ""
+	return "", false
+}
+
+func (data *persisted) currentVersion(key string) tool.MemoryVersion {
+	version, _ := data.current(key)
+	return version
 }
 
 func (data *persisted) materializeLegacy(key string) {

@@ -30,16 +30,17 @@ type builtin struct {
 // had reached 7 and was growing per feature) into one named struct so call sites
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
-	MCP        bool
-	Agents     bool
-	Skills     bool
-	Soul       bool
-	UserModel  bool
-	Models     bool // mirrors client.Capabilities.ModelSelection
-	Worktrees  bool
-	Scheduling bool
-	Sessions   bool // /sessions picker — gated on the lister + replayer being wired (NO caps bit)
-	Learning   bool // /learning operator-settings enum
+	MCP         bool
+	Agents      bool
+	Skills      bool
+	Soul        bool
+	UserModel   bool
+	Reflections bool
+	Models      bool // mirrors client.Capabilities.ModelSelection
+	Worktrees   bool
+	Scheduling  bool
+	Sessions    bool // /sessions picker — gated on the lister + replayer being wired (NO caps bit)
+	Learning    bool // /learning operator-settings enum
 }
 
 // wiredCollaborators builds the struct from m.deps — the SINGLE construction
@@ -52,7 +53,8 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 	return wiredCollaborators{
 		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
-		Worktrees: m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
+		Reflections: m.deps.Reflections != nil,
+		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		Sessions: m.deps.Sessions != nil && m.deps.Replayer != nil,
 		Learning: m.deps.Learning != nil,
 	}
@@ -78,6 +80,8 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // directly after it. The order is fixed (clear, help, mcp, agents, team, skills,
 // soul, usermodel, models, effort, worktrees, schedule) and locked by a test so
 // the palette ordering is stable.
+//
+//nolint:gocyclo // capability-gated built-ins remain explicit and ordered
 func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	out := []builtin{
 		{
@@ -132,6 +136,12 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "inspect the user model (read-only)",
 			run:  Model.runUserModel,
 		})
+	}
+	if caps.LearningProposals && w.Reflections {
+		out = append(out, builtin{name: "reflections", desc: "review staged learning proposals", run: Model.runReflections})
+	}
+	if caps.Reflection && w.Reflections {
+		out = append(out, builtin{name: "reflect", desc: "reflect the current completed session", run: Model.runReflect})
 	}
 	if caps.ModelSelection && w.Models {
 		out = append(out, builtin{
@@ -275,6 +285,10 @@ func (m Model) runSoul() (tea.Model, tea.Cmd) {
 // own nil/idle guards are belt-and-braces here.
 func (m Model) runUserModel() (tea.Model, tea.Cmd) {
 	return m.openUserModel()
+}
+
+func (m Model) runReflections() (tea.Model, tea.Cmd) {
+	return m.openReflections()
 }
 
 // runModels opens the /models picker. Only registered when caps.ModelSelection &&

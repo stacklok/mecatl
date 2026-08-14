@@ -115,7 +115,7 @@ The user model is a cross-project, agent-writable store of durable facts about t
 
 Keys in the user model are automatically namespaced under `user/`.
 
-### Automatic reviewer (off by default)
+### Staged reflection (off by default)
 
 Set the operator file `$XDG_CONFIG_HOME/mecatl/settings.yaml` to:
 
@@ -124,13 +124,15 @@ learning:
   mode: auto
 ```
 
-After each clean completion, mecatl synchronously gives an owned transcript snapshot to
-a fresh single-shot reviewer, which calls `RememberUser` for accepted operator facts. It
-never reopens the user's session. `off` means no automatic completed-trajectory reflection
-or review. `review` is available as a policy value but remains inert until a real review
-queue ships; it never silently writes accepted state. A project may lower the operator
+After an eligible clean completion, mecatl detects a conservative structural signal and
+enqueues an owned trajectory snapshot on one bounded process-wide reflection coordinator.
+`review` durably stages valid evidence-backed proposals without changing memory. `auto` stages
+first, then promotes operator facts only when the candidate cites the genuine user message carrying an explicit remember request. Tool/WebFetch/WebSearch/MCP, repository, event-only, and assistant-only evidence stays staged. Project facts use a separate narrow rule: candidates from any non-empty session workspace remain staged and inspectable in that project's partition, but auto-promotion, approval, and undo require the exact trusted configured workspace and an available convergence-capable project memory store. Operator facts continue to follow operator policy. Proposal detail re-checks source ownership and evidence digests and shows a bounded, redacted canonical preview before approval; unavailable, changed, or cross-owner evidence has no preview and cannot be promoted. Ambiguous, conflicting, sensitive, and unsupported
+material remains staged or rejected, and procedures are marked `deferred_unsupported`. `off`
+means no automatic observer, started coordinator worker, eager proposal repository, or reflection provider call. Explicit reflection remains synchronous: it lazily initializes persistence, starts bounded coordinator workers for that job, and uses the completed session's persisted provider/model. A project may lower the operator
 setting, never raise it. The legacy `--user-model-review` flag is a deprecated `auto` alias
-for one compatibility window.
+for one compatibility window. Proposal data defaults beside the user-model store under
+`reflections/`.
 
 The explicit memory and SkillDraft tools are independent and remain available while
 completed-trajectory learning is off. Dream intervals also do not enable that learning.
@@ -154,7 +156,7 @@ user-model store and provider are available regardless of effective workspace
 | Dream consolidation | **Off** | `--memory-consolidate-interval` |
 | Soul | **On** if `~/.config/mecatl/soul.md` exists | `--no-soul` to disable; `--soul-file` to relocate |
 | User model tools + live operator profile | **On** | `--no-user-model` to disable; `--user-model-dir` to relocate |
-| Automatic user-model reviewer | **Off** | `learning.mode: auto` in operator settings (`review` is currently inert) |
+| Automatic evidence reflection | **Off** | `learning.mode: review` stages proposals; `auto` may conservatively promote eligible facts |
 | User-model consolidation | **Off** | `--user-model-consolidate-interval` |
 | Semantic/embedding recall | **Not available** | No embedding backend required or supported |
 

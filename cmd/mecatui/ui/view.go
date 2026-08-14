@@ -109,6 +109,8 @@ func (m Model) renderBody() string {
 		return renderSoulOverlay(m.deps.Theme, m.soul, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.userModel.view != userModelNone:
 		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case m.reflections.view != reflectionsNone:
+		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.models.view != modelsNone:
 		return renderModelsOverlay(m.deps.Theme, m.models, m.caps, m.modelProvenanceLine(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.effort.view != effortNone:

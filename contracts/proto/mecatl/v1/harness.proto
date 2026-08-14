@@ -207,6 +207,23 @@ service HarnessService {
   // startup. Metadata only — the per-entry values are omitted (Recall loads them).
   rpc GetUserModel(GetUserModelRequest) returns (GetUserModelResponse);
 
+  // ReflectSession explicitly reflects one completed, caller-owned session. It
+  // remains available when automatic learning is off if reflection is configured.
+  rpc ReflectSession(ReflectSessionRequest) returns (ReflectSessionResponse);
+
+  // ListLearningProposals returns a bounded, caller/project-partitioned page.
+  rpc ListLearningProposals(ListLearningProposalsRequest) returns (ListLearningProposalsResponse);
+
+  // GetLearningProposal returns one proposal with digest-verified evidence status.
+  rpc GetLearningProposal(GetLearningProposalRequest) returns (GetLearningProposalResponse);
+
+  // DecideLearningProposal approves or rejects a staged proposal using CAS.
+  rpc DecideLearningProposal(DecideLearningProposalRequest) returns (DecideLearningProposalResponse);
+
+  // UndoLearningPromotion commits a compensating revision only while the promoted
+  // revision is still current, also guarded by proposal-version CAS.
+  rpc UndoLearningPromotion(UndoLearningPromotionRequest) returns (UndoLearningPromotionResponse);
+
   // ListModels returns the selectable-model inventory: every AVAILABLE provider's
   // catalog models, projected to public metadata only (no secrets). It powers the
   // client /models picker (multi-provider Phase 0, S3). Derived from the build-time
@@ -469,6 +486,10 @@ message ServerCapabilities {
   // loop (--scheduler): the store-backed RPCs work without the tick loop.
   // Additive: an older server leaves it false and the client hides the overlay.
   bool scheduling = 15;
+  // reflection is true when explicit completed-session reflection is available.
+  bool reflection = 16;
+  // learning_proposals is true when proposal review and promotion are available.
+  bool learning_proposals = 17;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -1924,7 +1945,8 @@ message UserModelRevision {
   string writer = 6;
   string origin = 7;
   string source_session_id = 8;
-  reserved 9, 10;
+  string source_proposal_id = 9;
+  reserved 10;
   reserved "source_event_id", "source_message_id";
   google.protobuf.Timestamp updated_at = 11;
 }
@@ -2029,6 +2051,113 @@ message ListModelsResponse {
   // provider-specific remediation hint even when it contributes zero models.
   repeated ProviderStatus provider_status = 2;
 }
+
+// --- Learning reflection and proposal review --------------------------------
+
+message ReflectSessionRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  reserved 2;
+  reserved "async";
+}
+
+message ReflectionReceipt {
+  string reflection_id = 1;
+  string disposition = 2;
+  int32 queued = 3;
+  bool abstained = 4;
+  int32 staged = 5;
+  int32 promoted = 6;
+  int32 conflicted = 7;
+}
+
+message ReflectSessionResponse { ReflectionReceipt receipt = 1; }
+
+message ListLearningProposalsRequest {
+  string status = 1;
+  string cursor = 2;
+  int32 limit = 3;
+  // project selects the project-scoped partition; empty selects operator scope.
+  string project = 4;
+}
+
+message LearningEvidenceRef {
+  string session_id = 1;
+  string locator = 2;
+  int32 ordinal = 3;
+  int64 event_seq = 4;
+  string tool_call_id = 5;
+  string digest = 6;
+  // available is true only when the authorized source still resolves to this digest.
+  bool available = 7;
+  string availability = 8;
+  // preview is the bounded canonical content re-read after ownership and digest checks.
+  string preview = 9;
+}
+
+message LearningDecision {
+  string kind = 1;
+  string actor = 2;
+  string reason = 3;
+  google.protobuf.Timestamp at = 4;
+}
+
+message LearningPromotionReceipt {
+  string memory_key = 1;
+  bool previous_exists = 2;
+  string previous_version = 3;
+  string result_version = 4;
+}
+
+message LearningProposal {
+  string id = 1;
+  string version = 2;
+  string status = 3;
+  string kind = 4;
+  string key = 5;
+  string value = 6;
+  string description = 7;
+  string title = 8;
+  string body = 9;
+  repeated LearningEvidenceRef evidence = 10;
+  repeated string triggers = 11;
+  repeated LearningDecision decisions = 12;
+  LearningPromotionReceipt promotion = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  bool project_scoped = 16;
+  // promotion_available is true when this partition has an exact trusted,
+  // convergence-capable memory target.
+  bool promotion_available = 17;
+  // promotion_unavailable_reason explains why approve/undo are disabled.
+  string promotion_unavailable_reason = 18;
+}
+
+message ListLearningProposalsResponse {
+  repeated LearningProposal proposals = 1;
+  string next_cursor = 2;
+}
+
+message GetLearningProposalRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string project = 2;
+}
+message GetLearningProposalResponse { LearningProposal proposal = 1; }
+
+message DecideLearningProposalRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_version = 2 [(buf.validate.field).string.min_len = 1];
+  string decision = 3 [(buf.validate.field).string.min_len = 1];
+  string reason = 4;
+  string project = 5;
+}
+message DecideLearningProposalResponse { LearningProposal proposal = 1; }
+
+message UndoLearningPromotionRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_version = 2 [(buf.validate.field).string.min_len = 1];
+  string project = 3;
+}
+message UndoLearningPromotionResponse { LearningProposal proposal = 1; }
 
 // --- Agent team messages ----------------------------------------------------
 

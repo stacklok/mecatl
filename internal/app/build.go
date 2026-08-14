@@ -35,6 +35,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/stacklok/mecatl/engine/adapter/memorypromotion"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -67,6 +68,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
+	"github.com/stacklok/mecatl/internal/adapter/reflectionstore"
 	"github.com/stacklok/mecatl/internal/adapter/rules"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -484,11 +486,11 @@ type Config struct {
 	// SECOND memory.Store under UserModelDir (or the conventional
 	// <xdg>/mecatl/usermodel). NoUserModel disables it entirely (--no-user-model).
 	//
-	// UserModelReview enables the OPT-IN Phase-2b completed-trajectory reviewer
-	// (OFF by default): after a session stops, a fresh single-shot child extracts
-	// operator facts from the transcript and writes them via RememberUser. It NEVER
-	// reopens the user session (R10). UserModelReviewInterval is a session-count
-	// debounce (0/1 = review every session when enabled).
+	// UserModelReview is the temporary compatibility alias for LearningMode Auto.
+	// Automatic completions are signal-gated and admitted to the Build-owned staged
+	// reflection coordinator; they no longer run a direct-writing child reviewer.
+	// UserModelReviewInterval is the process-wide eligible-completion debounce
+	// (0/1 = admit every signalled completion).
 	// UserModelConsolidateInterval independently authorizes a process-wide
 	// dream.Consolidator scoped to the "user/" namespace (0 = off); learning.mode
 	// controls completed-trajectory observation and does not gate this schedule.
@@ -499,7 +501,7 @@ type Config struct {
 	UserModelConsolidateInterval time.Duration
 	// LearningMode is the effective optional completion-observation policy. Off is
 	// the zero/default. The legacy UserModelReview flag projects to Auto for one
-	// compatibility window because it directly writes accepted durable facts.
+	// compatibility window; it now follows the same staged/convergent path.
 	LearningMode learning.Mode
 	// operatorLearningMode retains the pre-project ceiling so per-session engines
 	// can apply their own workspace's tighten-only project setting.
@@ -1516,7 +1518,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// expander build the engine consumes, so the palette offers exactly the
 	// commands a "/<cmd>" prompt would expand. nil when commands are disabled.
 	commandLister := buildCommandLister(cfg, mcpProvider)
-
 	svcCfg := server.Config{
 		Engine:            engine,
 		Store:             store,
@@ -1630,7 +1631,98 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// would violate the one-Store-per-dir lock invariant) so a fetch reflects the
 		// CURRENT entries. nil when user model is disabled (capabilities().UserModel
 		// then false).
-		UserModel: userModelLister(assets.userModelStore),
+		UserModel:         userModelLister(assets.userModelStore),
+		Proposals:         assets.reflectionRepository,
+		ProposalPrincipal: reflectionPrincipal,
+		ProjectPromotionAllowed: func(project string) bool {
+			return projectIngestionAdmittedForRoot(cfg, project)
+		},
+		ProposalActionAvailable: func(project string) (bool, string) {
+			store := assets.userModelStore
+			if project != "" {
+				if !projectIngestionAdmittedForRoot(cfg, project) {
+					return false, "project promotion requires exact trusted launch root"
+				}
+				store = assets.memStore
+			}
+			if store == nil {
+				return false, "convergence-capable memory target is unavailable"
+			}
+			if _, ok := store.(tool.MemoryConvergenceStore); !ok {
+				return false, "memory target does not support atomic convergence"
+			}
+			return true, ""
+		},
+		ReflectSession: func(ctx context.Context, sess *session.Session) (server.ReflectionReceipt, error) {
+			reflectionCfg := cfg
+			reflectionProvider := provider
+			reflectionCfg.LearningMode = learningModeForWorkspace(cfg, sess.Workspace)
+			reflectionCfg.Model = sess.ModelID
+			if sess.ProviderID != "" {
+				entry, ok := reg.Lookup(sess.ProviderID)
+				if !ok {
+					return server.ReflectionReceipt{}, fmt.Errorf("reflection session provider %q is unavailable", sess.ProviderID)
+				}
+				reflectionProvider = entry.provider
+				if reflectionCfg.Model == "" {
+					reflectionCfg.Model = reg.DefaultModelFor(sess.ProviderID)
+				}
+			} else if reflectionCfg.Model == "" {
+				// Only a legacy session with neither selector component inherits the
+				// process default. A persisted provider with no model uses that
+				// provider's own default above; cfg.Model belongs to reg.Default().
+				reflectionCfg.Model = cfg.Model
+			}
+			explicitReflection := buildExplicitReflectionObserver(reflectionCfg, reflectionProvider, reflectionCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator)
+			if explicitReflection == nil {
+				return server.ReflectionReceipt{}, errors.New("reflection is not configured")
+			}
+			stop, _ := sess.StopReason()
+			trajectory := learning.NewTrajectory(sess.ID, sess.Workspace, stop, sess.Usage, sess.Conversation.Messages)
+			trajectory.Principal = sess.Owner.Clone()
+			var events []session.Event
+			if eventLog != nil {
+				for event, eventErr := range eventLog.Read(ctx, sess.ID) {
+					if eventErr != nil {
+						return server.ReflectionReceipt{}, fmt.Errorf("read reflection evidence: %w", eventErr)
+					}
+					if len(events) == learning.MaxInputEvents {
+						break
+					}
+					events = append(events, event)
+				}
+			}
+			r, err := explicitReflection.reflectWithEvents(ctx, trajectory, events)
+			return server.ReflectionReceipt{ID: r.ID, Disposition: string(r.Disposition), Queued: r.Queued, Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted}, err
+		},
+		PromoteProposal: func(ctx context.Context, part learning.ProposalPartition, id learning.ProposalID, version learning.ProposalVersion, approved bool) (learning.ProposalRecord, error) {
+			if cfg.OwnershipEnforced && session.PrincipalFromContext(ctx) == nil {
+				return learning.ProposalRecord{}, server.ErrFailedPrecondition
+			}
+			ctx = memory.WithWorkspace(ctx, part.Project)
+			store := assets.userModelStore
+			if part.Project != "" {
+				if !projectIngestionAdmittedForRoot(cfg, part.Project) {
+					return learning.ProposalRecord{}, server.ErrFailedPrecondition
+				}
+				store = assets.memStore
+			}
+			return (memorypromotion.Promoter{Proposals: assets.reflectionRepository, Memory: store}).Process(ctx, part, id, version, memorypromotion.PolicyInput{Mode: learning.Review, TrustedProject: projectIngestionAdmitted(cfg), Approved: approved})
+		},
+		UndoProposal: func(ctx context.Context, part learning.ProposalPartition, id learning.ProposalID, version learning.ProposalVersion) (learning.ProposalRecord, error) {
+			if cfg.OwnershipEnforced && session.PrincipalFromContext(ctx) == nil {
+				return learning.ProposalRecord{}, server.ErrFailedPrecondition
+			}
+			ctx = memory.WithWorkspace(ctx, part.Project)
+			store := assets.userModelStore
+			if part.Project != "" {
+				if !projectIngestionAdmittedForRoot(cfg, part.Project) {
+					return learning.ProposalRecord{}, server.ErrFailedPrecondition
+				}
+				store = assets.memStore
+			}
+			return (memorypromotion.Promoter{Proposals: assets.reflectionRepository, Memory: store}).Undo(ctx, part, id, version)
+		},
 		// ListCommands palette discovery: a workspace-aware lister over the same
 		// command expander build the engine uses. nil disables the RPC (empty list).
 		Commands: commandLister,
@@ -1702,6 +1794,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// the interactivity bit so the Service observer can gate the auto-approve.
 		PlanModeAutoApprove: cfg.PlanModeAutoApprove,
 		Interactive:         cfg.Interactive,
+	}
+	if assets.reflectionRepository == nil || provider == nil {
+		svcCfg.ReflectSession = nil
+	}
+	if assets.reflectionRepository == nil {
+		svcCfg.PromoteProposal = nil
+		svcCfg.UndoProposal = nil
 	}
 	applyTeamConfig(&svcCfg, cfg, reg, provider, mainMgr, agentReg, assets.skillReadRoots, assets.skillIndex, assets)
 
@@ -1927,6 +2026,13 @@ func adoptHealedDefault(reg *providerRegistry, providerID string, fallbackProvid
 	return resolvedProvider, healed
 }
 
+func selectedProviderModel(reg *providerRegistry, providerID, model string) string {
+	if model != "" {
+		return model
+	}
+	return reg.DefaultModelFor(providerID)
+}
+
 func sessionEngineFactory(
 	cfg Config,
 	reg *providerRegistry,
@@ -1974,9 +2080,9 @@ func sessionEngineFactory(
 			}
 			resolvedProvider = entry.provider
 			resolvedProviderID = sel.ProviderID
-			// "" => provider/adapter default; a non-empty unknown model => verbatim
-			// passthrough (the catalog is NOT consulted to GATE the model string).
-			resolvedModel = sel.ModelID
+			// Empty model means this selected provider's own default. It must not
+			// inherit cfg.Model, which is resolved for the daemon default provider.
+			resolvedModel = selectedProviderModel(reg, sel.ProviderID, sel.ModelID)
 		}
 		// MODE→MODEL RE-RESOLUTION (ADR 0030 Layer 3, the opusplan pattern). When the
 		// session's PermissionMode is ModePlan and a `plan` slot resolves, the engine's
@@ -2111,7 +2217,7 @@ func sessionEngineFactory(
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, assets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
-		deps.LearningObserver = buildLearningObserver(learningCfg, reg, resolvedProviderID, resolvedProvider, assets.userModelStore, assets.learningAdmission)
+		deps.LearningObserver = buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, assets.learningAdmission)
 		deps.Catalog = cat
 		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
@@ -2909,7 +3015,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	deps := baseEngineDeps(cfg, reg, provider, store, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
-	deps.LearningObserver = buildLearningObserver(cfg, reg, reg.Default(), provider, userModelStore, learningAdmission)
+	deps.LearningObserver = buildReflectionObserver(cfg, provider, cfg.Model, userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmission)
 	deps.Catalog = cat
 	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
 	// SHARED engine too — the SAME wiring the per-session factory applies
@@ -4203,6 +4309,49 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		}
 	}
 
+	var reflectionRepository learning.ProposalRepository
+	var reflectionCoordinator *reflectionCoordinator
+	if userModelStore != nil && provider != nil {
+		if base := resolveUserModelDir(cfg.UserModelDir); base != "" {
+			reflectionDir := filepath.Join(base, "reflections")
+			reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
+			previousClose := mcpClose
+			mcpClose = func() { reflectionCoordinator.Close(); previousClose() }
+			if cfg.LearningMode == learning.Off {
+				if _, statErr := os.Stat(filepath.Join(reflectionDir, "proposals.json")); statErr == nil {
+					store, openErr := reflectionstore.New(reflectionDir)
+					if openErr != nil {
+						mcpClose()
+						return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build reflection store: %w", openErr)
+					}
+					reflectionRepository = store
+				} else if !errors.Is(statErr, os.ErrNotExist) {
+					mcpClose()
+					return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("inspect reflection store: %w", statErr)
+				} else {
+					reflectionRepository = &lazyProposalRepository{open: func() (learning.ProposalRepository, error) {
+						return reflectionstore.New(reflectionDir)
+					}}
+				}
+			} else {
+				store, openErr := reflectionstore.New(reflectionDir)
+				if openErr != nil {
+					mcpClose()
+					return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build reflection store: %w", openErr)
+				}
+				reflectionRepository = store
+			}
+		} else {
+			cfg.diag().Log(ctx, port.LevelWarn, "automatic reflection disabled: no durable proposal-store directory can be resolved")
+		}
+	}
+	if _, lazy := reflectionRepository.(*lazyProposalRepository); !lazy {
+		if err := reconcilePromotingProposals(ctx, cfg, reflectionRepository, userModelStore, memStore); err != nil {
+			mcpClose()
+			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build reflection reconciliation: %w", err)
+		}
+	}
+
 	// The skills seam (Phase C1): FS snapshot or remote driver, resolved once.
 	// A driver fault is FATAL (explicit operator config, the memory-driver
 	// posture above); the FS branch stays fail-soft.
@@ -4251,7 +4400,9 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
 		// and threaded onto the assets so every per-session catalog reuses the SAME
 		// provider.
-		searchProvider: buildSearchProvider(ctx, cfg),
+		searchProvider:        buildSearchProvider(ctx, cfg),
+		reflectionCoordinator: reflectionCoordinator,
+		reflectionRepository:  reflectionRepository,
 		// Fire-result delivery queue (ADR 0075): the DURABLE per-session
 		// pending-delivery queue. Built ONCE here so the main engine's Step 2a
 		// drain, the per-session engine factory's drain, and the scheduler's
@@ -4726,9 +4877,9 @@ func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.Mem
 	return true
 }
 
-// buildLearningObserver adapts the existing durable user-model reviewer to the
-// optional completed-trajectory seam. Review is honestly inert until #509 adds a
-// review queue; Auto retains the legacy accepted-fact write behavior.
+// buildLearningObserver retains the pre-Chunk-C composition helper for compatibility
+// tests around the exported direct-writing UserModelReviewer. Standard Build never calls
+// it; buildReflectionObserver is the only production completed-trajectory wiring.
 func buildLearningObserver(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider, userModelStore tool.MemoryStore, admission *learningAdmission) learning.Observer {
 	switch cfg.LearningMode {
 	case learning.Off:

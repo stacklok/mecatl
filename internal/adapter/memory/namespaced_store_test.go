@@ -193,6 +193,9 @@ func TestCallerStoresPreserveOptionalLifecycleCapability(t *testing.T) {
 		if _, ok := store.(tool.MemoryLifecycleStore); !ok {
 			t.Errorf("%s wrapper dropped MemoryLifecycleStore", name)
 		}
+		if _, ok := store.(tool.MemoryConvergenceStore); !ok {
+			t.Errorf("%s wrapper dropped MemoryConvergenceStore", name)
+		}
 	}
 
 	baseOnly := baseOnlyMemoryStore{MemoryStore: base}

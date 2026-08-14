@@ -295,8 +295,13 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"GetSoul":            {KindSharedInfrastructure, "the deployment's configured soul, identical for every caller"},
 
 	// --- derived: user-model memory delegates entirely to the caller-partitioned store ---
-	"GetUserModel":       {KindDerived, "delegates to cfg.UserModel.List, the caller-partitioned memory.CallerStore already classified caller-owned"},
-	"GetUserModelDetail": {KindDerived, "delegates to cfg.UserModel's optional lifecycle Inspect, preserving the same caller-partitioned memory.CallerStore boundary for current value and history"},
+	"GetUserModel":           {KindDerived, "delegates to cfg.UserModel.List, the caller-partitioned memory.CallerStore already classified caller-owned"},
+	"GetUserModelDetail":     {KindDerived, "delegates to cfg.UserModel's optional lifecycle Inspect, preserving the same caller-partitioned memory.CallerStore boundary for current value and history"},
+	"ReflectSession":         {KindCallerOwned, "loads and authorizes the source session before submitting its bounded completed trajectory"},
+	"ListLearningProposals":  {KindCallerOwned, "derives the proposal partition from the verified caller; optional project scope is trust-gated"},
+	"GetLearningProposal":    {KindCallerOwned, "reads only the verified caller's proposal partition"},
+	"DecideLearningProposal": {KindCallerOwned, "mutates only the verified caller's proposal partition with version CAS"},
+	"UndoLearningPromotion":  {KindCallerOwned, "compensates only a verified caller-owned proposal and linked current revision with version CAS"},
 
 	// --- exempt: workspace-path-scoped (project trust), not caller-identity-scoped ---
 	"ListCommands":  {KindExempt, "scoped by filesystem workspace path under the pre-existing project-trust gate, not caller identity — out of ADR 0102's per-caller kind table"},

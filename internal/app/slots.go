@@ -54,7 +54,8 @@ const (
 	// slotAskReviewer routes the OPT-IN headless child-ask reviewer (issue #31).
 	slotAskReviewer = "ask-reviewer"
 	// slotGuardrail routes the LLM-backed guardrail content checker (issue #27).
-	slotGuardrail = "guardrail"
+	slotGuardrail  = "guardrail"
+	slotReflection = "reflection"
 	// slotSynthesis is DEFINED for completeness (team synthesis is the cheap tier's
 	// natural fourth consumer) but is deliberately NOT wired this slice — the lead
 	// synthesis runs on the lead member's whole engine and lacks a clean seam.
@@ -97,6 +98,7 @@ var knownSlotNames = map[string]struct{}{
 	slotCompaction:  {},
 	slotAskReviewer: {},
 	slotGuardrail:   {},
+	slotReflection:  {},
 	slotSynthesis:   {},
 	slotPlan:        {},
 	slotRouter:      {},
@@ -116,6 +118,7 @@ var slotDefaultTier = map[string]string{
 	slotCompaction:  slotCheap,
 	slotAskReviewer: slotCheap,
 	slotGuardrail:   slotCheap,
+	slotReflection:  slotCheap,
 	slotSynthesis:   slotCheap,
 	slotPlan:        slotReasoning,
 	slotRouter:      slotCheap,

@@ -1,12 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -50,6 +52,11 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel", h.cancel)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel-child", h.cancelChild)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/fork", h.forkSession)
+	h.mux.HandleFunc("POST /v1/sessions/{id}/reflect", h.reflectSession)
+	h.mux.HandleFunc("GET /v1/learning/proposals", h.listLearningProposals)
+	h.mux.HandleFunc("GET /v1/learning/proposals/{id}", h.getLearningProposal)
+	h.mux.HandleFunc("POST /v1/learning/proposals/{id}/decision", h.decideLearningProposal)
+	h.mux.HandleFunc("POST /v1/learning/proposals/{id}/undo", h.undoLearningPromotion)
 	h.mux.HandleFunc("GET /v1/mcp/resources", h.listMcpResources)
 	h.mux.HandleFunc("GET /v1/mcp/resources/read", h.readMcpResource)
 	h.mux.HandleFunc("GET /v1/mcp/prompts", h.listMcpPrompts)
@@ -176,16 +183,18 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 // client gets. Populated from the shared Service.capabilities() so the two
 // surfaces cannot drift.
 type serverCapabilitiesJSON struct {
-	MCP            bool   `json:"mcp"`
-	SlashCommands  bool   `json:"slash_commands"`
-	Memory         bool   `json:"memory"`
-	Skills         bool   `json:"skills"`
-	Teams          bool   `json:"teams"`
-	Bash           bool   `json:"bash"`
-	Image          bool   `json:"image"`
-	Audio          bool   `json:"audio"`
-	ModelSelection bool   `json:"model_selection"`
-	Posture        string `json:"posture,omitempty"`
+	MCP               bool   `json:"mcp"`
+	SlashCommands     bool   `json:"slash_commands"`
+	Memory            bool   `json:"memory"`
+	Skills            bool   `json:"skills"`
+	Teams             bool   `json:"teams"`
+	Bash              bool   `json:"bash"`
+	Image             bool   `json:"image"`
+	Audio             bool   `json:"audio"`
+	ModelSelection    bool   `json:"model_selection"`
+	Reflection        bool   `json:"reflection"`
+	LearningProposals bool   `json:"learning_proposals"`
+	Posture           string `json:"posture,omitempty"`
 }
 
 // capabilitiesJSON projects the shared proto capabilities onto the JSON shape.
@@ -194,16 +203,18 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		return nil
 	}
 	return &serverCapabilitiesJSON{
-		MCP:            c.GetMcp(),
-		SlashCommands:  c.GetSlashCommands(),
-		Memory:         c.GetMemory(),
-		Skills:         c.GetSkills(),
-		Teams:          c.GetTeams(),
-		Bash:           c.GetBash(),
-		Image:          c.GetImage(),
-		Audio:          c.GetAudio(),
-		ModelSelection: c.GetModelSelection(),
-		Posture:        c.GetPosture(),
+		MCP:               c.GetMcp(),
+		SlashCommands:     c.GetSlashCommands(),
+		Memory:            c.GetMemory(),
+		Skills:            c.GetSkills(),
+		Teams:             c.GetTeams(),
+		Bash:              c.GetBash(),
+		Image:             c.GetImage(),
+		Audio:             c.GetAudio(),
+		ModelSelection:    c.GetModelSelection(),
+		Reflection:        c.GetReflection(),
+		LearningProposals: c.GetLearningProposals(),
+		Posture:           c.GetPosture(),
 	}
 }
 
@@ -1333,6 +1344,157 @@ func (h *HTTPHandler) getUserModel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func rejectDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := make(map[string]struct{})
+			for decoder.More() {
+				keyToken, keyErr := decoder.Token()
+				if keyErr != nil {
+					return keyErr
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("invalid JSON object key")
+				}
+				if _, duplicate := seen[key]; duplicate {
+					return fmt.Errorf("duplicate JSON key %q", key)
+				}
+				seen[key] = struct{}{}
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+		default:
+			return errors.New("invalid JSON delimiter")
+		}
+		_, err = decoder.Token()
+		return err
+	}
+	return walk()
+}
+
+func decodeLearningJSON(r *http.Request, limit int64, dst any, allowEmpty bool) error {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(raw)) > limit {
+		return errors.New("request body too large")
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		if allowEmpty {
+			return nil
+		}
+		return io.ErrUnexpectedEOF
+	}
+	if err := rejectDuplicateJSONKeys(raw); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func (h *HTTPHandler) reflectSession(w http.ResponseWriter, r *http.Request) {
+	if err := decodeLearningJSON(r, 1<<10, &struct{}{}, true); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid reflection request")
+		return
+	}
+	receipt, err := h.svc.ReflectSession(r.Context(), session.SessionID(r.PathValue("id")))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.ReflectSessionResponse{Receipt: receipt})
+}
+
+func (h *HTTPHandler) listLearningProposals(w http.ResponseWriter, r *http.Request) {
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil && r.URL.Query().Get("limit") != "" {
+		writeError(w, http.StatusBadRequest, "invalid proposal limit")
+		return
+	}
+	resp, err := h.svc.ListLearningProposals(r.Context(), r.URL.Query().Get("status"), r.URL.Query().Get("cursor"), limit, r.URL.Query().Get("project"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *HTTPHandler) getLearningProposal(w http.ResponseWriter, r *http.Request) {
+	proposal, err := h.svc.GetLearningProposal(r.Context(), r.PathValue("id"), r.URL.Query().Get("project"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.GetLearningProposalResponse{Proposal: proposal})
+}
+
+func (h *HTTPHandler) decideLearningProposal(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ExpectedVersion string `json:"expected_version"`
+		Decision        string `json:"decision"`
+		Reason          string `json:"reason"`
+		Project         string `json:"project"`
+	}
+	if err := decodeLearningJSON(r, 4<<10, &body, false); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid proposal decision")
+		return
+	}
+	proposal, err := h.svc.DecideLearningProposal(r.Context(), r.PathValue("id"), body.ExpectedVersion, body.Decision, body.Reason, body.Project)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.DecideLearningProposalResponse{Proposal: proposal})
+}
+
+func (h *HTTPHandler) undoLearningPromotion(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ExpectedVersion string `json:"expected_version"`
+		Project         string `json:"project"`
+	}
+	if err := decodeLearningJSON(r, 2<<10, &body, false); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid proposal undo")
+		return
+	}
+	proposal, err := h.svc.UndoLearningPromotion(r.Context(), r.PathValue("id"), body.ExpectedVersion, body.Project)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.UndoLearningPromotionResponse{Proposal: proposal})
+}
+
 // listCommands handles GET /v1/commands?workspace=.
 func (h *HTTPHandler) listCommands(w http.ResponseWriter, r *http.Request) {
 	cmds, err := h.svc.ListCommands(r.Context(), r.URL.Query().Get("workspace"))
@@ -1459,6 +1621,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrChildNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrLearningUnavailable):
+		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrProposalConflict):
+		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrFailedPrecondition):
 		writeError(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, ErrTeamsDisabled):

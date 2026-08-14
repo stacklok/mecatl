@@ -3484,19 +3484,69 @@ instruction-like prose. Both reference stores retain 64 revisions per key and pe
 origin-known/truncated marker; Undo may remove a value only when retained history proves the target
 was its creation, and fails without mutation at a truncated predecessor boundary.
 
-**Optional learning seam (#507):** `engine/learning` owns only `Mode`, the owned
-completed `Trajectory`, and synchronous `Observer`. `agent.terminateComplete` invokes it
-after state establishment and excludes error/cancelled terminals. Standard composition maps
-`learning.mode: auto` to the storage-free `agent.NewUserModelObserver` path over the owned
-trajectory; only the legacy ID-based `Review` path requires a SessionStore. `review` is
-inert until #509 supplies a real queue; `off` means no automatic completed-trajectory
-reflection or review. Project settings apply only as a minimum ceiling (`off < review <
-auto`). That ceiling does not control the separately authorized process-wide user-model
-maintenance service: `--user-model-consolidate-interval > 0` starts the cross-project
-consolidator whenever its store and provider are available, even when a project's effective
-mode is `off`. No candidate/evidence schema, goroutine, scheduler, persistence, or promotion
-logic lives in the engine. The legacy `--user-model-review` flag projects to `auto` for one
-compatibility window.
+**Optional learning and evidence reflection (#507 / #509 Chunk A):** `engine/learning`
+owns `Mode`, the owned completed `Trajectory`, and synchronous `Observer`, plus the
+storage-neutral reflection domain: closed candidate/outcome/signal types, bounded input,
+content-addressed canonical message/event evidence projections, structural within-input signal
+detection, and `Reflector`. Evidence projections omit binary and provider reasoning data, actor
+identity, permission arguments, and unbounded delegation content; every proposed handle is
+resolved against the exact input, while existing facts remain comparison-only. Candidate
+validation reuses the canonical memory secret/directive classifiers and rejects transient or
+unsupported durable claims.
+
+`engine/agent/evidencereflector.go` (`EvidenceReflector`) is the optional model-backed
+implementation: one direct provider-neutral turn, no catalog/tools/Engine loop or writes, with
+explicit input/event/existing/candidate/evidence/output/token/time bounds. Canonical JSON is
+untrusted-fenced and strict output accepts only one object (or one lone JSON fence), disallows
+unknown fields/trailing content, and validates every candidate and evidence reference. No
+automatic async coordinator, API, TUI, or skill schema is part of this chunk.
+
+**Durable proposal lifecycle and memory convergence (#509 Chunk B):**
+`engine/learning/proposal.go` owns bounded deterministic proposal records and the narrow
+`ProposalRepository` CAS seam. IDs hash principal/project identity, input, canonical candidate, and
+evidence digests; they never embed transcript text. `engine/adapter/memproposal` and
+`engine/adapter/proposalconformance` provide the reference implementation and shared contract. The
+host-side `internal/adapter/reflectionstore` partitions by principal/project hashes and commits each
+bounded JSON document under flock with temp-file fsync, rename, and directory fsync.
+
+`engine/adapter/memorypromotion` applies the standard conservative policy and converges one candidate
+at a time. Facts use an additive presence-and-version memory CAS; the resulting memory revision carries
+the proposal id. A process crash after memory commit but before proposal finalization is reconciled by
+that linkage without a second write. Undo requires that linked resulting revision to remain current;
+otherwise the proposal conflicts and newer memory is untouched. Procedures remain
+`deferred_unsupported`; exact duplicates do not write; user-explicit, newer, and ambiguous facts are
+never automatically overwritten. Heterogeneous batches can partially promote explicitly because no
+cross-store transaction is claimed. Dream consolidation uses lifecycle CAS when available and retains
+the legacy path only for base-only stores. This chunk deliberately does not wire reflection output into
+the repository automatically and adds no server/TUI surface.
+
+**Standard coordinator and staged wiring (#509 Chunk C):** `internal/app/reflection_coordinator.go`
+owns one dormant Build-lifetime coordinator in every mode, never one goroutine per completion. Workers start only after first admission, so Off starts none until explicit reflection. Its global and per-principal
+queues are count- and byte-bounded, preserve principal FIFO, and rotate principals fairly; default concurrency is one.
+The effective receipt cap is at least queue capacity plus workers and admission reserves a live receipt first, so completion publication cannot be dropped. Oversized raw trajectory/event input is rejected before projection/marshal and queue allocation.
+Principal+session+input-digest singleflight collapses pending duplicates. Every job has a timeout and
+runs only under the Build lifecycle context, so automatic work detaches from request cancellation only
+after the observer has copied the verified session principal and bounded trajectory. `Built.Close`
+stops admission, publishes closed receipts for queued waiters, clears pending state, cancels active work, and joins workers. Queue-full, duplicate, completion, and failure diagnostics carry only bounded
+job IDs and counts. Queue/singleflight/receipt state resets by design; proposal state is durable.
+
+The observer performs the structural signal gate before the process-wide legacy interval admission, so
+trivial completions spend no provider call and do not consume the debounce cadence. Standard composition
+constructs `agent.EvidenceReflector` on the selected session provider/model (or the same-provider
+`reflection` slot), stages through the durable proposal repository under principal/project partitions,
+and applies `memorypromotion.StandardPolicy`. `review` stages without memory writes. `auto` promotes operator facts only from explicit principal-authored remember evidence. Trusted project facts require principal-authored evidence and an exact configured-workspace match; tool/assistant/repository-only evidence remains staged. Project candidates from admitted alternate roots remain staged/reviewable but cannot approve, undo, or read/write launch-root project memory until a safe exact-root lifecycle store exists; untrusted project material is not ingested. Existing project partitions stay listable/rejectable. Conflicts and ambiguous facts remain non-promoted, project material
+requires `projectIngestionAdmitted`, and procedures become `deferred_unsupported`. `off` installs no
+automatic observer, started coordinator worker, or eager proposal repository. Explicit reflection synchronously uses the persisted session provider/model, performs a bounded EventLog read, and lazily opens persistence and starts coordinator workers in Off. Approval re-verifies owner-authorized message/event digest, sequence, and tool-call evidence before promotion. The deprecated `--user-model-review` alias maps to this same `auto` path;
+the old exported `UserModelReviewer`, `NewUserModelObserver`, and `Review` remain compatibility APIs but
+standard Build no longer uses their direct-writing child engine. Dream and explicit memory tools remain
+independent CAS writers. The shipped gRPC/HTTP surface provides synchronous explicit reflection plus caller-partitioned proposal list/detail/decision/undo, and mecatui provides windowed review with exact canonical value/scope/description and stale-CAS refresh.
+
+`agent.terminateComplete` invokes the existing Observer after state establishment and excludes
+error/cancelled terminals. Project settings apply only as a minimum ceiling (`off < review < auto`).
+That ceiling does not control the separately authorized process-wide user-model maintenance service:
+`--user-model-consolidate-interval > 0` starts the cross-project consolidator whenever its store and
+provider are available, even when a project's effective mode is `off`. No reflection goroutine,
+scheduler, persistence, or promotion logic lives in the engine.
 
 ### `providercatalog` (multi-provider Phase 0 S2)
 

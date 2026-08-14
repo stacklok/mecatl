@@ -130,12 +130,12 @@ type Config struct {
 // LearningSection is the strict learning: settings subtree.
 type LearningSection struct {
 	// Mode controls automatic completed-trajectory observation: off (default; no
-	// automatic reflection or review of completed trajectories), review (currently
-	// inert until #509 supplies a review queue), or auto (run the durable user-model
-	// reviewer after eligible clean completions). Operator settings establish the
-	// ceiling; project settings may only tighten it under off < review < auto and
-	// never raise autonomy. It does not override separately configured maintenance
-	// schedules such as --user-model-consolidate-interval.
+	// automatic reflection), review (signal-gated reflection stages durable proposals
+	// without memory writes), or auto (stage first, then conservatively promote only
+	// eligible non-conflicting facts). Operator settings establish the ceiling;
+	// project settings may only tighten it under off < review < auto and never raise
+	// autonomy. It does not override separately configured maintenance schedules such
+	// as --user-model-consolidate-interval.
 	Mode string `yaml:"mode"`
 }
 

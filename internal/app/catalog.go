@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -126,7 +127,9 @@ type catalogAssets struct {
 	deliveryQueue port.DeliveryQueue
 	// learningAdmission is the ONE process-wide completion counter shared by the
 	// default and every per-session/provider reviewer.
-	learningAdmission *learningAdmission
+	learningAdmission     *learningAdmission
+	reflectionCoordinator *reflectionCoordinator
+	reflectionRepository  learning.ProposalRepository
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the

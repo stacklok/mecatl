@@ -29,7 +29,12 @@ share one event shape.
 | `GET /v1/skills` | the skills inventory |
 | `GET /v1/commands` | the slash-command palette for a workspace |
 | `GET /v1/soul` | the resolved soul snapshot (provenance, trust, drift) |
-| `GET /v1/usermodel` | the live bounded user-model index; `?key=<exact-key>` also returns read-only value/version/provenance/timestamps/bounded history when available |
+| `GET /v1/usermodel` | the live bounded user-model index; `?key=<exact-key>` also returns read-only value/version/provenance/proposal linkage/timestamps/bounded history when available |
+| `POST /v1/sessions/{id}/reflect` | synchronously reflect a caller-owned completed session on its persisted provider (optional empty/`{}` body); returns bounded abstained/staged/promoted/conflicted counts |
+| `GET /v1/learning/proposals` | bounded caller-partitioned proposal page (`status`, `cursor`, `limit`, optional reviewable `project`; promotion remains launch-root/trust-gated) |
+| `GET /v1/learning/proposals/{id}` | bounded proposal detail with digest availability, never raw evidence text |
+| `POST /v1/learning/proposals/{id}/decision` | approve/reject with `expected_version`; stale versions return `409` |
+| `POST /v1/learning/proposals/{id}/undo` | compensating undo with `expected_version`; stale/current-memory conflicts return `409` |
 | `GET /v1/mcp/resources` | MCP resource snapshots |
 | `GET /v1/mcp/resources/read` | read one MCP resource by URI |
 | `GET /v1/mcp/prompts` | the MCP prompt inventory |

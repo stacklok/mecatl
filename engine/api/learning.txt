@@ -1,11 +1,118 @@
     ifacemethod func (Observer).Observe(context.Context, Trajectory) error
+    ifacemethod func (ProposalRepository).ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error)
+    ifacemethod func (ProposalRepository).ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error)
+    ifacemethod func (ProposalRepository).Finalize(context.Context, ProposalPartition, ProposalID, ProposalVersion, ProposalStatus, *PromotionReceipt, Decision) (ProposalRecord, error)
+    ifacemethod func (ProposalRepository).Get(context.Context, ProposalPartition, ProposalID) (ProposalRecord, bool, error)
+    ifacemethod func (ProposalRepository).List(context.Context, ProposalPartition, ProposalList) (ProposalPage, error)
+    ifacemethod func (ProposalRepository).StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)
+    ifacemethod func (Reflector).Reflect(context.Context, Input) (Outcome, error)
+    method func (CandidateKind).Valid() bool
     method func (Mode).Next() Mode
     method func (Mode).String() string
+    method func (OutcomeKind).Valid() bool
+    method func (ProposalStatus).Valid() bool
+    method func (SignalKind).Valid() bool
 const Auto Mode = 2
+const CandidateOperatorFact CandidateKind = "operator_fact"
+const CandidateProcedure CandidateKind = "procedure"
+const CandidateProjectFact CandidateKind = "project_fact"
+const DecisionApprove DecisionKind = "approve"
+const DecisionDefer DecisionKind = "defer"
+const DecisionReject DecisionKind = "reject"
+const DefaultProposalPageSize untyped int = 50
+const EvidenceEvent EvidenceLocator = "event"
+const EvidenceMessage EvidenceLocator = "message"
+const MaxCandidateBodyBytes untyped int = 8192
+const MaxCandidateDescriptionBytes untyped int = 2048
+const MaxCandidateEvidence untyped int = 16
+const MaxCandidateKeyBytes untyped int = 256
+const MaxCandidateTitleBytes untyped int = 256
+const MaxCandidateValueBytes untyped int = 8192
+const MaxCandidates untyped int = 16
+const MaxExistingFacts untyped int = 256
+const MaxInputEvents untyped int = 512
+const MaxInputMessages untyped int = 256
+const MaxInputSignals untyped int = 64
+const MaxProposalActorBytes untyped int = 256
+const MaxProposalDecisions untyped int = 16
+const MaxProposalPageSize untyped int = 200
+const MaxProposalReasonBytes untyped int = 1024
+const MaxProposalsPerPartition untyped int = 4096
 const Off Mode = 0
+const OutcomeAbstained OutcomeKind = "abstained"
+const OutcomeProposed OutcomeKind = "proposed"
+const ProposalConflicted ProposalStatus = "conflicted"
+const ProposalDeferredUnsupported ProposalStatus = "deferred_unsupported"
+const ProposalPromoted ProposalStatus = "promoted"
+const ProposalPromoting ProposalStatus = "promoting"
+const ProposalRejected ProposalStatus = "rejected"
+const ProposalStaged ProposalStatus = "staged"
+const ProposalUndone ProposalStatus = "undone"
 const Review Mode = 1
+const SignalContradiction SignalKind = "contradiction"
+const SignalExplicitRemember SignalKind = "explicit_remember"
+const SignalFailureRecovery SignalKind = "failure_recovery"
+const SignalRepeatedCorrection SignalKind = "repeated_correction"
+const SignalRepeatedToolSequence SignalKind = "repeated_tool_sequence"
+const SignalSubstantialSuccess SignalKind = "substantial_success"
+func DetectSignals(in Input) []Signal
+func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (ProposalID, error)
+func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
+func EvidenceHandle(ref EvidenceRef) string
+func EvidencePreview(in Input, ref EvidenceRef) (string, error)
+func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
+func NewCandidate(in Input, candidate Candidate) (Candidate, error)
+func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, existing []ExistingFact) Input
 func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory
 func ParseMode(s string) (Mode, error)
+func ProjectInput(in Input) (Projection, error)
+func ResolveEvidence(in Input, ref EvidenceRef) error
+func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
+func ValidateCandidate(in Input, candidate Candidate) error
+func ValidateDecision(d Decision) error
+func ValidateInput(in Input) error
+func ValidateOutcome(in Input, out Outcome) error
+func ValidateProposalMaterial(p ProposalPartition, input string, c Candidate, signals []Signal) error
+type Candidate struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key,omitempty\""; Value string "json:\"value,omitempty\""; Description string "json:\"description,omitempty\""; Title string "json:\"title,omitempty\""; Body string "json:\"body,omitempty\""; Evidence []EvidenceRef "json:\"evidence\""}
+type CandidateKind string
+type Decision struct{Kind DecisionKind "json:\"kind\""; Actor string "json:\"actor,omitempty\""; Reason string "json:\"reason,omitempty\""; At time.Time "json:\"at\""}
+type DecisionKind string
+type EventProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Type session.EventType "json:\"type\""; Seq int64 "json:\"seq\""; Turn int "json:\"turn\""; Text string "json:\"text,omitempty\""; ToolCall *ToolProjection "json:\"tool_call,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Stop session.StopReason "json:\"stop,omitempty\""}
+type EvidenceEventData struct{Type session.EventType; Seq int64; Turn int; Text string; ToolCall *ToolProjection; ToolResult *ResultProjection; Stop session.StopReason}
+type EvidenceLocator string
+type EvidenceProjection struct{Handle string "json:\"handle\""; Digest string "json:\"digest\""; EventSeq *int64 "json:\"event_seq,omitempty\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""}
+type EvidenceRef struct{SessionID session.SessionID "json:\"session_id\""; Locator EvidenceLocator "json:\"locator\""; Ordinal int "json:\"ordinal\""; EventSeq *int64 "json:\"event_seq,omitempty\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""; Digest string "json:\"digest\""}
+type ExistingFact struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key\""; Value string "json:\"value\""; Description string "json:\"description,omitempty\""}
+type Input struct{Trajectory Trajectory "json:\"trajectory\""; Events []EvidenceEventData "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""}
+type MessageProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Role session.Role "json:\"role\""; Text string "json:\"text,omitempty\""; ToolCalls []ToolProjection "json:\"tool_calls,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
 type Mode uint8
 type Observer interface{Observe(context.Context, Trajectory) error}
-type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message}
+type Outcome struct{Kind OutcomeKind "json:\"kind\""; Candidates []Candidate "json:\"candidates,omitempty\""}
+type OutcomeKind string
+type PartProjection struct{Kind string "json:\"kind,omitempty\""; MIMEType string "json:\"mime_type,omitempty\""; Text string "json:\"text,omitempty\""; Name string "json:\"name,omitempty\""; Title string "json:\"title,omitempty\""; Description string "json:\"description,omitempty\""; Binary bool "json:\"binary,omitempty\""}
+type Projection struct{SessionID session.SessionID "json:\"session_id\""; Stop session.StopReason "json:\"stop,omitempty\""; Messages []MessageProjection "json:\"messages\""; Events []EventProjection "json:\"events,omitempty\""; Signals []SignalProjection "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""}
+type PromotionReceipt struct{MemoryKey string "json:\"memory_key\""; PreviousExists bool "json:\"previous_exists\""; PreviousVersion string "json:\"previous_version,omitempty\""; ResultVersion string "json:\"result_version\""}
+type ProposalID string
+type ProposalList struct{After ProposalID; Limit int; Status ProposalStatus}
+type ProposalPage struct{Records []ProposalRecord; Next ProposalID}
+type ProposalPartition struct{Principal string "json:\"principal\""; Project string "json:\"project,omitempty\""}
+type ProposalRecord struct{ID ProposalID "json:\"id\""; Version ProposalVersion "json:\"version\""; Status ProposalStatus "json:\"status\""; Partition ProposalPartition "json:\"partition\""; InputDigest string "json:\"input_digest\""; Candidate Candidate "json:\"candidate\""; Signals []Signal "json:\"signals,omitempty\""; Decisions []Decision "json:\"decisions,omitempty\""; Receipt *PromotionReceipt "json:\"receipt,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type ProposalRepository interface{ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error); ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error); Finalize(context.Context, ProposalPartition, ProposalID, ProposalVersion, ProposalStatus, *PromotionReceipt, Decision) (ProposalRecord, error); Get(context.Context, ProposalPartition, ProposalID) (ProposalRecord, bool, error); List(context.Context, ProposalPartition, ProposalList) (ProposalPage, error); StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)}
+type ProposalStatus string
+type ProposalVersion string
+type Reflector interface{Reflect(context.Context, Input) (Outcome, error)}
+type ResultProjection struct{CallID session.ToolCallID "json:\"call_id\""; Content string "json:\"content,omitempty\""; IsError bool "json:\"is_error,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
+type Signal struct{Kind SignalKind "json:\"kind\""; Evidence []EvidenceRef "json:\"evidence,omitempty\""}
+type SignalKind string
+type SignalProjection struct{Kind SignalKind "json:\"kind\""; Evidence []string "json:\"evidence,omitempty\""}
+type ToolProjection struct{ID session.ToolCallID "json:\"id\""; Name string "json:\"name\""}
+type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Principal *session.Principal}
+var ErrInvalidCandidate error
+var ErrInvalidEvidence error
+var ErrInvalidInput error
+var ErrInvalidOutcome error
+var ErrInvalidProposal error
+var ErrProposalLimit error
+var ErrProposalNotFound error
+var ErrProposalTransition error
+var ErrProposalVersionConflict error

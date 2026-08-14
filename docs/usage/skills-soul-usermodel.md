@@ -190,13 +190,17 @@ It surfaces three ways:
   Recall, Search, Inspect, and Undo
   are floor Allows; Forget is a floor Ask. Any configured Ask/Deny/Allow at a higher
   scope overrides these built-in floors.
-- **Automatic reviewer (`learning.mode: auto`):** after a clean completion, a fresh
-  single-shot child receives an owned transcript snapshot and extracts operator facts via
-  RememberUser. `off` is the default and means no automatic completed-trajectory reflection
-  or review; `review` is honestly inert until a review queue exists.
-  `--user-model-review` remains as a deprecated `auto` alias and
-  `--user-model-review-interval` still debounces admitted completions. The reviewer never
-  reopens or re-runs the user's session.
+- **Staged reflection (`learning.mode`):** `off` is the default and attaches no
+  automatic completion observer; explicit reflection remains available through its lazy path.
+  `review` reflects eligible clean completions and stages bounded, evidence-backed proposals
+  without writing memory. `auto` uses the same stage-first path and then promotes only
+  conservative standard-policy-eligible, non-conflicting facts. Project/procedure proposals are
+  staged only when the session root is the exact trusted configured root. Proposal detail
+  re-checks source ownership and evidence digests and exposes a bounded, redacted canonical
+  preview before approval; changed, unavailable, and cross-owner evidence is not previewed or
+  promotable. `--user-model-review` remains as a deprecated `auto` alias and
+  `--user-model-review-interval` still debounces admitted completions. Reflection never reopens
+  or re-runs the user's session.
 - **Scheduled consolidation:** `--user-model-consolidate-interval > 0` independently
   authorizes a process-wide `dream` consolidator over the cross-project `user/` namespace.
   It runs when the user-model store and provider are available regardless of effective

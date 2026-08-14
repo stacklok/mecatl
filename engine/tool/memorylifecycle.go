@@ -58,7 +58,8 @@ const (
 // MemorySource identifies the optional durable session associated with a revision.
 // Empty means unavailable; callers must not invent one.
 type MemorySource struct {
-	SessionID string
+	SessionID  string
+	ProposalID string
 }
 
 // MemoryAttribution carries optional provenance facts for a lifecycle write.
@@ -127,6 +128,21 @@ type MemoryLifecycleStore interface {
 	Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
 	ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
 	UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
+}
+
+// MemoryCurrent identifies the complete expected current state for an atomic
+// mutation. Exists=false means the key must be absent; Exists=true requires the
+// exact opaque Version.
+type MemoryCurrent struct {
+	Exists  bool
+	Version MemoryVersion
+}
+
+// MemoryConvergenceStore is the additive create-or-update CAS capability used by
+// convergence workflows. Implementations compare and append atomically.
+type MemoryConvergenceStore interface {
+	MemoryLifecycleStore
+	RememberIfCurrent(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
 }
 
 // MemoryVersionConflictError reports a failed lifecycle compare-version

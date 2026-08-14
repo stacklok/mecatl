@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -500,5 +501,53 @@ func TestPrefixScopesConsolidationToUserNamespace(t *testing.T) {
 	}
 	if _, ok := store.entries["project/y"]; !ok {
 		t.Errorf("project/y is outside the user/ prefix and must survive")
+	}
+}
+
+type dreamRacingMemory struct {
+	*memmemory.Store
+	beforeCAS func(context.Context)
+}
+
+func (m *dreamRacingMemory) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	if m.beforeCAS != nil {
+		fn := m.beforeCAS
+		m.beforeCAS = nil
+		fn(ctx)
+	}
+	return m.Store.RememberIfCurrent(ctx, entry, expected)
+}
+
+func TestLifecycleDreamDoesNotOverwriteConcurrentPromotion(t *testing.T) {
+	ctx := context.Background()
+	store := &dreamRacingMemory{Store: memmemory.New()}
+	for _, entry := range []tool.MemoryEntry{
+		{Key: "project/a", Value: "old a"},
+		{Key: "project/b", Value: "old b"},
+		{Key: "project/c", Value: "old c"},
+	} {
+		if err := store.RememberEntry(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.beforeCAS = func(ctx context.Context) {
+		promotion := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterModel, Origin: tool.MemoryOriginLearning, Source: tool.MemorySource{ProposalID: "proposal-race"}})
+		if err := store.RememberEntry(promotion, tool.MemoryEntry{Key: "project/a", Value: "promoted value"}); err != nil {
+			t.Error(err)
+		}
+	}
+	consolidator := newWithPlanner(store, &stubPlanner{plan: Plan{Merges: []Merge{{Into: "project/a", From: []string{"project/b"}, Value: "dream value"}}}}, Config{MinEntriesToRun: 3})
+	if _, err := consolidator.Consolidate(ctx); err == nil {
+		t.Fatal("concurrent promotion did not trip dream CAS")
+	}
+	current, found, err := store.Inspect(ctx, "project/a")
+	if err != nil || !found {
+		t.Fatalf("inspect: found=%v err=%v", found, err)
+	}
+	if current.Current.Value != "promoted value" || current.Current.Source.ProposalID != "proposal-race" {
+		t.Fatalf("concurrent promotion overwritten: %#v", current.Current)
+	}
+	if _, found, err = store.Recall(ctx, "project/b"); err != nil || !found {
+		t.Fatalf("merge source removed after failed CAS: found=%v err=%v", found, err)
 	}
 }

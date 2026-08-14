@@ -105,16 +105,17 @@ type LearningSettings interface {
 // imports client + theme only — never contracts/gen or any internal/... package;
 // all proto contact happens behind Converser/SessionCreator.
 type Deps struct {
-	Session   SessionCreator
-	Conv      Converser
-	MCP       client.MCP             // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
-	Cmds      client.Commander       // slash-command discovery for the input palette; nil disables it
-	Skills    client.SkillLister     // skills-inventory discovery for the /skills panel; nil disables it
-	Agents    client.AgentLister     // agent-definition discovery for the /agents panel; nil disables it
-	Soul      client.SoulFetcher     // soul (persona) inspection for the /soul panel; nil disables it
-	UserModel client.UserModelLister // user-model inspection for the /usermodel panel; nil disables it
-	Models    client.ModelLister     // selectable-model discovery for the /models picker; nil disables it
-	Worktrees client.WorktreeLister  // worktree discovery for the /worktrees overlay (issue #102); nil disables it
+	Session     SessionCreator
+	Conv        Converser
+	MCP         client.MCP              // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
+	Cmds        client.Commander        // slash-command discovery for the input palette; nil disables it
+	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
+	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
+	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
+	UserModel   client.UserModelLister  // user-model inspection for the /usermodel panel; nil disables it
+	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
+	Models      client.ModelLister      // selectable-model discovery for the /models picker; nil disables it
+	Worktrees   client.WorktreeLister   // worktree discovery for the /worktrees overlay (issue #102); nil disables it
 	// Sched is the schedule discovery + management surface for the /schedule overlay
 	// (issue #234); nil disables it (the overlay is honestly absent). The overlay can
 	// create/inspect/pause/resume/fire-now on any store-backed server; auto-firing on
@@ -392,26 +393,28 @@ type Model struct {
 	// already kills stale-reader duplicates; this kills same-stream ones). Lazily
 	// initialised (markAskResolved); a reference type mutable through the
 	// value-receiver Model, same pattern as filesSeen below.
-	resolvedAsks map[string]struct{}
-	mcp          mcpState       // MCP overlay state (view==mcpNone when closed)
-	skills       skillsState    // skills-inventory overlay state (view==skillsNone when closed)
-	palette      paletteState   // slash-command palette (open when the input starts with "/")
-	mention      mentionState   // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
-	queued       []string       // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a clean/transient stop (see drainQueue)
-	queuePaused  string         // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
-	team         teamState      // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
-	agentsTab    agentsTab      // active tab in the unified agents overlay (Subagents | Parallel | Teams)
-	subagents    subagentState  // Subagents-tab state of the unified agents overlay (roster | focus)
-	parallel     parallelState  // Parallel-tab state of the unified agents overlay (roster | group focus)
-	agentsInv    agentsInvState // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	soul         soulState      // soul (persona) inspection overlay state (view==soulNone when closed)
-	userModel    userModelState // user-model inspection overlay state (view==userModelNone when closed)
-	userModelGen uint64         // monotonic request generation; invalidates delayed detail/index responses
-	models       modelsState    // /models picker overlay state (view==modelsNone when closed)
-	effort       effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
-	worktrees    worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
-	schedule     scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
-	sessions     sessionsState  // /sessions overlay state (view==sessionsNone when closed) — issue #245
+	resolvedAsks   map[string]struct{}
+	mcp            mcpState       // MCP overlay state (view==mcpNone when closed)
+	skills         skillsState    // skills-inventory overlay state (view==skillsNone when closed)
+	palette        paletteState   // slash-command palette (open when the input starts with "/")
+	mention        mentionState   // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
+	queued         []string       // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a clean/transient stop (see drainQueue)
+	queuePaused    string         // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
+	team           teamState      // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
+	agentsTab      agentsTab      // active tab in the unified agents overlay (Subagents | Parallel | Teams)
+	subagents      subagentState  // Subagents-tab state of the unified agents overlay (roster | focus)
+	parallel       parallelState  // Parallel-tab state of the unified agents overlay (roster | group focus)
+	agentsInv      agentsInvState // agent-definition inventory overlay state (view==agentsInvNone when closed)
+	soul           soulState      // soul (persona) inspection overlay state (view==soulNone when closed)
+	userModel      userModelState // user-model inspection overlay state (view==userModelNone when closed)
+	userModelGen   uint64         // monotonic request generation; invalidates delayed detail/index responses
+	reflections    reflectionsState
+	reflectionsGen uint64
+	models         modelsState    // /models picker overlay state (view==modelsNone when closed)
+	effort         effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
+	worktrees      worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
+	schedule       scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
+	sessions       sessionsState  // /sessions overlay state (view==sessionsNone when closed) — issue #245
 	// activeModel is the currently-selected (provider, model) the NEXT CreateSession
 	// will carry (apply-on-next-create). Seeded from Deps.InitialModel, updated by the
 	// picker, and reconciled-to-default at connect when its provider is unavailable. It

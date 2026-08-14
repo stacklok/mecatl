@@ -87,8 +87,9 @@ var coreImportRules = []coreImportRule{
 		pkg: modulePrefix + "engine/learning",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/session": true,
+			modulePrefix + "engine/tool":    true,
 		},
-		desc: "learning may import only session + stdlib (completed-trajectory policy and snapshot values)",
+		desc: "learning may import session + tool's canonical memory security helpers + stdlib",
 	},
 	{
 		pkg: modulePrefix + "engine/tool",

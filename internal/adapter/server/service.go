@@ -19,6 +19,7 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -383,6 +384,17 @@ type Config struct {
 	// It is the same seam idiom as Commands. Optional and nil-safe: when nil (user
 	// model disabled) capabilities().UserModel is false and GetUserModel returns empty.
 	UserModel UserModelLister
+
+	// ReflectSession enables explicit completed-session reflection independently of
+	// automatic learning mode. Proposals and the mutation callbacks expose the
+	// bounded, caller-partitioned staged-learning review surface.
+	ReflectSession          ExplicitReflector
+	Proposals               learning.ProposalRepository
+	ProposalPrincipal       func(*session.Principal) string
+	PromoteProposal         ProposalPromoter
+	UndoProposal            ProposalUndoer
+	ProjectPromotionAllowed func(project string) bool
+	ProposalActionAvailable func(project string) (bool, string)
 
 	// SessionEngine builds a PER-SESSION engine over a non-default provider/model
 	// selector AND/OR client-provided streaming-HTTP MCP servers (the ACP
@@ -1663,15 +1675,17 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// matches the client's documented semantics ("true when ≥1 provider is
 		// available"); opening the picker fires ListModels, which runs the refresher
 		// and populates the list, and the empty-list state is handled gracefully.
-		ModelSelection: len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
-		Memory:         has(memory.RememberToolName),
-		Skills:         has(skills.ToolName),
-		Bash:           has(tools.BashToolName),
-		Image:          pcaps.Image,
-		Audio:          pcaps.Audio,
-		Posture:        s.cfg.Posture,
-		Worktrees:      s.cfg.Worktrees != nil,
-		Scheduling:     s.scheduleStore() != nil,
+		ModelSelection:    len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
+		Memory:            has(memory.RememberToolName),
+		Skills:            has(skills.ToolName),
+		Bash:              has(tools.BashToolName),
+		Image:             pcaps.Image,
+		Audio:             pcaps.Audio,
+		Posture:           s.cfg.Posture,
+		Worktrees:         s.cfg.Worktrees != nil,
+		Reflection:        s.cfg.ReflectSession != nil,
+		LearningProposals: s.cfg.Proposals != nil,
+		Scheduling:        s.scheduleStore() != nil,
 	}
 }
 
@@ -4676,7 +4690,7 @@ func toProtoUserModelRevision(revision tool.MemoryRevision) *mecatlv1.UserModelR
 	if tool.SecretShapedMemoryValue(revision.Key, description) {
 		description = "[withheld: secret-shaped memory description]"
 	}
-	out := &mecatlv1.UserModelRevision{Key: userModelWireText(revision.Key), Value: userModelWireText(value), Description: userModelWireText(description), Version: userModelWireText(string(revision.Version)), Status: userModelWireText(string(revision.Status)), Writer: userModelWireText(string(revision.Writer)), Origin: userModelWireText(string(revision.Origin)), SourceSessionId: userModelWireText(revision.Source.SessionID)}
+	out := &mecatlv1.UserModelRevision{Key: userModelWireText(revision.Key), Value: userModelWireText(value), Description: userModelWireText(description), Version: userModelWireText(string(revision.Version)), Status: userModelWireText(string(revision.Status)), Writer: userModelWireText(string(revision.Writer)), Origin: userModelWireText(string(revision.Origin)), SourceSessionId: userModelWireText(revision.Source.SessionID), SourceProposalId: userModelWireText(revision.Source.ProposalID)}
 	if !revision.UpdatedAt.IsZero() {
 		out.UpdatedAt = timestamppb.New(revision.UpdatedAt)
 	}

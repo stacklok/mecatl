@@ -51,6 +51,7 @@ package dream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -219,6 +220,8 @@ func (c *Consolidator) Consolidate(ctx context.Context) (Report, error) {
 // apply validates the plan against the known input keys and mutates the store
 // conservatively. It never introduces a key absent from entries, and forgets at
 // most Config.MaxForgets entries.
+//
+//nolint:gocyclo // lifecycle/base-only branches keep one visible apply transaction
 func (c *Consolidator) apply(ctx context.Context, entries []tool.MemoryEntry, plan Plan) (Report, error) {
 	rewrite, fromMerge := c.stagePlan(entries, plan)
 	ctx = tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginConsolidation})
@@ -239,17 +242,59 @@ func (c *Consolidator) apply(ctx context.Context, entries []tool.MemoryEntry, pl
 		}
 	}
 
-	// --- mutate the store -----------------------------------------------------
-	// Consolidation intentionally stays on the six-operation MemoryStore contract,
-	// so a base-only remote executes one coherent plan without partial fallback.
-	for key, val := range rewrite {
-		if err := c.store.RememberEntry(ctx, tool.MemoryEntry{Key: key, Value: val}); err != nil {
-			return Report{}, fmt.Errorf("dream: rewrite %q: %w", key, err)
+	// Lifecycle stores use per-key CAS; base-only stores retain the compatible legacy path.
+	if lifecycle, ok := c.store.(tool.MemoryLifecycleStore); ok {
+		convergence, ok := c.store.(tool.MemoryConvergenceStore)
+		if !ok {
+			return Report{}, fmt.Errorf("dream: lifecycle store lacks atomic convergence writes")
 		}
-	}
-	for key := range fromMerge {
-		if err := c.store.Forget(ctx, key); err != nil {
-			return Report{}, fmt.Errorf("dream: forget %q: %w", key, err)
+		expected := map[string]tool.MemoryVersion{}
+		original := map[string]tool.MemoryEntry{}
+		for _, entry := range entries {
+			original[entry.Key] = entry
+		}
+		for key := range rewrite {
+			record, found, err := lifecycle.Inspect(ctx, key)
+			base := original[key]
+			if err != nil || !found || record.Current.Value != base.Value || record.Current.Description != base.Description {
+				if err == nil {
+					err = errors.New("memory changed since planning")
+				}
+				return Report{}, fmt.Errorf("dream: inspect rewrite %q: %w", key, err)
+			}
+			expected[key] = record.Current.Version
+		}
+		for key := range fromMerge {
+			record, found, err := lifecycle.Inspect(ctx, key)
+			base := original[key]
+			if err != nil || !found || record.Current.Value != base.Value || record.Current.Description != base.Description {
+				if err == nil {
+					err = errors.New("memory changed since planning")
+				}
+				return Report{}, fmt.Errorf("dream: inspect forget %q: %w", key, err)
+			}
+			expected[key] = record.Current.Version
+		}
+		for key, val := range rewrite {
+			if _, err := convergence.RememberIfCurrent(ctx, tool.MemoryEntry{Key: key, Value: val}, tool.MemoryCurrent{Exists: true, Version: expected[key]}); err != nil {
+				return Report{}, fmt.Errorf("dream: rewrite %q: %w", key, err)
+			}
+		}
+		for key := range fromMerge {
+			if _, err := lifecycle.ForgetVersioned(ctx, key, expected[key]); err != nil {
+				return Report{}, fmt.Errorf("dream: forget %q: %w", key, err)
+			}
+		}
+	} else {
+		for key, val := range rewrite {
+			if err := c.store.RememberEntry(ctx, tool.MemoryEntry{Key: key, Value: val}); err != nil {
+				return Report{}, fmt.Errorf("dream: rewrite %q: %w", key, err)
+			}
+		}
+		for key := range fromMerge {
+			if err := c.store.Forget(ctx, key); err != nil {
+				return Report{}, fmt.Errorf("dream: forget %q: %w", key, err)
+			}
 		}
 	}
 

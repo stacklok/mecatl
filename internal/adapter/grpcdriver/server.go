@@ -187,7 +187,8 @@ func NewMemoryStoreServer(st tool.MemoryStore) driverv1.MemoryStoreServiceServer
 
 func (s *memoryStoreServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
 	_, lifecycle := s.store.(tool.MemoryLifecycleStore)
-	return &driverv1.MemoryStoreCapabilitiesResponse{Lifecycle: lifecycle}, nil
+	_, convergence := s.store.(tool.MemoryConvergenceStore)
+	return &driverv1.MemoryStoreCapabilitiesResponse{Lifecycle: lifecycle, Convergence: convergence}, nil
 }
 
 // RememberEntry stores the entry; a blank/whitespace-only key is rejected
@@ -322,12 +323,28 @@ func (s *memoryStoreServer) UndoLatest(ctx context.Context, req *driverv1.UndoLa
 	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
 }
 
+func (s *memoryStoreServer) RememberIfCurrent(ctx context.Context, req *driverv1.RememberIfCurrentRequest) (*driverv1.MemoryRecordResponse, error) {
+	store, ok := s.store.(tool.MemoryConvergenceStore)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "memory convergence unsupported")
+	}
+	if req.GetEntry() == nil {
+		return nil, status.Error(codes.InvalidArgument, "entry is required")
+	}
+	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	record, err := store.RememberIfCurrent(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryCurrent{Exists: req.GetExpectedExists(), Version: tool.MemoryVersion(req.GetExpectedVersion())})
+	if err != nil {
+		return nil, storeStatus(err)
+	}
+	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
+}
+
 func withProtoAttribution(ctx context.Context, a *driverv1.MemoryAttribution) context.Context {
 	if a == nil {
 		return ctx
 	}
 	s := a.GetSource()
-	return tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriter(a.GetWriter()), Origin: tool.MemoryOrigin(a.GetOrigin()), Source: tool.MemorySource{SessionID: s.GetSessionId()}})
+	return tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriter(a.GetWriter()), Origin: tool.MemoryOrigin(a.GetOrigin()), Source: tool.MemorySource{SessionID: s.GetSessionId(), ProposalID: s.GetProposalId()}})
 }
 
 func toProtoRecord(record tool.MemoryRecord) *driverv1.MemoryRecord {
@@ -339,7 +356,7 @@ func toProtoRecord(record tool.MemoryRecord) *driverv1.MemoryRecord {
 }
 
 func toProtoRevision(rev tool.MemoryRevision) *driverv1.MemoryRevision {
-	out := &driverv1.MemoryRevision{Key: valid(rev.Key), Value: valid(rev.Value), Description: valid(rev.Description), Version: valid(string(rev.Version)), Status: valid(string(rev.Status)), Writer: valid(string(rev.Writer)), Origin: valid(string(rev.Origin)), Source: &driverv1.MemorySource{SessionId: valid(rev.Source.SessionID)}}
+	out := &driverv1.MemoryRevision{Key: valid(rev.Key), Value: valid(rev.Value), Description: valid(rev.Description), Version: valid(string(rev.Version)), Status: valid(string(rev.Status)), Writer: valid(string(rev.Writer)), Origin: valid(string(rev.Origin)), Source: &driverv1.MemorySource{SessionId: valid(rev.Source.SessionID), ProposalId: valid(rev.Source.ProposalID)}}
 	if !rev.UpdatedAt.IsZero() {
 		out.UpdatedAt = timestamppb.New(rev.UpdatedAt)
 	}

@@ -58,6 +58,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0010 — Semantic memory recall](./0010-semantic-memory-recall.md)
 - [0011 — Soul & user-model](./0011-soul-and-user-model.md)
 - [0012 — Compaction](./0012-compaction.md)
+- [0106 — Optional completion-learning seam](./0106-optional-learning-seam.md)
+- [0107 — Operator-profile memory lifecycle](./0107-operator-profile-memory-lifecycle.md)
+- [0109 — Evidence-backed reflection and durable staged learning](./0109-staged-learning-proposals.md)
 
 ### Core tools & shell
 - [0090 — Background Bash commands](./0090-background-bash.md)

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -150,6 +152,7 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 	workspace := t.TempDir()
 	providers := map[string]*mockllm.Provider{}
 	built, err := Build(ctx, Config{
+		Model:                   "test-model",
 		Workspace:               workspace,
 		NoSoul:                  true,
 		LearningMode:            learning.Auto,
@@ -164,9 +167,9 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 			var turns []mockllm.Turn
 			switch id {
 			case providerOpenAI:
-				turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn("default review")}
+				turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn(`{"kind":"abstained"}`)}
 			case providerOpenRouter:
-				turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn("selected review")}
+				turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn(`{"kind":"abstained"}`)}
 			default:
 				turns = []mockllm.Turn{mockllm.TextTurn("unused")}
 			}
@@ -184,18 +187,26 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 	if err != nil {
 		t.Fatalf("CreateSession(default): %v", err)
 	}
-	defaultRun, err := built.Service.StartRun(ctx, defaultSession.ID, "first")
+	defaultRun, err := built.Service.StartRun(ctx, defaultSession.ID, "Remember that I prefer concise answers")
 	if err != nil {
 		t.Fatalf("StartRun(default): %v", err)
 	}
 	_ = drainRun(defaultRun)
-	if got := providers[providerOpenAI].Calls(); got != 2 {
+	waitCalls := func(provider *mockllm.Provider, want int) int {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for provider.Calls() < want && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		return provider.Calls()
+	}
+	if got := waitCalls(providers[providerOpenAI], 2); got != 2 {
 		t.Fatalf("default provider calls after admitted completion = %d, want 2 (run + review)", got)
 	}
 
 	runSelected := func(prompt string) {
 		t.Helper()
-		sess, createErr := built.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter})
+		sess, createErr := built.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: "test-model"})
 		if createErr != nil {
 			t.Fatalf("CreateSessionWithProvider: %v", createErr)
 		}
@@ -206,13 +217,233 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 		_ = drainRun(run)
 	}
 
-	runSelected("second")
+	runSelected("Remember that I prefer short examples")
 	if got := providers[providerOpenRouter].Calls(); got != 1 {
 		t.Fatalf("selected provider calls after globally skipped completion = %d, want 1 (no reviewer call)", got)
 	}
-	runSelected("third")
-	if got := providers[providerOpenRouter].Calls(); got != 3 {
+	runSelected("Remember that I prefer Go examples")
+	if got := waitCalls(providers[providerOpenRouter], 3); got != 3 {
 		t.Fatalf("selected provider calls after next global admission = %d, want 3 (two runs + one review)", got)
+	}
+}
+
+func TestExplicitReflectionUsesPersistedSessionProvider(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	userModelDir := t.TempDir()
+	providers := map[string]*mockllm.Provider{}
+	var requestMu sync.Mutex
+	requestModels := map[string][]string{}
+	built, err := Build(ctx, Config{
+		Model: "default-model", Workspace: workspace, NoSoul: true, LearningMode: learning.Off,
+		UserModelDir:        userModelDir,
+		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "test", "OPENROUTER_API_KEY": "test"}),
+		liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			turns := []mockllm.Turn{mockllm.TextTurn("unused")}
+			if id == providerOpenRouter {
+				turns = []mockllm.Turn{mockllm.TextTurn("selected completion"), mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`)}
+			}
+			provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+				requestMu.Lock()
+				requestModels[id] = append(requestModels[id], req.Model)
+				requestMu.Unlock()
+			})}, turns...)
+			providers[id] = provider
+			return provider
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	if _, statErr := os.Stat(filepath.Join(userModelDir, "reflections")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("off mode eagerly initialized reflection repository: %v", statErr)
+	}
+	sess, err := built.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerOpenRouter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := built.Service.StartRun(ctx, sess.ID, "Remember that I prefer concise answers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainRun(run)
+	if _, err = built.Service.ReflectSession(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(filepath.Join(userModelDir, "reflections")); statErr != nil {
+		t.Fatalf("explicit reflection did not initialize lazy repository: %v", statErr)
+	}
+	if got := providers[providerOpenRouter].Calls(); got != 2 {
+		t.Fatalf("selected provider calls = %d, want run + reflection", got)
+	}
+	if got := providers[providerOpenAI].Calls(); got != 0 {
+		t.Fatalf("default provider received selected transcript: calls=%d", got)
+	}
+	requestMu.Lock()
+	selectedModels := append([]string(nil), requestModels[providerOpenRouter]...)
+	defaultModels := append([]string(nil), requestModels[providerOpenAI]...)
+	requestMu.Unlock()
+	if len(selectedModels) != 2 || selectedModels[0] != "openai/gpt-5" || selectedModels[1] != "openai/gpt-5" {
+		t.Fatalf("selected provider models = %v, want its own non-empty default for run and reflection", selectedModels)
+	}
+	if len(defaultModels) != 0 {
+		t.Fatalf("default provider received requests with models %v", defaultModels)
+	}
+}
+
+func TestExplicitReflectionAlternateRootStagesButCannotPromoteProjectProposal(t *testing.T) {
+	ctx := context.Background()
+	configuredRoot := t.TempDir()
+	alternateRoot := t.TempDir()
+	provider := mockllm.New(
+		mockllm.TextTurn("completed"),
+		mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"project_fact","key":"project/build","value":"task build","evidence":["m:0"]}]}`),
+	)
+	built, err := Build(ctx, Config{
+		Model: "model", Workspace: configuredRoot, TrustProject: true, NoSoul: true,
+		LearningMode: learning.Off, UserModelDir: t.TempDir(), MemoryDir: t.TempDir(),
+		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			if id == providerOpenAI {
+				return provider
+			}
+			return mockllm.New(mockllm.TextTurn("unused"))
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(ctx, alternateRoot, session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := built.Service.StartRun(ctx, sess.ID, "Remember that this project uses task build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = drainRun(run)
+	receipt, err := built.Service.ReflectSession(ctx, sess.ID)
+	if err != nil || receipt.GetStaged() != 1 || receipt.GetPromoted() != 0 {
+		t.Fatalf("alternate-root reflection receipt=%+v err=%v", receipt, err)
+	}
+	page, err := built.Service.ListLearningProposals(ctx, "", "", 10, alternateRoot)
+	if err != nil || len(page.GetProposals()) != 1 || page.GetProposals()[0].GetStatus() != string(learning.ProposalStaged) {
+		t.Fatalf("alternate-root project proposals=%+v err=%v", page.GetProposals(), err)
+	}
+	proposal := page.GetProposals()[0]
+	if proposal.GetPromotionAvailable() || proposal.GetPromotionUnavailableReason() == "" {
+		t.Fatalf("alternate-root proposal unexpectedly promotable: %+v", proposal)
+	}
+	if _, err = built.Service.DecideLearningProposal(ctx, proposal.GetId(), proposal.GetVersion(), "approve", "", alternateRoot); !errors.Is(err, server.ErrFailedPrecondition) {
+		t.Fatalf("alternate-root approval err=%v, want failed precondition", err)
+	}
+}
+
+func TestBuildGRPCReflectionPartitionsVerifiedPrincipals(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	provider := mockllm.New(
+		mockllm.TextTurn("alice completed"),
+		mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/alice","value":"alice value","evidence":["m:0"]}]}`),
+		mockllm.TextTurn("bob completed"),
+		mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/bob","value":"bob value","evidence":["m:0"]}]}`),
+	)
+	built, err := Build(ctx, Config{
+		Model: "model", Workspace: workspace, NoSoul: true, OwnershipEnforced: true,
+		LearningMode: learning.Off, UserModelDir: t.TempDir(),
+		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+			if id == providerOpenAI {
+				return provider
+			}
+			return mockllm.New(mockllm.TextTurn("unused"))
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	handler := server.NewHarnessServer(built.Service)
+	principals := []*session.Principal{
+		{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser},
+		{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser},
+	}
+	for _, principal := range principals {
+		principalCtx := session.WithPrincipal(ctx, principal)
+		sess, createErr := built.Service.CreateSession(principalCtx, workspace, session.ModeDefault, defaultLimits())
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		run, runErr := built.Service.StartRun(principalCtx, sess.ID, "Remember that I prefer my exact value")
+		if runErr != nil {
+			t.Fatal(runErr)
+		}
+		_ = drainRun(run)
+		response, reflectErr := handler.ReflectSession(principalCtx, &mecatlv1.ReflectSessionRequest{SessionId: string(sess.ID)})
+		if reflectErr != nil || response.GetReceipt().GetStaged() != 1 || response.GetReceipt().GetPromoted() != 0 {
+			t.Fatalf("%s reflection=%+v err=%v", principal.Subject, response, reflectErr)
+		}
+	}
+	for _, principal := range principals {
+		principalCtx := session.WithPrincipal(ctx, principal)
+		page, listErr := handler.ListLearningProposals(principalCtx, &mecatlv1.ListLearningProposalsRequest{Limit: 10})
+		if listErr != nil || len(page.GetProposals()) != 1 || page.GetProposals()[0].GetKey() != "user/"+principal.Subject {
+			t.Fatalf("%s partition=%+v err=%v", principal.Subject, page.GetProposals(), listErr)
+		}
+	}
+}
+
+func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		mode         learning.Mode
+		wantPromoted int32
+		wantStatus   learning.ProposalStatus
+	}{
+		{learning.Review, 0, learning.ProposalStaged},
+		{learning.Auto, 1, learning.ProposalPromoted},
+	} {
+		t.Run(tc.mode.String(), func(t *testing.T) {
+			workspace := t.TempDir()
+			provider := mockllm.New(
+				mockllm.TextTurn("completed"),
+				mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`),
+			)
+			built, err := Build(context.Background(), Config{
+				Model: "model", Workspace: workspace, NoSoul: true, LearningMode: tc.mode,
+				UserModelReviewInterval: 2, UserModelDir: t.TempDir(),
+				envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
+				providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
+					if id == providerOpenAI {
+						return provider
+					}
+					return mockllm.New(mockllm.TextTurn("unused"))
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+			sess, err := built.Service.CreateSession(context.Background(), workspace, session.ModeDefault, defaultLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := built.Service.StartRun(context.Background(), sess.ID, "Remember that I prefer concise output")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = drainRun(run)
+			receipt, err := built.Service.ReflectSession(context.Background(), sess.ID)
+			if err != nil || receipt.GetStaged() != 1 || receipt.GetPromoted() != tc.wantPromoted {
+				t.Fatalf("receipt=%+v err=%v", receipt, err)
+			}
+			page, err := built.Service.ListLearningProposals(context.Background(), "", "", 10, "")
+			if err != nil || len(page.GetProposals()) != 1 || page.GetProposals()[0].GetStatus() != string(tc.wantStatus) {
+				t.Fatalf("proposals=%+v err=%v", page.GetProposals(), err)
+			}
+		})
 	}
 }
 

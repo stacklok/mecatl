@@ -26,7 +26,15 @@ type namespacedLifecycleStore struct {
 	lifecycle tool.MemoryLifecycleStore
 }
 
-var _ tool.MemoryLifecycleStore = (*namespacedLifecycleStore)(nil)
+type namespacedConvergenceStore struct {
+	*namespacedLifecycleStore
+	convergence tool.MemoryConvergenceStore
+}
+
+var (
+	_ tool.MemoryLifecycleStore   = (*namespacedLifecycleStore)(nil)
+	_ tool.MemoryConvergenceStore = (*namespacedConvergenceStore)(nil)
+)
 
 // NewNamespacedStore confines a MemoryStore to namespace. Namespace is an
 // adapter-private boundary, not a model-visible key prefix. The returned store
@@ -39,6 +47,10 @@ func NewNamespacedStore(store tool.MemoryStore, namespace string) tool.MemorySto
 		panic("memory: NewNamespacedStore requires a non-empty namespace")
 	}
 	base := &NamespacedStore{store: store, namespace: strings.TrimSuffix(namespace, "/") + "/"}
+	if convergence, ok := store.(tool.MemoryConvergenceStore); ok {
+		lifecycle := &namespacedLifecycleStore{NamespacedStore: base, lifecycle: convergence}
+		return &namespacedConvergenceStore{namespacedLifecycleStore: lifecycle, convergence: convergence}
+	}
 	if lifecycle, ok := store.(tool.MemoryLifecycleStore); ok {
 		return &namespacedLifecycleStore{NamespacedStore: base, lifecycle: lifecycle}
 	}
@@ -152,6 +164,12 @@ func (s *namespacedLifecycleStore) UndoLatest(ctx context.Context, key string, e
 	return s.trimRecord(record), s.logicalError(err)
 }
 
+func (s *namespacedConvergenceStore) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	entry.Key = s.key(entry.Key)
+	record, err := s.convergence.RememberIfCurrent(ctx, entry, expected)
+	return s.trimRecord(record), s.logicalError(err)
+}
+
 type memoryWorkspaceKey struct{}
 
 // WithWorkspace annotates a run context for the caller-scoped project memory
@@ -174,7 +192,14 @@ type callerLifecycleStore struct {
 	*CallerStore
 }
 
-var _ tool.MemoryLifecycleStore = (*callerLifecycleStore)(nil)
+type callerConvergenceStore struct {
+	*callerLifecycleStore
+}
+
+var (
+	_ tool.MemoryLifecycleStore   = (*callerLifecycleStore)(nil)
+	_ tool.MemoryConvergenceStore = (*callerConvergenceStore)(nil)
+)
 
 // NewCallerStore returns a store partitioned by verified caller and, when
 // project is true, by workspace. The returned store advertises
@@ -184,6 +209,9 @@ func NewCallerStore(store tool.MemoryStore, project bool) tool.MemoryStore {
 		panic("memory: NewCallerStore requires a non-nil MemoryStore")
 	}
 	base := &CallerStore{store: store, project: project}
+	if _, ok := store.(tool.MemoryConvergenceStore); ok {
+		return &callerConvergenceStore{callerLifecycleStore: &callerLifecycleStore{CallerStore: base}}
+	}
 	if _, ok := store.(tool.MemoryLifecycleStore); ok {
 		return &callerLifecycleStore{CallerStore: base}
 	}
@@ -299,4 +327,12 @@ func (s *callerLifecycleStore) UndoLatest(ctx context.Context, key string, expec
 		return tool.MemoryRecord{}, err
 	}
 	return store.UndoLatest(ctx, key, expected)
+}
+
+func (s *callerConvergenceStore) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	store, err := s.scoped(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	return store.(tool.MemoryConvergenceStore).RememberIfCurrent(ctx, entry, expected)
 }

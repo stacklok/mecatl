@@ -81,6 +81,9 @@ service MemoryStoreService {
 
   // UndoLatest appends a compensating revision when expected_version matches.
   rpc UndoLatest(UndoLatestRequest) returns (MemoryRecordResponse);
+
+  // RememberIfCurrent compares presence and version atomically before appending.
+  rpc RememberIfCurrent(RememberIfCurrentRequest) returns (MemoryRecordResponse);
 }
 
 // MemoryEntry is one cross-session memory record, mirroring tool.MemoryEntry.
@@ -183,6 +186,7 @@ message MemorySource {
   string session_id = 1;
   reserved 2, 3;
   reserved "event_id", "message_id";
+  string proposal_id = 4;
 }
 
 // MemoryRevision is one immutable lifecycle revision. Status, writer, origin,
@@ -210,6 +214,7 @@ message MemoryStoreCapabilitiesResponse {
   // lifecycle is true only when all four lifecycle RPCs are implemented with
   // their documented atomic semantics.
   bool lifecycle = 1;
+  bool convergence = 2;
 }
 
 message RememberVersionedRequest {
@@ -239,5 +244,11 @@ message UndoLatestRequest {
   string key = 1;
   string expected_version = 2;
   MemoryAttribution attribution = 3;
+}
+message RememberIfCurrentRequest {
+  MemoryEntry entry = 1 [(buf.validate.field).required = true];
+  bool expected_exists = 2;
+  string expected_version = 3;
+  MemoryAttribution attribution = 4;
 }
 message MemoryRecordResponse { MemoryRecord record = 1; }

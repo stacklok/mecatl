@@ -2,7 +2,7 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
-**What this covers:** `tool.MemoryStore` (Remember/Recall/SearchMemory across sessions), the file-backed `memory` adapter, the opt-in `dream` consolidation service, the user model (RememberUser/RecallUser/SearchUserModel — cross-project operator FACTS), and the Stop-triggered user-model reviewer.
+**What this covers:** `tool.MemoryStore` (Remember/Recall/SearchMemory across sessions), the file-backed `memory` adapter, the opt-in `dream` consolidation service, the user model (RememberUser/RecallUser/SearchUserModel — cross-project operator FACTS), and staged evidence reflection.
 
 **Prerequisites:** [the agent loop](agent-loop.md) — the loop injects the memory index each run.
 
@@ -56,11 +56,14 @@ oldest predecessor was truncated, so Undo stops without mutation at that boundar
 mistaking it for proof that the retained target created the key.
 
 Remember is floor-Allow as before; Recall/Search/Inspect/Undo are floor-Allow and
-Forget is floor-Ask. All are config-overridable. Automatic review is controlled by
-`learning.mode` (`off` by default); turning it off does not remove explicit tools or
-the live profile. In `auto`, the completed-trajectory observer writes accepted facts
-through RememberUser and preserves the source session attribution. Consolidation is
-independently operator-scheduled and deliberately uses only the six base-store operations,
+Forget is floor-Ask. All are config-overridable. Completed-trajectory reflection is
+controlled by `learning.mode` (`off` by default): Off attaches no automatic observer,
+Review stages bounded evidence-backed proposals without a memory write, and Auto stages
+through the same repository before conservatively promoting eligible non-conflicting
+facts with source-session attribution. Explicit reflection remains available in Off via
+a lazy path. Project candidates are staged only for the exact admitted configured root.
+Proposal detail re-checks source ownership and evidence digests and exposes only a bounded,
+redacted canonical preview before approval. Consolidation is independently operator-scheduled and deliberately uses only the six base-store operations,
 so local and old remote stores execute the same coherent plan.
 
 Every final model/wire/TUI projection first uses the shared

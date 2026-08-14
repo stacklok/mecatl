@@ -7,6 +7,7 @@
     ifacemethod func (FileSystem).Glob(ctx context.Context, pattern string) ([]string, error)
     ifacemethod func (FileSystem).Read(ctx context.Context, path string) ([]byte, error)
     ifacemethod func (FileSystem).Stat(ctx context.Context, path string) (FileInfo, error)
+    ifacemethod func (MemoryConvergenceStore).RememberIfCurrent(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error)
     ifacemethod func (MemoryLifecycleStore).ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)
     ifacemethod func (MemoryLifecycleStore).Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
     ifacemethod func (MemoryLifecycleStore).RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error)
@@ -113,12 +114,14 @@ type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, e
 type FileVersion struct{}
 type GrepMatch struct{Path string; Line int; Text string}
 type MemoryAttribution struct{Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource}
+type MemoryConvergenceStore interface{RememberIfCurrent(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error); MemoryLifecycleStore}
+type MemoryCurrent struct{Exists bool; Version MemoryVersion}
 type MemoryEntry struct{Key string; Value string; Description string; UpdatedAt time.Time}
 type MemoryLifecycleStore interface{ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error); Inspect(ctx context.Context, key string) (MemoryRecord, bool, error); RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error); UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)}
 type MemoryOrigin string
 type MemoryRecord struct{Current MemoryRevision; Revisions []MemoryRevision}
 type MemoryRevision struct{Key string; Value string; Description string; Version MemoryVersion; Status MemoryStatus; Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource; UpdatedAt time.Time}
-type MemorySource struct{SessionID string}
+type MemorySource struct{SessionID string; ProposalID string}
 type MemoryStatus string
 type MemoryStore interface{Forget(ctx context.Context, key string) error; Index(ctx context.Context) ([]MemoryEntry, error); List(ctx context.Context, prefix string) ([]MemoryEntry, error); Recall(ctx context.Context, key string) (MemoryEntry, bool, error); RememberEntry(ctx context.Context, e MemoryEntry) error; Search(ctx context.Context, query string, k int) ([]MemoryEntry, error)}
 type MemoryVersion string

@@ -38,8 +38,9 @@ func New() *Store {
 }
 
 var (
-	_ tool.MemoryStore          = (*Store)(nil)
-	_ tool.MemoryLifecycleStore = (*Store)(nil)
+	_ tool.MemoryStore            = (*Store)(nil)
+	_ tool.MemoryLifecycleStore   = (*Store)(nil)
+	_ tool.MemoryConvergenceStore = (*Store)(nil)
 )
 
 // RememberEntry preserves the legacy MemoryStore behavior: only blank keys are
@@ -180,6 +181,25 @@ func (s *Store) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, e
 	return s.snapshot(entry.Key), nil
 }
 
+// RememberIfCurrent atomically compares presence and version before appending.
+func (s *Store) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if err := tool.ValidateMemoryEntryWrite(entry, attribution); err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	actual, exists := s.current(entry.Key)
+	if exists != expected.Exists || exists && actual != expected.Version {
+		return tool.MemoryRecord{}, &tool.MemoryVersionConflictError{Key: entry.Key, Expected: expected.Version, Actual: actual}
+	}
+	s.appendActive(ctx, entry, tool.MemoryOriginExplicit)
+	return s.snapshot(entry.Key), nil
+}
+
 // Inspect returns current state and complete history, including tombstones.
 func (s *Store) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
 	if err := ctx.Err(); err != nil {
@@ -255,11 +275,15 @@ func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.Memory
 	return s.snapshot(key), nil
 }
 
-func (s *Store) compare(key string, expected tool.MemoryVersion) error {
-	var actual tool.MemoryVersion
+func (s *Store) current(key string) (tool.MemoryVersion, bool) {
 	if r, ok := s.records[key]; ok && len(r.revisions) != 0 {
-		actual = r.revisions[len(r.revisions)-1].Version
+		return r.revisions[len(r.revisions)-1].Version, true
 	}
+	return "", false
+}
+
+func (s *Store) compare(key string, expected tool.MemoryVersion) error {
+	actual, _ := s.current(key)
 	if actual != expected {
 		return &tool.MemoryVersionConflictError{Key: key, Expected: expected, Actual: actual}
 	}

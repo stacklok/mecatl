@@ -2402,6 +2402,7 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 		return
 	}
 	tr := learning.NewTrajectory(sess.ID, sess.Workspace, reason, usage, sess.Conversation.Messages)
+	tr.Principal = sess.Owner.Clone()
 	if err := e.deps.LearningObserver.Observe(ctx, tr); err != nil {
 		r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)
 	}

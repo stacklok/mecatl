@@ -1351,6 +1351,7 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onSkillsKey,
 		m.onSoulKey,
 		m.onUserModelKey,
+		m.onReflectionsKey,
 		m.onModelsKey,
 		m.onEffortKey,
 		m.onWorktreesKey,

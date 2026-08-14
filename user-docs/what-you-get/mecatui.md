@@ -25,12 +25,20 @@ re-submits it. See the [`docs/tui.md` flags reference](https://github.com/stackl
 
 `/learning` cycles the operator setting through **Off → Review → Auto** in
 `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving unrelated YAML and comments. Off means
-no automatic completed-trajectory reflection or review; Review is currently inert because
-no review queue exists; Auto runs the user-model reviewer after eligible clean completions.
-These modes do not control a separately configured `--user-model-consolidate-interval`,
+no automatic completed-trajectory reflection. Review signal-gates eligible completions and
+stages evidence-backed proposals without changing memory; Auto uses the same stage-first path
+and may conservatively promote eligible non-conflicting facts. These modes do not control a separately configured `--user-model-consolidate-interval`,
 which remains an independent process-wide maintenance schedule. The setting is build-time:
 restart local mecatui after saving. In connect mode, mecatui never edits local settings;
 change `learning.mode` on the remote server host and restart that remote server.
+
+## Reviewing reflections (`/reflections`, `/reflect`)
+
+When the server advertises staged learning, `/reflections` opens a bounded proposal list and detail
+view with independent operator/project pagination. Before approval, the scrollable detail shows the complete bounded canonical key, value, scope, and optional description rather than only a benign summary, together with each evidence handle's ownership-checked, digest-reverified source session/sequence/tool-call/digest provenance and bounded redacted canonical preview. Approve or reject staged fact proposals with version-checked decisions; procedure approval is disabled and remains deferred to #510. Stale decisions offer an in-place refresh, and promoted facts offer a
+compensating undo only while their linked memory revision is still current and the partition's convergence-capable memory target is available. When a project target is unavailable or is not the exact trusted configured root, approve and undo are disabled with the server-provided reason while the proposal remains inspectable and rejectable. Unavailable, changed, and cross-owner evidence is shown honestly without a preview and cannot be approved; raw tool/permission arguments, reasoning, binary data, controls, and secrets are omitted. `/reflect` explicitly submits
+the current completed session synchronously on that session's persisted provider/model and works even when automatic learning is Off through lazy initialization. Older or unconfigured
+servers hide these commands through capability discovery.
 
 ## Switching models mid-conversation (`/models`)
 

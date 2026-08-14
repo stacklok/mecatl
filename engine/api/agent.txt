@@ -14,6 +14,7 @@
     method func (*Engine).Model() string
     method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run
     method func (*Engine).Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run
+    method func (*EvidenceReflector).Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error)
     method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*InspectMemberTool).ReadOnly() bool
     method func (*InspectMemberTool).Spec() tool.ToolSpec
@@ -99,6 +100,7 @@ func NewBashTool() tool.Tool
 func NewEngine(deps Deps) *Engine
 func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
 func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge
+func NewEvidenceReflector(provider port.LLMProvider, model string, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error)
 func NewInspectMemberTool(store port.SessionStore) tool.Tool
 func NewInspectMemberToolWithOwnership(store port.SessionStore, ownershipEnforced bool) tool.Tool
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool
@@ -115,6 +117,7 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
 func NewUserModelObserver(engine *Engine) *UserModelReviewer
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
+func ParseReflectionOutcome(in learning.Input, raw []byte, limits ReflectionLimits) (learning.Outcome, error)
 func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error)
 func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool)
 func StripLoneCodeFence(s string) string
@@ -189,6 +192,7 @@ type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.Permis
 type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)
+type EvidenceReflector struct{}
 type HeuristicCompactor struct{MaxToolBodyChars int; KeepLastTurns int}
 type HeuristicTokenCounter struct{CharsPerToken int}
 type InspectMemberTool struct{}
@@ -205,6 +209,7 @@ type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
 type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
+type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
 type Run struct{}
 type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
@@ -232,3 +237,6 @@ var ErrNotAwaiting error
 var ErrNotReviewable error
 var ErrReadOnlyMemberMutating error
 var ErrReadOnlyShellNoForker error
+var ErrReflectionLimits error
+var ErrReflectionOutput error
+var ErrReflectionProvider error

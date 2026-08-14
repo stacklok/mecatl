@@ -201,6 +201,7 @@ func run(argv []string) error {
 		Agents:              cl,
 		Soul:                cl,
 		UserModel:           cl,
+		Reflections:         cl,
 		Models:              cl,
 		Worktrees:           cl,
 		Sched:               cl,

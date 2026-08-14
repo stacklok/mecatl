@@ -16,3 +16,10 @@ package app
 func projectIngestionAdmitted(cfg Config) bool {
 	return cfg.TrustProject
 }
+
+// projectIngestionAdmittedForRoot binds the single project-ingestion decision to
+// its configured canonical launch root. Session-selected alternate roots never
+// inherit a trust decision made for cfg.Workspace.
+func projectIngestionAdmittedForRoot(cfg Config, root string) bool {
+	return projectIngestionAdmitted(cfg) && root != "" && root == cfg.Workspace
+}

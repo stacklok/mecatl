@@ -621,6 +621,52 @@ overlay. What remains here is the metrics surface:
   fired/skipped/failed) and `mecatl.schedule.fire_duration` (histogram, seconds,
   due→terminal — skipped fires record no duration). No role label (a fire's own run
   already carries `role="main"`).
+
+
+## Evidence-backed reflection
+
+`engine/learning` contains the storage-neutral reflection domain and completed-trajectory
+observer seam ([ADR 0109](adr/0109-staged-learning-proposals.md)). Standard composition owns the
+bounded staged-reflection coordinator. A host constructs an owned `learning.Input` from a
+trajectory, optional session events, typed admission signals, and bounded existing facts.
+Canonical evidence projections assign compact message/event handles (`m:<ordinal>` and
+`e:<ordinal>`) with SHA-256 digests while omitting provider reasoning blobs, binary media,
+actor identity, permission arguments, and unbounded delegation data. Structural signal
+detection is deliberately local to that input; cross-session contradiction or repetition
+must be supplied explicitly by the host. Signals admit reflection but never become
+candidates themselves.
+
+`agent.EvidenceReflector` is the optional model-backed implementation. It makes one
+provider-neutral call for an admitted input, with no catalog, tools, child engine, filesystem,
+MCP, delegation, memory mutation, or persistence; the injected production LLM transport is its
+only I/O. The input is canonical JSON inside the
+shared untrusted fence. The response parser accepts exactly one JSON object (or one lone
+JSON fence), resolves every returned handle against the exact digest-bound input, and
+rejects the entire response on recursively duplicate or unknown fields, trailing/multiple values,
+malformed fences, invalid enums, duplicate evidence, exceeded limits, unexpected stream chunks,
+provider errors, missing/non-benign terminal stops, or secret/directive/transient content. Explicit abstention
+is a successful outcome. Hosts select the provider/model; standard explicit reflection reloads the completed session's persisted provider/model through the registry, and a reflection-slot model remains on that provider. Hosts enforce input, event,
+existing-fact, candidate, evidence, output-byte, token, and timeout bounds. This layer only
+returns proposals or abstention. Durable proposal lifecycle is a separate, host-driven
+layer: `learning.ProposalRepository` stages deterministic content-addressed records partitioned by
+principal/project; reference `memproposal` and the flocked `reflectionstore` adapter provide atomic
+CAS transitions through staged, promoting, terminal, and undone states. The importable standard
+memory-promotion policy rejects unsafe/transient facts, never overwrites conflicts or user-explicit
+revisions, defers procedures, and uses per-candidate presence-and-version CAS. Memory revisions carry
+an optional proposal id, allowing a crashed promoting claim to reconcile without a duplicate write.
+Batches may partially promote by design because each candidate is its own atomic convergence unit.
+Standard composition signal-gates completions into one bounded Build-owned coordinator with fair
+per-principal queues, digest singleflight, pre-admission per-job and aggregate byte budgets, reserved-before-admission receipts, job timeouts, cancellation receipts, and joined shutdown. Review stages only; auto promotes operator facts only from explicit principal-authored remember evidence and project facts only from principal-authored evidence at the exact trusted configured root. Tool/assistant/repository-only evidence stages for review. In off mode the proposal repository stays lazy and the dormant coordinator starts workers only if explicit synchronous reflection is requested; there is no public async mode. Project candidates from an admitted non-launch root remain staged/reviewable but cannot auto-promote, approve, or undo until a safe exact-root lifecycle store exists, and reflection does not read launch-root project memory for those inputs; untrusted project material is not ingested. The standard proposal repository defaults
+beside the user-model store. The gRPC and HTTP surfaces expose explicit completed-session
+reflection, bounded caller-partitioned list/detail, CAS approve/reject, and compensating undo;
+capability bits keep older/unconfigured servers honest. Source-session ownership and proposal
+principal are verified, project partitions remain reviewable but project promotion is root/trust-gated, and evidence detail reports only
+digest availability rather than transcript text. `/reflections` provides bounded TUI review and
+`/reflect` explicitly submits the current completed session even when automatic mode is off
+([ADR 0109](adr/0109-staged-learning-proposals.md)).
+Procedures remain visibly
+`deferred_unsupported`; skill evaluation/promotion remains deferred to #510.
+
 ## Caller identity
 
 Caller identity ([ADR 0100](adr/0100-caller-identity-threading.md), issue #367)

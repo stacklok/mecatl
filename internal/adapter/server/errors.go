@@ -40,6 +40,10 @@ var (
 	// the read-only-share invariant). Adapters map it to FailedPrecondition /
 	// HTTP 412, distinguishing it from a bad request (ErrInvalidArgument).
 	ErrFailedPrecondition = errors.New("server: failed precondition")
+	// ErrLearningUnavailable means reflection/proposal persistence is not wired.
+	ErrLearningUnavailable = errors.New("server: learning proposals are not configured")
+	// ErrProposalConflict reports a stale proposal version or invalid lifecycle transition.
+	ErrProposalConflict = errors.New("server: proposal conflict")
 	// ErrInternal signals a server-side fault that is NOT the client's fault — a
 	// transport/protocol error talking to a downstream (e.g. an MCP server that
 	// is connected but errors a read). Adapters map it to Internal / HTTP 500,

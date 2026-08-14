@@ -26,11 +26,15 @@ learning:
   mode: off # off | review | auto
 ```
 
-`review` observes no trajectory yet because no review queue exists; it never writes
-accepted state. `auto` runs the existing user-model fact reviewer after each clean
-completion. `off` means no automatic completed-trajectory reflection or review. A project
-`.mecatl/settings.yaml` may only tighten the operator ceiling (`off < review < auto`).
-Explicit memory/user-model tools remain available in every mode.
+`review` signal-gates eligible clean completions into the process-wide reflection
+coordinator and durably stages valid proposals without changing memory. `auto` uses the same
+stage-first path, then promotes operator facts only from explicit principal-authored remember evidence and project facts only from principal-authored evidence at the exact trusted configured workspace. Project candidates from admitted alternate roots remain staged/reviewable but cannot approve, undo, or read/write launch-root project memory until a safe exact-root lifecycle store exists; untrusted project material is not ingested. Tool/assistant/repository-only, conflicting, ambiguous,
+sensitive, and unsupported material is not written, and procedures remain staged as
+`deferred_unsupported`. `off` installs no automatic observer/started coordinator worker or eager proposal repository and makes no automatic reflection provider
+call. Explicit reflection remains bounded and synchronous, lazily initializes persistence, starts the dormant coordinator for that job, and uses the completed session's persisted provider/model. A project `.mecatl/settings.yaml` may only tighten the operator ceiling
+(`off < review < auto`). Explicit memory/user-model tools remain available in every mode.
+The proposal store defaults to a `reflections/` directory beside the conventional or configured
+user-model store; in off mode that directory/flock is not created until the first explicit reflection or proposal operation.
 
 Consolidation is a separate maintenance authorization, not a learning mode:
 `--user-model-consolidate-interval > 0` starts the process-wide, cross-project user-model

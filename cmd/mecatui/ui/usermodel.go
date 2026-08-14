@@ -247,7 +247,7 @@ func renderUserModelDetail(th theme.Theme, st userModelState, hk helpKeys, width
 	} else if st.detail != nil {
 		rev := st.detail.Current
 		lines = append(lines, th.Style("toolName").Render(sanitizeTerminal(rev.Key)))
-		for _, row := range []struct{ label, value string }{{"status", rev.Status}, {"version", rev.Version}, {"writer", rev.Writer}, {"origin", rev.Origin}, {"source session", rev.SourceSessionID}} {
+		for _, row := range []struct{ label, value string }{{"status", rev.Status}, {"version", rev.Version}, {"writer", rev.Writer}, {"origin", rev.Origin}, {"source session", rev.SourceSessionID}, {"proposal", rev.SourceProposalID}} {
 			if row.value != "" {
 				lines = append(lines, th.Style("muted").Render(row.label+": ")+sanitizeTerminal(row.value))
 			}

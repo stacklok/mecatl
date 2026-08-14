@@ -114,8 +114,8 @@ func TestOldDriverOperatorProfileMatchesLocalRendering(t *testing.T) {
 
 func TestLifecycleProjectionRepairsInvalidUTF8(t *testing.T) {
 	bad := "bad\xff"
-	projected := toProtoRevision(tool.MemoryRevision{Key: bad, Value: bad, Description: bad, Version: tool.MemoryVersion(bad), Status: tool.MemoryStatus(bad), Writer: tool.MemoryWriter(bad), Origin: tool.MemoryOrigin(bad), Source: tool.MemorySource{SessionID: bad}})
-	for name, value := range map[string]string{"key": projected.GetKey(), "value": projected.GetValue(), "description": projected.GetDescription(), "version": projected.GetVersion(), "status": projected.GetStatus(), "writer": projected.GetWriter(), "origin": projected.GetOrigin(), "session": projected.GetSource().GetSessionId()} {
+	projected := toProtoRevision(tool.MemoryRevision{Key: bad, Value: bad, Description: bad, Version: tool.MemoryVersion(bad), Status: tool.MemoryStatus(bad), Writer: tool.MemoryWriter(bad), Origin: tool.MemoryOrigin(bad), Source: tool.MemorySource{SessionID: bad, ProposalID: bad}})
+	for name, value := range map[string]string{"key": projected.GetKey(), "value": projected.GetValue(), "description": projected.GetDescription(), "version": projected.GetVersion(), "status": projected.GetStatus(), "writer": projected.GetWriter(), "origin": projected.GetOrigin(), "session": projected.GetSource().GetSessionId(), "proposal": projected.GetSource().GetProposalId()} {
 		if !utf8.ValidString(value) {
 			t.Errorf("%s remains invalid UTF-8", name)
 		}

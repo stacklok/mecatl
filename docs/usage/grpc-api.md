@@ -25,7 +25,11 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `ListWorktrees` | unary | the git worktrees of a repo (discovery only — powers the mecatui `/worktrees` switch; nil-safe on a no-FS/cloud server) |
 | `ListSkills` | unary | the discovered skills inventory (name + one-line description) |
 | `GetSoul` | unary | the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state |
-| `GetUserModel` | unary | the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions. No mutation rides this RPC — Forget/Undo remain permission-gated tools |
+| `GetUserModel` | unary | the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions, including proposal linkage when present. No mutation rides this RPC — Forget remains a permission-gated tool |
+| `ReflectSession` | unary | synchronously reflect one caller-owned completed session through its persisted provider/model (the reflection slot may change only the model); remains available with automatic mode off through lazy Build-owned initialization |
+| `ListLearningProposals` / `GetLearningProposal` | unary | bounded, cursor-paged proposal metadata in the verified caller partition; optional project partitions remain reviewable, while approve/undo is limited to the trusted launch root; evidence reports digest-verified availability without returning source text |
+| `DecideLearningProposal` | unary | CAS approve or reject of a staged proposal; stale versions/transitions return `ABORTED` |
+| `UndoLearningPromotion` | unary | CAS compensating revision only while the linked promoted memory revision remains current; stale/newer revisions return `ABORTED` |
 | `ListMcpResources` / `ReadMcpResource` | unary | static MCP resource snapshots; read one resource by URI |
 | `ListMcpPrompts` / `GetMcpPrompt` | unary | MCP prompt snapshots; expand one prompt to its rendered messages |
 | `ListMcpSources` | unary | the resolved MCP source inventory (static / ToolHive) + diagnostics |
@@ -260,12 +264,14 @@ allow-all operator posture — same semantics, root refusal, and `MECATL_SANDBOX
 `IS_SANDBOX` env as `mecated`; see the allow-all note in §12). It is **rejected in
 `connect` mode** — the dialed server owns its own posture. Note the TUI's **built-in slash commands**
 (`/clear`, `/help`, and the caps-gated `/mcp`, `/agents`, `/team`, `/skills`,
-`/soul`, `/usermodel`, `/models`, `/effort`, `/worktrees` — in that fixed palette order) still work
+`/soul`, `/usermodel`, `/reflections`, `/reflect`, `/models`, `/effort`, `/worktrees`) still work
 regardless — they act on the TUI itself, not the server, so typing `/` always
 opens a useful palette even with workspace slash-command expansion off
 (`/agents` browses the agent-definition inventory; `/team`, also `ctrl+a`,
 opens the live agent-team overlay; `/skills` the skills inventory; `/soul` and
-`/usermodel` the persona/user-model views; `/models` the model picker;
+`/usermodel` the persona/user-model views; `/reflections` lists bounded staged proposals and supports
+CAS approve/reject/undo; `/reflect` explicitly reflects the current completed session even when
+automatic learning is off; `/models` the model picker;
 `/effort` picks the session's reasoning-effort tier (`auto`/`low`/`medium`/`high`/`xhigh`/`max`) and **restarts the session** to apply it (a per-session server setting, like a model switch);
 `/worktrees` the sibling-git-worktree switch — it lists the repo's worktrees and,
 on select, starts a NEW session rooted at the chosen worktree so all local tools

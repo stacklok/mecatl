@@ -198,7 +198,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--soul-strict` | off | **embedded** server: refuse a **drifted** soul — contribute no soul fragment when its hash differs from the baseline (default is warn-and-load); pair with `--approve-soul` to accept an edit |
 | `--user-model-dir` | – (auto) | **embedded** server: dir for the cross-project user-model store (RememberUser/RecallUser/SearchUserModel + the turn-0 `<user-model>` block); empty = the conventional `~/.config/mecatl/usermodel` |
 | `--no-user-model` | off | **embedded** server: disable the user model entirely (tools + turn-0 block) |
-| `--user-model-review` | off | **embedded** server: opt-in background user-model reviewer — after a session stops, a fresh single-shot child extracts durable operator facts via RememberUser (spends tokens, hence off) |
+| `--user-model-review` | off | **embedded** server: deprecated alias for `learning.mode: auto`; eligible completions are reflected into staged proposals, then only conservative policy-eligible facts are promoted (spends tokens, hence off) |
 | `--user-model-review-interval` | 1 | **embedded** server: session-count debounce for `--user-model-review` (1 = every session) |
 | `--trust-project` | off | **embedded** server: honour a discovered project's permission **ALLOW** rules **and** its project soul (`.mecatl/soul.md`). Default OFF, unified with `mecated` — deny/ask are always honoured regardless. Only pass it for a repo you trust |
 | `--yolo` | off | **embedded** server: OPERATOR POSTURE (dangerous) — suppress permission prompts for the built-in mutate-ask floor, for ephemeral/sandboxed use only. A configured deny/ask in any scope still applies. Refused as root unless `MECATL_SANDBOX=1` (or `IS_SANDBOX=1`) |
@@ -384,18 +384,22 @@ resolved registry the `Subagent` tool routes delegations to), `/team` (the unifi
 agents overlay pinned to the Teams tab — same surface as `ctrl+a`, which picks a
 context-sensitive default tab), `/skills` (browse the skills inventory),
 `/soul` (inspect the persona — read-only), `/usermodel` (inspect the user
-model — read-only), `/models` (pick the model for the next session), `/worktrees`
+model and its proposal linkage — read-only), `/reflections` (review bounded pending/recent
+learning proposals), `/reflect` (explicitly reflect the current completed session),
+`/models` (pick the model for the next session), `/worktrees`
 (switch to a sibling git worktree), and `/schedule` (browse & manage scheduled
 tasks) appear
 only when the connected server advertises those capabilities (and, for
-`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/models`/`/worktrees`/`/schedule`, the matching client
+`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/models`/`/worktrees`/`/schedule`, the matching client
 collaborator is wired). The fixed palette order is
-`clear, help, mcp, agents, team, skills, soul, usermodel, models, effort, worktrees, schedule, learning` (locked by a test).
+`clear, help, mcp, agents, team, skills, soul, usermodel, reflections, reflect, models, effort, worktrees, schedule, learning` (locked by a test).
 `/learning` is local embedded-server operator-settings UX: each invocation selects the
 next Off→Review→Auto value in `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving
 unrelated YAML and comments, and reports that restart is required. These labels describe
-completed-trajectory observation only: Off means no automatic reflection/review, Review
-currently stages nothing and performs no write, and Auto runs the user-model reviewer.
+completed-trajectory observation only: Off disables automatic reflection, Review stages
+bounded evidence-backed proposals for operator approval, and Auto additionally promotes only
+standard-policy-eligible, non-conflicting facts. Explicit `/reflect` remains available in Off when
+the server has a configured reflection provider/repository.
 They do not control a separately configured `--user-model-consolidate-interval`; that
 process-wide schedule remains operator-authorized even when a project lowers the effective
 mode to Off. In `mecatui connect` mode, `/learning` is read-only: it never mutates the
@@ -427,9 +431,27 @@ user-model store's bounded index) and shows count · size · hash over a key/des
 list. Move with `↑`/`↓`; `enter` lazily requests the selected key's exact current
 value and up to 16 recent lifecycle revisions. Every server-derived field is terminal-
 sanitized. Old/base-only stores show the current value and honestly report history as
-unavailable. `esc` returns from detail or closes the panel. The surface is read-only:
-Forget/Undo are not RPC actions and continue through ordinary model tools and their
-permission gates.
+unavailable. Proposal-linked revisions show the proposal id beside their existing provenance.
+`esc` returns from detail or closes the panel. The surface is read-only:
+Forget remains an ordinary model tool behind its permission gate.
+
+**`/reflections` and `/reflect` (proposal review).** `/reflections` is gated on the
+server's proposal capability. It loads at most 50 operator proposals plus at most 50 proposals
+for the current project, keeps independent scope cursors, sorts staged/conflicted work ahead of recent terminal records,
+and offers `n`/`p` bounded pages, `enter` detail, `a` approve facts, `x` reject, and `u` compensating undo. Procedure approval stays disabled and visibly deferred (#510 is not implemented). Detail uses a terminal-height window with arrow/page scrolling and shows the complete bounded canonical fact key, value, scope, and optional description before approval, plus
+bounded proposal metadata, triggers, decisions, promotion receipt, and ownership-checked,
+digest-reverified evidence provenance plus its bounded redacted canonical preview (source session,
+locator/ordinal, optional event sequence and tool call, digest, and preview). Preview projection omits
+raw tool and permission arguments, reasoning, binary data, controls, and credentials. Approval is enabled only when every evidence handle is currently available and the selected partition has an exact trusted, convergence-capable memory target; approve and undo are otherwise disabled with the server-provided reason while detail/reject remain available. The server re-verifies the same evidence bindings before writing memory.
+Every mutation is a gRPC server call carrying the proposal's opaque expected version; a stale
+decision, a newer memory revision, or an unsupported server is shown without changing local
+state; a stale CAS offers `r` refresh and replaces the detail with the current version/status. Responses are generation-correlated and all rendered strings are terminal-sanitized.
+The navigational overlay does not create a permission modal or send content to the model.
+
+`/reflect` submits the current completed session synchronously through its persisted provider/model,
+including when automatic learning is Off (which lazily initializes persistence and starts the dormant Build-owned bounded coordinator only for that explicit job). Its status receipt reports abstention or
+the staged/promoted/conflicted counts. It is hidden when explicit reflection is unsupported and
+never reflects a running or foreign-owned session.
 
 **`/models` (model picker — the only *selecting* overlay).** Gated on
 `caps.model_selection` (the server advertises ≥1 available provider) AND a wired
@@ -746,7 +768,7 @@ show the plain prompt-hint card.
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
-| `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
+| `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
 | `alt+m` | cycle the current session permission mode: **default → plan → accept-edits → default**. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `x` (agents overlay, on a **running** lane) | **cancel that child agent** (sends `CancelChild` with the lane's child id; the run itself keeps streaming). Works on all three tabs: a **Subagents** lane (roster or focus pane), a **Parallel branch** (inside a focused group — `↑/↓` selects the branch), and a **team member** (Teams roster or focus pane; mid-drive OR idle between rounds — the member is de-scheduled and its claimed tasks released). Confirm-less, because it is recoverable: the child is persisted (a subagent stays **resumable** by its `agentId`; a cancelled branch reads `[FAILED] cancelled by user`; a cancelled member shows `stopped — cancelled`). Inert on a done lane. If the child was parked on a surfaced permission ask, the server retracts it (`permission.retract`) and the approval modal dismisses itself. |

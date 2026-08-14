@@ -165,6 +165,22 @@ Optional fields with non-trivial defaults:
 
 ---
 
+## Optional evidence reflection
+
+Embedders can use `engine/learning` to construct an owned, bounded reflection input and
+run its pure structural signal detector. `agent.NewEvidenceReflector` adds an optional
+single-call model-backed reflector over an injected provider, selected model, token
+counter, and explicit limits. It has no tools or filesystem access and returns only a
+strictly evidence-backed proposal set or explicit abstention.
+
+This is a library seam, not an automatic memory workflow: it does not persist proposals,
+write memory, schedule jobs, expose a server API, or promote procedures into skills. Hosts
+that consume proposals own review, authorization, and persistence. See the
+[architecture guide](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#evidence-backed-reflection)
+for the evidence and output-validation contract.
+
+---
+
 ## What you do not get
 
 In-process embedding is the engine and nothing else. You are responsible for everything outside it:
