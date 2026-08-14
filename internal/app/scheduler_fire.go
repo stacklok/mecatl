@@ -34,7 +34,7 @@ const (
 // of a prior fire's session) via Service.CreateSessionWithProfile (passing a
 // pre-minted "sched--" id as the WithSessionID override, so the fire id IS the
 // session id and the session carries the sched-- GC-retention family prefix),
-// drives it to a terminal EvResult via Service.StartRunContent, and returns the
+// drives it to a terminal EvResult via Service.StartScheduledRunContent, and returns the
 // fire record carrying the stop reason + any error. It applies subagent-grade
 // defaults (bounded MaxTurns/MaxToolCalls when the schedule carries none) and
 // maps the port.ScheduleSpec's neutral selector/profile onto the server adapter's
@@ -181,7 +181,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		}
 		defer stopTimer()
 
-		run, err := svc.StartRunContent(ownerCtx, sess.ID, prompt, sched.Spec.Parts)
+		run, err := svc.StartScheduledRunContent(ownerCtx, sess.ID, prompt, sched.Spec.Parts)
 		if err != nil {
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}

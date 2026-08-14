@@ -2359,6 +2359,14 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 	if err != nil {
 		return nil, err
 	}
+	return s.reopenLoadedSession(ctx, sess)
+}
+
+// reopenLoadedSession applies the existing terminal-state recovery funnel to an
+// already-authorized session. Run entry uses this form so its purpose gate can
+// reject a session before recovery mutates or persists it.
+func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session) (*session.Session, error) {
+	id := sess.ID
 	// Repopulate the in-memory learned-rule store from the durable EventLog's
 	// allow-always verdicts (cloud-native Phase 3b) BEFORE the run starts, so a
 	// session that allow-always'd a tool before a restart does not re-ask. Done at
@@ -2542,27 +2550,43 @@ func (s *Service) StartRun(ctx context.Context, id session.SessionID, text strin
 // It reopens-if-completed (via loadAndReopen) so a follow-up prompt on a session
 // that cleanly finished a prior turn continues it — the in-process multi-turn
 // counterpart to the cross-process LoadSession resume path.
+// StartRunContent is the public chat-purpose multimodal sibling of StartRun.
+// Only explicitly-stamped main sessions are admitted; delegation children,
+// scheduled sessions, unknown metadata, and every historical child/fire prefix
+// fail closed. The trusted scheduler uses StartScheduledRunContent instead.
 func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat)
+}
+
+// StartScheduledRunContent is the trusted scheduler-purpose entry. It admits
+// explicitly-stamped scheduled sessions and the historical sched-- fallback for
+// legacy unknown snapshots. It is intentionally absent from public transports;
+// scheduler composition calls it directly.
+func (s *Service) StartScheduledRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
+	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler)
+}
+
+type runPurpose uint8
+
+const (
+	runPurposeChat runPurpose = iota
+	runPurposeScheduler
+	scheduleFireSessionPrefix = "sched--"
+)
+
+func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose) (*agent.Run, error) {
 	if text == "" && len(parts) == 0 {
 		return nil, fmt.Errorf("%w: prompt text or parts is required", ErrInvalidArgument)
 	}
-	// Delegation-child ids (subagent-/parallel-/team-, engine/agent/childregistry.go's
-	// exported id-minting convention) are NEVER a legitimate StartRunContent target
-	// (issue #475 follow-up). A child is driven exclusively by its PARENT's in-process
-	// dispatch (driveChild) — that is precisely why Service.IsLive is structurally
-	// blind to it (see the doc comment there and internal/app/childgc.go's isLive
-	// caveat). A caller who learns a child's id from the `agentId:`/Team-id trailer or
-	// InspectSubagent/InspectMember's MemberSessionID scheme could otherwise call the
-	// prompt endpoint directly against it WHILE the parent is genuinely still driving
-	// it: IsLive(childID) reads false (it only tracks top-level runs), so the
-	// StateRunning crash-orphan repair below would Abandon()+Save the child's history
-	// out from under the parent's live drive — reintroducing the dangling-tool_use/
-	// provider-400 hazard issue #475 exists to close, this time self-inflicted via
-	// direct wire access. `sched--`-prefixed schedule-fire sessions are DELIBERATELY
-	// excluded — scheduler_fire.go's own StartRunContent call IS the legitimate way a
-	// fire session is driven, so that family stays untouched.
-	if isDelegationChildSessionID(id) {
-		return nil, fmt.Errorf("%w: session %q is a delegation-child session (subagent/parallel/team) and cannot be started directly; children are driven only by their parent's run", ErrInvalidArgument, id)
+	// Authorize the exact id before revealing whether its metadata or legacy prefix
+	// is runnable. Foreign, ownerless-under-enforcement, pruned, and absent ids all
+	// remain the same ErrNotFound class.
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := admitRunPurpose(sess, purpose); err != nil {
+		return nil, err
 	}
 	// NOTE (ADR 0062): there is NO prompt-channel scan here. The guardrails
 	// approve-once flow is OUT-OF-BAND — a PreToolUse guardrail block surfaces to the
@@ -2572,15 +2596,9 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 	// human AllowAlways verdict, never from a parsed directive in `text`. This replaces
 	// the removed ADR-0061 /guardrail-allow prompt directive (no scan, no strip, no
 	// near-miss WARN). The `text` param flows straight through.
-	// loadAndReopen (not GetSession): a session that cleanly completed a prior turn
-	// is in StateCompleted, and the engine's RecordUserPrompt rejects a terminal
-	// state — so an in-process follow-up prompt (interactive multi-turn chat, a
-	// long-lived teammate) must reopen-if-completed FIRST, exactly as the
-	// cross-process LoadSession resume path does. A freshly-created idle session is
-	// returned unchanged; a cancelled session is recovered via Interrupt and a
-	// failed one via Recover (both history-repaired), so neither wedges the next
-	// prompt on an illegal RecordUserPrompt transition (issue #51).
-	sess, err := s.loadAndReopen(ctx, id)
+	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
+	// purpose gate. Rejected kinds are never mutated as a side effect of probing.
+	sess, err = s.reopenLoadedSession(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -2654,6 +2672,35 @@ func isDelegationChildSessionID(id session.SessionID) bool {
 	return strings.HasPrefix(s, agent.SubagentSessionPrefix) ||
 		strings.HasPrefix(s, agent.ParallelSessionPrefix) ||
 		strings.HasPrefix(s, agent.TeamSessionPrefix)
+}
+
+func hasLegacyNonChatPrefix(id session.SessionID) bool {
+	return isDelegationChildSessionID(id) || strings.HasPrefix(string(id), scheduleFireSessionPrefix)
+}
+
+func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
+	if sess == nil {
+		return fmt.Errorf("%w: session metadata is unavailable", ErrInvalidArgument)
+	}
+	if err := session.ValidateSessionMetadata(sess.Kind, sess.Relationship); err != nil {
+		return fmt.Errorf("%w: invalid session metadata: %v", ErrInvalidArgument, err)
+	}
+	kind := sess.Kind
+	if kind == "" {
+		kind = session.SessionKindUnknown
+	}
+	switch purpose {
+	case runPurposeChat:
+		if kind == session.SessionKindMain && !hasLegacyNonChatPrefix(sess.ID) {
+			return nil
+		}
+	case runPurposeScheduler:
+		if kind == session.SessionKindScheduled ||
+			(kind == session.SessionKindUnknown && strings.HasPrefix(string(sess.ID), scheduleFireSessionPrefix)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: session %q is not eligible for this run purpose", ErrInvalidArgument, sess.ID)
 }
 
 // engineAndEnvironmentFor resolves the engine + environment a loaded session should run

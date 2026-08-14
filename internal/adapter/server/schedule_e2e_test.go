@@ -400,7 +400,7 @@ func TestScheduleNoSchedulerVariants(t *testing.T) {
 // (which exposes ScheduleStore + EventLog) + mockllm + memfs, mirroring the
 // composition app.Build does for the SchedulerEnabled path but WITHOUT crossing
 // into the internal/app package (whose test seams are unexported). The FireFunc
-// mirrors makeFireFunc: CreateSessionWithProfile → StartRunContent → drain to the
+// mirrors makeFireFunc: CreateSessionWithProfile → StartScheduledRunContent → drain to the
 // terminal EvResult, returning the ScheduleFire carrying the stop reason. The
 // returned cleanup stops the scheduler + closes the service.
 func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) (*server.Service, *scheduler.Scheduler, *jsonlstore.Store, func()) {
@@ -457,7 +457,7 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 // fireFuncForTest mirrors internal/app.makeFireFunc over the *Service: it mints
 // a fresh "sched--"-prefixed session (default profile, so Workspace must be set
 // — the schedule's own workspace) via the WithSessionID override, drives it to
-// the terminal EvResult via StartRunContent, and returns the fire record. The
+// the terminal EvResult via StartScheduledRunContent, and returns the fire record. The
 // fire id IS the session id (ADR 0059 decision #7 Phase-2). Read-leaning
 // schedules run in plan mode (a read-only toolset).
 func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
@@ -481,7 +481,8 @@ func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 		}
 		fireID := newFireIDForTest(sched.Spec.Name, now)
 		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, server.ProviderSelector{}, server.ProfileDefault,
-			server.WithSessionID(session.SessionID(fireID)))
+			server.WithSessionID(session.SessionID(fireID)),
+			server.WithScheduledRelationship(sched.Spec.Name, sched.Spec.OriginSessionID))
 		if err != nil {
 			return port.ScheduleFire{
 				ID: fireID, ScheduleName: sched.Spec.Name,
@@ -489,7 +490,7 @@ func fireFuncForTest(svc *server.Service) scheduler.FireFunc {
 			}, err
 		}
 		defer svc.CloseSession(sess.ID)
-		run, err := svc.StartRunContent(ctx, sess.ID, sched.Spec.Prompt, sched.Spec.Parts)
+		run, err := svc.StartScheduledRunContent(ctx, sess.ID, sched.Spec.Prompt, sched.Spec.Parts)
 		if err != nil {
 			return port.ScheduleFire{
 				ID: string(sess.ID), ScheduleName: sched.Spec.Name, SessionID: sess.ID,

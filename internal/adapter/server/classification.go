@@ -238,14 +238,15 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
 	// --- caller-owned: live run verbs ---
-	"StartRun":        {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
-	"StartRunContent": {KindCallerOwned, "loadAndReopen authorizes the session before entering/resuming the run"},
-	"Approve":         {KindCallerOwned, "delegates to ApproveRun's authorization"},
-	"ApproveRun":      {KindCallerOwned, "same-process path authorizes via the registered run's owning session; the cross-process resumeFromAwaiting path authorizes via loadAndReopen"},
-	"ApprovePlan":     {KindCallerOwned, "authorizes the session before resolving the parked plan ask"},
-	"Cancel":          {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
-	"CancelChild":     {KindCallerOwned, "authorizes the PARENT session via GetSession before reaching into its child registry"},
-	"Persist":         {KindCallerOwned, "authorizes via GetSession before consulting the live run registry"},
+	"StartRun":                 {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
+	"StartRunContent":          {KindCallerOwned, "authorizes before the public chat-purpose kind gate and shared run-entry path"},
+	"StartScheduledRunContent": {KindCallerOwned, "trusted scheduler-purpose entry; authorizes the schedule owner before its kind gate and shared run-entry path"},
+	"Approve":                  {KindCallerOwned, "delegates to ApproveRun's authorization"},
+	"ApproveRun":               {KindCallerOwned, "same-process path authorizes via the registered run's owning session; the cross-process resumeFromAwaiting path authorizes via loadAndReopen"},
+	"ApprovePlan":              {KindCallerOwned, "authorizes the session before resolving the parked plan ask"},
+	"Cancel":                   {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
+	"CancelChild":              {KindCallerOwned, "authorizes the PARENT session via GetSession before reaching into its child registry"},
+	"Persist":                  {KindCallerOwned, "authorizes via GetSession before consulting the live run registry"},
 
 	// --- caller-owned: schedules ---
 	"CreateSchedule": {KindCallerOwned, "the schedule manager binds the verified context principal as owner atomically with visibility"},
