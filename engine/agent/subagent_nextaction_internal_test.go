@@ -347,8 +347,8 @@ func TestWritableTerminalClassificationSelectsCleanNoteOnlyForEndTurn(t *testing
 		forbidden     string
 	}{
 		{name: "end turn is the only clean terminal", stop: session.StopEndTurn, final: "done", wantClean: true},
-		{name: "max turns", stop: session.StopMaxTurns, final: "partial", want: "max-turns limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
-		{name: "max tool calls", stop: session.StopMaxToolCalls, final: "partial", want: "max-tool-calls limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
+		{name: "max turns", stop: session.StopMaxTurns, final: "partial", want: "max-turns limit", wantAll: []string{"treat as partial", "partial work remains available under the agentId above", "resume it only if continued work is appropriate within the operator's limits"}, forbidden: "resume it with the agentId above to continue"},
+		{name: "max tool calls", stop: session.StopMaxToolCalls, final: "partial", want: "max-tool-calls limit", wantAll: []string{"treat as partial", "partial work remains available under the agentId above", "resume it only if continued work is appropriate within the operator's limits"}, forbidden: "resume it with the agentId above to continue"},
 		{name: "no progress", stop: session.StopNoProgress, final: "partial", want: "ended without a final summary"},
 		{name: "budget", stop: session.StopBudget, final: "partial", want: "reached its token budget", wantAll: []string{"max_run_tokens", "raise", "narrow", "fresh subagent"}, forbidden: "resume it with the agentId above"},
 		{name: "immediate budget with zero work", stop: session.StopBudget, wantNoSummary: true, want: "reached its token budget"},

@@ -21,8 +21,8 @@ func TestRenderSubagentResultTerminalTaxonomy(t *testing.T) {
 	}{
 		{name: "none", stop: session.StopNone, want: "stopped without a terminal reason"},
 		{name: "end turn", stop: session.StopEndTurn},
-		{name: "max turns", stop: session.StopMaxTurns, want: "reached its max-turns limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
-		{name: "max tool calls", stop: session.StopMaxToolCalls, want: "reached its max-tool-calls limit", wantAll: []string{"treat as partial", "resume it with the agentId above to continue"}},
+		{name: "max turns", stop: session.StopMaxTurns, want: "reached its max-turns limit", wantAll: []string{"treat as partial", "partial work remains available under the agentId above", "resume it only if continued work is appropriate within the operator's limits"}, forbidden: "resume it with the agentId above to continue"},
+		{name: "max tool calls", stop: session.StopMaxToolCalls, want: "reached its max-tool-calls limit", wantAll: []string{"treat as partial", "partial work remains available under the agentId above", "resume it only if continued work is appropriate within the operator's limits"}, forbidden: "resume it with the agentId above to continue"},
 		{name: "max consecutive failures", stop: session.StopMaxConsecutiveFailures, want: "reached its consecutive-tool-failure limit"},
 		{name: "cancelled by parent", stop: session.StopCancelled, want: "cancelled because its parent run ended — treat as partial/incomplete"},
 		{name: "cancelled by user", stop: session.StopCancelled, clientCancelled: true, want: "subagent cancelled by user"},
