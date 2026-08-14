@@ -304,7 +304,7 @@ func (m Model) restartOnModel(sel client.ModelSelection) (tea.Model, tea.Cmd, bo
 
 	// Rebind the rest of the per-session client state to "no session yet": the new
 	// values arrive on the NEW session's SessionReadyMsg.
-	m.sessionID = ""
+	m = m.bindSessionID("")
 	m.effectiveModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false // a fresh attempt; clear any prior failure flag
@@ -381,7 +381,7 @@ func (m Model) restartOnModelWithCarryover(sel client.ModelSelection) (tea.Model
 
 	// Rebind the rest of the per-session client state to "no session yet": the new
 	// values arrive on the new session's SessionReadyMsg.
-	m.sessionID = ""
+	m = m.bindSessionID("")
 	m.effectiveModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false
@@ -459,7 +459,7 @@ func (m Model) switchEffort(sel client.ModelSelection) (tea.Model, tea.Cmd, bool
 
 	// Rebind the rest of the per-session client state to "no session yet": the new
 	// values arrive on the fork's SessionReadyMsg.
-	m.sessionID = ""
+	m = m.bindSessionID("")
 	m.effectiveModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false // a fresh attempt; clear any prior failure flag

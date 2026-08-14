@@ -338,14 +338,27 @@ func TestWindowTitleHealRefetchRoundTrip(t *testing.T) {
 		t.Errorf("windowTitle() = %q, want the healed title at idle", got)
 	}
 
-	// 3) A SECOND session-ready (a rebind) with the title now set must NOT refetch.
+	// 3) A SECOND session-ready (a rebind) refreshes the session metadata. The
+	// refetch must preserve the locally adopted title: titles are set-once so a
+	// later snapshot cannot clobber the user's current tab identity.
 	before := conv.getSessionCalls()
 	_, cmd = m.Update(client.SessionReadyMsg{SessionID: "sess-fork-0001"})
-	if cmd != nil {
-		drainBatch(t, cmd())
+	if cmd == nil {
+		t.Fatal("session rebind emitted no metadata refresh")
 	}
-	if n := conv.getSessionCalls(); n != before {
-		t.Errorf("GetSession called again (total %d) with the title already set, want no refetch", n)
+	drainBatch(t, cmd())
+	if n := conv.getSessionCalls(); n != before+1 {
+		t.Errorf("GetSession calls = %d, want %d after session rebind metadata refresh", n, before+1)
+	}
+	m = applyAll(m, client.ResolvedModelMsg{
+		SessionID: "sess-fork-0001",
+		Title:     "newer server title",
+		State:     "idle",
+		Workspace: "/workspace",
+		CreatedAt: 1_700_000_000,
+	})
+	if m.sessionTitle != "forked carryover task" {
+		t.Errorf("metadata refresh overwrote set-once sessionTitle = %q", m.sessionTitle)
 	}
 }
 

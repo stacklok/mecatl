@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
@@ -31,6 +32,22 @@ const (
 	sessionsTranscript
 )
 
+type sessionDetailsView struct {
+	ID         string
+	Title      string
+	State      string
+	Workspace  string
+	CreatedAt  int64
+	ModifiedAt int64
+	ProviderID string
+	ModelID    string
+}
+
+type sessionIDCopyResultMsg struct {
+	id  string
+	err error
+}
+
 type sessionsState struct {
 	view     sessionsView
 	tab      sessionsTab
@@ -55,6 +72,113 @@ type sessionsState struct {
 	replayClosed   bool
 	replayErr      error
 	continueOnLoad bool
+}
+
+func (m Model) bindSessionID(id string) Model {
+	m.sessionID = id
+	m.sessionState = ""
+	m.sessionCreatedAt = 0
+	m.sessionModifiedAt = 0
+	return m
+}
+
+func (m Model) sessionDetails() sessionDetailsView {
+	return sessionDetailsView{
+		ID: m.sessionID, Title: m.sessionTitle, State: m.sessionState,
+		Workspace: m.activeWorkspace, CreatedAt: m.sessionCreatedAt,
+		ModifiedAt: m.sessionModifiedAt, ProviderID: m.effectiveModel.ProviderID,
+		ModelID: m.effectiveModel.ModelID,
+	}
+}
+
+func (m Model) sessionCopyTarget() string {
+	if m.sessionID == "" || !utf8.ValidString(m.sessionID) {
+		return ""
+	}
+	return m.sessionID
+}
+
+func safeSessionID(id string) string { return strconv.QuoteToASCII(id) }
+
+func (m Model) openSessionDetails() (tea.Model, tea.Cmd) {
+	if m.phase != phaseIdle || m.sessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("no active session")
+		return m, nil
+	}
+	m.sessionDetailsOpen = true
+	m.ta.Blur()
+	if m.deps.Session != nil {
+		return m, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
+	}
+	return m, nil
+}
+
+func (m Model) onSessionDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if !m.sessionDetailsOpen {
+		return m, nil, false
+	}
+	if key.Matches(msg, m.keys.Close) {
+		m.sessionDetailsOpen = false
+		return m, m.ta.Focus(), true
+	}
+	if msg.String() != "c" {
+		return m, nil, true
+	}
+	id := m.sessionCopyTarget()
+	if id == "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("no active session ID to copy")
+		return m, nil, true
+	}
+	if m.deps.Clipboard == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: clipboard unavailable")
+		return m, nil, true
+	}
+	cb, ctx := m.deps.Clipboard, m.deps.Ctx
+	return m, func() tea.Msg {
+		err := cb.Write(ctx, "text/plain", []byte(id))
+		return sessionIDCopyResultMsg{id: id, err: err}
+	}, true
+}
+
+func (m Model) onSessionIDCopyResult(msg sessionIDCopyResultMsg) Model {
+	if msg.id == "" || msg.id != m.sessionID {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: active session changed")
+		return m
+	}
+	if msg.err != nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + sanitizeTerminal(msg.err.Error()))
+		return m
+	}
+	m.statusMsg = m.deps.Theme.Style("success").Render("copied session ID")
+	return m
+}
+
+func formatSessionTimestamp(unixSec int64) string {
+	if unixSec <= 0 {
+		return "unknown"
+	}
+	return time.Unix(unixSec, 0).UTC().Format(time.RFC3339)
+}
+
+func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKeys, width, height int) string {
+	unknown := func(value string) string {
+		if value == "" {
+			return "unknown"
+		}
+		return sanitizeTerminal(value)
+	}
+	var b strings.Builder
+	b.WriteString(th.Style("askTitle").Render("Active session") + "\n\n")
+	b.WriteString("ID: " + indentWrap(safeSessionID(details.ID), cardTextWidth(width)) + "\n")
+	b.WriteString("Title: " + unknown(details.Title) + "\n")
+	b.WriteString("State: " + unknown(details.State) + "\n")
+	b.WriteString("Workspace: " + unknown(details.Workspace) + "\n")
+	b.WriteString("Created: " + formatSessionTimestamp(details.CreatedAt) + "\n")
+	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")
+	b.WriteString("Provider: " + unknown(details.ProviderID) + "\n")
+	b.WriteString("Model: " + unknown(details.ModelID) + "\n\n")
+	b.WriteString(th.Style("muted").Render("c: copy exact ID  " + hk.closeOnly + ": close"))
+	return centerCard(th, b.String(), width, height)
 }
 
 func (m Model) openSessions() (tea.Model, tea.Cmd) {
@@ -345,8 +469,12 @@ func (m Model) adoptAuthoritativeTranscript() (tea.Model, tea.Cmd, bool) {
 	loaded := m.sessions.transcript
 	m = m.endRun("")
 	m = m.resetSession()
-	m.sessionID = row.ID
+	m = m.bindSessionID(row.ID)
 	m.sessionTitle = row.Title
+	m.sessionState = row.State
+	m.sessionCreatedAt = row.CreatedAt
+	m.sessionModifiedAt = row.ModifiedAt
+	m.activeWorkspace = row.Workspace
 	m.conv = loaded
 	m.restartedThisRun = true
 	m.sessions = sessionsState{}

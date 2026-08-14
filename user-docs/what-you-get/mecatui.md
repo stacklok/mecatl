@@ -72,6 +72,8 @@ Every session persists to disk as append-only JSONL — the conversation, the to
 
 `/sessions` opens a searchable inventory in three tabs: **Chats**, **Scheduled runs**, and **Child runs**. Rows show state, time, turns, title, model, and a short digest handle; the chat you are currently using is marked **`[current]`**. The search applies to the selected tab and matches the row's title, model, workspace, digest, and available relationship details.
 
+The main header uses that same compact digest instead of exposing the full opaque ID. Type `/session` to see the active chat's safely quoted full ID and metadata (title, state, workspace, known timestamps, provider, and model), then press `c` to copy the exact ID. Clipboard failure or a session switch is reported rather than shown as a successful stale copy.
+
 Press `enter` on a Chat to **Continue** it when the server says it is publicly continuable. mecatui loads the authoritative snapshot transcript first, then makes that chat the active prompt target. Scheduled and Child runs are normally **Inspect** instead: their same authoritative snapshot transcript opens read-only, without changing your active chat. This is deliberately non-destructive — `esc` is **Back** to the inventory. If a transcript cannot be loaded completely, mecatui does not continue it; the error view offers **`r` Retry** or **Back**. The durable event log may help live delivery catch-up, but it is not used as the conversation transcript or as proof that a transcript is complete.
 
 ## Suspending and quitting like a terminal app

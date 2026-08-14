@@ -1011,7 +1011,11 @@ whether the input is focused or blurred. The panel carries a tinted top-pad row 
 the top border, and one blank spacer row sits above the panel so it isn't jammed against the
 conversation history.
 
-**Header bar.** `mecatui · session <id> · <model> · mode <mode> · <server>`.
+**Header bar.** `mecatui · session #<digest> · <model> · mode <mode> · <server>`.
+The session segment uses the same terminal-safe eight-character SHA-256 digest as the
+`/sessions` inventory; it never prints the full opaque ID. Type **`/session`** for the
+safe quoted full ID and active-session metadata, or press **`c`** there to copy the exact
+ID through the clipboard.
 The **mode segment** shows the server-confirmed permission posture for the current session;
 when a mid-turn switch has been deferred it shows `mode <target> pending` until the retry
 succeeds at the next prompt boundary. The **model segment** shows the EFFECTIVE model the server resolved THIS session to —
@@ -1083,6 +1087,12 @@ read-only authoritative transcript. The jump-to-fire footer hint (`↑↓: selec
 fire  enter/t: open transcript  esc: back`) appears only when the transcript
 client is wired; a fire whose `SessionID` is empty reports "fire has no session
 id" and stays in inspect.
+
+**`/session` (active session details).** This read-only overlay shows the current
+chat's safely quoted full opaque ID, title, lifecycle state, workspace, known creation
+and modification timestamps, provider, and model. The header intentionally shows only
+the compact digest. Press **`c`** to copy the exact full ID byte-for-byte; mecatui reports
+clipboard failure or a session change instead of claiming a stale copy. `esc` closes it.
 
 **`/sessions` (session continuity).** The session inventory has three tabs:
 **Chats**, **Scheduled runs**, and **Child runs**. `tab` switches tabs; the

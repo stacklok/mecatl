@@ -315,6 +315,13 @@ type Model struct {
 
 	phase     phase
 	sessionID string
+	// sessionDetailsOpen is the read-only /session surface. The metadata fields
+	// below are refreshed from the current session snapshot; zero timestamps are
+	// rendered as unknown rather than guessed.
+	sessionDetailsOpen bool
+	sessionState       string
+	sessionCreatedAt   int64
+	sessionModifiedAt  int64
 	// sessionTitle is the session's human label for the terminal window/tab title
 	// (the "<title> — …" head of windowTitle). Set-once from the first genuine
 	// user prompt (submitPrompt), adopted on a session switch (switchToSession

@@ -179,7 +179,7 @@ func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd, bool) {
 	m.restartedThisRun = true
 	m = m.resetSession()
 
-	m.sessionID = ""
+	m = m.bindSessionID("")
 	m.effectiveModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false

@@ -18,6 +18,8 @@ import (
 type SessionSnapshot struct {
 	Mode          string
 	State         string
+	Workspace     string
+	CreatedAt     int64
 	ResolvedModel ResolvedModel
 	Title         string
 	// Capabilities is the server's feature-advertisement snapshot from the Session
@@ -35,6 +37,8 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 	return SessionSnapshot{
 		Mode:          ModeString(s.GetMode()),
 		State:         s.GetState(),
+		Workspace:     s.GetWorkspace(),
+		CreatedAt:     s.GetCreatedAtUnix(),
 		ResolvedModel: resolvedModelFrom(s.GetResolvedModel()),
 		Title:         s.GetTitle(),
 		Capabilities:  capabilitiesFrom(s.GetCapabilities()),
@@ -100,6 +104,9 @@ type ResolvedModelMsg struct {
 	SessionID string
 	Resolved  ResolvedModel
 	Mode      string
+	State     string
+	Workspace string
+	CreatedAt int64
 	// Title is the session's stored title from the snapshot (self-heal channel for
 	// the window title). See the struct doc.
 	Title string
@@ -155,6 +162,10 @@ func SetModeCmd(ctx context.Context, s ModeSetter, id, mode string) tea.Cmd {
 func RefreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string) tea.Cmd {
 	return func() tea.Msg {
 		snap, err := g.GetSession(ctx, id)
-		return ResolvedModelMsg{SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode, Title: snap.Title, Capabilities: snap.Capabilities, Err: err}
+		return ResolvedModelMsg{
+			SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode,
+			State: snap.State, Workspace: snap.Workspace, CreatedAt: snap.CreatedAt,
+			Title: snap.Title, Capabilities: snap.Capabilities, Err: err,
+		}
 	}
 }

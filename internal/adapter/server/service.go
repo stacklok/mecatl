@@ -2039,6 +2039,11 @@ func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*sessio
 	if err != nil || s.authorizeSession(ctx, sess) != nil {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
+	// The session ID is an opaque handle, so repairing malformed bytes here would
+	// silently turn one persisted identity into another before protobuf mapping.
+	if !utf8.ValidString(string(sess.ID)) {
+		return nil, fmt.Errorf("%w: persisted session has an invalid UTF-8 id", ErrInternal)
+	}
 	return sess, nil
 }
 

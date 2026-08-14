@@ -53,6 +53,14 @@ an editor that spawned it.
 | 18. OpenAI Codex subscription | [OpenAI Codex subscription](#openai-codex-subscription-experimental) |
 | 19. ToolHive LLM gateway | [ToolHive LLM gateway](#toolhive-llm-gateway) |
 
+## mecatui session identity
+
+The TUI header shows a compact `#<digest>` for the active session rather than a long
+opaque ID. Type `/session` to inspect the safely quoted full ID, title, state, workspace,
+known timestamps, provider, and model; press `c` in that overlay to copy the exact ID.
+Use `/sessions` separately to Continue a stored chat or Inspect scheduled and child runs.
+See the [full TUI reference](tui.md).
+
 ## Scheduled tasks
 
 `mecated` and `mecak8s` run scheduled agent fires autonomously (issue #189,

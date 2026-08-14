@@ -94,6 +94,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "show keys & features",
 			run:  Model.runHelp,
 		},
+		{
+			name: "session",
+			desc: "show active session details and copy its exact ID",
+			run:  Model.runSessionDetails,
+		},
 	}
 	if caps.MCP && w.MCP {
 		out = append(out, builtin{
@@ -241,6 +246,10 @@ func (m Model) runHelp() (tea.Model, tea.Cmd) {
 	m.showHelp = true
 	m.ta.Blur()
 	return m, nil
+}
+
+func (m Model) runSessionDetails() (tea.Model, tea.Cmd) {
+	return m.openSessionDetails()
 }
 
 // runMCP opens the MCP inventory panel — the same surface ctrl+o opens. Only

@@ -350,7 +350,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // server-rejected-selection fallback, issue #41) can reuse it before layering its
 // warning on top.
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
-	m.sessionID = msg.SessionID
+	m = m.bindSessionID(msg.SessionID)
 	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,
@@ -388,7 +388,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// the title is always "" server-side too, so the refetch is a no-op for the
 	// title — it still may raise the footer window denominator, which is the
 	// existing footer-heal path's concern.)
-	if m.sessionTitle == "" && m.sessionID != "" && m.deps.Session != nil {
+	if m.sessionID != "" && m.deps.Session != nil {
 		heal := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
 		cmd = tea.Batch(cmd, heal)
 	}
@@ -470,7 +470,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// on the /effort path the source session (and transcript) SURVIVES — see
 		// restartFailedForkID.
 		m.phase = phaseIdle
-		m.sessionID = ""
+		m = m.bindSessionID("")
 		m.restartFailed = true
 		// A carryover create's failure means enter-to-retry re-fires a FRESH
 		// (non-carryover) create (see onIdleSubmit), so the note armed by
@@ -507,6 +507,8 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case clipboardResultMsg:
 		mm, cmd := m.onClipboardResult(msg)
 		return mm, cmd, true
+	case sessionIDCopyResultMsg:
+		return m.onSessionIDCopyResult(msg), nil, true
 	case shellWriteResultMsg:
 		// Best-effort shell-clipboard WRITE result: intentionally swallowed. OSC52
 		// (tea.SetClipboard) is the primary copy path and the copy already reported
@@ -590,6 +592,9 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	if msg.Mode != "" {
 		m.activeMode = client.ModeString(client.ModeFromString(msg.Mode))
 	}
+	m.sessionState = msg.State
+	m.sessionCreatedAt = msg.CreatedAt
+	m.activeWorkspace = msg.Workspace
 	// Model identity changed (e.g. plan model → execute model): full replace.
 	// The model is normally fixed per session, so this only fires on a
 	// server-driven mode transition (plan approval). When identity is unchanged
@@ -1349,6 +1354,7 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	overlays := []func(tea.KeyPressMsg) (tea.Model, tea.Cmd, bool){
+		m.onSessionDetailsKey,
 		m.onMCPKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,

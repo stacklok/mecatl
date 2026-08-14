@@ -67,16 +67,16 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 	return out
 }
 
-// TestBuiltinCommandsCapsFilter pins the caps gate AND the fixed order: /clear
-// and /help are always present (and lead, in that order); /mcp needs caps.MCP &&
-// the MCP collaborator wired; /agents (the def inventory) needs caps.Agents &&
+// TestBuiltinCommandsCapsFilter pins the caps gate AND the fixed order: /clear,
+// /help, and /session are always present (and lead, in that order); /mcp needs
+// caps.MCP && the MCP collaborator wired; /agents (the def inventory) needs caps.Agents &&
 // the agents collaborator wired; /team (the live overlay) needs caps.Teams;
 // /skills needs caps.Skills && the skills collaborator wired; /soul needs
 // caps.Soul && the soul collaborator wired; /usermodel needs caps.UserModel &&
 // the user-model collaborator wired; /models needs caps.ModelSelection && the model
 // lister wired; /worktrees needs caps.Worktrees && the worktree lister wired
 // (issue #102); /effort is gated identically to /models and follows it (ADR 0055).
-// The fixed order is clear, help, mcp, agents, team, skills, soul, usermodel,
+// The fixed order is clear, help, session, mcp, agents, team, skills, soul, usermodel,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, Posture: "auto"}
@@ -127,8 +127,9 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := builtinNames(tc.caps, tc.w)
-			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-				t.Fatalf("builtinCommands order/filter = %v, want %v", got, tc.want)
+			want := append([]string{"clear", "help", "session"}, tc.want[2:]...)
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("builtinCommands order/filter = %v, want %v", got, want)
 			}
 		})
 	}
@@ -493,7 +494,7 @@ func TestBuiltinNameWithArgsFallsThrough(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"clear", "help", "session", "mcp", "agents", "team", "skills", "soul", "usermodel",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "posture",
 	}
 	for _, name := range known {

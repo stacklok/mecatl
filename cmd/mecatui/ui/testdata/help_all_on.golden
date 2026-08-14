@@ -1,4 +1,4 @@
- mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
+ mecatui  ·  session #b9ba2286  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                                                                                    ┃
@@ -23,6 +23,7 @@
 ┃    ctrl+a                agents overlay (subagents / parallel / teams · tab to switch)                                                                             ┃
 ┃    ctrl+e                reasoning-effort picker                                                                                                                   ┃
 ┃    /schedule             browse & manage scheduled tasks                                                                                                           ┃
+┃    /session              show active session details and copy its exact ID                                                                                         ┃
 ┃    /sessions             continue chats or inspect scheduled and child runs                                                                                        ┃
 ┃    alt+m                 cycle permission mode (default / plan / accept-edits)                                                                                     ┃
 ┃    ctrl+t                expand/collapse details                                                                                                                   ┃
