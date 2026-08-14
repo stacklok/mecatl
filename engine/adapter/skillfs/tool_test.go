@@ -100,6 +100,37 @@ func TestActivationReturnsBodyAndLogicalInventoryWithoutReadingAsset(t *testing.
 	}
 }
 
+func TestActivationOversizedBodyAndInventoryFitsCompleteOutputEnvelope(t *testing.T) {
+	assets := []tool.SkillAsset{{Name: "references/checklist.md", Size: 12}}
+	body := strings.Repeat("body-", MaxOutputBytes)
+	source := &stubSkillSource{
+		bodies: map[string]string{"review": body},
+		assets: map[string][]tool.SkillAsset{"review": assets},
+	}
+
+	res := exec(t, newSourceTool(source), call(t, map[string]any{"name": "review"}))
+	if res.IsError {
+		t.Fatalf("activation failed: %s", res.Content)
+	}
+	raw := "Skill: review\n" +
+		"Compatibility: mecatl >= 1\n" +
+		"This skill declares allowed-tools: Grep. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
+		renderBundledAssetInventory(assets) + "\n" + body
+	want := Truncate(raw, MaxOutputBytes-len(TruncationMarker))
+	if res.Content != want {
+		t.Fatalf("oversized activation differs from exact reserved-marker result: got %d bytes, want %d", len(res.Content), len(want))
+	}
+	if len(res.Content) != MaxOutputBytes {
+		t.Fatalf("complete activation result = %d bytes, want exact cap %d", len(res.Content), MaxOutputBytes)
+	}
+	if !strings.HasSuffix(res.Content, TruncationMarker) {
+		t.Fatalf("oversized activation is missing truncation marker: %q", res.Content[len(res.Content)-100:])
+	}
+	if source.reads != 0 {
+		t.Fatalf("activation called ReadSkillAsset %d times, want zero", source.reads)
+	}
+}
+
 func TestAssetRequestReadsExactlyOneListedTextAsset(t *testing.T) {
 	source := &stubSkillSource{
 		assets: map[string][]tool.SkillAsset{"review": {{Name: "references/checklist.md", Size: 5}}},

@@ -3,6 +3,7 @@ package skillfs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,82 @@ func TestFSSourceReadSkillAssetRejectsOversize(t *testing.T) {
 	data, err := src.ReadSkillAsset(context.Background(), "large", "large.txt")
 	if err == nil || data != nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("ReadSkillAsset = (%d bytes, %v), want whole-payload rejection", len(data), err)
+	}
+}
+
+func TestFSSourceInventoryCountBoundRejectsWholeInventory(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "crowded", "---\nname: crowded\ndescription: many assets\n---\nBODY\n")
+	skillDir := filepath.Join(dir, "crowded")
+	for i := 0; i < maxSkillInventoryEntries; i++ {
+		name := filepath.Join(skillDir, fmt.Sprintf("asset-%04d.txt", i))
+		if err := os.WriteFile(name, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write boundary asset %d: %v", i, err)
+		}
+	}
+	src, _, err := NewFSSource(context.Background(), DirSource{Dir: dir})
+	if err != nil {
+		t.Fatalf("NewFSSource at count boundary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "overflow.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assets, err := src.ListSkillAssets(context.Background(), "crowded")
+	if err == nil || assets != nil || !strings.Contains(err.Error(), "exceeds 1024 entries") {
+		t.Fatalf("ListSkillAssets overflow = (%v, %v), want nil and bounded count error", assets, err)
+	}
+	if fresh, _, err := NewFSSource(context.Background(), DirSource{Dir: dir}); err == nil || fresh != nil {
+		t.Fatalf("NewFSSource overflow = (%v, %v), want construction failure during HasAssets discovery", fresh, err)
+	}
+}
+
+func TestFSSourceInventoryNameBytesBoundRejectsWholeInventory(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "verbose", "---\nname: verbose\ndescription: long names\n---\nBODY\n")
+	skillDir := filepath.Join(dir, "verbose")
+	const stemBytes = 240
+	// Stay below the entry bound while crossing the independently carried 32 KiB
+	// aggregate logical-name limit.
+	for i := 0; i < maxSkillInventoryNameBytes/(stemBytes+8)+1; i++ {
+		name := fmt.Sprintf("%04d-%s.txt", i, strings.Repeat("n", stemBytes))
+		if err := os.WriteFile(filepath.Join(skillDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write long-name asset %d: %v", i, err)
+		}
+	}
+	if src, _, err := NewFSSource(context.Background(), DirSource{Dir: dir}); err == nil || src != nil || !strings.Contains(err.Error(), "exceed 32768 bytes") {
+		t.Fatalf("NewFSSource name-byte overflow = (%v, %v), want bounded construction failure", src, err)
+	}
+
+	// Rebuild a source just under the byte limit, then mutate the directory past
+	// it to prove the lazy ListSkillAssets path rejects rather than returning a
+	// partial prefix.
+	under := t.TempDir()
+	writeSkill(t, under, "verbose", "---\nname: verbose\ndescription: long names\n---\nBODY\n")
+	underDir := filepath.Join(under, "verbose")
+	nameBytes := 0
+	i := 0
+	for {
+		name := fmt.Sprintf("%04d-%s.txt", i, strings.Repeat("n", stemBytes))
+		if nameBytes+len(name) > maxSkillInventoryNameBytes-16 {
+			break
+		}
+		if err := os.WriteFile(filepath.Join(underDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		nameBytes += len(name)
+		i++
+	}
+	src, _, err := NewFSSource(context.Background(), DirSource{Dir: under})
+	if err != nil {
+		t.Fatalf("NewFSSource below name-byte boundary: %v", err)
+	}
+	overflowName := strings.Repeat("z", 200) + ".txt"
+	if err := os.WriteFile(filepath.Join(underDir, overflowName), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assets, err := src.ListSkillAssets(context.Background(), "verbose")
+	if err == nil || assets != nil || !strings.Contains(err.Error(), "exceed 32768 bytes") {
+		t.Fatalf("ListSkillAssets name-byte overflow = (%v, %v), want nil and bounded error", assets, err)
 	}
 }
 

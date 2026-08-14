@@ -259,6 +259,158 @@ func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
 	}
 }
 
+func TestRemoteSkillSourceBuildRunDefaultAndNoFS(t *testing.T) {
+	for _, profile := range []server.SessionProfile{server.ProfileDefault, server.ProfileNoFS} {
+		t.Run(string(profile), func(t *testing.T) {
+			source := &observedAssetSkillSource{
+				SkillSource: sourceconformance.NewFixtureSource(),
+				reads:       map[string]int{},
+			}
+			addr := startSourceDriver(t, func(gs *grpc.Server) {
+				driverv1.RegisterSkillSourceServiceServer(gs, grpcdriver.NewSkillSourceServer(source))
+			})
+
+			var (
+				reqMu sync.Mutex
+				reqs  []port.LLMRequest
+			)
+			provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+				reqMu.Lock()
+				reqs = append(reqs, req)
+				reqMu.Unlock()
+			})},
+				mockllm.ToolCallTurn(session.NewToolCall("activate", skills.ToolName, []byte(`{"name":"review"}`))),
+				mockllm.ToolCallTurn(session.NewToolCall("asset", skills.ToolName, []byte(`{"name":"review","asset":"references/checklist.md"}`))),
+				mockllm.TextTurn("done"),
+			)
+			ctx := context.Background()
+			built, err := Build(ctx, Config{
+				Workspace:      t.TempDir(),
+				Model:          "mock",
+				MockProvider:   provider,
+				NoSoul:         true,
+				MemoryDir:      t.TempDir(),
+				SkillSourceURL: addr,
+			})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+
+			var sess *session.Session
+			if profile == server.ProfileNoFS {
+				sess, err = built.Service.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
+			} else {
+				sess, err = built.Service.CreateSessionWithProfile(ctx, t.TempDir(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
+			}
+			if err != nil {
+				t.Fatalf("CreateSessionWithProfile: %v", err)
+			}
+			run, err := built.Service.StartRun(ctx, sess.ID, "activate review and read its checklist")
+			if err != nil {
+				t.Fatalf("StartRun: %v", err)
+			}
+			events := runEvents(run)
+			results := map[session.ToolCallID]session.ToolResult{}
+			for _, ev := range events {
+				if ev.Type == session.EvToolResult && ev.ToolResult != nil {
+					results[ev.ToolResult.CallID] = *ev.ToolResult
+				}
+			}
+			if got := results["activate"]; got.IsError || !strings.Contains(got.Content, "references/checklist.md") {
+				t.Fatalf("activation result = %+v", got)
+			}
+			if got := results["asset"]; got.IsError || !strings.Contains(got.Content, "correctness first") {
+				t.Fatalf("asset result = %+v", got)
+			}
+
+			reqMu.Lock()
+			captured := append([]port.LLMRequest(nil), reqs...)
+			reqMu.Unlock()
+			if len(captured) != 3 {
+				t.Fatalf("provider requests = %d, want activation, asset, final", len(captured))
+			}
+			for i, req := range captured {
+				var skillSpec *tool.ToolSpec
+				for j := range req.Tools {
+					if req.Tools[j].Name == skills.ToolName {
+						skillSpec = &req.Tools[j]
+						break
+					}
+				}
+				if skillSpec == nil {
+					t.Fatalf("provider request %d omitted Skill from tool specs", i)
+				}
+				var schema struct {
+					Properties map[string]json.RawMessage `json:"properties"`
+					Required   []string                   `json:"required"`
+				}
+				if err := json.Unmarshal(skillSpec.Schema, &schema); err != nil {
+					t.Fatalf("request %d Skill schema: %v", i, err)
+				}
+				if _, ok := schema.Properties["asset"]; !ok || !slices.Equal(schema.Required, []string{"name"}) {
+					t.Fatalf("request %d Skill schema does not expose optional asset: %s", i, skillSpec.Schema)
+				}
+				for _, want := range []string{"Call with {name}", "call again with {name, asset}"} {
+					if !strings.Contains(skillSpec.Description, want) {
+						t.Errorf("request %d Skill description missing %q: %q", i, want, skillSpec.Description)
+					}
+				}
+				for _, forbidden := range []string{"path", "Read", "Bash"} {
+					if strings.Contains(skillSpec.Description, forbidden) {
+						t.Errorf("request %d Skill description contains retired %q guidance: %q", i, forbidden, skillSpec.Description)
+					}
+				}
+			}
+
+			source.mu.Lock()
+			defer source.mu.Unlock()
+			wantOps := []string{
+				"body:review",
+				"list:review",
+				"list:review",
+				"read:review/references/checklist.md",
+			}
+			if !slices.Equal(source.operations, wantOps) {
+				t.Fatalf("source operations = %v, want %v (activation must perform zero asset reads)", source.operations, wantOps)
+			}
+			if got := source.reads["review/references/checklist.md"]; got != 1 {
+				t.Fatalf("exact asset pair read %d times, want once", got)
+			}
+		})
+	}
+}
+
+type observedAssetSkillSource struct {
+	tool.SkillSource
+	mu         sync.Mutex
+	operations []string
+	reads      map[string]int
+}
+
+func (s *observedAssetSkillSource) SkillBody(ctx context.Context, name string) (string, error) {
+	s.mu.Lock()
+	s.operations = append(s.operations, "body:"+name)
+	s.mu.Unlock()
+	return s.SkillSource.SkillBody(ctx, name)
+}
+
+func (s *observedAssetSkillSource) ListSkillAssets(ctx context.Context, name string) ([]tool.SkillAsset, error) {
+	s.mu.Lock()
+	s.operations = append(s.operations, "list:"+name)
+	s.mu.Unlock()
+	return s.SkillSource.ListSkillAssets(ctx, name)
+}
+
+func (s *observedAssetSkillSource) ReadSkillAsset(ctx context.Context, skill, asset string) ([]byte, error) {
+	pair := skill + "/" + asset
+	s.mu.Lock()
+	s.operations = append(s.operations, "read:"+pair)
+	s.reads[pair]++
+	s.mu.Unlock()
+	return s.SkillSource.ReadSkillAsset(ctx, skill, asset)
+}
+
 // TestResolveDriverSkillSeamUnreachableFatal pins the loud-misconfig posture:
 // an explicitly configured skill driver that cannot answer the build-time
 // ListSkills snapshot fails the seam (and therefore Build), never a silent

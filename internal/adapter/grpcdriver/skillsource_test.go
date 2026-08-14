@@ -370,6 +370,21 @@ func TestSkillSourceAssetRPCReceiveCaps(t *testing.T) {
 		}
 	})
 
+	t.Run("aggregate inventory name bytes", func(t *testing.T) {
+		assets := make([]*driverv1.SkillAsset, 200)
+		for i := range assets {
+			assets[i] = &driverv1.SkillAsset{Name: fmt.Sprintf("references/%03d-%s.txt", i, strings.Repeat("n", 160)), Size: 1}
+		}
+		server := &hostileSkillServer{skillAssets: map[string][]*driverv1.SkillAsset{"bundle": assets}}
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSkillSourceServiceServer(gs, server)
+		})
+		got, err := NewSkillSource(conn).ListSkillAssets(context.Background(), "bundle")
+		if err == nil || got != nil || status.Code(err) == codes.ResourceExhausted || !strings.Contains(err.Error(), "inventory names exceed") {
+			t.Fatalf("aggregate-name ListSkillAssets = (%d assets, %v), want client-side whole-inventory rejection", len(got), err)
+		}
+	})
+
 	t.Run("oversize inventory", func(t *testing.T) {
 		assets := make([]*driverv1.SkillAsset, maxSkillInventoryEntries)
 		for i := range assets {
@@ -411,6 +426,17 @@ func TestSkillSourceServerWrapperBoundsAssets(t *testing.T) {
 		_, err := srv.ListSkillAssets(context.Background(), &driverv1.ListSkillAssetsRequest{Name: "review"})
 		if status.Code(err) != codes.ResourceExhausted {
 			t.Fatalf("ListSkillAssets error = %v, want ResourceExhausted", err)
+		}
+	})
+	t.Run("inventory name bytes", func(t *testing.T) {
+		assets := make([]tool.SkillAsset, 200)
+		for i := range assets {
+			assets[i] = tool.SkillAsset{Name: fmt.Sprintf("references/%03d-%s.txt", i, strings.Repeat("n", 160)), Size: 1}
+		}
+		srv := NewSkillSourceServer(oversizedAssetSource{SkillSource: base, assets: assets})
+		resp, err := srv.ListSkillAssets(context.Background(), &driverv1.ListSkillAssetsRequest{Name: "review"})
+		if status.Code(err) != codes.ResourceExhausted || resp != nil {
+			t.Fatalf("ListSkillAssets = (%v, %v), want nil ResourceExhausted on aggregate name bytes", resp, err)
 		}
 	})
 	t.Run("payload size", func(t *testing.T) {

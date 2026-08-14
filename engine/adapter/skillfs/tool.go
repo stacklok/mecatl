@@ -131,7 +131,10 @@ func (t Tool) activate(ctx context.Context, callID session.ToolCallID, sk tool.S
 	b.WriteString(renderBundledAssetInventory(assets))
 	b.WriteString("\n")
 	b.WriteString(body)
-	return session.NewToolResult(callID, Truncate(b.String(), MaxOutputBytes))
+	// Truncate's carried contract appends TruncationMarker beyond its byte
+	// argument. Reserve that suffix here so the complete activation result,
+	// including the marker, stays inside the model-facing output envelope.
+	return session.NewToolResult(callID, Truncate(b.String(), MaxOutputBytes-len(TruncationMarker)))
 }
 
 func (t Tool) readAsset(ctx context.Context, callID session.ToolCallID, skill, asset string) session.ToolResult {

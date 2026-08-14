@@ -37,6 +37,14 @@ type FSSource struct {
 // compile-time assertion that FSSource satisfies the port.
 var _ tool.SkillSource = (*FSSource)(nil)
 
+// These bounds intentionally mirror the remote driver inventory contract
+// (internal/adapter/grpcdriver). They are carried here because engine is a
+// standalone module and must not import the root module.
+const (
+	maxSkillInventoryEntries   = 1_024
+	maxSkillInventoryNameBytes = 32 << 10
+)
+
 // NewFSSource resolves the given sources ONCE (highest-precedence first, the
 // NewMultiSource collision rule) and returns the snapshot source plus the
 // aggregated discovery diagnostics. A genuine discovery fault returns a
@@ -66,11 +74,14 @@ func NewFSSource(ctx context.Context, sources ...Source) (*FSSource, []SkipError
 			origin = tool.SkillOriginExplicit
 		}
 		assets, aerr := src.listAssets(sk.Name)
+		if aerr != nil {
+			return nil, skips, aerr
+		}
 		src.metas = append(src.metas, tool.SkillMeta{
 			Name:          sk.Name,
 			Description:   sk.Description,
 			Origin:        origin,
-			HasAssets:     aerr == nil && len(assets) > 0,
+			HasAssets:     len(assets) > 0,
 			License:       sk.License,
 			Compatibility: sk.Compatibility,
 			Metadata:      sk.Metadata,
@@ -173,7 +184,10 @@ func (s *FSSource) listAssets(name string) ([]tool.SkillAsset, error) {
 		return nil, nil //nolint:nilerr // deliberate fail-soft: bundle stays servable without payloads
 	}
 	defer func() { _ = root.Close() }() // read-only handle
-	var assets []tool.SkillAsset
+	var (
+		assets    []tool.SkillAsset
+		nameBytes int
+	)
 	werr := fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -193,6 +207,16 @@ func (s *FSSource) listAssets(name string) ([]tool.SkillAsset, error) {
 		if !tool.ValidSkillAssetName(logical) {
 			return fmt.Errorf("skills: invalid logical asset name %q", logical)
 		}
+		// Enforce the complete-inventory contract while walking, before fetching
+		// metadata or growing the result slice. Any overflow rejects the whole
+		// inventory; callers never observe a partial prefix.
+		if len(assets) >= maxSkillInventoryEntries {
+			return fmt.Errorf("skills: asset inventory of %q exceeds %d entries", name, maxSkillInventoryEntries)
+		}
+		if len(logical) > maxSkillInventoryNameBytes-nameBytes {
+			return fmt.Errorf("skills: asset inventory names of %q exceed %d bytes", name, maxSkillInventoryNameBytes)
+		}
+		nameBytes += len(logical)
 		info, err := d.Info()
 		if err != nil {
 			return err
