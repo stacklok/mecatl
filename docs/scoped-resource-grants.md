@@ -656,10 +656,11 @@ status namespace.
 - **Renewal cadence versus cache TTLs versus clock skew.** Three timers that
   interact; they need to be designed together, with stated tolerances.
 - **Bash coexistence.** The long-term goal displaces open-ended shell, but
-  Bash is load-bearing today and the migration is gradual. Does a granted
-  view materialize locally for shell consumption (the ADR 0005
-  materialize-for-exec split), and how does `IsolationApprovable` classify
-  commands against a grant posture?
+  Bash is load-bearing today and the migration is gradual. ADR 0108 rejected
+  implicit skill-asset materialization: textual references stay logical, while
+  workflows needing shell files must create or obtain them explicitly. Should a
+  future granted filesystem view materialize locally for shell consumption, and
+  how does `IsolationApprovable` classify commands against a grant posture?
 - **Talking to OAuth'd remote services (MCP).** The MCP world is heavily
   OAuth-based; a grant token can't be presented to an MCP server as-is. The
   likely shape is a gateway that translates a grant (plus the human user's

@@ -183,7 +183,7 @@ func TestUntrustedSubagentNoForkerWired(t *testing.T) {
 func TestUntrustedReadOnlyMemberHasNoBash(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
 	prov := bashThenEdit()
-	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, nil, catalogAssets{}, false)
+	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "reader", Mutating: false}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -206,7 +206,7 @@ func TestUntrustedReadOnlyMemberHasNoBash(t *testing.T) {
 func TestUntrustedMutatingMemberKeepsBash(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
 	prov := bashThenEdit()
-	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, nil, catalogAssets{}, false)
+	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "writer", Mutating: true}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -368,7 +368,7 @@ func TestUntrustedMutatingDefMemberKeepsBash(t *testing.T) {
 	cfg := untrustedTeamCfg(t)
 	prov := bashThenEdit()
 	def := agents.AgentDef{Name: "builder", Tools: []string{"Read", "Bash", "Edit"}}
-	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, regOf(def), nil, nil, catalogAssets{}, false)
+	factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, regOf(def), nil, catalogAssets{}, false)
 	build := factory(team.New("t"), agent.MemberSpec{Name: "writer", AgentType: "builder", Mutating: true}, "")
 	if build.Engine == nil {
 		t.Fatal("factory returned a nil engine")
@@ -397,7 +397,7 @@ func TestUntrustedReadOnlyMemberPromptCarriesShellNote(t *testing.T) {
 			sys = r.System.Render()
 			mu.Unlock()
 		})}, mockllm.TextTurn("done"))
-		factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, nil, catalogAssets{}, false)
+		factory, _, _, _, _ := buildTeamWiring(context.Background(), cfg, regForTest(prov, providerMock, cfg.Model), prov, providerMock, cfg.Model, nil, agents.NewRegistry(nil), nil, catalogAssets{}, false)
 		build := factory(team.New("t"), spec, "")
 		if build.Engine == nil {
 			t.Fatal("factory returned a nil engine")

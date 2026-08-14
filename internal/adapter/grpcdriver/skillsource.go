@@ -28,7 +28,8 @@ import (
 // UNCONDITIONALLY — a driver-served skill IS driver tier; a driver must not
 // claim the "project"/"user" admission labels (the wire origin field stays
 // driver-side observability only). Bodies/assets pass through; the
-// harness-side caps on materialized assets live in skills.AssetMaterializer.
+// SkillSource is retained by composition and enforces bounded logical payload
+// reads through the Skill tool.
 type SkillSource struct {
 	client driverv1.SkillSourceServiceClient
 }

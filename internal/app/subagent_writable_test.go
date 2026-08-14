@@ -70,7 +70,7 @@ func TestBuildSubagentToolWritableWritesParentDirectly(t *testing.T) {
 	)
 	task, closeFn := buildSubagentTool(context.Background(),
 		cfg, regForTest(childProvider, providerMock, cfg.Model), childProvider, providerMock, cfg.Model,
-		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, nil, assets, false)
+		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, assets, false)
 	if closeFn != nil {
 		defer func() { _ = closeFn() }()
 	}
@@ -116,7 +116,7 @@ func TestNoFSSubagentToolRejectsWritable(t *testing.T) {
 	childProvider := mockllm.New(mockllm.TextTurn("x"))
 	task, _ := buildSubagentTool(context.Background(),
 		cfg, regForTest(childProvider, providerMock, cfg.Model), childProvider, providerMock, cfg.Model,
-		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, nil, catalogAssets{}, true /* noFS */)
+		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, catalogAssets{}, true /* noFS */)
 
 	res, err := task.Execute(context.Background(),
 		session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"go","mode":"read-write"}`)),

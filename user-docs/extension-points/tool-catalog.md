@@ -234,13 +234,13 @@ type SkillSource interface {
 }
 ```
 
-A `SkillSource` deals in **logical bundles** — no path, directory, or root concept is present on the port. A filesystem-backed source (`engine/adapter/skillfs.FSSource`) derives per-skill directories from the discovery walk; a remote driver source materializes assets to a cache. The engine cannot tell the two apart.
+A `SkillSource` deals in **logical bundles** — no path, directory, or root concept is present on the port. Both the filesystem-backed source (`engine/adapter/skillfs.FSSource`) and a remote driver are consumed identically through these methods; filesystem paths remain private to the adapter.
 
-Skills may have **assets**: auxiliary payloads (scripts, data files, reference documents) identified by a logical name like `references/api.md`. Asset names are slash-separated relative identifiers with no `..` or empty segments — validated by `tool.ValidSkillAssetName`. The harness serves skill assets as read-only allowed roots on the workspace so a skill's instruction body can reference them by logical path.
+Skills may have **assets**: auxiliary payloads identified by a logical name like `references/api.md`. Asset names are slash-separated relative identifiers with no `..` or empty segments — validated by `tool.ValidSkillAssetName`. Calling `Skill` with `{name}` returns the instructions and bounded logical inventory. Calling it again with `{name, asset}` fetches only that textual payload, bounded by the tool-output cap and rejected if it is invalid UTF-8 or contains NUL bytes. Assets are not materialized, mounted as workspace read roots, or made available to `Read` or Bash.
 
 ### Skills inject instructions, not tools
 
-Activating a skill does **not** register new tools in the catalog. A skill's `SKILL.md` body is returned as the tool result of the `Skill` tool call, and the model incorporates it as instructions. If you want to expose new tool capabilities, register a `Tool` (see above); skills are for instruction and behavioral guidance.
+Activating a skill does **not** register new tools in the catalog. A skill's `SKILL.md` body is returned as the tool result of the `Skill` tool call, and the model incorporates it as instructions. Bundled scripts are not implicitly installed or executable: a workflow needing a real file must explicitly create or obtain it in the workspace under normal permissions. If you want to expose new tool capabilities, register a `Tool` (see above); skills are for instruction and behavioral guidance.
 
 ### Skills as slash commands (`/<skill-name>`)
 
@@ -264,11 +264,12 @@ Skill sources are registered per tier (explicit, project, user, driver) and are 
 
 ```mermaid
 flowchart LR
-    A["app.Build\n(resolveSkillSeam)"] --> B["FSSource\nsnapshot"]
+    A["app.Build\n(resolveSkillSeam)"] --> B["SkillSource\nsnapshot"]
     B --> C["skill metadata\nin Skill tool spec"]
-    B --> D["skill bodies\nvia Activator"]
-    B --> E["skill assets\nas workspace read-roots"]
-    M[model calls Skill tool] --> D
+    B --> D["skill bodies\non activation"]
+    B --> E["textual assets\nby logical name on demand"]
+    M[model calls Skill with name] --> D
+    N[model calls Skill with name + asset] --> E
 ```
 
 ---

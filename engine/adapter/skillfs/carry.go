@@ -174,8 +174,6 @@ func UserConfigDir(env ResolveEnv) string {
 // while an existing sibling resolves through the symlink, so two paths referring
 // to the same on-disk location compare unequal — defeating the dirsOverlap
 // containment check in validateSkillDraftConfig (a security-boundary bypass).
-//
-// mirrors internal/adapter/osfs.resolveRoot EXACTLY — the read-root allowlist an osfs Workspace enforces is derived from skillBaseDir's output, so the two must agree byte-for-byte across a symlinked home (/home → /var/home).
 func resolveRoot(root string) (string, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {

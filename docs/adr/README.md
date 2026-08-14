@@ -24,7 +24,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ### Architecture & implementation
 - [0001 — Agent Client Protocol (ACP) adapter](./0001-acp-adapter.md)
 - [0004 — v1 architecture](./0004-v1-architecture.md) *(historical)*
-- [0005 — Driver seams](./0005-driver-seams.md)
+- [0005 — Driver seams](./0005-driver-seams.md) *(skill-asset materialization/read-root decision superseded by 0108)*
 - [0006 — v1 step-chain](./0006-v1-step-chain.md) *(historical)*
 - [0007 — Twelve-patterns audit](./0007-twelve-patterns-audit.md) *(historical)*
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
@@ -37,6 +37,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
 - [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md)
+- [0108 — Read skill assets on demand by logical name](./0108-on-demand-logical-skill-assets.md) *(supersedes only ADR 0005's skill-asset materialization/read-root decision)*
 - [0048 — mecak8s: Kubernetes-native agent harness (storage-free, managed-service state)](./0048-mecak8s.md)
 - [0059 — Scheduled tasks](./0059-scheduled-tasks.md)
 - [0065 — Conversation fork: peer session from a history snapshot](./0065-conversation-fork.md)

@@ -1,16 +1,5 @@
 package skills
 
-// This file is the GOLDEN invariance proof across the #328 graduation seam: it
-// exercises the read-only Skill tool core via the alias re-exports from
-// engine/adapter/skillfs (NewFSSource, NewSnapshotActivator, NewTool,
-// NewSourceActivator, DirSource, Skill, SkipError) together with the root-only
-// AssetMaterializer (the writable half that stays in this package) and the real
-// osfs canonicalization. The helpers below (writeSkill, call, exec, validSkill)
-// were carried here from the moved root test files (discover_test.go /
-// tool_test.go) so this package's tests stay self-contained after the
-// graduation; the skillfs package keeps its own byte-identical copies for its
-// own tests.
-
 import (
 	"context"
 	"encoding/json"
@@ -21,36 +10,30 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// writeSkill creates <dir>/<name>/SKILL.md with the given content. It is an
-// offline helper — everything is on the test's temp filesystem, no network.
 func writeSkill(t *testing.T, dir, name, content string) {
 	t.Helper()
 	sub := filepath.Join(dir, name)
 	if err := os.MkdirAll(sub, 0o755); err != nil {
-		t.Fatalf("mkdir %q: %v", sub, err)
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(sub, SkillFileName), []byte(content), 0o644); err != nil {
-		t.Fatalf("write SKILL.md: %v", err)
+		t.Fatal(err)
 	}
 }
 
-// writeAsset creates <dir>/<skill>/<logical-name> with the given content,
-// making parent directories as needed.
 func writeAsset(t *testing.T, dir, skill, logicalName, content string) {
 	t.Helper()
 	p := filepath.Join(dir, skill, filepath.FromSlash(logicalName))
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatalf("mkdir asset dir: %v", err)
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatalf("write asset %q: %v", logicalName, err)
+		t.Fatal(err)
 	}
 }
 
-// validSkill is a structurally-valid SKILL.md used by promote tests.
 const validSkill = `---
 name: commit-style
 description: How to write conventional commit messages for this repo.
@@ -62,276 +45,68 @@ Use the Conventional Commits format: type(scope): subject.
 Wrap the body at 72 columns.
 `
 
-// call builds a ToolCall with JSON args marshalled from m.
 func call(t *testing.T, m map[string]any) session.ToolCall {
 	t.Helper()
 	raw, err := json.Marshal(m)
 	if err != nil {
-		t.Fatalf("marshal args: %v", err)
+		t.Fatal(err)
 	}
 	return session.NewToolCall("id-skill", ToolName, raw)
 }
 
-// exec runs the tool and fails on a harness-level error.
 func exec(t *testing.T, tl tool.Tool, in session.ToolCall) session.ToolResult {
 	t.Helper()
 	res, err := tl.Execute(context.Background(), in, tool.Environment{})
 	if err != nil {
-		t.Fatalf("Execute: unexpected harness error: %v", err)
+		t.Fatalf("Execute: %v", err)
 	}
 	return res
 }
 
-// staticSource is a path-free Source over a fixed slice, for tests that used
-// to hand NewTool a []Skill directly.
-type staticSource []Skill
+const expectedPreamble = `Activate a skill or read one of its bundled textual assets through its logical name.
 
-func (s staticSource) Skills(context.Context) ([]Skill, []SkipError, error) { return s, nil, nil }
-
-// newToolOver builds the Skill tool over the given skills through the REAL
-// seam (NewFSSource snapshot + NewSnapshotActivator) — the mechanical
-// adaptation of the pre-seam NewTool([]Skill) call sites to NewTool(metas,
-// activator). Behavior is byte-identical (TestFSSkillActivationByteIdentical
-// is the golden proof).
-func newToolOver(t *testing.T, sk []Skill) Tool {
-	t.Helper()
-	src, skips, err := NewFSSource(context.Background(), staticSource(sk))
-	if err != nil {
-		t.Fatalf("NewFSSource: %v", err)
-	}
-	if len(skips) != 0 {
-		t.Fatalf("unexpected skips: %v", skips)
-	}
-	metas, err := src.ListSkills(context.Background())
-	if err != nil {
-		t.Fatalf("ListSkills: %v", err)
-	}
-	return NewTool(metas, NewSnapshotActivator(src))
-}
-
-// expectedPreamble is the PRE-CHANGE Skill-tool description preamble spelled
-// out literally here (NOT derived from the graduated code), mirroring the
-// golden test's discipline for the activation-output strings. It is kept in
-// lockstep with engine/adapter/skillfs.descriptionPreamble; editing it without
-// editing the preamble is a defect.
-const expectedPreamble = `Activate a skill: load a named, progressive-disclosure instruction set into the conversation.
-
-Skills are curated, reusable playbooks (workflows, conventions, domain procedures) authored as files. Only each skill's NAME and one-line description are shown below; the FULL instructions load only when you activate a skill here. This keeps your context small until a skill is actually needed.
-
-When to use:
-- When the task matches one of the skills listed below. Read the one-line
-  descriptions, pick the best match, then activate it by name to get its full
-  instructions, and follow them.
-- You may activate more than one skill across a task, one call at a time.
-
-When NOT to use:
-- For reading project files (use Read) or searching code (use Grep/Glob). A skill
-  is curated guidance, not a file browser.
-- When no skill below fits the task — just proceed without one.
-
-Activation output starts with the skill's base directory; any bundled files the
-skill references (references/, scripts/, assets/) live under that directory.
+Skills are curated, reusable playbooks. Only each skill's name and one-line description are shown below. Call with {name} to load its instructions and logical asset inventory. If those instructions need an asset, call again with {name, asset}. Assets are disclosed one at a time; this tool is not a general file browser.
 
 Arguments:
 - name (required): the exact name of one of the skills listed below.
+- asset (optional): one logical asset name from that skill's activation result.
 
 Available skills:`
 
-// TestFSSkillActivationByteIdentical is the GOLDEN invariance proof for the
-// Activator seam: for FS skills, NewTool(metas, NewSnapshotActivator(src))
-// must render Execute output AND the Spec().Description byte-for-byte equal
-// to the pre-seam NewTool([]Skill) rendering. The expected strings below are
-// the pre-change format spelled out literally (NOT derived from the new code),
-// so any drift in the preamble, the header lines, or the body framing fails
-// here. Editing the preamble or the header strings is a defect against the
-// phase-C1 plan.
-func TestFSSkillActivationByteIdentical(t *testing.T) {
-	t.Run("skill with a source path renders the base-directory header", func(t *testing.T) {
-		dir := t.TempDir()
-		writeSkill(t, dir, "with-files", "---\nname: with-files\ndescription: has bundled files\n---\nUse scripts/run.sh.\n")
+func TestFSSkillLogicalActivationGolden(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "full", "---\nname: full\ndescription: every block\ncompatibility: \"mecatl >= 0.1\"\nallowed-tools: \"Bash Read\"\n---\nFull body.\n")
+	writeAsset(t, dir, "full", "scripts/run.sh", "#!/bin/sh\necho ok\n")
+	writeAsset(t, dir, "full", "references/api.md", "API notes\n")
 
-		src, skips, err := NewFSSource(context.Background(), DirSource{Dir: dir})
-		if err != nil || len(skips) != 0 {
-			t.Fatalf("NewFSSource: %v skips=%v", err, skips)
-		}
-		metas, _ := src.ListSkills(context.Background())
-		tl := NewTool(metas, NewSnapshotActivator(src))
-
-		canon, err := osfs.ResolveRoot(filepath.Join(dir, "with-files"))
-		if err != nil {
-			t.Fatalf("resolve: %v", err)
-		}
-		// The PRE-CHANGE rendering, byte for byte (tool.go's Execute before the
-		// Activator seam): header, canonical base dir, bundled-files guidance,
-		// blank line, body.
-		want := "Skill: with-files\n" +
-			"Base directory: " + canon + "\n" +
-			"Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n" +
-			"\n" +
-			"Use scripts/run.sh."
-		res := exec(t, tl, call(t, map[string]any{"name": "with-files"}))
-		if res.IsError {
-			t.Fatalf("Execute errored: %s", res.Content)
-		}
-		if res.Content != want {
-			t.Errorf("activation output drifted from the pre-seam rendering:\n got %q\nwant %q", res.Content, want)
-		}
-
-		// The Spec().Description likewise: the (unchanged) preamble plus the
-		// pre-change "\n- <name>: <description>" enumeration.
-		wantDesc := expectedPreamble + "\n- with-files: has bundled files"
-		if got := tl.Spec().Description; got != wantDesc {
-			t.Errorf("Spec().Description drifted from the pre-seam rendering:\n got %q\nwant %q", got, wantDesc)
-		}
-	})
-
-	t.Run("skill without a source path omits the base-directory block", func(t *testing.T) {
-		tl := newToolOver(t, []Skill{{Name: "review", Description: "Run a structured code review.", Body: "Look for correctness, then style."}})
-		want := "Skill: review\n" +
-			"\n" +
-			"Look for correctness, then style."
-		res := exec(t, tl, call(t, map[string]any{"name": "review"}))
-		if res.IsError {
-			t.Fatalf("Execute errored: %s", res.Content)
-		}
-		if res.Content != want {
-			t.Errorf("activation output drifted from the pre-seam rendering:\n got %q\nwant %q", res.Content, want)
-		}
-	})
-
-	// A skill WITH the optional `allowed-tools` frontmatter (agentskills.io,
-	// Experimental; issue #419) renders an ADVISORY note — which EXPLICITLY states
-	// calls still follow normal permission rules — between the base-directory
-	// block and the blank line + body. Pinned byte-for-byte so the wording the
-	// model reads cannot drift. It is ADVISORY ONLY — never a permission grant.
-	t.Run("skill with allowed-tools renders the advisory note", func(t *testing.T) {
-		tl := newToolOver(t, []Skill{{
-			Name:         "tooling",
-			Description:  "a skill with allowed-tools",
-			Body:         "BODY",
-			AllowedTools: []string{"Bash", "Read", "Grep"},
-		}})
-		want := "Skill: tooling\n" +
-			"This skill declares allowed-tools: Bash, Read, Grep. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
-			"\n" +
-			"BODY"
-		res := exec(t, tl, call(t, map[string]any{"name": "tooling"}))
-		if res.IsError {
-			t.Fatalf("Execute errored: %s", res.Content)
-		}
-		if res.Content != want {
-			t.Errorf("activation output with allowed-tools drifted from the pinned rendering:\n got %q\nwant %q", res.Content, want)
-		}
-	})
-
-	// A skill WITH bundled assets on disk renders the "Bundled files:"
-	// enumeration block — the agentskills.io "should enumerate bundled
-	// scripts/resources" contract. The block lists each asset's logical name
-	// (sorted, indented) WITHOUT reading payloads. Pinned byte-for-byte.
-	t.Run("skill with bundled assets renders the enumeration block", func(t *testing.T) {
-		dir := t.TempDir()
-		writeSkill(t, dir, "deploy", "---\nname: deploy\ndescription: deploy the app\n---\nRun the deploy script.\n")
-		writeAsset(t, dir, "deploy", "scripts/run.sh", "#!/bin/sh\ndeploy\n")
-		writeAsset(t, dir, "deploy", "references/api.md", "API notes\n")
-
-		src, skips, err := NewFSSource(context.Background(), DirSource{Dir: dir})
-		if err != nil || len(skips) != 0 {
-			t.Fatalf("NewFSSource: %v skips=%v", err, skips)
-		}
-		metas, _ := src.ListSkills(context.Background())
-		tl := NewTool(metas, NewSnapshotActivator(src))
-
-		canon, err := osfs.ResolveRoot(filepath.Join(dir, "deploy"))
-		if err != nil {
-			t.Fatalf("resolve: %v", err)
-		}
-		want := "Skill: deploy\n" +
-			"Base directory: " + canon + "\n" +
-			"Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n" +
-			"Bundled files:\n" +
-			"  - references/api.md\n" +
-			"  - scripts/run.sh\n" +
-			"\n" +
-			"Run the deploy script."
-		res := exec(t, tl, call(t, map[string]any{"name": "deploy"}))
-		if res.IsError {
-			t.Fatalf("Execute errored: %s", res.Content)
-		}
-		if res.Content != want {
-			t.Errorf("activation output with assets drifted from the pinned rendering:\n got %q\nwant %q", res.Content, want)
-		}
-	})
-
-	// Combined golden: a skill with base-dir + compatibility + allowed-tools
-	// + on-disk assets all present pins the relative ordering of the blocks:
-	// base-dir → compatibility → allowed-tools → bundled-files → body.
-	t.Run("combined block ordering", func(t *testing.T) {
-		dir := t.TempDir()
-		writeSkill(t, dir, "full", "---\nname: full\ndescription: a skill with every block\ncompatibility: \"mecatl >= 0.1\"\nallowed-tools: \"Bash Read Grep\"\n---\nFull body.\n")
-		writeAsset(t, dir, "full", "scripts/run.sh", "#!/bin/sh\necho ok\n")
-		writeAsset(t, dir, "full", "references/api.md", "API notes\n")
-
-		src, skips, err := NewFSSource(context.Background(), DirSource{Dir: dir})
-		if err != nil || len(skips) != 0 {
-			t.Fatalf("NewFSSource: %v skips=%v", err, skips)
-		}
-		metas, _ := src.ListSkills(context.Background())
-		tl := NewTool(metas, NewSnapshotActivator(src))
-
-		canon, err := osfs.ResolveRoot(filepath.Join(dir, "full"))
-		if err != nil {
-			t.Fatalf("resolve: %v", err)
-		}
-		want := "Skill: full\n" +
-			"Base directory: " + canon + "\n" +
-			"Bundled files (references/, scripts/, assets/) live under the base directory; read them with the Read tool by absolute path, and run bundled scripts via Bash with their absolute path.\n" +
-			"Compatibility: mecatl >= 0.1\n" +
-			"This skill declares allowed-tools: Bash, Read, Grep. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
-			"Bundled files:\n" +
-			"  - references/api.md\n" +
-			"  - scripts/run.sh\n" +
-			"\n" +
-			"Full body."
-		res := exec(t, tl, call(t, map[string]any{"name": "full"}))
-		if res.IsError {
-			t.Fatalf("Execute errored: %s", res.Content)
-		}
-		if res.Content != want {
-			t.Errorf("combined activation output drifted from the pinned rendering:\n got %q\nwant %q", res.Content, want)
-		}
-	})
-}
-
-// TestSourceActivatorFailureIsModelAddressable pins the driver-path error
-// surface: a failed activation (the materializer rejecting a bundle) is a
-// MODEL-addressable tool error naming the skill and the available
-// alternatives — never a harness-level error.
-func TestSourceActivatorFailureIsModelAddressable(t *testing.T) {
-	src := failingAssetSource{}
+	src, skips, err := NewFSSource(context.Background(), DirSource{Dir: dir})
+	if err != nil || len(skips) != 0 {
+		t.Fatalf("NewFSSource: %v skips=%v", err, skips)
+	}
 	metas, _ := src.ListSkills(context.Background())
-	mat := NewAssetMaterializer(src, t.TempDir())
-	tl := NewTool(metas, NewSourceActivator(src, mat))
+	tl := NewTool(metas, src)
+	want := "Skill: full\n" +
+		"Compatibility: mecatl >= 0.1\n" +
+		"This skill declares allowed-tools: Bash, Read. These are the tools the skill expects to use; each call still follows normal permission rules.\n" +
+		"Bundled assets (logical names; request one with this Skill tool's asset argument):\n" +
+		"  - references/api.md (10 bytes)\n" +
+		"  - scripts/run.sh (18 bytes)\n\n" +
+		"Full body."
+	res := exec(t, tl, call(t, map[string]any{"name": "full"}))
+	if res.IsError || res.Content != want {
+		t.Fatalf("activation output:\n got %q\nwant %q", res.Content, want)
+	}
+	if got, wantDesc := tl.Spec().Description, expectedPreamble+"\n- full: every block"; got != wantDesc {
+		t.Errorf("description:\n got %q\nwant %q", got, wantDesc)
+	}
+	for _, forbidden := range []string{"Base directory", filepath.Join(dir, "full"), "absolute path", "Read tool", "via Bash"} {
+		if strings.Contains(res.Content, forbidden) {
+			t.Errorf("activation leaked forbidden %q: %q", forbidden, res.Content)
+		}
+	}
 
-	res, err := tl.Execute(context.Background(), call(t, map[string]any{"name": "evil"}), tool.Environment{})
-	if err != nil {
-		t.Fatalf("Execute must not surface a harness error, got %v", err)
-	}
-	if !res.IsError {
-		t.Fatal("a failed activation must be an error RESULT")
-	}
-	if !strings.Contains(res.Content, `"evil"`) {
-		t.Errorf("error must name the skill, got %q", res.Content)
-	}
-	if !strings.Contains(res.Content, "available skills are: evil, good") {
-		t.Errorf("error must carry the available-skills hint, got %q", res.Content)
-	}
-
-	// The well-behaved sibling still activates (per-skill isolation).
-	res = exec(t, tl, call(t, map[string]any{"name": "good"}))
-	if res.IsError {
-		t.Fatalf("the asset-less sibling must activate, got error %q", res.Content)
-	}
-	if !strings.HasPrefix(res.Content, "Skill: good\n\n") {
-		t.Errorf("asset-less driver skill must omit the Base-directory block, got %q", res.Content)
+	asset := exec(t, tl, call(t, map[string]any{"name": "full", "asset": "references/api.md"}))
+	if asset.IsError || asset.Content != "Skill asset: full / references/api.md\n\nAPI notes\n" {
+		t.Fatalf("asset output = %#v", asset)
 	}
 }

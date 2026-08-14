@@ -202,7 +202,7 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 	)
 	cfg := Config{Model: "m", Shell: "/bin/sh", TrustProject: true, Diagnostics: port.NopDiagnostics{}}
 	subTool, closeFn := buildSubagentTool(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
-		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, nil, a, true)
+		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, a, true)
 	if closeFn != nil {
 		defer func() { _ = closeFn() }()
 	}
@@ -607,7 +607,7 @@ func TestNoFSSessionSurvivesRestartE2E(t *testing.T) {
 // upstream no-fs guard regressed). A non-empty root still opens osfs normally.
 func TestOsfsWorkspaceFactoryEmptyRootIntercepted(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	factory := osfsWorkspaceFactory(diag, nil)
+	factory := osfsWorkspaceFactory(diag)
 
 	ws := factory("")
 	if _, ok := ws.(nofs.Workspace); !ok {

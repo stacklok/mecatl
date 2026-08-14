@@ -163,7 +163,7 @@ func TestBuildSubagentToolAgentPlusModelWiring(t *testing.T) {
 	cfg := Config{Model: "claude-default", Diagnostics: port.NopDiagnostics{}}
 
 	subTool, closeFn := buildSubagentTool(ctx, cfg, regForTest(prov, providerAnthropic, cfg.Model), prov, providerAnthropic, cfg.Model,
-		hookexec.New(nil), agentReg, nil, nil, nil, nil, catalogAssets{}, false)
+		hookexec.New(nil), agentReg, nil, nil, nil, catalogAssets{}, false)
 	if closeFn != nil {
 		defer func() { _ = closeFn() }()
 	}

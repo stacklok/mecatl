@@ -100,7 +100,7 @@ func dialOptions(target string, cfg dialConfig) ([]grpc.DialOption, error) {
 
 	// Refuse CLEARTEXT to any non-local driver ENTIRELY — token or not. A
 	// driver delivers session payloads, memories, model-steering skill bodies,
-	// and 0o755-materialized executables: an on-path attacker over a cleartext
+	// and arbitrary skill payload bytes: an on-path attacker over a cleartext
 	// remote link would gain driver-equivalent capability regardless of auth.
 	// (This deliberately supersedes the earlier token-only rule for every
 	// driver seam.) The bearer credential's RequireTransportSecurity() remains
@@ -108,7 +108,7 @@ func dialOptions(target string, cfg dialConfig) ([]grpc.DialOption, error) {
 	// clear, actionable error instead of an opaque RPC failure later.
 	if !cfg.useTLS && !local {
 		return nil, fmt.Errorf(
-			"grpcdriver: refusing CLEARTEXT to non-loopback driver %q: drivers carry session payloads, memory, model instructions, and executable skill assets — enable driver TLS (--driver-tls)", target)
+			"grpcdriver: refusing CLEARTEXT to non-loopback driver %q: drivers carry session payloads, memory, model instructions, and arbitrary skill assets — enable driver TLS (--driver-tls)", target)
 	}
 
 	if cfg.useTLS {

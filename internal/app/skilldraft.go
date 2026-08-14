@@ -121,19 +121,6 @@ func activeSkillDirs(cfg Config) []string {
 	return dirs
 }
 
-// NOTE: the per-skill read-root computation that used to live here
-// (skillReadRoots) moved home to the FS skills adapter as
-// skills.FSSource.AssetDirs — the seam (resolveSkillSeam) derives
-// catalogAssets.skillReadRoots from it (or from the driver asset cache), with
-// the identical per-skill granularity, trust-gating-by-construction, and
-// osfs.ResolveRoot canonicalization guarantees.
-//
-// activeSkillDirs above stays CONCRETE (DirSource-shaped) on purpose: the
-// draft-quarantine overlap validation is inherently FS business. With a remote
-// skill driver (SkillSourceURL) the resolved source list is empty, so the
-// overlap check trivially passes — a driver's bundles have no local dirs a
-// quarantine could overlap.
-
 // dirsOverlap reports whether a and b are the same directory or one contains the
 // other. It compares cleaned paths via filepath.Rel so a nested relationship in
 // either direction counts as overlap.

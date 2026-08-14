@@ -48,9 +48,8 @@ import (
 // first call for that root. Learn is forwarded so an "allow always" verdict
 // on a non-escape call still records against the inner store.
 type escapePolicy struct {
-	inner     port.PermissionPolicy
-	posture   Posture
-	readRoots []string
+	inner   port.PermissionPolicy
+	posture Posture
 
 	// route is the ADR-0080 guardrail-routed escape checker: non-nil ONLY at
 	// posture auto WITH the operator-tier escape knob configured. nil is the
@@ -79,17 +78,14 @@ func withEscapeGuardrailRoute(checker modelhook.VerdictChecker) escapePolicyOpti
 	}
 }
 
-// newEscapePolicy builds the shared-engine wrapper. readRoots are the session's
-// WithReadRoots read-only roots (the skills carve-out), so each per-root
-// classifier's read-root verdict matches the workspace's. It is active at EVERY
+// newEscapePolicy builds the shared-engine wrapper. It is active at EVERY
 // posture (the caller installs it uniformly): at strict/trusted it converts a
 // non-denied escape into the Scenario-4 escape Ask.
-func newEscapePolicy(inner port.PermissionPolicy, posture Posture, readRoots []string, opts ...escapePolicyOption) port.PermissionPolicy {
+func newEscapePolicy(inner port.PermissionPolicy, posture Posture, opts ...escapePolicyOption) port.PermissionPolicy {
 	p := &escapePolicy{
-		inner:     inner,
-		posture:   posture,
-		readRoots: readRoots,
-		clfs:      make(map[string]*escapeClassifier),
+		inner:   inner,
+		posture: posture,
+		clfs:    make(map[string]*escapeClassifier),
 	}
 	for _, o := range opts {
 		o(p)
@@ -114,7 +110,7 @@ func (p *escapePolicy) classifierFor(ws tool.WorkspaceReader) *escapeClassifier 
 	if c, ok := p.clfs[root]; ok {
 		return c
 	}
-	c, err := newEscapeClassifier(root, p.readRoots...)
+	c, err := newEscapeClassifier(root)
 	if err != nil {
 		return nil
 	}

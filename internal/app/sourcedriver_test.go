@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -130,99 +130,74 @@ func TestValidateDriverConfigSourceExclusivity(t *testing.T) {
 	}
 }
 
-// TestResolveDriverSkillSeam drives the REAL driver branch end to end over a
-// loopback fixture server: the metadata snapshot, the single cache read root,
-// lazy materialization on first activation (executable bit honored, base dir
-// inside the cache), and cache removal on close.
-func TestResolveDriverSkillSeam(t *testing.T) {
-	addr := startSourceDriver(t, func(gs *grpc.Server) {
-		driverv1.RegisterSkillSourceServiceServer(gs, grpcdriver.NewSkillSourceServer(sourceconformance.NewFixtureSource()))
-	})
-	cfg := Config{SkillSourceURL: addr}
-	seam, err := resolveSkillSeam(context.Background(), cfg, nil)
-	if err != nil {
-		t.Fatalf("resolveSkillSeam: %v", err)
-	}
-	if len(seam.metas) != len(sourceconformance.Fixture) {
-		t.Fatalf("seam.metas = %d skills, want %d", len(seam.metas), len(sourceconformance.Fixture))
-	}
-
-	// readRoots == {cacheBase}: exactly one root, an existing dir (EAGER
-	// creation — a late-born root would be unreadable by osfs).
-	if len(seam.readRoots) != 1 {
-		t.Fatalf("seam.readRoots = %v, want exactly the asset cache", seam.readRoots)
-	}
-	cacheBase := seam.readRoots[0]
-	if fi, serr := os.Stat(cacheBase); serr != nil || !fi.IsDir() {
-		t.Fatalf("asset cache %q must exist at build time: %v", cacheBase, serr)
-	}
-
-	// LAZY: nothing materialized before the first activation.
-	if entries, _ := os.ReadDir(cacheBase); len(entries) != 0 {
-		t.Errorf("asset cache must be empty before any activation, got %v", entries)
-	}
-
-	act, err := seam.activator.Activate(context.Background(), "review")
-	if err != nil {
-		t.Fatalf("Activate(review): %v", err)
-	}
-	if act.BaseDir != filepath.Join(cacheBase, "review") {
-		t.Errorf("BaseDir = %q, want %q", act.BaseDir, filepath.Join(cacheBase, "review"))
-	}
-	script := filepath.Join(act.BaseDir, "scripts", "lint.sh")
-	if fi, serr := os.Stat(script); serr != nil || fi.Mode()&0o111 == 0 {
-		t.Errorf("materialized script %q must exist with the executable bit: fi=%v err=%v", script, fi, serr)
-	}
-
-	// An asset-less driver skill omits the base dir.
-	lean, err := seam.activator.Activate(context.Background(), "commit-style")
-	if err != nil {
-		t.Fatalf("Activate(commit-style): %v", err)
-	}
-	if lean.BaseDir != "" {
-		t.Errorf("asset-less skill BaseDir = %q, want \"\"", lean.BaseDir)
-	}
-
-	// Close removes the cache.
-	seam.close()
-	if _, serr := os.Stat(cacheBase); !errors.Is(serr, os.ErrNotExist) {
-		t.Errorf("seam close must remove the asset cache, stat err = %v", serr)
-	}
+type countingAssetSkillSource struct {
+	tool.SkillSource
+	assetReads atomic.Int32
 }
 
-// TestBuildCatalogSkillDriverRegistersSkillTool proves the REAL wiring
-// (buildCatalog) takes the SkillSourceURL branch: the Skill tool registers
-// over the driver metas, the assets carry the cache read root, and the
-// catalog close removes the cache — the driver-backed analogue of
-// TestBuildCatalogMemoryDriverRegistersTools.
-func TestBuildCatalogSkillDriverRegistersSkillTool(t *testing.T) {
+func (s *countingAssetSkillSource) ReadSkillAsset(ctx context.Context, skill, asset string) ([]byte, error) {
+	s.assetReads.Add(1)
+	return s.SkillSource.ReadSkillAsset(ctx, skill, asset)
+}
+
+// TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring drives the production
+// driver seam through both catalog profiles. Skill activation stays lazy, and a
+// no-fs session reads one logical asset through Skill without file or shell tools.
+func TestRemoteSkillSourceDefaultAndNoFSLogicalAssetWiring(t *testing.T) {
+	source := &countingAssetSkillSource{SkillSource: sourceconformance.NewFixtureSource()}
 	addr := startSourceDriver(t, func(gs *grpc.Server) {
-		driverv1.RegisterSkillSourceServiceServer(gs, grpcdriver.NewSkillSourceServer(sourceconformance.NewFixtureSource()))
+		driverv1.RegisterSkillSourceServiceServer(gs, grpcdriver.NewSkillSourceServer(source))
 	})
 	ctx := context.Background()
 	provider := mockllm.New(mockllm.TextTurn("x"))
 	cfg := Config{SkillSourceURL: addr}
 
-	cat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
+	defaultCat, assets, _, _, closeFn, err := buildCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, hookexec.New(nil), agents.NewRegistry(nil), memstore.New(), nil)
 	if err != nil {
 		t.Fatalf("buildCatalog(skill driver): %v", err)
 	}
-	if _, ok := cat.Lookup(skills.ToolName); !ok {
-		t.Error("skill driver enabled (SkillSourceURL set): catalog is missing the Skill tool")
+	defer closeFn()
+	if _, ok := defaultCat.Lookup(skills.ToolName); !ok {
+		t.Fatal("default catalog is missing the remote-backed Skill tool")
 	}
-	if len(assets.skills) != len(sourceconformance.Fixture) {
-		t.Errorf("assets.skills = %d metas, want %d", len(assets.skills), len(sourceconformance.Fixture))
+
+	noFSCat, noFSClose := assembleCatalog(ctx, cfg, regForTest(provider, providerMock, cfg.Model), memstore.New(), hookexec.New(nil), &assets, catalogSession{
+		provider: provider, providerID: providerMock, model: cfg.Model, noFS: true,
+	})
+	defer func() { _ = noFSClose() }()
+	for _, name := range []string{"Read", "Bash"} {
+		if _, ok := noFSCat.Lookup(name); ok {
+			t.Fatalf("no-fs catalog contains %s", name)
+		}
 	}
-	if len(assets.skillReadRoots) != 1 {
-		t.Fatalf("assets.skillReadRoots = %v, want exactly the asset cache", assets.skillReadRoots)
+	skillTool, ok := noFSCat.Lookup(skills.ToolName)
+	if !ok {
+		t.Fatal("no-fs catalog is missing the remote-backed Skill tool")
 	}
-	cacheBase := assets.skillReadRoots[0]
-	if _, serr := os.Stat(cacheBase); serr != nil {
-		t.Fatalf("asset cache must exist: %v", serr)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "test"}, nofs.New(), nil)
+
+	activated, err := skillTool.Execute(ctx, session.NewToolCall("activate", skills.ToolName, []byte(`{"name":"review"}`)), env)
+	if err != nil || activated.IsError {
+		t.Fatalf("activate remote skill: result=%+v err=%v", activated, err)
 	}
-	closeFn()
-	if _, serr := os.Stat(cacheBase); !errors.Is(serr, os.ErrNotExist) {
-		t.Errorf("catalog close must remove the asset cache, stat err = %v", serr)
+	if got := source.assetReads.Load(); got != 0 {
+		t.Fatalf("activation called ReadSkillAsset %d times, want zero", got)
+	}
+	for _, forbidden := range []string{"Base directory", "absolute path", "Read tool", "via Bash"} {
+		if strings.Contains(activated.Content, forbidden) {
+			t.Errorf("activation leaked path-based guidance %q: %q", forbidden, activated.Content)
+		}
+	}
+
+	asset, err := skillTool.Execute(ctx, session.NewToolCall("asset", skills.ToolName, []byte(`{"name":"review","asset":"references/checklist.md"}`)), env)
+	if err != nil || asset.IsError {
+		t.Fatalf("read remote skill asset: result=%+v err=%v", asset, err)
+	}
+	if got := source.assetReads.Load(); got != 1 {
+		t.Fatalf("logical asset request called ReadSkillAsset %d times, want exactly one", got)
+	}
+	if !strings.Contains(asset.Content, "correctness first") {
+		t.Fatalf("logical asset content missing: %q", asset.Content)
 	}
 }
 
@@ -590,49 +565,6 @@ func TestDefMCPHeadersNeverLogged(t *testing.T) {
 	}
 	if strings.Contains(out, sentinel) {
 		t.Errorf("an inline MCP header VALUE leaked into diagnostics:\n%s", out)
-	}
-}
-
-// TestDriverAssetReadableThroughEarlyWorkspace pins the seam join the EAGER
-// cache MkdirTemp exists for: a production osfs Workspace is constructed
-// BEFORE any activation (the cache root is registered while still empty),
-// a skill then materializes its payloads LATE, and a Read of the materialized
-// file by the absolute path the activation header advertises succeeds through
-// that pre-existing workspace.
-func TestDriverAssetReadableThroughEarlyWorkspace(t *testing.T) {
-	addr := startSourceDriver(t, func(gs *grpc.Server) {
-		driverv1.RegisterSkillSourceServiceServer(gs, grpcdriver.NewSkillSourceServer(sourceconformance.NewFixtureSource()))
-	})
-	cfg := Config{SkillSourceURL: addr}
-	seam, err := resolveSkillSeam(context.Background(), cfg, nil)
-	if err != nil {
-		t.Fatalf("resolveSkillSeam: %v", err)
-	}
-	t.Cleanup(seam.close)
-
-	// Workspace FIRST: the factory opens its read roots at construction; the
-	// cache root exists (eager MkdirTemp) but holds nothing yet.
-	ws := osfsWorkspaceFactory(Config{}.diag(), seam.readRoots)(t.TempDir())
-	if ws == nil {
-		t.Fatal("workspace factory returned nil")
-	}
-
-	// Activation SECOND: the bundle materializes after the workspace was built.
-	act, err := seam.activator.Activate(context.Background(), "review")
-	if err != nil {
-		t.Fatalf("Activate: %v", err)
-	}
-	if act.BaseDir == "" {
-		t.Fatal("review must materialize a base dir")
-	}
-
-	absFile := filepath.Join(act.BaseDir, "references", "checklist.md")
-	got, err := ws.Read(context.Background(), absFile)
-	if err != nil {
-		t.Fatalf("workspace Read(%q) after late materialization: %v (the eager cache-root registration is broken)", absFile, err)
-	}
-	if want := "- correctness first\n- style second\n"; string(got) != want {
-		t.Errorf("Read = %q, want %q", got, want)
 	}
 }
 

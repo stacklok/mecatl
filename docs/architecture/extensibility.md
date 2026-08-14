@@ -57,22 +57,18 @@ an oversized body is flagged too (it is truncated on activation). A single
 read-only `Skill` tool (`skills.NewTool`, catalog name `Skill`,
 `ReadOnly()==true`) exposes them: its `Spec().Description` **enumerates every
 discovered skill's name + one-line description** — the cheap, always-in-context,
-cache-stable metadata layer — while `Execute({name})` returns that skill's full
-**body** only when the model activates it (the load-on-activation layer),
-prefixed by a small header carrying the skill's canonical **base directory** plus
-one line of bundled-files guidance. The header is the runtime-discoverability
-half of the out-of-workspace fix: a user-scope skill lives outside the workspace,
-and without the path in the result the model can only guess. The enforcement half
-is the **read-root allowlist**: composition computes the unique per-skill
-directories from the discovered set (`internal/app.skillReadRoots`, stashed once
-on `catalogAssets.skillReadRoots`) and constructs every production osfs
-`Workspace` — the per-session factory and all fork closures — with
-`osfs.WithReadRoots`, so `Read`/`Stat` (and only they) serve those absolute paths
-through a per-root `os.Root` with the same symlink containment as the workspace
-root; every other absolute path keeps the byte-identical escape error. Because
-the tool is read-only it is also available in plan mode. The tool is registered
-**only when at least one valid skill is discovered** — an empty inventory
-advertises nothing.
+cache-stable metadata layer. `Execute({name})` returns that skill's full **body** and
+a bounded inventory of bundled assets by logical name. If the instructions need a
+textual reference, the model calls the same tool again with
+`Execute({name, asset})`; the tool validates the advertised logical name, fetches
+only that payload through `tool.SkillSource`, enforces its size cap, and rejects
+invalid UTF-8 or NUL-containing content. No base directory crosses the seam, no
+asset is materialized or added to the workspace, and `Read`/`Bash` gain no implicit
+access. A workflow that genuinely needs a file must create or obtain it explicitly
+inside the workspace under ordinary permissions. Because the tool is read-only it
+is also available in plan and no-filesystem sessions. The tool is registered **only
+when at least one valid skill is discovered** — an empty inventory advertises
+nothing.
 
 The discovered set is *also* projected into a server-side inventory snapshot
 (`internal/app.skillSnapshot`, name-sorted, name+description only — no body),
@@ -101,9 +97,8 @@ both the FS adapter (`skills.FSSource`) and the remote driver
 (`SkillSourceService`, [observability & persistence](observability.md)) implement it, and the conformance suite holds them
 to the same semantics. `skills.Source` remains the **adapter-local**
 discovery/composition seam underneath it (where a skill's files live is the FS
-adapter's non-port business — `FSSource.AssetDirs` feeds the read-root
-allowlist above); nothing in the agent loop consumes skills directly (they are
-packaged into a `tool.Tool` at composition time).
+adapter's private business); nothing in the agent loop consumes skills directly
+(they are packaged into a `tool.Tool` at composition time).
 
 **The self-improving skill loop** (`skills.Drafter`, opt-in) closes the loop so
 durable skills can *come into being from the agent's own experience*. A single
@@ -202,8 +197,9 @@ surface entirely. **stdio MCP is never supported**. Embeddings remain unbuilt
 (multi-provider routing shipped — [multi-provider](providers.md)); **skills**
 exist as progressive-disclosure instruction units (see above), with bundled
 *packaging* shipped as logical assets on the `tool.SkillSource` port
-(`SkillAsset`, `ListSkillAssets`/`ReadSkillAsset` — never a path on the wire),
-served through the skill read-root allowlist. The guiding restraint still holds: build the shape, instrument it,
+(`SkillAsset`, `ListSkillAssets`/`ReadSkillAsset` — never a path on the wire).
+The `Skill` tool retrieves textual assets one at a time by logical name; it does
+not materialize them or widen the workspace. The guiding restraint still holds: build the shape, instrument it,
 and resist features before the loop, tools, permissions, hooks, and cache all work.
 
 ## Prerequisites

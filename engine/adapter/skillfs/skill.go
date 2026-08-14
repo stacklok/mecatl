@@ -1,11 +1,11 @@
 // Package skillfs implements Agent Skills — progressive-disclosure instruction
 // units (Claude Code / Agent Skills style) — as an OPT-IN adapter exposing a
 // single tool.Tool to the model. This is the READ-ONLY skills core (discovery,
-// source, tool, snapshot activator).
+// logical source, and tool).
 //
 // This package graduated from internal/adapter/skills into the importable
 // engine module (engine/adapter/skillfs) per #328; the root package re-exports
-// it via alias and keeps the writable half (drafter/promote/assetcache).
+// it via alias and keeps the writable half (drafter/promote).
 //
 // PROGRESSIVE DISCLOSURE (corpus pattern 9, applied to INSTRUCTIONS rather than
 // tool schemas): the cheap, always-in-context layer is each skill's METADATA
@@ -62,12 +62,9 @@ type Skill struct {
 	// instructions that load on activation.
 	Body string
 	// Path is the source SKILL.md path the skill was discovered at, retained for
-	// diagnostics and so a reviewer can trace a skill back to its file. It is
+	// diagnostics and to locate bundled files inside this adapter. It is
 	// ADAPTER-PRIVATE state: it never crosses the tool.SkillSource port (which
-	// carries logical bundles only — no path/dir/root concept); the path business
-	// it feeds (FSSource.AssetDir/AssetDirs) is adapter-public NON-PORT API
-	// consumed only by the composition layer and the same-package snapshot
-	// activator.
+	// carries logical bundles only — no path/dir/root concept).
 	Path string
 	// Origin is the admission TIER the skill entered through (explicit flag,
 	// project tier, user tier, remote driver) — a closed tool.SkillOrigin label,

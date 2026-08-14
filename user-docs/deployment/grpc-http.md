@@ -385,6 +385,8 @@ In addition, `contracts/proto/mecatl/driver/v1/session_lease.proto` and `event_l
 
 **Snapshot semantics vs live semantics.** `SessionStoreService`, `SkillSourceService`, and `AgentSourceService` use snapshot semantics — the harness resolves once at build time and does not reload. `CommandSourceService` and `MemoryStoreService` have live semantics — the harness consults them on every call.
 
+**Skill assets stay logical.** `ListSkillAssets` advertises names; `ReadSkillAsset` supplies one payload when the model calls `Skill` with `{name, asset}`. The harness returns bounded textual content directly and does not materialize driver bytes, create workspace read roots, or honor `executable` by creating a file. A script that must run needs an explicit workspace-file workflow under normal permissions.
+
 **Opaque payloads.** `SessionStoreService` round-trips session snapshots as opaque format-tagged bytes (`format = "sessnap-json/1"`). The driver stores and returns the envelope verbatim; it never decodes it. A conforming driver must accept payloads up to 64 MiB.
 
 **Trust tier.** Driver processes sit at the same trust tier as operator-configured infrastructure — the equivalent of an on-disk store directory. A `SoulSourceService` body steers the model like `AGENTS.md`; an `AgentSourceService` definition with `hooks` executes ungated shell on the harness host. Point the harness only at a driver you own.

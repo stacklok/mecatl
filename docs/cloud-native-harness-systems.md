@@ -64,8 +64,9 @@ Sub-questions worth scoping, roughly in order of how directly they gate the rest
   session. A mount table / composite filesystem (Unix VFS, overlayfs union mounts,
   Plan 9 namespaces, FUSE) would route path prefixes to backend filesystems — a
   git-backed project repo, a read-only reference tree, a writable scratch area, a
-  synthetic FS over MCP resources or memory. The existing `osfs.WithReadRoots` skill
-  carve-out is already an ad-hoc special case of exactly this.
+  synthetic FS over MCP resources or memory. Earlier mecatl skill assets used
+  `osfs.WithReadRoots` as an ad-hoc special case; ADR 0108 removed that coupling
+  in favor of logical on-demand reads through `Skill`.
 - **The capability surface is past POSIX already, unevenly.** `Grep` is minimal
   (pattern + path only — no output modes, context lines, case control, type
   filters); there's no directory manipulation as first-class tools (mkdir / rename

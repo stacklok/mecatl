@@ -7,13 +7,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 )
 
-// These helpers are the MECHANICAL retargets for the pre-seam
-// resolveSkills/resolveSkillIndex/skillReadRoots test call sites (Phase C1
-// deleted those composition helpers): each drives the REAL production seam
-// (resolveSkillSeam — the same function buildCatalog calls) and projects its
-// outputs back onto the legacy shapes the assertions read, so the trust-gate /
-// preload / read-root assertions keep pinning the live path rather than a
-// test-only reimplementation.
+// These helpers drive the real production seam and project the metadata/body
+// shapes needed by trust-gate and preload tests.
 
 func seamForTest(t *testing.T, cfg Config) skillSeam {
 	t.Helper()
@@ -39,11 +34,4 @@ func resolveSkillsForTest(t *testing.T, cfg Config) []skills.Skill {
 func resolveSkillIndexForTest(t *testing.T, cfg Config) skillIndex {
 	t.Helper()
 	return seamForTest(t, cfg).index
-}
-
-// assetDirsForTest returns the seam's read-only allowed roots (the old
-// skillReadRoots computation, now FSSource.AssetDirs inside the seam).
-func assetDirsForTest(t *testing.T, cfg Config) []string {
-	t.Helper()
-	return seamForTest(t, cfg).readRoots
 }

@@ -23,19 +23,6 @@ func writeSkill(t *testing.T, dir, name, content string) {
 	}
 }
 
-// writeAsset creates <dir>/<skill>/<logical-name> with the given content,
-// making parent directories as needed.
-func writeAsset(t *testing.T, dir, skill, logicalName, content string) {
-	t.Helper()
-	p := filepath.Join(dir, skill, filepath.FromSlash(logicalName))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatalf("mkdir asset dir: %v", err)
-	}
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatalf("write asset %q: %v", logicalName, err)
-	}
-}
-
 const validSkill = `---
 name: commit-style
 description: How to write conventional commit messages for this repo.

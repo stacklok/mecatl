@@ -5,9 +5,8 @@ import "testing"
 // TestValidSkillAssetName pins the ONE shared logical-name validator: a valid
 // name is non-empty, slash-separated, relative, with no empty/"."/".."
 // segments, no backslash, and no NUL — every SkillSource implementation and
-// consumer (FS source, asset materializer, driver server wrapper) shares
-// exactly this grammar, so a name that escapes a skill's namespace is rejected
-// everywhere identically.
+// consumer (FS source, Skill tool, driver server wrapper) shares exactly this
+// grammar, so a name that escapes a skill's namespace is rejected everywhere.
 func TestValidSkillAssetName(t *testing.T) {
 	cases := []struct {
 		name string

@@ -43,6 +43,23 @@ When you promote, **read the body** — it is agent-authored, untrusted,
 instruction-like text that becomes trusted on promotion. The automated injection
 scan is a backstop, not a substitute for reading it.
 
+### Authoring bundled assets
+
+Treat bundled files as **logical textual references**, not paths. In `SKILL.md`,
+tell the model to call the `Skill` tool again with the skill name and exact logical
+asset name, for example: “Call `Skill` with `{name: "deploy", asset:
+"references/api.md"}` before choosing an endpoint.” Activation lists the available
+logical names and sizes; the follow-up call returns one bounded UTF-8, NUL-free asset.
+Do not tell the model to use `Read` on a skill directory or assume a base directory
+will be advertised.
+
+Bundled execution is not implicitly available. A `scripts/run.sh` asset is only a
+logical payload; the harness does not materialize it, apply its executable bit, or
+make it available to Bash. If a workflow genuinely requires a script or data file on
+disk, author an explicit, permission-governed step that creates or obtains it inside
+the session workspace, then invoke it normally. Prefer keeping reference material
+textual and consuming it directly through `Skill`.
+
 ### Skills as slash commands (`/<skill-name>`)
 
 Each discovered skill is also invocable as a **slash command** — a Claude-Code
@@ -52,11 +69,14 @@ instructions). No new tool, no new dispatch concept — it reuses the existing
 slash-command layer, so `$ARGUMENTS`/`$1`/`$2` placeholders substitute exactly
 like a file-backed command.
 
-This means the two ways to load a skill are equivalent:
+This means the two ways to load a skill's instructions are equivalent:
 - call the **`Skill`** tool with the skill's `name` (the progressive-disclosure
-  path, which also surfaces the base directory + bundled files), or
+  path, which also surfaces the logical bundled-asset inventory), or
 - type **`/<skill-name> <args>`** at the prompt (the inline path, which injects
-  just the body).
+  the body plus the same post-expansion logical inventory).
+
+Neither path retrieves asset content automatically. When an asset is needed, the
+model calls `Skill` with `{name, asset}`.
 
 **Precedence** (first-that-expands-wins): a local command file (`<commands-dir>/<name>.md`)
 **shadows** a same-named skill; a skill **shadows** a same-named slash-command

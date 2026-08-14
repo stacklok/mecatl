@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026
 - Scope: every externalizable store/source in the harness — session store, memory, skills, soul, agent defs, slash commands, event log
+- Superseded by: [ADR 0108](./0108-on-demand-logical-skill-assets.md) — ONLY the skill-asset materialization/read-root decision; all other decisions remain authoritative
 
 ## Context
 
@@ -252,7 +253,7 @@ backslash, no NUL. `tool.ValidSkillAssetName` is the single shared validator
 wrapper, materializer) calls it; nobody re-derives the grammar.
 
 **Materializer caps and latch semantics**
-(`internal/adapter/skills/assetcache.go`). Driver skill payloads materialize
+(the former `assetcache.go`). Driver skill payloads materialize
 lazily into a build-scoped temp cache on FIRST activation (a never-activated
 skill transfers zero bytes): per-asset 16 MiB, per-bundle 64 MiB, enforced on
 the ACTUAL bytes; name validation + post-Clean containment; executable →

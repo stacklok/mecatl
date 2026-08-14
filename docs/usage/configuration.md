@@ -238,14 +238,15 @@ set is **snapshotted once at startup** (fatal if the driver cannot answer —
 an explicitly configured source that is down is a misconfiguration, never a
 silent no-skills run). Skills cross the wire as **logical bundles** — name,
 description, body, and payloads addressed by slash-relative logical names
-(`references/api.md`, `scripts/run.sh`) — no paths. On a skill's **first
-activation** its payloads materialize into a temporary, build-scoped **asset
-cache** (the `Base directory` the activation header advertises); a
-never-activated skill transfers zero bytes. Materialization is capped
-(16 MiB per file, 64 MiB per bundle), name-validated and containment-checked
-(an invalid bundle fails that activation with a model-addressable error,
-never a partial bundle), honors the executable bit, and the whole cache is
-removed on shutdown. **Trust:** a driver-served `SKILL.md` steers the model
+(`references/api.md`, `scripts/run.sh`) — no paths. Calling `Skill` with a name
+returns the instructions and bounded logical inventory. If those instructions need
+a textual payload, the model calls `Skill` again with `{name, asset}` and only that
+asset is fetched. The harness validates the logical name, enforces the tool-output
+size bound, and rejects invalid UTF-8 or NUL-containing assets. It does **not**
+materialize bundles, honor executable bits by creating files, expose a base
+directory, or grant `Read`/`Bash` access. A workflow needing a real file must create
+or obtain it explicitly in the workspace under normal permissions. **Trust:** a
+driver-served `SKILL.md` steers the model
 like AGENTS.md/CLAUDE.md — point this only at a driver you trust (the same
 tier as `--skills-dir`).
 

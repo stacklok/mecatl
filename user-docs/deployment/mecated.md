@@ -340,6 +340,21 @@ a checked-in file weakening a security checker would be a downgrade.
 `--mcp-server` uses streaming-HTTP transport only. mecatl never speaks stdio MCP
 directly; ToolHive stdio backends are HTTP-proxied and fine.
 
+### Skills
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--skills-dir` | (none) | Trusted local Agent Skills directory; repeatable |
+| `--skills-conventional` | `false` | Add conventional project/user skill locations |
+| `--skill-source-url` | (none) | Remote `SkillSourceService`; replaces local discovery and snapshots metadata at startup |
+
+The `Skill` tool uses path-free progressive disclosure. `{name}` loads instructions
+and a logical asset inventory; `{name, asset}` fetches one bounded textual asset.
+Local and remote skills behave the same. Assets are not materialized or exposed as
+workspace files, and bundled scripts are not implicitly executable. If a skill needs
+a real file, its instructions must create or obtain one explicitly in the workspace,
+where ordinary Write/Bash permissions apply.
+
 ### Observability
 
 | Flag | Default | Notes |

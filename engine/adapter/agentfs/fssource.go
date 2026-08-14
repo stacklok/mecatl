@@ -10,8 +10,7 @@ import (
 // snapshot of the agent definitions discovered from the composed Source list
 // (explicit dirs + conventional locations). The port carries no path/dir/root
 // concept; the locator business the composition layer's diagnostics still need
-// is exposed as adapter-public NON-PORT methods (Discovered/Detail), mirroring
-// the skills FSSource's AssetDir/AssetDirs split.
+// is exposed as adapter-public NON-PORT methods (Discovered/Detail).
 //
 // SNAPSHOT SEMANTICS: discovery runs ONCE at construction (NewMultiSource over
 // the given sources) and the defs are retained in memory, so ListAgentDefs is

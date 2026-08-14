@@ -36,7 +36,7 @@ func buildRoutedEscapePolicy(t *testing.T, cfg Config, checkerTurns ...mockllm.T
 	if checker == nil {
 		t.Fatal("buildGuardrailsChecker returned nil — the test scripts the checker via the same mockllm path the composition uses")
 	}
-	return newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), PostureAuto, nil, withEscapeGuardrailRoute(checker))
+	return newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), PostureAuto, withEscapeGuardrailRoute(checker))
 }
 
 // evalEscapeAtAuto evaluates one call through the routed policy against a
@@ -121,7 +121,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 				// consumed verdict would flip the outcome).
 				checker := buildGuardrailsChecker(Config{UseMock: true, GuardrailsModel: "checker-model"}, nil,
 					mockllm.New(mockllm.TextTurn(`{"safe":false,"reason":"must not be consulted"}`)), "mock", "m")
-				p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture, nil, withEscapeGuardrailRoute(checker))
+				p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture, withEscapeGuardrailRoute(checker))
 				d := evalEscapeAtAuto(t, p, f.workspace, call)
 				switch posture {
 				case PostureYolo:
@@ -141,7 +141,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		t.Parallel()
 		// Without the escape knob the auto read row is a plain Allow (Bash
 		// parity) with NO checker call — the route is strictly opt-in.
-		p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), PostureAuto, nil)
+		p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), PostureAuto)
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Allow {
 			t.Fatalf("auto escape without the knob = %v, want Allow (no route, no checker spend)", d.Effect)
@@ -154,7 +154,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 			{Scope: governance.ScopeUser, Tool: "Read", Effect: governance.Deny},
 		}, nil)
 		checker := buildGuardrailsChecker(cfg, nil, mockllm.New(mockllm.TextTurn(`{"safe":true,"reason":"must not be consulted"}`)), "mock", "m")
-		p := newEscapePolicy(inner, PostureAuto, nil, withEscapeGuardrailRoute(checker))
+		p := newEscapePolicy(inner, PostureAuto, withEscapeGuardrailRoute(checker))
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Deny {
 			t.Fatalf("configured deny + routed escape = %v, want Deny — the route runs only after the inner fold", d.Effect)

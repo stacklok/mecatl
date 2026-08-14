@@ -902,17 +902,15 @@ description cap and the on-activation body truncation apply to **every** source,
 including the conventional ones. (An OS-level sandbox around tool execution remains
 future work — see the deferral note in the architecture doc.)
 
-A **discovered** skill's own directory (the one holding its `SKILL.md`) also
-becomes **read-visible** to the model — `Read` accepts that directory's absolute
-path even when it lies outside the workspace (e.g. `~/.claude/skills/<name>`), so
-an activated skill's bundled `references/`, `scripts/`, and `assets/` files are
-actually reachable (the `Skill` tool's result names the base directory). This is
-**read-only and per-skill**: `Write`/`Edit` still refuse those paths, `Glob`/`Grep`
-never enumerate them, a shadowed skill's directory or a sibling under a skills
-source never becomes readable, an untrusted workspace's project-tier skills are
-never discovered and therefore never readable, and the `SkillDraft` quarantine dir
-is never a source so it can never enter the read allowlist. Bundled scripts run
-via Bash by absolute path, under the same permission gates Bash always has.
+A discovered skill's bundled assets remain in the **logical SkillSource namespace**;
+they do not become workspace files. Activating the skill lists bounded logical names.
+To read a textual reference, the model calls `Skill` again with the exact `name` and
+`asset`; that one payload is returned after name, size, UTF-8, and NUL validation.
+This works for local and remote skills, including `no-fs` sessions. `Read`, `Stat`,
+`Glob`, `Grep`, and Bash receive no skill-derived path or access grant, and executable
+metadata does not cause implicit materialization or execution. Skill authors whose
+workflow truly needs a script on disk must provide an explicit step to create or obtain
+it inside the workspace; the resulting Write/Bash calls follow normal permissions.
 
 #### Path forms
 
@@ -925,8 +923,7 @@ accepts a path in one of two forms:
   is the same physical file a relative path would reach, addressed by its
   absolute alias, and reduced to its root-relative form before any operation. An
   absolute path that resolves OUTSIDE the workspace root is rejected with
-  `ErrPathEscape`. (For `Read`/`Stat` only, an absolute path under an activated
-  skill's base directory is also accepted — the read-only carve-out above.)
+  `ErrPathEscape`.
 
 A symlink inside the workspace whose target resolves OUTSIDE the workspace is
 rejected at resolution time, whether addressed relatively or absolutely —

@@ -70,5 +70,5 @@ func agentSubagentEnginesForTest(ctx context.Context, cfg Config, provider port.
 // `provider` and threads it as the parent.
 func taskToolForTest(ctx context.Context, cfg Config, provider port.LLMProvider, hooks port.HookRunner, reg *agents.Registry, mainMgr *mcp.Manager) (tool.Tool, func() error) {
 	return buildSubagentTool(ctx, cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
-		hooks, reg, mainMgr, nil, nil, nil, catalogAssets{}, false)
+		hooks, reg, mainMgr, nil, nil, catalogAssets{}, false)
 }

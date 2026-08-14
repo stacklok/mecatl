@@ -1,10 +1,9 @@
 // Package skills is the in-repo adapter for Agent Skills. The READ-ONLY core
-// (discovery, source, Skill tool, snapshot activator) graduated into the
-// importable engine module (engine/adapter/skillfs, issue #328) and is
-// re-exported here via thin type/func/const aliases; the writable SkillDraft
-// half (drafter/promote/assetcache) stays in this package and reaches the core
-// through those aliases. See alias.go and the skillfs package doc for the real
-// contract.
+// (discovery, source, and Skill tool) graduated into the importable engine
+// module (engine/adapter/skillfs, issue #328) and is re-exported here via thin
+// type/func/const aliases; the writable SkillDraft half stays in this package
+// and reaches the core through those aliases. See alias.go and the skillfs
+// package doc for the real contract.
 package skills
 
 import (
@@ -15,16 +14,14 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// alias.go re-exports the READ-ONLY skills core (discovery, source, tool,
-// snapshot activator) that graduated into the importable engine module
-// (engine/adapter/skillfs, issue #328) so every existing caller — internal/app,
-// cmd/mecated, internal/adapter/server, internal/adapter/grpcdriver,
-// internal/adapter/soul, internal/adapter/memory, internal/adapter/workspacetrust
-// — keeps compiling against the skills package unchanged. The writable
-// SkillDraft half (drafter/promote/assetcache) stays in this root package and
-// reaches the core through these aliases. The discovery, parsing, tool body,
-// and activator bodies live once, in skillfs; these are thin type/func/const
-// aliases, not re-implementations, so there is no second copy to drift.
+// alias.go re-exports the READ-ONLY skills core (discovery, source, and tool)
+// that graduated into the importable engine module
+// (engine/adapter/skillfs, issue #328) so existing callers keep compiling
+// against the skills package unchanged. The writable SkillDraft half
+// (drafter/promote) stays in this root package and reaches the core through
+// these aliases. The discovery, parsing, and tool bodies live once, in skillfs;
+// these are thin type/func/const aliases, not re-implementations, so there is no
+// second copy to drift.
 
 // Skill is a pure value object: one discovered skill's metadata and body. See
 // skillfs.Skill.
@@ -48,14 +45,6 @@ type DirSource = skillfs.DirSource
 // FSSource is the FILESYSTEM implementation of the tool.SkillSource port. See
 // skillfs.FSSource.
 type FSSource = skillfs.FSSource
-
-// Activator is the seam the Skill tool loads a skill through on activation. See
-// skillfs.Activator.
-type Activator = skillfs.Activator
-
-// Activation is the load-on-activation payload the Skill tool renders. See
-// skillfs.Activation.
-type Activation = skillfs.Activation
 
 // ResolveOptions configures the known-path resolver. See
 // skillfs.ResolveOptions.
@@ -106,9 +95,11 @@ const ProjectDirMecatl = skillfs.ProjectDirMecatl
 // skillfs.ProjectDirClaude.
 const ProjectDirClaude = skillfs.ProjectDirClaude
 
-// NewTool builds the Skill tool over the given skill metadata and activator.
-// See skillfs.NewTool.
-func NewTool(metas []tool.SkillMeta, act Activator) Tool { return skillfs.NewTool(metas, act) }
+// NewTool builds the Skill tool over the given skill metadata and logical
+// source. See skillfs.NewTool.
+func NewTool(metas []tool.SkillMeta, source tool.SkillSource) Tool {
+	return skillfs.NewTool(metas, source)
+}
 
 // NewFSSource resolves the given sources ONCE and returns the snapshot source
 // plus the aggregated discovery diagnostics. See skillfs.NewFSSource.
@@ -116,24 +107,10 @@ func NewFSSource(ctx context.Context, sources ...Source) (*FSSource, []SkipError
 	return skillfs.NewFSSource(ctx, sources...)
 }
 
-// NewSnapshotActivator returns the FS activator. See skillfs.NewSnapshotActivator.
-func NewSnapshotActivator(src *FSSource) Activator { return skillfs.NewSnapshotActivator(src) }
-
-// NewSourceActivator returns the driver activator over the PORT only. See
-// skillfs.NewSourceActivator. It is a var re-export (not a wrapper func) because
-// skillfs.NewSourceActivator's second parameter is an UNEXPORTED
-// assetProvisioner interface; this package's *AssetMaterializer satisfies it
-// structurally (Provision), so callers passing a *AssetMaterializer compile
-// unchanged. A wrapper would have to name the unexported type.
-var NewSourceActivator = skillfs.NewSourceActivator
-
-// NewSkillCommandSource builds a prompt.CommandSource over the resolved skill
-// seam so each discovered skill is invocable as /<skill-name>. See
-// skillfs.NewSkillCommandSource. Re-exported so the composition layer
-// (internal/app) composes the bridge over the SAME seam pieces the Skill tool
-// uses, without importing the engine adapter directly.
-func NewSkillCommandSource(metas []tool.SkillMeta, act Activator) prompt.CommandSource {
-	return skillfs.NewSkillCommandSource(metas, act)
+// NewSkillCommandSource builds a prompt.CommandSource over the resolved logical
+// source so each discovered skill is invocable as /<skill-name>.
+func NewSkillCommandSource(metas []tool.SkillMeta, source tool.SkillSource) prompt.CommandSource {
+	return skillfs.NewSkillCommandSource(metas, source)
 }
 
 // RegisterSource discovers skills from src and, when at least one valid skill

@@ -52,7 +52,7 @@ func TestBuildSubagentToolWritableModelOverrideE2E(t *testing.T) {
 	)
 	task, closeFn := buildSubagentTool(context.Background(),
 		cfg, regForTest(childProvider, providerMock, cfg.Model), childProvider, providerMock, cfg.Model,
-		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, nil, catalogAssets{}, false)
+		hookexec.New(nil), agents.NewRegistry(nil), nil, nil, nil, catalogAssets{}, false)
 	if closeFn != nil {
 		defer func() { _ = closeFn() }()
 	}

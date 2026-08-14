@@ -167,7 +167,7 @@ func TestMaxTeamTokensPropagates(t *testing.T) {
 
 	// --- Half 1: applyTeamConfig threads svcCfg.TeamTokenBudget --------------
 	var svcCfg server.Config
-	applyTeamConfig(&svcCfg, cfg, reg, provider, nil, agents.NewRegistry(nil), nil, nil, catalogAssets{})
+	applyTeamConfig(&svcCfg, cfg, reg, provider, nil, agents.NewRegistry(nil), nil, catalogAssets{})
 	if svcCfg.TeamTokenBudget != budget {
 		t.Fatalf("svcCfg.TeamTokenBudget = %d, want %d (applyTeamConfig must thread MaxTeamTokens)", svcCfg.TeamTokenBudget, budget)
 	}

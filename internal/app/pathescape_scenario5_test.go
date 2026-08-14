@@ -182,7 +182,7 @@ func TestPathEscapePosture_Scenario5_GlobGrepConfined(t *testing.T) {
 			// exact object whose Glob/Grep must stay confined. Confinement is a
 			// workspace-body property (not a policy one), so this is the honest
 			// seam; the factory is the single construction site.
-			ws := osfsWorkspaceFactory(port.NopDiagnostics{}, nil)(f.workspace)
+			ws := osfsWorkspaceFactory(port.NopDiagnostics{})(f.workspace)
 			if ws == nil {
 				t.Fatalf("osfsWorkspaceFactory returned a nil workspace at %s", posture)
 			}
@@ -263,9 +263,9 @@ func TestPathEscapePosture_Scenario5_ChildEnginesNeverRelaxed(t *testing.T) {
 	// workspaces that deny an out-of-root read even when forked from a relaxed
 	// main-session base.
 	forkShapes := map[string]*forker.Forker{
-		"subagent-worktree":       forker.New(newForkWorkspace(nil), forker.WithDirtyOverlay()),
-		"team-member-force-copy":  forker.New(newForkWorkspace(nil), forker.WithForceCopy()),
-		"parallel-branch-forcopy": forker.New(newForkWorkspace(nil), forker.WithForceCopy()),
+		"subagent-worktree":       forker.New(newForkWorkspace(), forker.WithDirtyOverlay()),
+		"team-member-force-copy":  forker.New(newForkWorkspace(), forker.WithForceCopy()),
+		"parallel-branch-forcopy": forker.New(newForkWorkspace(), forker.WithForceCopy()),
 	}
 	for name, fk := range forkShapes {
 		fk := fk
@@ -277,7 +277,7 @@ func TestPathEscapePosture_Scenario5_ChildEnginesNeverRelaxed(t *testing.T) {
 					// posture — the exact object a Subagent/member/branch
 					// receives as its parent ws. If the child workspace
 					// inherited the relax, the out-of-root read below succeeds.
-					base := osfsWorkspaceFactory(port.NopDiagnostics{}, nil)(f.workspace)
+					base := osfsWorkspaceFactory(port.NopDiagnostics{})(f.workspace)
 					if base == nil {
 						t.Fatalf("relaxed base workspace is nil at %s", posture)
 					}

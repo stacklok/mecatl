@@ -303,7 +303,7 @@ func TestPathEscapePosture_Scenario4_PlanModeWriteEscapeDenied(t *testing.T) {
 		posture := posture
 		t.Run(posture.String(), func(t *testing.T) {
 			t.Parallel()
-			p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture, nil)
+			p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture)
 
 			d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModePlan, writeCall, ws)
 			if d.Effect != governance.Deny {
@@ -350,7 +350,7 @@ func TestPathEscapePosture_Scenario4_ConfiguredRulesStillWin(t *testing.T) {
 		inner := permpolicy.NewPolicy([]governance.Rule{
 			{Scope: governance.ScopeUser, Tool: "Read", Effect: governance.Deny},
 		}, nil)
-		p := newEscapePolicy(inner, PostureStrict, nil)
+		p := newEscapePolicy(inner, PostureStrict)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
 		if d.Effect != governance.Deny {
 			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the escape Ask", d.Effect)
@@ -362,7 +362,7 @@ func TestPathEscapePosture_Scenario4_ConfiguredRulesStillWin(t *testing.T) {
 		inner := permpolicy.NewPolicy([]governance.Rule{
 			{Scope: governance.ScopeUser, Tool: "Read", Effect: governance.Ask},
 		}, nil)
-		p := newEscapePolicy(inner, PostureTrusted, nil)
+		p := newEscapePolicy(inner, PostureTrusted)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
 		if d.Effect != governance.Ask || !d.ConfiguredAsk {
 			t.Fatalf("effect = %+v, want the CONFIGURED Ask — the escape Ask must never replace a configured Ask", d)

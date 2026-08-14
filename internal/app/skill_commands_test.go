@@ -33,7 +33,7 @@ func TestSkillCommandBridgeExpandsSkillBody(t *testing.T) {
 	if len(seam.metas) != 1 || seam.metas[0].Name != "deploy" {
 		t.Fatalf("resolveFSSkillSeam = %+v, want one skill named deploy", seam.metas)
 	}
-	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, activator: seam.activator}
+	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 
 	exp := buildCommandExpander(cfg, nil)
 	ws := memfs.NewWorkspace("/proj")
@@ -58,7 +58,7 @@ func TestSkillCommandBridgeUnknownSkillPassesThrough(t *testing.T) {
 	writeSkill(t, dir, "deploy", "deploy", "Deploy.")
 	cfg := Config{SkillsDirs: []string{dir}, TrustProject: true}
 	seam := resolveFSSkillSeam(context.Background(), cfg)
-	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, activator: seam.activator}
+	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 
 	exp := buildCommandExpander(cfg, nil)
 	ws := memfs.NewWorkspace("/proj")
@@ -84,7 +84,7 @@ func TestSkillCommandBridgeLocalCommandShadowsSkill(t *testing.T) {
 
 	cfg := Config{SkillsDirs: []string{skillDir}, TrustProject: true}
 	seam := resolveFSSkillSeam(context.Background(), cfg)
-	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, activator: seam.activator}
+	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 	// A local command dir that ALSO defines "dup" — the file shadows the skill.
 	cfg.CommandsDir = "cmds"
 	exp := buildCommandExpander(cfg, nil)
@@ -125,7 +125,7 @@ func TestSkillCommandBridgeSkillShadowsDriverSource(t *testing.T) {
 
 	cfg := Config{SkillsDirs: []string{skillDir}, TrustProject: true}
 	seam := resolveFSSkillSeam(context.Background(), cfg)
-	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, activator: seam.activator}
+	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 	// A stashed driver source that ALSO defines "dup" + a driver-only "driver-only".
 	cfg.commandSource = stubCommandSource{
 		bodies: map[string]string{
@@ -158,7 +158,7 @@ func TestSkillCommandBridgeSkillShadowsDriverSource(t *testing.T) {
 // the bridge is a no-op and an unknown /name passes through unchanged. This
 // guards the nil-safe contract (don't break the no-skills path).
 func TestSkillCommandBridgeNoSkillsIsNoOp(t *testing.T) {
-	// No skillCommandInputs stashed (the zero value: nil metas, nil activator).
+	// No skillCommandInputs stashed (the zero value: nil metas, nil source).
 	cfg := Config{}
 	exp := buildCommandExpander(cfg, nil)
 	if _, isNoop := exp.(prompt.NoopExpander); !isNoop {
@@ -186,7 +186,7 @@ func TestSkillCommandBridgeProjectTierWithheldWhenUntrusted(t *testing.T) {
 	if hasSkillNamed(seam.metas, "sneaky") {
 		t.Fatalf("untrusted workspace discovered the project-tier skill 'sneaky' (trust gate leak): %+v", seam.metas)
 	}
-	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, activator: seam.activator}
+	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 	exp := buildCommandExpander(cfg, nil)
 
 	wsReader := memfs.NewWorkspace(ws)
@@ -214,7 +214,7 @@ func TestSkillCommandBridgeProjectTierAdmittedWhenTrusted(t *testing.T) {
 	if !hasSkillNamed(seam.metas, "review") {
 		t.Fatalf("trusted workspace did not discover its project-tier skill 'review': %+v", seam.metas)
 	}
-	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, activator: seam.activator}
+	cfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 	exp := buildCommandExpander(cfg, nil)
 
 	wsReader := memfs.NewWorkspace(ws)

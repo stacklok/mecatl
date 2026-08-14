@@ -10,51 +10,26 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// SkillCommandSource adapts the resolved skill seam (the always-in-context
-// SkillMeta inventory + the Activator that loads a body on activation) to the
-// prompt.CommandSource port, so each discovered skill is invocable as
-// `/<skill-name>` — a Claude-Code-style skill-as-slash-command. A skill body IS
-// the command template: the model receives the skill's instructions directly in
-// context (no tool dispatch, no new concept — this reuses the existing
-// CommandSource/SourceExpander seam the loop already consumes).
-//
-// The Activator is the SAME seam the Skill tool loads through, so the driver
-// path's caching/materialization is SHARED — a `/skill` expansion and a Skill
-// tool activation read through one activator. The skill body returned by
-// Activate is ALREADY frontmatter-stripped (ParseSkill trims it), so
-// SourceExpander's stripFrontmatter is a no-op on it — safe.
-//
-// TRUST GATE: this source is constructed over the resolved seam, which an
-// untrusted workspace's project tier never enters (ResolveSources drops
-// project-tier skills before this source is built). So a SkillCommandSource
-// never leaks untrusted project skills — the gate is INHERITED by
-// construction, the same way the Skill tool's inventory is.
+// SkillCommandSource exposes admitted skills as slash commands through the same
+// logical, path-free SkillSource consumed by the Skill tool.
 type SkillCommandSource struct {
 	metas []tool.SkillMeta
 	names map[string]struct{}
-	act   Activator
+	src   tool.SkillSource
 }
 
-// NewSkillCommandSource builds a prompt.CommandSource over the skill seam.
-// metas is the always-in-context skill inventory (name + description); act
-// loads a named skill's body on CommandBody. A nil/empty metas yields a source
-// that lists and expands nothing (the no-skills path stays byte-identical).
-func NewSkillCommandSource(metas []tool.SkillMeta, act Activator) *SkillCommandSource {
+// NewSkillCommandSource builds a prompt.CommandSource over a SkillSource.
+func NewSkillCommandSource(metas []tool.SkillMeta, source tool.SkillSource) *SkillCommandSource {
 	names := make(map[string]struct{}, len(metas))
 	for _, m := range metas {
 		if prompt.ValidCommandName(m.Name) {
 			names[m.Name] = struct{}{}
 		}
 	}
-	return &SkillCommandSource{metas: metas, names: names, act: act}
+	return &SkillCommandSource{metas: metas, names: names, src: source}
 }
 
-// ListCommands returns one prompt.Command per skill, defensively filtered by
-// prompt.ValidCommandName (a skill name that cannot be invoked as `/<name>` is
-// dropped — belt-and-braces; the skill-name grammar is a subset of the command
-// grammar, so this is a no-op on well-formed skills). De-duplicated by name and
-// name-sorted. A non-nil error is reserved for a genuine backend fault; an
-// empty inventory is normal (returns an empty slice, never nil-error).
+// ListCommands returns the admitted skill names as sorted slash commands.
 func (s *SkillCommandSource) ListCommands(_ context.Context) ([]prompt.Command, error) {
 	if len(s.metas) == 0 {
 		return nil, nil
@@ -75,56 +50,49 @@ func (s *SkillCommandSource) ListCommands(_ context.Context) ([]prompt.Command, 
 	return out, nil
 }
 
-// CommandBody returns the named skill's raw instruction template. Activation
-// metadata is deliberately not concatenated here: SourceExpander substitutes
-// placeholders only in this body before its optional post-expansion seam adds
-// the metadata.
+// CommandBody returns one admitted skill's instruction body.
 func (s *SkillCommandSource) CommandBody(ctx context.Context, name string) (string, bool, error) {
-	act, found, err := s.activate(ctx, name)
-	if err != nil || !found {
-		return "", found, err
-	}
-	return act.Body, true, nil
+	body, _, found, err := s.load(ctx, name)
+	return body, found, err
 }
 
-// CommandBodyWithPost supplies the raw body plus the activation header for
-// prompt.SourceExpander. Keeping them separate prevents $1 and $ARGUMENTS in
-// a base directory or logical asset name from being treated as placeholders.
+// CommandBodyWithPost keeps the body separate from the logical inventory so
+// command argument substitution cannot rewrite asset names.
 func (s *SkillCommandSource) CommandBodyWithPost(ctx context.Context, name string) (body, post string, found bool, err error) {
-	act, found, err := s.activate(ctx, name)
-	if err != nil || !found {
-		return "", "", found, err
-	}
-	if len(act.Assets) == 0 {
-		return act.Body, "", true, nil
-	}
-	return act.Body, renderActivationAssets(act, false), true, nil
+	return s.load(ctx, name)
 }
 
-func (s *SkillCommandSource) activate(ctx context.Context, name string) (Activation, bool, error) {
-	if name == "" || s.act == nil || !prompt.ValidCommandName(name) {
-		return Activation{}, false, nil
+func (s *SkillCommandSource) load(ctx context.Context, name string) (body, post string, found bool, err error) {
+	if name == "" || s.src == nil || !prompt.ValidCommandName(name) {
+		return "", "", false, nil
 	}
 	if _, ok := s.names[name]; !ok {
-		return Activation{}, false, nil
+		return "", "", false, nil
 	}
-	act, err := s.act.Activate(ctx, name)
+	body, err = s.src.SkillBody(ctx, name)
 	if err != nil {
 		if errors.Is(err, tool.ErrSkillNotFound) {
-			return Activation{}, false, nil
+			return "", "", false, nil
 		}
-		return Activation{}, false, err
+		return "", "", false, err
 	}
-	act.Body = strings.TrimSpace(act.Body)
-	if act.Body == "" {
-		// An empty body is not an expansion: leave the input unchanged so the
-		// model sees its raw /name rather than a blank substitution.
-		return Activation{}, false, nil
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", "", false, nil
 	}
-	return act, true, nil
+	assets, err := s.src.ListSkillAssets(ctx, name)
+	if err != nil {
+		if errors.Is(err, tool.ErrSkillNotFound) {
+			return "", "", false, nil
+		}
+		return "", "", false, err
+	}
+	if err := validateAssetInventory(assets); err != nil {
+		return "", "", false, err
+	}
+	return body, renderBundledAssetInventory(assets), true, nil
 }
 
-// Compile-time assertions for the base and optional post-expansion seams.
 var (
 	_ prompt.CommandSource              = (*SkillCommandSource)(nil)
 	_ prompt.CommandPostExpansionSource = (*SkillCommandSource)(nil)

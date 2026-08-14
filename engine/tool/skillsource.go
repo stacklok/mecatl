@@ -73,7 +73,7 @@ type SkillMeta struct {
 type SkillAsset struct {
 	Name       string
 	Size       int64 // payload size in bytes (advisory; readers re-enforce caps)
-	Executable bool  // payload should carry the executable bit if materialized
+	Executable bool  // advisory source metadata; the Skill tool never materializes or executes it
 }
 
 // Sentinel errors every SkillSource implementation returns (wrapped, so

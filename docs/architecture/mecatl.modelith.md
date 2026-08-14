@@ -279,13 +279,13 @@ An exclusive, renewable, expiring claim on a `Session` held by a single `Process
 
 ### `Skill`
 
-A logical bundle of instructions and named assets that the agent can activate by name to extend its behavior for a task. A `Skill` crosses the boundary as identity, body, and payloads — never as a path — and may expose read-only assets to the `Workspace` when active.
+A logical bundle of instructions and named assets that the agent can activate by name to extend its behavior for a task. A `Skill` crosses the boundary as identity, body, and payloads — never as a path. Textual assets are read one at a time by logical name through the `Skill` tool.
 
 **Invariants**
 
 - **skill-crosses-as-bundle-not-path** — A `Skill` crosses the boundary as identity, body, and named assets — never as a filesystem path or directory.
 
-- **skill-assets-read-only** — An active `Skill`'s out-of-workspace assets are exposed to the `Workspace` read-only.
+- **skill-assets-on-demand** — A `Skill`'s textual assets are retrieved one at a time by logical name; they are not materialized or exposed to the `Workspace`.
 
 ### `Subagent`
 
@@ -402,7 +402,7 @@ One round-trip with the `Provider` inside a `Run`: the model is given the replay
 
 ### `Workspace`
 
-The filesystem scope of a `Session`, rooted at a single directory and contained so that file `Tools` cannot escape it via symlinks or parent traversal. Read-only out-of-workspace roots (e.g. an activated `Skill`'s assets) may be granted on top. One `Workspace` per `Session`.
+The filesystem scope of a `Session`, rooted at a single directory and contained so that file `Tools` cannot escape it via symlinks or parent traversal. One `Workspace` per `Session`.
 
 **Invariants**
 
@@ -754,14 +754,14 @@ erDiagram
 **Steps**
 
 1. The model activates a `Skill` by name; it crosses as identity, body, and assets, never as a path.
-2. The `Skill`'s assets become readable to the `Workspace` read-only.
-3. File `Tools` still cannot write outside the `Workspace` root.
+2. Activation lists logical asset names without reading their content.
+3. When needed, the model calls `Skill` again with the name and one asset; that textual payload is returned without widening the `Workspace`.
 
 **Invariants touched**
 
 - **skill-crosses-as-bundle-not-path** — A `Skill` crosses the boundary as identity, body, and named assets — never as a filesystem path or directory.
 
-- **skill-assets-read-only** — An active `Skill`'s out-of-workspace assets are exposed to the `Workspace` read-only.
+- **skill-assets-on-demand** — A `Skill`'s textual assets are retrieved one at a time by logical name; they are not materialized or exposed to the `Workspace`.
 - **workspace-contained** — File `Tools` cannot read or write outside the `Workspace` root, except through explicitly granted read-only roots.
 
 

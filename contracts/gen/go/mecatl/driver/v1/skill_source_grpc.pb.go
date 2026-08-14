@@ -26,9 +26,9 @@
 //     provided Go server wrapper pre-validates via tool.ValidSkillAssetName).
 //
 // CAPACITY: ReadSkillAsset is unary and rides the protocol's 64 MiB required
-// minimum message capacity (internal/adapter/grpcdriver.MaxSnapshotBytes; the
-// harness additionally caps a single materialized asset at 16 MiB and a
-// skill's whole bundle at 64 MiB).
+// minimum message capacity (internal/adapter/grpcdriver.MaxSnapshotBytes). The
+// harness reads one asset on demand and applies its smaller model-facing tool-
+// output bound before returning textual content.
 //
 // Validation: required-field annotations are authored with `buf.validate.field`
 // for documentation and future runtime enforcement; V1 enforces them in the Go

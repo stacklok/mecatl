@@ -4898,15 +4898,10 @@ discover skills via `resolveSkills`) and produces the process-wide `catalogAsset
 under the typed-nil discipline: every assignment is a known-non-nil concrete store or
 an untyped nil (`buildUserModelStore` returns the interface with untyped-nil returns,
 guarded by `TestBuildUserModelStoreDisabledReturnsNilInterface`), so the typed-nil
-interface trap cannot arise — the skills slice, the per-skill
-read-root allowlist `skillReadRoots` — computed ONCE from that same discovered slice
-(`internal/app.skillReadRoots`: unique `osfs.ResolveRoot(filepath.Dir(sk.Path))` per
-skill, so the trust gate is inherited by construction and there is no second list to
-drift) and threaded into EVERY production osfs Workspace constructor
-(`osfsWorkspaceFactory` + the shared `newForkWorkspace` fork closure) as
-`osfs.WithReadRoots`, making an activated skill's out-of-workspace files Read/Stat-able
-by the absolute path the Skill tool's "Base directory" header advertises — and ONE
-process-wide `agent.LRUForkReaper` so `ForkPreservedCap` stays a process bound). `assembleCatalog`
+interface trap cannot arise — the skills metadata snapshot, path-free source,
+and name→body preload index — resolved ONCE from the admitted source set, so the
+trust gate is inherited by construction — and ONE process-wide
+`agent.LRUForkReaper` so `ForkPreservedCap` stays a process bound). `assembleCatalog`
 is the single registration path both the build-time shared catalog and every
 `sessionEngineFactory` catalog run through, in the canonical order core → global MCP
 (+ `MCPResourceTools` meta-tools) → client MCP → Subagent trio → Parallel → Team →
@@ -6412,12 +6407,12 @@ grew without bound. Split mechanism from policy:
   in-memory store stays bounded too). Durable-store-only in effect: the in-memory
   default never accumulates across restarts.
 
-## Source drivers — skill + soul (Phase C1: `engine/tool/skillsource.go` + `engine/adapter/sourceconformance/` + `skills.FSSource`/`Activator`/`AssetMaterializer` + grpcdriver clients)
+## Source drivers — skill + soul (Phase C1: `engine/tool/skillsource.go` + `engine/adapter/sourceconformance/` + `skills.FSSource`/`Tool` + grpcdriver clients)
 
 HARD REQUIREMENT honoured throughout: the `tool.SkillSource` port carries **NO path/dir/root/
 file concept** — a skill crosses as a LOGICAL BUNDLE (identity + trigger metadata, instruction
-body, payloads addressed by LOGICAL name). The FS adapter's path business
-(`FSSource.AssetDir/AssetDirs`) is adapter-public NON-PORT API consumed only by composition.
+body, payloads addressed by LOGICAL name). The Skill tool now preserves that property end to
+end; filesystem paths remain private to `FSSource`.
 The settled decisions, condensed:
 
 - **A — Port home: `engine/tool` (skills); soul stays on `prompt.SoulSource`.** New types are
@@ -6467,31 +6462,23 @@ The settled decisions, condensed:
   `compatibility`=6, `metadata`=7, `map<string,string>`, `allowed_tools`=8, `repeated string`);
   the grpcdriver client re-clamps defensively to the SAME caps the parser uses (the driver
   sits at the operator tier, but its metadata feeds the always-in-context layer).
-- **C — Aux assets: real disk behind the existing Read/read-roots contract.** FS skills serve
-  IN PLACE (zero copy; `FSSource.AssetDirs` = the old per-skill `skillReadRoots`). Driver skills
-  materialize LAZILY (`skills.AssetMaterializer`, over the PORT only) into
-  `<cacheBase>/<skill>/<logical-name>` on FIRST activation (per-skill once; never-activated =
-  zero bytes; executable→0o755 else 0o644; caps 16 MiB/asset + 64 MiB/bundle on the ACTUAL
-  bytes; name validation + post-Clean containment; failure = model-addressable activation error,
-  NEVER a partial bundle). cacheBase via eager `os.MkdirTemp` at build (osfs opens read roots at
-  workspace construction — a late-born root would be unreadable), canonicalized through
-  `osfs.ResolveRoot`, RemoveAll folded into the catalog close. A pure-virtual overlay was
-  REJECTED on a hard fact: Bash executes real OS processes — a virtual file can't be executed.
-  A dedicated asset tool was REJECTED: it orphans every SKILL.md's relative-Read/script
-  instructions (model-facing regression for zero interface gain).
-- **K — Skill tool seam.** `skills.NewTool(metas []tool.SkillMeta, act Activator)`;
-  `Activator.Activate(ctx,name) → Activation{Body, BaseDir, Assets}` (BaseDir "" omits the
-  Base-directory header block; Assets is the bundled-asset logical-name list, enumerated
-  but never eagerly read). `NewSnapshotActivator(*FSSource)` (FS, byte-identical — the
-  golden `TestFSSkillActivationByteIdentical` pins Execute output AND Spec().Description
-  byte-for-byte against the pre-seam rendering) and `NewSourceActivator(tool.SkillSource,
-  *AssetMaterializer)` (driver; caches body+BaseDir+Assets after first success; failures NOT
-  cached — the materializer's once caches deterministic rejections). descriptionPreamble /
-  header strings / truncation are UNCHANGED — editing them is a defect against the C1 plan.
-  Activation renders a `Bundled files:` block (one indented logical name per line, sorted)
-  after the base-directory guidance when `len(Assets) > 0`, per the agentskills.io "should
-  enumerate bundled scripts/resources but must not eagerly read them" contract; an asset-less
-  skill renders byte-identically to before.
+- **C — Aux assets: path-free, textual, and on demand (issue #540; ADR 0108).**
+  `Skill({name})` reads the body and lists a bounded, sorted logical inventory without reading
+  payload bytes. `Skill({name,asset})` validates the logical name, requires it to appear in the
+  source inventory, reads only that payload through `ReadSkillAsset`, caps both advertised and
+  actual size at the shared tool-output bound, and rejects invalid UTF-8 or NUL bytes before
+  returning text. FS and driver skills therefore render identically. There is NO
+  `AssetMaterializer`, temp cache, `FSSource.AssetDir(s)`, base-directory header, workspace
+  read-root threading, executable-bit application, or implicit execution. Bash requiring real
+  files does not justify materializing textual references; a workflow that genuinely needs a
+  file must create or obtain one explicitly in the workspace under ordinary permissions.
+- **K — Skill tool seam.** `skills.NewTool(metas []tool.SkillMeta, source tool.SkillSource)`
+  consumes the logical source directly. Its description tells the model the two-call contract:
+  `{name}` for instructions + inventory, then `{name,asset}` for one textual payload. Activation
+  renders `Bundled assets (logical names; request one with this Skill tool's asset argument):`
+  with name + advertised byte size, bounded to 8 KiB; asset content is never eager. The same
+  renderer supplies slash-command post-expansion metadata, so placeholder substitution cannot
+  rewrite logical names and a slash command still directs asset retrieval through `Skill`.
 - **H — Wire + client discipline.** `SkillSourceService{ListSkills,GetSkillBody,
   ListSkillAssets,ReadSkillAsset}` (unary; rides the 64 MiB ceiling; origin is a string
   passthrough, no proto enum) and `SoulSourceService{LoadSoul}`. Server wrappers
@@ -6512,18 +6499,17 @@ The settled decisions, condensed:
   (one INFO line; `--soul-strict`/`--approve-soul` are documented no-ops for this provenance).
   Build-time probe failure FATAL (in `buildEngine`, conn close folded into the teardown chain);
   per-session turn-0 Load fail-soft.
-- **Composition reshape.** `resolveSkillSeam(ctx,cfg,agentReg)` replaces `resolveSkills` (FS
-  branch: `NewFSSource` over `ResolveSources(skillResolveOptions(cfg))`, narration verbatim;
-  driver branch: dial + ONE ListSkills snapshot, both FATAL on fault — explicit config =
-  loud-misconfig). `catalogAssets` now carries `skills []tool.SkillMeta` + `skillActivator` +
-  `skillIndex` (name→body preload: full for FS, LAZY def-referenced-only for the driver) +
-  `skillReadRoots` (name + ALL workspace-constructor threading KEPT; only the derivation moved
-  into the seam). `resolveSkillIndex` and skilldraft's `skillReadRoots()` are DELETED;
-  `buildSubagentTool`/`buildTeamWiring`/`applyTeamConfig` take the index as a param.
-  `skillValues(metas, idx)` projects back to `[]skills.Skill{Name,Description,Body}` for the
-  two legacy consumers (skillSnapshot, NewDirDrafter novelty input — signature kept).
-  `activeSkillDirs` stays CONCRETE (quarantine-overlap validation is inherently FS business;
-  driver source ⇒ empty active dirs ⇒ the check trivially passes, documented).
+- **Composition reshape.** `resolveSkillSeam(ctx,cfg,agentReg)` resolves the FS or driver
+  source, snapshots metadata once, preloads only the bodies required by agent definitions, and
+  returns the same `tool.SkillSource` consumed by every catalog's Skill tool and skill-command
+  source. `catalogAssets` carries `skills []tool.SkillMeta` + `skillSource` + `skillIndex`; it
+  carries no activator, materializer, cache close, or skill read roots. `resolveSkillIndex` and
+  skilldraft's `skillReadRoots()` remain deleted; `buildSubagentTool`/`buildTeamWiring`/
+  `applyTeamConfig` take the index as a param. `skillValues(metas, idx)` projects back to
+  `[]skills.Skill{Name,Description,Body}` for the two legacy consumers (skillSnapshot,
+  NewDirDrafter novelty input — signature kept). `activeSkillDirs` stays CONCRETE
+  (quarantine-overlap validation is inherently FS business; driver source ⇒ empty active dirs ⇒
+  the check trivially passes, documented).
 - **Conformance as contract.** `sourceconformance.RunSkillSource` (driven by the exported
   canonical `Fixture`: text+executable assets / asset-less / multi-segment logical name;
   subtests: list-matches-fixture incl. sorted/unique/HasAssets/Origin-non-empty,
@@ -6537,8 +6523,9 @@ The settled decisions, condensed:
 **Phase D notes (landed in `DRIVERS.md`, additions to the Phase-B list):** the construction-time-trust rule (Origin is
 observability; admission is gated where sources are CONSTRUCTED — an untrusted workspace's
 project tier is never built); the logical-name grammar (verbatim from `ValidSkillAssetName`);
-the no-watch/snapshot decision and its trust-gate rationale; the memfs/virtual-overlay
-rejection rationale (Bash executes real processes — drivers must materialize).
+and the no-watch/snapshot decision and its trust-gate rationale. ADR 0108 supersedes the former
+materialize-for-Bash conclusion: textual assets are fetched through `Skill({name,asset})`, while
+execution requires an explicit workspace-file workflow.
 
 ## Source drivers — agent defs + commands (Phase C2: `engine/tool/agentsource.go` + `engine/prompt/commandsource.go` + `agents.FSSource` + grpcdriver clients)
 
@@ -6655,22 +6642,23 @@ rejection rationale (Bash executes real processes — drivers must materialize).
   the skill's instructions directly in context — no new tool, no new dispatch
   concept. The bridge is `engine/adapter/skillfs.SkillCommandSource`, a
   `prompt.CommandSource` over the resolved skill seam's always-in-context
-  `SkillMeta` inventory + the `Activator` the Skill tool already loads through.
-  `ListCommands` projects one `prompt.Command` per skill, defensively filtered by
+  `SkillMeta` inventory + the same path-free `tool.SkillSource` the Skill tool
+  consumes. `ListCommands` projects one `prompt.Command` per skill, defensively filtered by
   `prompt.ValidCommandName` (the skill-name grammar is a subset of the command
   grammar, so the filter is belt-and-braces), de-duped + name-sorted.
-  `CommandBody` calls `Activator.Activate` and returns the body (ALREADY
+  `CommandBodyWithPost` reads the body through `SkillBody` and appends the bounded
+  logical inventory after ordinary command parsing/substitution (the body is ALREADY
   frontmatter-stripped by `ParseSkill`, so `SourceExpander`'s `stripFrontmatter`
-  is a no-op); an `ErrSkillNotFound`-class activation is the NORMAL `found=false`
-  outcome (the input passes through unchanged), a genuine activation fault
+  is a no-op); an `ErrSkillNotFound`-class source miss is the NORMAL `found=false`
+  outcome (the input passes through unchanged), a genuine source fault
   surfaces as an error (mirroring the Skill tool's addressable-error posture),
-  and an empty body does NOT expand (never a blank substitution). The driver
-  path's caching/materialization is SHARED — a `/skill` expansion and a Skill
-  tool activation read through one activator. Composition (`internal/app`
+  and an empty body does NOT expand (never a blank substitution). Asset bytes are
+  not read during expansion; the inventory tells the model to call `Skill` with
+  `{name,asset}`. Composition (`internal/app`
   `buildCommandExpander`) inserts the bridge into the expander chain with
   precedence `dirExp > skillExp > sourceExp > mcpExp`: a local command file
   SHADOWS a same-named skill, a skill SHADOWS a same-named driver command, both
-  shadow MCP prompts. The seam inputs (metas + activator) are stashed on the
+  shadow MCP prompts. The seam inputs (metas + source) are stashed on the
   unexported `Config.skillCommandInputs` after `buildCatalog` resolves the seam
   (the `Config.commandSource` precedent — `buildCommandExpander` runs per
   session), so the main engine, the per-session factory, and the `ListCommands`

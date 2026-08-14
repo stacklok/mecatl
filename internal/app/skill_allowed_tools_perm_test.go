@@ -41,7 +41,7 @@ func TestAllowedToolsDoesNotBypassPolicy(t *testing.T) {
 	ctx := context.Background()
 
 	// Build the Skill tool over a skill declaring `allowed-tools: "Bash"`,
-	// through the REAL seam (NewFSSource snapshot + NewSnapshotActivator).
+	// through the REAL NewFSSource snapshot seam.
 	src, skips, err := skills.NewFSSource(ctx, staticSkillsSource{
 		{
 			Name:         "tooling",
@@ -57,7 +57,7 @@ func TestAllowedToolsDoesNotBypassPolicy(t *testing.T) {
 		t.Fatalf("unexpected skips: %v", skips)
 	}
 	metas, _ := src.ListSkills(ctx)
-	tl := skills.NewTool(metas, skills.NewSnapshotActivator(src))
+	tl := skills.NewTool(metas, src)
 
 	// Precondition A: the skill carries the advisory allowed-tools field on
 	// the port-shaped SkillMeta (the layer the catalog and policy see).
