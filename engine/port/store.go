@@ -112,17 +112,26 @@ type SessionMeta struct {
 	// multimodal-only first prompt) carries "" here; the caller may fall back to
 	// the lazy deriveTitle walk via a full Load if it needs the derived value.
 	Title string
-	// Kind and Relationship are the validated trusted-producer taxonomy projected
-	// from the latest snapshot. A legacy row has KindUnknown and no relationship.
+	// Owner is the verified caller the session is attributed to (ADR 0100), or
+	// nil when the session is ownerless.
+	Owner *session.Principal
+}
+
+// SessionDiscoveryMeta is the additive bounded-inventory projection. It keeps
+// SessionMeta source-compatible while carrying the trusted taxonomy and workspace
+// needed by discovery clients.
+type SessionDiscoveryMeta struct {
+	ID           session.SessionID
+	ModifiedAt   time.Time
+	State        session.State
+	Turns        int
+	ModelID      string
+	CreatedAt    time.Time
+	Title        string
+	Owner        *session.Principal
+	Workspace    string
 	Kind         session.SessionKind
 	Relationship session.SessionRelationship
-	// Owner is the verified caller the session is attributed to (ADR 0100), or
-	// nil when the session is ownerless (the no-auth path, or a session
-	// persisted before the owner label existed — nothing backfills it). It is
-	// carried here so the cheap MetaLister listing renders the owner IDENTICALLY
-	// to the Load-per-row fallback; a store that cannot decode it leaves it nil,
-	// which renders as unowned rather than as somebody else.
-	Owner *session.Principal
 }
 
 // MetaLister is the OPTIONAL cheap-listing seam a SessionStore adapter may
@@ -173,7 +182,7 @@ type SessionMetadataPageRequest struct {
 // SessionMetadataPage is one best-effort keyset page. Concurrent saves may move
 // rows to an earlier page; the response remains bounded and owner-filtered.
 type SessionMetadataPage struct {
-	Sessions   []SessionMeta
+	Sessions   []SessionDiscoveryMeta
 	NextCursor *SessionMetadataCursor
 	TotalCount int
 }
@@ -189,8 +198,8 @@ type SessionMetadataPager interface {
 // PaginateSessionMetadata applies the shared owner-filter, ordering, and keyset
 // rules to an adapter's metadata scan. It intentionally bounds only the returned
 // page; an adapter may scan its backend in v1.
-func PaginateSessionMetadata(rows []SessionMeta, request SessionMetadataPageRequest) SessionMetadataPage {
-	filtered := make([]SessionMeta, 0, len(rows))
+func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage {
+	filtered := make([]SessionDiscoveryMeta, 0, len(rows))
 	for _, row := range rows {
 		if request.OwnershipEnforced && (request.Owner == nil || !request.Owner.SameIdentity(row.Owner)) {
 			continue

@@ -18,9 +18,11 @@ type fakeStartupResumeSource struct {
 	snapshots       map[string]client.SessionSnapshot
 	snapshotErrs    map[string]error
 	transcriptCalls []string
+	listCalls       int
 }
 
 func (f *fakeStartupResumeSource) ListSessions(context.Context) ([]client.SessionListItem, error) {
+	f.listCalls++
 	return f.rows, f.listErr
 }
 
@@ -66,6 +68,29 @@ func TestSessionContinuityUX_Scenario6_FlagGrammar(t *testing.T) {
 	}
 }
 
+func TestSessionContinuityUX_Scenario6_ExactResumeDoesNotRequireInventory(t *testing.T) {
+	source := &fakeStartupResumeSource{
+		listErr: errors.New("inventory paging unavailable"),
+		transcripts: map[string]client.SessionTranscript{
+			"opaque-id": {SessionID: "opaque-id", Complete: true, Kind: client.SessionKindMain},
+		},
+		snapshots: map[string]client.SessionSnapshot{
+			"opaque-id": {State: "completed", Workspace: "/workspace"},
+		},
+	}
+
+	got, err := resolveStartupResume(context.Background(), source, "opaque-id", false)
+	if err != nil {
+		t.Fatalf("exact resume with unavailable inventory: %v", err)
+	}
+	if source.listCalls != 0 {
+		t.Fatalf("exact resume listed inventory %d times; want 0", source.listCalls)
+	}
+	if got == nil || got.Row.ID != "opaque-id" || got.Transcript.SessionID != "opaque-id" {
+		t.Fatalf("exact resume selection = %+v", got)
+	}
+}
+
 func TestSessionContinuityUX_Scenario6_LatestSelection(t *testing.T) {
 	source := &fakeStartupResumeSource{
 		rows: []client.SessionListItem{
@@ -91,7 +116,13 @@ func TestSessionContinuityUX_Scenario6_LatestSelection(t *testing.T) {
 
 func TestADR_0108_StartupStaticValidation(t *testing.T) {
 	child := client.SessionListItem{ID: "child", Kind: client.SessionKindSubagent, Capabilities: client.SessionInventoryCapabilities{Inspect: true}, ReasonCode: client.CapabilityReasonInspectOnlyKind}
-	source := &fakeStartupResumeSource{rows: []client.SessionListItem{child}, transcripts: map[string]client.SessionTranscript{}}
+	source := &fakeStartupResumeSource{
+		rows: []client.SessionListItem{child},
+		transcripts: map[string]client.SessionTranscript{
+			"child": {SessionID: "child", Complete: true, Kind: client.SessionKindSubagent},
+		},
+		snapshotErrs: map[string]error{"missing": errors.New("not found")},
+	}
 	_, err := resolveStartupResume(context.Background(), source, "child", false)
 	var resumeErr *startupResumeError
 	if !errors.As(err, &resumeErr) || resumeErr.Reason != client.CapabilityReasonInspectOnlyKind {

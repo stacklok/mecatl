@@ -716,6 +716,8 @@ message SessionSummary {
   SessionInventoryCapabilities capabilities = 11;
   // reason_code explains why a capability is unavailable. Empty means no denial.
   string reason_code = 12;
+  // workspace is the stored session root used for inventory search/display.
+  string workspace = 13;
 }
 
 // SessionRelationship carries the validated links appropriate to a session kind.
@@ -733,6 +735,10 @@ message SessionRelationship {
 message SessionInventoryCapabilities {
   bool public_chat = 1;
   bool inspect = 2;
+  // authoritative_transcript reports snapshot-derived transcript availability.
+  bool authoritative_transcript = 3;
+  // activity_replay reports the independent optional EventLog replay plane.
+  bool activity_replay = 4;
 }
 
 // ListSessionsResponse carries one bounded stored-session inventory page, sorted

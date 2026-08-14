@@ -151,7 +151,7 @@ func (st *SessionStore) List(ctx context.Context) ([]port.StoredSession, error) 
 	return out, nil
 }
 
-func metadataAfter(row port.SessionMeta, cursor *port.SessionMetadataCursor) bool {
+func metadataAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadataCursor) bool {
 	return row.ModifiedAt.Before(cursor.ModifiedAt) ||
 		(row.ModifiedAt.Equal(cursor.ModifiedAt) && row.ID > cursor.ID)
 }
@@ -239,7 +239,7 @@ func pageMetadataRequest(request port.SessionMetadataPageRequest) (*driverv1.Pag
 }
 
 func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse) (port.SessionMetadataPage, error) {
-	page := port.SessionMetadataPage{TotalCount: int(resp.GetTotalCount()), Sessions: make([]port.SessionMeta, 0, len(resp.GetSessions()))}
+	page := port.SessionMetadataPage{TotalCount: int(resp.GetTotalCount()), Sessions: make([]port.SessionDiscoveryMeta, 0, len(resp.GetSessions()))}
 	for _, entry := range resp.GetSessions() {
 		if entry == nil {
 			return port.SessionMetadataPage{}, fmt.Errorf("grpcdriver: page metadata: driver returned a nil row")
@@ -261,14 +261,15 @@ func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse) (port.Ses
 	return page, nil
 }
 
-func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionMeta {
-	meta := port.SessionMeta{
-		ID:      session.SessionID(entry.GetSessionId()),
-		State:   session.State(entry.GetState()),
-		Turns:   int(entry.GetTurns()),
-		ModelID: entry.GetModelId(),
-		Title:   entry.GetTitle(),
-		Kind:    session.SessionKind(entry.GetKind()),
+func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscoveryMeta {
+	meta := port.SessionDiscoveryMeta{
+		ID:        session.SessionID(entry.GetSessionId()),
+		State:     session.State(entry.GetState()),
+		Turns:     int(entry.GetTurns()),
+		ModelID:   entry.GetModelId(),
+		Title:     entry.GetTitle(),
+		Workspace: entry.GetWorkspace(),
+		Kind:      session.SessionKind(entry.GetKind()),
 		Relationship: session.SessionRelationship{
 			ParentSessionID: session.SessionID(entry.GetParentSessionId()),
 			CallID:          session.ToolCallID(entry.GetCallId()),

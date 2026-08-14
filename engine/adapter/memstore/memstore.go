@@ -116,16 +116,16 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 // in-memory snapshot of the store maps.
 func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
 	st.mu.RLock()
-	rows := make([]port.SessionMeta, 0, len(st.sessions))
+	rows := make([]port.SessionDiscoveryMeta, 0, len(st.sessions))
 	for id, snap := range st.sessions {
 		kind := snap.Kind
 		if kind == "" {
 			kind = session.SessionKindUnknown
 		}
-		rows = append(rows, port.SessionMeta{
+		rows = append(rows, port.SessionDiscoveryMeta{
 			ID: id, ModifiedAt: st.savedAt[id], State: snap.State,
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
-			Title: snap.Title, Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+			Title: snap.Title, Workspace: snap.Workspace, Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
 		})
 	}
 	st.mu.RUnlock()

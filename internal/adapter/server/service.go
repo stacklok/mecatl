@@ -2586,6 +2586,11 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if text == "" && len(parts) == 0 {
 		return nil, fmt.Errorf("%w: prompt text or parts is required", ErrInvalidArgument)
 	}
+	// Serialize the complete run-entry transaction, including the authoritative
+	// load, purpose authorization, and terminal-state recovery. Loading before this
+	// lock lets two same-id starts recover the same snapshot independently.
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
 	// Authorize the exact id before revealing whether its metadata or legacy prefix
 	// is runnable. Foreign, ownerless-under-enforcement, pruned, and absent ids all
 	// remain the same ErrNotFound class.
@@ -2595,6 +2600,17 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	}
 	if err := admitRunPurpose(sess, purpose); err != nil {
 		return nil, err
+	}
+	// The run registry is the authoritative same-process single-run gate while the
+	// loaded aggregate is non-terminal. A terminal snapshot means the registered
+	// run has finished driving but its relay has not called FinishRun yet. Remove
+	// that exact run before reopening so the finished relay's later FinishRun
+	// cannot deregister the continuation that replaces it.
+	if registered, ok := s.LookupRun(id); ok {
+		if !sess.State.IsTerminal() {
+			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
+		}
+		s.deregister(id, registered)
 	}
 	// NOTE (ADR 0062): there is NO prompt-channel scan here. The guardrails
 	// approve-once flow is OUT-OF-BAND — a PreToolUse guardrail block surfaces to the
@@ -2612,12 +2628,8 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	}
 	// Hold the per-session run-entry lock across engine-resolve (which may REBUILD a
 	// per-session engine for a mode→model change, ADR 0030 Layer 3) + run launch +
-	// register: this makes the rebuild's under-lock no-live-run check authoritative
-	// (no concurrent run-entry for this id can be between its engine-read and its
-	// register), so a displaced prior engine is never closed while in use. Per-session,
-	// so unrelated sessions run concurrently.
-	unlock := s.runEntryMu.lock(id)
-	defer unlock()
+	// register. The lock was acquired before loading so the entire run-entry
+	// transaction observes one authoritative snapshot.
 	// Cross-process single-writer gate (cloud-native Phase 4): take the session
 	// lease AFTER the in-process runEntryMu so same-process exclusion stays cheap.
 	// A competing live owner refuses the run with ErrSessionLeasedElsewhere; nil
@@ -2636,18 +2648,11 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	//
 	// One remaining hazard: runEntryMu only serializes the RUN-ENTRY section, not
 	// a run's full lifetime (it is unlocked as soon as this function returns,
-	// long before the registered run finishes). A second StartRunContent for the
-	// SAME id can therefore enter here while a run this process itself started
-	// earlier is still genuinely live and re-saving StateRunning snapshots
-	// (resumeFromAwaiting cannot collide here — it rejects everything but
-	// StateAwaiting before it ever reaches this repair). Abandoning a genuinely
-	// live session's history out from under it would corrupt an active run, so
-	// IsLive(id) is checked FIRST and, if true, the repair is refused outright
-	// rather than racing it.
+	// long before the registered run finishes). The authoritative registry/state
+	// check above therefore runs while runEntryMu is held and before reopen/save.
+	// Reaching this branch proves the running snapshot has no same-process owner
+	// and may be repaired.
 	if sess.State == session.StateRunning {
-		if s.IsLive(id) {
-			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
-		}
 		if err := sess.Abandon(); err != nil {
 			return nil, fmt.Errorf("server: abandon stale running session: %w", err)
 		}
@@ -4940,6 +4945,8 @@ type SessionSummary struct {
 	// (walks the conversation for the first genuine user prompt). Empty for a
 	// session with no genuine prompt.
 	Title string
+	// Workspace is the stored session root used for search and display.
+	Workspace string
 	// Owner is the verified caller the session is attributed to.
 	Owner *session.Principal
 	// Kind and Relationship are the durable trusted-producer taxonomy.
@@ -4952,8 +4959,10 @@ type SessionSummary struct {
 
 // SessionInventoryCapabilities is the proto-free action posture for one row.
 type SessionInventoryCapabilities struct {
-	PublicChat bool
-	Inspect    bool
+	PublicChat              bool
+	Inspect                 bool
+	AuthoritativeTranscript bool
+	ActivityReplay          bool
 }
 
 // CapabilityReason is a stable machine-readable explanation for a disabled
@@ -5053,7 +5062,7 @@ func validSessionIdentityMetadata(id session.SessionID, relationship session.Ses
 	return id != "" && utf8.ValidString(string(id)) && validSessionRelationshipUTF8(relationship)
 }
 
-func metadataKeyAfter(row port.SessionMeta, cursor *port.SessionMetadataCursor) bool {
+func metadataKeyAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadataCursor) bool {
 	return row.ModifiedAt.Before(cursor.ModifiedAt) ||
 		(row.ModifiedAt.Equal(cursor.ModifiedAt) && row.ID > cursor.ID)
 }
@@ -5133,7 +5142,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	}
 	out := ListSessionsPage{Sessions: make([]SessionSummary, 0, len(page.Sessions)), TotalCount: page.TotalCount}
 	for _, meta := range page.Sessions {
-		out.Sessions = append(out.Sessions, s.summaryFromMeta(meta))
+		out.Sessions = append(out.Sessions, s.summaryFromDiscoveryMeta(meta))
 	}
 	out.NextCursor, err = encodeInventoryCursor(page.NextCursor)
 	if err != nil {
@@ -5142,7 +5151,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	return out, nil
 }
 
-func (s *Service) summaryFromMeta(meta port.SessionMeta) SessionSummary {
+func (s *Service) summaryFromDiscoveryMeta(meta port.SessionDiscoveryMeta) SessionSummary {
 	created := int64(0)
 	if !meta.CreatedAt.IsZero() {
 		created = meta.CreatedAt.Unix()
@@ -5152,12 +5161,21 @@ func (s *Service) summaryFromMeta(meta port.SessionMeta) SessionSummary {
 		kind = session.SessionKindUnknown
 	}
 	caps, reason := inventoryCapabilities(kind, meta.ID, meta.State, s.IsLive(meta.ID))
+	caps.AuthoritativeTranscript = meta.State != ""
+	caps.ActivityReplay = s.cfg.EventLog != nil
 	return SessionSummary{
 		SessionID: string(meta.ID), ModifiedAtUnix: meta.ModifiedAt.Unix(), State: string(meta.State),
 		Turns: meta.Turns, ModelID: meta.ModelID, CreatedAtUnix: created, Title: meta.Title,
-		Owner: meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
+		Workspace: meta.Workspace, Owner: meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
 		Capabilities: caps, ReasonCode: reason,
 	}
+}
+
+func (s *Service) summaryFromMeta(meta port.SessionMeta) SessionSummary {
+	return s.summaryFromDiscoveryMeta(port.SessionDiscoveryMeta{
+		ID: meta.ID, ModifiedAt: meta.ModifiedAt, State: meta.State, Turns: meta.Turns,
+		ModelID: meta.ModelID, CreatedAt: meta.CreatedAt, Title: meta.Title, Owner: meta.Owner,
+	})
 }
 
 // StreamSessionEvents replays a session's durable event log as a lazy iterator
@@ -5267,6 +5285,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 				summary.ModelID = sess.ModelID
 			}
 			summary.Title = DeriveTitle(sess)
+			summary.Workspace = sess.Workspace
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.
 			summary.Owner = sess.Owner.Clone()
@@ -5276,6 +5295,8 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			}
 			summary.Relationship = sess.Relationship
 			summary.Capabilities, summary.ReasonCode = inventoryCapabilities(summary.Kind, sess.ID, sess.State, s.IsLive(sess.ID))
+			summary.Capabilities.AuthoritativeTranscript = true
+			summary.Capabilities.ActivityReplay = s.cfg.EventLog != nil
 		}
 		out = append(out, summary)
 	}

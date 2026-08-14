@@ -616,7 +616,7 @@ func TestModeRebuildSerializedByRunEntryMu(t *testing.T) {
 		if rerr != nil {
 			// A clean rejection (the other entry holds the run) is acceptable; a transport
 			// error would point at a close-during-use.
-			if !errors.Is(rerr, server.ErrInvalidArgument) {
+			if !errors.Is(rerr, server.ErrFailedPrecondition) {
 				t.Errorf("%s: unexpected StartRun error %v", label, rerr)
 			}
 			return
@@ -853,29 +853,13 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				}, nil
 			},
 		},
-		// ── REBUILD (CASE 1 — mid-run reject → ErrInvalidArgument) ──────────────
-		// This is the NET-NEW row: the CHEAP liveness pre-check at ~service.go:1384.
-		// (A redundant AUTHORITATIVE guard also fires at ~1618 under the lock in
-		// buildAndRegisterSessionEngine — the BACKSTOP PAIR. The two return identical
-		// ErrInvalidArgument, so errors.Is alone cannot tell which fired. They differ in
-		// ONE observable: the cheap pre-check short-circuits BEFORE any factory build,
-		// while the authoritative guard fires only AFTER a factory call. Asserting the
-		// factory was called EXACTLY ONCE (create only, no rebuild attempt) therefore
-		// pins the cheap pre-check — the branch this row's comment names.) Only
-		// incidentally covered today.
-		//
-		// Trigger sequence (deterministic, no sleeps, no blocking provider):
-		//  1. Selector session created → builtForMode=ModeDefault (factory call #1).
-		//  2. Run1 executes to completion (session→StateCompleted); FinishRun is
-		//     deliberately NOT called, so run1 stays in s.runs[id].
-		//  3. SetMode(plan) — StateCompleted allows mode changes — makes the engine
-		//     stale: builtForMode=ModeDefault, sess.Mode=plan.
-		//  4. Run2 tries StartRun → loadAndReopen reopens (StateCompleted→idle) →
-		//     engineAndEnvironmentFor → CASE 1 (builtForMode != sess.Mode) → liveness
-		//     pre-check: s.runs[id] still has run1 → ErrInvalidArgument, no factory build.
-		//  5. Cleanup: FinishRun(run1) so the registry is clean for goroutine-leak gate.
+		// ── REBUILD (CASE 1 — terminal registered run handoff) ───────────────
+		// A run remains registered until its relay calls FinishRun. Once its
+		// authoritative snapshot is terminal, a follow-up prompt may replace that
+		// finished registration under runEntryMu. Pointer-checked deregistration keeps
+		// the old relay's later FinishRun from removing the continuation.
 		{
-			name: "rebuild/mid-run-rejected",
+			name: "rebuild/terminal-registered-handoff",
 			run: func(t *testing.T) (func(), error) {
 				t.Helper()
 				ctx := context.Background()
@@ -907,25 +891,30 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				}
 				// builtForMode=ModeDefault, sess.Mode=plan → CASE 1 will fire on next StartRun.
 
-				// Step 4: run2 must hit the liveness guard and be rejected.
-				_, midRunErr := svc.StartRun(ctx, sess.ID, "run2")
-				// Capture the factory count at the moment of rejection (before cleanup; cleanup
-				// triggers no factory calls). Exactly 1 = create only ⇒ the CHEAP pre-check
-				// short-circuited before any rebuild build.
-				callsAtReject := calls.Load()
-
-				// Step 5: clean up the lingering run1 registration.
-				svc.FinishRun(sess.ID, run1)
-
-				if !errors.Is(midRunErr, server.ErrInvalidArgument) {
-					return nil, fmt.Errorf("mid-run-rejected: want ErrInvalidArgument (CASE 1 liveness guard), got %v", midRunErr)
+				// The terminal aggregate authorizes a handoff even though run1 is still
+				// registered while its old relay finishes cleanup.
+				run2, err := svc.StartRun(ctx, sess.ID, "run2")
+				if err != nil {
+					return nil, fmt.Errorf("terminal registered handoff: %w", err)
 				}
+				if got, ok := svc.LookupRun(sess.ID); !ok || got != run2 {
+					return nil, fmt.Errorf("registered run after handoff = %p, %v; want run2 %p", got, ok, run2)
+				}
+
+				// The old relay's deferred cleanup must not remove its replacement.
+				svc.FinishRun(sess.ID, run1)
+				if got, ok := svc.LookupRun(sess.ID); !ok || got != run2 {
+					return nil, fmt.Errorf("old FinishRun removed replacement: got %p, %v; want run2 %p", got, ok, run2)
+				}
+				reply := drainServerRun(run2)
+				svc.FinishRun(sess.ID, run2)
+
 				return func() {
-					// The cheap pre-check rejected BEFORE building: factory called exactly once
-					// (the create-time build), no rebuild attempt. The authoritative under-lock
-					// guard would instead show 2 (it rejects only after a factory build).
-					if callsAtReject != 1 {
-						t.Errorf("mid-run-rejected: factory calls = %d at rejection, want 1 (the cheap pre-check must reject before any rebuild build)", callsAtReject)
+					if calls.Load() != 2 {
+						t.Errorf("terminal handoff: factory calls = %d, want 2 (create + mode rebuild)", calls.Load())
+					}
+					if reply != "reply-opus-plan" {
+						t.Errorf("terminal handoff reply = %q, want reply-opus-plan", reply)
 					}
 				}, nil
 			},

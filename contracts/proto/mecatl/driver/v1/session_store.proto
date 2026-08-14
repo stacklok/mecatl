@@ -184,6 +184,7 @@ message SessionMetadataEntry {
   string owner_grant_type = 18;
   string owner_name = 19;
   bool has_owner = 20;
+  string workspace = 21;
 }
 
 message PageSessionMetadataResponse {

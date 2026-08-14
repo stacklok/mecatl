@@ -305,6 +305,7 @@ func TestNoFSSessionRehydratesAfterRestart(t *testing.T) {
 		t.Fatalf("post-restart reply = %q, want REHYDRATED (the rehydrated no-fs per-session engine); "+
 			"SHARED-ENGINE-REPLY means the session ESCALATED onto the shared FS engine", got)
 	}
+	svc2.FinishRun(sess.ID, run2)
 	if calls2.Load() != 1 {
 		t.Fatalf("factory called %d times after restart, want exactly 1 (rehydration)", calls2.Load())
 	}

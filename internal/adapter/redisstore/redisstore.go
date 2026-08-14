@@ -181,9 +181,9 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 	if err != nil {
 		return port.SessionMetadataPage{}, err
 	}
-	rows := make([]port.SessionMeta, 0, len(stored))
+	rows := make([]port.SessionDiscoveryMeta, 0, len(stored))
 	for _, entry := range stored {
-		meta := port.SessionMeta{ID: entry.ID, ModifiedAt: entry.ModifiedAt}
+		meta := port.SessionDiscoveryMeta{ID: entry.ID, ModifiedAt: entry.ModifiedAt}
 		sess, loadErr := st.Load(ctx, entry.ID)
 		if loadErr == nil && sess != nil {
 			meta.State = sess.State
@@ -191,6 +191,7 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 			meta.ModelID = sess.ModelID
 			meta.CreatedAt = sess.CreatedAt
 			meta.Title = sess.Title
+			meta.Workspace = sess.Workspace
 			meta.Kind = sess.Kind
 			meta.Relationship = sess.Relationship
 			meta.Owner = sess.Owner

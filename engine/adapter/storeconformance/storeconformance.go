@@ -586,6 +586,9 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 			if row.ID == "foreign" || row.ID == "ownerless" {
 				t.Fatalf("ownership filtering happened after paging: leaked %q", row.ID)
 			}
+			if row.Workspace != "/work/space" || row.Kind != session.SessionKindMain {
+				t.Fatalf("discovery metadata for %q = workspace %q kind %q", row.ID, row.Workspace, row.Kind)
+			}
 		}
 	}
 }

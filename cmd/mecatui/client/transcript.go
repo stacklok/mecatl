@@ -19,10 +19,12 @@ type ActivityReplayStatus struct {
 
 // SessionTranscript is the proto-free, human-displayable conversation projection.
 type SessionTranscript struct {
-	SessionID string
-	Messages  []ConversationMessage
-	Complete  bool
-	Activity  ActivityReplayStatus
+	SessionID    string
+	Messages     []ConversationMessage
+	Complete     bool
+	Activity     ActivityReplayStatus
+	Kind         SessionKind
+	Relationship SessionRelationship
 }
 
 // ResumeSelection is a statically validated startup adoption. Row carries the
@@ -41,10 +43,22 @@ func (c *Client) GetSessionTranscript(ctx context.Context, id string) (SessionTr
 		return SessionTranscript{}, fmt.Errorf("get session transcript: %w", err)
 	}
 	activity := resp.GetActivity()
+	rel := resp.GetRelationship()
+	var branchIndex *int32
+	if rel != nil && rel.BranchIndex != nil {
+		v := rel.GetBranchIndex()
+		branchIndex = &v
+	}
 	return SessionTranscript{
 		SessionID: resp.GetSessionId(),
 		Messages:  transcriptMessagesFromProto(resp.GetMessages()),
 		Complete:  resp.GetComplete(),
+		Kind:      SessionKind(resp.GetKind()),
+		Relationship: SessionRelationship{
+			ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
+			ScheduleName: rel.GetScheduleName(), OriginSessionID: rel.GetOriginSessionId(),
+			TeamID: rel.GetTeamId(), MemberName: rel.GetMemberName(),
+		},
 		Activity: ActivityReplayStatus{
 			Available:     activity.GetAvailable(),
 			Complete:      activity.GetComplete(),

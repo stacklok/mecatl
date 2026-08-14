@@ -40,17 +40,12 @@ func resolveStartupResume(ctx context.Context, source startupResumeSource, exact
 	if exactID == "" && !latest {
 		return nil, nil
 	}
+	if exactID != "" {
+		return loadExactStartupResume(ctx, source, exactID)
+	}
 	rows, err := source.ListSessions(ctx)
 	if err != nil {
 		return nil, &startupResumeError{Reason: client.CapabilityReasonUnknown, text: "could not list resumable chats; retry or start without a resume flag"}
-	}
-	if exactID != "" {
-		for _, row := range rows {
-			if row.ID == exactID {
-				return loadStartupResume(ctx, source, row, false)
-			}
-		}
-		return nil, &startupResumeError{Reason: startupReasonNotFound, text: "session not found; check the exact ID or use --resume-latest"}
 	}
 
 	// Do not trust transport ordering here: the wire promises this key, but sorting
@@ -73,6 +68,34 @@ func resolveStartupResume(ctx context.Context, source startupResumeSource, exact
 		// pruned/corrupt row is advisory inventory, so continue to the next row.
 	}
 	return nil, &startupResumeError{Reason: startupReasonNotFound, text: "no eligible resumable chat was found; use --resume with an exact ID or start a new chat"}
+}
+
+func loadExactStartupResume(ctx context.Context, source startupResumeSource, id string) (*client.ResumeSelection, error) {
+	snapshot, err := source.GetSession(ctx, id)
+	if err != nil {
+		return nil, &startupResumeError{Reason: startupReasonNotFound, text: "session not found; check the exact ID or use --resume-latest"}
+	}
+	transcript, err := source.GetSessionTranscript(ctx, id)
+	if err != nil || !transcript.Complete || transcript.SessionID != id {
+		return nil, &startupResumeError{Reason: client.CapabilityReasonTranscriptUnavailable, text: "the authoritative transcript is unavailable; retry or start without a resume flag"}
+	}
+	row := client.SessionListItem{
+		ID: id, State: snapshot.State, Workspace: snapshot.Workspace, CreatedAt: snapshot.CreatedAt,
+		Title: snapshot.Title, Kind: transcript.Kind, Relationship: transcript.Relationship,
+		Capabilities: client.SessionInventoryCapabilities{
+			PublicChat: transcript.Kind == client.SessionKindMain && snapshot.State != "awaiting",
+			Inspect:    true, AuthoritativeTranscript: true, ActivityReplay: transcript.Activity.Available,
+		},
+	}
+	if transcript.Kind != client.SessionKindMain {
+		row.ReasonCode = client.CapabilityReasonInspectOnlyKind
+	} else if snapshot.State == "awaiting" {
+		row.ReasonCode = client.CapabilityReasonAwaitingApproval
+	}
+	if !startupResumeEligible(row, false) {
+		return nil, &startupResumeError{Reason: row.ReasonCode, text: capabilityStartupGuidance(row.ReasonCode)}
+	}
+	return &client.ResumeSelection{Row: row, Transcript: transcript, Snapshot: snapshot}, nil
 }
 
 func startupResumeEligible(row client.SessionListItem, latest bool) bool {

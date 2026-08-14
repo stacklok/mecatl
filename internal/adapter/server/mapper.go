@@ -941,12 +941,15 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		ModelId:        s.ModelID,
 		CreatedAtUnix:  s.CreatedAtUnix,
 		Title:          valid(s.Title),
+		Workspace:      valid(s.Workspace),
 		Owner:          toProtoPrincipal(s.Owner),
 		Kind:           string(s.Kind),
 		Relationship:   toProtoSessionRelationship(s.Relationship),
 		Capabilities: &mecatlv1.SessionInventoryCapabilities{
-			PublicChat: s.Capabilities.PublicChat,
-			Inspect:    s.Capabilities.Inspect,
+			PublicChat:              s.Capabilities.PublicChat,
+			Inspect:                 s.Capabilities.Inspect,
+			AuthoritativeTranscript: s.Capabilities.AuthoritativeTranscript,
+			ActivityReplay:          s.Capabilities.ActivityReplay,
 		},
 		ReasonCode: string(s.ReasonCode),
 	}

@@ -37,7 +37,8 @@ func (s *Service) GetTranscript(ctx context.Context, id session.SessionID) (*Ses
 		if errors.Is(err, port.ErrSessionNotFound) {
 			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return nil, fmt.Errorf("%w: load transcript: %v", ErrInternal, err)
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session transcript load failed", "session", id, "error", err)
+		return nil, fmt.Errorf("%w: transcript storage unavailable", ErrInternal)
 	}
 	if sess == nil {
 		return nil, fmt.Errorf("%w: load transcript returned nil session", ErrInternal)

@@ -163,8 +163,10 @@ func TestSessionContinuityUX_Scenario3_TransportParity(t *testing.T) {
 	}
 	row := grpcList.GetSessions()[0]
 	if row.GetKind() != string(session.SessionKindSubagent) || row.GetRelationship().GetParentSessionId() != "parent" ||
-		row.GetCapabilities().GetPublicChat() || row.GetReasonCode() != string(server.CapabilityReasonInspectOnlyKind) {
-		t.Fatalf("inventory taxonomy/capability projection incomplete: %+v", row)
+		row.GetWorkspace() != "/workspace" || row.GetCapabilities().GetPublicChat() ||
+		!row.GetCapabilities().GetAuthoritativeTranscript() || row.GetCapabilities().GetActivityReplay() ||
+		row.GetReasonCode() != string(server.CapabilityReasonInspectOnlyKind) {
+		t.Fatalf("inventory taxonomy/workspace/capability projection incomplete: %+v", row)
 	}
 	if grpcTranscript.GetKind() != string(session.SessionKindSubagent) || grpcTranscript.GetRelationship().GetCallId() != "call-1" {
 		t.Fatalf("transcript taxonomy projection incomplete: %+v", grpcTranscript)

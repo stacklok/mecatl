@@ -70,15 +70,29 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 	if r.Title != "the real title" {
 		t.Errorf("Title = %q, want %q", r.Title, "the real title")
 	}
-	wantRelationship := session.SessionRelationship{ParentSessionID: "parent-1", CallID: "call-1"}
-	if r.Kind != session.SessionKindSubagent || r.Relationship != wantRelationship {
-		t.Errorf("session metadata = (%q, %+v), want (%q, %+v)", r.Kind, r.Relationship, session.SessionKindSubagent, wantRelationship)
-	}
 	if !r.CreatedAt.Equal(created) {
 		t.Errorf("CreatedAt = %v, want %v", r.CreatedAt, created)
 	}
 	if r.ModifiedAt.Unix() != 1800000000 {
 		t.Errorf("ModifiedAt = %v, want 1800000000", r.ModifiedAt.Unix())
+	}
+
+	// MetaList is the legacy compatibility seam and intentionally keeps its old
+	// projection. The discovery pager carries the additive taxonomy and workspace.
+	pager := ss.(port.SessionMetadataPager)
+	page, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("PageSessionMetadata: %v", err)
+	}
+	if len(page.Sessions) != 1 {
+		t.Fatalf("PageSessionMetadata returned %d rows, want 1: %+v", len(page.Sessions), page.Sessions)
+	}
+	discovery := page.Sessions[0]
+	if discovery.Workspace != "/ws" || discovery.Kind != session.SessionKindSubagent {
+		t.Errorf("discovery metadata = workspace %q kind %q", discovery.Workspace, discovery.Kind)
+	}
+	if discovery.Relationship.ParentSessionID != "parent-1" || discovery.Relationship.CallID != "call-1" {
+		t.Errorf("discovery relationship = %+v", discovery.Relationship)
 	}
 }
 

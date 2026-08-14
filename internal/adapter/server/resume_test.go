@@ -254,6 +254,7 @@ func TestStartRunContentRecoversCancelledSession(t *testing.T) {
 	<-bt.started
 	run.Cancel()
 	drainRun(t, run)
+	svc.FinishRun(sess.ID, run)
 
 	reloaded, err := svc.GetSession(context.Background(), sess.ID)
 	if err != nil {
@@ -437,6 +438,7 @@ func TestStartRunContentRecoversFailedSession(t *testing.T) {
 	if firstStop != session.StopError {
 		t.Fatalf("first run stop = %q, want %q (terminal failure)", firstStop, session.StopError)
 	}
+	svc.FinishRun(sess.ID, run)
 	// Proof the stream error actually Fail()ed the session (not a clean terminal).
 	reloaded, err := svc.GetSession(context.Background(), sess.ID)
 	if err != nil {
@@ -491,6 +493,7 @@ func TestStartRunContentRecoversFailedSessionAfterToolWork(t *testing.T) {
 		t.Fatalf("first StartRunContent: %v", err)
 	}
 	drainRun(t, run)
+	svc.FinishRun(sess.ID, run)
 
 	reloaded, err := svc.GetSession(context.Background(), sess.ID)
 	if err != nil {
@@ -671,6 +674,7 @@ func TestStartRunContentRecoversAcrossRepeatedFailures(t *testing.T) {
 		if stop != session.StopError {
 			t.Fatalf("%s stop = %q, want %q", label, stop, session.StopError)
 		}
+		svc.FinishRun(sess.ID, run)
 		loaded, err := svc.GetSession(context.Background(), sess.ID)
 		if err != nil {
 			t.Fatalf("%s GetSession: %v", label, err)
@@ -763,6 +767,7 @@ func TestRecoverMidStreamFailureReplayIsPaired(t *testing.T) {
 	if firstStop != session.StopError {
 		t.Fatalf("first run stop = %q, want %q", firstStop, session.StopError)
 	}
+	svc.FinishRun(sess.ID, run)
 	reloaded, err := svc.GetSession(context.Background(), sess.ID)
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)

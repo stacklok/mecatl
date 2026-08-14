@@ -134,6 +134,7 @@ func TestCallerIdentity_Scenario3_OwnerSurvivesReopenRestart(t *testing.T) {
 			t.Fatalf("StartRun %q: %v", prompt, rerr)
 		}
 		drainServerRun(run)
+		svc1.FinishRun(sess.ID, run)
 	}
 	after, err := store.Load(ctx, sess.ID)
 	if err != nil {

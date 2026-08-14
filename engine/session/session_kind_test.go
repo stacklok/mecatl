@@ -70,7 +70,7 @@ func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 				t.Errorf("event-source metadata = (%q, %+v), want (%q, %+v)", folded.Kind, folded.Relationship, tc.kind, tc.rel)
 			}
 
-			storeMeta := port.SessionMeta{ID: want.ID, Kind: want.Kind, Relationship: want.Relationship}
+			storeMeta := port.SessionDiscoveryMeta{ID: want.ID, Kind: want.Kind, Relationship: want.Relationship}
 			if storeMeta.Kind != tc.kind || !reflect.DeepEqual(storeMeta.Relationship, tc.rel) {
 				t.Errorf("store metadata = (%q, %+v), want (%q, %+v)", storeMeta.Kind, storeMeta.Relationship, tc.kind, tc.rel)
 			}

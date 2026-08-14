@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,6 +28,25 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
+
+type recordingDiagnostics struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (d *recordingDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.entries = append(d.entries, fmt.Sprint(append([]any{msg}, args...)...))
+}
+
+func (d *recordingDiagnostics) With(...any) port.Diagnostics { return d }
+
+func (d *recordingDiagnostics) contains(text string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.ContainsFunc(d.entries, func(entry string) bool { return strings.Contains(entry, text) })
+}
 
 type transcriptStore struct {
 	inner   port.SessionStore
@@ -138,6 +160,31 @@ func TestSessionContinuityUX_Scenario3_AuthoritativeTranscript(t *testing.T) {
 	}
 	if effects.Load() != 0 || lease.calls.Load() != 0 {
 		t.Fatalf("transcript triggered runtime effects: callbacks=%d lease calls=%d", effects.Load(), lease.calls.Load())
+	}
+}
+
+func TestADR_0108_TranscriptBackendErrorsAreRedacted(t *testing.T) {
+	const raw = "snapshot decode failed at /secret/backend/session.jsonl"
+	diag := &recordingDiagnostics{}
+	svc, err := server.NewService(server.Config{
+		Engine:      agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
+		Store:       &transcriptStore{inner: memstore.New(), loadErr: errors.New(raw)},
+		Workspaces:  func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	got, err := svc.GetTranscript(context.Background(), "opaque-id")
+	if got != nil || !errors.Is(err, server.ErrInternal) {
+		t.Fatalf("GetTranscript = (%v, %v), want nil internal error", got, err)
+	}
+	if strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "/secret/backend") {
+		t.Fatalf("caller error leaked backend detail: %v", err)
+	}
+	if !diag.contains(raw) {
+		t.Fatalf("operator diagnostics did not retain backend cause: %v", diag.entries)
 	}
 }
 

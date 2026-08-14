@@ -210,13 +210,13 @@ func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.Pag
 	return resp, nil
 }
 
-func metadataToProto(meta port.SessionMeta) (*driverv1.SessionMetadataEntry, error) {
+func metadataToProto(meta port.SessionDiscoveryMeta) (*driverv1.SessionMetadataEntry, error) {
 	if meta.Turns < -1<<31 || meta.Turns > 1<<31-1 {
 		return nil, errors.New("session metadata turns exceeds protocol range")
 	}
 	entry := &driverv1.SessionMetadataEntry{
 		SessionId: string(meta.ID), State: string(meta.State), Turns: int32(meta.Turns),
-		ModelId: meta.ModelID, Title: meta.Title, Kind: string(meta.Kind),
+		ModelId: meta.ModelID, Title: meta.Title, Workspace: meta.Workspace, Kind: string(meta.Kind),
 		ParentSessionId: string(meta.Relationship.ParentSessionID), CallId: string(meta.Relationship.CallID),
 		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID),
 		TeamId: meta.Relationship.TeamID, MemberName: meta.Relationship.MemberName,

@@ -50,8 +50,10 @@ type SessionRelationship struct {
 
 // SessionInventoryCapabilities declares the actions permitted for an inventory row.
 type SessionInventoryCapabilities struct {
-	PublicChat bool
-	Inspect    bool
+	PublicChat              bool
+	Inspect                 bool
+	AuthoritativeTranscript bool
+	ActivityReplay          bool
 }
 
 // SessionListItem is one server-authored stored-session inventory row. ID remains
@@ -113,14 +115,17 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		out = append(out, SessionListItem{
 			ID: s.GetSessionId(), ModifiedAt: s.GetModifiedAtUnix(), State: s.GetState(),
 			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: s.GetTitle(),
-			Kind: SessionKind(s.GetKind()),
+			Workspace: s.GetWorkspace(), Kind: SessionKind(s.GetKind()),
 			Relationship: SessionRelationship{
 				ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
 				ScheduleName: rel.GetScheduleName(), OriginSessionID: rel.GetOriginSessionId(),
 				TeamID: rel.GetTeamId(), MemberName: rel.GetMemberName(),
 			},
-			Capabilities: SessionInventoryCapabilities{PublicChat: caps.GetPublicChat(), Inspect: caps.GetInspect()},
-			ReasonCode:   CapabilityReason(s.GetReasonCode()),
+			Capabilities: SessionInventoryCapabilities{
+				PublicChat: caps.GetPublicChat(), Inspect: caps.GetInspect(),
+				AuthoritativeTranscript: caps.GetAuthoritativeTranscript(), ActivityReplay: caps.GetActivityReplay(),
+			},
+			ReasonCode: CapabilityReason(s.GetReasonCode()),
 		})
 	}
 	return out
