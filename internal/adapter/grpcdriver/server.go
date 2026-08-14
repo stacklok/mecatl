@@ -158,6 +158,92 @@ func (s *sessionStoreServer) List(ctx context.Context, _ *driverv1.ListSessionsR
 	return &driverv1.ListSessionsResponse{Sessions: out}, nil
 }
 
+// PageMetadata serves the optional bounded metadata pager. Ownership criteria
+// are forwarded into the backend query so foreign rows never enter a page or
+// its total count.
+func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.PageSessionMetadataRequest) (*driverv1.PageSessionMetadataResponse, error) {
+	pager, ok := s.store.(port.SessionMetadataPager)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support metadata paging (port.SessionMetadataPager)")
+	}
+	if req.GetLimit() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "limit must be positive")
+	}
+	request := port.SessionMetadataPageRequest{
+		Limit: int(req.GetLimit()), OwnershipEnforced: req.GetOwnershipEnforced(),
+	}
+	if cursor := req.GetCursor(); cursor != nil {
+		if cursor.GetModifiedAt() == nil || cursor.GetSessionId() == "" || cursor.GetModifiedAt().CheckValid() != nil {
+			return nil, status.Error(codes.InvalidArgument, "cursor requires a valid modified_at and session_id")
+		}
+		request.Cursor = &port.SessionMetadataCursor{
+			ModifiedAt: cursor.GetModifiedAt().AsTime(), ID: session.SessionID(cursor.GetSessionId()),
+		}
+	}
+	if req.GetOwnerIssuer() != "" || req.GetOwnerSubject() != "" {
+		request.Owner = &session.Principal{Issuer: req.GetOwnerIssuer(), Subject: req.GetOwnerSubject()}
+	}
+	page, err := pager.PageSessionMetadata(ctx, request)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
+			return nil, status.Error(codes.Unimplemented, err.Error())
+		}
+		return nil, storeStatus(err)
+	}
+	if page.TotalCount > 1<<31-1 {
+		return nil, status.Error(codes.Internal, "session metadata total count exceeds protocol range")
+	}
+	resp := &driverv1.PageSessionMetadataResponse{TotalCount: int32(page.TotalCount)} // #nosec G115 -- checked above
+	resp.Sessions = make([]*driverv1.SessionMetadataEntry, 0, len(page.Sessions))
+	for _, meta := range page.Sessions {
+		entry, err := metadataToProto(meta)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		resp.Sessions = append(resp.Sessions, entry)
+	}
+	if page.NextCursor != nil {
+		resp.NextCursor = &driverv1.SessionMetadataCursor{
+			ModifiedAt: timestamppb.New(page.NextCursor.ModifiedAt), SessionId: string(page.NextCursor.ID),
+		}
+	}
+	return resp, nil
+}
+
+func metadataToProto(meta port.SessionMeta) (*driverv1.SessionMetadataEntry, error) {
+	if meta.Turns < -1<<31 || meta.Turns > 1<<31-1 {
+		return nil, errors.New("session metadata turns exceeds protocol range")
+	}
+	entry := &driverv1.SessionMetadataEntry{
+		SessionId: string(meta.ID), State: string(meta.State), Turns: int32(meta.Turns),
+		ModelId: meta.ModelID, Title: meta.Title, Kind: string(meta.Kind),
+		ParentSessionId: string(meta.Relationship.ParentSessionID), CallId: string(meta.Relationship.CallID),
+		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID),
+		TeamId: meta.Relationship.TeamID, MemberName: meta.Relationship.MemberName,
+	}
+	if !meta.ModifiedAt.IsZero() {
+		entry.ModifiedAt = timestamppb.New(meta.ModifiedAt)
+	}
+	if !meta.CreatedAt.IsZero() {
+		entry.CreatedAt = timestamppb.New(meta.CreatedAt)
+	}
+	if meta.Relationship.BranchIndex != nil {
+		if *meta.Relationship.BranchIndex < -1<<31 || *meta.Relationship.BranchIndex > 1<<31-1 {
+			return nil, errors.New("session metadata branch index exceeds protocol range")
+		}
+		index := int32(*meta.Relationship.BranchIndex)
+		entry.BranchIndex = &index
+	}
+	if meta.Owner != nil {
+		entry.HasOwner = true
+		entry.OwnerIssuer = meta.Owner.Issuer
+		entry.OwnerSubject = meta.Owner.Subject
+		entry.OwnerGrantType = string(meta.Owner.GrantType)
+		entry.OwnerName = meta.Owner.Name
+	}
+	return entry, nil
+}
+
 // Delete serves the retention seam's idempotent delete (same PrunableStore
 // type-assertion posture as List; UNIMPLEMENTED for a plain backend).
 func (s *sessionStoreServer) Delete(ctx context.Context, req *driverv1.DeleteSessionRequest) (*driverv1.DeleteSessionResponse, error) {

@@ -37,8 +37,9 @@ type Store struct {
 // compile-time assertions that Store satisfies the port plus the optional
 // retention seam.
 var (
-	_ port.SessionStore  = (*Store)(nil)
-	_ port.PrunableStore = (*Store)(nil)
+	_ port.SessionStore         = (*Store)(nil)
+	_ port.PrunableStore        = (*Store)(nil)
+	_ port.SessionMetadataPager = (*Store)(nil)
 )
 
 // Option configures a Store at construction.
@@ -109,6 +110,26 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 		out = append(out, port.StoredSession{ID: id, ModifiedAt: st.savedAt[id]})
 	}
 	return out, nil
+}
+
+// PageSessionMetadata returns one owner-filtered keyset page from a consistent
+// in-memory snapshot of the store maps.
+func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	st.mu.RLock()
+	rows := make([]port.SessionMeta, 0, len(st.sessions))
+	for id, snap := range st.sessions {
+		kind := snap.Kind
+		if kind == "" {
+			kind = session.SessionKindUnknown
+		}
+		rows = append(rows, port.SessionMeta{
+			ID: id, ModifiedAt: st.savedAt[id], State: snap.State,
+			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
+			Title: snap.Title, Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+		})
+	}
+	st.mu.RUnlock()
+	return port.PaginateSessionMetadata(rows, request), nil
 }
 
 // Delete removes the session stored under id. It is idempotent: an unknown id

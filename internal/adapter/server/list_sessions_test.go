@@ -485,6 +485,10 @@ func (f *failingListStore) List(_ context.Context) ([]port.StoredSession, error)
 	return nil, f.listErr
 }
 
+func (f *failingListStore) PageSessionMetadata(context.Context, port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	return port.SessionMetadataPage{}, f.listErr
+}
+
 func (f *failingListStore) Delete(ctx context.Context, id session.SessionID) error {
 	if ps, ok := f.SessionStore.(port.PrunableStore); ok {
 		return ps.Delete(ctx, id)

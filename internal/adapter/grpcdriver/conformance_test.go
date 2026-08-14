@@ -54,6 +54,15 @@ func TestGRPCSessionStorePrunableConformance(t *testing.T) {
 	})
 }
 
+func TestSessionContinuityUX_Scenario3_PagerConformance(t *testing.T) {
+	storeconformance.RunMetadataPager(t, func(t *testing.T) port.SessionStore {
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
+		})
+		return NewSessionStore(conn)
+	})
+}
+
 // TestGRPCEventLogConformance runs the shared EventLog conformance table over
 // grpcdriver → bufconn → NewEventLogServer(memstore.NewEventLog()): the SAME
 // suite the local jsonlstore passes, now over the full client → wire →

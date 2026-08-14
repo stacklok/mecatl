@@ -3,6 +3,7 @@ package port
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -144,6 +145,95 @@ type MetaLister interface {
 	// MetaList returns every stored session's picker metadata, reading only the
 	// last snapshot line of each (never the full conversation).
 	MetaList(ctx context.Context) ([]SessionMeta, error)
+}
+
+// ErrSessionMetadataPagingUnsupported is returned by a metadata pager whose
+// backend cannot enumerate bounded inventory pages. It is a permanent
+// capability posture, distinct from a transient storage failure.
+var ErrSessionMetadataPagingUnsupported = errors.New("port: store does not support session metadata paging")
+
+// SessionMetadataCursor is the structured store-side keyset position. Public
+// transports encode it as an opaque token; adapters compare ModifiedAt
+// descending and ID ascending.
+type SessionMetadataCursor struct {
+	ModifiedAt time.Time
+	ID         session.SessionID
+}
+
+// SessionMetadataPageRequest asks an optional pager for one bounded metadata
+// page. Ownership is part of the storage query so filtering happens before page
+// formation and TotalCount; a nil Owner with OwnershipEnforced selects no rows.
+type SessionMetadataPageRequest struct {
+	Limit             int
+	Cursor            *SessionMetadataCursor
+	OwnershipEnforced bool
+	Owner             *session.Principal
+}
+
+// SessionMetadataPage is one best-effort keyset page. Concurrent saves may move
+// rows to an earlier page; the response remains bounded and owner-filtered.
+type SessionMetadataPage struct {
+	Sessions   []SessionMeta
+	NextCursor *SessionMetadataCursor
+	TotalCount int
+}
+
+// SessionMetadataPager is the OPTIONAL bounded inventory seam. SessionStore
+// remains the required Save/Load pair. Implementations order rows by
+// (ModifiedAt DESC, ID ASC), filter ownership before paging/counting, return at
+// most request.Limit rows, and use strict keyset continuation after Cursor.
+type SessionMetadataPager interface {
+	PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
+}
+
+// PaginateSessionMetadata applies the shared owner-filter, ordering, and keyset
+// rules to an adapter's metadata scan. It intentionally bounds only the returned
+// page; an adapter may scan its backend in v1.
+func PaginateSessionMetadata(rows []SessionMeta, request SessionMetadataPageRequest) SessionMetadataPage {
+	filtered := make([]SessionMeta, 0, len(rows))
+	for _, row := range rows {
+		if request.OwnershipEnforced && (request.Owner == nil || !request.Owner.SameIdentity(row.Owner)) {
+			continue
+		}
+		row.Owner = row.Owner.Clone()
+		if row.Relationship.BranchIndex != nil {
+			index := *row.Relationship.BranchIndex
+			row.Relationship.BranchIndex = &index
+		}
+		filtered = append(filtered, row)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if !filtered[i].ModifiedAt.Equal(filtered[j].ModifiedAt) {
+			return filtered[i].ModifiedAt.After(filtered[j].ModifiedAt)
+		}
+		return filtered[i].ID < filtered[j].ID
+	})
+
+	start := 0
+	if request.Cursor != nil {
+		start = len(filtered)
+		for i, row := range filtered {
+			if row.ModifiedAt.Before(request.Cursor.ModifiedAt) ||
+				(row.ModifiedAt.Equal(request.Cursor.ModifiedAt) && row.ID > request.Cursor.ID) {
+				start = i
+				break
+			}
+		}
+	}
+	limit := request.Limit
+	if limit < 0 {
+		limit = 0
+	}
+	end := start + limit
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	page := SessionMetadataPage{Sessions: filtered[start:end], TotalCount: len(filtered)}
+	if end < len(filtered) && end > start {
+		last := filtered[end-1]
+		page.NextCursor = &SessionMetadataCursor{ModifiedAt: last.ModifiedAt, ID: last.ID}
+	}
+	return page
 }
 
 // ErrPruneUnsupported is the port-level sentinel a PrunableStore's List or

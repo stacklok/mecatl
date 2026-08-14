@@ -274,9 +274,11 @@ func toProtoTranscript(t *SessionTranscript) *mecatlv1.GetSessionTranscriptRespo
 		messages = append(messages, toProtoTranscriptMessage(m))
 	}
 	return &mecatlv1.GetSessionTranscriptResponse{
-		SessionId: string(t.SessionID),
-		Messages:  messages,
-		Complete:  t.Complete,
+		SessionId:    string(t.SessionID),
+		Messages:     messages,
+		Complete:     t.Complete,
+		Kind:         string(t.Kind),
+		Relationship: toProtoSessionRelationship(t.Relationship),
 		Activity: &mecatlv1.ActivityReplayStatus{
 			Available:     t.Activity.Available,
 			Complete:      t.Activity.Complete,
@@ -940,7 +942,27 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		CreatedAtUnix:  s.CreatedAtUnix,
 		Title:          valid(s.Title),
 		Owner:          toProtoPrincipal(s.Owner),
+		Kind:           string(s.Kind),
+		Relationship:   toProtoSessionRelationship(s.Relationship),
+		Capabilities: &mecatlv1.SessionInventoryCapabilities{
+			PublicChat: s.Capabilities.PublicChat,
+			Inspect:    s.Capabilities.Inspect,
+		},
+		ReasonCode: string(s.ReasonCode),
 	}
+}
+
+func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.SessionRelationship {
+	out := &mecatlv1.SessionRelationship{
+		ParentSessionId: string(r.ParentSessionID), CallId: string(r.CallID),
+		ScheduleName: r.ScheduleName, OriginSessionId: string(r.OriginSessionID),
+		TeamId: r.TeamID, MemberName: r.MemberName,
+	}
+	if r.BranchIndex != nil {
+		index := ClampInt32(*r.BranchIndex)
+		out.BranchIndex = &index
+	}
+	return out
 }
 
 // toProtoPrincipal maps the verified owner (ADR 0100) to its proto form. A nil

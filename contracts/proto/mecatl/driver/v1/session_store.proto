@@ -65,6 +65,10 @@ service SessionStoreService {
   // unfiltered — retention policy stays harness-side (see the package doc).
   rpc List(ListSessionsRequest) returns (ListSessionsResponse);
 
+  // PageMetadata returns one owner-filtered keyset page when the backend
+  // implements the optional port.SessionMetadataPager capability.
+  rpc PageMetadata(PageSessionMetadataRequest) returns (PageSessionMetadataResponse);
+
   // Delete removes the snapshot stored under session_id, idempotently: an
   // unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
   // harness client and mapped to success).
@@ -144,6 +148,48 @@ message StoredSessionEntry {
 message ListSessionsResponse {
   // sessions is the unfiltered inventory.
   repeated StoredSessionEntry sessions = 1;
+}
+
+message SessionMetadataCursor {
+  google.protobuf.Timestamp modified_at = 1;
+  string session_id = 2;
+}
+
+message PageSessionMetadataRequest {
+  int32 limit = 1;
+  SessionMetadataCursor cursor = 2;
+  bool ownership_enforced = 3;
+  string owner_issuer = 4;
+  string owner_subject = 5;
+}
+
+message SessionMetadataEntry {
+  string session_id = 1;
+  google.protobuf.Timestamp modified_at = 2;
+  string state = 3;
+  int32 turns = 4;
+  string model_id = 5;
+  google.protobuf.Timestamp created_at = 6;
+  string title = 7;
+  string kind = 8;
+  string parent_session_id = 9;
+  string call_id = 10;
+  optional int32 branch_index = 11;
+  string schedule_name = 12;
+  string origin_session_id = 13;
+  string team_id = 14;
+  string member_name = 15;
+  string owner_issuer = 16;
+  string owner_subject = 17;
+  string owner_grant_type = 18;
+  string owner_name = 19;
+  bool has_owner = 20;
+}
+
+message PageSessionMetadataResponse {
+  repeated SessionMetadataEntry sessions = 1;
+  SessionMetadataCursor next_cursor = 2;
+  int32 total_count = 3;
 }
 
 // DeleteSessionRequest asks for the snapshot under session_id to be removed.

@@ -65,8 +65,11 @@ var knownStates = map[session.State]bool{
 // silently truncated.
 const lastLineSeekWindow = 64 * 1024
 
-// compile-time assertion that Store satisfies the optional MetaLister seam.
-var _ port.MetaLister = (*Store)(nil)
+// compile-time assertions that Store satisfies the optional metadata seams.
+var (
+	_ port.MetaLister           = (*Store)(nil)
+	_ port.SessionMetadataPager = (*Store)(nil)
+)
 
 // MetaList returns every stored session's picker metadata by reading ONLY the
 // last snapshot line of each *.session.jsonl file and decoding into a small
@@ -127,6 +130,17 @@ func (st *Store) MetaList(_ context.Context) ([]port.SessionMeta, error) {
 		out = append(out, meta)
 	}
 	return out, nil
+}
+
+// PageSessionMetadata scans the latest-line metadata projection, then applies
+// the shared owner-filtered keyset contract. The response is bounded even
+// though this v1 adapter may scan all snapshot files.
+func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	rows, err := st.MetaList(ctx)
+	if err != nil {
+		return port.SessionMetadataPage{}, err
+	}
+	return port.PaginateSessionMetadata(rows, request), nil
 }
 
 // readLastLine returns the last complete line of the file at path. It seeks

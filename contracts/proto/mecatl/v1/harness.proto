@@ -624,6 +624,9 @@ message GetSessionTranscriptResponse {
   bool complete = 3;
   // activity reports the separate, optional, non-authoritative replay plane.
   ActivityReplayStatus activity = 4;
+  // kind and relationship come from the same authoritative snapshot as messages.
+  string kind = 5;
+  SessionRelationship relationship = 6;
 }
 
 // StreamSessionEventsRequest names the session whose durable event log is replayed.
@@ -642,8 +645,13 @@ message StreamSessionLiveRequest {
   string session_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 
-// ListSessionsRequest is the empty unary request for the stored-session inventory.
-message ListSessionsRequest {}
+// ListSessionsRequest asks for one bounded keyset page of stored-session inventory.
+message ListSessionsRequest {
+  // page_size is clamped by the server. Zero selects the server default.
+  int32 page_size = 1;
+  // cursor is the opaque continuation token returned by the previous page.
+  string cursor = 2;
+}
 
 // Principal is the verified caller an object is attributed to (ADR 0100 — caller
 // identity, threaded). Identity is the (issuer, subject) PAIR, never subject alone:
@@ -699,17 +707,40 @@ message SessionSummary {
   // owner is the verified caller the session is attributed to (ADR 0100), stamped
   // write-once at CreateSession from the validated token — never from the request
   // body. UNSET for an ownerless session (a no-auth deployment, or a session
-  // persisted before the owner label existed; nothing backfills it). It is DISPLAY
-  // metadata: ListSessions applies NO owner filtering — scoping is the isolation
-  // track's (#368), not this one's.
+  // persisted before the owner label existed; nothing backfills it).
   Principal owner = 8;
+  // kind and relationship are the durable trusted-producer taxonomy.
+  string kind = 9;
+  SessionRelationship relationship = 10;
+  // capabilities state which public actions are valid for this row.
+  SessionInventoryCapabilities capabilities = 11;
+  // reason_code explains why a capability is unavailable. Empty means no denial.
+  string reason_code = 12;
 }
 
-// ListSessionsResponse carries the stored-session inventory, sorted by
-// modified_at descending (most-recently-active first).
+// SessionRelationship carries the validated links appropriate to a session kind.
+message SessionRelationship {
+  string parent_session_id = 1;
+  string call_id = 2;
+  optional int32 branch_index = 3;
+  string schedule_name = 4;
+  string origin_session_id = 5;
+  string team_id = 6;
+  string member_name = 7;
+}
+
+// SessionInventoryCapabilities is the picker-safe action posture for one row.
+message SessionInventoryCapabilities {
+  bool public_chat = 1;
+  bool inspect = 2;
+}
+
+// ListSessionsResponse carries one bounded stored-session inventory page, sorted
+// by modified_at descending then session_id ascending.
 message ListSessionsResponse {
-  // sessions are the (possibly empty) stored-session summaries.
   repeated SessionSummary sessions = 1;
+  string next_cursor = 2;
+  int32 total_count = 3;
 }
 
 // SetModeRequest changes a session's permission posture.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -13,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -4932,14 +4935,210 @@ type SessionSummary struct {
 	// (walks the conversation for the first genuine user prompt). Empty for a
 	// session with no genuine prompt.
 	Title string
-	// Owner is the verified caller the session is attributed to (ADR 0100), or
-	// nil for an ownerless session (a no-auth deployment, or a session persisted
-	// before the owner label existed — nothing backfills it). DISPLAY ONLY:
-	// ListSessions applies NO owner filtering, so a caller sees every stored
-	// session regardless of who owns it. Scoping belongs to the isolation track
-	// (#368), not here. Populated identically on the MetaLister fast path and the
-	// Load-per-row fallback.
+	// Owner is the verified caller the session is attributed to.
 	Owner *session.Principal
+	// Kind and Relationship are the durable trusted-producer taxonomy.
+	Kind         session.SessionKind
+	Relationship session.SessionRelationship
+	// Capabilities and ReasonCode describe the public actions valid for this row.
+	Capabilities SessionInventoryCapabilities
+	ReasonCode   CapabilityReason
+}
+
+// SessionInventoryCapabilities is the proto-free action posture for one row.
+type SessionInventoryCapabilities struct {
+	PublicChat bool
+	Inspect    bool
+}
+
+// CapabilityReason is a stable machine-readable explanation for a disabled
+// inventory action.
+type CapabilityReason string
+
+const (
+	// CapabilityReasonInspectOnlyKind means the session kind is available for
+	// inspection but cannot be driven through the public chat entry point.
+	CapabilityReasonInspectOnlyKind CapabilityReason = "inspect_only_kind"
+)
+
+const (
+	// DefaultSessionInventoryPageSize applies when the caller omits page_size.
+	DefaultSessionInventoryPageSize = 50
+	// MaxSessionInventoryPageSize is the hard response-row bound.
+	MaxSessionInventoryPageSize = 100
+)
+
+// ListSessionsPageRequest asks for one bounded inventory page.
+type ListSessionsPageRequest struct {
+	PageSize int
+	Cursor   string
+}
+
+// ListSessionsPage is one bounded owner-filtered inventory response.
+type ListSessionsPage struct {
+	Sessions   []SessionSummary
+	NextCursor string
+	TotalCount int
+}
+
+type inventoryCursor struct {
+	ModifiedAtUnixNano int64  `json:"m"`
+	SessionID          string `json:"i"`
+}
+
+func encodeInventoryCursor(cursor *port.SessionMetadataCursor) (string, error) {
+	if cursor == nil {
+		return "", nil
+	}
+	data, err := json.Marshal(inventoryCursor{ModifiedAtUnixNano: cursor.ModifiedAt.UnixNano(), SessionID: string(cursor.ID)})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func decodeInventoryCursor(token string) (*port.SessionMetadataCursor, error) {
+	if token == "" {
+		return nil, nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid session inventory cursor", ErrInvalidArgument)
+	}
+	var cursor inventoryCursor
+	if err := json.Unmarshal(data, &cursor); err != nil || cursor.SessionID == "" {
+		return nil, fmt.Errorf("%w: invalid session inventory cursor", ErrInvalidArgument)
+	}
+	return &port.SessionMetadataCursor{ModifiedAt: time.Unix(0, cursor.ModifiedAtUnixNano), ID: session.SessionID(cursor.SessionID)}, nil
+}
+
+func inventoryCapabilities(kind session.SessionKind, id session.SessionID) (SessionInventoryCapabilities, CapabilityReason) {
+	caps := SessionInventoryCapabilities{Inspect: true}
+	if kind == session.SessionKindMain && !hasLegacyNonChatPrefix(id) {
+		caps.PublicChat = true
+		return caps, ""
+	}
+	return caps, CapabilityReasonInspectOnlyKind
+}
+
+func validSessionRelationshipUTF8(relationship session.SessionRelationship) bool {
+	return utf8.ValidString(string(relationship.ParentSessionID)) &&
+		utf8.ValidString(string(relationship.CallID)) &&
+		utf8.ValidString(relationship.ScheduleName) &&
+		utf8.ValidString(string(relationship.OriginSessionID)) &&
+		utf8.ValidString(relationship.TeamID) &&
+		utf8.ValidString(relationship.MemberName)
+}
+
+func validSessionIdentityMetadata(id session.SessionID, relationship session.SessionRelationship) bool {
+	return id != "" && utf8.ValidString(string(id)) && validSessionRelationshipUTF8(relationship)
+}
+
+func metadataKeyAfter(row port.SessionMeta, cursor *port.SessionMetadataCursor) bool {
+	return row.ModifiedAt.Before(cursor.ModifiedAt) ||
+		(row.ModifiedAt.Equal(cursor.ModifiedAt) && row.ID > cursor.ID)
+}
+
+func validateSessionMetadataPage(page port.SessionMetadataPage, request port.SessionMetadataPageRequest) error {
+	if len(page.Sessions) > request.Limit {
+		return fmt.Errorf("pager returned %d rows for limit %d", len(page.Sessions), request.Limit)
+	}
+	if page.TotalCount < 0 || page.TotalCount < len(page.Sessions) {
+		return fmt.Errorf("pager returned invalid total count %d", page.TotalCount)
+	}
+	for i, row := range page.Sessions {
+		if !validSessionIdentityMetadata(row.ID, row.Relationship) {
+			return fmt.Errorf("pager returned invalid session identity metadata")
+		}
+		if request.OwnershipEnforced && (request.Owner == nil || !request.Owner.SameIdentity(row.Owner)) {
+			return fmt.Errorf("pager returned a session outside the requested owner scope")
+		}
+		if request.Cursor != nil && !metadataKeyAfter(row, request.Cursor) {
+			return fmt.Errorf("pager returned a row before its cursor")
+		}
+		if i > 0 && !metadataKeyAfter(row, &port.SessionMetadataCursor{
+			ModifiedAt: page.Sessions[i-1].ModifiedAt,
+			ID:         page.Sessions[i-1].ID,
+		}) {
+			return fmt.Errorf("pager returned rows out of keyset order")
+		}
+	}
+	if page.NextCursor != nil {
+		if len(page.Sessions) == 0 || page.NextCursor.ID == "" || !utf8.ValidString(string(page.NextCursor.ID)) {
+			return fmt.Errorf("pager returned an invalid next cursor")
+		}
+		last := page.Sessions[len(page.Sessions)-1]
+		if !page.NextCursor.ModifiedAt.Equal(last.ModifiedAt) || page.NextCursor.ID != last.ID {
+			return fmt.Errorf("pager next cursor does not identify the final row")
+		}
+	}
+	return nil
+}
+
+// ListSessionPage returns one bounded keyset page. The optional pager is a
+// deployment capability: unsupported stores fail honestly instead of falling
+// back to an unbounded response. Ownership criteria are sent to the store so
+// filtering occurs before page formation and TotalCount.
+func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageRequest) (ListSessionsPage, error) {
+	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
+	if !ok {
+		return ListSessionsPage{}, port.ErrSessionMetadataPagingUnsupported
+	}
+	limit := request.PageSize
+	if limit < 0 {
+		return ListSessionsPage{}, fmt.Errorf("%w: page_size must be non-negative", ErrInvalidArgument)
+	}
+	if limit == 0 {
+		limit = DefaultSessionInventoryPageSize
+	}
+	if limit > MaxSessionInventoryPageSize {
+		limit = MaxSessionInventoryPageSize
+	}
+	cursor, err := decodeInventoryCursor(request.Cursor)
+	if err != nil {
+		return ListSessionsPage{}, err
+	}
+	pageRequest := port.SessionMetadataPageRequest{
+		Limit: limit, Cursor: cursor, OwnershipEnforced: s.cfg.OwnershipEnforced,
+		Owner: session.PrincipalFromContext(ctx),
+	}
+	page, err := pager.PageSessionMetadata(ctx, pageRequest)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
+			return ListSessionsPage{}, err
+		}
+		return ListSessionsPage{}, fmt.Errorf("%w: list session page: %v", ErrInternal, err)
+	}
+	if err := validateSessionMetadataPage(page, pageRequest); err != nil {
+		return ListSessionsPage{}, fmt.Errorf("%w: invalid session metadata page: %v", ErrInternal, err)
+	}
+	out := ListSessionsPage{Sessions: make([]SessionSummary, 0, len(page.Sessions)), TotalCount: page.TotalCount}
+	for _, meta := range page.Sessions {
+		out.Sessions = append(out.Sessions, summaryFromMeta(meta))
+	}
+	out.NextCursor, err = encodeInventoryCursor(page.NextCursor)
+	if err != nil {
+		return ListSessionsPage{}, fmt.Errorf("%w: encode session inventory cursor: %v", ErrInternal, err)
+	}
+	return out, nil
+}
+
+func summaryFromMeta(meta port.SessionMeta) SessionSummary {
+	created := int64(0)
+	if !meta.CreatedAt.IsZero() {
+		created = meta.CreatedAt.Unix()
+	}
+	kind := meta.Kind
+	if kind == "" {
+		kind = session.SessionKindUnknown
+	}
+	caps, reason := inventoryCapabilities(kind, meta.ID)
+	return SessionSummary{
+		SessionID: string(meta.ID), ModifiedAtUnix: meta.ModifiedAt.Unix(), State: string(meta.State),
+		Turns: meta.Turns, ModelID: meta.ModelID, CreatedAtUnix: created, Title: meta.Title,
+		Owner: meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
+		Capabilities: caps, ReasonCode: reason,
+	}
 }
 
 // StreamSessionEvents replays a session's durable event log as a lazy iterator
@@ -5032,9 +5231,11 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 				continue
 			}
 		}
+		kind := session.SessionKindUnknown
+		caps, reason := inventoryCapabilities(kind, r.ID)
 		summary := SessionSummary{
-			SessionID:      string(r.ID),
-			ModifiedAtUnix: r.ModifiedAt.Unix(),
+			SessionID: string(r.ID), ModifiedAtUnix: r.ModifiedAt.Unix(),
+			Kind: kind, Capabilities: caps, ReasonCode: reason,
 		}
 		if sess, lerr := s.cfg.Store.Load(ctx, r.ID); lerr == nil && sess != nil {
 			if !s.ownsResource(ctx, sess.Owner) {
@@ -5050,6 +5251,12 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.
 			summary.Owner = sess.Owner.Clone()
+			summary.Kind = sess.Kind
+			if summary.Kind == "" {
+				summary.Kind = session.SessionKindUnknown
+			}
+			summary.Relationship = sess.Relationship
+			summary.Capabilities, summary.ReasonCode = inventoryCapabilities(summary.Kind, sess.ID)
 		}
 		out = append(out, summary)
 	}
@@ -5080,16 +5287,7 @@ func (s *Service) listSessionsMeta(ctx context.Context, ml port.MetaLister) ([]S
 				continue
 			}
 		}
-		summary := SessionSummary{
-			SessionID:      string(r.ID),
-			ModifiedAtUnix: r.ModifiedAt.Unix(),
-			State:          string(r.State),
-			Turns:          r.Turns,
-			CreatedAtUnix:  r.CreatedAt.Unix(),
-			ModelID:        r.ModelID,
-			Title:          r.Title,
-			Owner:          r.Owner.Clone(),
-		}
+		summary := summaryFromMeta(r)
 		// A zero CreatedAt (a snapshot with no created_at, or a corrupt row that
 		// left CreatedAt at the zero time) maps to 0, NOT the zero time's Unix
 		// value (-62135596800) — matching the Load-fails zeroed-fields behaviour.

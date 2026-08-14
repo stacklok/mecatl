@@ -29,6 +29,12 @@ func TestMemstorePrunableConformance(t *testing.T) {
 	})
 }
 
+func TestSessionContinuityUX_Scenario3_PagerConformance(t *testing.T) {
+	storeconformance.RunMetadataPager(t, func(*testing.T) port.SessionStore {
+		return memstore.New()
+	})
+}
+
 // TestMemstoreEventLogConformance runs the shared EventLog conformance table
 // against the in-memory reference event log (the no-store-dir offline default).
 func TestMemstoreEventLogConformance(t *testing.T) {

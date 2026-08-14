@@ -527,6 +527,69 @@ func RunPrunable(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 	})
 }
 
+// RunMetadataPager executes the shared optional metadata-pager contract against
+// every store that advertises port.SessionMetadataPager.
+func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
+	t.Helper()
+	ctx := context.Background()
+	st := newStore(t)
+	pager, ok := st.(port.SessionMetadataPager)
+	if !ok {
+		t.Fatalf("store %T does not implement port.SessionMetadataPager", st)
+	}
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
+	bob := &session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
+	for _, fixture := range []struct {
+		id    session.SessionID
+		owner *session.Principal
+	}{
+		{id: "b", owner: alice},
+		{id: "a", owner: alice},
+		{id: "foreign", owner: bob},
+		{id: "ownerless"},
+	} {
+		s := newSession(fixture.id)
+		if err := s.RestoreLabels(fixture.owner, session.Authority("")); err != nil {
+			t.Fatalf("RestoreLabels(%q): %v", fixture.id, err)
+		}
+		if err := st.Save(ctx, s); err != nil {
+			t.Fatalf("Save(%q): %v", fixture.id, err)
+		}
+	}
+
+	first, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 1, OwnershipEnforced: true, Owner: alice,
+	})
+	if err != nil {
+		t.Fatalf("PageSessionMetadata(first): %v", err)
+	}
+	if len(first.Sessions) != 1 || first.TotalCount != 2 || first.NextCursor == nil {
+		t.Fatalf("first page = %+v, want one of two owned rows plus a cursor", first)
+	}
+	second, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 1, OwnershipEnforced: true, Owner: alice, Cursor: first.NextCursor,
+	})
+	if err != nil {
+		t.Fatalf("PageSessionMetadata(second): %v", err)
+	}
+	if len(second.Sessions) != 1 || second.TotalCount != 2 || second.NextCursor != nil {
+		t.Fatalf("second page = %+v, want final owned row", second)
+	}
+	if first.Sessions[0].ID == second.Sessions[0].ID {
+		t.Fatalf("cursor repeated %q", first.Sessions[0].ID)
+	}
+	if first.Sessions[0].ModifiedAt.Equal(second.Sessions[0].ModifiedAt) && first.Sessions[0].ID > second.Sessions[0].ID {
+		t.Fatalf("equal-time IDs ordered %q then %q, want ascending", first.Sessions[0].ID, second.Sessions[0].ID)
+	}
+	for _, page := range []port.SessionMetadataPage{first, second} {
+		for _, row := range page.Sessions {
+			if row.ID == "foreign" || row.ID == "ownerless" {
+				t.Fatalf("ownership filtering happened after paging: leaked %q", row.ID)
+			}
+		}
+	}
+}
+
 // newSession constructs an idle session with non-default limits, workspace,
 // mode and a fixed (whole-nanosecond, UTC) creation time so timestamp
 // round-trip equality is well-defined.

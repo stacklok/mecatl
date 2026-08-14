@@ -235,6 +235,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ForkSession":               {KindCallerOwned, "authorizes the SOURCE session (authorizeSession) before copying its history to a new owned session"},
 	"EndSession":                {KindCallerOwned, "authorizes via GetSession before CloseSession"},
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
+	"ListSessionPage":           {KindCallerOwned, "passes caller ownership into the store query before keyset page formation and counting"},
 	"StreamSessionEvents":       {KindCallerOwned, "event log/live stream resolves through the owning session's authorizeSession check"},
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 

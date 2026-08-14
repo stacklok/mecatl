@@ -59,10 +59,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SessionStoreService_Save_FullMethodName   = "/mecatl.driver.v1.SessionStoreService/Save"
-	SessionStoreService_Load_FullMethodName   = "/mecatl.driver.v1.SessionStoreService/Load"
-	SessionStoreService_List_FullMethodName   = "/mecatl.driver.v1.SessionStoreService/List"
-	SessionStoreService_Delete_FullMethodName = "/mecatl.driver.v1.SessionStoreService/Delete"
+	SessionStoreService_Save_FullMethodName         = "/mecatl.driver.v1.SessionStoreService/Save"
+	SessionStoreService_Load_FullMethodName         = "/mecatl.driver.v1.SessionStoreService/Load"
+	SessionStoreService_List_FullMethodName         = "/mecatl.driver.v1.SessionStoreService/List"
+	SessionStoreService_PageMetadata_FullMethodName = "/mecatl.driver.v1.SessionStoreService/PageMetadata"
+	SessionStoreService_Delete_FullMethodName       = "/mecatl.driver.v1.SessionStoreService/Delete"
 )
 
 // SessionStoreServiceClient is the client API for SessionStoreService service.
@@ -86,6 +87,9 @@ type SessionStoreServiceClient interface {
 	// List returns EVERY stored session id with its last-modified time,
 	// unfiltered — retention policy stays harness-side (see the package doc).
 	List(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
+	// PageMetadata returns one owner-filtered keyset page when the backend
+	// implements the optional port.SessionMetadataPager capability.
+	PageMetadata(ctx context.Context, in *PageSessionMetadataRequest, opts ...grpc.CallOption) (*PageSessionMetadataResponse, error)
 	// Delete removes the snapshot stored under session_id, idempotently: an
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
@@ -130,6 +134,16 @@ func (c *sessionStoreServiceClient) List(ctx context.Context, in *ListSessionsRe
 	return out, nil
 }
 
+func (c *sessionStoreServiceClient) PageMetadata(ctx context.Context, in *PageSessionMetadataRequest, opts ...grpc.CallOption) (*PageSessionMetadataResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PageSessionMetadataResponse)
+	err := c.cc.Invoke(ctx, SessionStoreService_PageMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *sessionStoreServiceClient) Delete(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteSessionResponse)
@@ -161,6 +175,9 @@ type SessionStoreServiceServer interface {
 	// List returns EVERY stored session id with its last-modified time,
 	// unfiltered — retention policy stays harness-side (see the package doc).
 	List(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
+	// PageMetadata returns one owner-filtered keyset page when the backend
+	// implements the optional port.SessionMetadataPager capability.
+	PageMetadata(context.Context, *PageSessionMetadataRequest) (*PageSessionMetadataResponse, error)
 	// Delete removes the snapshot stored under session_id, idempotently: an
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
@@ -183,6 +200,9 @@ func (UnimplementedSessionStoreServiceServer) Load(context.Context, *LoadRequest
 }
 func (UnimplementedSessionStoreServiceServer) List(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedSessionStoreServiceServer) PageMetadata(context.Context, *PageSessionMetadataRequest) (*PageSessionMetadataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PageMetadata not implemented")
 }
 func (UnimplementedSessionStoreServiceServer) Delete(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
@@ -262,6 +282,24 @@ func _SessionStoreService_List_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SessionStoreService_PageMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PageSessionMetadataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionStoreServiceServer).PageMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionStoreService_PageMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionStoreServiceServer).PageMetadata(ctx, req.(*PageSessionMetadataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SessionStoreService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteSessionRequest)
 	if err := dec(in); err != nil {
@@ -298,6 +336,10 @@ var SessionStoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "List",
 			Handler:    _SessionStoreService_List_Handler,
+		},
+		{
+			MethodName: "PageMetadata",
+			Handler:    _SessionStoreService_PageMetadata_Handler,
 		},
 		{
 			MethodName: "Delete",

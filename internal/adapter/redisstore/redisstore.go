@@ -77,10 +77,11 @@ type eventLogRecord struct {
 
 // compile-time assertions that Store satisfies all four ports it meets.
 var (
-	_ port.SessionStore     = (*Store)(nil)
-	_ port.ToolCallRecorder = (*Store)(nil)
-	_ port.PrunableStore    = (*Store)(nil)
-	_ port.EventLog         = (*Store)(nil)
+	_ port.SessionStore         = (*Store)(nil)
+	_ port.ToolCallRecorder     = (*Store)(nil)
+	_ port.PrunableStore        = (*Store)(nil)
+	_ port.SessionMetadataPager = (*Store)(nil)
+	_ port.EventLog             = (*Store)(nil)
 )
 
 // Store is the Redis-backed SessionStore + EventLog + PrunableStore +
@@ -170,6 +171,33 @@ func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
 		return nil, fmt.Errorf("redisstore: list: %w", err)
 	}
 	return out, nil
+}
+
+// PageSessionMetadata forms a bounded keyset page from a Redis SCAN. V1 may
+// traverse all session keys; only the returned page and transport response are
+// bounded by contract.
+func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	stored, err := st.List(ctx)
+	if err != nil {
+		return port.SessionMetadataPage{}, err
+	}
+	rows := make([]port.SessionMeta, 0, len(stored))
+	for _, entry := range stored {
+		meta := port.SessionMeta{ID: entry.ID, ModifiedAt: entry.ModifiedAt}
+		sess, loadErr := st.Load(ctx, entry.ID)
+		if loadErr == nil && sess != nil {
+			meta.State = sess.State
+			meta.Turns = sess.Counters.Turns
+			meta.ModelID = sess.ModelID
+			meta.CreatedAt = sess.CreatedAt
+			meta.Title = sess.Title
+			meta.Kind = sess.Kind
+			meta.Relationship = sess.Relationship
+			meta.Owner = sess.Owner
+		}
+		rows = append(rows, meta)
+	}
+	return port.PaginateSessionMetadata(rows, request), nil
 }
 
 // Delete removes the session snapshot AND its event-log and tool-call sidecars.

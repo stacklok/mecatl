@@ -662,12 +662,17 @@ func isDeliveryNoteText(text string) bool {
 // ListSessions returns the stored-session inventory — the picker metadata a
 // client renders to let an operator open an EXISTING session by id (issue #245
 // Phase 1).
-func (h *HarnessServer) ListSessions(ctx context.Context, _ *mecatlv1.ListSessionsRequest) (*mecatlv1.ListSessionsResponse, error) {
-	rows, err := h.svc.ListSessions(ctx)
+func (h *HarnessServer) ListSessions(ctx context.Context, req *mecatlv1.ListSessionsRequest) (*mecatlv1.ListSessionsResponse, error) {
+	page, err := h.svc.ListSessionPage(ctx, ListSessionsPageRequest{
+		PageSize: int(req.GetPageSize()), Cursor: req.GetCursor(),
+	})
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.ListSessionsResponse{Sessions: toProtoSessionSummaries(rows)}, nil
+	return &mecatlv1.ListSessionsResponse{
+		Sessions: toProtoSessionSummaries(page.Sessions), NextCursor: page.NextCursor,
+		TotalCount: ClampInt32(page.TotalCount),
+	}, nil
 }
 
 // toStatus maps service sentinel errors to gRPC status codes.
@@ -725,6 +730,8 @@ func toStatus(err error) error {
 		// No durable EventLog (cloud-native Phase 3a) is configured: the
 		// StreamSessionEvents read-back surface is not available on this
 		// deployment. Unimplemented (HTTP 501).
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrSchedulerNotRunning):
 		// A ScheduleStore is available but no in-process scheduler is wired to

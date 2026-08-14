@@ -46,6 +46,7 @@
     ifacemethod func (SessionLease).Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error)
     ifacemethod func (SessionLease).Release(ctx context.Context, l Lease) error
     ifacemethod func (SessionLease).Renew(ctx context.Context, l Lease) (Lease, error)
+    ifacemethod func (SessionMetadataPager).PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
     ifacemethod func (SessionStore).Load(ctx context.Context, id session.SessionID) (*session.Session, error)
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
@@ -76,6 +77,7 @@ const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
 const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0
 const TriggerOneShot TriggerKind = 2
+func PaginateSessionMetadata(rows []SessionMeta, request SessionMetadataPageRequest) SessionMetadataPage
 func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content
 func SessionIDFromContext(ctx context.Context) (session.SessionID, bool)
 func WithSessionID(ctx context.Context, id session.SessionID) context.Context
@@ -113,6 +115,10 @@ type ScheduleState struct{NextFireAt time.Time; LastFireAt time.Time; FireCount 
 type ScheduleStore interface{Claim(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); ClaimNow(ctx context.Context, name string, now time.Time, nextFire time.Time) (Schedule, error); Delete(ctx context.Context, name string) error; Due(ctx context.Context, now time.Time) ([]Schedule, error); List(ctx context.Context) ([]Schedule, error); ListFires(ctx context.Context, scheduleName string) ([]ScheduleFire, error); Load(ctx context.Context, name string) (Schedule, error); LoadFire(ctx context.Context, fireID string) (ScheduleFire, error); RecordFire(ctx context.Context, f ScheduleFire) error; RecordFireProgress(ctx context.Context, name string, fireID string, at time.Time) error; RecordFireStart(ctx context.Context, name string, fire ScheduleFire) error; Save(ctx context.Context, s Schedule) error; SetEnabled(ctx context.Context, name string, enabled bool) error}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
 type SessionMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; Kind session.SessionKind; Relationship session.SessionRelationship; Owner *session.Principal}
+type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID}
+type SessionMetadataPage struct{Sessions []SessionMeta; NextCursor *SessionMetadataCursor; TotalCount int}
+type SessionMetadataPageRequest struct{Limit int; Cursor *SessionMetadataCursor; OwnershipEnforced bool; Owner *session.Principal}
+type SessionMetadataPager interface{PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)}
 type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*session.Session, error); Save(ctx context.Context, s *session.Session) error}
 type StoredSession struct{ID session.SessionID; ModifiedAt time.Time}
 type ToolCallRecorder interface{ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}
@@ -125,4 +131,5 @@ var ErrPruneUnsupported error
 var ErrScheduleAlreadyExists error
 var ErrScheduleNotFound error
 var ErrScheduleUnsupported error
+var ErrSessionMetadataPagingUnsupported error
 var ErrSessionNotFound error

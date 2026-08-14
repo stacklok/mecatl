@@ -1651,12 +1651,26 @@ func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
 // listSessions handles GET /v1/sessions — the stored-session inventory picker
 // (issue #245 Phase 1). Read-only; loads no conversation content.
 func (h *HTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.svc.ListSessions(r.Context())
+	pageSize := 0
+	if raw := r.URL.Query().Get("page_size"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeServiceError(w, fmt.Errorf("%w: page_size must be a non-negative integer", ErrInvalidArgument))
+			return
+		}
+		pageSize = parsed
+	}
+	page, err := h.svc.ListSessionPage(r.Context(), ListSessionsPageRequest{
+		PageSize: pageSize, Cursor: r.URL.Query().Get("cursor"),
+	})
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, &mecatlv1.ListSessionsResponse{Sessions: toProtoSessionSummaries(rows)})
+	writeJSON(w, http.StatusOK, &mecatlv1.ListSessionsResponse{
+		Sessions: toProtoSessionSummaries(page.Sessions), NextCursor: page.NextCursor,
+		TotalCount: ClampInt32(page.TotalCount),
+	})
 }
 
 // streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
@@ -1788,6 +1802,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		// No durable EventLog (cloud-native Phase 3a) is configured: the
 		// StreamSessionEvents read-back surface is not available on this
 		// deployment. 501 (gRPC Unimplemented).
+		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
 		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, ErrSchedulerNotRunning):
 		// A ScheduleStore is available but no in-process scheduler is wired to
