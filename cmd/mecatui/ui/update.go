@@ -304,6 +304,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case renderTickMsg:
 		return m.onRenderTick()
 
+	case startupResumeReadyMsg:
+		return m.finishStartupResume()
+
 	case quitDisarmMsg, quitDDisarmMsg, clickDisarmMsg:
 		return m.onDisarmMsg(msg)
 
@@ -343,6 +346,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// keep this reducer's branch count in check.
 		return m.updateStreamEvent(msg)
 	}
+}
+
+func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
+	cmd := (&m).maybeKittyTransmit()
+	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
+		cmd = tea.Batch(cmd, liveCmd)
+	}
+	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
+		m.pendingInitialPrompt = ""
+		m.ta.SetValue(p)
+		mm, submitCmd := m.submitPrompt()
+		return mm, tea.Batch(cmd, submitCmd)
+	}
+	return m, cmd
 }
 
 // applySessionReady binds an established session into the model: the
@@ -493,6 +510,10 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if m.startupFirstPromptPending {
+			m = m.failStartupRunEntry()
+			return m, nil, true
+		}
 		// A HARD stream error PAUSES the queue: the staged follow-ups are kept intact
 		// and marked paused (m.queuePaused) so the queue card says why, not auto-sent
 		// into a broken run. A TRANSIENT stream error (msg.Transient — an idle/stalled
@@ -638,6 +659,11 @@ func (m Model) onRenderTick() (tea.Model, tea.Cmd) {
 func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case client.SessionInitMsg:
+		if m.startupFirstPromptPending {
+			m.startupFirstPromptPending = false
+			m.startupAdopted = false
+			m.startupRetryPrompt = ""
+		}
 		return m, m.waitCmd()
 	case client.TurnStartMsg:
 		m.conv.startAssistant()
@@ -2273,6 +2299,27 @@ func (m Model) afterInputEdit(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return mm, tea.Batch(cmd, fetch)
 }
 
+var errStartupRunEntry = &sessionTranscriptError{"the chat could not be attached for a new turn"}
+
+func (m Model) failStartupRunEntry() Model {
+	m = m.endRun("")
+	m.conv = conversationFromTranscript(m.deps.Resume.Transcript.Messages)
+	m.sessions = sessionsState{
+		selected:   m.deps.Resume.Row,
+		inspect:    true,
+		loadErr:    errStartupRunEntry,
+		transcript: conversationFromTranscript(m.deps.Resume.Transcript.Messages),
+		view:       sessionsTranscript,
+	}
+	m.phase = phaseReplay
+	m.startupFirstPromptPending = false
+	m.startupRunEntryFailed = true
+	m.ta.SetValue(m.startupRetryPrompt)
+	m.ta.Blur()
+	m.refreshView()
+	return m
+}
+
 // submitPrompt opens a fresh Converse run for the textarea text, sends the
 // mandatory prompt frame, starts the reader goroutine, and arms WaitForMsg.
 func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
@@ -2382,6 +2429,10 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// truly empty submit (no text AND no parts) is the no-op early-return.
 	if text == "" && len(media.Parts) == 0 {
 		return m, nil
+	}
+	if m.startupAdopted {
+		m.startupRetryPrompt = m.ta.Value()
+		m.startupFirstPromptPending = true
 	}
 	if len(media.Descriptors) > 0 {
 		m.conv.addUserWithMedia(text, media.Descriptors)
@@ -3156,6 +3207,24 @@ func compactionArchiveNotice(msg client.CompactionArchiveMsg) string {
 // inspected. Escape returns to the inventory without changing the active chat;
 // retry reloads the same opaque session id after a failed request.
 func (m Model) onReplayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.startupRunEntryFailed {
+		if key.Matches(msg, m.keys.Close) {
+			m.sessions = sessionsState{}
+			m.startupRunEntryFailed = false
+			m.phase = phaseIdle
+			cmd := m.ta.Focus()
+			m.refreshView()
+			return m, cmd
+		}
+		if msg.String() == "r" {
+			m.sessions = sessionsState{}
+			m.startupRunEntryFailed = false
+			m.phase = phaseIdle
+			m.ta.SetValue(m.startupRetryPrompt)
+			return m.submitPrompt()
+		}
+		return m, nil
+	}
 	if key.Matches(msg, m.keys.Close) {
 		return m.closeSessionsTranscript()
 	}

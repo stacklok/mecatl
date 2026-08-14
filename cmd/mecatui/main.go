@@ -179,17 +179,24 @@ func run(argv []string) error {
 		return err
 	}
 
+	resume, uiWorkspace, err := startupResumeConfig(ctx, cl, cfg)
+	if err != nil {
+		_ = cl.Close()
+		transCleanup()
+		return err
+	}
+
 	// Client-side model-selection persistence (the /models picker): the store reads
 	// the last-used selection at launch and persists a pick. Lives in main (the
 	// composition root) so the client stays proto-only and the ui never touches
 	// os/xdg. The connect-time ListModels reconcile clears a now-unavailable provider
 	// before the create carries it (see ui.Init / updateModelsMsg).
 	store := newSelectionStore(xdgconfig.OSEnv)
-	initialSel := store.Load(cfg.workspace)
+	initialSel := store.Load(uiWorkspace)
 	// Provenance inputs for the /models picker (display-only): the un-collapsed
 	// per-workspace entry and the global default, kept separate so the picker can tell
 	// "workspace default" from "global default" without a server round-trip.
-	wsDefault, wsDefaultSet := store.LoadWorkspace(cfg.workspace)
+	wsDefault, wsDefaultSet := store.LoadWorkspace(uiWorkspace)
 	globalDefault := store.LoadGlobalDefault()
 
 	deps := ui.Deps{
@@ -227,8 +234,9 @@ func run(argv []string) error {
 		// --context-window-override and an external mecated's flag both move the engine
 		// trigger and this echoed denominator.
 		Model:     cfg.model,
-		Workspace: cfg.workspace,
+		Workspace: uiWorkspace,
 		Mode:      cfg.mode,
+		Resume:    resume,
 		Ctx:       ctx,
 		// Build version for the welcome splash (ldflags-set; "dev" by default).
 		Version: version,

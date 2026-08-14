@@ -129,6 +129,12 @@ type config struct {
 	mock                 bool
 	noBash               bool
 
+	// resumeID and resumeLatest select an existing owned main chat for static
+	// startup adoption. They are shared by embedded and connect modes and mutually
+	// exclusive; the first prompt still owns all run-entry attachment/revalidation.
+	resumeID     string
+	resumeLatest bool
+
 	// prompt is the literal seed-prompt text supplied via -p/--prompt.
 	// Empty = no seed. Joined ahead of --prompt-file when both are given.
 	prompt string
@@ -313,8 +319,10 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 	cfg.transportMode = mode
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&cfg.workspace, "workspace", "", "absolute workspace root for the session (default: cwd)")
+	fs.StringVar(&cfg.workspace, "workspace", "", "absolute workspace root for a new session (default: cwd); an adopted session keeps its stored workspace")
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
+	fs.StringVar(&cfg.resumeID, "resume", "", "start by continuing the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session (mutually exclusive with --resume-latest)")
+	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "start by continuing the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions (mutually exclusive with --resume)")
 	fs.StringVar(&cfg.prompt, "prompt", "", "seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both --prompt and --prompt-file may be given (literal first)")
 	fs.StringVar(&cfg.prompt, "p", "", "short form of --prompt")
 	fs.StringVar(&cfg.promptFile, "prompt-file", "", "path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after --prompt when both are given")
@@ -428,6 +436,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string) (*fla
 
 	if err := finalizeParsedConfig(fs, &cfg); err != nil {
 		return fs, config{}, err
+	}
+	if cfg.resumeID != "" && cfg.resumeLatest {
+		return fs, config{}, errors.New("--resume and --resume-latest are mutually exclusive")
 	}
 	if cfg.promptFile != "" {
 		body, err := os.ReadFile(cfg.promptFile)
@@ -606,6 +617,9 @@ func resolveWorkspace(ws string) (string, error) {
 func (c config) validate() error {
 	if c.listThemes {
 		return nil
+	}
+	if c.resumeID != "" && c.resumeLatest {
+		return errors.New("--resume and --resume-latest are mutually exclusive")
 	}
 	if c.workspace == "" {
 		return errors.New("workspace is required")

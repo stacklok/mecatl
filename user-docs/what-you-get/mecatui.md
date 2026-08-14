@@ -21,6 +21,30 @@ mecatui -p "Summarize the failing tests in this repo" --workspace "$PWD"
 The seed fires once: a `/models` restart or `/clear` rebinds the session but never
 re-submits it. See the [`docs/tui.md` flags reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#seeding-an-initial-prompt) for the full details.
 
+## Continue a chat when mecatui starts
+
+Pass `--resume SESSION_ID` to open one exact owned main chat, or `--resume-latest`
+to open the newest eligible one. Both selectors work when mecatui hosts its embedded
+server and in `mecatui connect` mode, and cannot be combined:
+
+```sh
+mecatui --resume 01JOPAQUESESSIONID
+mecatui connect 127.0.0.1:8080 --resume-latest
+```
+
+mecatui loads the authoritative stored transcript and adopts that same chat; it does
+not create a throwaway session. The chat keeps its stored workspace, mode, model, and
+capabilities. Latest skips active or awaiting chats, scheduled and child runs, unknown
+rows, and rows without a complete transcript. An exact selector reports why the chosen
+row cannot be continued.
+
+The first new prompt still goes through the server's atomic attachment and lease checks.
+If that fails, the prior transcript remains read-only and no fallback chat is created:
+press `r` to retry the preserved prompt, or `esc` to go Back and edit it. You can combine
+a resume selector with `--prompt` or `--prompt-file`; mecatui adopts the old transcript
+first, then sends the seed exactly once as the next turn. See the
+[`docs/tui.md` startup continuation reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#continue-a-chat-at-startup).
+
 ## Changing completed-trajectory learning (`/learning`)
 
 `/learning` cycles the operator setting through **Off → Review → Auto** in

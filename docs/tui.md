@@ -137,6 +137,33 @@ closed.
 > --subagent-ask-reviewer …` and point `mecatui connect` at it. The `--model-slot
 > ask-reviewer=…` model slot is unaffected.
 
+### Continue a chat at startup
+
+`--resume SESSION_ID` adopts an existing owned main chat before Bubble Tea starts.
+`--resume-latest` instead chooses the newest eligible owned main chat whose authoritative
+snapshot transcript is available. Both flags work with the embedded server and with
+`mecatui connect`, and they are mutually exclusive:
+
+```sh
+mecatui --resume 01JOPAQUESESSIONID
+mecatui connect 127.0.0.1:8080 --resume-latest
+```
+
+Adoption does not create a temporary session: mecatui loads and displays the stored
+transcript, workspace, mode, model, and capabilities, then targets the same opaque ID.
+`--workspace` and `--mode` therefore describe only a newly created session; an adopted
+chat keeps its stored values. Scheduled runs, child runs, unknown legacy rows, chats
+awaiting approval, active chats, and rows without a complete authoritative transcript
+are not eligible. Exact `--resume` reports why its row cannot be continued;
+`--resume-latest` skips ineligible or unreadable rows and tries the next one.
+
+The read-only startup lookup does not reopen, recover, abandon, or acquire a lease.
+Those checks remain atomic at the ordinary run-entry funnel when the first new prompt
+is sent. If that attachment fails, the stored transcript remains visible and no
+fallback session is created: press `r` to retry the preserved prompt or `esc` to go
+Back and edit it. Combining a resume selector with `--prompt` or `--prompt-file`
+adopts the transcript first and then submits the seed exactly once as the next turn.
+
 ### Seeding an initial prompt
 
 `-p`/`--prompt` (or `--prompt-file` for a longer body) launches the session with
@@ -158,8 +185,10 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--workspace` | cwd | absolute session workspace root |
-| `--mode` | `default` | permission posture: `default` \| `plan` \| `accept-edits` |
+| `--workspace` | cwd | absolute workspace root for a new session; an adopted chat keeps its stored workspace |
+| `--mode` | `default` | permission posture for a new session: `default` \| `plan` \| `accept-edits`; an adopted chat keeps its stored mode |
+| `--resume` | – | continue the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session; mutually exclusive with `--resume-latest` |
+| `--resume-latest` | off | continue the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions; mutually exclusive with `--resume` |
 | `-p` / `--prompt` | – | seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both `--prompt` and `--prompt-file` may be given (literal first, joined by a blank line). Fires ONCE — a `/models` restart or `/clear` never re-submits it |
 | `--prompt-file` | – | path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after `--prompt` when both are given. Same once-only semantics as `--prompt` |
 | `--theme` | `aztec` | theme name (also `MECATUI_THEME`) |

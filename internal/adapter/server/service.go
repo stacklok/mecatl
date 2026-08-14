@@ -4964,6 +4964,14 @@ const (
 	// CapabilityReasonInspectOnlyKind means the session kind is available for
 	// inspection but cannot be driven through the public chat entry point.
 	CapabilityReasonInspectOnlyKind CapabilityReason = "inspect_only_kind"
+	// CapabilityReasonAwaitingApproval means the chat has an unresolved approval.
+	CapabilityReasonAwaitingApproval CapabilityReason = "awaiting_approval"
+	// CapabilityReasonActiveElsewhere means another live run currently owns the chat.
+	CapabilityReasonActiveElsewhere CapabilityReason = "active_elsewhere"
+	// CapabilityReasonTranscriptUnavailable means no complete snapshot transcript can be loaded.
+	CapabilityReasonTranscriptUnavailable CapabilityReason = "transcript_unavailable"
+	// CapabilityReasonUnknown means the row cannot prove public-chat eligibility.
+	CapabilityReasonUnknown CapabilityReason = "unknown"
 )
 
 const (
@@ -5017,13 +5025,19 @@ func decodeInventoryCursor(token string) (*port.SessionMetadataCursor, error) {
 	return &port.SessionMetadataCursor{ModifiedAt: time.Unix(0, cursor.ModifiedAtUnixNano), ID: session.SessionID(cursor.SessionID)}, nil
 }
 
-func inventoryCapabilities(kind session.SessionKind, id session.SessionID) (SessionInventoryCapabilities, CapabilityReason) {
+func inventoryCapabilities(kind session.SessionKind, id session.SessionID, state session.State, live bool) (SessionInventoryCapabilities, CapabilityReason) {
 	caps := SessionInventoryCapabilities{Inspect: true}
-	if kind == session.SessionKindMain && !hasLegacyNonChatPrefix(id) {
-		caps.PublicChat = true
-		return caps, ""
+	if kind != session.SessionKindMain || hasLegacyNonChatPrefix(id) {
+		return caps, CapabilityReasonInspectOnlyKind
 	}
-	return caps, CapabilityReasonInspectOnlyKind
+	if state == session.StateAwaiting {
+		return caps, CapabilityReasonAwaitingApproval
+	}
+	if live {
+		return caps, CapabilityReasonActiveElsewhere
+	}
+	caps.PublicChat = true
+	return caps, ""
 }
 
 func validSessionRelationshipUTF8(relationship session.SessionRelationship) bool {
@@ -5119,7 +5133,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	}
 	out := ListSessionsPage{Sessions: make([]SessionSummary, 0, len(page.Sessions)), TotalCount: page.TotalCount}
 	for _, meta := range page.Sessions {
-		out.Sessions = append(out.Sessions, summaryFromMeta(meta))
+		out.Sessions = append(out.Sessions, s.summaryFromMeta(meta))
 	}
 	out.NextCursor, err = encodeInventoryCursor(page.NextCursor)
 	if err != nil {
@@ -5128,7 +5142,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	return out, nil
 }
 
-func summaryFromMeta(meta port.SessionMeta) SessionSummary {
+func (s *Service) summaryFromMeta(meta port.SessionMeta) SessionSummary {
 	created := int64(0)
 	if !meta.CreatedAt.IsZero() {
 		created = meta.CreatedAt.Unix()
@@ -5137,7 +5151,7 @@ func summaryFromMeta(meta port.SessionMeta) SessionSummary {
 	if kind == "" {
 		kind = session.SessionKindUnknown
 	}
-	caps, reason := inventoryCapabilities(kind, meta.ID)
+	caps, reason := inventoryCapabilities(kind, meta.ID, meta.State, s.IsLive(meta.ID))
 	return SessionSummary{
 		SessionID: string(meta.ID), ModifiedAtUnix: meta.ModifiedAt.Unix(), State: string(meta.State),
 		Turns: meta.Turns, ModelID: meta.ModelID, CreatedAtUnix: created, Title: meta.Title,
@@ -5237,7 +5251,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			}
 		}
 		kind := session.SessionKindUnknown
-		caps, reason := inventoryCapabilities(kind, r.ID)
+		caps, reason := inventoryCapabilities(kind, r.ID, "", s.IsLive(r.ID))
 		summary := SessionSummary{
 			SessionID: string(r.ID), ModifiedAtUnix: r.ModifiedAt.Unix(),
 			Kind: kind, Capabilities: caps, ReasonCode: reason,
@@ -5261,7 +5275,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 				summary.Kind = session.SessionKindUnknown
 			}
 			summary.Relationship = sess.Relationship
-			summary.Capabilities, summary.ReasonCode = inventoryCapabilities(summary.Kind, sess.ID)
+			summary.Capabilities, summary.ReasonCode = inventoryCapabilities(summary.Kind, sess.ID, sess.State, s.IsLive(sess.ID))
 		}
 		out = append(out, summary)
 	}
@@ -5292,7 +5306,7 @@ func (s *Service) listSessionsMeta(ctx context.Context, ml port.MetaLister) ([]S
 				continue
 			}
 		}
-		summary := summaryFromMeta(r)
+		summary := s.summaryFromMeta(r)
 		// A zero CreatedAt (a snapshot with no created_at, or a corrupt row that
 		// left CreatedAt at the zero time) maps to 0, NOT the zero time's Unix
 		// value (-62135596800) — matching the Load-fails zeroed-fields behaviour.

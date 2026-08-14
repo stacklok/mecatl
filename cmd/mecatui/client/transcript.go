@@ -25,6 +25,15 @@ type SessionTranscript struct {
 	Activity  ActivityReplayStatus
 }
 
+// ResumeSelection is a statically validated startup adoption. Row carries the
+// server-authored capability/metadata projection; Transcript is the authoritative
+// snapshot-derived conversation. Resolving it performs no run-entry work.
+type ResumeSelection struct {
+	Row        SessionListItem
+	Transcript SessionTranscript
+	Snapshot   SessionSnapshot
+}
+
 // GetSessionTranscript fetches the authoritative snapshot-derived transcript.
 func (c *Client) GetSessionTranscript(ctx context.Context, id string) (SessionTranscript, error) {
 	resp, err := c.svc.GetSessionTranscript(ctx, &mecatlv1.GetSessionTranscriptRequest{SessionId: id})
