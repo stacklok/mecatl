@@ -22,6 +22,7 @@ const (
 	tabChats sessionsTab = iota
 	tabScheduledRuns
 	tabChildRuns
+	tabOtherRuns
 )
 
 type sessionsView int
@@ -276,7 +277,10 @@ func filterSessionsByTab(sessions []client.SessionListItem, tab sessionsTab) []c
 		case tabScheduledRuns:
 			keep = s.Kind == client.SessionKindScheduled
 		case tabChildRuns:
-			keep = s.Kind != client.SessionKindMain && s.Kind != client.SessionKindScheduled
+			keep = s.Kind == client.SessionKindSubagent || s.Kind == client.SessionKindParallelBranch || s.Kind == client.SessionKindTeamMember
+		case tabOtherRuns:
+			keep = s.Kind != client.SessionKindMain && s.Kind != client.SessionKindScheduled &&
+				s.Kind != client.SessionKindSubagent && s.Kind != client.SessionKindParallelBranch && s.Kind != client.SessionKindTeamMember
 		}
 		if keep {
 			out = append(out, s)
@@ -512,7 +516,7 @@ func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) switchSessionsTab() Model {
-	m.sessions.tab = (m.sessions.tab + 1) % 3
+	m.sessions.tab = (m.sessions.tab + 1) % 4
 	return m.syncSessionsFilter()
 }
 
@@ -554,7 +558,7 @@ func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabil
 }
 
 func sessionsTabBar(th theme.Theme, tab sessionsTab) string {
-	labels := []string{"Chats", "Scheduled runs", "Child runs"}
+	labels := []string{"Chats", "Scheduled runs", "Child runs", "Other"}
 	var parts []string
 	for i, label := range labels {
 		prefix := "  "
@@ -588,7 +592,8 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 		if st.filter.Value() != "" {
 			b.WriteString(th.Style("muted").Render("no matches — clear search to see all"))
 		} else {
-			b.WriteString(th.Style("muted").Render("no " + strings.ToLower([]string{"Chats", "Scheduled runs", "Child runs"}[st.tab]) + " found"))
+			labels := []string{"chats", "scheduled runs", "child runs", "other sessions"}
+			b.WriteString(th.Style("muted").Render("no " + labels[st.tab] + " found"))
 		}
 		b.WriteString("\n" + th.Style("muted").Render(sessionsEmptyHint(hk)))
 		return b.String()

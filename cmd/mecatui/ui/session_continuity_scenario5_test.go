@@ -73,25 +73,81 @@ func TestSessionContinuityUX_Scenario5_CopyExactID(t *testing.T) {
 }
 
 func TestSessionContinuityUX_Scenario5_RebindMatrix(t *testing.T) {
-	m := newScenario5Model(t, &fakeClipboard{})
-	for _, tc := range []struct {
-		name string
-		id   string
-	}{
-		{"stored continuation", "adopted-id"},
-		{"model carryover", "carryover-id"},
-		{"effort fork", "fork-id"},
-		{"worktree switch", "worktree-id"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m = m.bindSessionID(tc.id)
-			if got := m.sessionDetails().ID; got != tc.id {
-				t.Fatalf("details ID = %q, want final adopted %q", got, tc.id)
+	for _, journey := range []string{"stored continuation", "model carryover", "effort fork", "worktree switch"} {
+		t.Run(journey, func(t *testing.T) {
+			cb := &fakeClipboard{}
+			m, wantID := driveSessionRebindJourney(t, journey, cb)
+			if got := m.sessionDetails().ID; got != wantID {
+				t.Fatalf("details ID = %q, want final adopted %q", got, wantID)
 			}
-			if got := m.sessionCopyTarget(); got != tc.id {
-				t.Fatalf("copy target = %q, want final adopted %q", got, tc.id)
+			m.sessionDetailsOpen = true
+			mm, cmd, handled := m.onSessionDetailsKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+			if !handled || cmd == nil {
+				t.Fatal("/session copy action did not issue a clipboard command")
+			}
+			m = mm.(Model)
+			m = applyAll(m, cmd())
+			if len(cb.wrote) != 1 || !bytes.Equal(cb.wrote[0], []byte(wantID)) {
+				t.Fatalf("clipboard payloads = %q, want final adopted ID %q", cb.wrote, wantID)
 			}
 		})
+	}
+}
+
+func driveSessionRebindJourney(t *testing.T, journey string, cb client.Clipboard) (Model, string) {
+	t.Helper()
+	m := newScenario5Model(t, cb)
+	conv := m.deps.Session.(*fakeConv)
+	applyCmd := func(cmd tea.Cmd) {
+		t.Helper()
+		for _, msg := range flattenBatch(cmd) {
+			m = applyAll(m, msg)
+		}
+	}
+
+	switch journey {
+	case "stored continuation":
+		const id = "continued-id"
+		loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: id, Complete: true, Kind: client.SessionKindMain}}
+		m.deps.Transcript = loader
+		m.sessions.filtered = []client.SessionListItem{{ID: id, Title: "Stored chat", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}}
+		mm, cmd, handled := m.chooseSession()
+		if !handled || cmd == nil {
+			t.Fatal("stored continuation did not request its authoritative transcript")
+		}
+		m = mm.(Model)
+		applyCmd(cmd)
+		return m, id
+	case "model carryover":
+		conv.createCount = 1
+		mm, cmd, handled := m.restartOnModelWithCarryover(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"})
+		if !handled || cmd == nil {
+			t.Fatal("model carryover did not issue its create command")
+		}
+		m = mm.(Model)
+		applyCmd(cmd)
+		return m, "sess-test-0002"
+	case "effort fork":
+		conv.forkedID = "effort-fork-id"
+		mm, cmd, handled := m.switchEffort(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "high"})
+		if !handled || cmd == nil {
+			t.Fatal("effort switch did not issue its fork command")
+		}
+		m = mm.(Model)
+		applyCmd(cmd)
+		return m, conv.forkedID
+	case "worktree switch":
+		conv.createCount = 1
+		mm, cmd, handled := m.switchToWorktree(client.Worktree{Path: "/workspace/feature", Branch: "feature"})
+		if !handled || cmd == nil {
+			t.Fatal("worktree switch did not issue its create command")
+		}
+		m = mm.(Model)
+		applyCmd(cmd)
+		return m, "sess-test-0002"
+	default:
+		t.Fatalf("unknown rebind journey %q", journey)
+		return Model{}, ""
 	}
 }
 

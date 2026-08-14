@@ -31,6 +31,7 @@ func TestSessionContinuityUX_Scenario4_FamilyTabs(t *testing.T) {
 		{ID: "ordinary-schedule", Kind: client.SessionKindScheduled},
 		{ID: "ordinary-child", Kind: client.SessionKindSubagent},
 		{ID: "ordinary-member", Kind: client.SessionKindTeamMember},
+		{ID: "legacy-unknown", Kind: client.SessionKindUnknown, Capabilities: client.SessionInventoryCapabilities{Inspect: true}},
 	}
 	cases := []struct {
 		tab  sessionsTab
@@ -39,6 +40,7 @@ func TestSessionContinuityUX_Scenario4_FamilyTabs(t *testing.T) {
 		{tabChats, []string{"ordinary"}},
 		{tabScheduledRuns, []string{"ordinary-schedule"}},
 		{tabChildRuns, []string{"ordinary-child", "ordinary-member"}},
+		{tabOtherRuns, []string{"legacy-unknown"}},
 	}
 	for _, tc := range cases {
 		got := filterSessionsByTab(rows, tc.tab)
@@ -99,27 +101,36 @@ func TestSessionContinuityUX_Scenario4_SearchFields(t *testing.T) {
 }
 
 func TestSessionContinuityUX_Scenario4_InspectionPreservesActiveChat(t *testing.T) {
-	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "scheduled-run", Complete: true, Messages: []client.ConversationMessage{{Role: "assistant", Text: "scheduled output"}}}}
-	m := newScenario4Model(t, loader)
-	m.sessionID = "active-chat"
-	m.sessionTitle = "Active title"
-	m.effectiveModel = client.ResolvedModel{ProviderID: "provider", ModelID: "model"}
-	m.caps = client.Capabilities{Teams: true}
-	m.conv.addUser("active conversation")
-	m.liveArmed = "active-chat"
-	before := m
-	row := client.SessionListItem{ID: "scheduled-run", Kind: client.SessionKindScheduled, Capabilities: client.SessionInventoryCapabilities{Inspect: true}}
-	m.sessions.filtered = []client.SessionListItem{row}
-	mm, cmd, _ := m.chooseSession()
-	m = mm.(Model)
-	m = applyAll(m, cmd())
-	if m.sessionID != before.sessionID || m.sessionTitle != before.sessionTitle || m.effectiveModel != before.effectiveModel || m.caps != before.caps || m.liveArmed != before.liveArmed || len(m.conv.blocks) != len(before.conv.blocks) {
-		t.Fatal("inspection changed active chat identity, subscription, capabilities, model, or conversation")
-	}
-	mm, _ = m.onReplayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
-	m = mm.(Model)
-	if m.sessionID != "active-chat" || m.phase != phaseIdle {
-		t.Fatalf("escape did not restore active chat: id=%q phase=%v", m.sessionID, m.phase)
+	for _, tc := range []struct {
+		name string
+		row  client.SessionListItem
+	}{
+		{name: "scheduled run", row: client.SessionListItem{ID: "scheduled-run", Kind: client.SessionKindScheduled, Capabilities: client.SessionInventoryCapabilities{Inspect: true}}},
+		{name: "child run", row: client.SessionListItem{ID: "child-run", Kind: client.SessionKindSubagent, Capabilities: client.SessionInventoryCapabilities{Inspect: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: tc.row.ID, Complete: true, Messages: []client.ConversationMessage{{Role: "assistant", Text: "inspection output"}}}}
+			m := newScenario4Model(t, loader)
+			m.sessionID = "active-chat"
+			m.sessionTitle = "Active title"
+			m.effectiveModel = client.ResolvedModel{ProviderID: "provider", ModelID: "model"}
+			m.caps = client.Capabilities{Teams: true}
+			m.conv.addUser("active conversation")
+			m.liveArmed = "active-chat"
+			before := m
+			m.sessions.filtered = []client.SessionListItem{tc.row}
+			mm, cmd, _ := m.chooseSession()
+			m = mm.(Model)
+			m = applyAll(m, cmd())
+			if m.sessionID != before.sessionID || m.sessionTitle != before.sessionTitle || m.effectiveModel != before.effectiveModel || m.caps != before.caps || m.liveArmed != before.liveArmed || len(m.conv.blocks) != len(before.conv.blocks) {
+				t.Fatal("inspection changed active chat identity, subscription, capabilities, model, or conversation")
+			}
+			mm, _ = m.onReplayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+			m = mm.(Model)
+			if m.sessionID != "active-chat" || m.phase != phaseIdle {
+				t.Fatalf("escape did not restore active chat: id=%q phase=%v", m.sessionID, m.phase)
+			}
+		})
 	}
 }
 

@@ -58,7 +58,8 @@ an editor that spawned it.
 The TUI header shows a compact `#<digest>` for the active session rather than a long
 opaque ID. Type `/session` to inspect the safely quoted full ID, title, state, workspace,
 known timestamps, provider, and model; press `c` in that overlay to copy the exact ID.
-Use `/sessions` separately to Continue a stored chat or Inspect scheduled and child runs.
+Use `/sessions` separately to Continue a stored chat or Inspect scheduled, child, and
+unknown/other runs without changing the active chat.
 To continue directly at process startup, pass `--resume SESSION_ID` or
 `--resume-latest` in either embedded or `connect` mode. mecatui adopts the complete
 authoritative transcript without creating a throwaway session; latest excludes active,

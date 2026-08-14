@@ -1142,8 +1142,10 @@ and modification timestamps, provider, and model. The header intentionally shows
 the compact digest. Press **`c`** to copy the exact full ID byte-for-byte; mecatui reports
 clipboard failure or a session change instead of claiming a stale copy. `esc` closes it.
 
-**`/sessions` (session continuity).** The session inventory has three tabs:
-**Chats**, **Scheduled runs**, and **Child runs**. `tab` switches tabs; the
+**`/sessions` (session continuity).** The session inventory has four tabs:
+**Chats**, **Scheduled runs**, **Child runs**, and **Other**. The Other tab keeps
+unknown legacy/custom rows inspect-only without mislabeling them as delegation children.
+`tab` switches tabs; the
 search box filters the current tab. Search matches the title, full session ID,
 its terminal-safe digest handle, model, workspace, and the available
 relationship metadata (parent/call, schedule/origin, team/member). This keeps
@@ -1160,7 +1162,7 @@ back to the server.
 Pressing `enter` follows server-authored capabilities. A public Chat is
 **Continue**: mecatui first loads the authoritative snapshot-derived
 conversation, then rebinds the prompt to that session so the next text adds a
-turn. Scheduled and Child runs are normally **Inspect**: their authoritative
+turn. Scheduled, Child, and inspect-capable Other runs are normally **Inspect**: their authoritative
 snapshot transcript is displayed read-only, and the active chat is left
 unchanged. A row with neither capability explains why it is unavailable (for
 example, awaiting approval, active elsewhere, unavailable transcript, or
