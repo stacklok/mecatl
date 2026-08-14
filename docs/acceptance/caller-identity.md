@@ -14,29 +14,29 @@ configuration belong in the [architecture guide](../architecture.md) and
 
 ### Edge and context
 
-- **AC1.1:** When OIDC is configured, a valid token from the configured issuer and
+- AC1.1: When OIDC is configured, a valid token from the configured issuer and
   audience yields its `(issuer, subject)` principal on the handler context.
   - verify: `TestCallerIdentity_Scenario1_ValidTokenYieldsPrincipal`
-- **AC1.2:** Invalid, malformed, or unusable principals are rejected before the
+- AC1.2: Invalid, malformed, or unusable principals are rejected before the
   handler runs; an unavailable JWKS is distinguishable as a 503-class condition.
   - verify: `TestCallerIdentity_Scenario1_BadTokensRejected`,
     `TestCallerIdentityEdgeRejectsMalformedPrincipal`,
     `TestCallerIdentity_Scenario1_JWKSDownIsTransientNotUnauthorized`
-- **AC1.3:** Without OIDC configuration, requests remain unauthenticated with a nil
+- AC1.3: Without OIDC configuration, requests remain unauthenticated with a nil
   principal; no anonymous principal is fabricated.
   - verify: `TestCallerIdentity_Scenario1_NoAuthByteIdentical`,
     `TestInvariant_no_fabricated_principal`
-- **AC1.4:** OIDC enablement is independent of static-token authentication, and rate
+- AC1.4: OIDC enablement is independent of static-token authentication, and rate
   limiting under OIDC uses the validated `(issuer, subject)`, not the raw token.
   - verify: `TestCallerIdentity_Scenario1_IdentityPredicateIndependent`,
     `TestCallerIdentity_Scenario1_RateLimitKeyedOnPrincipal`
-- **AC2.1:** The principal rides the context rather than widening port interfaces.
+- AC2.1: The principal rides the context rather than widening port interfaces.
   Internal work that crosses a port boundary runs with an explicit system principal.
   - verify: `TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem`
 
 ### Durable ownership and attribution
 
-- **AC3.1:** `CreateSession` records the verified principal as the write-once session
+- AC3.1: `CreateSession` records the verified principal as the write-once session
   owner. The owner round-trips snapshots, restart/rehydration, and list rows,
   including both list implementation paths.
   - verify: `TestCallerIdentity_Scenario0_OwnerSnapshotRoundTrip`,
@@ -44,20 +44,20 @@ configuration belong in the [architecture guide](../architecture.md) and
     `TestCallerIdentity_Scenario0_APICompatAdditive`,
     `TestCallerIdentity_Scenario3_OwnerRecordedAndListed`,
     `TestCallerIdentity_Scenario3_OwnerSurvivesReopenRestart`
-- **AC3.2:** Child sessions and forks retain the source owner. Pre-identity sessions
+- AC3.2: Child sessions and forks retain the source owner. Pre-identity sessions
   remain ownerless and are never adopted on a later access.
   - verify: `TestCallerIdentity_Scenario3_ForkInheritsSourceOwner`,
     `TestCallerIdentity_Scenario3_PreShipSessionNeverBackfilled`
-- **AC3.3:** Session ownership is display-only: it does not filter listings or deny
+- AC3.3: Session ownership is display-only: it does not filter listings or deny
   access.
   - verify: `TestCallerIdentity_Scenario3_ListRowOwnerIsDisplayOnly`
-- **AC4.1:** Durable events record the context principal that acted, not the session
+- AC4.1: Durable events record the context principal that acted, not the session
   owner. The annotation is log-only and does not reach client event relays or alter
   event-sourced rehydration.
   - verify: `TestCallerIdentity_Scenario4_EventActorStampedAtAppendOnly`,
     `TestCallerIdentity_Scenario4_EventActorLogOnly`,
     `TestCallerIdentity_Scenario4_OwnerlessEventActorAbsent`
-- **AC4.2:** A schedule captures its owner at creation. Its fire session retains that
+- AC4.2: A schedule captures its owner at creation. Its fire session retains that
   owner with `client_credentials`; the fire's events name the scheduler system
   principal.
   - verify: `TestCallerIdentity_Scenario4_ScheduleOwnerCapturedAtCreate`,
@@ -66,7 +66,7 @@ configuration belong in the [architecture guide](../architecture.md) and
 
 ### Deployment boundary
 
-- **AC5.1:** A configured validator fails closed at startup when initial key material
+- AC5.1: A configured validator fails closed at startup when initial key material
   cannot be obtained. Cached JWKS behavior follows ADR 0101: after the configured
   staleness bound, an unavailable refresh is 503-class rather than an authentication
   success or 401.
@@ -74,7 +74,7 @@ configuration belong in the [architecture guide](../architecture.md) and
     `TestCallerIdentityE2E_Scenario2_RealTokenYieldsPrincipal`,
     `TestCallerIdentityE2E_Scenario2_WrongAudienceRejected`,
     `TestCallerIdentityE2E_Scenario2_StaticJWKSSkipsDiscovery`
-- **AC5.2:** The published deployment configuration leaves identity off unless OIDC
+- AC5.2: The published deployment configuration leaves identity off unless OIDC
   is explicitly configured and does not enable the private-issuer relaxation.
   - verify: `TestCallerIdentityE2E_Scenario3_PrivateIssuerRefusedByDefault`,
     `TestCallerIdentityE2E_Scenario3_InsecureIssuerFlagWarns`
