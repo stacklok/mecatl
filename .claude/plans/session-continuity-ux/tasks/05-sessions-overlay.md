@@ -2,8 +2,8 @@
 id: 05-sessions-overlay
 title: Honest searchable non-destructive sessions overlay
 blocked_by: [02-run-purpose-gates, 03-authoritative-transcript, 04-paged-inventory]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-continuity-ux/05-sessions-overlay"
 worktree: ".scratch/worktrees/session-continuity-ux-task-05"
 issue: "471"
 retries: 0
