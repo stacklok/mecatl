@@ -29,6 +29,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0007 — Twelve-patterns audit](./0007-twelve-patterns-audit.md) *(historical)*
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
 - [0104 — Session families get a bounded, injective, non-reversible physical name](./0104-session-family-physical-naming.md) *(NUMBER COLLIDES with the three entries below — renumber on merge)*
+- [0108 — Session discovery uses durable kind metadata and separates replay from continuation](./0108-session-discovery-continuation.md) *(proposed)*
 - [0104 — Operator-owned exact context-window overrides](./0104-context-window-overrides.md) *(the file's own heading says "ADR 0103" — a pre-existing origin/main title/filename mismatch, not introduced here; NUMBER COLLIDES with the other three entries)*
 - [0104 — Attribute schedule origins through the run context](./0104-schedule-origin-run-context.md) *(this branch's own ADR, superseding ADR 0075's origin-binding mechanism; NUMBER COLLIDES with the other three entries — renumber on merge)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
