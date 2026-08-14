@@ -552,6 +552,48 @@ linters:
           deny:
             - pkg: os
               desc: 'scheduleconformance drives the abstract ScheduleStore contract (a test-helper, it may use cronparse to compute expected next fires); it must not touch the real OS'
+        # Host-internal opaque credential CAS boundary. Production is deliberately
+        # stdlib-only except for the already-direct flock dependency; it must never
+        # acquire credentials or configuration.
+        internal-adapter-credentialstore:
+          list-mode: strict
+          files:
+            - '**/internal/adapter/credentialstore/**.go'
+            - '!**/internal/adapter/credentialstore/conformance/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/gofrs/flock
+          deny:
+            - pkg: log
+              desc: 'credentialstore must not use global logging or expose credential metadata'
+            - pkg: log/slog
+              desc: 'credentialstore has no diagnostics or global logging surface'
+            - pkg: os/exec
+              desc: 'credentialstore must never spawn credential helpers or other processes'
+            - pkg: github.com/stacklok/mecatl/authn
+              desc: 'credentialstore is credential-format-agnostic and must not depend on OAuth/OIDC concepts'
+            - pkg: github.com/stacklok/mecatl/internal/adapter/mcp
+              desc: 'credentialstore must not depend on MCP concepts'
+            - pkg: github.com/stacklok/mecatl/internal/adapter/permconfig
+              desc: 'credentialstore receives explicit inputs and must not read configuration'
+            - pkg: github.com/stacklok/mecatl/internal/adapter/xdgconfig
+              desc: 'credentialstore must not perform implicit XDG resolution'
+            - pkg: github.com/stacklok/mecatl/internal/cliconfig
+              desc: 'credentialstore must not depend on CLI/provider configuration'
+            - pkg: github.com/stacklok/mecatl/provider
+              desc: 'credentialstore must not depend on LLM provider adapters'
+        internal-adapter-credentialstore-conformance:
+          list-mode: strict
+          files:
+            - '**/internal/adapter/credentialstore/conformance/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/internal/adapter/credentialstore
+          deny:
+            - pkg: os
+              desc: 'credentialstore conformance drives the abstract Store contract without host I/O'
         # learning: reflection domain; reuses tool's canonical memory security helpers.
         core-learning:
           list-mode: strict
@@ -762,10 +804,11 @@ linters:
         text: SA5011
         path: (.+)_test\.go
       # fsconformance/memconformance/storeconformance/sourceconformance/
-      # eventlogconformance are shared
-      # test-helper packages (importing "testing" in a non-_test.go file, the
-      # conventional Go pattern à la testing/fstest). Their conformance tables are
-      # dense like tests, so apply the same relaxations.
+      # eventlogconformance/leaseconformance/scheduleconformance and
+      # credentialstore/conformance are shared test-helper packages (importing
+      # "testing" in a non-_test.go file, the conventional Go pattern à la
+      # testing/fstest). Their conformance tables are dense like tests, so apply
+      # the same relaxations.
       - linters:
           - gocyclo
           - errcheck
@@ -815,6 +858,13 @@ linters:
           - goconst
           - unparam
         path: engine/adapter/scheduleconformance/
+      - linters:
+          - gocyclo
+          - errcheck
+          - gosec
+          - goconst
+          - unparam
+        path: internal/adapter/credentialstore/conformance/
       - linters:
           - revive
         path: .golangci.yml

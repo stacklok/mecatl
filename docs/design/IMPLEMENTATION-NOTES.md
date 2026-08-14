@@ -17,6 +17,58 @@ Prefer updating the relevant design doc + this file over re-growing CLAUDE.md.
 
 ---
 
+## Credential store
+
+`internal/adapter/credentialstore` owns a narrow host-internal `Store`; it does not
+import OAuth, MCP, provider, config, XDG, or composition packages. Logical stores are
+namespace-bound. Keys and values are arbitrary bytes with explicit caps. `Put` is
+create-only when `expected == nil` and otherwise replace-only for the exact opaque
+version; `Delete` always requires a valid exact version. There is no unconditional or
+zero-version wildcard. The shared suite in
+`internal/adapter/credentialstore/conformance/conformance.go` drives both backends.
+
+The deterministic memory backend shares nested namespace maps behind one mutex, copies
+all values, and mints versions from a backend-wide monotonic generation. The encrypted
+backend in `internal/adapter/credentialstore/encrypted_file.go` is available only on the
+reviewed Unix targets. Construction requires an explicit absolute `0700`, current-UID
+root and exactly 32 injected bytes; it clones that key and clears its sole long-lived
+owned copy under the lifecycle write lock on `Close`. It performs no key/path discovery.
+Unsupported platforms return `ErrUnavailable` without filesystem side effects.
+
+Physical names are full domain-separated SHA-256 hashes: one `ns-v1-<digest>` directory,
+then `rec-v1-<digest>.lock` and `.cred` files per logical key. The `0600` lock sentinel
+is stable and never deleted. Every operation takes its exclusive flock, rechecks file
+ownership/type/mode/link count, and completes read/authentication, condition evaluation,
+and mutation while holding it. Existing corruption is authenticated before conflict
+selection, so `Put` and `Delete` cannot launder a damaged or wrong-key record.
+
+`internal/adapter/credentialstore/envelope.go` encodes one strict format: eight-byte
+magic, version/algorithm/nonce-length/zero-flags bytes, a big-endian ciphertext length,
+a random 12-byte nonce, and AES-256-GCM ciphertext/tag. Decoder input is capped at
+`44 + MaxValueBytes`; unknown metadata, impossible lengths, truncation, trailing bytes,
+and authentication failures are `ErrCorrupt`. AAD covers the complete header,
+namespace, and arbitrary-byte record key through length-prefixed framing. The SHA-256
+of the complete persisted envelope is the opaque version; random nonces make identical
+replace and delete/recreate fresh against ABA.
+
+Writes use an unpredictable exclusive `0600` temporary in the namespace directory,
+write + file sync + close, a final context gate, same-directory rename, then directory
+sync where supported. Delete has the same final gate before remove and directory sync.
+An error before rename/remove leaves the old record authoritative; an error after that
+atomic boundary may have committed, so the caller must `Get` before retrying.
+Cancellation racing after the final gate cannot cancel the syscall. A crash can leave an
+encrypted temporary file, which is ignored rather than swept.
+
+The posture is intentionally local: advisory flock/CAS is claimed only for cooperating
+processes on one supported local host/filesystem. Root and same-UID attackers, process
+memory, secure media erasure, valid-envelope rollback, lengths/access patterns, and
+network-filesystem semantics are not defended. No default consumer or key source ships
+in issue #519; OAuth integration, OS-keyring/HSM acquisition, remote/Kubernetes storage,
+and per-client routing remain separate work. See
+[ADR 0108](../adr/0108-credential-store.md).
+
+---
+
 ## Caller identity embedding and OIDC module boundary
 
 The engine accepts identity only after verification. `session.PrincipalFromClaims`
