@@ -1,13 +1,16 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -448,6 +451,73 @@ func TestManagerConnectsConcurrently(t *testing.T) {
 	if elapsed >= 1500*time.Millisecond {
 		t.Errorf("NewManager took %v, expected < 1.5s (serial connect would take ~3× a single server's handshake; parallel regressed?)",
 			elapsed)
+	}
+}
+
+func TestConnectCancellationDuringSDKHandshakeLeavesNoLiveOperation(t *testing.T) {
+	for _, blockedMethod := range []string{"initialize", "tools/list"} {
+		t.Run(blockedMethod, func(t *testing.T) {
+			sdkServer := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "cancel", Version: "v1"}, nil)
+			mcpsdk.AddTool(sdkServer, &mcpsdk.Tool{Name: "echo", Description: "echo"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in echoArgs) (*mcpsdk.CallToolResult, any, error) {
+				return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: in.Text}}}, nil, nil
+			})
+			next := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return sdkServer }, nil)
+			started := make(chan struct{})
+			var signaled, active atomic.Int32
+			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Errorf("read SDK request: %v", err)
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					var message struct {
+						Method string `json:"method"`
+					}
+					if json.Unmarshal(body, &message) == nil && message.Method == blockedMethod {
+						active.Add(1)
+						defer active.Add(-1)
+						if signaled.CompareAndSwap(0, 1) {
+							close(started)
+						}
+						<-r.Context().Done()
+						return
+					}
+				}
+				next.ServeHTTP(w, r)
+			}))
+			defer httpServer.Close()
+
+			store := newOAuthMemoryStore(t)
+			opts := testOAuthOptions(store)
+			opts.Issuer = httpServer.URL
+			opts.Client.Preregistered.Issuer = httpServer.URL
+			opts.Network.PrivateOrigins = []string{httpServer.URL}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				_, err := Connect(ctx, ServerConfig{Name: "cancel", URL: httpServer.URL, OAuth: &opts, Timeout: 5 * time.Second}, nil)
+				done <- err
+			}()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatalf("SDK %s request did not start", blockedMethod)
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("Connect error = %v, want canceled", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Connect did not return promptly after cancellation")
+			}
+			if active.Load() != 0 {
+				t.Fatalf("%d SDK handshake operations remained live", active.Load())
+			}
+		})
 	}
 }
 
