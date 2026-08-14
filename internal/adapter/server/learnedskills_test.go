@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestLearnedSkillAPIIsPartitionedCASAndPublishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	published := 0
-	svc := &Service{cfg: Config{LearnedSkills: repository, PublishLearnedSkills: func(context.Context) error { published++; return nil }}}
+	svc := &Service{cfg: Config{LearnedSkills: repository, PublishLearnedSkills: func(context.Context) error { published++; return nil }, SkillActionAvailable: func(learning.SkillPartition, string) (bool, string) { return true, "" }}}
 	listed, err := svc.ListLearnedSkills(context.Background(), &mecatlv1.ListLearnedSkillsRequest{Limit: 1})
 	if err != nil || len(listed.GetSkills()) != 1 {
 		t.Fatalf("list: %+v %v", listed, err)
@@ -43,6 +44,26 @@ func TestLearnedSkillAPIIsPartitionedCASAndPublishes(t *testing.T) {
 	_, err = svc.ArchiveLearnedSkill(context.Background(), &mecatlv1.MutateLearnedSkillRequest{OwnerAgent: "agent", Id: string(staged.ID), Version: string(staged.Version), ExpectedRevision: string(staged.Revision)})
 	if !errors.Is(err, ErrProposalConflict) {
 		t.Fatalf("stale CAS err=%v", err)
+	}
+}
+
+func TestDecodeLearnedSkillMutationIsStrictAndBounded(t *testing.T) {
+	for _, body := range []string{
+		`{"owner_agent":"a","owner_agent":"b"}`,
+		`{"unknown":true}`,
+		`{"owner_agent":"a"} {}`,
+		`{"owner_agent":"` + strings.Repeat("a", learning.MaxSkillOwnerBytes+1) + `"}`,
+		strings.Repeat(" ", 16<<10) + `{}`,
+	} {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		recorder := httptest.NewRecorder()
+		if _, ok := (*HTTPHandler)(nil).decodeLearnedSkillMutation(recorder, req); ok {
+			t.Fatalf("accepted invalid body %q", body[:min(len(body), 80)])
+		}
+	}
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"project":"/p","owner_agent":"a","version":"v","expected_revision":"r"}`))
+	if got, ok := (*HTTPHandler)(nil).decodeLearnedSkillMutation(httptest.NewRecorder(), req); !ok || got.Project != "/p" {
+		t.Fatalf("valid body = %+v ok=%v", got, ok)
 	}
 }
 
@@ -63,7 +84,7 @@ func TestLearnedSkillExternalCollisionBlocksActivation(t *testing.T) {
 	d, _ := repository.CreateDraft(context.Background(), p, "agent", learning.SkillBundle{Name: "protected", Description: "Protected", Body: "body"}, learning.SkillProvenance{Origin: learning.SkillProvenanceLegacyModel})
 	e, _ := repository.RecordEvaluation(context.Background(), p, "agent", d.ID, d.Version, d.Revision, learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"f"}, At: time.Now()})
 	staged, _ := repository.Stage(context.Background(), p, "agent", d.ID, d.Version, e.Revision)
-	svc := &Service{cfg: Config{LearnedSkills: repository, LearnedSkillNameAvailable: func(string) bool { return false }}}
+	svc := &Service{cfg: Config{LearnedSkills: repository, LearnedSkillNameAvailable: func(string) bool { return false }, SkillActionAvailable: func(learning.SkillPartition, string) (bool, string) { return true, "" }}}
 	_, err := svc.ActivateLearnedSkill(context.Background(), &mecatlv1.MutateLearnedSkillRequest{OwnerAgent: "agent", Id: string(staged.ID), Version: string(staged.Version), ExpectedRevision: string(staged.Revision)})
 	if !errors.Is(err, ErrFailedPrecondition) {
 		t.Fatalf("collision err=%v", err)

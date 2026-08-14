@@ -2239,6 +2239,8 @@ message ListLearnedSkillsRequest {
 message ListLearnedSkillsResponse {
   repeated LearnedSkillVersion skills = 1;
   string next_cursor = 2;
+  uint64 generation = 3;
+  string project = 4;
 }
 message GetLearnedSkillRequest {
   string project = 1;
@@ -2246,7 +2248,11 @@ message GetLearnedSkillRequest {
   string id = 3 [(buf.validate.field).string.min_len = 1];
   string version = 4;
 }
-message GetLearnedSkillResponse { LearnedSkillVersion skill = 1; }
+message GetLearnedSkillResponse {
+  LearnedSkillVersion skill = 1;
+  uint64 generation = 2;
+  string project = 3;
+}
 message DiffLearnedSkillVersionsRequest {
   string project = 1;
   string owner_agent = 2 [(buf.validate.field).string.min_len = 1];
@@ -2254,7 +2260,14 @@ message DiffLearnedSkillVersionsRequest {
   string from_version = 4 [(buf.validate.field).string.min_len = 1];
   string to_version = 5 [(buf.validate.field).string.min_len = 1];
 }
-message DiffLearnedSkillVersionsResponse { string diff = 1; }
+message DiffLearnedSkillVersionsResponse {
+  string diff = 1;
+  uint64 generation = 2;
+  string project = 3;
+  string skill_id = 4;
+  string from_version = 5;
+  string to_version = 6;
+}
 message MutateLearnedSkillRequest {
   string project = 1;
   string owner_agent = 2 [(buf.validate.field).string.min_len = 1];
@@ -2262,7 +2275,13 @@ message MutateLearnedSkillRequest {
   string version = 4 [(buf.validate.field).string.min_len = 1];
   string expected_revision = 5 [(buf.validate.field).string.min_len = 1];
 }
-message MutateLearnedSkillResponse { LearnedSkillVersion skill = 1; }
+message MutateLearnedSkillResponse {
+  LearnedSkillVersion skill = 1;
+  uint64 generation = 2;
+  string project = 3;
+  string publication_status = 4;
+  string publication_error = 5;
+}
 message RollbackLearnedSkillRequest {
   string project = 1;
   string owner_agent = 2 [(buf.validate.field).string.min_len = 1];
@@ -2278,6 +2297,8 @@ message ListSkillChangesRequest {
 message ListSkillChangesResponse {
   repeated SkillChangeReceipt changes = 1;
   string next_cursor = 2;
+  uint64 generation = 3;
+  string project = 4;
 }
 
 // --- Agent team messages ----------------------------------------------------

@@ -40,17 +40,19 @@ const skillsBodyLines = 14
 // value-copy semantics hold. scroll is the 0-based index of the first visible
 // rendered row (clamped in the key handlers, reset on each RPC result).
 type skillsState struct {
-	view     skillsView
-	loading  bool  // the ListSkills RPC is in flight
-	err      error // the ListSkills error, rendered distinctly (nil on success)
-	skills   []client.Skill
-	filtered []client.Skill  // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
-	filter   textinput.Model // the type-to-filter input; focused while the panel is open
-	scroll   int             // first visible rendered body row (clamped in the key handlers)
-	learned  []client.LearnedSkill
-	cursor   int
-	detail   *client.LearnedSkill
-	diff     string
+	view       skillsView
+	loading    bool  // the ListSkills RPC is in flight
+	err        error // the ListSkills error, rendered distinctly (nil on success)
+	skills     []client.Skill
+	filtered   []client.Skill  // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
+	filter     textinput.Model // the type-to-filter input; focused while the panel is open
+	scroll     int             // first visible rendered body row (clamped in the key handlers)
+	learned    []client.LearnedSkill
+	cursor     int
+	detail     *client.LearnedSkill
+	diff       string
+	project    string
+	generation uint64
 }
 
 // openSkills opens the inventory panel and fires the ListSkills RPC. Only
@@ -62,7 +64,7 @@ func (m Model) openSkills() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.ta.Blur() // overlay owns the keyboard while open
-	m.skills = skillsState{view: skillsPanel, loading: true}
+	m.skills = skillsState{view: skillsPanel, loading: true, project: m.deps.Workspace}
 	// Open with the filter FOCUSED so the user can type to narrow immediately (the
 	// /models picker's headline affordance, mirrored here as read-only narrowing —
 	// there is no cursor/enter/select on this inventory). The filtered slice is
@@ -76,7 +78,7 @@ func (m Model) openSkills() (tea.Model, tea.Cmd) {
 	m.skills.filtered = nil
 	cmds := []tea.Cmd{client.ListSkillsCmd(m.deps.Ctx, m.deps.Skills), textinput.Blink}
 	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
-		cmds = append(cmds, client.ListLearnedSkillsCmd(m.deps.Ctx, lifecycle))
+		cmds = append(cmds, client.ListLearnedSkillsCmd(m.deps.Ctx, lifecycle, m.deps.Workspace))
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -233,6 +235,8 @@ func (m Model) syncSkillsFilter() Model {
 // follow-up command (the panel is a single-shot read), so it returns only the
 // model + handled flag; handled=false for any other message so Update can fall
 // through.
+//
+//nolint:gocyclo // inventory, lifecycle detail, receipt, and diff messages share one reducer
 func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 	if diff, ok := msg.(client.SkillDiffMsg); ok {
 		if diff.Err != nil {
@@ -255,22 +259,39 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 		return m, true
 	}
 	if learned, ok := msg.(client.LearnedSkillsMsg); ok {
-		if learned.Err == nil {
+		if learned.Project != m.skills.project || learned.Generation < m.skills.generation {
+			return m, true
+		}
+		if learned.Err != nil {
+			m.skills.err = learned.Err
+		} else {
 			m.skills.learned = learned.Skills
 			m.skills.cursor = 0
+			m.skills.generation = learned.Generation
+			m.skills.err = nil
 		}
 		return m, true
 	}
 	if detail, ok := msg.(client.LearnedSkillMsg); ok {
+		if detail.Project != m.skills.project || detail.Generation < m.skills.generation || (m.skills.detail != nil && (detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedVersion != m.skills.detail.Version)) {
+			return m, true
+		}
 		if detail.Err != nil {
 			m.skills.err = detail.Err
 			return m, true
 		}
+		if detail.PublicationError != "" {
+			m.skills.err = fmt.Errorf("publication %s: %s", detail.PublicationStatus, detail.PublicationError)
+		}
 		if detail.Skill != nil {
 			value := *detail.Skill
-			m.skills.detail, m.skills.view, m.skills.err = &value, skillsDetail, nil
+			m.skills.detail, m.skills.view = &value, skillsDetail
+			m.skills.generation = max(m.skills.generation, detail.Generation)
+			if detail.PublicationError == "" {
+				m.skills.err = nil
+			}
 			for i := range m.skills.learned {
-				if m.skills.learned[i].ID == value.ID {
+				if m.skills.learned[i].Project == value.Project && m.skills.learned[i].ID == value.ID && m.skills.learned[i].Version == value.Version {
 					m.skills.learned[i] = value
 				}
 			}

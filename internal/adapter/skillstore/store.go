@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -201,11 +202,34 @@ func (s *Store) locked(ctx context.Context, write bool, fn func(*manifest) error
 	return nil
 }
 
+func boundedReadRegular(path string, limit int64) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("skillstore: non-regular file rejected: %s", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, learning.ErrSkillLimit
+	}
+	return raw, nil
+}
+
 func (s *Store) load() (manifest, error) {
 	if err := rejectKnownSymlinks(s.dir); err != nil {
 		return manifest{}, err
 	}
-	raw, err := os.ReadFile(s.path)
+	raw, err := boundedReadRegular(s.path, maxManifest)
 	if os.IsNotExist(err) {
 		return emptyManifest(), nil
 	}
@@ -314,7 +338,7 @@ func (s *Store) validateVersionFile(value learning.SkillVersion) error {
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%w: invalid version file", learning.ErrInvalidSkill)
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := boundedReadRegular(path, learning.MaxSkillBodyBytes+learning.MaxSkillDescriptionBytes+1024)
 	if err != nil {
 		return err
 	}
@@ -392,7 +416,7 @@ func (s *Store) ensureVersion(bundle learning.SkillBundle, version learning.Vers
 	}
 	path := filepath.Join(dir, skillfs.SkillFileName)
 	raw := []byte(renderBundle(bundle))
-	if existing, err := os.ReadFile(path); err == nil {
+	if existing, err := boundedReadRegular(path, int64(len(raw))); err == nil {
 		if string(existing) != string(raw) {
 			return fmt.Errorf("%w: content-address collision", learning.ErrInvalidSkill)
 		}
@@ -774,11 +798,11 @@ func (s *Store) Reject(ctx context.Context, p learning.SkillPartition, owner str
 	})
 }
 
-// Archive archives any non-archived version under CAS.
+// Archive archives an active version under CAS.
 func (s *Store) Archive(ctx context.Context, p learning.SkillPartition, owner string, id learning.SkillID, version learning.VersionID, expected learning.Revision) (learning.SkillVersion, error) {
 	return s.update(ctx, p, owner, id, version, expected, func(record *skillRecord, index int, now time.Time) error {
 		value := &record.Versions[index]
-		if value.State == learning.SkillArchived {
+		if value.State != learning.SkillActive {
 			return learning.ErrSkillTransition
 		}
 		from := value.State
@@ -818,7 +842,7 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 		if targetIndex < 0 {
 			return learning.ErrSkillNotFound
 		}
-		if record.Versions[targetIndex].State != learning.SkillArchived {
+		if !rollbackEligible(record.Versions[targetIndex]) {
 			return learning.ErrSkillTransition
 		}
 		now := s.now().UTC()
@@ -842,4 +866,16 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 		return nil
 	})
 	return
+}
+
+func rollbackEligible(v learning.SkillVersion) bool {
+	if v.State != learning.SkillArchived || len(v.Evaluations) == 0 || v.Evaluations[len(v.Evaluations)-1].Verdict != learning.EvaluationPass {
+		return false
+	}
+	for _, receipt := range v.Receipts {
+		if receipt.To == learning.SkillActive && (receipt.Operation == "activate" || receipt.Operation == "rollback_to") {
+			return true
+		}
+	}
+	return false
 }

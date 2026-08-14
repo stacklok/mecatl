@@ -1653,6 +1653,32 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			return (learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills, external: assets.skills, source: assets.skillSource}).Publish(ctx)
 		},
+		RevokeLearnedSkill: func(name string) {
+			if assets.liveSkills != nil {
+				assets.liveSkills.RevokeLearned(name)
+			}
+		},
+		LiveSkillGeneration: func() uint64 {
+			if assets.liveSkills == nil {
+				return 0
+			}
+			return assets.liveSkills.Snapshot().Generation
+		},
+		SkillActionAvailable: func(partition learning.SkillPartition, owner string) (bool, string) {
+			if assets.liveSkills == nil || assets.learnedSkills == nil {
+				return false, "learned-skill publication target is unavailable"
+			}
+			if owner != assets.skillOwner {
+				return false, "agent does not own this publication target"
+			}
+			if partition.Principal != assets.skillPartition.Principal {
+				return false, "caller partition is not bound to this publication target"
+			}
+			if partition.Project != "" && (partition.Project != cfg.Workspace || !projectIngestionAdmittedForRoot(cfg, partition.Project)) {
+				return false, "project publication requires the exact trusted launch root"
+			}
+			return true, ""
+		},
 		LearnedSkillNameAvailable: func(name string) bool {
 			for _, meta := range assets.skills {
 				if meta.Name == name {

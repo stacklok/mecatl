@@ -224,7 +224,12 @@ It surfaces three ways:
   without writing memory. `auto` uses the same stage-first path and then promotes only
   conservative standard-policy-eligible, non-conflicting facts. Evidence-backed procedures use
   the versioned learned-skill lifecycle: `review` evaluates and stages PASS/ABSTAIN (FAIL rejects),
-  while `auto` activates only PASS and publishes it to the live Skill catalog without restart.
+  while `auto` activates only PASS when that caller/project has a bound publication target; a similar
+  candidate remains staged for review. A missing evaluator records ABSTAIN. Activation, archive, and rollback
+  return committed state plus publication status; temporary publication failure revokes the live learned entry
+  and startup or the next `/skills` refresh reconciles it. Rollback targets must be PASS versions durably proven
+  previously active. `SkillDraft` derives the verified caller, exact workspace, and main-agent owner and refuses
+  identity-free calls. It creates body-only inactive content: learned assets/scripts are unsupported.
   `off` never materializes procedures automatically; explicit `SkillDraft` or legacy import creates
   only an inactive validated draft. Project proposals are eligible only when the session root is the
   exact trusted configured root. The gRPC/HTTP learned-skill API lists and inspects bounded bodies,

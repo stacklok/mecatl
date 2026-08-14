@@ -17,6 +17,7 @@ type CatalogSnapshot struct {
 	Generation uint64
 	Metas      []tool.SkillMeta
 	byName     map[string]catalogEntry
+	external   tool.SkillSource
 }
 
 type catalogEntry struct {
@@ -28,11 +29,10 @@ type catalogEntry struct {
 type AtomicCatalog struct {
 	generation atomic.Uint64
 	current    atomic.Pointer[CatalogSnapshot]
-	external   tool.SkillSource
 }
 
 func NewAtomicCatalog(external []tool.SkillMeta, source tool.SkillSource, learned []learning.SkillVersion) *AtomicCatalog {
-	c := &AtomicCatalog{external: source}
+	c := &AtomicCatalog{}
 	c.Refresh(external, source, learned)
 	return c
 }
@@ -62,9 +62,34 @@ func (c *AtomicCatalog) Refresh(external []tool.SkillMeta, source tool.SkillSour
 		metas = append(metas, cloneMeta(entry.meta))
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Name < metas[j].Name })
-	c.external = source
-	c.current.Store(&CatalogSnapshot{Generation: c.generation.Add(1), Metas: metas, byName: entries})
+	c.current.Store(&CatalogSnapshot{Generation: c.generation.Add(1), Metas: metas, byName: entries, external: source})
 	return conflicts
+}
+
+func (c *AtomicCatalog) RevokeLearned(name string) {
+	for {
+		current := c.load()
+		entry, ok := current.byName[name]
+		if !ok || !entry.learned {
+			return
+		}
+		entries := make(map[string]catalogEntry, len(current.byName)-1)
+		metas := make([]tool.SkillMeta, 0, len(current.Metas)-1)
+		for key, value := range current.byName {
+			if key != name {
+				entries[key] = value
+			}
+		}
+		for _, meta := range current.Metas {
+			if meta.Name != name {
+				metas = append(metas, cloneMeta(meta))
+			}
+		}
+		next := &CatalogSnapshot{Generation: c.generation.Add(1), Metas: metas, byName: entries, external: current.external}
+		if c.current.CompareAndSwap(current, next) {
+			return
+		}
+	}
 }
 
 func (c *AtomicCatalog) Snapshot() CatalogSnapshot {
@@ -77,45 +102,48 @@ func (c *AtomicCatalog) ListSkills(context.Context) ([]tool.SkillMeta, error) {
 }
 
 func (c *AtomicCatalog) SkillBody(ctx context.Context, name string) (string, error) {
-	entry, ok := c.load().byName[name]
+	snapshot := c.load()
+	entry, ok := snapshot.byName[name]
 	if !ok {
 		return "", tool.ErrSkillNotFound
 	}
 	if entry.learned {
 		return entry.body, nil
 	}
-	if c.external == nil {
+	if snapshot.external == nil {
 		return "", tool.ErrSkillNotFound
 	}
-	return c.external.SkillBody(ctx, name)
+	return snapshot.external.SkillBody(ctx, name)
 }
 
 func (c *AtomicCatalog) ListSkillAssets(ctx context.Context, name string) ([]tool.SkillAsset, error) {
-	entry, ok := c.load().byName[name]
+	snapshot := c.load()
+	entry, ok := snapshot.byName[name]
 	if !ok {
 		return nil, tool.ErrSkillNotFound
 	}
 	if entry.learned {
 		return nil, nil
 	}
-	if c.external == nil {
+	if snapshot.external == nil {
 		return nil, tool.ErrSkillNotFound
 	}
-	return c.external.ListSkillAssets(ctx, name)
+	return snapshot.external.ListSkillAssets(ctx, name)
 }
 
 func (c *AtomicCatalog) ReadSkillAsset(ctx context.Context, skill, asset string) ([]byte, error) {
-	entry, ok := c.load().byName[skill]
+	snapshot := c.load()
+	entry, ok := snapshot.byName[skill]
 	if !ok {
 		return nil, tool.ErrSkillAssetNotFound
 	}
 	if entry.learned {
 		return nil, fmt.Errorf("learned skill %q is body-only and has no assets: %w", skill, tool.ErrSkillAssetNotFound)
 	}
-	if c.external == nil {
+	if snapshot.external == nil {
 		return nil, tool.ErrSkillAssetNotFound
 	}
-	return c.external.ReadSkillAsset(ctx, skill, asset)
+	return snapshot.external.ReadSkillAsset(ctx, skill, asset)
 }
 
 func (c *AtomicCatalog) load() *CatalogSnapshot {

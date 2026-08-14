@@ -7,13 +7,15 @@ package skilllifecycle
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
-const maxReceiptTextBytes = 1024
+const (
+	maxReceiptTextBytes = 1024
+	publicationTimeout  = 5 * time.Second
+)
 
 type Publisher interface{ Publish(context.Context) error }
 
@@ -25,97 +27,126 @@ type Candidate struct {
 }
 
 type Receipt struct {
-	SkillID    learning.SkillID
-	Name       string
-	Version    learning.VersionID
-	State      learning.SkillState
-	Verdict    learning.EvaluationVerdict
-	Evidence   int
-	FixtureIDs []string
-	Baseline   string
-	Treatment  string
-	Inspect    bool
-	Undo       bool
+	SkillID          learning.SkillID
+	Name             string
+	Version          learning.VersionID
+	State            learning.SkillState
+	Verdict          learning.EvaluationVerdict
+	Evidence         int
+	FixtureIDs       []string
+	Baseline         string
+	Treatment        string
+	Inspect          bool
+	Undo             bool
+	Published        bool
+	PublicationError string
 }
 
 type Pipeline struct {
 	Repository learning.SkillRepository
 	Validator  learning.SkillValidator
-	Evaluator  learning.SkillEvaluator
-	Publisher  Publisher
-	Now        func() time.Time
+	// Evaluator is trusted admission-control code supplied by the host. It must
+	// evaluate host-issued immutable fixture IDs, keep baseline and treatment
+	// independent, expose no tools/shell/network, fence candidate content, and
+	// enforce deterministic time/token/output limits. Nil records ABSTAIN; the
+	// engine deliberately provides no production keyword or model judge.
+	Evaluator learning.SkillEvaluator
+	Publisher Publisher
+	Now       func() time.Time
 }
 
-// Process drives one candidate synchronously to a bounded receipt.
-//
-//nolint:gocyclo // lifecycle stages remain visibly ordered around every CAS
-func (p Pipeline) Process(ctx context.Context, candidate Candidate) (Receipt, error) {
+// Process idempotently resumes one candidate from its durable repository state.
+// Publication follows committed activation with a cancel-detached bounded context;
+// a publication failure is reported on the receipt without disguising the commit.
+func (p Pipeline) Process(ctx context.Context, candidate Candidate) (Receipt, error) { //nolint:gocyclo
 	if p.Repository == nil || p.Validator == nil {
 		return Receipt{}, errors.New("skilllifecycle: repository and validator required")
 	}
 	if candidate.Automatic && candidate.Mode == learning.Off {
-		return Receipt{}, fmt.Errorf("%w: automatic skill generation is disabled", learning.ErrSkillTransition)
+		return Receipt{}, learning.ErrSkillTransition
 	}
 	in := candidate.Draft
-	if _, err := p.Validator.Validate(ctx, learning.SkillValidationRequest{Partition: in.Partition, OwnerAgent: in.OwnerAgent, Bundle: in.Bundle, Provenance: in.Provenance, Inventory: candidate.Inventory}); err != nil {
-		return Receipt{}, err
-	}
-	draft, err := p.Repository.CreateDraft(ctx, in.Partition, in.OwnerAgent, in.Bundle, in.Provenance)
+	validation, err := p.Validator.Validate(ctx, learning.SkillValidationRequest{Partition: in.Partition, OwnerAgent: in.OwnerAgent, Bundle: in.Bundle, Provenance: in.Provenance, Inventory: candidate.Inventory})
 	if err != nil {
 		return Receipt{}, err
 	}
-	receipt := receiptFor(draft)
+	version, err := p.Repository.CreateDraft(ctx, in.Partition, in.OwnerAgent, in.Bundle, in.Provenance)
+	if err != nil {
+		return Receipt{}, err
+	}
 	if !candidate.Automatic || len(in.Provenance.EvidenceRefs) == 0 {
-		return receipt, nil
+		return receiptFor(version), nil
 	}
-	if p.Evaluator == nil {
-		return receipt, errors.New("skilllifecycle: evaluator required for an evidence-backed candidate")
-	}
-	evaluation, err := p.Evaluator.Evaluate(ctx, learning.SkillEvaluationRequest{Partition: in.Partition, OwnerAgent: in.OwnerAgent, Version: draft})
-	if err != nil {
-		return receipt, err
-	}
-	if evaluation.At.IsZero() {
-		now := p.Now
-		if now == nil {
-			now = time.Now
-		}
-		evaluation.At = now().UTC()
-	}
-	if err := learning.ValidateSkillEvaluation(evaluation); err != nil {
-		return receipt, err
-	}
-	version, err := p.Repository.RecordEvaluation(ctx, in.Partition, in.OwnerAgent, draft.ID, draft.Version, draft.Revision, evaluation)
-	if err != nil {
-		return receipt, err
-	}
-	if evaluation.Verdict != learning.EvaluationFail {
-		version, err = p.Repository.Stage(ctx, in.Partition, in.OwnerAgent, version.ID, version.Version, version.Revision)
-		if err != nil {
-			return receipt, err
-		}
-	}
-	if candidate.Mode == learning.Auto && evaluation.Verdict == learning.EvaluationPass {
-		version, err = p.Repository.Activate(ctx, in.Partition, in.OwnerAgent, version.ID, version.Version, version.Revision)
-		if err != nil {
-			return receipt, err
-		}
-		if p.Publisher != nil {
-			if err := p.Publisher.Publish(ctx); err != nil {
-				return receiptFor(version), fmt.Errorf("skilllifecycle: publish active catalog: %w", err)
+
+	if version.State == learning.SkillDraft {
+		evaluation := learning.SkillEvaluation{Verdict: learning.EvaluationAbstain, Reason: "no trusted skill evaluator configured", At: p.now()}
+		if p.Evaluator != nil {
+			evaluation, err = p.Evaluator.Evaluate(ctx, learning.SkillEvaluationRequest{Partition: in.Partition, OwnerAgent: in.OwnerAgent, Version: version})
+			if err != nil {
+				return receiptFor(version), err
+			}
+			if evaluation.At.IsZero() {
+				evaluation.At = p.now()
 			}
 		}
+		if err = learning.ValidateSkillEvaluation(evaluation); err != nil {
+			return receiptFor(version), err
+		}
+		version, err = p.Repository.RecordEvaluation(ctx, in.Partition, in.OwnerAgent, version.ID, version.Version, version.Revision, evaluation)
+		if err != nil {
+			return receiptFor(version), err
+		}
 	}
-	receipt = receiptFor(version)
+
+	evaluation := lastEvaluation(version)
+	if version.State == learning.SkillEvaluated && evaluation.Verdict != learning.EvaluationFail {
+		version, err = p.Repository.Stage(ctx, in.Partition, in.OwnerAgent, version.ID, version.Version, version.Revision)
+		if err != nil {
+			return receiptFor(version), err
+		}
+	}
+	activate := candidate.Mode == learning.Auto && evaluation.Verdict == learning.EvaluationPass && validation.Disposition != learning.ValidationSimilarStageHint
+	if version.State == learning.SkillStaged && activate && p.Publisher != nil {
+		version, err = p.Repository.Activate(ctx, in.Partition, in.OwnerAgent, version.ID, version.Version, version.Revision)
+		if err != nil {
+			return receiptFor(version), err
+		}
+	}
+	receipt := receiptFor(version)
 	receipt.Verdict = evaluation.Verdict
 	receipt.FixtureIDs = append([]string(nil), evaluation.FixtureIDs...)
 	receipt.Baseline, receipt.Treatment = bound(evaluation.Baseline), bound(evaluation.Treatment)
+	if version.State == learning.SkillActive && p.Publisher != nil {
+		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publicationTimeout)
+		err = p.Publisher.Publish(publishCtx)
+		cancel()
+		if err != nil {
+			receipt.PublicationError = bound(err.Error())
+		} else {
+			receipt.Published = true
+		}
+	}
 	return receipt, nil
+}
+
+func (p Pipeline) now() time.Time {
+	if p.Now != nil {
+		return p.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func lastEvaluation(v learning.SkillVersion) learning.SkillEvaluation {
+	if len(v.Evaluations) == 0 {
+		return learning.SkillEvaluation{}
+	}
+	return v.Evaluations[len(v.Evaluations)-1]
 }
 
 func receiptFor(v learning.SkillVersion) Receipt {
 	return Receipt{SkillID: v.ID, Name: v.Bundle.Name, Version: v.Version, State: v.State, Evidence: len(v.Provenance.EvidenceRefs), Inspect: true, Undo: v.State == learning.SkillActive}
 }
+
 func bound(v string) string {
 	if len(v) <= maxReceiptTextBytes {
 		return v

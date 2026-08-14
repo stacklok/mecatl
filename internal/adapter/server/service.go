@@ -400,6 +400,9 @@ type Config struct {
 	// publisher atomically refreshes the shared live Skill catalog after mutations.
 	LearnedSkills             learning.SkillRepository
 	PublishLearnedSkills      func(context.Context) error
+	RevokeLearnedSkill        func(string)
+	LiveSkillGeneration       func() uint64
+	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool
 	LiveSkills                func(context.Context) []*mecatlv1.SkillInfo
 
@@ -4568,6 +4571,11 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
+	if s.cfg.PublishLearnedSkills != nil {
+		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
+		_ = s.cfg.PublishLearnedSkills(publishCtx)
+		cancel()
+	}
 	if s.cfg.LiveSkills != nil {
 		return s.cfg.LiveSkills(ctx)
 	}

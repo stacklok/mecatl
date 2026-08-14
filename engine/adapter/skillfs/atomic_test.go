@@ -2,6 +2,7 @@ package skillfs_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -12,29 +13,69 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-type atomicActivator map[string]string
-
-func (a atomicActivator) Activate(_ context.Context, name string) (skillfs.Activation, error) {
-	return skillfs.Activation{Body: a[name]}, nil
+type atomicSource struct {
+	bodies map[string]string
+	assets map[string][]tool.SkillAsset
+	data   map[string][]byte
 }
+
+func (atomicSource) ListSkills(context.Context) ([]tool.SkillMeta, error) { return nil, nil }
+func (s atomicSource) SkillBody(_ context.Context, name string) (string, error) {
+	body, ok := s.bodies[name]
+	if !ok {
+		return "", tool.ErrSkillNotFound
+	}
+	return body, nil
+}
+func (s atomicSource) ListSkillAssets(_ context.Context, name string) ([]tool.SkillAsset, error) {
+	if _, ok := s.bodies[name]; !ok {
+		return nil, tool.ErrSkillNotFound
+	}
+	return append([]tool.SkillAsset(nil), s.assets[name]...), nil
+}
+func (s atomicSource) ReadSkillAsset(_ context.Context, skill, asset string) ([]byte, error) {
+	data, ok := s.data[skill+"\x00"+asset]
+	if !ok {
+		return nil, tool.ErrSkillAssetNotFound
+	}
+	return append([]byte(nil), data...), nil
+}
+
 func activeVersion(name, body string) learning.SkillVersion {
 	return learning.SkillVersion{State: learning.SkillActive, Bundle: learning.SkillBundle{Name: name, Description: name + " description", Body: body}}
 }
 
-func TestAtomicCatalogExternalPrecedenceAndRefresh(t *testing.T) {
-	external := []tool.SkillMeta{{Name: "same", Description: "operator"}}
-	catalog := skillfs.NewAtomicCatalog(external, atomicActivator{"same": "operator body"}, nil)
-	if conflicts := catalog.Refresh(external, atomicActivator{"same": "operator body"}, []learning.SkillVersion{activeVersion("same", "agent body")}); len(conflicts) != 1 {
+func TestAtomicCatalogExternalPrecedenceAssetParityAndRefresh(t *testing.T) {
+	external := []tool.SkillMeta{{Name: "same", Description: "operator", HasAssets: true}}
+	source := atomicSource{
+		bodies: map[string]string{"same": "operator body"},
+		assets: map[string][]tool.SkillAsset{"same": {{Name: "references/check.md", Size: 5}}},
+		data:   map[string][]byte{"same\x00references/check.md": []byte("check")},
+	}
+	catalog := skillfs.NewAtomicCatalog(external, source, nil)
+	if conflicts := catalog.Refresh(external, source, []learning.SkillVersion{activeVersion("same", "agent body")}); len(conflicts) != 1 {
 		t.Fatalf("conflicts=%d", len(conflicts))
 	}
 	live := skillfs.NewLiveTool(catalog)
 	result, _ := live.Execute(context.Background(), session.NewToolCall("c", "Skill", []byte(`{"name":"same"}`)), tool.Environment{})
-	if !strings.Contains(result.Content, "operator body") || strings.Contains(result.Content, "agent body") {
+	if !strings.Contains(result.Content, "operator body") || strings.Contains(result.Content, "agent body") || !strings.Contains(result.Content, "references/check.md") {
 		t.Fatalf("collision result: %s", result.Content)
 	}
-	catalog.Refresh(external, atomicActivator{"same": "operator body"}, []learning.SkillVersion{activeVersion("new-skill", "new body")})
-	if !strings.Contains(live.Spec().Description, "new-skill") {
-		t.Fatal("spec did not refresh")
+	asset, _ := live.Execute(context.Background(), session.NewToolCall("a", "Skill", []byte(`{"name":"same","asset":"references/check.md"}`)), tool.Environment{})
+	if asset.IsError || !strings.Contains(asset.Content, "check") {
+		t.Fatalf("asset result: %#v", asset)
+	}
+
+	catalog.Refresh(external, source, []learning.SkillVersion{activeVersion("new-skill", "new body")})
+	if !strings.Contains(live.Spec().Description, "new-skill") || !strings.Contains(string(live.Spec().Schema), `"asset"`) {
+		t.Fatal("live spec did not retain asset schema after refresh")
+	}
+	asset, _ = live.Execute(context.Background(), session.NewToolCall("l", "Skill", []byte(`{"name":"new-skill","asset":"x.txt"}`)), tool.Environment{})
+	if !asset.IsError || !strings.Contains(asset.Content, "body-only") {
+		t.Fatalf("learned asset request = %#v", asset)
+	}
+	if _, err := catalog.ReadSkillAsset(context.Background(), "new-skill", "x.txt"); !errors.Is(err, tool.ErrSkillAssetNotFound) {
+		t.Fatalf("ReadSkillAsset error = %v", err)
 	}
 }
 

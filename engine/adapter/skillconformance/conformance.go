@@ -69,6 +69,43 @@ func Run(t *testing.T, factory Factory) {
 			t.Fatalf("archive=%#v %v", archived, err)
 		}
 	})
+	t.Run("archive-rejects-never-active-versions", func(t *testing.T) {
+		repo := factory(t)
+		ctx := context.Background()
+		p := partition()
+		draft, err := repo.CreateDraft(ctx, p, "agent-a", skill("never-active", "Draft workflow."), provenance("draft"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = repo.Archive(ctx, p, "agent-a", draft.ID, draft.Version, draft.Revision); !errors.Is(err, learning.ErrSkillTransition) {
+			t.Fatalf("archive draft=%v", err)
+		}
+		evaluated, err := repo.RecordEvaluation(ctx, p, "agent-a", draft.ID, draft.Version, draft.Revision, evaluation(learning.EvaluationAbstain))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = repo.Archive(ctx, p, "agent-a", evaluated.ID, evaluated.Version, evaluated.Revision); !errors.Is(err, learning.ErrSkillTransition) {
+			t.Fatalf("archive evaluated=%v", err)
+		}
+		staged, err := repo.Stage(ctx, p, "agent-a", evaluated.ID, evaluated.Version, evaluated.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = repo.Archive(ctx, p, "agent-a", staged.ID, staged.Version, staged.Revision); !errors.Is(err, learning.ErrSkillTransition) {
+			t.Fatalf("archive staged=%v", err)
+		}
+		rejectedDraft, err := repo.CreateDraft(ctx, p, "agent-a", skill("never-active-rejected", "Rejected workflow."), provenance("rejected"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rejected, err := repo.Reject(ctx, p, "agent-a", rejectedDraft.ID, rejectedDraft.Version, rejectedDraft.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = repo.Archive(ctx, p, "agent-a", rejected.ID, rejected.Version, rejected.Revision); !errors.Is(err, learning.ErrSkillTransition) {
+			t.Fatalf("archive rejected=%v", err)
+		}
+	})
 	t.Run("supersede-activate-rollback-one-active", func(t *testing.T) {
 		repo := factory(t)
 		ctx := context.Background()

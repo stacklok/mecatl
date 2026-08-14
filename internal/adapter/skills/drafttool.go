@@ -107,7 +107,7 @@ func (DraftTool) ReadOnly() bool { return false }
 // sanitization failure is returned as a model-addressable error result (never a
 // harness-level Go error), so the model can revise and retry. On success the
 // result names the quarantine path and any near-duplicate warnings.
-func (t DraftTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+func (t DraftTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	var args draftArgs
 	if msg, ok := toolkit.ParseArgs(in, &args); !ok {
 		return session.NewToolError(in.ID, msg), nil
@@ -116,7 +116,16 @@ func (t DraftTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Envi
 	// draftArgs (the JSON wire shape) and DraftRequest (the seam input) are kept
 	// field-identical so this conversion stays valid; add a field to one and you
 	// MUST add it to the other in the same position.
-	res, err := t.drafter.Draft(ctx, DraftRequest(args))
+	request := DraftRequest(args)
+	var res DraftResult
+	var err error
+	if contextual, ok := t.drafter.(interface {
+		DraftIn(context.Context, tool.Environment, DraftRequest) (DraftResult, error)
+	}); ok {
+		res, err = contextual.DraftIn(ctx, env, request)
+	} else {
+		res, err = t.drafter.Draft(ctx, request)
+	}
 	if err != nil {
 		// A validation/sanitization/write failure: model-addressable, not a fault.
 		return session.NewToolError(in.ID, err.Error()), nil

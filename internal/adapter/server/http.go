@@ -1367,7 +1367,7 @@ type learnedSkillMutationBody struct {
 
 func (*HTTPHandler) decodeLearnedSkillMutation(w http.ResponseWriter, r *http.Request) (learnedSkillMutationBody, bool) {
 	var body learnedSkillMutationBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeLearningJSON(r, 16<<10, &body, false); err != nil || len(body.Project) > 4096 || len(body.OwnerAgent) > learning.MaxSkillOwnerBytes || len(body.Version) > 256 || len(body.ExpectedRevision) > 256 || len(body.TargetVersion) > 256 {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return body, false
 	}

@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/learning"
 )
 
 // The skills-inventory discovery surface: a plain client-owned struct mirroring
@@ -31,6 +32,8 @@ type Skill struct {
 
 type LearnedSkill struct {
 	ID, Name, Version, Revision, State, OwnerAgent, Description, Body, Supersedes string
+	Project, PublicationStatus, PublicationError                                  string
+	Generation                                                                    uint64
 	EvidenceCount                                                                 int
 	Evaluations                                                                   []SkillEvaluation
 	Receipts                                                                      []SkillChange
@@ -45,12 +48,20 @@ type SkillChange struct {
 	InspectAvailable, UndoAvailable            bool
 }
 type LearnedSkillsMsg struct {
-	Skills []LearnedSkill
-	Err    error
+	Skills     []LearnedSkill
+	Project    string
+	Generation uint64
+	Err        error
 }
 type LearnedSkillMsg struct {
-	Skill *LearnedSkill
-	Err   error
+	Skill             *LearnedSkill
+	Project           string
+	Generation        uint64
+	SelectedSkillID   string
+	SelectedVersion   string
+	PublicationStatus string
+	PublicationError  string
+	Err               error
 }
 type SkillChangesMsg struct {
 	Changes []SkillChange
@@ -89,34 +100,52 @@ func mapSkills(in []*mecatlv1.SkillInfo) []Skill {
 
 // LearnedSkillClient is the optional lifecycle half of the existing /skills panel.
 type LearnedSkillClient interface {
-	ListLearnedSkills(context.Context) ([]LearnedSkill, error)
-	GetLearnedSkill(context.Context, string, string, string) (LearnedSkill, error)
+	ListLearnedSkills(context.Context, string) ([]LearnedSkill, error)
+	GetLearnedSkill(context.Context, string, string, string, string) (LearnedSkill, error)
 	MutateLearnedSkill(context.Context, string, LearnedSkill) (LearnedSkill, error)
 	RollbackLearnedSkill(context.Context, LearnedSkill) (LearnedSkill, error)
-	ListSkillChanges(context.Context) ([]SkillChange, error)
+	ListSkillChanges(context.Context, string) ([]SkillChange, error)
 	DiffLearnedSkill(context.Context, LearnedSkill) (string, error)
 }
 
-func (c *Client) ListLearnedSkills(ctx context.Context) ([]LearnedSkill, error) {
-	resp, err := c.svc.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Limit: 200})
-	if err != nil {
-		return nil, err
+func (c *Client) ListLearnedSkills(ctx context.Context, project string) ([]LearnedSkill, error) {
+	projects := []string{""}
+	if project != "" {
+		projects = append(projects, project)
 	}
-	out := make([]LearnedSkill, 0, len(resp.GetSkills()))
-	for _, value := range resp.GetSkills() {
-		out = append(out, mapLearnedSkill(value))
+	var out []LearnedSkill
+	for _, partition := range projects {
+		cursor := ""
+		for {
+			resp, err := c.svc.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: partition, Cursor: cursor, Limit: learning.MaxSkillPageSize})
+			if err != nil {
+				return nil, err
+			}
+			for _, value := range resp.GetSkills() {
+				skill := mapLearnedSkill(value)
+				skill.Project = resp.GetProject()
+				skill.Generation = resp.GetGeneration()
+				out = append(out, skill)
+			}
+			cursor = resp.GetNextCursor()
+			if cursor == "" {
+				break
+			}
+		}
 	}
 	return out, nil
 }
-func (c *Client) GetLearnedSkill(ctx context.Context, id, owner, version string) (LearnedSkill, error) {
-	resp, err := c.svc.GetLearnedSkill(ctx, &mecatlv1.GetLearnedSkillRequest{Id: id, OwnerAgent: owner, Version: version})
+func (c *Client) GetLearnedSkill(ctx context.Context, project, id, owner, version string) (LearnedSkill, error) {
+	resp, err := c.svc.GetLearnedSkill(ctx, &mecatlv1.GetLearnedSkillRequest{Project: project, Id: id, OwnerAgent: owner, Version: version})
 	if err != nil {
 		return LearnedSkill{}, err
 	}
-	return mapLearnedSkill(resp.GetSkill()), nil
+	out := mapLearnedSkill(resp.GetSkill())
+	out.Project, out.Generation = resp.GetProject(), resp.GetGeneration()
+	return out, nil
 }
 func (c *Client) MutateLearnedSkill(ctx context.Context, action string, skill LearnedSkill) (LearnedSkill, error) {
-	req := &mecatlv1.MutateLearnedSkillRequest{Id: skill.ID, OwnerAgent: skill.OwnerAgent, Version: skill.Version, ExpectedRevision: skill.Revision}
+	req := &mecatlv1.MutateLearnedSkillRequest{Project: skill.Project, Id: skill.ID, OwnerAgent: skill.OwnerAgent, Version: skill.Version, ExpectedRevision: skill.Revision}
 	var resp *mecatlv1.MutateLearnedSkillResponse
 	var err error
 	switch action {
@@ -132,33 +161,52 @@ func (c *Client) MutateLearnedSkill(ctx context.Context, action string, skill Le
 	if err != nil {
 		return LearnedSkill{}, err
 	}
-	return mapLearnedSkill(resp.GetSkill()), nil
+	out := mapLearnedSkill(resp.GetSkill())
+	out.Project, out.Generation = resp.GetProject(), resp.GetGeneration()
+	out.PublicationStatus, out.PublicationError = resp.GetPublicationStatus(), resp.GetPublicationError()
+	return out, nil
 }
 func (c *Client) RollbackLearnedSkill(ctx context.Context, skill LearnedSkill) (LearnedSkill, error) {
-	resp, err := c.svc.RollbackLearnedSkill(ctx, &mecatlv1.RollbackLearnedSkillRequest{Id: skill.ID, OwnerAgent: skill.OwnerAgent, TargetVersion: skill.Supersedes, ExpectedRevision: skill.Revision})
+	resp, err := c.svc.RollbackLearnedSkill(ctx, &mecatlv1.RollbackLearnedSkillRequest{Project: skill.Project, Id: skill.ID, OwnerAgent: skill.OwnerAgent, TargetVersion: skill.Supersedes, ExpectedRevision: skill.Revision})
 	if err != nil {
 		return LearnedSkill{}, err
 	}
-	return mapLearnedSkill(resp.GetSkill()), nil
+	out := mapLearnedSkill(resp.GetSkill())
+	out.Project, out.Generation = resp.GetProject(), resp.GetGeneration()
+	out.PublicationStatus, out.PublicationError = resp.GetPublicationStatus(), resp.GetPublicationError()
+	return out, nil
 }
 func (c *Client) DiffLearnedSkill(ctx context.Context, skill LearnedSkill) (string, error) {
 	if skill.Supersedes == "" {
 		return "", nil
 	}
-	resp, err := c.svc.DiffLearnedSkillVersions(ctx, &mecatlv1.DiffLearnedSkillVersionsRequest{Id: skill.ID, OwnerAgent: skill.OwnerAgent, FromVersion: skill.Supersedes, ToVersion: skill.Version})
+	resp, err := c.svc.DiffLearnedSkillVersions(ctx, &mecatlv1.DiffLearnedSkillVersionsRequest{Project: skill.Project, Id: skill.ID, OwnerAgent: skill.OwnerAgent, FromVersion: skill.Supersedes, ToVersion: skill.Version})
 	if err != nil {
 		return "", err
 	}
 	return resp.GetDiff(), nil
 }
-func (c *Client) ListSkillChanges(ctx context.Context) ([]SkillChange, error) {
-	resp, err := c.svc.ListSkillChanges(ctx, &mecatlv1.ListSkillChangesRequest{Limit: 50})
-	if err != nil {
-		return nil, err
+func (c *Client) ListSkillChanges(ctx context.Context, project string) ([]SkillChange, error) {
+	projects := []string{""}
+	if project != "" {
+		projects = append(projects, project)
 	}
-	out := make([]SkillChange, 0, len(resp.GetChanges()))
-	for _, r := range resp.GetChanges() {
-		out = append(out, mapSkillChange(r))
+	var out []SkillChange
+	for _, partition := range projects {
+		cursor := ""
+		for {
+			resp, err := c.svc.ListSkillChanges(ctx, &mecatlv1.ListSkillChangesRequest{Project: partition, Cursor: cursor, Limit: learning.MaxSkillPageSize})
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range resp.GetChanges() {
+				out = append(out, mapSkillChange(r))
+			}
+			cursor = resp.GetNextCursor()
+			if cursor == "" {
+				break
+			}
+		}
 	}
 	return out, nil
 }
@@ -181,34 +229,38 @@ func mapLearnedSkill(value *mecatlv1.LearnedSkillVersion) LearnedSkill {
 	}
 	return out
 }
-func ListLearnedSkillsCmd(ctx context.Context, c LearnedSkillClient) tea.Cmd {
+func ListLearnedSkillsCmd(ctx context.Context, c LearnedSkillClient, project string) tea.Cmd {
 	return func() tea.Msg {
-		values, err := c.ListLearnedSkills(ctx)
-		return LearnedSkillsMsg{Skills: values, Err: err}
+		values, err := c.ListLearnedSkills(ctx, project)
+		var generation uint64
+		for _, value := range values {
+			generation = max(generation, value.Generation)
+		}
+		return LearnedSkillsMsg{Skills: values, Project: project, Generation: generation, Err: err}
 	}
 }
 func GetLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill) tea.Cmd {
 	return func() tea.Msg {
-		value, err := c.GetLearnedSkill(ctx, s.ID, s.OwnerAgent, s.Version)
-		return LearnedSkillMsg{Skill: &value, Err: err}
+		value, err := c.GetLearnedSkill(ctx, s.Project, s.ID, s.OwnerAgent, s.Version)
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, Err: err}
 	}
 }
 func MutateLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, action string, s LearnedSkill) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.MutateLearnedSkill(ctx, action, s)
-		return LearnedSkillMsg{Skill: &value, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
 	}
 }
 func RollbackLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.RollbackLearnedSkill(ctx, s)
-		return LearnedSkillMsg{Skill: &value, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
 	}
 }
 
-func ListSkillChangesCmd(ctx context.Context, c LearnedSkillClient) tea.Cmd {
+func ListSkillChangesCmd(ctx context.Context, c LearnedSkillClient, project string) tea.Cmd {
 	return func() tea.Msg {
-		values, err := c.ListSkillChanges(ctx)
+		values, err := c.ListSkillChanges(ctx, project)
 		return SkillChangesMsg{Changes: values, Err: err}
 	}
 }

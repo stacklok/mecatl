@@ -379,7 +379,7 @@ func (s *Store) Reject(ctx context.Context, p learning.SkillPartition, owner str
 func (s *Store) Archive(ctx context.Context, p learning.SkillPartition, owner string, id learning.SkillID, version learning.VersionID, expected learning.Revision) (learning.SkillVersion, error) {
 	return s.update(ctx, p, owner, id, version, expected, func(r *skillRecord, i int, now time.Time) error {
 		v := &r.versions[i]
-		if v.State == learning.SkillArchived {
+		if v.State != learning.SkillActive {
 			return learning.ErrSkillTransition
 		}
 		from := v.State
@@ -419,7 +419,7 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 	if targetIndex < 0 {
 		return learning.SkillVersion{}, learning.ErrSkillNotFound
 	}
-	if r.versions[targetIndex].State != learning.SkillArchived {
+	if !rollbackEligible(r.versions[targetIndex]) {
 		return learning.SkillVersion{}, learning.ErrSkillTransition
 	}
 	now := s.now().UTC()
@@ -434,4 +434,16 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 	t.Revision = s.revision()
 	t.UpdatedAt = now
 	return clone(*t), nil
+}
+
+func rollbackEligible(v learning.SkillVersion) bool {
+	if v.State != learning.SkillArchived || len(v.Evaluations) == 0 || v.Evaluations[len(v.Evaluations)-1].Verdict != learning.EvaluationPass {
+		return false
+	}
+	for _, receipt := range v.Receipts {
+		if receipt.To == learning.SkillActive && (receipt.Operation == "activate" || receipt.Operation == "rollback_to") {
+			return true
+		}
+	}
+	return false
 }

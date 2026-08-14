@@ -72,8 +72,8 @@ func Materialize(ctx context.Context, proposals learning.ProposalRepository, ski
 	if err != nil {
 		return Result{}, err
 	}
-	if draft.State != learning.SkillDraft || len(draft.Evaluations) != 0 {
-		return Result{}, errors.New("skillmaterialize: repository returned a non-draft version")
+	if draft.ID == "" || draft.Version == "" {
+		return Result{}, errors.New("skillmaterialize: repository returned an invalid version")
 	}
 	if current.Status == learning.ProposalSkillMaterialized {
 		if current.SkillID != draft.ID {

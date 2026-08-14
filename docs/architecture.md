@@ -665,7 +665,8 @@ digest availability rather than transcript text. `/reflections` provides bounded
 `/reflect` explicitly submits the current completed session even when automatic mode is off
 ([ADR 0109](adr/0109-staged-learning-proposals.md)).
 Procedures initially remain visibly `deferred_unsupported`. The importable learned-skill
-contracts ([ADR 0110](adr/0110-evaluated-agent-owned-skills.md)) now let a host explicitly
+contracts ([ADR 0110](adr/0110-evaluated-agent-owned-skills.md), superseded by
+[ADR 0111](adr/0111-hardened-agent-owned-skill-publication.md)) now let a host explicitly
 materialize one as an owner-agent draft: body-only bundles are content-addressed and move by
 CAS through draft, evaluated, staged, active, archived, or rejected states, with bounded
 provenance, evaluations, receipts, and version history. `memskill` and the shared conformance
@@ -683,13 +684,17 @@ Draft creation converges by proposal provenance and SkillID without a duplicate.
 `ImportLegacyDraft` imports `origin:model` quarantine content as an unevidenced Draft, never
 Active. The synchronous `skilllifecycle.Pipeline` now applies off/review/auto policy: explicit drafts
 stay inactive, evidence-backed procedures are evaluated, FAIL rejects, PASS/ABSTAIN stage, and only
-an auto-mode PASS activates. The existing reflection coordinator owns automatic work and crash retry
-re-enters the proposal-linked materializer; there is no second queue or historical sweep.
-`skillfs.AtomicCatalog` publishes one complete immutable generation behind an atomic pointer, merging
-external skills first and active learned bodies last. The same pointer feeds shared, selector, and no-fs
-catalogs plus live `ListSkills`; external collisions remain visible and block learned activation.
-Caller/project-partitioned gRPC and HTTP methods provide bounded list/get/diff/receipts and CAS
-activate/reject/archive/rollback. Reflections links procedure proposals to learned skills, while `/skills`
+an auto-mode PASS with a bound publication target activates; similarity always forces review. The state-aware
+pipeline resumes after each durable boundary and republishes an already-active version during reconciliation.
+The existing reflection coordinator owns automatic work; there is no second queue or historical sweep.
+`skillfs.AtomicCatalog` publishes one complete immutable generation behind an atomic pointer, composing the
+path-free external `SkillSource` first and active learned bodies last. External logical assets preserve the
+ordinary `{name, asset}` behavior; body-only learned skills explicitly reject assets and add no paths or roots.
+The same pointer feeds shared, selector, and no-fs catalogs plus live `ListSkills`; external collisions remain
+visible and block learned activation. Archive is Active-only and rollback requires durable prior-active PASS
+proof. Caller/project-partitioned gRPC and HTTP methods provide bounded list/get/diff/receipt-count pages and CAS
+activate/reject/archive/rollback, with generation/selection correlation and publication status. Publication is
+cancel-detached and bounded after commit; failure revokes live learned content and startup/list refresh reconciles. Reflections links procedure proposals to learned skills, while `/skills`
 marks live agent-owned versions. The legacy direct filesystem promotion command remains deprecated.
 
 ## Caller identity

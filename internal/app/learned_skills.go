@@ -64,15 +64,36 @@ func (abstainingSkillEvaluator) Evaluate(_ context.Context, request learning.Ski
 	return learning.SkillEvaluation{Verdict: learning.EvaluationAbstain, FixtureIDs: fixtures, Reason: "no skill evaluator configured", At: time.Now().UTC()}, nil
 }
 
+func learnedSkillInventory(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, external []tool.SkillMeta) ([]learning.SkillInventoryItem, error) {
+	inventory := make([]learning.SkillInventoryItem, 0, len(external))
+	for _, meta := range external {
+		inventory = append(inventory, learning.SkillInventoryItem{Name: meta.Name})
+	}
+	var after learning.SkillID
+	for {
+		page, err := repository.List(ctx, partition, learning.SkillList{After: after, Limit: learning.MaxSkillPageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, version := range page.Versions {
+			inventory = append(inventory, learning.SkillInventoryItem{Name: version.Bundle.Name, OwnerAgent: version.OwnerAgent, AgentOwned: true, Bundle: version.Bundle, SkillID: version.ID, Version: version.Version})
+		}
+		if page.Next == "" {
+			return inventory, nil
+		}
+		after = page.Next
+	}
+}
+
 func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Context, learning.ProposalRecord, learning.Mode) error {
 	if cfg.LearningMode == learning.Off || assets.learnedSkills == nil || assets.reflectionRepository == nil {
 		return nil
 	}
 	return func(ctx context.Context, record learning.ProposalRecord, mode learning.Mode) error {
 		partition := learning.SkillPartition{Principal: record.Partition.Principal, Project: record.Partition.Project}
-		inventory := make([]learning.SkillInventoryItem, 0, len(assets.skills))
-		for _, meta := range assets.skills {
-			inventory = append(inventory, learning.SkillInventoryItem{Name: meta.Name})
+		inventory, err := learnedSkillInventory(ctx, assets.learnedSkills, partition, assets.skills)
+		if err != nil {
+			return err
 		}
 		materialized, err := skillmaterialize.Materialize(ctx, assets.reflectionRepository, assets.learnedSkills, partition, assets.skillOwner, record, inventory, learning.Decision{Kind: learning.DecisionApprove, Actor: "skill-pipeline", At: time.Now().UTC()})
 		if err != nil {

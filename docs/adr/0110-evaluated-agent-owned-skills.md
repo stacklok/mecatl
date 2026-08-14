@@ -1,10 +1,10 @@
 # ADR 0110 — Evaluated, versioned agent-owned skills
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-08-14
 - Scope: learned-skill domain lifecycle, proposal linkage, validation, and reference contracts
 - Supersedes: none
-- Superseded by: none
+- Superseded by: [ADR 0111](0111-hardened-agent-owned-skill-publication.md)
 
 ## Context
 

@@ -948,7 +948,7 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 	mm, drainCmd := m.drainQueue(msg.Stop, msg.Transient)
 	var skillChanges tea.Cmd
 	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
-		skillChanges = client.ListSkillChangesCmd(m.deps.Ctx, lifecycle)
+		skillChanges = client.ListSkillChangesCmd(m.deps.Ctx, lifecycle, m.deps.Workspace)
 	}
 	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, m.armLiveFeed(), skillChanges)
 }
