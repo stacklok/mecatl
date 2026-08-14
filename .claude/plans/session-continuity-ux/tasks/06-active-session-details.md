@@ -2,9 +2,9 @@
 id: 06-active-session-details
 title: Active session details and exact-ID copy
 blocked_by: [03-authoritative-transcript, 04-paged-inventory]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/worktrees/session-continuity-ux-task-06"
 issue: "525"
 retries: 0
 last_error: ""
