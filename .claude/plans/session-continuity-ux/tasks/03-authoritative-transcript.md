@@ -2,9 +2,9 @@
 id: 03-authoritative-transcript
 title: Snapshot-derived authoritative transcript surface
 blocked_by: [01-session-taxonomy]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/worktrees/session-continuity-ux-task-03"
 issue: "471"
 retries: 0
 last_error: ""

@@ -2,9 +2,9 @@
 id: 04-paged-inventory
 title: Cursor-bounded session inventory and transport parity
 blocked_by: [01-session-taxonomy]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/worktrees/session-continuity-ux-task-04"
 issue: "471"
 retries: 0
 last_error: ""
