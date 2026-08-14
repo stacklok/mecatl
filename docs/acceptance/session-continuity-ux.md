@@ -1,7 +1,7 @@
 # Session continuity UX — acceptance plan
 
 **Phase:** durable session discovery, inspection, continuation, and CLI handoff  
-**Status:** in-progress, 2026-08-14. Review repair wave after the initial aggregate implementation.  
+**Status:** landed, 2026-08-14. Aggregate implementation plus one panel repair wave complete.  
 **Issues:** [stacklok/mecatl#471](https://github.com/stacklok/mecatl/issues/471), [stacklok/mecatl#473](https://github.com/stacklok/mecatl/issues/473), [stacklok/mecatl#525](https://github.com/stacklok/mecatl/issues/525).  
 **ADR:** [ADR-0108](../adr/0108-session-discovery-continuation.md) — durable session taxonomy, authoritative transcript, bounded inventory, and continuation safety.  
 **Accumulator branch:** `acc/session-continuity-ux` (off latest `origin/main`).

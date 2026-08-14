@@ -2,8 +2,8 @@
 id: 10-review-ux-tests
 title: Repair UX and test-adequacy findings from panel review
 blocked_by: [09-review-server-contract]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-continuity-ux/10-review-ux-tests"
 worktree: ".scratch/worktrees/session-continuity-ux-repair-10"
 issue: "525"
 retries: 0
