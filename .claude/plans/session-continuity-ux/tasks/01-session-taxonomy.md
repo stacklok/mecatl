@@ -2,9 +2,9 @@
 id: 01-session-taxonomy
 title: Durable session kind and relationship metadata
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/worktrees/session-continuity-ux-task-01"
 issue: "471"
 retries: 0
 last_error: ""
