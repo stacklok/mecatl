@@ -2,8 +2,8 @@
 id: 07-startup-resume
 title: Exact and latest startup resume without throwaway sessions
 blocked_by: [05-sessions-overlay]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-continuity-ux/07-startup-resume"
 worktree: ".scratch/worktrees/session-continuity-ux-task-07"
 issue: "473"
 retries: 0
