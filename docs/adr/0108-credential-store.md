@@ -21,11 +21,19 @@ a new engine API.
 
 ## Decision
 
-Create the host-internal `internal/adapter/credentialstore` package. Its format-agnostic
-`Store` accepts opaque bounded byte keys and values and supports only create-only,
-version-matched replace, and version-matched delete. Versions are opaque and a zero
-version is never a wildcard. Ship a deterministic memory backend and a hardened local
-encrypted-file backend behind the same conformance suite.
+Create the host-internal `internal/adapter/credentialstore` port package; the engine is
+not its consumer, so this boundary does not belong in `engine/port`. Its format-agnostic
+`Reader` exposes read, capabilities, and lifecycle operations. `ConditionalWriter`
+exposes only create-only, version-matched replace, and version-matched delete, and
+mutable `Store` embeds both. Versions are opaque and a zero version is never a wildcard.
+Mutability is expressed by interface implementation rather than a capability flag that
+could contradict the method set. Ship a deterministic memory Store and a hardened local
+encrypted-file Store adapter behind the same mutable-Store conformance suite.
+
+Future environment or Kubernetes Secret-backed sources may implement Reader only.
+Consumers that perform durable refresh-token rotation require a mutable CAS Store; they
+must not silently accept a Reader and lose refreshed credentials. No such source or
+consumer is implemented by this decision.
 
 The file constructor requires an explicit absolute owner-only root, a validated
 namespace, and exactly 32 injected key bytes. It performs no environment, XDG, config,

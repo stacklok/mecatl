@@ -59,7 +59,11 @@ type EncryptedFileStore struct {
 	ops       fileOps
 }
 
-var _ Store = (*EncryptedFileStore)(nil)
+var (
+	_ Reader            = (*EncryptedFileStore)(nil)
+	_ ConditionalWriter = (*EncryptedFileStore)(nil)
+	_ Store             = (*EncryptedFileStore)(nil)
+)
 
 // NewEncryptedFile constructs a local encrypted-file store. root must be an
 // explicit absolute owner-only path and key must contain exactly 32 bytes of

@@ -62,7 +62,11 @@ type memoryStore struct {
 	closed    atomic.Bool
 }
 
-var _ Store = (*memoryStore)(nil)
+var (
+	_ Reader            = (*memoryStore)(nil)
+	_ ConditionalWriter = (*memoryStore)(nil)
+	_ Store             = (*memoryStore)(nil)
+)
 
 func (s *memoryStore) Get(ctx context.Context, key []byte) (Record, error) {
 	if err := s.preflight(ctx, key); err != nil {

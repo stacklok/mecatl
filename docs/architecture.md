@@ -53,13 +53,20 @@ This page is the overview and router; the big picture and the layering rule are 
 ### Internal credential store
 
 `internal/adapter/credentialstore` is a host-internal, credential-format-agnostic
-CAS boundary for opaque binary records. It is not an engine port and is not wired by
-default: no command, provider, OAuth flow, or MCP adapter constructs it yet. Future
-consumers must explicitly inject a backend and, for encrypted files, an absolute root
-and an exact 32-byte key acquired elsewhere.
+port for opaque binary records. It stays under `internal` rather than `engine/port`
+because the engine is not its consumer. Its `Reader` contract provides lookup,
+capabilities, and lifecycle operations; `ConditionalWriter` provides create-only and
+version-matched replace/delete; mutable `Store` embeds both. Mutability is represented
+by the implemented interface, not a capability bit that could disagree with it.
 
-The memory and local encrypted-file backends share create-only and version-matched
-replace/delete semantics. The file backend hashes arbitrary-byte logical keys to path
+The package is not wired by default: no command, provider, OAuth flow, or MCP adapter
+constructs it yet. Future environment or Kubernetes Secret-backed sources may satisfy
+Reader only. A consumer that durably rotates refreshed credentials requires a mutable
+CAS Store. No environment source is implemented here.
+
+Memory and local encrypted storage are Store adapters. Encrypted-file consumers must
+explicitly inject an absolute root and an exact 32-byte key acquired elsewhere. Both
+share create-only and version-matched replace/delete semantics. The file backend hashes
 names, encrypts strict bounded envelopes with AES-256-GCM and location-bound AAD, and
 serializes the complete CAS under stable per-record flock sentinels. Supported Unix
 stores enforce owner-only modes and reject symlinks, special files, hard links, and

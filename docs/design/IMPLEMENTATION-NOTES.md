@@ -19,12 +19,19 @@ Prefer updating the relevant design doc + this file over re-growing CLAUDE.md.
 
 ## Credential store
 
-`internal/adapter/credentialstore` owns a narrow host-internal `Store`; it does not
-import OAuth, MCP, provider, config, XDG, or composition packages. Logical stores are
-namespace-bound. Keys and values are arbitrary bytes with explicit caps. `Put` is
-create-only when `expected == nil` and otherwise replace-only for the exact opaque
-version; `Delete` always requires a valid exact version. There is no unconditional or
-zero-version wildcard. The shared suite in
+`internal/adapter/credentialstore` owns a narrow host-internal port; it stays out of
+`engine/port` because the engine is not its consumer. `Reader` provides `Get`, backend
+capabilities, and `Close`; `ConditionalWriter` provides CAS `Put`/`Delete`; mutable
+`Store` embeds both. Mutability is represented by interface implementation, not a
+capability flag. Future environment or Kubernetes Secret-backed sources may implement
+Reader only, while any consumer that durably rotates refreshed credentials requires a
+mutable Store. Issue #519 implements no environment source.
+
+The package does not import OAuth, MCP, provider, config, XDG, or composition packages.
+Logical stores are namespace-bound. Keys and values are arbitrary bytes with explicit
+caps. `Put` is create-only when `expected == nil` and otherwise replace-only for the exact
+opaque version; `Delete` always requires a valid exact version. There is no unconditional
+or zero-version wildcard. The shared mutable-Store suite in
 `internal/adapter/credentialstore/conformance/conformance.go` drives both backends.
 
 The deterministic memory backend shares nested namespace maps behind one mutex, copies

@@ -59,16 +59,30 @@ type Record struct {
 }
 
 // Capabilities describes backend durability and compare-and-swap scope.
+// Mutability is represented by implementing ConditionalWriter, not by a flag
+// that could contradict the implemented interfaces.
 type Capabilities struct {
 	Persistent      bool
 	CrossProcessCAS bool
 }
 
-// Store is a namespace-bound opaque record store.
-type Store interface {
+// Reader is the host-internal read-only port for a namespace-bound opaque
+// credential source. Backends such as environment or Kubernetes Secret sources
+// may implement Reader without supporting mutation.
+type Reader interface {
 	// Get returns an owned value copy and its current opaque version.
 	Get(ctx context.Context, key []byte) (Record, error)
 
+	Capabilities() Capabilities
+
+	// Close is safe for concurrent use and idempotent for this handle.
+	Close() error
+}
+
+// ConditionalWriter provides compare-and-swap mutation of opaque credential
+// records. It is intentionally separate from Reader so read-only sources do not
+// have to expose mutations they cannot honor.
+type ConditionalWriter interface {
 	// Put is always conditional. A nil expected version means create-only. A
 	// non-nil expected version replaces only a record carrying that version.
 	// There is no unconditional overwrite mode, and a zero Version is not a
@@ -78,11 +92,13 @@ type Store interface {
 	// Delete removes only the record carrying expected. A missing record returns
 	// ErrNotFound; a stale, zero, or foreign version returns ErrConflict.
 	Delete(ctx context.Context, key []byte, expected Version) error
+}
 
-	Capabilities() Capabilities
-
-	// Close is safe for concurrent use and idempotent for this handle.
-	Close() error
+// Store is a mutable namespace-bound opaque record store. Durable credential
+// refresh rotation requires a Store so updates remain conditional.
+type Store interface {
+	Reader
+	ConditionalWriter
 }
 
 func validateNamespace(namespace string) error {

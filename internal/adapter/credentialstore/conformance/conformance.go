@@ -1,9 +1,10 @@
-// Package conformance provides the reusable contract tests for credential stores.
+// Package conformance provides the reusable contract tests for mutable
+// credential stores.
 //
 // Importing testing from this non-test package is intentional: backend tests call
 // Run with a factory that opens namespace-bound handles over one shared logical
-// backend. The suite observes only credentialstore.Store and does not depend on
-// backend representation.
+// backend. The suite observes the full credentialstore.Store contract, including
+// conditional mutation, and does not apply to read-only Reader implementations.
 package conformance
 
 import (
