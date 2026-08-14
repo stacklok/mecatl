@@ -304,9 +304,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case renderTickMsg:
 		return m.onRenderTick()
 
-	case startupResumeReadyMsg:
-		return m.finishStartupResume()
-
 	case quitDisarmMsg, quitDDisarmMsg, clickDisarmMsg:
 		return m.onDisarmMsg(msg)
 
@@ -439,8 +436,13 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 // split out of update so the top-level dispatcher stays under the cyclomatic cap;
 // handled=false means the msg is none of these and the caller continues its
 // fall-through chain (MCP/skills/agents overlays → stream events).
+//
+//nolint:gocyclo // one flat lifecycle message classifier; splitting it would duplicate the handled contract.
 func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
+	case startupResumeReadyMsg:
+		mm, cmd := m.finishStartupResume()
+		return mm, cmd, true
 	case reconnectMsg:
 		// Live-feed reconnect loop msgs (issue #387): degraded-state markers and
 		// the catch-up event msgs ride the reconnect channel. Handled here (a
