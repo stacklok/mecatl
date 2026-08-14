@@ -1,6 +1,6 @@
 # ADR 0108 — Session discovery uses durable kind metadata and an authoritative transcript
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-14
 - Scope: session creation metadata, SessionStore snapshots/meta projections, HarnessService session inventory/transcript surfaces, and mecatui session discovery/continuation
 
