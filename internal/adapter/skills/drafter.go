@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/skillvalidation"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 )
 
@@ -107,6 +109,13 @@ func WithClock(now func() time.Time) DraftOption {
 	}
 }
 
+// WithNeutralValidation controls the shared logical skill validator. Validation
+// is enabled by default; false is the explicit compatibility escape hatch for a
+// host that has not yet migrated its legacy quarantine policy.
+func WithNeutralValidation(enabled bool) DraftOption {
+	return func(d *DirDrafter) { d.validate = enabled }
+}
+
 // DirDrafter is the local-filesystem Drafter. It writes candidates as
 // <QuarantineDir>/<name>/SKILL.md with a provenance-stamped frontmatter, reusing
 // parseSkill/validateName for validation and a snapshot of the active skill
@@ -116,6 +125,7 @@ type DirDrafter struct {
 	existing      []Skill // snapshot of active skills, for the novelty check (read-only)
 	threshold     float64
 	now           func() time.Time
+	validate      bool
 }
 
 // Compile-time assertion that *DirDrafter implements Drafter.
@@ -133,6 +143,7 @@ func NewDirDrafter(quarantineDir string, existing []Skill, opts ...DraftOption) 
 		existing:      append([]Skill(nil), existing...),
 		threshold:     DefaultSimilarityThreshold,
 		now:           time.Now,
+		validate:      true,
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -187,6 +198,28 @@ func (d *DirDrafter) Draft(ctx context.Context, req DraftRequest) (DraftResult, 
 		warnings = append(warnings, fmt.Sprintf(
 			"body is %d bytes; it exceeds %d bytes and will be truncated when the skill is activated — keep it concise and reference detail with a \"For detail, Read: <skill-dir>/REFERENCE.md\" line",
 			len(body), maxBodyBytes))
+	}
+
+	if d.validate {
+		inventory := make([]learning.SkillInventoryItem, 0, len(d.existing))
+		for _, existing := range d.existing {
+			inventory = append(inventory, learning.SkillInventoryItem{
+				Name: existing.Name,
+				Bundle: learning.SkillBundle{
+					Name: existing.Name, Description: existing.Description, Body: existing.Body,
+				},
+			})
+		}
+		_, err := (skillvalidation.Validator{}).Validate(ctx, learning.SkillValidationRequest{
+			Partition:  learning.SkillPartition{Principal: "legacy-skilldraft"},
+			OwnerAgent: "legacy-skilldraft",
+			Bundle:     learning.SkillBundle{Name: name, Description: desc, Body: body},
+			Provenance: learning.SkillProvenance{Origin: learning.SkillProvenanceLegacyModel},
+			Inventory:  inventory,
+		})
+		if err != nil {
+			return DraftResult{}, fmt.Errorf("skill validation failed: %w", err)
+		}
 	}
 
 	// Novelty check (warn-only).

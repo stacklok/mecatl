@@ -59,6 +59,7 @@ type LearningProposal struct {
 	Project                                                         string
 	PromotionAvailable                                              bool
 	PromotionUnavailableReason                                      string
+	LearnedSkillID                                                  string
 }
 type LearningProposalPage struct {
 	Proposals          []LearningProposal
@@ -141,7 +142,7 @@ func mapLearningProposal(p *mecatlv1.LearningProposal) LearningProposal {
 	if p == nil {
 		return LearningProposal{}
 	}
-	out := LearningProposal{ID: p.GetId(), Version: p.GetVersion(), Status: p.GetStatus(), Kind: p.GetKind(), Key: p.GetKey(), Value: p.GetValue(), Description: p.GetDescription(), Title: p.GetTitle(), Body: p.GetBody(), Triggers: append([]string(nil), p.GetTriggers()...), ProjectScoped: p.GetProjectScoped(), PromotionAvailable: p.GetPromotionAvailable(), PromotionUnavailableReason: p.GetPromotionUnavailableReason()}
+	out := LearningProposal{ID: p.GetId(), Version: p.GetVersion(), Status: p.GetStatus(), Kind: p.GetKind(), Key: p.GetKey(), Value: p.GetValue(), Description: p.GetDescription(), Title: p.GetTitle(), Body: p.GetBody(), Triggers: append([]string(nil), p.GetTriggers()...), ProjectScoped: p.GetProjectScoped(), PromotionAvailable: p.GetPromotionAvailable(), PromotionUnavailableReason: p.GetPromotionUnavailableReason(), LearnedSkillID: p.GetLearnedSkillId()}
 	if t := p.GetCreatedAt(); t != nil && t.IsValid() {
 		out.CreatedAt = t.AsTime()
 	}

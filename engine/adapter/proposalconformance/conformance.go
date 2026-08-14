@@ -150,6 +150,31 @@ func Run(t *testing.T, f Factory) {
 			t.Fatal("returned record aliases repository state")
 		}
 	})
+	t.Run("historical-procedure-materialization", func(t *testing.T) {
+		r := f(t)
+		p, candidate := fixture("procedure")
+		candidate.Kind, candidate.Key, candidate.Value, candidate.Description = learning.CandidateProcedure, "", "", ""
+		candidate.Title, candidate.Body = "Review Go changes", "Inspect the diff and run focused tests."
+		records, err := r.StageBatch(context.Background(), p, strings.Repeat("9", 64), []learning.Candidate{candidate}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := r.ClaimPromotion(context.Background(), p, records[0].ID, records[0].Version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deferred, err := r.Finalize(context.Background(), p, claimed.ID, claimed.Version, learning.ProposalDeferredUnsupported, nil, learning.Decision{Kind: learning.DecisionDefer, Actor: "legacy", Reason: "skills were unsupported"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		linked, err := r.LinkSkillDraft(context.Background(), p, deferred.ID, deferred.Version, "skill-review-go", learning.Decision{Kind: learning.DecisionApprove, Actor: "operator", Reason: "explicit materialization"})
+		if err != nil || linked.Status != learning.ProposalSkillMaterialized || linked.SkillID != "skill-review-go" || linked.Receipt != nil {
+			t.Fatalf("linked=%#v err=%v", linked, err)
+		}
+		if _, err = r.LinkSkillDraft(context.Background(), p, deferred.ID, deferred.Version, "skill-other", learning.Decision{Kind: learning.DecisionApprove}); !errors.Is(err, learning.ErrProposalVersionConflict) {
+			t.Fatalf("stale linkage=%v", err)
+		}
+	})
 }
 func fixture(x string) (learning.ProposalPartition, learning.Candidate) {
 	return learning.ProposalPartition{Principal: "issuer\x00subject", Project: "project"}, learning.Candidate{Kind: learning.CandidateProjectFact, Key: "project/" + x, Value: "Use task test.", Description: "Test command", Evidence: []learning.EvidenceRef{{SessionID: session.SessionID("s-" + x), Locator: learning.EvidenceMessage, Ordinal: 0, Digest: strings.Repeat("d", 64)}}}

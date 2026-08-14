@@ -652,7 +652,7 @@ layer: `learning.ProposalRepository` stages deterministic content-addressed reco
 principal/project; reference `memproposal` and the flocked `reflectionstore` adapter provide atomic
 CAS transitions through staged, promoting, terminal, and undone states. The importable standard
 memory-promotion policy rejects unsafe/transient facts, never overwrites conflicts or user-explicit
-revisions, defers procedures, and uses per-candidate presence-and-version CAS. Memory revisions carry
+revisions, routes procedure candidates into the evaluated learned-skill pipeline, and uses per-candidate presence-and-version CAS. Memory revisions carry
 an optional proposal id, allowing a crashed promoting claim to reconcile without a duplicate write.
 Batches may partially promote by design because each candidate is its own atomic convergence unit.
 Standard composition signal-gates completions into one bounded Build-owned coordinator with fair
@@ -664,8 +664,33 @@ principal are verified, project partitions remain reviewable but project promoti
 digest availability rather than transcript text. `/reflections` provides bounded TUI review and
 `/reflect` explicitly submits the current completed session even when automatic mode is off
 ([ADR 0109](adr/0109-staged-learning-proposals.md)).
-Procedures remain visibly
-`deferred_unsupported`; skill evaluation/promotion remains deferred to #510.
+Procedures initially remain visibly `deferred_unsupported`. The importable learned-skill
+contracts ([ADR 0110](adr/0110-evaluated-agent-owned-skills.md)) now let a host explicitly
+materialize one as an owner-agent draft: body-only bundles are content-addressed and move by
+CAS through draft, evaluated, staged, active, archived, or rejected states, with bounded
+provenance, evaluations, receipts, and version history. `memskill` and the shared conformance
+suite prove lifecycle, ownership, partition, and concurrency behavior; the durable
+`internal/adapter/skillstore` adds a stable flock, bounded atomic manifest, and immutable
+content-addressed `SKILL.md` versions with reopen and multi-instance CAS coverage. `skillvalidation`
+rejects unsafe framing, secrets, machine paths, permission claims, generated assets, and
+inventory collisions; the legacy `DirDrafter` now delegates logical checks to it while retaining
+quarantine and an explicit compatibility-off option. Historical title/body procedures stay readable
+and can be linked from `deferred_unsupported` only by explicit materialization.
+`engine/adapter/skillmaterialize` turns an evidence-backed proposal into a validated
+`SkillDraftInput`, then uses recoverable create-then-CAS-link reconciliation. A crash after
+Draft creation converges by proposal provenance and SkillID without a duplicate. The legacy
+`mecated skills promote` filesystem workflow remains operator/manual-only and deprecated;
+`ImportLegacyDraft` imports `origin:model` quarantine content as an unevidenced Draft, never
+Active. The synchronous `skilllifecycle.Pipeline` now applies off/review/auto policy: explicit drafts
+stay inactive, evidence-backed procedures are evaluated, FAIL rejects, PASS/ABSTAIN stage, and only
+an auto-mode PASS activates. The existing reflection coordinator owns automatic work and crash retry
+re-enters the proposal-linked materializer; there is no second queue or historical sweep.
+`skillfs.AtomicCatalog` publishes one complete immutable generation behind an atomic pointer, merging
+external skills first and active learned bodies last. The same pointer feeds shared, selector, and no-fs
+catalogs plus live `ListSkills`; external collisions remain visible and block learned activation.
+Caller/project-partitioned gRPC and HTTP methods provide bounded list/get/diff/receipts and CAS
+activate/reject/archive/rollback. Reflections links procedure proposals to learned skills, while `/skills`
+marks live agent-owned versions. The legacy direct filesystem promotion command remains deprecated.
 
 ## Caller identity
 

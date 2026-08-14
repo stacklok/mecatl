@@ -91,8 +91,10 @@ const (
 	SignalFailureRecovery SignalKind = "failure_recovery"
 	// SignalRepeatedToolSequence marks a stable repeated multi-tool sequence.
 	SignalRepeatedToolSequence SignalKind = "repeated_tool_sequence"
-	// SignalExplicitRemember marks a narrow explicit remember/learn request.
+	// SignalExplicitRemember marks a narrow explicit fact remember/learn request.
 	SignalExplicitRemember SignalKind = "explicit_remember"
+	// SignalExplicitLearnProcedure marks an explicit request to retain a reusable procedure.
+	SignalExplicitLearnProcedure SignalKind = "explicit_learn_procedure"
 	// SignalContradiction is supplied by a host with cross-session knowledge.
 	SignalContradiction SignalKind = "contradiction"
 )
@@ -101,7 +103,7 @@ const (
 func (k SignalKind) Valid() bool {
 	switch k {
 	case SignalSubstantialSuccess, SignalRepeatedCorrection, SignalFailureRecovery,
-		SignalRepeatedToolSequence, SignalExplicitRemember, SignalContradiction:
+		SignalRepeatedToolSequence, SignalExplicitRemember, SignalExplicitLearnProcedure, SignalContradiction:
 		return true
 	default:
 		return false
@@ -137,13 +139,15 @@ type Signal struct {
 }
 
 // Candidate is a bounded durable-learning proposal. Facts use Key, Value, and
-// optional Description. Procedures use Title and Body. Procedures carry no skill
-// name, path, assets, evaluation, or promotion operation.
+// optional Description. Procedures use Title and Body; new skill-materializable
+// procedures also carry Name. Name remains optional here so historical title/body
+// procedure proposals remain readable.
 type Candidate struct {
 	Kind        CandidateKind `json:"kind"`
 	Key         string        `json:"key,omitempty"`
 	Value       string        `json:"value,omitempty"`
 	Description string        `json:"description,omitempty"`
+	Name        string        `json:"name,omitempty"`
 	Title       string        `json:"title,omitempty"`
 	Body        string        `json:"body,omitempty"`
 	Evidence    []EvidenceRef `json:"evidence"`
@@ -247,12 +251,13 @@ func ValidateCandidate(in Input, candidate Candidate) error {
 	switch candidate.Kind {
 	case CandidateProcedure:
 		if strings.TrimSpace(candidate.Title) == "" || strings.TrimSpace(candidate.Body) == "" ||
+			(candidate.Name != "" && !ValidLearnedSkillName(candidate.Name)) ||
 			candidate.Key != "" || candidate.Value != "" || candidate.Description != "" {
-			return fmt.Errorf("%w: procedure requires title/body and forbids fact fields", ErrInvalidCandidate)
+			return fmt.Errorf("%w: procedure requires title/body, optional valid name, and forbids fact fields", ErrInvalidCandidate)
 		}
 	default:
 		if strings.TrimSpace(candidate.Key) == "" || strings.TrimSpace(candidate.Value) == "" ||
-			candidate.Title != "" || candidate.Body != "" {
+			candidate.Name != "" || candidate.Title != "" || candidate.Body != "" {
 			return fmt.Errorf("%w: fact requires key/value and forbids procedure fields", ErrInvalidCandidate)
 		}
 		entry := tool.MemoryEntry{Key: candidate.Key, Value: candidate.Value, Description: candidate.Description}
@@ -282,6 +287,17 @@ func ValidateCandidate(in Input, candidate Candidate) error {
 	return nil
 }
 
+// ValidateSkillCandidate requires the named procedure shape used for skill materialization.
+func ValidateSkillCandidate(in Input, candidate Candidate) error {
+	if err := ValidateCandidate(in, candidate); err != nil {
+		return err
+	}
+	if candidate.Kind != CandidateProcedure || !ValidLearnedSkillName(candidate.Name) {
+		return fmt.Errorf("%w: skill candidate requires procedure kind and name", ErrInvalidCandidate)
+	}
+	return ValidateSkillBundle(SkillBundle{Name: candidate.Name, Description: candidate.Title, Body: candidate.Body})
+}
+
 // ValidateOutcome enforces abstention/proposal structure and duplicate keys.
 func ValidateOutcome(in Input, out Outcome) error {
 	if !out.Kind.Valid() {
@@ -303,7 +319,11 @@ func ValidateOutcome(in Input, out Outcome) error {
 		}
 		identity := "fact\x00" + strings.ToLower(strings.TrimSpace(candidate.Key))
 		if candidate.Kind == CandidateProcedure {
-			identity = "procedure\x00" + strings.ToLower(strings.TrimSpace(candidate.Title))
+			procedureName := candidate.Name
+			if procedureName == "" {
+				procedureName = candidate.Title
+			}
+			identity = "procedure\x00" + strings.ToLower(strings.TrimSpace(procedureName))
 		}
 		if _, ok := keys[identity]; ok {
 			return fmt.Errorf("%w: duplicate candidate key", ErrInvalidOutcome)
@@ -329,9 +349,9 @@ func validateExistingFact(fact ExistingFact) error {
 }
 
 func candidateTextValid(candidate Candidate) bool {
-	return utf8.ValidString(candidate.Key) && utf8.ValidString(candidate.Value) &&
+	return utf8.ValidString(candidate.Key) && utf8.ValidString(candidate.Value) && utf8.ValidString(candidate.Name) &&
 		utf8.ValidString(candidate.Description) && utf8.ValidString(candidate.Title) && utf8.ValidString(candidate.Body) &&
-		len(candidate.Key) <= MaxCandidateKeyBytes && len(candidate.Value) <= MaxCandidateValueBytes &&
+		len(candidate.Key) <= MaxCandidateKeyBytes && len(candidate.Value) <= MaxCandidateValueBytes && len(candidate.Name) <= 64 &&
 		len(candidate.Description) <= MaxCandidateDescriptionBytes && len(candidate.Title) <= MaxCandidateTitleBytes &&
 		len(candidate.Body) <= MaxCandidateBodyBytes
 }
@@ -344,8 +364,8 @@ var (
 )
 
 func unsafeCandidateText(c Candidate) bool {
-	all := strings.TrimSpace(strings.Join([]string{c.Key, c.Value, c.Description, c.Title, c.Body}, "\n"))
-	for _, value := range []string{c.Key, c.Value, c.Description, c.Title, c.Body} {
+	all := strings.TrimSpace(strings.Join([]string{c.Key, c.Value, c.Description, c.Name, c.Title, c.Body}, "\n"))
+	for _, value := range []string{c.Key, c.Value, c.Description, c.Name, c.Title, c.Body} {
 		if tool.SecretShapedMemoryValue(c.Key, value) {
 			return true
 		}

@@ -1,5 +1,7 @@
 package server
 
+//revive:disable:exported // RPC methods mirror the generated HarnessService interface
+
 import (
 	"context"
 	"errors"
@@ -418,6 +420,63 @@ func (h *HarnessServer) UndoLearningPromotion(ctx context.Context, req *mecatlv1
 		return nil, toStatus(err)
 	}
 	return &mecatlv1.UndoLearningPromotionResponse{Proposal: proposal}, nil
+}
+
+func (h *HarnessServer) ListLearnedSkills(ctx context.Context, req *mecatlv1.ListLearnedSkillsRequest) (*mecatlv1.ListLearnedSkillsResponse, error) {
+	resp, err := h.svc.ListLearnedSkills(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+func (h *HarnessServer) GetLearnedSkill(ctx context.Context, req *mecatlv1.GetLearnedSkillRequest) (*mecatlv1.GetLearnedSkillResponse, error) {
+	resp, err := h.svc.GetLearnedSkill(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+func (h *HarnessServer) DiffLearnedSkillVersions(ctx context.Context, req *mecatlv1.DiffLearnedSkillVersionsRequest) (*mecatlv1.DiffLearnedSkillVersionsResponse, error) {
+	resp, err := h.svc.DiffLearnedSkillVersions(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+func (h *HarnessServer) ActivateLearnedSkill(ctx context.Context, req *mecatlv1.MutateLearnedSkillRequest) (*mecatlv1.MutateLearnedSkillResponse, error) {
+	resp, err := h.svc.ActivateLearnedSkill(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+func (h *HarnessServer) RejectLearnedSkill(ctx context.Context, req *mecatlv1.MutateLearnedSkillRequest) (*mecatlv1.MutateLearnedSkillResponse, error) {
+	resp, err := h.svc.RejectLearnedSkill(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+func (h *HarnessServer) ArchiveLearnedSkill(ctx context.Context, req *mecatlv1.MutateLearnedSkillRequest) (*mecatlv1.MutateLearnedSkillResponse, error) {
+	resp, err := h.svc.ArchiveLearnedSkill(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+func (h *HarnessServer) RollbackLearnedSkill(ctx context.Context, req *mecatlv1.RollbackLearnedSkillRequest) (*mecatlv1.MutateLearnedSkillResponse, error) {
+	resp, err := h.svc.RollbackLearnedSkill(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
+}
+func (h *HarnessServer) ListSkillChanges(ctx context.Context, req *mecatlv1.ListSkillChangesRequest) (*mecatlv1.ListSkillChangesResponse, error) {
+	resp, err := h.svc.ListSkillChanges(ctx, req)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return resp, nil
 }
 
 // ListCommands returns the available slash commands for the requested workspace.

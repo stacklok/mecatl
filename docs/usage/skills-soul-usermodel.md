@@ -1,10 +1,18 @@
 ## 7. Skills, soul, user model
 
-### The self-improving-skill loop (`SkillDraft` + `mecated skills promote`)
+### Legacy self-improving-skill loop (`SkillDraft` + `mecated skills promote`)
+
+> **Deprecated compatibility workflow:** `mecated skills promote` operates only on
+> the old `origin:model` quarantine tree. It does not inspect or activate records in
+> the evaluated skill lifecycle repository. Lifecycle integrations must explicitly
+> import a legacy candidate as an unevidenced Draft. The standard evaluator abstains
+> for unevidenced drafts; any later review/evaluation/stage/activation is an explicit host or
+> operator action. There is no command or startup sweep that makes an unevaluated lifecycle
+> skill live. Operator/manual skills already supplied through `--skills-dir` are unchanged.
 
 `--skills-draft-dir <quarantine>` enables a **writable** `SkillDraft` tool so the
-agent can author a reusable skill from a procedure it just performed. This is the
-*only* tool that produces skills, and it is bounded by a hard trust boundary:
+agent can author a reusable skill from a procedure it just performed. This legacy
+quarantine tool is bounded by a hard trust boundary:
 
 - A drafted skill is **never active in the session that wrote it.** `SkillDraft`
   validates and sanitizes the (untrusted) candidate — name regex, an
@@ -214,8 +222,15 @@ It surfaces three ways:
   automatic completion observer; explicit reflection remains available through its lazy path.
   `review` reflects eligible clean completions and stages bounded, evidence-backed proposals
   without writing memory. `auto` uses the same stage-first path and then promotes only
-  conservative standard-policy-eligible, non-conflicting facts. Project/procedure proposals are
-  staged only when the session root is the exact trusted configured root. Proposal detail
+  conservative standard-policy-eligible, non-conflicting facts. Evidence-backed procedures use
+  the versioned learned-skill lifecycle: `review` evaluates and stages PASS/ABSTAIN (FAIL rejects),
+  while `auto` activates only PASS and publishes it to the live Skill catalog without restart.
+  `off` never materializes procedures automatically; explicit `SkillDraft` or legacy import creates
+  only an inactive validated draft. Project proposals are eligible only when the session root is the
+  exact trusted configured root. The gRPC/HTTP learned-skill API lists and inspects bounded bodies,
+  diffs, evidence/evaluations, and receipts and applies activate/reject/archive/rollback with an
+  expected revision. External/operator skills retain precedence and cannot be lifecycle-mutated.
+  Proposal detail
   re-checks source ownership and evidence digests and exposes a bounded, redacted canonical
   preview before approval; changed, unavailable, and cross-owner evidence is not previewed or
   promotable. `--user-model-review` remains as a deprecated `auto` alias and

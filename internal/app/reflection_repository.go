@@ -64,4 +64,12 @@ func (r *lazyProposalRepository) Finalize(ctx context.Context, p learning.Propos
 	return repo.Finalize(ctx, p, id, version, status, receipt, decision)
 }
 
+func (r *lazyProposalRepository) LinkSkillDraft(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID, version learning.ProposalVersion, skillID learning.SkillID, decision learning.Decision) (learning.ProposalRecord, error) {
+	repo, err := r.get()
+	if err != nil {
+		return learning.ProposalRecord{}, err
+	}
+	return repo.LinkSkillDraft(ctx, p, id, version, skillID, decision)
+}
+
 var _ learning.ProposalRepository = (*lazyProposalRepository)(nil)

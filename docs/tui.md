@@ -311,13 +311,16 @@ in your `~/.tmux.conf`.
 conventional dirs, e.g. `.claude/skills`, when present) — consistent with
 agent-definition discovery. Skills register only when at least one `SKILL.md` is
 found (opt-in by presence), so with none, `caps.Skills` is false and the `?`
-overlay reflects that. When skills ARE discovered, `/skills` opens a read-only
-inventory panel listing each skill's name + one-line description (a startup
-snapshot via the `ListSkills` RPC — skills are immutable for the process
-lifetime). The panel opens with a **type-to-filter** input focused: type to
-narrow the list by a case-insensitive substring match over each skill's **name**
-and **description** (mirroring the `/models` picker's filter, but read-only —
-there is no cursor/enter/select here, activation stays the model's call). `esc`
+overlay reflects that. `/skills` opens the combined inventory panel: external skills show
+name/description from the live `ListSkills` generation, while learned skills also show owner and
+lifecycle state. Active learned entries are labelled `agent-owned` with owner and active version;
+external skills remain unlabelled and retain precedence. `up`/`down` selects a learned skill and
+`enter` opens bounded body, evidence/evaluation, receipt history, and a `v` version diff; `a` activates, `x` rejects,
+`d` archives, and `r` rolls back through server-side expected-revision CAS. A stale action stays in
+the detail with a refresh hint. Procedure linkage is also shown in `/reflections`; changes surface
+non-modally and never force-open either overlay. The panel opens with a **type-to-filter** input focused: type to
+narrow the external live list by a case-insensitive substring match over each skill's **name**
+and **description**. `esc`
 is two-stage: a non-empty filter is cleared first (panel stays open); a second
 `esc` closes the panel. A long inventory is **scrollable** the same way `/soul` is:
 `pgup`/`pgdn` (and `up`/`down`, `home`/`end`) move a fixed line-window over the
@@ -438,7 +441,7 @@ Forget remains an ordinary model tool behind its permission gate.
 **`/reflections` and `/reflect` (proposal review).** `/reflections` is gated on the
 server's proposal capability. It loads at most 50 operator proposals plus at most 50 proposals
 for the current project, keeps independent scope cursors, sorts staged/conflicted work ahead of recent terminal records,
-and offers `n`/`p` bounded pages, `enter` detail, `a` approve facts, `x` reject, and `u` compensating undo. Procedure approval stays disabled and visibly deferred (#510 is not implemented). Detail uses a terminal-height window with arrow/page scrolling and shows the complete bounded canonical fact key, value, scope, and optional description before approval, plus
+and offers `n`/`p` bounded pages, `enter` detail, `a` approve facts or materialize/evaluate evidence-backed procedures, `x` reject, and `u` compensating undo. A materialized procedure shows its learned-skill id and points to `/skills`; no receipt auto-opens a modal. Detail uses a terminal-height window with arrow/page scrolling and shows the complete bounded canonical fact key, value, scope, and optional description before approval, plus
 bounded proposal metadata, triggers, decisions, promotion receipt, and ownership-checked,
 digest-reverified evidence provenance plus its bounded redacted canonical preview (source session,
 locator/ordinal, optional event sequence and tool call, digest, and preview). Preview projection omits

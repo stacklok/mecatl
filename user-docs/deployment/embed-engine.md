@@ -173,8 +173,22 @@ single-call model-backed reflector over an injected provider, selected model, to
 counter, and explicit limits. It has no tools or filesystem access and returns only a
 strictly evidence-backed proposal set or explicit abstention.
 
-This is a library seam, not an automatic memory workflow: it does not persist proposals,
-write memory, schedule jobs, expose a server API, or promote procedures into skills. Hosts
+The module also exposes replaceable, CAS-only learned-skill lifecycle contracts. Hosts can
+validate body-only agent-owned bundles, store content-addressed versions with bounded
+provenance and evaluations, and explicitly link a historical deferred procedure proposal to a
+draft. `engine/adapter/memskill` is the in-memory reference,
+`engine/adapter/skillvalidation` is the logical admission validator, and
+`engine/adapter/skillmaterialize` is the recoverable proposal-to-draft linker. The host repository
+ships `internal/adapter/skillstore` as a durable single-host flock/manifest implementation with
+immutable content-addressed `SKILL.md` files. Procedure materialization uses recoverable
+create-then-CAS-link semantics, so retry after a crash does not duplicate a draft.
+`engine/adapter/skilllifecycle.Pipeline` supplies the synchronous off/review/auto policy over an
+injected repository, validator, evaluator, and atomic publisher; `engine/adapter/skillfs.AtomicCatalog`
+supplies a complete-generation live Skill tool while preserving existing snapshot sources. Standard
+mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
+replace every seam.
+
+The engine library seam itself does not choose persistence, schedule jobs, or expose a transport. Hosts
 that consume proposals own review, authorization, and persistence. See the
 [architecture guide](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#evidence-backed-reflection)
 for the evidence and output-validation contract.

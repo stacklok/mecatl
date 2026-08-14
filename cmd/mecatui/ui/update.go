@@ -946,7 +946,11 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		return dm, tea.Batch(pm.refreshCmd(), modeCmd, proceedCmd, drainCmd, refresh)
 	}
 	mm, drainCmd := m.drainQueue(msg.Stop, msg.Transient)
-	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, m.armLiveFeed())
+	var skillChanges tea.Cmd
+	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
+		skillChanges = client.ListSkillChangesCmd(m.deps.Ctx, lifecycle)
+	}
+	return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, m.armLiveFeed(), skillChanges)
 }
 
 // noticeLine renders the muted-notice text for a transient advisory message

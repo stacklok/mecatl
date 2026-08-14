@@ -210,7 +210,7 @@ func (m Model) updateReflectionsMsg(msg tea.Msg) (tea.Model, bool) {
 }
 
 func reflectionApprovable(p client.LearningProposal) bool {
-	if p.Status != client.ProposalStatusStaged || p.Kind == "procedure" || len(p.Evidence) == 0 || !p.PromotionAvailable {
+	if (p.Status != client.ProposalStatusStaged && p.Status != client.ProposalStatusDeferred) || len(p.Evidence) == 0 || !p.PromotionAvailable {
 		return false
 	}
 	for _, evidence := range p.Evidence {
@@ -295,10 +295,17 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 		if p.Promotion != nil {
 			lines = append(lines, "receipt: "+reflectionDisplayText(p.Promotion.MemoryKey, 96)+" @ "+reflectionDisplayText(p.Promotion.ResultVersion, 64))
 		}
+		if p.LearnedSkillID != "" {
+			lines = append(lines, "learned skill: "+reflectionDisplayText(p.LearnedSkillID, 96)+" (open /skills to inspect versions)")
+		}
 		switch p.Status {
-		case client.ProposalStatusStaged:
+		case client.ProposalStatusStaged, client.ProposalStatusDeferred:
 			if p.Kind == "procedure" {
-				lines = append(lines, "procedure promotion is deferred; x reject")
+				if reflectionApprovable(*p) {
+					lines = append(lines, "a materialize and evaluate learned-skill draft   x reject")
+				} else {
+					lines = append(lines, "skill materialization disabled: evidence unavailable or lifecycle unavailable; x reject")
+				}
 			} else if !p.PromotionAvailable {
 				reason := p.PromotionUnavailableReason
 				if reason == "" {

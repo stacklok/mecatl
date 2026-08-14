@@ -15,6 +15,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -65,6 +66,14 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/mcp/toolhive/groups", h.listToolHiveGroups)
 	h.mux.HandleFunc("GET /v1/agents", h.listAgents)
 	h.mux.HandleFunc("GET /v1/skills", h.listSkills)
+	h.mux.HandleFunc("GET /v1/skills/learned", h.listLearnedSkills)
+	h.mux.HandleFunc("GET /v1/skills/learned/changes", h.listSkillChanges)
+	h.mux.HandleFunc("GET /v1/skills/learned/{id}", h.getLearnedSkill)
+	h.mux.HandleFunc("GET /v1/skills/learned/{id}/diff", h.diffLearnedSkill)
+	h.mux.HandleFunc("POST /v1/skills/learned/{id}/activate", h.activateLearnedSkill)
+	h.mux.HandleFunc("POST /v1/skills/learned/{id}/reject", h.rejectLearnedSkill)
+	h.mux.HandleFunc("POST /v1/skills/learned/{id}/archive", h.archiveLearnedSkill)
+	h.mux.HandleFunc("POST /v1/skills/learned/{id}/rollback", h.rollbackLearnedSkill)
 	h.mux.HandleFunc("GET /v1/models", h.listModels)
 	h.mux.HandleFunc("GET /v1/soul", h.getSoul)
 	h.mux.HandleFunc("GET /v1/usermodel", h.getUserModel)
@@ -194,6 +203,7 @@ type serverCapabilitiesJSON struct {
 	ModelSelection    bool   `json:"model_selection"`
 	Reflection        bool   `json:"reflection"`
 	LearningProposals bool   `json:"learning_proposals"`
+	LearnedSkills     bool   `json:"learned_skills"`
 	Posture           string `json:"posture,omitempty"`
 }
 
@@ -214,6 +224,7 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		ModelSelection:    c.GetModelSelection(),
 		Reflection:        c.GetReflection(),
 		LearningProposals: c.GetLearningProposals(),
+		LearnedSkills:     c.GetLearnedSkills(),
 		Posture:           c.GetPosture(),
 	}
 }
@@ -1313,6 +1324,117 @@ func (h *HTTPHandler) listAgents(w http.ResponseWriter, r *http.Request) {
 // listSkills handles GET /v1/skills.
 func (h *HTTPHandler) listSkills(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.ListSkillsResponse{Skills: h.svc.ListSkills(r.Context())})
+}
+
+func (h *HTTPHandler) listLearnedSkills(w http.ResponseWriter, r *http.Request) {
+	limit, err := strconv.Atoi(defaultString(r.URL.Query().Get("limit"), "0"))
+	if err != nil || limit < 0 || limit > learning.MaxSkillPageSize {
+		http.Error(w, "invalid limit", http.StatusBadRequest)
+		return
+	}
+	resp, err := h.svc.ListLearnedSkills(r.Context(), &mecatlv1.ListLearnedSkillsRequest{Project: r.URL.Query().Get("project"), Cursor: r.URL.Query().Get("cursor"), Limit: int32(limit), State: r.URL.Query().Get("state"), OwnerAgent: r.URL.Query().Get("owner_agent")}) //nolint:gosec // bounded above
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+func (h *HTTPHandler) getLearnedSkill(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.svc.GetLearnedSkill(r.Context(), &mecatlv1.GetLearnedSkillRequest{Project: r.URL.Query().Get("project"), OwnerAgent: r.URL.Query().Get("owner_agent"), Id: r.PathValue("id"), Version: r.URL.Query().Get("version")})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+func (h *HTTPHandler) diffLearnedSkill(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	resp, err := h.svc.DiffLearnedSkillVersions(r.Context(), &mecatlv1.DiffLearnedSkillVersionsRequest{Project: q.Get("project"), OwnerAgent: q.Get("owner_agent"), Id: r.PathValue("id"), FromVersion: q.Get("from"), ToVersion: q.Get("to")})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type learnedSkillMutationBody struct {
+	Project          string `json:"project"`
+	OwnerAgent       string `json:"owner_agent"`
+	Version          string `json:"version"`
+	ExpectedRevision string `json:"expected_revision"`
+	TargetVersion    string `json:"target_version"`
+}
+
+func (*HTTPHandler) decodeLearnedSkillMutation(w http.ResponseWriter, r *http.Request) (learnedSkillMutationBody, bool) {
+	var body learnedSkillMutationBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return body, false
+	}
+	return body, true
+}
+func (h *HTTPHandler) learnedSkillMutation(w http.ResponseWriter, r *http.Request, operation string) {
+	body, ok := h.decodeLearnedSkillMutation(w, r)
+	if !ok {
+		return
+	}
+	request := &mecatlv1.MutateLearnedSkillRequest{Project: body.Project, OwnerAgent: body.OwnerAgent, Id: r.PathValue("id"), Version: body.Version, ExpectedRevision: body.ExpectedRevision}
+	var resp *mecatlv1.MutateLearnedSkillResponse
+	var err error
+	switch operation {
+	case "activate":
+		resp, err = h.svc.ActivateLearnedSkill(r.Context(), request)
+	case "reject":
+		resp, err = h.svc.RejectLearnedSkill(r.Context(), request)
+	case "archive":
+		resp, err = h.svc.ArchiveLearnedSkill(r.Context(), request)
+	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+func (h *HTTPHandler) activateLearnedSkill(w http.ResponseWriter, r *http.Request) {
+	h.learnedSkillMutation(w, r, "activate")
+}
+func (h *HTTPHandler) rejectLearnedSkill(w http.ResponseWriter, r *http.Request) {
+	h.learnedSkillMutation(w, r, "reject")
+}
+func (h *HTTPHandler) archiveLearnedSkill(w http.ResponseWriter, r *http.Request) {
+	h.learnedSkillMutation(w, r, "archive")
+}
+func (h *HTTPHandler) rollbackLearnedSkill(w http.ResponseWriter, r *http.Request) {
+	body, ok := h.decodeLearnedSkillMutation(w, r)
+	if !ok {
+		return
+	}
+	resp, err := h.svc.RollbackLearnedSkill(r.Context(), &mecatlv1.RollbackLearnedSkillRequest{Project: body.Project, OwnerAgent: body.OwnerAgent, Id: r.PathValue("id"), TargetVersion: body.TargetVersion, ExpectedRevision: body.ExpectedRevision})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+func (h *HTTPHandler) listSkillChanges(w http.ResponseWriter, r *http.Request) {
+	limit, err := strconv.Atoi(defaultString(r.URL.Query().Get("limit"), "0"))
+	if err != nil || limit < 0 || limit > learning.MaxSkillPageSize {
+		http.Error(w, "invalid limit", http.StatusBadRequest)
+		return
+	}
+	resp, err := h.svc.ListSkillChanges(r.Context(), &mecatlv1.ListSkillChangesRequest{Project: r.URL.Query().Get("project"), Cursor: r.URL.Query().Get("cursor"), Limit: int32(limit)}) //nolint:gosec // bounded above
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 // listModels handles GET /v1/models. Threads (issue #262) the per-provider

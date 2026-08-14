@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -21,8 +22,9 @@ import (
 type skillsView int
 
 const (
-	skillsNone  skillsView = iota // overlay closed
-	skillsPanel                   // read-only inventory (name + description)
+	skillsNone   skillsView = iota // overlay closed
+	skillsPanel                    // inventory (external + learned lifecycle)
+	skillsDetail                   // learned-skill bounded detail and actions
 )
 
 // skillsBodyLines is the fixed number of inventory rows the panel shows at once
@@ -45,6 +47,10 @@ type skillsState struct {
 	filtered []client.Skill  // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
 	filter   textinput.Model // the type-to-filter input; focused while the panel is open
 	scroll   int             // first visible rendered body row (clamped in the key handlers)
+	learned  []client.LearnedSkill
+	cursor   int
+	detail   *client.LearnedSkill
+	diff     string
 }
 
 // openSkills opens the inventory panel and fires the ListSkills RPC. Only
@@ -68,7 +74,11 @@ func (m Model) openSkills() (tea.Model, tea.Cmd) {
 	ti.Focus()
 	m.skills.filter = ti
 	m.skills.filtered = nil
-	return m, tea.Batch(client.ListSkillsCmd(m.deps.Ctx, m.deps.Skills), textinput.Blink)
+	cmds := []tea.Cmd{client.ListSkillsCmd(m.deps.Ctx, m.deps.Skills), textinput.Blink}
+	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
+		cmds = append(cmds, client.ListLearnedSkillsCmd(m.deps.Ctx, lifecycle))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // closeSkills dismisses the overlay and returns focus to the prompt input. The
@@ -98,9 +108,50 @@ func (m Model) closeSkills() (tea.Model, tea.Cmd) {
 // closes the panel. Every key is handled=true (the open panel swallows keys),
 // unchanged. After any input-feeding key the filter is re-synced (recompute +
 // scroll clamp) and the input's cmd returned for the cursor blink.
+//
+//nolint:gocyclo // panel, lifecycle detail, and filter keys remain in one visible router
 func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.skills.view == skillsNone {
 		return m, nil, false
+	}
+	if m.skills.view == skillsDetail {
+		if key.Matches(msg, m.keys.Close) {
+			m.skills.view, m.skills.detail = skillsPanel, nil
+			return m, nil, true
+		}
+		lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient)
+		if !ok || m.skills.detail == nil {
+			return m, nil, true
+		}
+		action := ""
+		switch msg.String() {
+		case "a":
+			action = "activate"
+		case "x":
+			action = "reject"
+		case "d":
+			action = "archive"
+		case "v":
+			if m.skills.detail.Supersedes != "" {
+				return m, client.DiffLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail), true
+			}
+		case "r":
+			if m.skills.detail.Supersedes != "" {
+				return m, client.RollbackLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail), true
+			}
+		}
+		if action != "" {
+			return m, client.MutateLearnedSkillCmd(m.deps.Ctx, lifecycle, action, *m.skills.detail), true
+		}
+		return m, nil, true
+	}
+	if msg.String() == "enter" && len(m.skills.learned) > 0 {
+		lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient)
+		if !ok {
+			return m, nil, true
+		}
+		selected := m.skills.learned[min(m.skills.cursor, len(m.skills.learned)-1)]
+		return m, client.GetLearnedSkillCmd(m.deps.Ctx, lifecycle, selected), true
 	}
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -112,9 +163,13 @@ func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		mm, cmd := m.closeSkills()
 		return mm, cmd, true
 	case msg.String() == keyMenuDown:
+		if len(m.skills.learned) > 0 {
+			m.skills.cursor = min(m.skills.cursor+1, len(m.skills.learned)-1)
+		}
 		m.skills.scroll = clampScroll(m.skills.scroll+1, m.skillsFilteredRowTotal(), skillsBodyLines)
 		return m, nil, true
 	case msg.String() == keyMenuUp:
+		m.skills.cursor = max(0, m.skills.cursor-1)
 		m.skills.scroll = clampScroll(m.skills.scroll-1, m.skillsFilteredRowTotal(), skillsBodyLines)
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollD):
@@ -179,6 +234,49 @@ func (m Model) syncSkillsFilter() Model {
 // model + handled flag; handled=false for any other message so Update can fall
 // through.
 func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
+	if diff, ok := msg.(client.SkillDiffMsg); ok {
+		if diff.Err != nil {
+			m.skills.err = diff.Err
+		} else {
+			m.skills.diff = diff.Diff
+			m.skills.err = nil
+		}
+		return m, true
+	}
+	if changes, ok := msg.(client.SkillChangesMsg); ok {
+		if changes.Err != nil || len(changes.Changes) == 0 {
+			return m, true
+		}
+		latest := changes.Changes[len(changes.Changes)-1]
+		if latest.ID != m.skillChangeLast {
+			m.skillChangeLast = latest.ID
+			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("%d learned-skill change receipt(s) available — open /skills", len(changes.Changes)))
+		}
+		return m, true
+	}
+	if learned, ok := msg.(client.LearnedSkillsMsg); ok {
+		if learned.Err == nil {
+			m.skills.learned = learned.Skills
+			m.skills.cursor = 0
+		}
+		return m, true
+	}
+	if detail, ok := msg.(client.LearnedSkillMsg); ok {
+		if detail.Err != nil {
+			m.skills.err = detail.Err
+			return m, true
+		}
+		if detail.Skill != nil {
+			value := *detail.Skill
+			m.skills.detail, m.skills.view, m.skills.err = &value, skillsDetail, nil
+			for i := range m.skills.learned {
+				if m.skills.learned[i].ID == value.ID {
+					m.skills.learned[i] = value
+				}
+			}
+		}
+		return m, true
+	}
 	sm, ok := msg.(client.SkillsMsg)
 	if !ok {
 		return m, false
@@ -201,10 +299,44 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 // via centerCard (the same bordered-card treatment as the MCP/agents overlays).
 // All server-derived strings are terminal-sanitized.
 func renderSkillsOverlay(th theme.Theme, st skillsState, caps client.Capabilities, hk helpKeys, width, height int) string {
-	if st.view != skillsPanel {
+	if st.view == skillsNone {
 		return ""
 	}
+	if st.view == skillsDetail && st.detail != nil {
+		body := renderLearnedSkillDetail(th, *st.detail, st.diff)
+		if st.err != nil {
+			body += "\n\n" + th.Style("errorText").Render(sanitizeTerminal(st.err.Error())) + "\npress esc, then enter to refresh"
+		}
+		return centerCard(th, body, width, height)
+	}
 	return centerCard(th, renderSkillsPanel(th, st, caps, hk, width), width, height)
+}
+
+func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff string) string {
+	var b strings.Builder
+	b.WriteString(th.Style("askTitle").Render("Learned skill") + "\n\n")
+	for _, line := range []string{"name: " + skill.Name, "owner: " + skill.OwnerAgent, "state: " + skill.State, "version: " + skill.Version, "revision: " + skill.Revision, "evidence: " + strconv.Itoa(skill.EvidenceCount), "description: " + skill.Description, "body: " + skill.Body} {
+		b.WriteString(sanitizeTerminal(line) + "\n")
+	}
+	if len(skill.Evaluations) > 0 {
+		e := skill.Evaluations[len(skill.Evaluations)-1]
+		b.WriteString("evaluation: " + sanitizeTerminal(e.Verdict) + " fixtures=" + sanitizeTerminal(strings.Join(e.FixtureIDs, ",")) + "\n")
+		if e.Baseline != "" {
+			b.WriteString("baseline: " + sanitizeTerminal(e.Baseline) + "\n")
+		}
+		if e.Treatment != "" {
+			b.WriteString("treatment: " + sanitizeTerminal(e.Treatment) + "\n")
+		}
+	}
+	b.WriteString("history receipts: " + strconv.Itoa(len(skill.Receipts)) + "\n")
+	for _, receipt := range skill.Receipts {
+		b.WriteString("  " + sanitizeTerminal(receipt.Operation) + " " + sanitizeTerminal(receipt.FromState) + " → " + sanitizeTerminal(receipt.ToState) + "\n")
+	}
+	if diff != "" {
+		b.WriteString("\nversion diff:\n" + sanitizeTerminal(diff) + "\n")
+	}
+	b.WriteString("\nesc back   v diff   a activate   x reject   d archive   r rollback")
+	return b.String()
 }
 
 // cardTextWidth is the column budget for wrapping server-derived overlay text
@@ -275,7 +407,11 @@ func skillsEmptyCopy(caps client.Capabilities) string {
 func skillsRowLines(th theme.Theme, skills []client.Skill, budget int) []string {
 	var lines []string
 	for _, s := range skills {
-		lines = append(lines, th.Style("toolName").Render(sanitizeTerminal(s.Name)))
+		name := sanitizeTerminal(s.Name)
+		if s.AgentOwned {
+			name += "  [agent-owned · active " + sanitizeTerminal(s.ActiveVersion) + " · " + sanitizeTerminal(s.OwnerAgent) + "]"
+		}
+		lines = append(lines, th.Style("toolName").Render(name))
 		if s.Description != "" {
 			desc := th.Style("toolArgs").Render(indentWrap(sanitizeTerminal(s.Description), budget))
 			lines = append(lines, strings.Split(desc, "\n")...)
@@ -306,7 +442,7 @@ func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities,
 			line = ansi.Wrap(line, budget, "")
 		}
 		b.WriteString(th.Style("errorText").Render(line) + "\n")
-	case len(st.skills) == 0:
+	case len(st.skills) == 0 && len(st.learned) == 0:
 		// Server-side empty/disabled (no inventory at all) — distinct from a filter
 		// that matched nothing.
 		b.WriteString(th.Style("muted").Render(skillsEmptyCopy(caps)) + "\n")
@@ -316,6 +452,16 @@ func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities,
 		b.WriteString(th.Style("muted").Render("no skills match "+strconv.Quote(st.filter.Value())+" — "+hk.closeOnly+" to clear") + "\n")
 	default:
 		b.WriteString(windowRenderedLines(th, skillsRowLines(th, st.filtered, budget), st.scroll, skillsBodyLines))
+	}
+	if len(st.learned) > 0 {
+		b.WriteString("\n" + th.Style("muted").Render("Learned skills (↑/↓ select, enter inspect):") + "\n")
+		for i, skill := range st.learned {
+			mark := "  "
+			if i == st.cursor {
+				mark = "> "
+			}
+			b.WriteString(mark + th.Style("toolName").Render(sanitizeTerminal(skill.Name)) + " [" + sanitizeTerminal(skill.State) + " · " + sanitizeTerminal(skill.OwnerAgent) + "]\n")
+		}
 	}
 
 	// The "↑/↓" nav stays literal: the skills handler scrolls on the BARE up/down

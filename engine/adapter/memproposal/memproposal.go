@@ -233,6 +233,27 @@ func (s *Store) finalizeUpdate(ctx context.Context, p learning.ProposalPartition
 	return clone(r), nil
 }
 
+func (s *Store) LinkSkillDraft(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID, v learning.ProposalVersion, skillID learning.SkillID, d learning.Decision) (learning.ProposalRecord, error) {
+	if skillID == "" {
+		return learning.ProposalRecord{}, fmt.Errorf("%w: skill id", learning.ErrInvalidProposal)
+	}
+	if err := learning.ValidateDecision(d); err != nil {
+		return learning.ProposalRecord{}, err
+	}
+	return s.update(ctx, p, id, v, func(r *learning.ProposalRecord) error {
+		if r.Status != learning.ProposalDeferredUnsupported || r.Candidate.Kind != learning.CandidateProcedure || r.SkillID != "" {
+			return learning.ErrProposalTransition
+		}
+		if d.At.IsZero() {
+			d.At = s.now().UTC()
+		}
+		r.SkillID = skillID
+		r.Status = learning.ProposalSkillMaterialized
+		r.Decisions = decisions(r.Decisions, d)
+		return nil
+	})
+}
+
 //nolint:gocyclo
 func (s *Store) Finalize(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID, v learning.ProposalVersion, status learning.ProposalStatus, receipt *learning.PromotionReceipt, d learning.Decision) (learning.ProposalRecord, error) {
 	if status != learning.ProposalPromoted && status != learning.ProposalRejected && status != learning.ProposalDeferredUnsupported && status != learning.ProposalConflicted && status != learning.ProposalUndone {

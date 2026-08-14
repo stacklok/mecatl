@@ -38,11 +38,12 @@ const (
 	ProposalDeferredUnsupported ProposalStatus = "deferred_unsupported"
 	ProposalConflicted          ProposalStatus = "conflicted"
 	ProposalUndone              ProposalStatus = "undone"
+	ProposalSkillMaterialized   ProposalStatus = "skill_materialized"
 )
 
 func (s ProposalStatus) Valid() bool {
 	switch s {
-	case ProposalStaged, ProposalPromoting, ProposalPromoted, ProposalRejected, ProposalDeferredUnsupported, ProposalConflicted, ProposalUndone:
+	case ProposalStaged, ProposalPromoting, ProposalPromoted, ProposalRejected, ProposalDeferredUnsupported, ProposalConflicted, ProposalUndone, ProposalSkillMaterialized:
 		return true
 	}
 	return false
@@ -82,6 +83,7 @@ type ProposalRecord struct {
 	Signals     []Signal          `json:"signals,omitempty"`
 	Decisions   []Decision        `json:"decisions,omitempty"`
 	Receipt     *PromotionReceipt `json:"receipt,omitempty"`
+	SkillID     SkillID           `json:"skill_id,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
@@ -110,6 +112,7 @@ type ProposalRepository interface {
 	ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error)
 	ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error)
 	Finalize(context.Context, ProposalPartition, ProposalID, ProposalVersion, ProposalStatus, *PromotionReceipt, Decision) (ProposalRecord, error)
+	LinkSkillDraft(context.Context, ProposalPartition, ProposalID, ProposalVersion, SkillID, Decision) (ProposalRecord, error)
 }
 
 // DeterministicProposalID hashes identity, scope, input, candidate, and evidence digests; it never includes transcript text.
@@ -155,10 +158,10 @@ func ValidateProposalMaterial(p ProposalPartition, input string, c Candidate, si
 		return fmt.Errorf("%w: candidate", ErrInvalidProposal)
 	}
 	if c.Kind == CandidateProcedure {
-		if strings.TrimSpace(c.Title) == "" || strings.TrimSpace(c.Body) == "" || c.Key != "" || c.Value != "" || c.Description != "" {
+		if strings.TrimSpace(c.Title) == "" || strings.TrimSpace(c.Body) == "" || (c.Name != "" && !ValidLearnedSkillName(c.Name)) || c.Key != "" || c.Value != "" || c.Description != "" {
 			return fmt.Errorf("%w: procedure shape", ErrInvalidProposal)
 		}
-	} else if strings.TrimSpace(c.Key) == "" || strings.TrimSpace(c.Value) == "" || c.Title != "" || c.Body != "" {
+	} else if strings.TrimSpace(c.Key) == "" || strings.TrimSpace(c.Value) == "" || c.Name != "" || c.Title != "" || c.Body != "" {
 		return fmt.Errorf("%w: fact shape", ErrInvalidProposal)
 	} else {
 		entry := tool.MemoryEntry{Key: c.Key, Value: c.Value, Description: c.Description}

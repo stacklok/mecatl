@@ -2,11 +2,14 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/engine/learning"
 )
 
 // fixedClock returns a deterministic time source for the drafted_at stamp.
@@ -29,6 +32,27 @@ func newDrafter(t *testing.T, dir string, existing []Skill) *DirDrafter {
 	return NewDirDrafter(dir, existing,
 		WithClock(fixedClock()),
 	)
+}
+
+func TestDraftUsesNeutralValidatorAndCanBeExplicitlyDisabled(t *testing.T) {
+	req := draftReq()
+	req.Body = "Read /home/alice/private/config before deploying."
+	root := t.TempDir()
+	if result, err := NewDirDrafter(root, nil).Draft(context.Background(), req); err == nil || result.Path != "" {
+		t.Fatalf("neutral validator result=%#v err=%v", result, err)
+	}
+	if result, err := NewDirDrafter(root, nil, WithNeutralValidation(false)).Draft(context.Background(), req); err != nil || result.Path == "" {
+		t.Fatalf("explicit compatibility off result=%#v err=%v", result, err)
+	}
+}
+
+func TestDraftNeutralValidatorRejectsImmutableInventoryCollision(t *testing.T) {
+	req := draftReq()
+	existing := []Skill{{Name: req.Name, Description: "Operator skill", Body: "Do the operator procedure."}}
+	result, err := NewDirDrafter(t.TempDir(), existing).Draft(context.Background(), req)
+	if !errors.Is(err, learning.ErrSkillNameCollision) || result.Path != "" {
+		t.Fatalf("collision result=%#v err=%v", result, err)
+	}
 }
 
 func TestDraftHappyPath(t *testing.T) {

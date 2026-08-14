@@ -161,10 +161,20 @@ func validateDocument(d document) error {
 					return fmt.Errorf("%w: corrupt decision", learning.ErrInvalidProposal)
 				}
 			}
+			if err := validateSkillLink(record); err != nil {
+				return err
+			}
 			if err := validateReceipt(record); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateSkillLink(record learning.ProposalRecord) error {
+	if record.Status == learning.ProposalSkillMaterialized && record.SkillID == "" || record.Status != learning.ProposalSkillMaterialized && record.SkillID != "" {
+		return fmt.Errorf("%w: corrupt skill linkage", learning.ErrInvalidProposal)
 	}
 	return nil
 }
@@ -438,6 +448,28 @@ func (s *Store) finalizeUpdate(ctx context.Context, p learning.ProposalPartition
 		return nil
 	})
 	return
+}
+
+// LinkSkillDraft atomically links an explicitly materialized historical procedure.
+func (s *Store) LinkSkillDraft(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID, v learning.ProposalVersion, skillID learning.SkillID, x learning.Decision) (learning.ProposalRecord, error) {
+	if skillID == "" {
+		return learning.ProposalRecord{}, learning.ErrInvalidProposal
+	}
+	if err := learning.ValidateDecision(x); err != nil {
+		return learning.ProposalRecord{}, err
+	}
+	return s.update(ctx, p, id, v, func(r *learning.ProposalRecord) error {
+		if r.Status != learning.ProposalDeferredUnsupported || r.Candidate.Kind != learning.CandidateProcedure || r.SkillID != "" {
+			return learning.ErrProposalTransition
+		}
+		if x.At.IsZero() {
+			x.At = s.now().UTC()
+		}
+		r.SkillID = skillID
+		r.Status = learning.ProposalSkillMaterialized
+		r.Decisions = bounded(r.Decisions, x)
+		return nil
+	})
 }
 
 // Finalize records a terminal promotion, reconciliation, or undo outcome.

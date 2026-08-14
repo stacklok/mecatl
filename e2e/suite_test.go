@@ -202,10 +202,10 @@ func trackUsage(res *harness.RunResult) {
 // (verified against OpenRouter's /models at implementation time). Unknown
 // models report tokens only.
 var modelPricing = map[string][2]float64{ // {prompt, completion} USD per token
-	"openai/gpt-4.1-mini":         {0.40e-6, 1.60e-6},
-	"openai/gpt-4o-mini":          {0.15e-6, 0.60e-6},
-	"anthropic/claude-haiku-4.5":  {1.00e-6, 5.00e-6},
-	"anthropic/claude-3.5-haiku":  {0.80e-6, 4.00e-6},
+	"openai/gpt-4.1-mini":        {0.40e-6, 1.60e-6},
+	"openai/gpt-4o-mini":         {0.15e-6, 0.60e-6},
+	"anthropic/claude-haiku-4.5": {1.00e-6, 5.00e-6},
+	"anthropic/claude-3.5-haiku": {0.80e-6, 4.00e-6},
 }
 
 // reportUsage prints the cumulative token usage + a cost ESTIMATE per model.

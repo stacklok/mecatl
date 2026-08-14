@@ -32,11 +32,14 @@ When NOT to use (the over-eager anti-pattern — these are REJECTED):
   the code.
 - Procedural "how-to" ONLY. For a durable FACT or preference, use Remember instead.
 
-IMPORTANT — a drafted skill is NOT active this session:
-- It is written to a QUARANTINE review queue, never to the live skill catalog.
-- An operator must review and promote it before any session can activate it.
-- So drafting is cheap to get wrong (it only costs quarantine disk), but do not
-  spam it — an over-eager draft is rejected at review.
+IMPORTANT — a drafted skill is a versioned agent-owned DRAFT, not active:
+- It is validated and stored in the learned-skill lifecycle; it cannot edit prompts,
+  code, AGENTS.md, lifecycle metadata, or generated assets.
+- Evidence and evaluation are required before activation. In learning mode off it
+  stays draft; review stages evidence-backed PASS/ABSTAIN proposals; auto activates
+  only an evidence-backed PASS. FAIL is rejected.
+- Legacy deployments may still use the deprecated quarantine/promote path; direct
+  model draft promotion is not an activation policy.
 
 How to write the SKILL.md fields:
 - description: ONE line — what it does and WHEN to use it (the applicability
@@ -121,7 +124,7 @@ func (t DraftTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Envi
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Drafted skill %q to the review queue at %s.\n", strings.TrimSpace(args.Name), res.Path)
-	b.WriteString("It is NOT active this session — an operator must promote it before any session can activate it.")
+	b.WriteString("It is NOT active this session — evidence and evaluation are required; only an evidence-backed PASS may be activated by policy or an operator.")
 	for _, w := range res.Warnings {
 		fmt.Fprintf(&b, "\nNote: %s", w)
 	}

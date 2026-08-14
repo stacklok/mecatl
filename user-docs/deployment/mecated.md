@@ -583,11 +583,15 @@ mecated skills promote \
 mecated perf-mcp print-config
 ```
 
-`mecated skills promote` is the only path from a model-authored quarantine skill
-(`--skills-draft-dir`) into the trusted, live catalog (`--skills-dir`). It shows the
-full candidate content, asks for operator confirmation (or `--yes` for CI), validates
-the promotion, and moves the file. The model cannot perform this step — it does not
-have filesystem access outside the workspace.
+`mecated skills promote` is the deprecated compatibility path from a legacy
+model-authored quarantine skill (`--skills-draft-dir`) into an operator-managed live catalog
+(`--skills-dir`). It shows the full candidate content, asks for operator confirmation (or `--yes`
+for CI), validates the promotion, and moves the file. It does **not** read or activate evaluated
+skill-lifecycle repository records, so it cannot silently promote an unevaluated lifecycle Draft.
+Existing operator/manual skills are unchanged. New lifecycle integrations explicitly import a
+legacy `origin:model` draft as inactive. The standard evaluator abstains on that unevidenced
+record; later review/evaluation/stage/activation requires an explicit host or operator path. The model
+cannot perform the legacy promotion step — it does not have filesystem access outside the workspace.
 
 Schedules are managed **in-chat** via the model-facing `Schedule` tool or over the
 gRPC/REST `ScheduleService` API — there is no `mecated schedules` CLI (it was removed;

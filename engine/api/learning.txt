@@ -3,15 +3,29 @@
     ifacemethod func (ProposalRepository).ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error)
     ifacemethod func (ProposalRepository).Finalize(context.Context, ProposalPartition, ProposalID, ProposalVersion, ProposalStatus, *PromotionReceipt, Decision) (ProposalRecord, error)
     ifacemethod func (ProposalRepository).Get(context.Context, ProposalPartition, ProposalID) (ProposalRecord, bool, error)
+    ifacemethod func (ProposalRepository).LinkSkillDraft(context.Context, ProposalPartition, ProposalID, ProposalVersion, SkillID, Decision) (ProposalRecord, error)
     ifacemethod func (ProposalRepository).List(context.Context, ProposalPartition, ProposalList) (ProposalPage, error)
     ifacemethod func (ProposalRepository).StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)
     ifacemethod func (Reflector).Reflect(context.Context, Input) (Outcome, error)
+    ifacemethod func (SkillEvaluator).Evaluate(context.Context, SkillEvaluationRequest) (SkillEvaluation, error)
+    ifacemethod func (SkillRepository).Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
+    ifacemethod func (SkillRepository).Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
+    ifacemethod func (SkillRepository).CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error)
+    ifacemethod func (SkillRepository).Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error)
+    ifacemethod func (SkillRepository).List(context.Context, SkillPartition, SkillList) (SkillPage, error)
+    ifacemethod func (SkillRepository).RecordEvaluation(context.Context, SkillPartition, string, SkillID, VersionID, Revision, SkillEvaluation) (SkillVersion, error)
+    ifacemethod func (SkillRepository).Reject(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
+    ifacemethod func (SkillRepository).Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error)
+    ifacemethod func (SkillRepository).Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
+    ifacemethod func (SkillValidator).Validate(context.Context, SkillValidationRequest) (SkillValidation, error)
     method func (CandidateKind).Valid() bool
+    method func (EvaluationVerdict).Valid() bool
     method func (Mode).Next() Mode
     method func (Mode).String() string
     method func (OutcomeKind).Valid() bool
     method func (ProposalStatus).Valid() bool
     method func (SignalKind).Valid() bool
+    method func (SkillState).Valid() bool
 const Auto Mode = 2
 const CandidateOperatorFact CandidateKind = "operator_fact"
 const CandidateProcedure CandidateKind = "procedure"
@@ -20,6 +34,10 @@ const DecisionApprove DecisionKind = "approve"
 const DecisionDefer DecisionKind = "defer"
 const DecisionReject DecisionKind = "reject"
 const DefaultProposalPageSize untyped int = 50
+const DefaultSkillPageSize untyped int = 50
+const EvaluationAbstain EvaluationVerdict = "abstain"
+const EvaluationFail EvaluationVerdict = "fail"
+const EvaluationPass EvaluationVerdict = "pass"
 const EvidenceEvent EvidenceLocator = "event"
 const EvidenceMessage EvidenceLocator = "message"
 const MaxCandidateBodyBytes untyped int = 8192
@@ -38,6 +56,19 @@ const MaxProposalDecisions untyped int = 16
 const MaxProposalPageSize untyped int = 200
 const MaxProposalReasonBytes untyped int = 1024
 const MaxProposalsPerPartition untyped int = 4096
+const MaxSkillBodyBytes untyped int = 32768
+const MaxSkillDescriptionBytes untyped int = 1024
+const MaxSkillEvaluationTextBytes untyped int = 4096
+const MaxSkillEvaluations untyped int = 16
+const MaxSkillEvidence untyped int = 32
+const MaxSkillFixtures untyped int = 32
+const MaxSkillOwnerBytes untyped int = 256
+const MaxSkillPageSize untyped int = 200
+const MaxSkillProposals untyped int = 16
+const MaxSkillReceipts untyped int = 32
+const MaxSkillSignals untyped int = 16
+const MaxSkillVersionsPerSkill untyped int = 32
+const MaxSkillsPerPartition untyped int = 1024
 const Off Mode = 0
 const OutcomeAbstained OutcomeKind = "abstained"
 const OutcomeProposed OutcomeKind = "proposed"
@@ -46,15 +77,27 @@ const ProposalDeferredUnsupported ProposalStatus = "deferred_unsupported"
 const ProposalPromoted ProposalStatus = "promoted"
 const ProposalPromoting ProposalStatus = "promoting"
 const ProposalRejected ProposalStatus = "rejected"
+const ProposalSkillMaterialized ProposalStatus = "skill_materialized"
 const ProposalStaged ProposalStatus = "staged"
 const ProposalUndone ProposalStatus = "undone"
 const Review Mode = 1
 const SignalContradiction SignalKind = "contradiction"
+const SignalExplicitLearnProcedure SignalKind = "explicit_learn_procedure"
 const SignalExplicitRemember SignalKind = "explicit_remember"
 const SignalFailureRecovery SignalKind = "failure_recovery"
 const SignalRepeatedCorrection SignalKind = "repeated_correction"
 const SignalRepeatedToolSequence SignalKind = "repeated_tool_sequence"
 const SignalSubstantialSuccess SignalKind = "substantial_success"
+const SkillActive SkillState = "active"
+const SkillArchived SkillState = "archived"
+const SkillDraft SkillState = "draft"
+const SkillEvaluated SkillState = "evaluated"
+const SkillProvenanceLegacyModel SkillProvenanceOrigin = "legacy_model"
+const SkillRejected SkillState = "rejected"
+const SkillStaged SkillState = "staged"
+const ValidationAccept ValidationDisposition = "accept"
+const ValidationExactDuplicate ValidationDisposition = "exact_duplicate"
+const ValidationSimilarStageHint ValidationDisposition = "similar_stage_hint"
 func DetectSignals(in Input) []Signal
 func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (ProposalID, error)
 func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
@@ -68,15 +111,23 @@ func ParseMode(s string) (Mode, error)
 func ProjectInput(in Input) (Projection, error)
 func ResolveEvidence(in Input, ref EvidenceRef) error
 func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
+func SkillVersionID(bundle SkillBundle) (VersionID, error)
+func ValidLearnedSkillName(name string) bool
 func ValidateCandidate(in Input, candidate Candidate) error
 func ValidateDecision(d Decision) error
 func ValidateInput(in Input) error
 func ValidateOutcome(in Input, out Outcome) error
 func ValidateProposalMaterial(p ProposalPartition, input string, c Candidate, signals []Signal) error
-type Candidate struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key,omitempty\""; Value string "json:\"value,omitempty\""; Description string "json:\"description,omitempty\""; Title string "json:\"title,omitempty\""; Body string "json:\"body,omitempty\""; Evidence []EvidenceRef "json:\"evidence\""}
+func ValidateSkillBundle(bundle SkillBundle) error
+func ValidateSkillCandidate(in Input, candidate Candidate) error
+func ValidateSkillEvaluation(e SkillEvaluation) error
+func ValidateSkillPartition(partition SkillPartition, ownerAgent string) error
+func ValidateSkillProvenance(p SkillProvenance) error
+type Candidate struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key,omitempty\""; Value string "json:\"value,omitempty\""; Description string "json:\"description,omitempty\""; Name string "json:\"name,omitempty\""; Title string "json:\"title,omitempty\""; Body string "json:\"body,omitempty\""; Evidence []EvidenceRef "json:\"evidence\""}
 type CandidateKind string
 type Decision struct{Kind DecisionKind "json:\"kind\""; Actor string "json:\"actor,omitempty\""; Reason string "json:\"reason,omitempty\""; At time.Time "json:\"at\""}
 type DecisionKind string
+type EvaluationVerdict string
 type EventProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Type session.EventType "json:\"type\""; Seq int64 "json:\"seq\""; Turn int "json:\"turn\""; Text string "json:\"text,omitempty\""; ToolCall *ToolProjection "json:\"tool_call,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Stop session.StopReason "json:\"stop,omitempty\""}
 type EvidenceEventData struct{Type session.EventType; Seq int64; Turn int; Text string; ToolCall *ToolProjection; ToolResult *ResultProjection; Stop session.StopReason}
 type EvidenceLocator string
@@ -96,23 +147,52 @@ type ProposalID string
 type ProposalList struct{After ProposalID; Limit int; Status ProposalStatus}
 type ProposalPage struct{Records []ProposalRecord; Next ProposalID}
 type ProposalPartition struct{Principal string "json:\"principal\""; Project string "json:\"project,omitempty\""}
-type ProposalRecord struct{ID ProposalID "json:\"id\""; Version ProposalVersion "json:\"version\""; Status ProposalStatus "json:\"status\""; Partition ProposalPartition "json:\"partition\""; InputDigest string "json:\"input_digest\""; Candidate Candidate "json:\"candidate\""; Signals []Signal "json:\"signals,omitempty\""; Decisions []Decision "json:\"decisions,omitempty\""; Receipt *PromotionReceipt "json:\"receipt,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
-type ProposalRepository interface{ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error); ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error); Finalize(context.Context, ProposalPartition, ProposalID, ProposalVersion, ProposalStatus, *PromotionReceipt, Decision) (ProposalRecord, error); Get(context.Context, ProposalPartition, ProposalID) (ProposalRecord, bool, error); List(context.Context, ProposalPartition, ProposalList) (ProposalPage, error); StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)}
+type ProposalRecord struct{ID ProposalID "json:\"id\""; Version ProposalVersion "json:\"version\""; Status ProposalStatus "json:\"status\""; Partition ProposalPartition "json:\"partition\""; InputDigest string "json:\"input_digest\""; Candidate Candidate "json:\"candidate\""; Signals []Signal "json:\"signals,omitempty\""; Decisions []Decision "json:\"decisions,omitempty\""; Receipt *PromotionReceipt "json:\"receipt,omitempty\""; SkillID SkillID "json:\"skill_id,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type ProposalRepository interface{ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error); ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error); Finalize(context.Context, ProposalPartition, ProposalID, ProposalVersion, ProposalStatus, *PromotionReceipt, Decision) (ProposalRecord, error); Get(context.Context, ProposalPartition, ProposalID) (ProposalRecord, bool, error); LinkSkillDraft(context.Context, ProposalPartition, ProposalID, ProposalVersion, SkillID, Decision) (ProposalRecord, error); List(context.Context, ProposalPartition, ProposalList) (ProposalPage, error); StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)}
 type ProposalStatus string
 type ProposalVersion string
 type Reflector interface{Reflect(context.Context, Input) (Outcome, error)}
 type ResultProjection struct{CallID session.ToolCallID "json:\"call_id\""; Content string "json:\"content,omitempty\""; IsError bool "json:\"is_error,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
+type Revision string
 type Signal struct{Kind SignalKind "json:\"kind\""; Evidence []EvidenceRef "json:\"evidence,omitempty\""}
 type SignalKind string
 type SignalProjection struct{Kind SignalKind "json:\"kind\""; Evidence []string "json:\"evidence,omitempty\""}
+type SkillBundle struct{Name string "json:\"name\""; Description string "json:\"description\""; Body string "json:\"body\""}
+type SkillDraftInput struct{Partition SkillPartition; OwnerAgent string; Bundle SkillBundle; Provenance SkillProvenance}
+type SkillEvaluation struct{Verdict EvaluationVerdict "json:\"verdict\""; FixtureIDs []string "json:\"fixture_ids,omitempty\""; Baseline string "json:\"baseline,omitempty\""; Treatment string "json:\"treatment,omitempty\""; Reason string "json:\"reason,omitempty\""; At time.Time "json:\"at\""}
+type SkillEvaluationRequest struct{Partition SkillPartition; OwnerAgent string; Version SkillVersion}
+type SkillEvaluator interface{Evaluate(context.Context, SkillEvaluationRequest) (SkillEvaluation, error)}
+type SkillID string
+type SkillInventoryItem struct{Name string; OwnerAgent string; AgentOwned bool; Bundle SkillBundle; SkillID SkillID; Version VersionID}
+type SkillList struct{After SkillID; Limit int; Name string; State SkillState; OwnerAgent string}
+type SkillPage struct{Versions []SkillVersion; Next SkillID}
+type SkillPartition struct{Principal string "json:\"principal\""; Project string "json:\"project,omitempty\""}
+type SkillProvenance struct{Origin SkillProvenanceOrigin "json:\"origin,omitempty\""; ProposalIDs []ProposalID "json:\"proposal_ids,omitempty\""; EvidenceRefs []EvidenceRef "json:\"evidence_refs,omitempty\""; Signals []Signal "json:\"signals,omitempty\""}
+type SkillProvenanceOrigin string
+type SkillReceipt struct{Operation string "json:\"operation\""; From SkillState "json:\"from\""; To SkillState "json:\"to\""; Version VersionID "json:\"version\""; At time.Time "json:\"at\""}
+type SkillRepository interface{Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error); Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error); List(context.Context, SkillPartition, SkillList) (SkillPage, error); RecordEvaluation(context.Context, SkillPartition, string, SkillID, VersionID, Revision, SkillEvaluation) (SkillVersion, error); Reject(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error); Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
+type SkillState string
+type SkillValidation struct{Disposition ValidationDisposition; Duplicate *SkillInventoryItem; Similar []SkillInventoryItem}
+type SkillValidationRequest struct{Partition SkillPartition; OwnerAgent string; Bundle SkillBundle; Provenance SkillProvenance; Assets []string; Inventory []SkillInventoryItem}
+type SkillValidator interface{Validate(context.Context, SkillValidationRequest) (SkillValidation, error)}
+type SkillVersion struct{ID SkillID "json:\"id\""; Version VersionID "json:\"version\""; Revision Revision "json:\"revision\""; State SkillState "json:\"state\""; OwnerAgent string "json:\"owner_agent\""; Partition SkillPartition "json:\"partition\""; Bundle SkillBundle "json:\"bundle\""; Provenance SkillProvenance "json:\"provenance\""; Evaluations []SkillEvaluation "json:\"evaluations,omitempty\""; Receipts []SkillReceipt "json:\"receipts,omitempty\""; Supersedes VersionID "json:\"supersedes,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
 type ToolProjection struct{ID session.ToolCallID "json:\"id\""; Name string "json:\"name\""}
 type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Principal *session.Principal}
+type ValidationDisposition string
+type VersionID string
 var ErrInvalidCandidate error
 var ErrInvalidEvidence error
 var ErrInvalidInput error
 var ErrInvalidOutcome error
 var ErrInvalidProposal error
+var ErrInvalidSkill error
 var ErrProposalLimit error
 var ErrProposalNotFound error
 var ErrProposalTransition error
 var ErrProposalVersionConflict error
+var ErrSkillConflict error
+var ErrSkillLimit error
+var ErrSkillNameCollision error
+var ErrSkillNotFound error
+var ErrSkillOwnerMismatch error
+var ErrSkillTransition error

@@ -188,6 +188,54 @@ linters:
           deny:
             - pkg: os
               desc: 'memproposal is the process-local proposal reference store; it must not touch the real OS'
+        engine-adapter-memskill:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memskill/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/learning
+          deny:
+            - pkg: os
+              desc: 'memskill is the process-local learned-skill reference store; it must not touch the real OS'
+        engine-adapter-skillconformance:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/skillconformance/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/learning
+            - github.com/stacklok/mecatl/engine/session
+          deny:
+            - pkg: os
+              desc: 'skillconformance drives the abstract learned-skill repository contract; it must not touch the real OS'
+        engine-adapter-skillmaterialize:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/skillmaterialize/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/adapter/skillvalidation
+            - github.com/stacklok/mecatl/engine/learning
+          deny:
+            - pkg: os
+              desc: 'skillmaterialize is portable policy over injected repositories; it must not touch the real OS'
+        engine-adapter-skillvalidation:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/skillvalidation/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/adapter/skillfs
+            - github.com/stacklok/mecatl/engine/learning
+            - github.com/stacklok/mecatl/engine/tool
+          deny:
+            - pkg: os
+              desc: 'skillvalidation is a logical admission adapter; it must not touch the real OS'
         engine-adapter-memorypromotion:
           list-mode: strict
           files:
@@ -255,6 +303,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/learning
             - github.com/stacklok/mecatl/engine/prompt
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/engine/tool

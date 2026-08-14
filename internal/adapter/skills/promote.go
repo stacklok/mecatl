@@ -1,10 +1,14 @@
 package skills
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/stacklok/mecatl/engine/adapter/skillvalidation"
+	"github.com/stacklok/mecatl/engine/learning"
 )
 
 // modelOriginRE matches the provenance line the DirDrafter stamps into every
@@ -21,7 +25,20 @@ func ReadCandidate(quarantineDir, name string) ([]byte, error) {
 	if err := validateName(name); err != nil {
 		return nil, err
 	}
-	srcFile := filepath.Join(quarantineDir, name, SkillFileName)
+	srcDir := filepath.Join(quarantineDir, name)
+	srcFile := filepath.Join(srcDir, SkillFileName)
+	for _, path := range []string{quarantineDir, srcDir, srcFile} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("no quarantined skill named %q at %s", name, srcFile)
+			}
+			return nil, fmt.Errorf("inspect quarantined skill %q: %w", name, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("refusing quarantined skill %q: symlink path %s", name, path)
+		}
+	}
 	raw, err := os.ReadFile(srcFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -32,9 +49,57 @@ func ReadCandidate(quarantineDir, name string) ([]byte, error) {
 	return raw, nil
 }
 
+// ImportLegacyDraft explicitly imports one origin:model quarantine candidate into
+// the evaluated lifecycle as an unevidenced agent-owned Draft. It rejects assets,
+// scripts, and inventory collisions; it never stages or activates the result.
+func ImportLegacyDraft(ctx context.Context, repo learning.SkillRepository, partition learning.SkillPartition, owner, quarantineDir, name string, inventory []learning.SkillInventoryItem) (learning.SkillVersion, error) {
+	if repo == nil {
+		return learning.SkillVersion{}, fmt.Errorf("skills: lifecycle repository required")
+	}
+	raw, err := ReadCandidate(quarantineDir, name)
+	if err != nil {
+		return learning.SkillVersion{}, err
+	}
+	if !modelOriginRE.Match(raw) {
+		return learning.SkillVersion{}, fmt.Errorf("refusing to import %q: missing `origin: model` provenance", name)
+	}
+	entries, err := os.ReadDir(filepath.Join(quarantineDir, name))
+	if err != nil {
+		return learning.SkillVersion{}, err
+	}
+	if len(entries) != 1 || entries[0].Name() != SkillFileName || entries[0].Type()&os.ModeSymlink != 0 {
+		return learning.SkillVersion{}, fmt.Errorf("refusing to import %q: lifecycle skills are body-only; assets and scripts are unsupported", name)
+	}
+	skill, reason, _ := ParseSkill(raw, filepath.Join(quarantineDir, name, SkillFileName))
+	if reason != "" {
+		return learning.SkillVersion{}, fmt.Errorf("refusing to import %q: %s", name, reason)
+	}
+	bundle := learning.SkillBundle{Name: skill.Name, Description: skill.Description, Body: skill.Body}
+	provenance := learning.SkillProvenance{Origin: learning.SkillProvenanceLegacyModel}
+	if _, err = (skillvalidation.Validator{}).Validate(ctx, learning.SkillValidationRequest{
+		Partition: partition, OwnerAgent: owner, Bundle: bundle, Provenance: provenance, Inventory: inventory,
+	}); err != nil {
+		return learning.SkillVersion{}, err
+	}
+	created, err := repo.CreateDraft(ctx, partition, owner, bundle, provenance)
+	if err != nil {
+		return learning.SkillVersion{}, err
+	}
+	if created.State != learning.SkillDraft || len(created.Evaluations) != 0 {
+		return learning.SkillVersion{}, fmt.Errorf("skills: repository returned a non-draft legacy import")
+	}
+	return created, nil
+}
+
 // Promote moves a quarantined candidate skill <quarantineDir>/<name>/ into the
 // operator's active <activeDir>/<name>/, re-running structural validation as
-// defense in depth. It is the OPERATOR gate: the only path from model-authored
+// defense in depth.
+//
+// This is the legacy operator/manual filesystem workflow. It does not read or
+// activate lifecycle repository records. New integrations should use
+// ImportLegacyDraft and evaluate/stage/activate through SkillRepository.
+//
+// It is the OPERATOR gate: the only path from model-authored
 // quarantine to the live, trusted skill catalog. It requires filesystem access
 // the model does not have, and is invoked by the `mecated skills promote`
 // subcommand, never by a tool.

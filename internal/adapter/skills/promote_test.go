@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/adapter/memskill"
+	"github.com/stacklok/mecatl/engine/learning"
 )
 
 // draftInto writes a valid candidate into the quarantine via the Drafter and
@@ -20,6 +23,36 @@ func draftInto(t *testing.T, quarantine, name string) {
 	})
 	if err != nil {
 		t.Fatalf("seed draft %q: %v", name, err)
+	}
+}
+
+func TestImportLegacyDraftIsUnevidencedAndInactive(t *testing.T) {
+	quarantine := t.TempDir()
+	draftInto(t, quarantine, "do-thing")
+	repo := memskill.New()
+	partition := learning.SkillPartition{Principal: "operator"}
+	created, err := ImportLegacyDraft(context.Background(), repo, partition, "agent-a", quarantine, "do-thing", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.State != learning.SkillDraft || created.Provenance.Origin != learning.SkillProvenanceLegacyModel || len(created.Provenance.EvidenceRefs) != 0 || len(created.Provenance.ProposalIDs) != 0 {
+		t.Fatalf("legacy import=%#v", created)
+	}
+	again, err := ImportLegacyDraft(context.Background(), repo, partition, "agent-a", quarantine, "do-thing", nil)
+	if err != nil || again.ID != created.ID || again.Version != created.Version {
+		t.Fatalf("idempotent import=%#v err=%v", again, err)
+	}
+}
+
+func TestImportLegacyDraftRejectsAssets(t *testing.T) {
+	quarantine := t.TempDir()
+	draftInto(t, quarantine, "do-thing")
+	if err := os.WriteFile(filepath.Join(quarantine, "do-thing", "script.sh"), []byte("exit 0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ImportLegacyDraft(context.Background(), memskill.New(), learning.SkillPartition{Principal: "operator"}, "agent-a", quarantine, "do-thing", nil)
+	if err == nil {
+		t.Fatal("asset-bearing legacy draft imported")
 	}
 }
 
@@ -137,6 +170,18 @@ func TestReadCandidate(t *testing.T) {
 	}
 	if _, err := ReadCandidate(quarantine, "absent"); err == nil {
 		t.Fatal("ReadCandidate must error on a missing candidate")
+	}
+}
+
+func TestReadCandidateRejectsSymlinkRoot(t *testing.T) {
+	target := t.TempDir()
+	draftInto(t, target, "viewable")
+	link := filepath.Join(t.TempDir(), "quarantine")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := ReadCandidate(link, "viewable"); err == nil {
+		t.Fatal("ReadCandidate accepted a symlink quarantine root")
 	}
 }
 

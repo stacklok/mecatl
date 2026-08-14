@@ -26,6 +26,7 @@ type reflectionObserver struct {
 	trusted          bool
 	projectWorkspace string
 	admission        *learningAdmission
+	procedure        func(context.Context, learning.ProposalRecord, learning.Mode) error
 }
 
 func reflectionPrincipal(p *session.Principal) string {
@@ -193,7 +194,7 @@ func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal
 		process: func(ctx context.Context, digest string, outcome learning.Outcome) (reflectionReceipt, error) {
 			return processReflectionOutcome(memoryadapter.WithWorkspace(reflectionContext(ctx, owner), input.Trajectory.Workspace), o.repository,
 				o.operatorMemory, o.projectMemory, principal, input,
-				digest, outcome, signals, o.mode, o.trusted, o.projectWorkspace)
+				digest, outcome, signals, o.mode, o.trusted, o.projectWorkspace, o.procedure)
 		},
 	}
 }
@@ -253,7 +254,12 @@ func processReflectionOutcome(
 	mode learning.Mode,
 	trusted bool,
 	projectWorkspace string,
+	procedures ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) (reflectionReceipt, error) {
+	var procedure func(context.Context, learning.ProposalRecord, learning.Mode) error
+	if len(procedures) > 0 {
+		procedure = procedures[0]
+	}
 	var receipt reflectionReceipt
 	if outcome.Kind == learning.OutcomeAbstained {
 		receipt.Abstained = true
@@ -299,25 +305,33 @@ func processReflectionOutcome(
 			case learning.ProposalConflicted:
 				receipt.Conflicted++
 				continue
-			case learning.ProposalRejected, learning.ProposalDeferredUnsupported, learning.ProposalUndone:
+			case learning.ProposalRejected, learning.ProposalUndone:
 				continue
+			case learning.ProposalDeferredUnsupported:
+				if record.Candidate.Kind != learning.CandidateProcedure || procedure == nil || mode == learning.Off {
+					continue
+				}
 			}
 			if record.Candidate.Kind == learning.CandidateProcedure {
 				claimed := record
 				var err error
 				if record.Status == learning.ProposalStaged {
 					claimed, err = repository.ClaimPromotion(ctx, group.partition, record.ID, record.Version)
+					if err == nil {
+						claimed, err = repository.Finalize(ctx, group.partition, record.ID, claimed.Version,
+							learning.ProposalDeferredUnsupported, nil, learning.Decision{
+								Kind: learning.DecisionDefer, Actor: "standard-policy",
+								Reason: "awaiting learned-skill evaluation",
+							})
+					}
 				}
 				if err != nil {
 					return receipt, err
 				}
-				_, err = repository.Finalize(ctx, group.partition, record.ID, claimed.Version,
-					learning.ProposalDeferredUnsupported, nil, learning.Decision{
-						Kind: learning.DecisionDefer, Actor: "standard-policy",
-						Reason: "procedure promotion is deferred",
-					})
-				if err != nil {
-					return receipt, err
+				if procedure != nil && mode != learning.Off {
+					if err := procedure(ctx, claimed, mode); err != nil {
+						return receipt, err
+					}
 				}
 				continue
 			}
@@ -350,11 +364,12 @@ func buildReflectionObserver(
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
 	admission *learningAdmission,
+	procedure ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) learning.Observer {
 	if cfg.LearningMode == learning.Off {
 		return nil
 	}
-	return buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, admission)
+	return buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, admission, procedure...)
 }
 
 func buildExplicitReflectionObserver(
@@ -364,11 +379,12 @@ func buildExplicitReflectionObserver(
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
+	procedure ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) *reflectionObserver {
 	if cfg.LearningMode == learning.Off {
 		cfg.LearningMode = learning.Review
 	}
-	observer, _ := buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, nil).(*reflectionObserver)
+	observer, _ := buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, nil, procedure...).(*reflectionObserver)
 	return observer
 }
 
@@ -380,6 +396,7 @@ func buildConfiguredReflectionObserver(
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
 	admission *learningAdmission,
+	procedure ...func(context.Context, learning.ProposalRecord, learning.Mode) error,
 ) learning.Observer {
 	if provider == nil || repository == nil {
 		return nil
@@ -394,9 +411,13 @@ func buildConfiguredReflectionObserver(
 		cfg.diag().Log(context.Background(), port.LevelWarn, "automatic reflection unavailable", "error", err)
 		return nil
 	}
+	var processProcedure func(context.Context, learning.ProposalRecord, learning.Mode) error
+	if len(procedure) > 0 {
+		processProcedure = procedure[0]
+	}
 	return &reflectionObserver{
 		coordinator: coordinator, reflector: reflector, repository: repository,
 		operatorMemory: operatorMemory, projectMemory: projectMemory,
-		mode: cfg.LearningMode, trusted: projectIngestionAdmitted(cfg), projectWorkspace: cfg.Workspace, admission: admission,
+		mode: cfg.LearningMode, trusted: projectIngestionAdmitted(cfg), projectWorkspace: cfg.Workspace, admission: admission, procedure: processProcedure,
 	}
 }

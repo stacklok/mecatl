@@ -28,6 +28,9 @@ func DetectSignals(in Input) []Signal {
 	if refs := explicitRemember(in); len(refs) > 0 {
 		signals = append(signals, Signal{Kind: SignalExplicitRemember, Evidence: refs})
 	}
+	if refs := explicitLearnProcedure(in); len(refs) > 0 {
+		signals = append(signals, Signal{Kind: SignalExplicitLearnProcedure, Evidence: refs})
+	}
 	if refs := repeatedCorrections(in); len(refs) > 0 {
 		signals = append(signals, Signal{Kind: SignalRepeatedCorrection, Evidence: refs})
 	}
@@ -162,6 +165,24 @@ func explicitRemember(in Input) []EvidenceRef {
 		line := strings.ToLower(strings.TrimSpace(message.Text))
 		for _, prefix := range []string{"remember that ", "please remember that ", "please remember ", "learn that "} {
 			if strings.HasPrefix(line, prefix) && len(strings.TrimSpace(line[len(prefix):])) >= 4 {
+				ref, err := MessageEvidenceRef(in, i, "")
+				if err == nil {
+					return []EvidenceRef{ref}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func explicitLearnProcedure(in Input) []EvidenceRef {
+	for i, message := range in.Trajectory.Messages {
+		if message.Role != session.RoleUser {
+			continue
+		}
+		line := strings.ToLower(strings.TrimSpace(message.Text))
+		for _, prefix := range []string{"learn this procedure", "learn this workflow", "save this as a skill", "remember this procedure"} {
+			if strings.HasPrefix(line, prefix) {
 				ref, err := MessageEvidenceRef(in, i, "")
 				if err == nil {
 					return []EvidenceRef{ref}

@@ -45,10 +45,10 @@ func NewRemote(addr string) (*Remote, error) {
 	}, nil
 }
 
-func (r *Remote) Client() *client.Client       { return r.cli }
-func (r *Remote) Workspace() string            { return r.workspace }
-func (r *Remote) MetricsURL() string           { return r.metricsURL }
-func (r *Remote) StateDir(StateKind) string    { return "" }
-func (r *Remote) LogTail(int) string           { return "" }
-func (r *Remote) IsLocal() bool                { return false }
-func (r *Remote) Close() error                 { return r.cli.Close() }
+func (r *Remote) Client() *client.Client    { return r.cli }
+func (r *Remote) Workspace() string         { return r.workspace }
+func (r *Remote) MetricsURL() string        { return r.metricsURL }
+func (r *Remote) StateDir(StateKind) string { return "" }
+func (r *Remote) LogTail(int) string        { return "" }
+func (r *Remote) IsLocal() bool             { return false }
+func (r *Remote) Close() error              { return r.cli.Close() }

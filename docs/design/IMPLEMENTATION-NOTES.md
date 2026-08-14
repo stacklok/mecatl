@@ -3535,11 +3535,23 @@ trivial completions spend no provider call and do not consume the debounce caden
 constructs `agent.EvidenceReflector` on the selected session provider/model (or the same-provider
 `reflection` slot), stages through the durable proposal repository under principal/project partitions,
 and applies `memorypromotion.StandardPolicy`. `review` stages without memory writes. `auto` promotes operator facts only from explicit principal-authored remember evidence. Trusted project facts require principal-authored evidence and an exact configured-workspace match; tool/assistant/repository-only evidence remains staged. Project candidates from admitted alternate roots remain staged/reviewable but cannot approve, undo, or read/write launch-root project memory until a safe exact-root lifecycle store exists; untrusted project material is not ingested. Existing project partitions stay listable/rejectable. Conflicts and ambiguous facts remain non-promoted, project material
-requires `projectIngestionAdmitted`, and procedures become `deferred_unsupported`. `off` installs no
+requires `projectIngestionAdmitted`. Procedures first become `deferred_unsupported` as the durable crash-recovery checkpoint, then enter the installed learned-skill pipeline in review/auto. `off` installs no
 automatic observer, started coordinator worker, or eager proposal repository. Explicit reflection synchronously uses the persisted session provider/model, performs a bounded EventLog read, and lazily opens persistence and starts coordinator workers in Off. Approval re-verifies owner-authorized message/event digest, sequence, and tool-call evidence before promotion. The deprecated `--user-model-review` alias maps to this same `auto` path;
 the old exported `UserModelReviewer`, `NewUserModelObserver`, and `Review` remain compatibility APIs but
 standard Build no longer uses their direct-writing child engine. Dream and explicit memory tools remain
 independent CAS writers. The shipped gRPC/HTTP surface provides synchronous explicit reflection plus caller-partitioned proposal list/detail/decision/undo, and mecatui provides windowed review with exact canonical value/scope/description and stale-CAS refresh.
+
+**Evaluated agent-owned skills (#510):** `engine/adapter/skilllifecycle.Pipeline` synchronously validates,
+creates, evaluates, stages, and conditionally activates one logical candidate. It owns no queue: the
+existing reflection coordinator is the sole automatic-work owner. PASS/ABSTAIN stage, FAIL rejects, and
+only auto+PASS activates; a nil host evaluator conservatively abstains. Proposal create→link and immutable
+version identity make retries after either crash window converge. `skillfs.AtomicCatalog` builds metadata,
+body activation, and indexes off to the side and swaps one immutable generation. External metadata and
+activators merge first; learned body-only active versions merge last. Shared, selector, and no-fs catalogs
+all register `LiveTool` over that pointer, and server `ListSkills` uses the same live lister. API mutations
+are caller/project partitioned, exact-root trust-gated, and revision-CAS; bounded UTF-8-safe receipts carry
+evidence handles and evaluation summaries but no raw unbounded model output. The legacy quarantine
+promotion remains available but deprecated; lifecycle-backed `SkillDraft` creates only an inactive version.
 
 `agent.terminateComplete` invokes the existing Observer after state establishment and excludes
 error/cancelled terminals. Project settings apply only as a minimum ceiling (`off < review < auto`).

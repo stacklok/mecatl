@@ -25,6 +25,7 @@ import (
 	"context"
 	"strings"
 
+	coreskillfs "github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
@@ -75,6 +76,10 @@ type catalogAssets struct {
 	skills         []tool.SkillMeta
 	skillSource    tool.SkillSource
 	skillIndex     skillIndex
+	liveSkills     *coreskillfs.AtomicCatalog
+	learnedSkills  learning.SkillRepository
+	skillPartition learning.SkillPartition
+	skillOwner     string
 	forkReaper     *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
 	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
@@ -532,13 +537,28 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 // (fetching every body eagerly just for a warn-only similarity check would
 // defeat the lazy-transfer design).
 func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a catalogAssets, s catalogSession) {
-	if len(a.skills) > 0 {
+	if a.liveSkills != nil {
+		if err := cat.Register(coreskillfs.NewLiveTool(a.liveSkills)); err != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "registering live skills failed; Skill tool disabled", "err", err)
+		}
+	} else if len(a.skills) > 0 {
 		if err := cat.Register(skills.NewTool(a.skills, a.skillSource)); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "registering skills failed; Skill tool disabled", "err", err)
 		}
 	}
 	if !s.noFS {
-		registerSkillDraft(ctx, cfg, cat, skillValues(a.skills, a.skillIndex), s.narrate)
+		if a.learnedSkills != nil && cfg.SkillsDraftDir != "" {
+			inventory := make([]learning.SkillInventoryItem, 0, len(a.skills))
+			for _, meta := range a.skills {
+				inventory = append(inventory, learning.SkillInventoryItem{Name: meta.Name})
+			}
+			cat.MustRegister(skills.NewDraftTool(skills.NewLifecycleDrafter(a.learnedSkills, a.skillPartition, a.skillOwner, inventory)))
+			if s.narrate {
+				cfg.diag().Log(ctx, port.LevelInfo, "SkillDraft tool ENABLED (versioned agent-owned drafts; evidence/evaluation required for activation)")
+			}
+		} else {
+			registerSkillDraft(ctx, cfg, cat, skillValues(a.skills, a.skillIndex), s.narrate)
+		}
 	}
 }
 

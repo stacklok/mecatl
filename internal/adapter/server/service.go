@@ -396,6 +396,13 @@ type Config struct {
 	ProjectPromotionAllowed func(project string) bool
 	ProposalActionAvailable func(project string) (bool, string)
 
+	// LearnedSkills exposes caller-partitioned, agent-owned lifecycle records. The
+	// publisher atomically refreshes the shared live Skill catalog after mutations.
+	LearnedSkills             learning.SkillRepository
+	PublishLearnedSkills      func(context.Context) error
+	LearnedSkillNameAvailable func(string) bool
+	LiveSkills                func(context.Context) []*mecatlv1.SkillInfo
+
 	// SessionEngine builds a PER-SESSION engine over a non-default provider/model
 	// selector AND/OR client-provided streaming-HTTP MCP servers (the ACP
 	// session/new mcpServers). It is the seam that lets a session bind its OWN
@@ -1685,6 +1692,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Worktrees:         s.cfg.Worktrees != nil,
 		Reflection:        s.cfg.ReflectSession != nil,
 		LearningProposals: s.cfg.Proposals != nil,
+		LearnedSkills:     s.cfg.LearnedSkills != nil,
 		Scheduling:        s.scheduleStore() != nil,
 	}
 }
@@ -4558,9 +4566,11 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 	return s.cfg.Agents
 }
 
-// ListSkills returns the resolved skills-inventory snapshot (possibly empty).
-// It is a pure read of the injected snapshot; no live discovery.
-func (s *Service) ListSkills(_ context.Context) []*mecatlv1.SkillInfo {
+// ListSkills returns the current skills inventory (possibly empty).
+func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
+	if s.cfg.LiveSkills != nil {
+		return s.cfg.LiveSkills(ctx)
+	}
 	return s.cfg.Skills
 }
 

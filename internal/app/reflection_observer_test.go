@@ -7,6 +7,8 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memorypromotion"
 	"github.com/stacklok/mecatl/engine/adapter/memproposal"
+	"github.com/stacklok/mecatl/engine/adapter/memskill"
+	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -14,6 +16,12 @@ import (
 )
 
 type captureReflectionInput struct{ input chan learning.Input }
+
+type passingSkillEvaluator struct{}
+
+func (passingSkillEvaluator) Evaluate(context.Context, learning.SkillEvaluationRequest) (learning.SkillEvaluation, error) {
+	return learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"fixture-pass"}}, nil
+}
 
 func (r captureReflectionInput) Reflect(_ context.Context, in learning.Input) (learning.Outcome, error) {
 	r.input <- in
@@ -36,7 +44,7 @@ func reflectionOutcomeFixture(t *testing.T, kind learning.CandidateKind) (learni
 	}
 	if kind == learning.CandidateProcedure {
 		candidate.Key, candidate.Value, candidate.Description = "", "", ""
-		candidate.Title, candidate.Body = "Review Go changes", "Run focused tests before the full suite."
+		candidate.Name, candidate.Title, candidate.Body = "review-go-changes", "Review Go changes", "Run focused tests before the full suite."
 	}
 	validated, err := learning.NewCandidate(input, candidate)
 	if err != nil {
@@ -152,6 +160,33 @@ func TestProcessReflectionOutcomeProcedureIsDeferred(t *testing.T) {
 	page, err := repository.List(context.Background(), partition, learning.ProposalList{})
 	if err != nil || len(page.Records) != 1 || page.Records[0].Status != learning.ProposalDeferredUnsupported {
 		t.Fatalf("procedure proposals = %+v err=%v", page.Records, err)
+	}
+}
+
+func TestProcessReflectionOutcomeProcedurePipelineActivatesPass(t *testing.T) {
+	input, outcome, digest := reflectionOutcomeFixture(t, learning.CandidateProcedure)
+	proposals := memproposal.New()
+	repository := memskill.New()
+	catalog := skillfs.NewAtomicCatalog(nil, nil, nil)
+	assets := catalogAssets{reflectionRepository: proposals, learnedSkills: repository, liveSkills: catalog, skillPartition: learning.SkillPartition{Principal: "principal"}, skillOwner: "reflection"}
+	cfg := Config{LearningMode: learning.Auto, SkillEvaluator: passingSkillEvaluator{}, Workspace: input.Trajectory.Workspace, TrustProject: true}
+	processor := buildProcedureProcessor(cfg, assets)
+	_, err := processReflectionOutcome(context.Background(), proposals, nil, memmemory.New(), "principal", input, digest, outcome, learning.DetectSignals(input), learning.Auto, true, input.Trajectory.Workspace, processor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := learning.ProposalPartition{Principal: "principal", Project: input.Trajectory.Workspace}
+	page, err := proposals.List(context.Background(), part, learning.ProposalList{})
+	if err != nil || len(page.Records) != 1 || page.Records[0].Status != learning.ProposalSkillMaterialized {
+		t.Fatalf("proposal=%+v err=%v", page.Records, err)
+	}
+	skillsPage, err := repository.List(context.Background(), learning.SkillPartition{Principal: "principal", Project: input.Trajectory.Workspace}, learning.SkillList{State: learning.SkillActive, OwnerAgent: "reflection"})
+	if err != nil || len(skillsPage.Versions) != 1 {
+		t.Fatalf("skills=%+v err=%v", skillsPage, err)
+	}
+	metas, _ := catalog.ListSkills(context.Background())
+	if len(metas) != 1 || metas[0].Name != "review-go-changes" {
+		t.Fatalf("live metas=%+v", metas)
 	}
 }
 

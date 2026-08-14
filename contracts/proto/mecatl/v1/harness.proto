@@ -224,6 +224,17 @@ service HarnessService {
   // revision is still current, also guarded by proposal-version CAS.
   rpc UndoLearningPromotion(UndoLearningPromotionRequest) returns (UndoLearningPromotionResponse);
 
+  // Learned-skill lifecycle inspection and CAS mutations. These methods are
+  // caller/project partitioned and are unimplemented when no lifecycle store exists.
+  rpc ListLearnedSkills(ListLearnedSkillsRequest) returns (ListLearnedSkillsResponse);
+  rpc GetLearnedSkill(GetLearnedSkillRequest) returns (GetLearnedSkillResponse);
+  rpc DiffLearnedSkillVersions(DiffLearnedSkillVersionsRequest) returns (DiffLearnedSkillVersionsResponse);
+  rpc ActivateLearnedSkill(MutateLearnedSkillRequest) returns (MutateLearnedSkillResponse);
+  rpc RejectLearnedSkill(MutateLearnedSkillRequest) returns (MutateLearnedSkillResponse);
+  rpc ArchiveLearnedSkill(MutateLearnedSkillRequest) returns (MutateLearnedSkillResponse);
+  rpc RollbackLearnedSkill(RollbackLearnedSkillRequest) returns (MutateLearnedSkillResponse);
+  rpc ListSkillChanges(ListSkillChangesRequest) returns (ListSkillChangesResponse);
+
   // ListModels returns the selectable-model inventory: every AVAILABLE provider's
   // catalog models, projected to public metadata only (no secrets). It powers the
   // client /models picker (multi-provider Phase 0, S3). Derived from the build-time
@@ -490,6 +501,8 @@ message ServerCapabilities {
   bool reflection = 16;
   // learning_proposals is true when proposal review and promotion are available.
   bool learning_proposals = 17;
+  // learned_skills is true when the caller-partitioned lifecycle API is available.
+  bool learned_skills = 18;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -1849,6 +1862,10 @@ message SkillInfo {
   string name = 1;
   // description is the one-line frontmatter summary that steers WHEN to activate.
   string description = 2;
+  // learned lifecycle metadata is absent for immutable external skills.
+  bool agent_owned = 3;
+  string owner_agent = 4;
+  string active_version = 5;
 }
 
 // ListSkillsRequest requests the resolved skills inventory snapshot.
@@ -2130,6 +2147,8 @@ message LearningProposal {
   bool promotion_available = 17;
   // promotion_unavailable_reason explains why approve/undo are disabled.
   string promotion_unavailable_reason = 18;
+  // learned_skill_id links a materialized procedure to its agent-owned skill.
+  string learned_skill_id = 19;
 }
 
 message ListLearningProposalsResponse {
@@ -2158,6 +2177,108 @@ message UndoLearningPromotionRequest {
   string project = 3;
 }
 message UndoLearningPromotionResponse { LearningProposal proposal = 1; }
+
+// LearnedSkillVersion is a bounded inspect-only projection of an agent-owned
+// immutable version. Body is capped and repaired to valid UTF-8 by the server.
+message LearnedSkillVersion {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  string revision = 4;
+  string state = 5;
+  string owner_agent = 6;
+  string description = 7;
+  string body = 8;
+  string supersedes = 9;
+  int32 evidence_count = 10;
+  repeated LearningEvidenceRef evidence = 11;
+  repeated SkillEvaluation evaluations = 12;
+  repeated SkillChangeReceipt receipts = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  bool inspect_available = 16;
+  bool undo_available = 17;
+}
+
+message SkillEvaluation {
+  string verdict = 1;
+  repeated string fixture_ids = 2;
+  string baseline = 3;
+  string treatment = 4;
+  string reason = 5;
+  google.protobuf.Timestamp at = 6;
+}
+
+message SkillChangeReceipt {
+  string id = 1;
+  string skill_id = 2;
+  string name = 3;
+  string version = 4;
+  string operation = 5;
+  string from_state = 6;
+  string to_state = 7;
+  int32 evidence_count = 8;
+  repeated string source_session_ids = 9;
+  repeated string source_tool_call_ids = 10;
+  string verdict = 11;
+  repeated string fixture_ids = 12;
+  string baseline = 13;
+  string treatment = 14;
+  google.protobuf.Timestamp at = 15;
+  bool inspect_available = 16;
+  bool undo_available = 17;
+}
+
+message ListLearnedSkillsRequest {
+  string project = 1;
+  string cursor = 2;
+  int32 limit = 3;
+  string state = 4;
+  string owner_agent = 5;
+}
+message ListLearnedSkillsResponse {
+  repeated LearnedSkillVersion skills = 1;
+  string next_cursor = 2;
+}
+message GetLearnedSkillRequest {
+  string project = 1;
+  string owner_agent = 2 [(buf.validate.field).string.min_len = 1];
+  string id = 3 [(buf.validate.field).string.min_len = 1];
+  string version = 4;
+}
+message GetLearnedSkillResponse { LearnedSkillVersion skill = 1; }
+message DiffLearnedSkillVersionsRequest {
+  string project = 1;
+  string owner_agent = 2 [(buf.validate.field).string.min_len = 1];
+  string id = 3 [(buf.validate.field).string.min_len = 1];
+  string from_version = 4 [(buf.validate.field).string.min_len = 1];
+  string to_version = 5 [(buf.validate.field).string.min_len = 1];
+}
+message DiffLearnedSkillVersionsResponse { string diff = 1; }
+message MutateLearnedSkillRequest {
+  string project = 1;
+  string owner_agent = 2 [(buf.validate.field).string.min_len = 1];
+  string id = 3 [(buf.validate.field).string.min_len = 1];
+  string version = 4 [(buf.validate.field).string.min_len = 1];
+  string expected_revision = 5 [(buf.validate.field).string.min_len = 1];
+}
+message MutateLearnedSkillResponse { LearnedSkillVersion skill = 1; }
+message RollbackLearnedSkillRequest {
+  string project = 1;
+  string owner_agent = 2 [(buf.validate.field).string.min_len = 1];
+  string id = 3 [(buf.validate.field).string.min_len = 1];
+  string target_version = 4 [(buf.validate.field).string.min_len = 1];
+  string expected_revision = 5 [(buf.validate.field).string.min_len = 1];
+}
+message ListSkillChangesRequest {
+  string project = 1;
+  string cursor = 2;
+  int32 limit = 3;
+}
+message ListSkillChangesResponse {
+  repeated SkillChangeReceipt changes = 1;
+  string next_cursor = 2;
+}
 
 // --- Agent team messages ----------------------------------------------------
 

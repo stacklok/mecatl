@@ -1,0 +1,71 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memskill"
+	"github.com/stacklok/mecatl/engine/learning"
+)
+
+func TestLearnedSkillAPIIsPartitionedCASAndPublishes(t *testing.T) {
+	repository := memskill.New()
+	partition := learning.SkillPartition{Principal: reflectionPrincipal(nil)}
+	draft, err := repository.CreateDraft(context.Background(), partition, "agent", learning.SkillBundle{Name: "review-code", Description: "Review code", Body: "Inspect changes."}, learning.SkillProvenance{Origin: learning.SkillProvenanceLegacyModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluated, err := repository.RecordEvaluation(context.Background(), partition, "agent", draft.ID, draft.Version, draft.Revision, learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"f"}, At: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := repository.Stage(context.Background(), partition, "agent", draft.ID, draft.Version, evaluated.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := 0
+	svc := &Service{cfg: Config{LearnedSkills: repository, PublishLearnedSkills: func(context.Context) error { published++; return nil }}}
+	listed, err := svc.ListLearnedSkills(context.Background(), &mecatlv1.ListLearnedSkillsRequest{Limit: 1})
+	if err != nil || len(listed.GetSkills()) != 1 {
+		t.Fatalf("list: %+v %v", listed, err)
+	}
+	activated, err := svc.ActivateLearnedSkill(context.Background(), &mecatlv1.MutateLearnedSkillRequest{OwnerAgent: "agent", Id: string(staged.ID), Version: string(staged.Version), ExpectedRevision: string(staged.Revision)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activated.GetSkill().GetState() != string(learning.SkillActive) || published != 1 {
+		t.Fatalf("activate=%+v publishes=%d", activated, published)
+	}
+	_, err = svc.ArchiveLearnedSkill(context.Background(), &mecatlv1.MutateLearnedSkillRequest{OwnerAgent: "agent", Id: string(staged.ID), Version: string(staged.Version), ExpectedRevision: string(staged.Revision)})
+	if !errors.Is(err, ErrProposalConflict) {
+		t.Fatalf("stale CAS err=%v", err)
+	}
+}
+
+func TestLearnedSkillProjectionRepairsAndBoundsText(t *testing.T) {
+	value := learning.SkillVersion{ID: "id", Version: "v", Revision: "r", State: learning.SkillDraft, OwnerAgent: "a\xff", Bundle: learning.SkillBundle{Name: "n", Description: "d\xff", Body: strings.Repeat("x", learning.MaxSkillBodyBytes) + "\xff"}}
+	got := toProtoLearnedSkill(value)
+	if !strings.Contains(got.GetOwnerAgent(), "�") || !strings.Contains(got.GetDescription(), "�") {
+		t.Fatalf("invalid UTF-8 not repaired: %+v", got)
+	}
+	if len(got.GetBody()) > learning.MaxSkillBodyBytes {
+		t.Fatalf("body unbounded: %d", len(got.GetBody()))
+	}
+}
+
+func TestLearnedSkillExternalCollisionBlocksActivation(t *testing.T) {
+	repository := memskill.New()
+	p := learning.SkillPartition{Principal: reflectionPrincipal(nil)}
+	d, _ := repository.CreateDraft(context.Background(), p, "agent", learning.SkillBundle{Name: "protected", Description: "Protected", Body: "body"}, learning.SkillProvenance{Origin: learning.SkillProvenanceLegacyModel})
+	e, _ := repository.RecordEvaluation(context.Background(), p, "agent", d.ID, d.Version, d.Revision, learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"f"}, At: time.Now()})
+	staged, _ := repository.Stage(context.Background(), p, "agent", d.ID, d.Version, e.Revision)
+	svc := &Service{cfg: Config{LearnedSkills: repository, LearnedSkillNameAvailable: func(string) bool { return false }}}
+	_, err := svc.ActivateLearnedSkill(context.Background(), &mecatlv1.MutateLearnedSkillRequest{OwnerAgent: "agent", Id: string(staged.ID), Version: string(staged.Version), ExpectedRevision: string(staged.Revision)})
+	if !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("collision err=%v", err)
+	}
+}

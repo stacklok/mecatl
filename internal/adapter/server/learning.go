@@ -136,6 +136,8 @@ func (s *Service) GetLearningProposal(ctx context.Context, id, project string) (
 }
 
 // DecideLearningProposal rejects or approves a staged proposal using version CAS.
+//
+//nolint:gocyclo // fact and learned-procedure approval share validation and evidence checks
 func (s *Service) DecideLearningProposal(ctx context.Context, id, expected, decision, reason, project string) (*mecatlv1.LearningProposal, error) {
 	if s.cfg.Proposals == nil {
 		return nil, ErrLearningUnavailable
@@ -152,8 +154,8 @@ func (s *Service) DecideLearningProposal(ctx context.Context, id, expected, deci
 	case learning.DecisionReject:
 		record, err = s.cfg.Proposals.ClaimDecision(ctx, part, learning.ProposalID(id), learning.ProposalVersion(expected), learning.Decision{Kind: learning.DecisionReject, Actor: "operator", Reason: validLearningText(reason), At: time.Now()})
 	case learning.DecisionApprove:
-		if available, reason := s.proposalActionAvailable(project); !available {
-			return nil, fmt.Errorf("%w: %s", ErrFailedPrecondition, reason)
+		if project != "" && (s.cfg.ProjectPromotionAllowed == nil || !s.cfg.ProjectPromotionAllowed(project)) {
+			return nil, fmt.Errorf("%w: project promotion requires exact trusted launch root", ErrFailedPrecondition)
 		}
 		if s.cfg.PromoteProposal == nil {
 			return nil, fmt.Errorf("%w: proposal promotion is not configured", ErrFailedPrecondition)
@@ -164,6 +166,16 @@ func (s *Service) DecideLearningProposal(ctx context.Context, id, expected, deci
 		}
 		if !found {
 			return nil, fmt.Errorf("%w: proposal %q", ErrNotFound, id)
+		}
+		if current.Candidate.Kind == learning.CandidateProcedure {
+			if s.cfg.LearnedSkills == nil {
+				return nil, fmt.Errorf("%w: learned-skill lifecycle is unavailable", ErrFailedPrecondition)
+			}
+			if project != "" && (s.cfg.ProjectPromotionAllowed == nil || !s.cfg.ProjectPromotionAllowed(project)) {
+				return nil, fmt.Errorf("%w: project skill activation requires exact trusted launch root", ErrFailedPrecondition)
+			}
+		} else if available, reason := s.proposalActionAvailable(project); !available {
+			return nil, fmt.Errorf("%w: %s", ErrFailedPrecondition, reason)
 		}
 		for _, evidence := range current.Candidate.Evidence {
 			if available, _ := s.learningEvidenceAvailable(ctx, evidence); !available {
@@ -231,12 +243,23 @@ func proposalServiceError(err error) error {
 func (s *Service) toProtoLearningProposal(ctx context.Context, r learning.ProposalRecord) *mecatlv1.LearningProposal {
 	candidate := r.Candidate
 	available, unavailableReason := s.proposalActionAvailable(r.Partition.Project)
+	if candidate.Kind == learning.CandidateProcedure {
+		available = s.cfg.LearnedSkills != nil
+		unavailableReason = ""
+		if available && r.Partition.Project != "" {
+			available, unavailableReason = s.proposalActionAvailable(r.Partition.Project)
+		}
+		if !available && unavailableReason == "" {
+			unavailableReason = "learned-skill lifecycle is unavailable"
+		}
+	}
 	out := &mecatlv1.LearningProposal{
 		Id: validLearningText(string(r.ID)), Version: validLearningText(string(r.Version)), Status: validLearningText(string(r.Status)), Kind: validLearningText(string(candidate.Kind)),
 		Key: validLearningText(candidate.Key), Value: safeLearningText(candidate.Key, candidate.Value), Description: safeLearningText(candidate.Key, candidate.Description),
 		Title: safeLearningText("procedure/title", candidate.Title), Body: safeLearningText(candidate.Title, candidate.Body),
 		CreatedAt: timestampOrNil(r.CreatedAt), UpdatedAt: timestampOrNil(r.UpdatedAt), ProjectScoped: r.Partition.Project != "",
 		PromotionAvailable: available, PromotionUnavailableReason: validLearningText(unavailableReason),
+		LearnedSkillId: validLearningText(string(r.SkillID)),
 	}
 	out.Evidence = make([]*mecatlv1.LearningEvidenceRef, len(candidate.Evidence))
 	for i, ref := range candidate.Evidence {

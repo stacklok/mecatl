@@ -127,7 +127,6 @@
 
 
 
-
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                        ┃
 ┃  Reflections                                                           ┃
@@ -138,7 +137,10 @@
 ┃  scope: trusted project                                                ┃
 ┃  key: Run checks                                                       ┃
 ┃  body: Run focused tests before the full suite.                        ┃
-┃  evidence: 0  decisions: 0                                             ┃
+┃  evidence: 1  decisions: 0                                             ┃
+┃    :0  available  source=                                              ┃
+┃      digest=                                                           ┃
+┃  a materialize and evaluate learned-skill draft   x reject             ┃
 ┃                                                                        ┃
 ┃  esc close  ↑/↓ navigate  n/p pages  pgup/pgdown detail  enter detail  ┃
 ┃                                                                        ┃
@@ -146,10 +148,7 @@
 
 
 
-
-
 === staged-procedure ===
-
 
 
 
@@ -163,13 +162,14 @@
 ┃  scope: trusted project                                                ┃
 ┃  key: Run checks                                                       ┃
 ┃  body: Run focused tests before the full suite.                        ┃
-┃  evidence: 0  decisions: 0                                             ┃
-┃  procedure promotion is deferred; x reject                             ┃
+┃  evidence: 1  decisions: 0                                             ┃
+┃    :0  available  source=                                              ┃
+┃      digest=                                                           ┃
+┃  a materialize and evaluate learned-skill draft   x reject             ┃
 ┃                                                                        ┃
 ┃  esc close  ↑/↓ navigate  n/p pages  pgup/pgdown detail  enter detail  ┃
 ┃                                                                        ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
 
 
 

@@ -32,7 +32,7 @@ func admittedInput(t *testing.T) (learning.Input, learning.EvidenceRef) {
 func modelOutcome(candidate learning.Candidate, handles ...string) []byte {
 	wireCandidate := map[string]any{
 		"kind": candidate.Kind, "key": candidate.Key, "value": candidate.Value,
-		"description": candidate.Description, "title": candidate.Title, "body": candidate.Body,
+		"description": candidate.Description, "name": candidate.Name, "title": candidate.Title, "body": candidate.Body,
 		"evidence": handles,
 	}
 	encoded, _ := json.Marshal(map[string]any{"kind": learning.OutcomeProposed, "candidates": []any{wireCandidate}})
@@ -66,7 +66,7 @@ func TestEvidenceReflectorOneProviderCallZeroToolsAndSelectedModel(t *testing.T)
 			t.Errorf("request leaked %q", forbidden)
 		}
 	}
-	if !strings.Contains(request.System.StablePrefix, "Abstention is normal") || !strings.Contains(request.Messages[0].Text, agent.UntrustedFence) {
+	if !strings.Contains(request.System.StablePrefix, "Abstention is normal") || !strings.Contains(request.System.StablePrefix, "lowercase activation name") || !strings.Contains(request.Messages[0].Text, agent.UntrustedFence) {
 		t.Fatal("reflection policy or untrusted fence missing")
 	}
 }
@@ -86,7 +86,7 @@ func TestEvidenceReflectorAbstainsWithoutSignalAndDoesNotCall(t *testing.T) {
 
 func TestParseReflectionOutcomeStrictnessAndEvidenceResolution(t *testing.T) {
 	input, ref := admittedInput(t)
-	candidate := learning.Candidate{Kind: learning.CandidateProcedure, Title: "Format Go", Body: "Run gofmt before focused tests."}
+	candidate := learning.Candidate{Kind: learning.CandidateProcedure, Name: "format-go", Title: "Format Go", Body: "Run gofmt before focused tests."}
 	valid := modelOutcome(candidate, "m:0")
 	for name, raw := range map[string]string{
 		"unknown":          strings.TrimSuffix(string(valid), "}") + `,"extra":true}`,

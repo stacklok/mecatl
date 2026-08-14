@@ -295,13 +295,21 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"GetSoul":            {KindSharedInfrastructure, "the deployment's configured soul, identical for every caller"},
 
 	// --- derived: user-model memory delegates entirely to the caller-partitioned store ---
-	"GetUserModel":           {KindDerived, "delegates to cfg.UserModel.List, the caller-partitioned memory.CallerStore already classified caller-owned"},
-	"GetUserModelDetail":     {KindDerived, "delegates to cfg.UserModel's optional lifecycle Inspect, preserving the same caller-partitioned memory.CallerStore boundary for current value and history"},
-	"ReflectSession":         {KindCallerOwned, "loads and authorizes the source session before submitting its bounded completed trajectory"},
-	"ListLearningProposals":  {KindCallerOwned, "derives the proposal partition from the verified caller; optional project scope is trust-gated"},
-	"GetLearningProposal":    {KindCallerOwned, "reads only the verified caller's proposal partition"},
-	"DecideLearningProposal": {KindCallerOwned, "mutates only the verified caller's proposal partition with version CAS"},
-	"UndoLearningPromotion":  {KindCallerOwned, "compensates only a verified caller-owned proposal and linked current revision with version CAS"},
+	"GetUserModel":             {KindDerived, "delegates to cfg.UserModel.List, the caller-partitioned memory.CallerStore already classified caller-owned"},
+	"GetUserModelDetail":       {KindDerived, "delegates to cfg.UserModel's optional lifecycle Inspect, preserving the same caller-partitioned memory.CallerStore boundary for current value and history"},
+	"ReflectSession":           {KindCallerOwned, "loads and authorizes the source session before submitting its bounded completed trajectory"},
+	"ListLearningProposals":    {KindCallerOwned, "derives the proposal partition from the verified caller; optional project scope is trust-gated"},
+	"GetLearningProposal":      {KindCallerOwned, "reads only the verified caller's proposal partition"},
+	"DecideLearningProposal":   {KindCallerOwned, "mutates only the verified caller's proposal partition with version CAS"},
+	"UndoLearningPromotion":    {KindCallerOwned, "compensates only a verified caller-owned proposal and linked current revision with version CAS"},
+	"ListLearnedSkills":        {KindCallerOwned, "lists only the verified caller's learned-skill partition"},
+	"GetLearnedSkill":          {KindCallerOwned, "reads only the verified caller's learned-skill partition"},
+	"DiffLearnedSkillVersions": {KindCallerOwned, "diffs versions only inside the verified caller's learned-skill partition"},
+	"ActivateLearnedSkill":     {KindCallerOwned, "activates an agent-owned caller-partitioned version with revision CAS"},
+	"RejectLearnedSkill":       {KindCallerOwned, "rejects an agent-owned caller-partitioned version with revision CAS"},
+	"ArchiveLearnedSkill":      {KindCallerOwned, "archives an agent-owned caller-partitioned version with revision CAS"},
+	"RollbackLearnedSkill":     {KindCallerOwned, "rolls back an agent-owned caller-partitioned skill with revision CAS"},
+	"ListSkillChanges":         {KindCallerOwned, "lists bounded receipts only from the verified caller's learned-skill partition"},
 
 	// --- exempt: workspace-path-scoped (project trust), not caller-identity-scoped ---
 	"ListCommands":  {KindExempt, "scoped by filesystem workspace path under the pre-existing project-trust gate, not caller identity — out of ADR 0102's per-caller kind table"},

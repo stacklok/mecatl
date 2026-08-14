@@ -710,6 +710,7 @@ func runSkillsPromote(argv []string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintln(out, "Warning: `skills promote` is the deprecated legacy quarantine workflow; it never activates evaluated-lifecycle repository records.")
 	_, _ = fmt.Fprintf(out, "\n--- candidate skill %q (model-authored, UNTRUSTED until promoted) ---\n%s\n--- end candidate ---\n\n", name, raw)
 
 	if !assumeYes {

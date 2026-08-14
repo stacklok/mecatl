@@ -1,6 +1,7 @@
-// Package learning defines host-driven completed-trajectory observation and
-// evidence-backed reflection values. It owns policy and bounded snapshots only;
-// persistence, scheduling, model transport, and promotion remain host concerns.
+// Package learning defines host-driven completed-trajectory observation,
+// evidence-backed reflection, and evaluated agent-owned skill lifecycle values.
+// It owns policy and bounded contracts only; persistence, scheduling, model
+// transport, and runtime catalog activation remain host concerns.
 package learning
 
 import (
