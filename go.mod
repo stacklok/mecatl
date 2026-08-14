@@ -28,7 +28,7 @@ require (
 	github.com/prometheus/procfs v0.21.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
-	github.com/stacklok/mecatl/engine v0.10.0
+	github.com/stacklok/mecatl/engine v0.11.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000

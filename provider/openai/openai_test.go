@@ -1377,7 +1377,10 @@ func TestStreamContextCancel(t *testing.T) {
 // retry with only reasoning blobs removed. Visible/tool history and provider-assigned
 // function-call item IDs remain intact so recovery does not create a second replay bug.
 func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
-	var bodies [][]byte
+	var (
+		bodies  [][]byte
+		headers []string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -1385,6 +1388,7 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 			return
 		}
 		bodies = append(bodies, body)
+		headers = append(headers, r.Header.Get(sessionIDHeaderName))
 		if len(bodies) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -1416,7 +1420,8 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 		}()},
 	}}
 	p := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"))
-	seq, err := p.Stream(context.Background(), req)
+	ctx := port.WithSessionID(context.Background(), "fallback-session")
+	seq, err := p.Stream(ctx, req)
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -1434,6 +1439,11 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 	}
 	if len(bodies) != 2 {
 		t.Fatalf("request count = %d, want exactly 2", len(bodies))
+	}
+	for i, header := range headers {
+		if header != "fallback-session" {
+			t.Errorf("request %d X-Mecatl-Session-ID = %q, want fallback-session", i, header)
+		}
 	}
 
 	var first, second struct {

@@ -337,6 +337,21 @@ config resolves per-session against that root without a mutate-capable handle; `
 `engine/adapter/wallclock`, wired in `engineDepsForProvider`/`newChildEngineWithHooks`
 (issue #53 — previously never injected, leaving all latency observations zero).
 
+**Provider request session correlation (issue #543).**
+`engine/agent/loop.go` (`startRun`) overwrites the run context with the exact
+loaded `session.SessionID` via `engine/port/sessioncontext.go` (`WithSessionID`),
+shipped in `engine/v0.11.0`, so regular and awaiting-resume runs share one binding seam and nested engines replace a
+parent binding with their own child/member/auxiliary ID. Compaction receives that
+same context and therefore uses the parent run ID. The three real HTTP adapters read
+it at request time and add `X-Mecatl-Session-ID` through SDK per-request options:
+`provider/openai/openai.go` (`Stream`),
+`provider/openaichat/openaichat.go` (`Stream`), and
+`provider/anthropic/anthropic.go` (`Stream`). No provider instance stores
+session identity. Absent or Go-illegal header values are omitted without changing
+the inference request; legal values remain exact. The proprietary field is
+correlation-only, never auth, tracing, idempotency, provider state, user/safety
+identity, or cache identity ([ADR 0110](../adr/0110-provider-session-correlation-header.md)).
+
 ## Application — `engine/agent/` (subagent workspace policy)
 
 The loop (`Engine`/`Run`), dispatch, permission pause/resume, compaction, the Subagent delegation tool,

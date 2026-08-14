@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/openai/openai-go/v3 v3.37.0
-	github.com/stacklok/mecatl/engine v0.8.0
+	github.com/stacklok/mecatl/engine v0.11.0
 	github.com/stacklok/mecatl/provider/ssefilter v0.0.0
 	go.uber.org/goleak v1.3.0
 )

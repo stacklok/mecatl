@@ -37,6 +37,8 @@ import (
 	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
+const sessionIDHeaderName = "X-Mecatl-Session-ID"
+
 // Provider is a port.LLMProvider backed by the OpenAI Chat Completions API.
 // Construct it with New.
 type Provider struct {
@@ -129,6 +131,27 @@ func New(opts ...Option) *Provider {
 	return &Provider{client: client.Chat.Completions, effort: c.effort, cacheDialect: c.cacheDialect}
 }
 
+func sessionHeaderOptions(ctx context.Context) []option.RequestOption {
+	id, ok := port.SessionIDFromContext(ctx)
+	if !ok || !validHTTPHeaderValue(string(id)) {
+		return nil
+	}
+	return []option.RequestOption{option.WithHeader(sessionIDHeaderName, string(id))}
+}
+
+func validHTTPHeaderValue(value string) bool {
+	if value == "" || value[0] == ' ' || value[0] == '\t' || value[len(value)-1] == ' ' || value[len(value)-1] == '\t' {
+		return false
+	}
+	for i := range len(value) {
+		c := value[i]
+		if (c < ' ' && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // Stream issues a streaming Chat Completions request and yields provider-neutral
 // chunks. The returned iterator translates each SSE chunk via translate; it stops
 // (abandoning the underlying stream) when ctx is cancelled, and surfaces a
@@ -140,7 +163,8 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 		return nil, err
 	}
 
-	stream := p.client.NewStreaming(ctx, params)
+	reqOpts := sessionHeaderOptions(ctx)
+	stream := p.client.NewStreaming(ctx, params, reqOpts...)
 
 	return func(yield func(port.Chunk, error) bool) {
 		defer func() { _ = stream.Close() }()

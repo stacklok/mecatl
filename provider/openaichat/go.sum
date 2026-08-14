@@ -8,6 +8,8 @@ github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRI
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stacklok/mecatl/engine v0.8.0 h1:j4rGY02X246u236vrfWIqJe5WjLwmdnS17wTa40kHLQ=
 github.com/stacklok/mecatl/engine v0.8.0/go.mod h1:PZe5kskQ5Gk8KH7qAg6XhB+zs9TgSQ1Nt6hQ6vGAeAA=
+github.com/stacklok/mecatl/engine v0.11.0 h1:AkJKted0uGl6gF6pc0Lo3bvNlXl0I3DRDbVMT8lzQRA=
+github.com/stacklok/mecatl/engine v0.11.0/go.mod h1:+t/vC19tLuW6FSN+D5DGLp4Y4CpearW8PX7UDgyCdcM=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=

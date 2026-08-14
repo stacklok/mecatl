@@ -16,8 +16,8 @@ github.com/pb33f/ordered-map/v2 v2.3.1 h1:5319HDO0aw4DA4gzi+zv4FXU9UlSs3xGZ40wcP
 github.com/pb33f/ordered-map/v2 v2.3.1/go.mod h1:qxFQgd0PkVUtOMCkTapqotNgzRhMPL7VvaHKbd1HnmQ=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/stacklok/mecatl/engine v0.9.0 h1:PpXB7LSYEWupj9GWG5iLqyVTupowTLoS9MWNBjfGtHc=
-github.com/stacklok/mecatl/engine v0.9.0/go.mod h1:PZe5kskQ5Gk8KH7qAg6XhB+zs9TgSQ1Nt6hQ6vGAeAA=
+github.com/stacklok/mecatl/engine v0.11.0 h1:AkJKted0uGl6gF6pc0Lo3bvNlXl0I3DRDbVMT8lzQRA=
+github.com/stacklok/mecatl/engine v0.11.0/go.mod h1:+t/vC19tLuW6FSN+D5DGLp4Y4CpearW8PX7UDgyCdcM=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 h1:uOfcYT+3QungH6tIGSVCR/Y3KJmgJiHcojJbMTPDZAI=
 github.com/standard-webhooks/standard-webhooks/libraries v0.0.1/go.mod h1:L1MQhA6x4dn9r007T033lsaZMv9EmBAdXyU/+EF40fo=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

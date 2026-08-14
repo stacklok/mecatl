@@ -18,7 +18,10 @@ import (
 // Anthropic requires max_tokens and rejects a value above the model's real output
 // limit, so the per-REQUEST value is resolved per req.Model (maxTokensFor), not
 // baked in — see WithMaxTokensResolver.
-const defaultMaxTokens int64 = 4096
+const (
+	defaultMaxTokens    int64 = 4096
+	sessionIDHeaderName       = "X-Mecatl-Session-ID"
+)
 
 // defaultThinkingBudget is the default budget_tokens used for the manual
 // (type:"enabled") thinking config on older thinking-capable model families. It
@@ -268,6 +271,27 @@ func New(opts ...Option) *Provider {
 	}
 }
 
+func sessionHeaderOptions(ctx context.Context) []option.RequestOption {
+	id, ok := port.SessionIDFromContext(ctx)
+	if !ok || !validHTTPHeaderValue(string(id)) {
+		return nil
+	}
+	return []option.RequestOption{option.WithHeader(sessionIDHeaderName, string(id))}
+}
+
+func validHTTPHeaderValue(value string) bool {
+	if value == "" || value[0] == ' ' || value[0] == '\t' || value[len(value)-1] == ' ' || value[len(value)-1] == '\t' {
+		return false
+	}
+	for i := range len(value) {
+		c := value[i]
+		if (c < ' ' && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // maxTokensForModel resolves the REQUIRED max_tokens for a given request model:
 // the per-model resolver's value when it knows the model (>0), else the
 // construction fallback (WithMaxTokens / defaultMaxTokens). Never returns a value
@@ -293,7 +317,8 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 		return nil, err
 	}
 
-	stream := p.client.NewStreaming(ctx, params)
+	reqOpts := sessionHeaderOptions(ctx)
+	stream := p.client.NewStreaming(ctx, params, reqOpts...)
 
 	return func(yield func(port.Chunk, error) bool) {
 		defer func() { _ = stream.Close() }()

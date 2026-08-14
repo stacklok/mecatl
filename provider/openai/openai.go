@@ -36,6 +36,8 @@ import (
 	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
+const sessionIDHeaderName = "X-Mecatl-Session-ID"
+
 // Provider is a port.LLMProvider backed by the OpenAI Responses API. Construct
 // it with New.
 type Provider struct {
@@ -257,11 +259,12 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 		return nil, err
 	}
 
-	// Per-REQUEST OpenRouter routing options (issue #480). These are request
-	// options, NOT buildParams output: the `provider` key is routing metadata, so
-	// the params struct and the byte-stable prompt-cache prefix stay untouched.
-	// Both the initial attempt and the encrypted-reasoning fallback carry them.
+	// Per-request options keep routing and correlation metadata scoped to this
+	// model call; Provider instances are shared by concurrent sessions.
 	reqOpts := p.routingRequestOptions(req.Model)
+	if id, ok := port.SessionIDFromContext(ctx); ok && validHTTPHeaderValue(string(id)) {
+		reqOpts = append(reqOpts, option.WithHeader(sessionIDHeaderName, string(id)))
+	}
 
 	return func(yield func(port.Chunk, error) bool) {
 		emitted, stopped, streamErr := p.streamAttempt(ctx, params, reqOpts, yield)
@@ -319,6 +322,19 @@ func (p *Provider) routingRequestOptions(model string) []option.RequestOption {
 		opts = append(opts, option.WithHeader("X-OpenRouter-Metadata", "enabled"))
 	}
 	return opts
+}
+
+func validHTTPHeaderValue(value string) bool {
+	if value == "" || value[0] == ' ' || value[0] == '\t' || value[len(value)-1] == ' ' || value[len(value)-1] == '\t' {
+		return false
+	}
+	for i := range len(value) {
+		c := value[i]
+		if (c < ' ' && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // encryptedReasoningFallbackError marks a failed cleaned fallback as terminal for

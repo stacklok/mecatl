@@ -24,6 +24,17 @@ type LLMProvider interface {
 
 Context cancellation is the API "cancel" verb — cancel the context to interrupt an in-flight turn mid-stream. Both the OpenAI and Anthropic adapters stop yielding on `ctx.Done()`.
 
+The same context carries the exact active session ID through
+`port.SessionIDFromContext`. Mecatl's three real HTTP adapters send a legal value as
+`X-Mecatl-Session-ID` on each inference request, which lets gateways correlate a
+request with the durable parent, child, member, or auxiliary session that made it;
+compaction inside a run keeps that run's ID. The header is optional and
+correlation-only—not authentication, tracing, idempotency, provider conversation
+state, safety/user identity, or a cache key. Missing or Go-illegal HTTP header values
+are omitted without failing the model call. Custom providers may use the context
+helper without adding a field to `LLMRequest`. See
+[ADR 0110](https://github.com/stacklok/mecatl/blob/main/docs/adr/0110-provider-session-correlation-header.md).
+
 **`Capabilities`** reports which non-text prompt content the provider accepts. The composition layer computes a capability intersection (model-level modalities ∩ adapter capabilities) and uses it to gate multimodal content at the ACP surface — rejecting unsupported image or audio parts loudly rather than silently dropping them. A decorator that wraps another `LLMProvider` **must** forward the inner provider's `Capabilities()` unchanged; replacing it with the zero value breaks multimodal gating.
 
 ---

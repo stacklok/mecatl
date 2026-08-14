@@ -76,6 +76,17 @@ directly from recorded fixtures by `decodeSSE` in tests):
 and abandons the underlying stream; a deliberate `ctx` cancel is **not** reported
 as a stream error.
 
+**Per-request session correlation.** The shared run-entry path binds the exact active
+`session.SessionID` to the context passed through `LLMProvider.Stream`. The OpenAI
+Responses, OpenAI Chat Completions, and Anthropic adapters project it as
+`X-Mecatl-Session-ID` on each HTTP request. It is correlation-only: child/member/
+auxiliary engines bind their own IDs, while compaction inherits the parent run's ID.
+Provider clients never hold it globally, so concurrent sessions cannot cross-stamp.
+An absent or Go-illegal HTTP field value omits the header without failing inference;
+the value is otherwise byte-exact. It is not auth, tracing, idempotency, provider
+state, safety/user identity, or a cache key. See
+[ADR 0110](../adr/0110-provider-session-correlation-header.md).
+
 **The provider-neutral seam**: the loop only ever sees `port.Chunk`; no OpenAI
 type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`,
 `New(turns...)`, `TextTurn`) implements the same port for offline loop testing.
