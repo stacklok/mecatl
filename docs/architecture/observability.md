@@ -140,7 +140,9 @@
   after a restart so a previously-approved tool does not re-ask; and (#115)
   **event-sourced `SessionStore.Load`** — a host whose system of record is the
   event log folds `EventLog` + `SessionMeta` → `*session.Session` via
-  `engine/adapter/eventsource.Fold`. That third consumer carries a documented
+  `engine/adapter/eventsource.Fold`. The out-of-band metadata includes the durable,
+  validated session kind/relationship; absent legacy kind metadata restores as
+  fail-closed `unknown`. That third consumer carries a documented
   **replay-fidelity limitation**: the opaque assistant-replay fields
   (`Message.Reasoning`/`ProviderPhase`, `ToolCall.ItemID`) are not on the stream,
   so a pure fold is byte-identical-replay faithful only for plain-chat providers

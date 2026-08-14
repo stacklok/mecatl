@@ -241,7 +241,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     (Title is seeded from the first genuine EvUserPrompt via SetTitle)
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
-	//     Profile, ProviderID, ModelID, ReasoningEffort, CreatedAt
+	//     Profile, ProviderID, ModelID, ReasoningEffort, Kind, Relationship, CreatedAt
 	//   not-event-carried identity labels (ADR 0100/0106): Owner, Authority,
 	//     EnvironmentRef — the event annotation is log-only and the fold neither
 	//     requires nor re-derives any of them, so a folded session keeps the
@@ -251,7 +251,8 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
 		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
-		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "CreatedAt": {},
+		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "Kind": {},
+		"Relationship": {}, "CreatedAt": {},
 		"Title": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,

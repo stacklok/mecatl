@@ -21,12 +21,14 @@ import (
 // pinned by TestMetaSnapshotTagsAreSessnapSubset (a reflection tripwire so the
 // mirror cannot silently drift).
 type metaSnapshot struct {
-	ID        session.SessionID `json:"id"`
-	State     session.State     `json:"state"`
-	Counters  session.Counters  `json:"counters"`
-	ModelID   string            `json:"model_id,omitempty"`
-	Title     string            `json:"title,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
+	ID           session.SessionID           `json:"id"`
+	State        session.State               `json:"state"`
+	Counters     session.Counters            `json:"counters"`
+	ModelID      string                      `json:"model_id,omitempty"`
+	Title        string                      `json:"title,omitempty"`
+	Kind         session.SessionKind         `json:"kind,omitempty"`
+	Relationship session.SessionRelationship `json:"relationship,omitzero"`
+	CreatedAt    time.Time                   `json:"created_at"`
 	// Owner is the session's verified owner (ADR 0100). Decoding it here is
 	// what keeps the cheap fast path's row IDENTICAL to the Load-per-row
 	// fallback's; a pre-owner snapshot simply has no key and stays nil.
@@ -101,10 +103,20 @@ func (st *Store) MetaList(_ context.Context) ([]port.SessionMeta, error) {
 		meta := port.SessionMeta{ID: file.id, ModifiedAt: file.modified}
 		var m metaSnapshot
 		if err := json.Unmarshal(file.last, &m); err == nil && knownStates[m.State] {
+			kind := m.Kind
+			if kind == "" {
+				kind = session.SessionKindUnknown
+			}
+			if session.ValidateSessionMetadata(kind, m.Relationship) != nil {
+				out = append(out, meta)
+				continue
+			}
 			meta.State = m.State
 			meta.Turns = m.Counters.Turns
 			meta.ModelID = m.ModelID
 			meta.Title = m.Title
+			meta.Kind = kind
+			meta.Relationship = m.Relationship
 			meta.Owner = m.Owner
 			// A zero CreatedAt (a snapshot with no created_at, or the zero time)
 			// must surface as the zero time — NOT .Unix() of the zero time, which

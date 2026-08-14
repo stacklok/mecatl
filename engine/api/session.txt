@@ -27,6 +27,7 @@
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ResetUsage() error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
+    method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).SeedHistory(messages []Message) error
     method func (*Session).SetMode(mode PermissionMode) error
@@ -118,6 +119,12 @@ const RoutingReasonPinnedModel untyped string = "pinned-model"
 const RoutingReasonResume untyped string = "resume"
 const RoutingReasonRouterDisabled untyped string = "router-disabled"
 const RoutingReasonTargetUnavailable untyped string = "route-target-unavailable"
+const SessionKindMain SessionKind = "main"
+const SessionKindParallelBranch SessionKind = "parallel_branch"
+const SessionKindScheduled SessionKind = "scheduled"
+const SessionKindSubagent SessionKind = "subagent"
+const SessionKindTeamMember SessionKind = "team_member"
+const SessionKindUnknown SessionKind = "unknown"
 const StateAwaiting State = "awaiting"
 const StateCancelled State = "cancelled"
 const StateCompleted State = "completed"
@@ -158,9 +165,13 @@ func NewContent(kind MediaKind, mime string, data []byte, rawURL string) (Conten
 func NewEmbeddedResourceBlock(uri string, mimeType string, text string, blob []byte, audience []string) (Content, error)
 func NewImageContent(mime string, data []byte) (Content, error)
 func NewImageURLContent(mime string, rawURL string) (Content, error)
+func NewParallelBranch(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, call ToolCallID, branchIndex int) (*Session, error)
 func NewResourceLinkBlock(uri string, name string, title string, description string, mimeType string, size int64, audience []string) Content
+func NewScheduled(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, scheduleName string, origin SessionID) (*Session, error)
 func NewStructuredContentBlock(structuredJSON string) Content
+func NewSubagent(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, call ToolCallID) (*Session, error)
 func NewSystemMessage(text string) Message
+func NewTeamMember(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, teamID string, member string, parent SessionID) (*Session, error)
 func NewTextBlock(text string) Content
 func NewToolCall(id ToolCallID, name string, args json.RawMessage) ToolCall
 func NewToolError(callID ToolCallID, content string) ToolResult
@@ -180,6 +191,7 @@ func ValidateJSON(schema json.RawMessage, payload json.RawMessage) error
 func ValidateMediaParts(parts []Content) error
 func ValidateMediaURL(raw string) error
 func ValidateResolvedIP(ip net.IP) error
+func ValidateSessionMetadata(kind SessionKind, rel SessionRelationship) error
 func ValidateToolPairing(msgs []Message) error
 func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
@@ -211,8 +223,10 @@ type Principal struct{Issuer string; Subject string; GrantType GrantType; Name s
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool}
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; Owner *Principal; Authority Authority; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
 type SessionID string
+type SessionKind string
+type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""}
 type State string
 type StopReason string
 type SubagentPayload struct{ParentCallID string; ChildID string; Goal string; Background bool; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Usage Usage; Stop StopReason; Cause string; DurationMs int64}
@@ -231,5 +245,6 @@ type UserPromptPayload struct{Text string; Parts []Content}
 var ErrIllegalTransition error
 var ErrInvalidContent error
 var ErrInvalidMediaURL error
+var ErrInvalidSessionMetadata error
 var ErrNoPendingAsk error
 var ErrOwnerAlreadySet error

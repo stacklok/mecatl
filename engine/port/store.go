@@ -35,8 +35,9 @@ var ErrSessionNotFound = errors.New("port: session not found")
 //     permanently-failed session reconstructs with FailurePermanence()==true and the
 //     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
 //     — the budget brake reads it), and the creation metadata the events do not carry
-//     (id, mode, limits, workspace, profile, provider/model selector, createdAt —
-//     supplied out-of-band, e.g. eventsource.SessionMeta).
+//     (id, mode, limits, workspace, profile, provider/model selector, reasoning
+//     effort, session kind/relationship, createdAt — supplied out-of-band, e.g.
+//     eventsource.SessionMeta).
 //   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
 //
@@ -68,9 +69,10 @@ type StoredSession struct {
 // fields a session LISTING (the /sessions picker) needs to render a row WITHOUT
 // loading the full conversation. It is a PROJECTION of the latest snapshot —
 // state, turn count, model id, title, and creation time — with the large
-// conversation (messages array) skipped entirely. The store adapter populates
-// it by reading ONLY the last snapshot line and decoding into a small struct,
-// so listing N sessions is O(N × last-line-read) rather than O(N × filesize).
+// conversation (messages array) skipped entirely. Kind and Relationship preserve
+// the validated producer taxonomy needed to classify the row without parsing its ID.
+// The store adapter populates it by reading ONLY the last snapshot line into a
+// small struct, so listing N sessions is O(N × last-line-read) rather than O(N × filesize).
 //
 // It is owned by the PORT (so the server adapter references the shape without
 // importing any concrete store) and implemented by a store via the optional
@@ -109,6 +111,10 @@ type SessionMeta struct {
 	// multimodal-only first prompt) carries "" here; the caller may fall back to
 	// the lazy deriveTitle walk via a full Load if it needs the derived value.
 	Title string
+	// Kind and Relationship are the validated trusted-producer taxonomy projected
+	// from the latest snapshot. A legacy row has KindUnknown and no relationship.
+	Kind         session.SessionKind
+	Relationship session.SessionRelationship
 	// Owner is the verified caller the session is attributed to (ADR 0100), or
 	// nil when the session is ownerless (the no-auth path, or a session
 	// persisted before the owner label existed — nothing backfills it). It is

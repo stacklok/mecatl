@@ -40,6 +40,10 @@ type Snapshot struct {
 	Messages   []messageDTO           `json:"messages"`
 	Pending    *session.PendingAsk    `json:"pending,omitempty"`
 	StopReason session.StopReason     `json:"stop_reason,omitempty"`
+	// Kind and Relationship are the validated producer taxonomy from ADR 0108.
+	// A missing kind is legacy data and restores as unknown (fail-closed).
+	Kind         session.SessionKind         `json:"kind,omitempty"`
+	Relationship session.SessionRelationship `json:"relationship,omitzero"`
 	// Profile is the session's opaque tool-surface profile label. omitempty keeps a
 	// v1 snapshot with no "profile" key decoding to "" (the default profile) —
 	// purely additive, no format-tag bump (the same precedent as ProviderPhase /
@@ -153,6 +157,11 @@ func Of(s *session.Session) (Snapshot, error) {
 	if s == nil {
 		return Snapshot{}, ErrNilSession
 	}
+	relationship := s.Relationship
+	if relationship.BranchIndex != nil {
+		branchIndex := *relationship.BranchIndex
+		relationship.BranchIndex = &branchIndex
+	}
 	snap := Snapshot{
 		ID:              s.ID,
 		State:           s.State,
@@ -167,6 +176,8 @@ func Of(s *session.Session) (Snapshot, error) {
 		ReasoningEffort: s.ReasoningEffort,
 		Title:           s.Title,
 		Authority:       s.Authority,
+		Kind:            s.Kind,
+		Relationship:    relationship,
 		CreatedAt:       s.CreatedAt,
 		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
 		// alias (and later mutate) the aggregate's own principal.
@@ -203,6 +214,9 @@ func Of(s *session.Session) (Snapshot, error) {
 // hold on the rebuilt aggregate.
 func (snap Snapshot) Restore() (*session.Session, error) {
 	s := session.New(snap.ID, snap.Mode, snap.Workspace, snap.Limits, snap.CreatedAt)
+	if err := s.RestoreSessionMetadata(snap.Kind, snap.Relationship); err != nil {
+		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
+	}
 
 	// Rebuild the conversation history verbatim.
 	for _, dto := range snap.Messages {

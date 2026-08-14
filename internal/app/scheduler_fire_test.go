@@ -147,6 +147,10 @@ func TestSchedulerFire(t *testing.T) {
 	if sess.State != session.StateCompleted {
 		t.Errorf("fire session state = %q, want completed", sess.State)
 	}
+	wantRelationship := session.SessionRelationship{ScheduleName: schedName}
+	if sess.Kind != session.SessionKindScheduled || sess.Relationship != wantRelationship {
+		t.Errorf("fire session metadata = (%q, %+v), want (%q, %+v)", sess.Kind, sess.Relationship, session.SessionKindScheduled, wantRelationship)
+	}
 	_ = filepath.Separator // keep filepath import (store dir layoutagnostic)
 }
 

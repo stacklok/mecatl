@@ -321,6 +321,7 @@ type Supervisor struct {
 	// synthesis-prompt status line). Touched only by the single Run goroutine.
 	budgetTripped bool
 	idPrefix      string
+	teamID        string
 	hooks         port.HookRunner
 
 	// goal is the team's top-level objective, rendered as the TRUSTED top-level
@@ -653,6 +654,7 @@ func WithMemberSessionPrefix(p string) SupervisorOption {
 	return func(s *Supervisor) {
 		if p != "" {
 			s.idPrefix = p
+			s.teamID = strings.TrimPrefix(p, TeamSessionPrefix)
 		}
 	}
 }
@@ -683,6 +685,7 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 		// survives one transient member failure (ADR 0077).
 		memberErrorRetries: defaultMemberErrorRetries,
 		idPrefix:           strings.TrimSuffix(TeamSessionPrefix, "-"), // the exported convention is the source
+		teamID:             strings.TrimSuffix(TeamSessionPrefix, "-"),
 		members:            make(map[string]*memberRT),
 	}
 	for _, o := range opts {
@@ -794,7 +797,14 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
-	sess := session.New(s.sessionID(spec.Name), mode, ws.Workspace().Root(), limits, build.Engine.now())
+	sess, err := session.NewTeamMember(s.sessionID(spec.Name), mode, ws.Workspace().Root(), limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID)
+	if err != nil {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+		s.team.RemoveMember(spec.Name)
+		return fmt.Errorf("agent: stamp team-member relationship: %w", err)
+	}
 	// The member is attributed to the PARENT session's owner (ADR 0100 decision 4).
 	s.caps.inheritOwner(sess)
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)

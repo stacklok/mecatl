@@ -92,7 +92,8 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		fireID := newFireID(literalName, now)
 		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
-			server.WithOwner(fireSessionOwner(sched.Spec.Owner)))
+			server.WithOwner(fireSessionOwner(sched.Spec.Owner)),
+			server.WithScheduledRelationship(literalName, sched.Spec.OriginSessionID))
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
 		}

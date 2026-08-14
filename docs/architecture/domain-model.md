@@ -26,6 +26,15 @@ state; mutation flows through methods such as `BeginTurn`, `RecordAssistant`,
 States (`session.State`): `idle`, `running`, `awaiting`, `completed`, `failed`,
 `cancelled`. The last three are terminal (`State.IsTerminal()`).
 
+Every new aggregate also carries validated, durable producer metadata
+(`SessionKind` + `SessionRelationship`): public create, peer fork, reasoning-effort
+fork, and model carryover are `main` with no lineage; scheduler fires are
+`scheduled`; and Subagent, Parallel, and Supervisor producers stamp their respective
+child relationships. Snapshot stores and metadata listings round-trip it, while an
+absent legacy kind restores as fail-closed `unknown`. `session.New` remains the
+main-session constructor; the non-main producer paths use intention-revealing
+validated constructors.
+
 ```mermaid
 stateDiagram-v2
   [*] --> idle: New

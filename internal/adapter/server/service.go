@@ -1205,6 +1205,9 @@ type createSessionOpts struct {
 	// called", which falls back to session.PrincipalFromContext.
 	owner    *session.Principal
 	ownerSet bool
+	// scheduled is set only by the trusted scheduler composition path. Public
+	// create requests have no field that can populate it.
+	scheduled *session.SessionRelationship
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1248,6 +1251,14 @@ func WithOwner(p *session.Principal) CreateSessionOption {
 	return func(o *createSessionOpts) { o.owner, o.ownerSet = p, true }
 }
 
+// WithScheduledRelationship is the trusted composition-only creation seam for
+// scheduler fires. No public request field maps to this option.
+func WithScheduledRelationship(scheduleName string, origin session.SessionID) CreateSessionOption {
+	return func(o *createSessionOpts) {
+		o.scheduled = &session.SessionRelationship{ScheduleName: scheduleName, OriginSessionID: origin}
+	}
+}
+
 // resolveOwner picks the owner a create stamps: the explicit WithOwner value
 // when the option was passed (nil included — see WithOwner), else the verified
 // principal riding the context. An absent principal yields nil — the ownerless
@@ -1258,6 +1269,13 @@ func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principa
 		return opts.owner
 	}
 	return session.PrincipalFromContext(ctx)
+}
+
+func newCreatedSession(id session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, createdAt time.Time, scheduled *session.SessionRelationship) (*session.Session, error) {
+	if scheduled == nil {
+		return session.New(id, mode, workspace, limits, createdAt), nil
+	}
+	return session.NewScheduled(id, mode, workspace, limits, createdAt, scheduled.ScheduleName, scheduled.OriginSessionID)
 }
 
 // CreateSession allocates a new idle session on the SHARED engine, persists it,
@@ -1526,7 +1544,10 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		// the empty pair + default profile here (the empty-selector default profile is
 		// exactly the no-per-session case), so setLabels persists nothing new — the
 		// snapshot stays byte-identical to a pre-Phase-1 default session.
-		sess := session.New(mintID(), mode, workspace, limits, s.cfg.Now())
+		sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), opts.scheduled)
+		if err != nil {
+			return nil, fmt.Errorf("server: create session metadata: %w", err)
+		}
 		if err := setSessionLabels(sess, sel, profile, owner); err != nil {
 			return nil, err
 		}
@@ -1540,7 +1561,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		return sess, nil
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts.scheduled)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -1551,7 +1572,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 // evicts the reservation and tears the freshly-built engine down so a failed
 // create leaks neither a slot nor a connection. See createSession for the
 // profile-aware workspace rule and the carryover snapshot semantics.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal) (*session.Session, error) {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, scheduled *session.SessionRelationship) (*session.Session, error) {
 	if s.cfg.SessionEngine == nil {
 		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 	}
@@ -1574,7 +1595,13 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		return nil, err
 	}
 	eng, closeFn := res.Engine, res.Close
-	sess := session.New(mintID(), mode, workspace, limits, s.cfg.Now())
+	sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), scheduled)
+	if err != nil {
+		if closeFn != nil {
+			_ = closeFn()
+		}
+		return nil, fmt.Errorf("server: create session metadata: %w", err)
+	}
 	// Persist the neutral provider+model selector and the profile as write-once
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the

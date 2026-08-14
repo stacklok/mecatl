@@ -1046,13 +1046,25 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	res.childRoot = childEnv.Workspace().Root()
 	res.childEnv = childEnv
 
-	childSess := session.New(
-		t.childSessionID(caps.parentSessionID, callID, i),
-		t.childMode,
-		childEnv.Workspace().Root(),
-		t.limits,
-		branchEngine.now(),
-	)
+	var childSess *session.Session
+	if caps.parentSessionID == "" {
+		// Direct Tool.Execute has no parent aggregate identity. Classify that
+		// custom-host path unknown rather than fabricating lineage or granting main.
+		childSess = session.New(t.childSessionID("", callID, i), t.childMode,
+			childEnv.Workspace().Root(), t.limits, branchEngine.now())
+		err = childSess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
+	} else {
+		childSess, err = session.NewParallelBranch(
+			t.childSessionID(caps.parentSessionID, callID, i), t.childMode,
+			childEnv.Workspace().Root(), t.limits, branchEngine.now(),
+			caps.parentSessionID, callID, i)
+	}
+	if err != nil {
+		res.failed = true
+		res.failReason = fmt.Sprintf("invalid branch relationship metadata: %v", err)
+		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
+		return res, session.StopError
+	}
 	// The branch is attributed to the PARENT session's owner (ADR 0100 decision 4).
 	caps.inheritOwner(childSess)
 

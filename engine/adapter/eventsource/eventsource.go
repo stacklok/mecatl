@@ -95,6 +95,10 @@ type SessionMeta struct {
 	// when unset. Opaque to the domain; carried so the rehydrated session re-mints
 	// the same-effort per-session engine via the factory.
 	ReasoningEffort string
+	// Kind and Relationship are the trusted producer taxonomy supplied alongside
+	// the event stream. An empty kind is legacy and folds to unknown.
+	Kind         session.SessionKind
+	Relationship session.SessionRelationship
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -137,6 +141,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	}
 
 	s := session.New(meta.ID, meta.Mode, meta.Workspace, meta.Limits, meta.CreatedAt)
+	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
 	// Inert creation labels — opaque to the domain, restored by direct assignment
 	// exactly as sessnap.Restore does (these are authoritative exported values, not
 	// state transitions).

@@ -21,6 +21,12 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 
 	created := time.Unix(1700000000, 0).UTC()
 	s := session.New("meta-1", session.ModeDefault, "/ws", session.Limits{}, created)
+	if err := s.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{
+		ParentSessionID: "parent-1",
+		CallID:          "call-1",
+	}); err != nil {
+		t.Fatalf("RestoreSessionMetadata: %v", err)
+	}
 	s.ModelID = "model-x"
 	s.SetTitle("the real title")
 	for i := 0; i < 3; i++ {
@@ -63,6 +69,10 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 	}
 	if r.Title != "the real title" {
 		t.Errorf("Title = %q, want %q", r.Title, "the real title")
+	}
+	wantRelationship := session.SessionRelationship{ParentSessionID: "parent-1", CallID: "call-1"}
+	if r.Kind != session.SessionKindSubagent || r.Relationship != wantRelationship {
+		t.Errorf("session metadata = (%q, %+v), want (%q, %+v)", r.Kind, r.Relationship, session.SessionKindSubagent, wantRelationship)
 	}
 	if !r.CreatedAt.Equal(created) {
 		t.Errorf("CreatedAt = %v, want %v", r.CreatedAt, created)

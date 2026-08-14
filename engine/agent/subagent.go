@@ -2177,7 +2177,7 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 // still on disk — because this is the only place that sees the resumed session's
 // PERSISTED workspace before buildChildSession re-homes it. See editsSurvived's
 // doc-comment on the named result below and resumeWritableNote.
-func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID, parentID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
 	// priorWorkspace is the resumed child's PERSISTED workspace root, captured here
@@ -2218,7 +2218,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
 	// The path comparison is the honest test and needs no new persisted field.
 	editsSurvived = writable && priorWorkspace != "" && priorWorkspace == env.Workspace().Root()
-	child, errRes, bok := t.buildChildSession(call.ID, childID, resumedChild, runEnv.Workspace().Root(), limits, forkHistory)
+	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, resumedChild, runEnv.Workspace().Root(), limits, forkHistory)
 	if !bok {
 		_ = cleanupWS()
 		return nil, tool.Environment{}, noop, "", false, errRes, false
@@ -2398,7 +2398,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// Resume load + fork + session build (see prepareChildSession). The cleanup is
 	// always non-nil and tears the worktree down after the child fully drains (the
 	// run is drained below in this call), so a deferred cleanup is correct.
-	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, limits, forkHistory)
+	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, caps.parentSessionID, limits, forkHistory)
 	if !ok {
 		return errResult, nil
 	}
@@ -2733,7 +2733,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		return
 	}
 	defer func() { _ = cleanupWS() }()
-	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.resumed, runEnv.Workspace().Root(), b.limits, b.forkHistory)
+	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.caps.parentSessionID, b.resumed, runEnv.Workspace().Root(), b.limits, b.forkHistory)
 	if !ok {
 		endOnError(errResult)
 		return
@@ -3929,11 +3929,24 @@ func (t *SubagentTool) forkChildEnvironment(ctx context.Context, callID session.
 // torn down, and without the re-home the re-persisted snapshot would record a dead
 // path. (The child's prompt cwd is independently sourced from the engine's PromptConfig
 // and is NOT affected by this field.)
-func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID session.SessionID, resumedChild *session.Session, root string, limits session.Limits, forkHistory []session.Message) (*session.Session, session.ToolResult, bool) {
+func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, resumedChild *session.Session, root string, limits session.Limits, forkHistory []session.Message) (*session.Session, session.ToolResult, bool) {
 	if resumedChild == nil {
 		// When a named agent def pins limits, the child runs under THOSE; otherwise it uses
 		// the Subagent tool's default limits.
-		child := session.New(childID, t.childMode, root, limits, t.childEngine.now())
+		var child *session.Session
+		var err error
+		if parentID == "" {
+			// Direct Tool.Execute has no parent aggregate identity. Classify that
+			// custom-host path unknown rather than fabricating lineage or granting main.
+			child = session.New(childID, t.childMode, root, limits, t.childEngine.now())
+			err = child.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
+		} else {
+			child, err = session.NewSubagent(childID, t.childMode, root, limits, t.childEngine.now(), parentID, callID)
+		}
+		if err != nil {
+			return nil, session.NewToolError(callID,
+				fmt.Sprintf("Subagent: failed to stamp child relationship metadata: %v", err)), false
+		}
 		// fork:true (issue #34): seed the FRESH child from the deep copy of the parent
 		// conversation taken synchronously in run()/startBackground. SeedHistory is
 		// idle-only and re-validates tool pairing (the snapshot is already

@@ -418,6 +418,12 @@ type Session struct {
 	// consequences). Nothing in this plan reads or writes it beyond the snapshot
 	// round-trip; the zero value means "unset". Stamped through RestoreLabels.
 	Authority Authority
+	// Kind classifies the trusted producer and continuation posture. New creates
+	// main sessions; delegated/scheduled producers use the validated constructors.
+	Kind SessionKind
+	// Relationship carries kind-specific durable lineage. It is empty for main
+	// and legacy unknown sessions.
+	Relationship SessionRelationship
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 
@@ -478,6 +484,7 @@ func New(id SessionID, mode PermissionMode, workspace string, limits Limits, cre
 		Conversation: &Conversation{},
 		Limits:       limits,
 		Workspace:    workspace,
+		Kind:         SessionKindMain,
 		CreatedAt:    createdAt,
 	}
 }

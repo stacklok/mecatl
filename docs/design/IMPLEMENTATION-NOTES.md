@@ -37,6 +37,22 @@ the server-root system context and all existing flag behavior.
 
 ---
 
+## Domain — `engine/session/` (producer taxonomy)
+
+`engine/session/session.go` (`Session.Kind` / `Session.Relationship`) carries inert,
+durable creation metadata with a closed validated schema in `engine/session/kind.go`
+(ADR 0108): public creates and ADR-0065 peer/carryover forks remain `main` without
+lineage; scheduler fires, Subagent children, Parallel branches, and team members are
+stamped by their trusted producer paths. `engine/session/session.go` (`New`) keeps its
+existing signature and creates `main`; intention-revealing constructors create the
+non-main kinds. `engine/adapter/sessnap/sessnap.go`, every SessionStore adapter
+(including the opaque remote snapshot driver), `internal/adapter/store/jsonlstore/metalist.go`
+(`MetaList`), and `engine/adapter/eventsource/eventsource.go` (`SessionMeta`) round-trip the values.
+Restore rejects invalid combinations; a legacy absent kind becomes fail-closed
+`unknown` rather than gaining main-session continuation posture.
+
+---
+
 ## Domain — `engine/session/` (lifecycle recovery)
 
 A turn always drives the `Session` aggregate to a terminal state within one
