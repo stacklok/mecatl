@@ -65,7 +65,7 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 	emitAuthFileWarning(stderr, f.providerCredentials.AuthFileWarning)
 	diag := newDiagnostics()
 
-	// Observability (issue #343, ADR 0097): OPT-IN OTLP push. Built right after
+	// Observability (issue #343, ADR 0098): OPT-IN OTLP push. Built right after
 	// flag parse so the flush-on-exit defer covers EVERY exit path (setup-failure
 	// included). With no --otlp-* flags this is a no-op (byte-identical default).
 	obs, oerr := buildObservability(context.Background(), f)

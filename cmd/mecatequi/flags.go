@@ -224,7 +224,7 @@ func parseFlags(argv []string) (flags, error) {
 	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN")
 	fs.BoolVar(&f.trustProject, "trust-project", false, "trust the workspace for this run: admit BOTH project steering (AGENTS.md/CLAUDE.md, project rules/agents/skills/soul/commands/git snapshot) and the read-only child worktree shell. On this HEADLESS root posture never grants trust. DEFAULT OFF: without explicit, declared, or remembered trust a cloned repo gets neither steering nor child shell. TRUST BOUNDARY: only pass it for a repo whose content and .git you trust")
 
-	// Headless telemetry (issue #343, ADR 0097): OPT-IN OTLP trace + metrics push.
+	// Headless telemetry (issue #343, ADR 0098): OPT-IN OTLP trace + metrics push.
 	// Both endpoints empty (the default) leaves the pipeline off — no metrics, no
 	// tracing, byte-identical to the pre-telemetry posture. A metrics endpoint
 	// installs a PeriodicReader (push) alongside the always-on prometheus reader.
@@ -444,7 +444,7 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		Interactive: !f.headless,
 
 		Diagnostics: diag,
-		// Observability (issue #343, ADR 0097): OPT-IN OTLP push. With no --otlp-*
+		// Observability (issue #343, ADR 0098): OPT-IN OTLP push. With no --otlp-*
 		// flags the handles are zero-valued (nil Sink/ToolCallRecorder/
 		// MetricsRoleScoper) — the byte-identical no-telemetry posture.
 		Sink:              obs.Sink,
