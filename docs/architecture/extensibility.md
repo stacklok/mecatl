@@ -48,20 +48,28 @@ of one already-resolved OAuth `ServerConfig`, calls the real `mcp.Connect`, requ
 initialize and initial tool listing to succeed, and immediately closes the temporary
 server/controller while leaving the borrowed credential store open. The callback converts
 only code/state/issuer; the controller and official SDK retain their issuer/state checks,
-discovery, PKCE, exchange, and durable CAS. No browser runtime is installed by default, and
-there is no CLI/config, ACP, or production-daemon wiring yet. OAuth traffic is exact-origin allowlisted, DNS-resolved and pinned, blocks
-private/link-local/metadata destinations unless that exact origin is opted in, ignores
+discovery, PKCE, exchange, and durable CAS. OAuth traffic is exact-origin allowlisted, DNS-resolved and pinned, and blocks
+loopback, link-local, metadata, unspecified, multicast, mapped, and other special destinations unconditionally.
+An exact `private_origins` opt-in admits only RFC1918 IPv4 or ULA IPv6 answers; every DNS answer must remain in that
+class. The adapter ignores
 proxies, and follows only bounded same-origin safe redirects. Discovery GETs may reach the
 resource/additional origins, but the presenter and protocol transport permit codes, tokens,
 client authentication, and token exchanges only at the canonical configured issuer origin;
 preregistered confidential clients require Basic and `client_secret_post` is denied before
-network send. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
+network send. The shipped roots resolve strict operator-tier `mcp.servers` profiles
+through one loader: `none`, environment-referenced `static_bearer`, or OAuth backed by a
+mutable encrypted local Store or read-only environment Reader. Normal serving and ACP
+never install a presenter. Only `mecated mcp login SERVER [--no-browser]` authorizes a
+local Store; environment credentials are preprovisioned and picked up after restart.
+OAuth remains unavailable to ACP, per-session/inline/discovered MCP, and DCR remains
+unsupported. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
 cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
 Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static
 headers retain their existing origin-scoped behavior. See [ADR 0109](../adr/0109-mcp-oauth-sdk-profile.md)
 for the constrained dependency profile, [ADR 0110](../adr/0110-mcp-oauth-controller.md)
-for controller ownership, and [ADR 0112](../adr/0112-mcp-oauth-loopback-runtime.md) for the
-opt-in host runtime and remaining profile/CLI blockers.
+for controller ownership, [ADR 0112](../adr/0112-mcp-oauth-loopback-runtime.md) for the
+opt-in host runtime, and [ADR 0113](../adr/0113-operator-mcp-auth-profiles.md) for profile
+and command wiring.
 
 **Progressive tool disclosure** (pattern 9) — a tool may optionally implement
 `tool.Disclosable`; the built-in `tool.Search` tool (catalog name `ToolSearch`,

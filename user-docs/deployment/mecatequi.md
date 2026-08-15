@@ -7,6 +7,10 @@ title: Single-shot CI with mecatequi
 
 `mecatequi` (`cmd/mecatequi/`) is the headless, single-shot mecatl runner. One prompt in, three artifacts out, then exit. It is stateless by design: there is no session state between runs, no listeners, no TLS, no auth layer. It shares the same engine and service assembly as `mecated` (assembled through `internal/app.Build`) so its behaviour matches the daemon's — the same tool catalog, the same permission model, the same compaction. What it does not have is any forge awareness. It knows nothing about GitHub. The split-privilege job graph, issue extraction, and PR creation live entirely in `.github/` workflows and shell scripts.
 
+It reads the same operator global MCP profiles as `mecated`, but never launches an OAuth
+browser. Authorize local credentials before the job or inject a preprovisioned environment
+credential and restart the job. See [MCP client](/what-you-get/mcp-client.md).
+
 ---
 
 ## What mecatequi produces
@@ -146,7 +150,9 @@ The `publish` job resolves its write token in precedence order:
 
 ## Key flags
 
-All flags are defined in `cmd/mecatequi/flags.go`. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`) — or, alternatively, an `auth.yaml` credentials file — via `internal/cliconfig.ProviderFlags`. All four command roots share its API-key/base-URL wiring, but only `mecated`, embedded `mecatui`, and `mecatequi` accept the experimental Codex OAuth snapshot; `mecak8s` deliberately rejects that local-file credential. Never pass secrets as flag values.
+All flags are defined in `cmd/mecatequi/flags.go`. Operator MCP profiles are discovered
+from the conventional global `settings.yaml`; repeatable `--permission-config PATH` entries
+select explicit trusted settings with higher precedence. The binary reads provider credentials from the environment (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`) — or, alternatively, an `auth.yaml` credentials file — via `internal/cliconfig.ProviderFlags`. All four command roots share its API-key/base-URL wiring, but only `mecated`, embedded `mecatui`, and `mecatequi` accept the experimental Codex OAuth snapshot; `mecak8s` deliberately rejects that local-file credential. Never pass secrets as flag values.
 
 ### Prompt and output
 

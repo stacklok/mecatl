@@ -34,6 +34,7 @@ type oauthHTTPTransport struct {
 	requireClientBasic bool
 	lookup             oauthLookupFunc
 	dial               oauthDialFunc
+	allowLoopback      bool
 	base               *http.Transport
 }
 
@@ -69,6 +70,7 @@ func newOAuthHTTPClient(resource string, opts OAuthOptions) (*http.Client, *oaut
 		requireClientBasic: opts.Client.Preregistered != nil,
 		lookup:             resolver.LookupNetIP,
 		dial:               dialer.DialContext,
+		allowLoopback:      opts.allowLoopbackForTest,
 	}
 	transport.base = &http.Transport{
 		Proxy:                  nil,
@@ -191,7 +193,8 @@ func (t *oauthHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 	if !strings.EqualFold(req.URL.Scheme, "https") {
 		_, private := t.private[origin]
-		if !private && !isLoopbackHost(req.URL.Hostname()) {
+		loopbackTest := t.allowLoopback && isLoopbackHost(req.URL.Hostname())
+		if !private && !loopbackTest {
 			return nil, projectOAuthError(ErrOAuthUnavailable)
 		}
 	}
@@ -231,7 +234,7 @@ func (t *oauthHTTPTransport) dialContext(ctx context.Context, network, address s
 		return nil, projectOAuthError(ErrOAuthUnavailable)
 	}
 	_, private := t.private[origin]
-	loopbackHTTP := strings.EqualFold(u.Scheme, "http") && isLoopbackHost(host)
+	loopbackTest := t.allowLoopback && isLoopbackHost(host)
 	addrs, err := t.lookup(ctx, "ip", host)
 	if err != nil || len(addrs) == 0 {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -240,16 +243,7 @@ func (t *oauthHTTPTransport) dialContext(ctx context.Context, network, address s
 		return nil, projectOAuthError(ErrOAuthUnavailable)
 	}
 	for _, addr := range addrs {
-		if private {
-			continue
-		}
-		if loopbackHTTP {
-			if !addr.IsLoopback() {
-				return nil, projectOAuthError(ErrOAuthUnavailable)
-			}
-			continue
-		}
-		if unsafeOAuthAddress(addr) {
+		if !allowedOAuthAddress(addr, private, loopbackTest) {
 			return nil, projectOAuthError(ErrOAuthUnavailable)
 		}
 	}
@@ -265,6 +259,21 @@ func (t *oauthHTTPTransport) dialContext(ctx context.Context, network, address s
 		return nil, ctxErr
 	}
 	return nil, projectOAuthError(lastErr)
+}
+
+func allowedOAuthAddress(addr netip.Addr, private, loopbackTest bool) bool {
+	switch {
+	case loopbackTest:
+		return addr.IsValid() && addr.Zone() == "" && addr.Unmap().IsLoopback()
+	case private:
+		return privateOAuthAddress(addr)
+	default:
+		return !unsafeOAuthAddress(addr)
+	}
+}
+
+func privateOAuthAddress(addr netip.Addr) bool {
+	return addr.IsValid() && addr.Zone() == "" && !addr.Is4In6() && addr.IsPrivate()
 }
 
 func unsafeOAuthAddress(addr netip.Addr) bool {
@@ -309,9 +318,9 @@ func (t oauthResourceRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	return t.base.RoundTrip(req.Clone(ctx))
 }
 
-func mcpOAuthRedirectPolicy(origin string) func(*http.Request, []*http.Request) error {
+func mcpOAuthRedirectPolicy(origin string, limit int) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
-		if len(via) == 0 || len(via) > maxOAuthRedirects || requestOrigin(req.URL) != origin {
+		if limit < 1 || limit > maxOAuthRedirects || len(via) == 0 || len(via) > limit || requestOrigin(req.URL) != origin {
 			return projectOAuthError(ErrOAuthUnavailable)
 		}
 		return nil

@@ -148,6 +148,10 @@ func writeFieldSkeleton(b *strings.Builder, indent string, f *Field) {
 	if f.EnableNote != "" {
 		writeWrapped(b, indent+"# ENABLE: ", f.EnableNote)
 	}
+	if f.SkeletonCollapse {
+		fmt.Fprintf(b, "%s%s: %s\n", indent, f.Key, placeholder(f))
+		return
+	}
 	if len(f.Nested) > 0 {
 		// A structured sub-mapping: show one example element / the nested keys.
 		fmt.Fprintf(b, "%s%s:\n", indent, f.Key)
@@ -343,13 +347,13 @@ func mdParagraph(s string) string {
 }
 
 // flagDrivenSection is the hand-written pointer block (decision 1): the settings.yaml
-// reference covers the four permconfig subtrees ONLY; the other operator-facing
+// reference covers the settings subtrees above; the other operator-facing
 // features are wired through CLI flags / their own files, not settings.yaml. This
 // block points operators at usage.md + the relevant flags rather than auto-harvesting
 // every CLI flag (deliberately rejected).
 const flagDrivenSection = "## Flag- / file-configured features (NOT in `settings.yaml`)\n" +
 	"\n" +
-	"By design, `settings.yaml` covers the four subtrees above. Several other\n" +
+	"By design, `settings.yaml` covers the subtrees above. Several other\n" +
 	"operator features are configured through **CLI flags** (and, for some, their own\n" +
 	"files) rather than this YAML. See the [running `mecated`](usage/mecated.md) and\n" +
 	"[configuration](usage/configuration.md) pages for the full flag tables; the\n" +

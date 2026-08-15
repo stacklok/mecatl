@@ -76,6 +76,11 @@ type Field struct {
 	// Nested, when non-nil, describes a structured sub-mapping (e.g. each router
 	// category, or the subagent permissions block) so the skeleton can show its shape.
 	Nested []*Field
+	// SkeletonCollapse renders this field as its type-shaped placeholder in the
+	// skeleton even when Nested is populated for the exhaustive reference. It is
+	// used for closed unions whose mutually exclusive variants cannot all appear
+	// in one uncomment-and-run structural example; Subtree.Example shows valid arms.
+	SkeletonCollapse bool
 	// ExampleValue is a short inline example used in the skeleton's commented binding
 	// (e.g. `default: sonnet`). Empty renders a type-shaped placeholder.
 	ExampleValue string

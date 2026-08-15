@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -725,11 +726,21 @@ type Config struct {
 
 	// MCP: static servers, the resource meta-tools toggle, the prompt-expander
 	// toggle, and the live ToolHive workload source.
-	MCPServers       []mcp.ServerConfig
-	MCPResourceTools bool
-	MCPPrompts       bool
-	ToolHiveEnabled  bool
-	ToolHiveGroup    string
+	MCPServers []mcp.ServerConfig
+	// MCPProfileLoader resolves operator-tier profiles with the same permission
+	// resolver Build already owns. Command roots install it so settings are not
+	// parsed a second time and secret lookup remains a runtime-only operation.
+	MCPProfileLoader interface {
+		Load(*permconfig.MCPSection) ([]mcp.ServerConfig, interface{ Close() error }, error)
+	}
+	// MCPProfileLifecycle owns credential stores/readers used by MCPServers.
+	// Build closes it after the global MCP manager/controllers and before other
+	// source lifecycles. It is nil for programmatic and legacy static configs.
+	MCPProfileLifecycle interface{ Close() error }
+	MCPResourceTools    bool
+	MCPPrompts          bool
+	ToolHiveEnabled     bool
+	ToolHiveGroup       string
 
 	// File-based permission config (issue #13). PermissionsConventional turns on
 	// auto-discovery of the conventional per-project config (<ws>/.mecatl/settings.yaml
@@ -1137,6 +1148,15 @@ func (c Config) diag() port.Diagnostics {
 	return c.Diagnostics
 }
 
+func closeMCPProfileLifecycle(ctx context.Context, cfg Config) {
+	if cfg.MCPProfileLifecycle == nil {
+		return
+	}
+	if err := cfg.MCPProfileLifecycle.Close(); err != nil {
+		cfg.diag().Log(ctx, port.LevelWarn, "MCP profile credential sources close failed")
+	}
+}
+
 // Built is the result of Build: the assembled server.Service plus a Close func
 // that tears down composition-owned resources (the MCP manager). Close is always
 // safe to call, even when nothing needs closing.
@@ -1155,6 +1175,17 @@ type Built struct {
 //
 //nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
+	profileLifecycle := cfg.MCPProfileLifecycle
+	closeProfiles := sync.OnceFunc(func() {
+		cfg.MCPProfileLifecycle = profileLifecycle
+		closeMCPProfileLifecycle(ctx, cfg)
+	})
+	profilesTransferred := false
+	defer func() {
+		if !profilesTransferred {
+			closeProfiles()
+		}
+	}()
 	// Remote store drivers (Phase B): a local dir and a driver URL for the same
 	// store are mutually exclusive — fatal here, before anything is constructed
 	// (the validateSkillDraftConfig precedent).
@@ -1239,9 +1270,26 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, learningErr
 	}
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
+		if cfg.MCPProfileLoader != nil {
+			profiles, lifecycle, err := cfg.MCPProfileLoader.Load(resolver.OperatorMCP())
+			if err != nil {
+				return nil, err
+			}
+			cfg.MCPServers = profiles
+			cfg.MCPProfileLifecycle = lifecycle
+			profileLifecycle = lifecycle
+		}
 		if models := resolver.OperatorModelPolicy(); models != nil {
 			cfg.contextWindows = map[string]map[string]int(models.ContextWindows)
 		}
+	} else if cfg.MCPProfileLoader != nil {
+		profiles, lifecycle, err := cfg.MCPProfileLoader.Load(nil)
+		if err != nil {
+			return nil, err
+		}
+		cfg.MCPServers = profiles
+		cfg.MCPProfileLifecycle = lifecycle
+		profileLifecycle = lifecycle
 	}
 
 	// Guardrails operator-tier config (issue #27, decision 3): fold the user-global +
@@ -1991,10 +2039,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		refreshClose()
 		svc.Close()
 		mcpClose()
+		closeProfiles()
 		agentClose()
 		storeClose()
 		commandConnClose()
 	}
+	profilesTransferred = true
 	return &Built{Service: svc, Close: closeAll}, nil
 }
 
@@ -4673,11 +4723,19 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 	}
 
 	onError := func(sc mcp.ServerConfig, err error) {
-		cfg.diag().Log(ctx, port.LevelWarn, "MCP server unreachable; skipping", "name", sc.Name, "url", sc.URL, "err", err)
+		if errors.Is(err, mcp.ErrOAuthLoginRequired) {
+			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth login required", "name", sc.Name, "remedy", mcpLoginRemedy(sc))
+			return
+		}
+		if sc.OAuth != nil && sc.OAuth.CredentialReader != nil && errors.Is(err, mcp.ErrOAuthUnavailable) {
+			cfg.diag().Log(ctx, port.LevelWarn, "MCP OAuth environment credential unavailable", "name", sc.Name, "remedy", mcpLoginRemedy(sc))
+			return
+		}
+		cfg.diag().Log(ctx, port.LevelWarn, "MCP server unreachable; skipping", "name", sc.Name, "reason", "unavailable")
 	}
 	mgr, err := mcp.NewManager(ctx, configs, onError, cfg.diag())
 	if err != nil {
-		cfg.diag().Log(ctx, port.LevelWarn, "MCP manager construction failed; continuing without MCP tools", "err", err)
+		cfg.diag().Log(ctx, port.LevelWarn, "MCP manager construction failed; continuing without MCP tools", "reason", "unavailable")
 		return nil, nil, inventory, func() {}
 	}
 	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(configs), "tools", len(mgr.Tools()))
@@ -4687,6 +4745,13 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP manager close", "err", err)
 		}
 	}
+}
+
+func mcpLoginRemedy(sc mcp.ServerConfig) string {
+	if sc.OAuth != nil && sc.OAuth.CredentialReader != nil {
+		return "preprovision the environment credential and restart"
+	}
+	return "mecated mcp login " + sc.Name
 }
 
 // logMCPInventory logs a one-line-per-source summary of the resolved MCP source

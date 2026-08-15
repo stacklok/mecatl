@@ -89,6 +89,7 @@ type loginFixture struct {
 	failToken      bool
 	keepRejecting  bool
 	publicResource bool
+	failClose      bool
 	blockMCP       <-chan struct{}
 	blockMCPMethod string
 	mcpBlocked     chan<- struct{}
@@ -161,8 +162,19 @@ func (f *loginFixture) callbackAddress() string {
 func (f *loginFixture) serveHTTP(mcpHandler http.Handler, w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/mcp":
+		if r.Method == http.MethodDelete && f.failClose {
+			f.mu.Lock()
+			f.sessionsClosed++
+			f.mu.Unlock()
+			panic(http.ErrAbortHandler)
+		}
 		if f.publicResource {
 			mcpHandler.ServeHTTP(w, r)
+			if r.Method == http.MethodDelete {
+				f.mu.Lock()
+				f.sessionsClosed++
+				f.mu.Unlock()
+			}
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+loginAccessToken || f.keepRejecting {
@@ -282,13 +294,15 @@ func (f *loginFixture) serveToken(w http.ResponseWriter, r *http.Request) {
 
 func loginConfig(t *testing.T, fixture *loginFixture, store credentialstore.Store) mcp.ServerConfig {
 	t.Helper()
+	oauth := &mcp.OAuthOptions{
+		Subject: mcp.OAuthSubject{Profile: "profile", Principal: "principal"}, Issuer: fixture.issuer(),
+		Client:          mcp.OAuthClientConfig{Preregistered: &oauthex.ClientCredentials{ClientID: loginClientID, ClientSecretAuth: &oauthex.ClientSecretAuth{ClientSecret: loginClientSecret}, Issuer: fixture.issuer()}},
+		CredentialStore: store, Network: mcp.OAuthNetworkPolicy{PrivateOrigins: []string{fixture.origin()}}, AllowedScopes: []string{"read"}, Timeout: 3 * time.Second,
+	}
+	mcp.AllowOAuthLoopbackForTest(t, oauth)
 	return mcp.ServerConfig{
 		Name: "protected", URL: fixture.resource(), Timeout: 3 * time.Second,
-		OAuth: &mcp.OAuthOptions{
-			Subject: mcp.OAuthSubject{Profile: "profile", Principal: "principal"}, Issuer: fixture.issuer(),
-			Client:          mcp.OAuthClientConfig{Preregistered: &oauthex.ClientCredentials{ClientID: loginClientID, ClientSecretAuth: &oauthex.ClientSecretAuth{ClientSecret: loginClientSecret}, Issuer: fixture.issuer()}},
-			CredentialStore: store, Network: mcp.OAuthNetworkPolicy{PrivateOrigins: []string{fixture.origin()}}, AllowedScopes: []string{"read"}, Timeout: 3 * time.Second,
-		},
+		OAuth: oauth,
 	}
 }
 
@@ -428,12 +442,36 @@ func TestLoginMCPRejectsPublicResourceWithoutOAuthCredential(t *testing.T) {
 	if !errors.Is(err, ErrMCPLoginFailed) {
 		t.Fatalf("public-resource login error = %v", err)
 	}
-	if err.Error() != ErrMCPLoginFailed.Error() || strings.Contains(err.Error(), fixture.server.URL) {
+	if !errors.Is(err, ErrMCPLoginCredential) || err.Error() != ErrMCPLoginCredential.Error() || strings.Contains(err.Error(), fixture.server.URL) {
 		t.Fatalf("public-resource failure was not redacted: %v", err)
 	}
 	authorize, tokens, _ := fixture.counts()
 	if browser.calls.Load() != 0 || authorize != 0 || tokens != 0 {
 		t.Fatalf("public resource unexpectedly ran OAuth: browser=%d authorize=%d token=%d", browser.calls.Load(), authorize, tokens)
+	}
+	opened, closed := fixture.sessionCounts()
+	if opened == 0 || closed != 1 {
+		t.Fatalf("temporary server lifecycle opened=%d closed=%d, want at least one open and exactly one close", opened, closed)
+	}
+}
+
+func TestLoginMCPCloseFailureIsCleanupError(t *testing.T) {
+	fixture := newLoginFixture(t)
+	fixture.failClose = true
+	store, err := credentialstore.NewMemoryBackend().Open("mcp-login-close-error")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := oauthlogin.New(oauthlogin.Options{Launcher: &loginBrowser{client: fixture.server.Client()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); !errors.Is(err, ErrMCPLoginCleanup) || err.Error() != ErrMCPLoginCleanup.Error() {
+		t.Fatalf("close failure = %v, want redacted cleanup category", err)
+	}
+	opened, closed := fixture.sessionCounts()
+	if opened == 0 || closed != 1 {
+		t.Fatalf("temporary server lifecycle opened=%d closed=%d, want at least one open and exactly one close", opened, closed)
 	}
 }
 
@@ -504,6 +542,12 @@ func TestLoginMCPRejectsInvalidShapesBeforeRuntime(t *testing.T) {
 		},
 		"redirect":             func(c *mcp.ServerConfig) { c.OAuth.RedirectURL = "http://127.0.0.1/existing" },
 		"static authorization": func(c *mcp.ServerConfig) { c.Headers = map[string]string{"authorization": "Bearer secret-canary"} },
+		"proxy authorization":  func(c *mcp.ServerConfig) { c.Headers = map[string]string{"Proxy-Authorization": "secret-canary"} },
+		"cookie":               func(c *mcp.ServerConfig) { c.Headers = map[string]string{"cookie": "secret-canary"} },
+		"read only credentials": func(c *mcp.ServerConfig) {
+			c.OAuth.CredentialReader = c.OAuth.CredentialStore
+			c.OAuth.CredentialStore = nil
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -540,7 +584,7 @@ func TestLoginMCPRedactsConnectFailure(t *testing.T) {
 	cfg := loginConfig(t, fixture, store)
 	cfg.URL = fixture.server.URL + "/missing-connect-canary"
 	err = LoginMCP(context.Background(), cfg, runtime)
-	if !errors.Is(err, ErrMCPLoginFailed) {
+	if !errors.Is(err, ErrMCPLoginConnect) || !errors.Is(err, ErrMCPLoginFailed) {
 		t.Fatalf("error = %v", err)
 	}
 	if strings.Contains(err.Error(), "missing-connect-canary") || strings.Contains(err.Error(), fixture.server.URL) {
@@ -564,7 +608,7 @@ func TestLoginMCPRedactsAuthenticationFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime)
-	if !errors.Is(err, ErrMCPLoginFailed) {
+	if !errors.Is(err, ErrMCPLoginAuthorization) || !errors.Is(err, ErrMCPLoginFailed) {
 		t.Fatalf("error = %v", err)
 	}
 	for _, secret := range []string{"token-failure-canary", loginClientSecret, loginAccessToken, fixture.server.URL} {

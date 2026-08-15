@@ -1,8 +1,54 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+func TestMecatedBuildDiscoversOperatorMCPSettings(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	conventional := filepath.Join(xdg, "mecatl", "settings.yaml")
+	if err := os.MkdirAll(filepath.Dir(conventional), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conventional, []byte("mcp:\n  servers:\n    - name: conventional\n      url: https://mcp.example/mcp\n      auth:\n        mode: static_bearer\n        static_bearer: {token_env: MECATL_MISSING_TOKEN}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseFlags([]string{"--workspace", t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac := appConfig(cfg, nil, nil, nil, nil, nil)
+	ac.MockProvider = mockllm.New()
+	if _, err := app.Build(context.Background(), ac); !errors.Is(err, cliconfig.ErrMCPProfileSecret) {
+		t.Fatalf("conventional operator profile Build error = %v, want missing-secret category", err)
+	}
+
+	explicit := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(explicit, []byte("mcp:\n  servers:\n    - name: explicit\n      url: https://mcp.example/mcp\n      auth: {mode: none}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = parseFlags([]string{"--workspace", t.TempDir(), "--permission-config", explicit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac = appConfig(cfg, nil, nil, nil, nil, nil)
+	ac.MockProvider = mockllm.New()
+	built, err := app.Build(context.Background(), ac)
+	if err != nil {
+		t.Fatalf("explicit operator profile did not override conventional source: %v", err)
+	}
+	built.Close()
+}
 
 // TestParseFlagsMCPServer pins mecated's --mcp-server behavior ACROSS the
 // issue-#341 extraction into cliconfig.MCPServerList: name=URL parses, the
@@ -55,6 +101,21 @@ func TestParseFlagsMCPServerInsecureHTTP(t *testing.T) {
 			cfg, err := parseFlags(argv)
 			if err != nil {
 				t.Fatalf("parseFlags (%s): %v", name, err)
+			}
+			ac := appConfig(cfg, nil, nil, nil, nil, nil)
+			if ac.MCPProfileLoader == nil {
+				t.Fatal("app.Config.MCPProfileLoader is nil; operator profiles would be ignored")
+			}
+			resolved, lifecycle, err := ac.MCPProfileLoader.Load(&permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{
+				{Name: "github", URL: "https://operator.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}},
+				{Name: "operator", URL: "https://operator-only.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = lifecycle.Close() })
+			if len(resolved) != 2 || resolved[0].URL != "http://mcp.github.internal/v1" || resolved[1].Name != "operator" {
+				t.Fatalf("resolved profiles = %#v; legacy replacement and operator profile were not both applied", resolved)
 			}
 			servers := cfg.mcpServers.Servers()
 			if len(servers) != 1 || servers[0].Headers["Authorization"] != "Bearer ghp-token" {

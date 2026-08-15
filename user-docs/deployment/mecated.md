@@ -34,6 +34,10 @@ with a usage error.
 The minimal invocation starts the server on loopback with an in-memory session
 store. No persistence, no auth — the single-user localhost trust model.
 
+Global MCP OAuth profiles are operator settings. Serving never opens a browser; authorize
+a mutable local profile explicitly with `mecated mcp login SERVER` (or
+`--no-browser`). ACP has no OAuth presenter. See [MCP client](/what-you-get/mcp-client.md).
+
 Default addresses:
 
 | Listener | Default |

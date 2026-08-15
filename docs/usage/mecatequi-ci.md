@@ -15,6 +15,15 @@ the operator walkthrough.
 
 ### The factory invocation profile (scheduler-launched runs)
 
+`mecatequi` consumes the same conventionally discovered operator-tier global MCP profiles
+as `mecated`; repeatable `--permission-config PATH` entries select explicit trusted settings
+with the usual higher precedence. This includes warm local or environment-backed OAuth
+credentials. It is headless even when
+`--headless=false` is passed for permission routing: it never installs an OAuth presenter
+or opens a browser. Perform local authorization beforehand with `mecated mcp login SERVER`,
+or provision an environment credential and restart the job/pod. The legacy
+`--mcp-server`/`MCP_<NAME>_TOKEN` factory contract below remains supported.
+
 GitHub Actions is not the only launcher: a **scheduler** (e.g. titlani in the same
 platform) launches mecatequi as a one-shot Kubernetes Job or local subprocess per work
 item, with no human and no forge glue attached

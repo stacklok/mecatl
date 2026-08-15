@@ -22,6 +22,10 @@ flowchart TD
 
 Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
 
+For global MCP OAuth, use an externally provisioned read-only environment credential and
+restart pods after rotation. `mecak8s` never launches a browser; a local mutable credential
+root conflicts with the normal storage-free posture. See [MCP client](/what-you-get/mcp-client.md).
+
 ---
 
 ## How mecak8s differs from mecated

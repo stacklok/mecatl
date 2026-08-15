@@ -7041,10 +7041,26 @@ and controller close on every path while the injected store stays caller-owned. 
 project to context/runtime categories or fixed `ErrMCPLoginConfig`/`ErrMCPLoginFailed`
 without endpoint or credential-bearing causes.
 
-No composition root constructs the runtime. There is no `mecated mcp login`, default browser,
-profile/key resolver, ACP operation, or Buzz-specific wiring in this slice; issue #523 must
-supply one canonical profile and key-acquisition path before a command can call `LoginMCP`.
-ADR 0109's metadata-profile blockers also remain open.
+The shipped `mecated mcp login SERVER [--no-browser]` command is the sole runtime
+constructor. It uses the canonical operator profile loader, requires a mutable local Store,
+and emits an authorization URL to stdout only in explicit no-browser mode. Normal serving,
+ACP, mecatequi, and mecak8s keep the presenter nil. ADR 0109's metadata-profile blockers
+remain open.
+
+## Operator MCP profiles (ADR 0113)
+
+`internal/adapter/permconfig/schema.go` owns the strict operator-only `mcp.servers` tagged
+unions. `internal/cliconfig/mcpprofile.go` (`LoadMCPProfiles`) is the sole conversion to
+runtime `ServerConfig`: it merges settings with legacy CLI entries by whole profile,
+resolves only named environment references, shares local Stores within one load, and owns
+all resulting Stores/Readers. The three command roots install the same profile resolver on
+`app.Config`; `Build` gives it `Resolver.OperatorMCP`, so there is no MCP-specific YAML pass.
+
+`Built.Close` shuts down the service and global MCP manager/controllers before closing the
+profile lifecycle. Environment Readers are the intended Kubernetes posture: credentials are
+externally provisioned and a rotated value requires restart. They cannot be targeted by the
+login command. OAuth applies only to named global static profiles, never ACP, client MCP,
+inline agent definitions, or ToolHive-discovered servers.
 
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 

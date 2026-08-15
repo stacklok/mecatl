@@ -34,6 +34,13 @@ $ go run ./cmd/mecated serve --openai --workspace "$PWD"
 - `mecated --help-all` — the exhaustive serve-compatible flag reference (every
   public flag a `mecated serve` invocation accepts), plus a note pointing to
   `mecated acp --help-all` for the ACP-scoped subset.
+- `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]` — authorize one operator-configured
+  OAuth server backed by a mutable local credential store. Login uses the same
+  conventional operator settings and explicit-file precedence as `serve`; the
+  repeatable `--permission-config` selects trusted config files and never carries an
+  OAuth value. This is the only command
+  that installs an OAuth presenter; `--help` performs no settings, environment,
+  browser, listener, or network work.
 - `mecated import --help` — offline Codex/Claude Code session, skill, and
   workspace-file import flags. The import does not start a listener or provider.
 

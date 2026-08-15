@@ -64,8 +64,14 @@ read-only Reader. Those options are mutually exclusive, and no independently sup
 writer is accepted, so reads and writes cannot cross CAS domains. It never constructs or
 closes a backend. The opt-in `mcp/oauthlogin` host runtime and `internal/app.LoginMCP`
 one-shot operation can populate a mutable store by driving a real protected MCP initialize
-and tool listing through a random IPv4-loopback callback. They are not installed by default:
-no command, profile resolver, key-acquisition policy, daemon, or ACP surface wires them yet.
+and tool listing through a random IPv4-loopback callback. The strict operator-tier
+`mcp.servers` schema and the single `internal/cliconfig` loader feed all three headless
+roots. Normal serve, ACP, mecatequi, and mecak8s install no presenter; only
+`mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]` authorizes a
+mutable local profile, selecting operator settings through the same resolver and precedence as
+serve. The global manager/controllers close before loader-owned Stores and Readers. OAuth is
+not available for ACP, per-session MCP, inline agent definitions, or discovered servers
+(ADR 0113).
 
 The explicit environment Reader maps one configured opaque key to one configured lookup
 function and strict base64 environment value. It does no global lookup, listing, or

@@ -452,7 +452,7 @@ func TestServerRetainsOAuthHandlerAcrossReconnectAndRejectsStaticAuthorization(t
 		}},
 		RedirectURL: "http://127.0.0.1/callback", CredentialStore: store,
 		Network:       OAuthNetworkPolicy{PrivateOrigins: []string{resource}},
-		AllowedScopes: []string{"read"}, Timeout: time.Second,
+		AllowedScopes: []string{"read"}, Timeout: time.Second, allowLoopbackForTest: true,
 	}
 	if _, err := Connect(context.Background(), ServerConfig{Name: "conflict", URL: resource, Headers: map[string]string{"authorization": "Bearer static"}, OAuth: &opts}, nil); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("static/OAuth conflict error = %v", err)

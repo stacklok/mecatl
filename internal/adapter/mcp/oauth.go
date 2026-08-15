@@ -75,6 +75,17 @@ type OAuthOptions struct {
 	RequestRefreshToken  bool
 	AllowedScopes        []string
 	Timeout              time.Duration
+	allowLoopbackForTest bool
+}
+
+// AllowOAuthLoopbackForTest enables loopback only for in-process test servers.
+// It is deliberately absent from OAuthNetworkPolicy and every production config
+// projection, so operator input can never relax the loopback denial.
+func AllowOAuthLoopbackForTest(t interface{ Helper() }, opts *OAuthOptions) {
+	t.Helper()
+	if opts != nil {
+		opts.allowLoopbackForTest = true
+	}
 }
 
 type oauthRegistration struct {

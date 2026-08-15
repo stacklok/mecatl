@@ -42,6 +42,18 @@ func authoritativeKeys() []string {
 	collect("models.router.categories", permconfig.RouterCategory{})
 	collect("openrouter", permconfig.OpenRouterSection{})
 	collect("openrouter.models", permconfig.OpenRouterModelRoute{})
+	collect("mcp", permconfig.MCPSection{})
+	collect("mcp.servers", permconfig.MCPServerProfile{})
+	collect("mcp.servers.auth", permconfig.MCPAuthProfile{})
+	collect("mcp.servers.auth.static_bearer", permconfig.MCPStaticBearerProfile{})
+	collect("mcp.servers.auth.oauth", permconfig.MCPOAuthProfile{})
+	collect("mcp.servers.auth.oauth.client", permconfig.MCPOAuthClientProfile{})
+	collect("mcp.servers.auth.oauth.client.preregistered", permconfig.MCPPreregisteredClientProfile{})
+	collect("mcp.servers.auth.oauth.client.cimd", permconfig.MCPCIMDClientProfile{})
+	collect("mcp.servers.auth.oauth.credentials", permconfig.MCPOAuthCredentialProfile{})
+	collect("mcp.servers.auth.oauth.credentials.local", permconfig.MCPLocalCredentialProfile{})
+	collect("mcp.servers.auth.oauth.credentials.environment", permconfig.MCPEnvironmentCredentialProfile{})
+	collect("mcp.servers.auth.oauth.network", permconfig.MCPOAuthNetworkProfile{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
 	// output-economy is absent: the setting was REMOVED (ADR 0041, superseded;
@@ -111,6 +123,37 @@ func TestOpenRouterReferenceShowsDynamicModelKey(t *testing.T) {
 	} {
 		if !strings.Contains(reference, key) {
 			t.Errorf("reference is missing dynamic map-entry path %s", key)
+		}
+	}
+}
+
+func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
+	model := configgen.BuildModel(nil)
+	skeleton := configgen.RenderSkeleton(model)
+	reference := configgen.RenderReference(model)
+	for _, want := range []string{
+		"mode: none", "mode: static_bearer", "mode: oauth",
+		"token_env: MECATL_MCP_STATIC_TOKEN", "secret_env: MECATL_MCP_GITHUB_CLIENT_SECRET",
+		"key_env: MECATL_MCP_CREDENTIAL_KEY",
+	} {
+		if !strings.Contains(skeleton, want) {
+			t.Errorf("skeleton missing MCP example %q", want)
+		}
+	}
+	for _, want := range []string{
+		"`mcp.servers[].auth.mode`",
+		"`mcp.servers[].auth.oauth.client.preregistered.secret_env`",
+		"`mcp.servers[].auth.oauth.client.cimd.document_url`",
+		"`mcp.servers[].auth.oauth.credentials.environment.credential_env`",
+		"`mcp.servers[].auth.oauth.network.private_origins`",
+	} {
+		if !strings.Contains(reference, want) {
+			t.Errorf("reference missing MCP path %s", want)
+		}
+	}
+	for _, forbidden := range []string{"Bearer ey", "client_secret:", "token: actual", "credential: ey"} {
+		if strings.Contains(skeleton, forbidden) || strings.Contains(reference, forbidden) {
+			t.Errorf("generated artifacts contain secret value shape %q", forbidden)
 		}
 	}
 }
@@ -219,6 +262,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)
+		"mcp":                    configgen.TierOperator, // operator-only: endpoints, auth, credentials, and egress policy
 	}
 	got := map[string]configgen.Tier{}
 	for _, st := range configgen.BuildModel(nil).Subtrees {

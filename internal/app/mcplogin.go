@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
@@ -13,10 +12,22 @@ var (
 	// ErrMCPLoginConfig reports that the resolved server is not eligible for a
 	// one-shot OAuth login operation.
 	ErrMCPLoginConfig = errors.New("mcp login: invalid server configuration")
-	// ErrMCPLoginFailed reports a redacted connect, authentication, persistence,
-	// or cleanup failure.
+	// ErrMCPLoginFailed is the parent category for redacted operational failures.
 	ErrMCPLoginFailed = errors.New("mcp login: failed")
+	// ErrMCPLoginAuthorization reports an unavailable or rejected authorization flow.
+	ErrMCPLoginAuthorization = mcpLoginCategory("mcp login: authorization unavailable or login required")
+	// ErrMCPLoginConnect reports failure to connect to or verify the MCP server.
+	ErrMCPLoginConnect = mcpLoginCategory("mcp login: MCP connect or verification failed")
+	// ErrMCPLoginCredential reports that a durable credential was not established.
+	ErrMCPLoginCredential = mcpLoginCategory("mcp login: credential was not established or persisted")
+	// ErrMCPLoginCleanup reports failure to close the temporary login resources.
+	ErrMCPLoginCleanup = mcpLoginCategory("mcp login: temporary-session cleanup failed")
 )
+
+type mcpLoginCategory string
+
+func (e mcpLoginCategory) Error() string      { return string(e) }
+func (mcpLoginCategory) Is(target error) bool { return target == ErrMCPLoginFailed }
 
 // LoginMCP runs one host-authorized OAuth login against an already-resolved MCP
 // server configuration. The runtime and credential store are borrowed. A nil
@@ -28,6 +39,7 @@ func LoginMCP(ctx context.Context, cfg mcp.ServerConfig, runtime *oauthlogin.Run
 		return err
 	}
 
+	var operationCategory error
 	err := runtime.Authorize(ctx, cfg.OAuth.Issuer, func(ctx context.Context, redirectURL string, present func(context.Context, string) (oauthlogin.Result, error)) error {
 		loginCfg := cfg
 		oauth := *cfg.OAuth
@@ -37,12 +49,21 @@ func LoginMCP(ctx context.Context, cfg mcp.ServerConfig, runtime *oauthlogin.Run
 
 		server, err := mcp.Connect(ctx, loginCfg, nil)
 		if err != nil {
+			if errors.Is(err, mcp.ErrOAuthLoginRequired) || errors.Is(err, mcp.ErrOAuthUnavailable) {
+				operationCategory = ErrMCPLoginAuthorization
+			} else {
+				operationCategory = ErrMCPLoginConnect
+			}
 			return err
 		}
 		ready := server.HasOAuthCredential()
 		closeErr := server.Close()
 		if !ready {
+			operationCategory = ErrMCPLoginCredential
 			return errors.New("MCP OAuth credential was not established")
+		}
+		if closeErr != nil {
+			operationCategory = ErrMCPLoginCleanup
 		}
 		return closeErr
 	})
@@ -53,7 +74,13 @@ func LoginMCP(ctx context.Context, cfg mcp.ServerConfig, runtime *oauthlogin.Run
 		errors.Is(err, oauthlogin.ErrBrowserLaunch) || errors.Is(err, oauthlogin.ErrCallbackAttempts) {
 		return err
 	}
-	return ErrMCPLoginFailed
+	if operationCategory != nil {
+		return operationCategory
+	}
+	if errors.Is(err, oauthlogin.ErrAuthorizationFailed) {
+		return ErrMCPLoginAuthorization
+	}
+	return ErrMCPLoginCleanup
 }
 
 func validateMCPLoginConfig(cfg mcp.ServerConfig, runtime *oauthlogin.Runtime) error {
@@ -63,10 +90,8 @@ func validateMCPLoginConfig(cfg mcp.ServerConfig, runtime *oauthlogin.Runtime) e
 	if cfg.OAuth.Presenter != nil || cfg.OAuth.RedirectURL != "" {
 		return ErrMCPLoginConfig
 	}
-	for name := range cfg.Headers {
-		if strings.EqualFold(name, "Authorization") {
-			return ErrMCPLoginConfig
-		}
+	if cfg.OAuth.CredentialStore == nil || cfg.OAuth.CredentialReader != nil || mcp.HasCredentialHeaders(cfg.Headers) {
+		return ErrMCPLoginConfig
 	}
 	return nil
 }

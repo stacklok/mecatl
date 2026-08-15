@@ -27,6 +27,18 @@ func TestStrictFieldsMatchYAMLTags(t *testing.T) {
 		{"RouterCategory", (&RouterCategory{}).strictFields(), RouterCategory{}},
 		{"OpenRouterSection", (&OpenRouterSection{}).strictFields(), OpenRouterSection{}},
 		{"OpenRouterModelRoute", (&OpenRouterModelRoute{}).strictFields(), OpenRouterModelRoute{}},
+		{"MCPSection", (&MCPSection{}).strictFields(), MCPSection{}},
+		{"MCPServerProfile", (&MCPServerProfile{}).strictFields(), MCPServerProfile{}},
+		{"MCPAuthProfile", (&MCPAuthProfile{}).strictFields(), MCPAuthProfile{}},
+		{"MCPStaticBearerProfile", (&MCPStaticBearerProfile{}).strictFields(), MCPStaticBearerProfile{}},
+		{"MCPOAuthProfile", (&MCPOAuthProfile{}).strictFields(), MCPOAuthProfile{}},
+		{"MCPOAuthClientProfile", (&MCPOAuthClientProfile{}).strictFields(), MCPOAuthClientProfile{}},
+		{"MCPPreregisteredClientProfile", (&MCPPreregisteredClientProfile{}).strictFields(), MCPPreregisteredClientProfile{}},
+		{"MCPCIMDClientProfile", (&MCPCIMDClientProfile{}).strictFields(), MCPCIMDClientProfile{}},
+		{"MCPOAuthCredentialProfile", (&MCPOAuthCredentialProfile{}).strictFields(), MCPOAuthCredentialProfile{}},
+		{"MCPLocalCredentialProfile", (&MCPLocalCredentialProfile{}).strictFields(), MCPLocalCredentialProfile{}},
+		{"MCPEnvironmentCredentialProfile", (&MCPEnvironmentCredentialProfile{}).strictFields(), MCPEnvironmentCredentialProfile{}},
+		{"MCPOAuthNetworkProfile", (&MCPOAuthNetworkProfile{}).strictFields(), MCPOAuthNetworkProfile{}},
 	}
 	for _, tc := range cases {
 		strictKeys := mapKeys(tc.strict)

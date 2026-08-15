@@ -17,6 +17,32 @@ For the exhaustive, auto-generated key/type/default/tier table, see the
 this guide are illustrative; the reference page is the complete source of truth
 (generated from the schema, so it never drifts).
 
+### Global MCP authentication profiles
+
+All three headless roots read the same operator-tier `mcp.servers` profiles. A project
+`.mecatl/settings.yaml` cannot define them. Each server selects exactly one auth mode:
+`none`, `static_bearer`, or `oauth`; secret-bearing fields name `MECATL_*` environment
+variables rather than containing values. See the [generated reference](../configuration-reference.md)
+for the complete strict schema.
+
+Local OAuth credentials require an absolute `credentials.local.root` and a canonical
+base64-encoded 32-byte key in `credentials.local.key_env`. Authorize that profile once:
+
+```console
+$ mecated mcp login github
+$ mecated mcp login github --no-browser  # prints the authorization URL to this terminal
+```
+
+The command accepts one server and only `--no-browser`; issuer, client, scope, secret,
+root, and network policy remain settings. Normal serve/ACP, mecatequi, and mecak8s never
+open a browser. Environment-backed OAuth records are read-only and intended for
+Kubernetes: provision the opaque record externally and restart the pod after rotation.
+They cannot be populated by `mecated mcp login`. DCR and OAuth for ACP, per-session MCP,
+inline agents, or discovered ToolHive servers are not supported.
+
+The legacy `--mcp-server name=URL` and `MCP_<NAME>_TOKEN` path remains supported. A
+same-name legacy CLI entry replaces the whole settings profile case-insensitively.
+
 ### Automatic learning
 
 `learning.mode` in the operator settings file is strict and defaults to `off`:

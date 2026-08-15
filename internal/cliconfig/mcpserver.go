@@ -49,8 +49,8 @@ type mcpServerEntry struct {
 	raw string
 	// envName is the MCP_<NAME>_TOKEN env var the name derives.
 	envName string
-	// hasToken records whether envName held a non-empty token at parse time —
-	// the condition under which the CWE-319 scheme gate applies.
+	// hasToken is populated only by the runtime resolution step. Parsing and
+	// flag help remain environment-lookup-free.
 	hasToken bool
 }
 
@@ -64,13 +64,14 @@ type mcpServerEntry struct {
 // named MCP endpoint.
 //
 // The per-server token env read (MCP_<NAME>_TOKEN, name upper-cased) happens
-// in Set — cliconfig is the cmd-side helper that MAY read the process
-// environment (see the package comment); the token is SECRET-shaped and is
+// only in Finalize or LoadMCPProfiles. Set and flag help retain metadata only,
+// so parse/inspection paths are lookup-free. The token is SECRET-shaped and is
 // never logged. A missing/empty token simply leaves Headers nil (token
 // optional — an unauthenticated dev endpoint stays reachable).
 //
-// LIFECYCLE (issue #358): Set only COLLECTS; the token-bearing scheme gate
-// (CWE-319) runs in Finalize, which every main calls right after flag.Parse.
+// LIFECYCLE (issues #358/#523): Set only COLLECTS; runtime resolution and the
+// token-bearing scheme gate (CWE-319) run in Finalize, which every existing main
+// calls right after flag.Parse.
 // Deferring the gate is what makes --mcp-server-insecure-http order-independent
 // — a relaxation parsed after its --mcp-server would otherwise arrive too late.
 // Servers() refuses (panics) before a successful Finalize, so a main cannot
@@ -98,9 +99,9 @@ func (l *MCPServerList) String() string {
 }
 
 // Set parses a single "name=URL" entry, splitting at the FIRST '=' (a URL may
-// itself contain '='). A per-server bearer token is read from the environment
-// variable MCP_<NAME>_TOKEN (name upper-cased) when present and becomes an
-// "Authorization: Bearer <token>" header on that server only.
+// itself contain '='). It records the derived MCP_<NAME>_TOKEN reference but
+// deliberately does not read it; Finalize or LoadMCPProfiles performs runtime
+// secret resolution after command selection.
 //
 // Two ADR-0082 hardenings (applied to all three mains, deliberately tightening
 // mecated's original behavior):
@@ -130,15 +131,14 @@ func (l *MCPServerList) Set(v string) error {
 		}
 	}
 	entry := mcpServerEntry{cfg: mcp.ServerConfig{Name: name, URL: u}, raw: v, envName: envName}
-	if tok := os.Getenv(envName); tok != "" {
-		// A bearer will ride every request to this URL. Whether the URL shape
-		// may carry it (https, http to loopback, or the per-server insecure-http
-		// opt-in) is decided in Finalize, once the whole argv has been parsed.
-		entry.hasToken = true
-		entry.cfg.Headers = map[string]string{"Authorization": "Bearer " + tok}
-	}
 	l.entries = append(l.entries, entry)
 	return nil
+}
+
+// Validate checks only cross-flag metadata. It performs no environment lookup;
+// runtime secret resolution belongs to LoadMCPProfiles.
+func (l *MCPServerList) Validate() error {
+	return validateLegacyRelaxations(l)
 }
 
 // Finalize is the post-parse validation step every main calls right after
@@ -157,8 +157,20 @@ func (l *MCPServerList) Set(v string) error {
 // Nil-receiver safe (a config built without RegisterMCPServerFlag has nothing
 // to gate). Idempotent on success.
 func (l *MCPServerList) Finalize() error {
+	return l.finalizeWithLookup(os.LookupEnv)
+}
+
+func (l *MCPServerList) finalizeWithLookup(lookup func(string) (string, bool)) error {
 	if l == nil {
 		return nil
+	}
+	for i := range l.entries {
+		l.entries[i].hasToken = false
+		l.entries[i].cfg.Headers = nil
+		if token, ok := lookup(l.entries[i].envName); ok && token != "" {
+			l.entries[i].hasToken = true
+			l.entries[i].cfg.Headers = map[string]string{"Authorization": "Bearer " + token}
+		}
 	}
 	relaxed := make([]bool, len(l.entries))
 	for _, name := range l.insecure {

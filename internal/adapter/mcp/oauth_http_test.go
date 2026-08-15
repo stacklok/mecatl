@@ -92,7 +92,7 @@ func TestOAuthHTTPPrivateOriginOptInIsExact(t *testing.T) {
 func TestOAuthHTTPLoopbackHTTPRequiresLoopbackDNSAnswer(t *testing.T) {
 	origin := "http://localhost:8080"
 	transport := &oauthHTTPTransport{
-		origins: map[string]struct{}{origin: {}}, private: map[string]struct{}{},
+		origins: map[string]struct{}{origin: {}}, private: map[string]struct{}{}, allowLoopback: true,
 		lookup: func(context.Context, string, string) ([]netip.Addr, error) {
 			return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
 		},
@@ -373,6 +373,70 @@ func TestOAuthHTTPRestoredBearerRequiresExactPrivateOptInAndBypassesProxy(t *tes
 	}
 }
 
+func TestOAuthHTTPPrivateOptInAllowsOnlyRFC1918AndULAWithoutUnsafeDial(t *testing.T) {
+	origin := "https://oauth.example"
+	for _, test := range []struct {
+		name      string
+		addr      string
+		wantDials int32
+	}{
+		{name: "RFC1918", addr: "10.0.0.8", wantDials: 1},
+		{name: "ULA", addr: "fd00::8", wantDials: 1},
+		{name: "loopback", addr: "127.0.0.1"},
+		{name: "IPv6 loopback", addr: "::1"},
+		{name: "link-local", addr: "169.254.1.1"},
+		{name: "cloud metadata", addr: "169.254.169.254"},
+		{name: "unspecified", addr: "0.0.0.0"},
+		{name: "IPv6 unspecified", addr: "::"},
+		{name: "multicast", addr: "224.0.0.1"},
+		{name: "IPv6 multicast", addr: "ff02::1"},
+		{name: "public", addr: "192.0.2.8"},
+		{name: "mapped RFC1918", addr: "::ffff:10.0.0.8"},
+		{name: "mapped metadata", addr: "::ffff:169.254.169.254"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var dials atomic.Int32
+			transport := &oauthHTTPTransport{
+				origins: map[string]struct{}{origin: {}}, private: map[string]struct{}{origin: {}},
+				lookup: func(context.Context, string, string) ([]netip.Addr, error) {
+					return []netip.Addr{netip.MustParseAddr(test.addr)}, nil
+				},
+				dial: func(context.Context, string, string) (net.Conn, error) {
+					dials.Add(1)
+					return nil, errors.New("injected dial stop")
+				},
+			}
+			_, err := transport.dialContext(oauthDialContext(origin), "tcp", "oauth.example:443")
+			if !errors.Is(err, ErrOAuthUnavailable) {
+				t.Fatalf("error = %v, want unavailable", err)
+			}
+			if got := dials.Load(); got != test.wantDials {
+				t.Fatalf("dials = %d, want %d", got, test.wantDials)
+			}
+		})
+	}
+
+	t.Run("mixed private and unsafe answer rejects before dial", func(t *testing.T) {
+		var dials atomic.Int32
+		transport := &oauthHTTPTransport{
+			origins: map[string]struct{}{origin: {}}, private: map[string]struct{}{origin: {}},
+			lookup: func(context.Context, string, string) ([]netip.Addr, error) {
+				return []netip.Addr{netip.MustParseAddr("10.0.0.8"), netip.MustParseAddr("169.254.169.254")}, nil
+			},
+			dial: func(context.Context, string, string) (net.Conn, error) {
+				dials.Add(1)
+				return nil, errors.New("must not dial")
+			},
+		}
+		if _, err := transport.dialContext(oauthDialContext(origin), "tcp", "oauth.example:443"); !errors.Is(err, ErrOAuthUnavailable) {
+			t.Fatalf("error = %v, want unavailable", err)
+		}
+		if dials.Load() != 0 {
+			t.Fatalf("mixed DNS answer caused %d dials", dials.Load())
+		}
+	})
+}
+
 func TestOAuthHTTPRejectsUnsafeSingleDNSAnswersWithoutDial(t *testing.T) {
 	origin := "https://oauth.example"
 	for _, test := range []struct {
@@ -499,7 +563,7 @@ func TestMCPOAuthCrossOriginRedirectNeverReachesDestinationWithBearer(t *testing
 
 func TestMCPOAuthRedirectGateRejectsCrossOriginBeforeDial(t *testing.T) {
 	origin := "https://mcp.example"
-	policy := mcpOAuthRedirectPolicy(origin)
+	policy := mcpOAuthRedirectPolicy(origin, maxOAuthRedirects)
 	first, _ := http.NewRequest(http.MethodPost, origin+"/mcp", nil)
 	cross, _ := http.NewRequest(http.MethodGet, "https://attacker.example/mcp", nil)
 	cross.Header.Set("Authorization", "Bearer canary")

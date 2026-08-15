@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/agent"
@@ -14,6 +15,14 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+func (s *stringList) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
 
 // flags is the parsed command-line configuration for mecatequi. It is a small,
 // single-shot subset of mecated's config: the engine-build knobs (provider, model,
@@ -80,13 +89,14 @@ type flags struct {
 	// mecated/mecak8s: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
 	// scheduler like titlani injects a short-lived per-run identity there), token
 	// optional. Threaded onto app.Config.MCPServers in appConfig.
-	mcpServers    *cliconfig.MCPServerList
-	useMock       bool
-	storeDir      string
-	shell         string
-	noBash        bool
-	maxRunTokens  int
-	maxTeamTokens int
+	mcpServers        *cliconfig.MCPServerList
+	permissionConfigs stringList
+	useMock           bool
+	storeDir          string
+	shell             string
+	noBash            bool
+	maxRunTokens      int
+	maxTeamTokens     int
 	// maxTurns caps the session's model calls (the StopMaxTurns terminal). 0
 	// (default/unset) inherits the composition default (internal/app build.go), so
 	// it is NOT mapped onto app.Config — it is a per-SESSION limit threaded to
@@ -191,6 +201,7 @@ func parseFlags(argv []string) (flags, error) {
 	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
 	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecak8s.
 	f.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
+	fs.Var(&f.permissionConfigs, "permission-config", "explicit operator settings YAML (repeatable); uses the same precedence and strict parser as conventional settings")
 	fs.BoolVar(&f.useMock, "mock", false, "use a canned offline mock provider (no network; smoke tests only)")
 	fs.StringVar(&f.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash")
@@ -395,7 +406,10 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time),
 		// consumed by app.Build's static MCP source. Nil-safe when the flag was
 		// never registered (a hand-built test config).
-		MCPServers: f.mcpServers.Servers(),
+		MCPServers:              f.mcpServers.Servers(),
+		MCPProfileLoader:        cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		PermissionsConventional: true,
+		PermissionConfigs:       f.permissionConfigs,
 
 		GuardrailsModel:    f.guardrailsModel,
 		GuardrailsDisabled: f.guardrailsOff,

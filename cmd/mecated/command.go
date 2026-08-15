@@ -74,6 +74,13 @@ func resolveCommand(argv []string) commandResolution {
 	if first == "acp" {
 		return commandResolution{mode: modeACP, remaining: stripCommandWord(args)}
 	}
+	// `mecated mcp login` is the sole interactive OAuth presenter. Command
+	// classification remains pure; settings, credentials, listener, and browser
+	// work happen only inside the captured action after argument validation.
+	if first == "mcp" {
+		return resolveMCPSubcommand(args)
+	}
+
 	// `mecated import` is an offline migration command. It never starts a
 	// listener or constructs an LLM provider.
 	if first == "import" {
@@ -217,6 +224,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "Commands:\n")
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
 	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
+	_, _ = fmt.Fprintf(out, "  mcp login SERVER        authorize an operator-configured OAuth MCP server\n")
 	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
 	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
@@ -228,7 +236,40 @@ func writeTopLevelHelp(out io.Writer) {
 
 // unknownCommandError builds the error message for an unknown leading bare word.
 func unknownCommandError(arg string) error {
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  serve    start the network daemon (gRPC + HTTP/SSE)\n  acp      serve the Agent Client Protocol over stdio\n  import   import Codex or Claude Code data\n  config   configuration management\n  skills   skill management\n  perf-mcp perf MCP utilities\n\nRun 'mecated <command> --help' for command-specific flags", arg)
+	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  serve    start the network daemon (gRPC + HTTP/SSE)\n  acp      serve the Agent Client Protocol over stdio\n  mcp      MCP OAuth login\n  import   import Codex or Claude Code data\n  config   configuration management\n  skills   skill management\n  perf-mcp perf MCP utilities\n\nRun 'mecated <command> --help' for command-specific flags", arg)
+}
+
+func resolveMCPSubcommand(args []string) commandResolution {
+	if len(args) >= 3 && (args[2] == "-h" || args[2] == "--help") {
+		return commandResolution{handled: true, run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+			writeMCPHelp(stdout)
+			return nil
+		})}
+	}
+	if len(args) >= 3 && args[2] == "login" {
+		return commandResolution{
+			handled: true,
+			run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+				return runMCPLogin(args[3:], stdout)
+			}),
+		}
+	}
+	return commandResolution{err: mcpUsageError(args)}
+}
+
+func writeMCPHelp(out io.Writer) {
+	_, _ = fmt.Fprintln(out, "Usage: mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]\n\nAuthorize one operator-configured OAuth MCP server.")
+}
+
+func mcpUsageError(argv []string) error {
+	sub := ""
+	if len(argv) >= 3 {
+		sub = argv[2]
+	}
+	if sub == "" {
+		return errors.New("mcp: missing subcommand\navailable subcommands:\n  mcp login SERVER [--no-browser]    authorize a configured OAuth server")
+	}
+	return fmt.Errorf("mcp: unknown subcommand %q\navailable subcommands:\n  mcp login SERVER [--no-browser]    authorize a configured OAuth server", sub)
 }
 
 // configUsageError builds the error message for a bare/unknown `config` invocation.

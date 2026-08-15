@@ -138,9 +138,50 @@ OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model p
 | `openrouter.models.<key>.order` | `[]string` | `(absent)` | Order lists downstream provider slugs (lowercase-kebab, e.g. "anthropic", "google-vertex", "deepinfra/turbo") tried in order. Setting it disables OpenRouter's default price load-balancing. Base-slug matching applies: "google-vertex" matches all its regions/variants (service tiers excepted). |
 | `openrouter.models.<key>.allow_fallbacks` | `bool` | `(absent)` | AllowFallbacks, when explicitly false, pins the request to Order with no fallback to other downstreams. Omit the key to keep OpenRouter's default (true); set it to false to disable fallback. |
 
+## `mcp`
+
+Tier: **operator**
+
+Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is a closed none/static_bearer/oauth union; OAuth supports preregistered or CIMD clients and local or environment credentials. All secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `mcp.servers` | `[]mcpserverprofile` | `(absent)` | Servers is the ordered list of named global Streamable HTTP servers. |
+| `mcp.servers[].name` | `string` | `(empty)` | Name is an ASCII [A-Za-z0-9_]+ identifier, unique case-insensitively. |
+| `mcp.servers[].url` | `string` | `(empty)` | URL is an absolute HTTP(S) endpoint without userinfo or a fragment. |
+| `mcp.servers[].auth` | `mcpauthprofile` | `(absent)` | Auth selects exactly one of none, static_bearer, or oauth. |
+| `mcp.servers[].auth.mode` | `string` | `(empty)` | Mode is exactly none, static_bearer, or oauth. |
+| `mcp.servers[].auth.static_bearer` | `mcpstaticbearerprofile` | `(absent)` | StaticBearer names the bearer-token environment reference. |
+| `mcp.servers[].auth.static_bearer.token_env` | `string` | `(empty)` | TokenEnv is a MECATL_* environment variable name containing the opaque token. |
+| `mcp.servers[].auth.oauth` | `mcpoauthprofile` | `(absent)` | OAuth declares the OAuth identity, client, credentials, scopes, and network policy. |
+| `mcp.servers[].auth.oauth.profile` | `string` | `(empty)` | Profile is the required operator-defined credential identity profile. |
+| `mcp.servers[].auth.oauth.principal` | `string` | `(empty)` | Principal is the required operator-defined credential identity principal. |
+| `mcp.servers[].auth.oauth.issuer` | `string` | `(empty)` | Issuer is the required canonical exact HTTP(S) origin of the authorization server. |
+| `mcp.servers[].auth.oauth.client` | `mcpoauthclientprofile` | `(absent)` | Client selects exactly one preregistered or CIMD client declaration. |
+| `mcp.servers[].auth.oauth.client.mode` | `string` | `(empty)` | Mode is exactly preregistered or cimd. |
+| `mcp.servers[].auth.oauth.client.preregistered` | `mcppreregisteredclientprofile` | `(absent)` | Preregistered declares a confidential client registered with the issuer. |
+| `mcp.servers[].auth.oauth.client.preregistered.id` | `string` | `(empty)` | ID is the required preregistered OAuth client identifier. |
+| `mcp.servers[].auth.oauth.client.preregistered.secret_env` | `string` | `(empty)` | SecretEnv is a MECATL_* environment variable name containing the client secret. |
+| `mcp.servers[].auth.oauth.client.cimd` | `mcpcimdclientprofile` | `(absent)` | CIMD declares an HTTPS client-id metadata document URL. |
+| `mcp.servers[].auth.oauth.client.cimd.document_url` | `string` | `(empty)` | DocumentURL is the required HTTPS metadata-document URL. |
+| `mcp.servers[].auth.oauth.scopes` | `[]string` | `(absent)` | Scopes is the non-empty allowlist of OAuth scopes the client may request. |
+| `mcp.servers[].auth.oauth.request_refresh_token` | `bool` | `false` | RequestRefreshToken asks the authorization server for refresh capability. |
+| `mcp.servers[].auth.oauth.credentials` | `mcpoauthcredentialprofile` | `(absent)` | Credentials selects exactly one local or environment credential source. |
+| `mcp.servers[].auth.oauth.credentials.mode` | `string` | `(empty)` | Mode is exactly local or environment. |
+| `mcp.servers[].auth.oauth.credentials.local` | `mcplocalcredentialprofile` | `(absent)` | Local declares encrypted mutable credentials rooted at an absolute path. |
+| `mcp.servers[].auth.oauth.credentials.local.root` | `string` | `(empty)` | Root is the required absolute credential-store root. |
+| `mcp.servers[].auth.oauth.credentials.local.key_env` | `string` | `(empty)` | KeyEnv is a MECATL_* environment variable name containing the encryption key. |
+| `mcp.servers[].auth.oauth.credentials.environment` | `mcpenvironmentcredentialprofile` | `(absent)` | Environment declares one externally provisioned read-only credential record. |
+| `mcp.servers[].auth.oauth.credentials.environment.credential_env` | `string` | `(empty)` | CredentialEnv is a MECATL_* environment variable containing the opaque credential record. |
+| `mcp.servers[].auth.oauth.credentials.environment.allow_process_local_refresh` | `bool` | `false` | AllowProcessLocalRefresh permits refreshed credentials to live only in this process. |
+| `mcp.servers[].auth.oauth.network` | `mcpoauthnetworkprofile` | `(absent)` | Network is required and declares immutable exact-origin egress policy. |
+| `mcp.servers[].auth.oauth.network.additional_origins` | `[]string` | `(absent)` | AdditionalOrigins lists canonical exact origins additionally allowed for OAuth traffic. |
+| `mcp.servers[].auth.oauth.network.private_origins` | `[]string` | `(absent)` | PrivateOrigins lists allowed origins that may resolve only to RFC1918 IPv4 or ULA IPv6 addresses. Loopback, link-local, metadata, unspecified, multicast, mapped, public, and other special addresses remain denied. |
+| `mcp.servers[].auth.oauth.network.max_redirects` | `int` | `0` | MaxRedirects is the redirect bound, from zero through five. |
+
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 
-By design, `settings.yaml` covers the four subtrees above. Several other
+By design, `settings.yaml` covers the subtrees above. Several other
 operator features are configured through **CLI flags** (and, for some, their own
 files) rather than this YAML. See the [running `mecated`](usage/mecated.md) and
 [configuration](usage/configuration.md) pages for the full flag tables; the

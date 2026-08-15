@@ -518,6 +518,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).
 		MCPServers:              cfg.mcpServers.Servers(),
+		MCPProfileLoader:        cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
 		EnableParallel:          cfg.enableParallel,
 		EnableTeams:             cfg.enableTeams,
 		SoulPath:                cfg.soulFile,

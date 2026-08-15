@@ -82,6 +82,7 @@ func testOAuthOptions(store credentialstore.Store) OAuthOptions {
 		}},
 		RedirectURL: "http://127.0.0.1/callback", CredentialStore: store,
 		RequestRefreshToken: true, AllowedScopes: []string{"read", "offline_access"}, Timeout: 30 * time.Second,
+		allowLoopbackForTest: true,
 	}
 }
 

@@ -238,21 +238,41 @@ type Server struct {
 	promptsGen     uint64
 }
 
+// HasCredentialHeaders reports whether headers contain a credential-bearing
+// header that cannot be combined with OAuth. Matching is case-insensitive.
+func HasCredentialHeaders(headers map[string]string) bool {
+	for name := range headers {
+		switch {
+		case strings.EqualFold(name, "Authorization"),
+			strings.EqualFold(name, "Proxy-Authorization"),
+			strings.EqualFold(name, "Cookie"):
+			return true
+		}
+	}
+	return false
+}
+
 func prepareOAuthServerConfig(ctx context.Context, cfg ServerConfig) (ServerConfig, *OAuthController, error) {
 	if cfg.OAuth == nil {
 		return cfg, nil, nil
 	}
-	for name := range cfg.Headers {
-		if strings.EqualFold(name, "Authorization") {
-			return cfg, nil, errors.New("mcp: static Authorization and OAuth are mutually exclusive")
-		}
+	if HasCredentialHeaders(cfg.Headers) {
+		return cfg, nil, errors.New("mcp: static credential headers and OAuth are mutually exclusive")
 	}
 	canonical, err := canonicalOAuthResource(cfg.URL)
 	if err != nil {
 		return cfg, nil, err
 	}
 	cfg.URL = canonical
-	controller, err := NewOAuthController(ctx, cfg.URL, *cfg.OAuth)
+	oauth := *cfg.OAuth
+	if oauth.RedirectURL == "" {
+		// Runtime restoration needs no presenter/listener, but the SDK handler
+		// requires a syntactically valid redirect URI. The explicit login path
+		// replaces this inert value with its bound callback before connecting.
+		oauth.RedirectURL = "http://127.0.0.1/callback"
+	}
+	cfg.OAuth = &oauth
+	controller, err := NewOAuthController(ctx, cfg.URL, oauth)
 	return cfg, controller, err
 }
 
@@ -260,7 +280,7 @@ func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 	client := &http.Client{}
 	if oauth != nil {
 		resourceURL, _ := url.Parse(cfg.URL)
-		client.CheckRedirect = mcpOAuthRedirectPolicy(requestOrigin(resourceURL))
+		client.CheckRedirect = mcpOAuthRedirectPolicy(requestOrigin(resourceURL), cfg.OAuth.Network.MaxRedirects)
 		// Resource requests carrying restored or refreshed bearer tokens must use
 		// the same no-proxy, DNS-pinned destination policy as OAuth endpoints.
 		client.Transport = oauthResourceRoundTripper{base: oauth.transport}

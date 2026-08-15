@@ -33,9 +33,16 @@
 package permconfig
 
 import (
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	yaml "go.yaml.in/yaml/v3"
 
@@ -125,6 +132,507 @@ type Config struct {
 	// key was absent. The composition layer reads + validates the maps; permconfig
 	// only carries them.
 	OpenRouter *OpenRouterSection `yaml:"openrouter"`
+	// MCP holds named global Streamable HTTP MCP server profiles. It is strict and
+	// OPERATOR-TIER ONLY: project files cannot choose endpoints, authentication,
+	// credential references, or egress policy. Values are metadata only; parsing
+	// never reads an environment variable, opens a credential store, or performs I/O.
+	MCP *MCPSection `yaml:"mcp"`
+}
+
+// MCPSection is the strict operator-only mcp: subtree.
+type MCPSection struct {
+	// Servers is the ordered list of named global Streamable HTTP servers.
+	Servers []MCPServerProfile `yaml:"servers"`
+}
+
+// MCPServerProfile is one named Streamable HTTP endpoint and its explicit auth mode.
+type MCPServerProfile struct {
+	// Name is an ASCII [A-Za-z0-9_]+ identifier, unique case-insensitively.
+	Name string `yaml:"name"`
+	// URL is an absolute HTTP(S) endpoint without userinfo or a fragment.
+	URL string `yaml:"url"`
+	// Auth selects exactly one of none, static_bearer, or oauth.
+	Auth MCPAuthProfile `yaml:"auth"`
+}
+
+// MCPAuthProfile is a closed tagged union. none has no payload; the other modes
+// require exactly their matching payload and reject cross-variant fields.
+type MCPAuthProfile struct {
+	// Mode is exactly none, static_bearer, or oauth.
+	Mode string `yaml:"mode"`
+	// StaticBearer names the bearer-token environment reference.
+	StaticBearer *MCPStaticBearerProfile `yaml:"static_bearer"`
+	// OAuth declares the OAuth identity, client, credentials, scopes, and network policy.
+	OAuth *MCPOAuthProfile `yaml:"oauth"`
+}
+
+// MCPStaticBearerProfile contains a reference only, never a bearer-token value.
+type MCPStaticBearerProfile struct {
+	// TokenEnv is a MECATL_* environment variable name containing the opaque token.
+	TokenEnv string `yaml:"token_env"`
+}
+
+// MCPOAuthProfile is the metadata-only OAuth configuration for one server.
+type MCPOAuthProfile struct {
+	// Profile is the required operator-defined credential identity profile.
+	Profile string `yaml:"profile"`
+	// Principal is the required operator-defined credential identity principal.
+	Principal string `yaml:"principal"`
+	// Issuer is the required canonical exact HTTP(S) origin of the authorization server.
+	Issuer string `yaml:"issuer"`
+	// Client selects exactly one preregistered or CIMD client declaration.
+	Client MCPOAuthClientProfile `yaml:"client"`
+	// Scopes is the non-empty allowlist of OAuth scopes the client may request.
+	Scopes []string `yaml:"scopes"`
+	// RequestRefreshToken asks the authorization server for refresh capability.
+	RequestRefreshToken bool `yaml:"request_refresh_token"`
+	// Credentials selects exactly one local or environment credential source.
+	Credentials MCPOAuthCredentialProfile `yaml:"credentials"`
+	// Network is required and declares immutable exact-origin egress policy.
+	Network *MCPOAuthNetworkProfile `yaml:"network"`
+}
+
+// MCPOAuthClientProfile is a closed preregistered/CIMD tagged union. DCR is unsupported.
+type MCPOAuthClientProfile struct {
+	// Mode is exactly preregistered or cimd.
+	Mode string `yaml:"mode"`
+	// Preregistered declares a confidential client registered with the issuer.
+	Preregistered *MCPPreregisteredClientProfile `yaml:"preregistered"`
+	// CIMD declares an HTTPS client-id metadata document URL.
+	CIMD *MCPCIMDClientProfile `yaml:"cimd"`
+}
+
+// MCPPreregisteredClientProfile contains client identity metadata and a secret reference.
+type MCPPreregisteredClientProfile struct {
+	// ID is the required preregistered OAuth client identifier.
+	ID string `yaml:"id"`
+	// SecretEnv is a MECATL_* environment variable name containing the client secret.
+	SecretEnv string `yaml:"secret_env"`
+}
+
+// MCPCIMDClientProfile contains the HTTPS client-id metadata document URL.
+type MCPCIMDClientProfile struct {
+	// DocumentURL is the required HTTPS metadata-document URL.
+	DocumentURL string `yaml:"document_url"`
+}
+
+// MCPOAuthCredentialProfile is a closed local/environment tagged union.
+type MCPOAuthCredentialProfile struct {
+	// Mode is exactly local or environment.
+	Mode string `yaml:"mode"`
+	// Local declares encrypted mutable credentials rooted at an absolute path.
+	Local *MCPLocalCredentialProfile `yaml:"local"`
+	// Environment declares one externally provisioned read-only credential record.
+	Environment *MCPEnvironmentCredentialProfile `yaml:"environment"`
+}
+
+// MCPLocalCredentialProfile declares local encrypted credential persistence metadata.
+type MCPLocalCredentialProfile struct {
+	// Root is the required absolute credential-store root.
+	Root string `yaml:"root"`
+	// KeyEnv is a MECATL_* environment variable name containing the encryption key.
+	KeyEnv string `yaml:"key_env"`
+}
+
+// MCPEnvironmentCredentialProfile declares a read-only environment credential source.
+type MCPEnvironmentCredentialProfile struct {
+	// CredentialEnv is a MECATL_* environment variable containing the opaque credential record.
+	CredentialEnv string `yaml:"credential_env"`
+	// AllowProcessLocalRefresh permits refreshed credentials to live only in this process.
+	AllowProcessLocalRefresh bool `yaml:"allow_process_local_refresh"`
+}
+
+// MCPOAuthNetworkProfile is the required immutable OAuth egress policy.
+type MCPOAuthNetworkProfile struct {
+	// AdditionalOrigins lists canonical exact origins additionally allowed for OAuth traffic.
+	AdditionalOrigins []string `yaml:"additional_origins"`
+	// PrivateOrigins lists allowed origins that may resolve only to RFC1918 IPv4 or ULA IPv6 addresses. Loopback, link-local, metadata, unspecified, multicast, mapped, public, and other special addresses remain denied.
+	PrivateOrigins []string `yaml:"private_origins"`
+	// MaxRedirects is the redirect bound, from zero through five.
+	MaxRedirects int `yaml:"max_redirects"`
+}
+
+var (
+	mcpProfileName        = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	mecatlSecretReference = regexp.MustCompile(`^MECATL_[A-Z0-9_]+$`)
+)
+
+const modeKey = "mode"
+
+func (s *MCPSection) strictFields() map[string]any { return map[string]any{"servers": &s.Servers} }
+
+// UnmarshalYAML strictly decodes and validates an MCP operator section.
+func (s *MCPSection) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp", s.strictFields()); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(s.Servers))
+	for i := range s.Servers {
+		name := strings.ToLower(s.Servers[i].Name)
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("mcp.servers[%d].name: duplicate case-insensitive server name", i)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+func (s *MCPServerProfile) strictFields() map[string]any {
+	return map[string]any{"name": &s.Name, "url": &s.URL, "auth": &s.Auth}
+}
+
+// UnmarshalYAML strictly decodes and validates one MCP server profile.
+func (s *MCPServerProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[]", s.strictFields()); err != nil {
+		return err
+	}
+	if !mappingHasKey(node, "auth") {
+		return errors.New("mcp.servers[].auth is required")
+	}
+	if !mcpProfileName.MatchString(s.Name) || strings.Contains(s.Name, "__") {
+		return errors.New("mcp.servers[].name must match [A-Za-z0-9_]+ and must not contain __")
+	}
+	u, err := validateMCPHTTPURL("mcp.servers[].url", s.URL, false)
+	if err != nil {
+		return err
+	}
+	if s.Auth.Mode != "none" && u.Scheme != "https" && !mcpLoopback(u.Hostname()) {
+		return errors.New("mcp.servers[].url must use https for authenticated profiles except loopback http")
+	}
+	if s.Auth.OAuth != nil {
+		allowed := map[string]struct{}{mcpURLOrigin(u): {}, s.Auth.OAuth.Issuer: {}}
+		for _, origin := range s.Auth.OAuth.Network.AdditionalOrigins {
+			allowed[origin] = struct{}{}
+		}
+		if client := s.Auth.OAuth.Client.CIMD; client != nil {
+			document, _ := url.Parse(client.DocumentURL)
+			if _, ok := allowed[mcpURLOrigin(document)]; !ok {
+				return errors.New("mcp.servers[].auth.oauth.client.cimd.document_url origin must match the issuer or resource origin, or appear in mcp.servers[].auth.oauth.network.additional_origins")
+			}
+		}
+		for _, origin := range s.Auth.OAuth.Network.PrivateOrigins {
+			if _, ok := allowed[origin]; !ok {
+				return errors.New("mcp.servers[].auth.oauth.network.private_origins[] must also be an issuer, resource, or additional origin")
+			}
+		}
+	}
+	return nil
+}
+
+func (a *MCPAuthProfile) strictFields() map[string]any {
+	return map[string]any{modeKey: &a.Mode, "static_bearer": &a.StaticBearer, "oauth": &a.OAuth}
+}
+
+// UnmarshalYAML strictly decodes the closed MCP authentication union.
+func (a *MCPAuthProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth", a.strictFields()); err != nil {
+		return err
+	}
+	switch a.Mode {
+	case "none":
+		if mappingHasKey(node, "static_bearer") || mappingHasKey(node, "oauth") {
+			return errors.New("mcp.servers[].auth: none must not contain a variant payload")
+		}
+	case "static_bearer":
+		if a.StaticBearer == nil || mappingHasKey(node, "oauth") {
+			return errors.New("mcp.servers[].auth: static_bearer requires only static_bearer payload")
+		}
+	case "oauth":
+		if a.OAuth == nil || mappingHasKey(node, "static_bearer") {
+			return errors.New("mcp.servers[].auth: oauth requires only oauth payload")
+		}
+	default:
+		return errors.New("mcp.servers[].auth.mode must be exactly none, static_bearer, or oauth")
+	}
+	return nil
+}
+
+func (s *MCPStaticBearerProfile) strictFields() map[string]any {
+	return map[string]any{"token_env": &s.TokenEnv}
+}
+
+// UnmarshalYAML strictly decodes a static bearer secret reference.
+func (s *MCPStaticBearerProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.static_bearer", s.strictFields()); err != nil {
+		return err
+	}
+	return validateMCPSecretRef("mcp.servers[].auth.static_bearer.token_env", s.TokenEnv)
+}
+
+func (o *MCPOAuthProfile) strictFields() map[string]any {
+	return map[string]any{"profile": &o.Profile, "principal": &o.Principal, "issuer": &o.Issuer, "client": &o.Client, "scopes": &o.Scopes, "request_refresh_token": &o.RequestRefreshToken, "credentials": &o.Credentials, "network": &o.Network}
+}
+
+// UnmarshalYAML strictly decodes and validates OAuth profile metadata.
+func (o *MCPOAuthProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth", o.strictFields()); err != nil {
+		return err
+	}
+	if !mappingHasKey(node, "client") {
+		return errors.New("mcp.servers[].auth.oauth.client is required")
+	}
+	if !mappingHasKey(node, "credentials") {
+		return errors.New("mcp.servers[].auth.oauth.credentials is required")
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.profile", o.Profile); err != nil {
+		return err
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.principal", o.Principal); err != nil {
+		return err
+	}
+	if err := validateMCPOrigin("mcp.servers[].auth.oauth.issuer", o.Issuer); err != nil {
+		return err
+	}
+	if len(o.Scopes) == 0 {
+		return errors.New("mcp.servers[].auth.oauth.scopes is required")
+	}
+	for _, scope := range o.Scopes {
+		if err := validateMCPSafeValue("mcp.servers[].auth.oauth.scopes[]", scope); err != nil {
+			return err
+		}
+	}
+	if o.Network == nil {
+		return errors.New("mcp.servers[].auth.oauth.network is required")
+	}
+	return nil
+}
+
+func (c *MCPOAuthClientProfile) strictFields() map[string]any {
+	return map[string]any{modeKey: &c.Mode, "preregistered": &c.Preregistered, "cimd": &c.CIMD}
+}
+
+// UnmarshalYAML strictly decodes the closed preregistered/CIMD client union.
+func (c *MCPOAuthClientProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client", c.strictFields()); err != nil {
+		return err
+	}
+	switch c.Mode {
+	case "preregistered":
+		if c.Preregistered == nil || mappingHasKey(node, "cimd") {
+			return errors.New("mcp.servers[].auth.oauth.client: preregistered requires only preregistered payload")
+		}
+	case "cimd":
+		if c.CIMD == nil || mappingHasKey(node, "preregistered") {
+			return errors.New("mcp.servers[].auth.oauth.client: cimd requires only cimd payload")
+		}
+	default:
+		return errors.New("mcp.servers[].auth.oauth.client.mode must be exactly preregistered or cimd")
+	}
+	return nil
+}
+
+func (c *MCPPreregisteredClientProfile) strictFields() map[string]any {
+	return map[string]any{"id": &c.ID, "secret_env": &c.SecretEnv}
+}
+
+// UnmarshalYAML strictly decodes preregistered client metadata.
+func (c *MCPPreregisteredClientProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client.preregistered", c.strictFields()); err != nil {
+		return err
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.client.preregistered.id", c.ID); err != nil {
+		return err
+	}
+	return validateMCPSecretRef("mcp.servers[].auth.oauth.client.preregistered.secret_env", c.SecretEnv)
+}
+
+func (c *MCPCIMDClientProfile) strictFields() map[string]any {
+	return map[string]any{"document_url": &c.DocumentURL}
+}
+
+// UnmarshalYAML strictly decodes CIMD client metadata.
+func (c *MCPCIMDClientProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client.cimd", c.strictFields()); err != nil {
+		return err
+	}
+	u, err := validateMCPHTTPURL("mcp.servers[].auth.oauth.client.cimd.document_url", c.DocumentURL, true)
+	if err != nil {
+		return err
+	}
+	if u.Path == "" || u.Path == "/" {
+		return errors.New("mcp.servers[].auth.oauth.client.cimd.document_url must include a document path")
+	}
+	return nil
+}
+
+func (c *MCPOAuthCredentialProfile) strictFields() map[string]any {
+	return map[string]any{modeKey: &c.Mode, "local": &c.Local, "environment": &c.Environment}
+}
+
+// UnmarshalYAML strictly decodes the closed local/environment credential union.
+func (c *MCPOAuthCredentialProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials", c.strictFields()); err != nil {
+		return err
+	}
+	switch c.Mode {
+	case "local":
+		if c.Local == nil || mappingHasKey(node, "environment") {
+			return errors.New("mcp.servers[].auth.oauth.credentials: local requires only local payload")
+		}
+	case "environment":
+		if c.Environment == nil || mappingHasKey(node, "local") {
+			return errors.New("mcp.servers[].auth.oauth.credentials: environment requires only environment payload")
+		}
+	default:
+		return errors.New("mcp.servers[].auth.oauth.credentials.mode must be exactly local or environment")
+	}
+	return nil
+}
+
+func (c *MCPLocalCredentialProfile) strictFields() map[string]any {
+	return map[string]any{"root": &c.Root, "key_env": &c.KeyEnv}
+}
+
+// UnmarshalYAML strictly decodes local credential-store metadata.
+func (c *MCPLocalCredentialProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.local", c.strictFields()); err != nil {
+		return err
+	}
+	if c.Root == "" || !filepath.IsAbs(c.Root) {
+		return errors.New("mcp.servers[].auth.oauth.credentials.local.root must be absolute")
+	}
+	return validateMCPSecretRef("mcp.servers[].auth.oauth.credentials.local.key_env", c.KeyEnv)
+}
+
+func (c *MCPEnvironmentCredentialProfile) strictFields() map[string]any {
+	return map[string]any{"credential_env": &c.CredentialEnv, "allow_process_local_refresh": &c.AllowProcessLocalRefresh}
+}
+
+// UnmarshalYAML strictly decodes environment credential metadata.
+func (c *MCPEnvironmentCredentialProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.environment", c.strictFields()); err != nil {
+		return err
+	}
+	return validateMCPSecretRef("mcp.servers[].auth.oauth.credentials.environment.credential_env", c.CredentialEnv)
+}
+
+func (n *MCPOAuthNetworkProfile) strictFields() map[string]any {
+	return map[string]any{"additional_origins": &n.AdditionalOrigins, "private_origins": &n.PrivateOrigins, "max_redirects": &n.MaxRedirects}
+}
+
+// UnmarshalYAML strictly decodes immutable OAuth network policy metadata.
+func (n *MCPOAuthNetworkProfile) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.network", n.strictFields()); err != nil {
+		return err
+	}
+	if n.MaxRedirects < 0 || n.MaxRedirects > 5 {
+		return errors.New("mcp.servers[].auth.oauth.network.max_redirects must be between 0 and 5")
+	}
+	for _, raw := range n.AdditionalOrigins {
+		if err := validateMCPOrigin("mcp.servers[].auth.oauth.network.additional_origins[]", raw); err != nil {
+			return err
+		}
+	}
+	for _, raw := range n.PrivateOrigins {
+		if err := validateMCPOrigin("mcp.servers[].auth.oauth.network.private_origins[]", raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMCPSecretRef(field, value string) error {
+	if !mecatlSecretReference.MatchString(value) {
+		return fmt.Errorf("%s must name a MECATL_* environment variable", field)
+	}
+	return nil
+}
+func validateMCPSafeValue(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%s must not contain control characters", field)
+		}
+	}
+	return nil
+}
+func validateMCPHTTPURL(field, raw string, httpsOnly bool) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" || u.User != nil || u.Fragment != "" || !validMCPHostname(u.Hostname()) {
+		return nil, fmt.Errorf("%s must be an absolute HTTP(S) URL without userinfo or fragment", field)
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	if u.Scheme != "https" && (httpsOnly || u.Scheme != "http") {
+		return nil, fmt.Errorf("%s has an unsupported scheme", field)
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("%s has an invalid port", field)
+		}
+	}
+	return u, nil
+}
+func validateMCPOrigin(field, raw string) error {
+	u, err := validateMCPHTTPURL(field, raw, false)
+	if err != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
+		return fmt.Errorf("%s must be a canonical exact origin", field)
+	}
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	port := u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" {
+		host = net.JoinHostPort(strings.Trim(host, "[]"), port)
+	}
+	canonical := u.Scheme + "://" + host
+	if raw != canonical {
+		return fmt.Errorf("%s must use canonical exact-origin form", field)
+	}
+	return nil
+}
+func validMCPHostname(host string) bool {
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+func mcpURLOrigin(u *url.URL) string {
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	port := u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" {
+		host = net.JoinHostPort(strings.Trim(host, "[]"), port)
+	}
+	return u.Scheme + "://" + host
+}
+func mcpLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // LearningSection is the strict learning: settings subtree.
@@ -141,7 +649,7 @@ type LearningSection struct {
 
 // UnmarshalYAML strictly decodes learning.mode and validates its closed vocabulary.
 func (s *LearningSection) UnmarshalYAML(node *yaml.Node) error {
-	if err := decodeStrictMapping(node, "learning", map[string]any{"mode": &s.Mode}); err != nil {
+	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode}); err != nil {
 		return err
 	}
 	if _, err := learning.ParseMode(s.Mode); err != nil {
@@ -505,7 +1013,7 @@ func (r *GuardrailRuleSpec) strictFields() map[string]any {
 	return map[string]any{
 		"match":      &r.Match,
 		"phases":     &r.Phases,
-		"mode":       &r.Mode,
+		modeKey:      &r.Mode,
 		"prompt":     &r.Prompt,
 		"failClosed": &r.FailClosed,
 	}
@@ -599,6 +1107,18 @@ func (s *SubagentPermissions) UnmarshalYAML(node *yaml.Node) error {
 	return decodeStrictMapping(node, "permissions.subagent", s.strictFields())
 }
 
+func mappingHasKey(node *yaml.Node, key string) bool {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
+}
+
 // decodeStrictMapping walks a YAML mapping node and decodes each known key's
 // value into its target, erroring on any unknown key (with the key's line for
 // the operator). A null/absent node (e.g. a bare `permissions:` line) decodes
@@ -611,8 +1131,13 @@ func decodeStrictMapping(node *yaml.Node, where string, known map[string]any) er
 	if node.Kind != yaml.MappingNode {
 		return fmt.Errorf("%s: expected a mapping (line %d)", where, node.Line)
 	}
+	seen := make(map[string]struct{}, len(node.Content)/2)
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode, valNode := node.Content[i], node.Content[i+1]
+		if _, duplicate := seen[keyNode.Value]; duplicate {
+			return fmt.Errorf("%s: duplicate key %q (line %d)", where, keyNode.Value, keyNode.Line)
+		}
+		seen[keyNode.Value] = struct{}{}
 		target, ok := known[keyNode.Value]
 		if !ok {
 			return fmt.Errorf("%s: unknown key %q (line %d); known keys: %s",

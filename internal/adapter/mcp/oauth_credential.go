@@ -155,6 +155,31 @@ func validateOAuthIdentity(identity oauthCredentialIdentity) error {
 	return nil
 }
 
+// OAuthCredentialRecordKey derives the opaque persistence key used by the OAuth
+// controller for resource and options. Hosts constructing a single-record Reader
+// must use this helper rather than duplicating the identity framing protocol.
+func OAuthCredentialRecordKey(resource string, opts OAuthOptions) ([]byte, error) {
+	if err := validateSafeValue("OAuth subject profile", opts.Subject.Profile); err != nil {
+		return nil, err
+	}
+	if err := validateSafeValue("OAuth subject principal", opts.Subject.Principal); err != nil {
+		return nil, err
+	}
+	canonical, err := canonicalOAuthResource(resource)
+	if err != nil {
+		return nil, err
+	}
+	registration, err := validateOAuthRegistration(opts.Client, opts.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	return oauthCredentialKey(oauthCredentialIdentity{
+		Profile: opts.Subject.Profile, Principal: opts.Subject.Principal,
+		Resource: canonical, Issuer: opts.Issuer,
+		ClientKind: registration.kind, ClientID: registration.clientID,
+	})
+}
+
 func oauthCredentialKey(identity oauthCredentialIdentity) ([]byte, error) {
 	if err := validateOAuthIdentity(identity); err != nil {
 		return nil, err

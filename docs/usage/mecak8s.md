@@ -17,7 +17,13 @@ a `coordination.k8s.io` Lease per session
 (the in-cluster multi-replica single-writer path), a dynamic
 `/readyz` (drain-gated + Redis-pinged), and a bounded `GracefulStop`. The agent pods are
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
-managed service the pod talks to over the network (Redis + the k8s API server). It drops
+managed service the pod talks to over the network (Redis + the k8s API server). Global
+MCP profiles use the same operator settings loader as mecated/mecatequi. The intended
+OAuth posture is a read-only environment credential injected from a Kubernetes Secret;
+rotation requires an external provisioner and pod restart. `mecak8s` never launches a
+browser and cannot run `mecated mcp login`. A mutable local credential root is accepted
+only when explicitly mounted/configured, but contradicts the normal storage-free posture
+and is not recommended. It drops
 `mecated`'s `skills promote` / `config` / `perf-mcp` subcommands, ACP, and the
 Prometheus/OTel admin surface. It inverts `mecated`'s interactive defaults: `--headless`
 defaults **on** and `--posture` defaults to **`auto`** (an unattended daemon).

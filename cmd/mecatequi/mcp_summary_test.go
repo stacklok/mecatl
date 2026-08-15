@@ -2,10 +2,58 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+func TestMecatequiBuildDiscoversOperatorMCPSettings(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	conventional := filepath.Join(xdg, "mecatl", "settings.yaml")
+	if err := os.MkdirAll(filepath.Dir(conventional), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missingSecret := "mcp:\n  servers:\n    - name: conventional\n      url: https://mcp.example/mcp\n      auth:\n        mode: static_bearer\n        static_bearer: {token_env: MECATL_MISSING_TOKEN}\n"
+	if err := os.WriteFile(conventional, []byte(missingSecret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := parseFlags([]string{"--prompt", "x", "--mock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := appConfig(f, newDiagnostics(), observability{})
+	cfg.MockProvider = mockllm.New()
+	if _, err := app.Build(context.Background(), cfg); !errors.Is(err, cliconfig.ErrMCPProfileSecret) {
+		t.Fatalf("conventional operator profile Build error = %v, want missing-secret category", err)
+	}
+
+	explicit := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(explicit, []byte("mcp:\n  servers:\n    - name: explicit\n      url: https://mcp.example/mcp\n      auth: {mode: none}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err = parseFlags([]string{"--prompt", "x", "--mock", "--permission-config", explicit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = appConfig(f, newDiagnostics(), observability{})
+	cfg.MockProvider = mockllm.New()
+	built, err := app.Build(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("explicit operator profile did not override conventional source: %v", err)
+	}
+	built.Close()
+}
 
 // TestParseFlagsMCPServer covers the factory MCP wiring (issue #341): the shared
 // --mcp-server flag (cliconfig.MCPServerList) is registered on mecatequi, the
@@ -24,6 +72,20 @@ func TestParseFlagsMCPServer(t *testing.T) {
 			t.Fatalf("parseFlags: %v", err)
 		}
 		cfg := appConfig(f, newDiagnostics(), observability{})
+		if cfg.MCPProfileLoader == nil {
+			t.Fatal("app.Config.MCPProfileLoader is nil; operator profiles would be ignored")
+		}
+		resolved, lifecycle, err := cfg.MCPProfileLoader.Load(&permconfig.MCPSection{Servers: []permconfig.MCPServerProfile{
+			{Name: "tequitl", URL: "https://operator.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}},
+			{Name: "operator", URL: "https://operator-only.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = lifecycle.Close() })
+		if len(resolved) != 3 || resolved[0].URL != "https://tequitl.internal/mcp" || resolved[1].Name != "operator" || resolved[2].Name != "vmcp" {
+			t.Fatalf("resolved profiles = %#v; legacy replacement and operator profile were not both applied", resolved)
+		}
 		if len(cfg.MCPServers) != 2 {
 			t.Fatalf("app.Config.MCPServers len = %d, want 2", len(cfg.MCPServers))
 		}
