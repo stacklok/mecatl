@@ -94,6 +94,12 @@ or fallback:
   `--trust-project`, provider knobs, …) apply, and the remote-only flags
   (`--auth-token`, `--tls`, `--tls-ca`, `--insecure`) are **rejected** here.
 
+- **`mecatui sessions [flags]`** — use the same embedded transport and flags as
+  bare `mecatui`, but open the stored-session inventory before creating anything.
+  Press `enter` to Continue an eligible chat or Inspect a read-only run, `n` to
+  create a new chat with the launch workspace/mode/model defaults, or `esc` to
+  quit without a session. Inspection `esc` returns to the startup inventory.
+
 - **`mecatui connect ADDRESS [flags]`** — always dial a running `mecated` at
   `ADDRESS` (host:port); **never probe** loopback and **never embed** — the
   target must already be serving. Embedded-server flags (`--mock`,
@@ -103,6 +109,7 @@ or fallback:
   ```sh
   bin/mecated serve &                                 # listens on 127.0.0.1:8080
   bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
+  bin/mecatui connect 127.0.0.1:8080 sessions --workspace "$PWD"
   bin/mecatui connect mecated.internal:443 --tls --auth-token "$MECATL_AUTH_TOKEN"
   ```
 
@@ -127,8 +134,16 @@ agent pod, not your local checkout. See [Security & transport](usage/mecated.md#
 
 `ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
 a usage error, with one carve-out: `mecatui connect --help` renders the connect
-help instead of the missing-ADDRESS usage error. An unknown leading command fails
-closed.
+help instead of the missing-ADDRESS usage error. Put `sessions` after the address
+for the remote startup browser: `mecatui connect ADDRESS sessions [flags]`.
+An unknown leading command fails closed.
+
+The startup browser never creates a throwaway session. It completes the model-list
+reconcile before enabling `n`, so a removed saved provider cannot race a new-chat
+create. Empty inventories, list failures, and unavailable transcript loading still
+leave `n` and `esc` available. `-p`/`--prompt`, `--prompt-file`, `--resume`, and
+`--resume-latest` conflict with either `sessions` launch form and are rejected with
+a usage error; choose one startup intent explicitly.
 
 > **Removed flags:** the three `--subagent-ask-reviewer*` flags were inert under
 > `mecatui` (it runs interactive — a child ask surfaces to the approval modal, not
@@ -1143,7 +1158,12 @@ the compact digest. Press **`c`** to copy the exact full ID byte-for-byte; mecat
 clipboard failure or a session change instead of claiming a stale copy. `esc` closes it.
 
 **`/sessions` (session continuity).** The session inventory has four tabs:
-**Chats**, **Scheduled runs**, **Child runs**, and **Other**. The Other tab keeps
+**Chats**, **Scheduled runs**, **Child runs**, and **Other**. The same inventory is
+the initial view for `mecatui sessions` and `mecatui connect ADDRESS sessions`;
+those launch forms establish no session until the operator continues a chat or
+presses `n` for a new one. At startup, `esc` quits; after opening an inspection,
+`esc` returns to this inventory.
+The Other tab keeps
 unknown legacy/custom rows inspect-only without mislabeling them as delegation children.
 `tab` switches tabs; the
 search box filters the current tab. Search matches the title, full session ID,

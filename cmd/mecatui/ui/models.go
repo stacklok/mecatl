@@ -616,6 +616,9 @@ func (m Model) saveGlobalDefaultCmd(sel client.ModelSelection) tea.Cmd {
 func (m Model) updateModelsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case client.ModelsMsg:
+		if m.browsingStartupSessions {
+			m.modelsReconciled = true
+		}
 		m.models.loading = false
 		if msg.Err != nil {
 			m.models.err = msg.Err

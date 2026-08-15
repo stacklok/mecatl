@@ -108,6 +108,20 @@ If your current model doesn't support reasoning effort, the picker warns you tha
 
 Every session persists to disk as append-only JSONL — the conversation, the tool-call history, and the event timeline — under a per-workspace directory, mode `0700` (owner-only; it stores the raw conversation in plaintext). Quit mecatui and come back later and your work is still there.
 
+To browse before creating a chat, launch the existing session inventory directly:
+
+```sh
+mecatui sessions
+mecatui connect 127.0.0.1:8080 sessions
+```
+
+Neither form creates a throwaway session. Press `enter` to continue or inspect the
+selected row, `n` to create a new chat with your launch defaults, or `esc` to quit
+without a session. `esc` from an inspection goes Back to the startup inventory.
+New-chat creation waits for saved model defaults to be reconciled. Seed-prompt flags
+(`-p`/`--prompt`, `--prompt-file`) and resume flags cannot be combined with a
+`sessions` launch.
+
 `/sessions` opens a searchable inventory in four tabs: **Chats**, **Scheduled runs**, **Child runs**, and **Other**. Unknown legacy or custom rows appear under Other instead of being mislabeled as children. Rows show state, time, turns, title, model, and a short digest handle; the chat you are currently using is marked **`[current]`**. The search applies to the selected tab and matches the row's title, model, workspace, digest, and available relationship details.
 
 The main header uses that same compact digest instead of exposing the full opaque ID. Type `/session` to see the active chat's safely quoted full ID and metadata (title, state, workspace, known timestamps, provider, and model), then press `c` to copy the exact ID. Clipboard failure or a session switch is reported rather than shown as a successful stale copy.

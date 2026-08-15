@@ -51,6 +51,7 @@ type sessionIDCopyResultMsg struct {
 
 type sessionsState struct {
 	view     sessionsView
+	startup  bool // same /sessions renderer, with launch-only new/quit hints
 	tab      sessionsTab
 	loading  bool
 	err      error
@@ -186,23 +187,20 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 	return centerCard(th, b.String(), width, height)
 }
 
+func newSessionsPanelState() sessionsState {
+	ti := textinput.New()
+	ti.Placeholder = "search sessions…"
+	ti.SetWidth(40)
+	ti.Focus()
+	return sessionsState{view: sessionsPanel, tab: tabChats, loading: true, filter: ti}
+}
+
 func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Sessions == nil || m.deps.Transcript == nil {
 		return m, nil
 	}
 	m.ta.Blur()
-	m.sessions.view = sessionsPanel
-	m.sessions.tab = tabChats
-	m.sessions.loading = true
-	m.sessions.err = nil
-	m.sessions.loadErr = nil
-	m.sessions.cursor = 0
-	ti := textinput.New()
-	ti.Placeholder = "search sessions…"
-	ti.SetWidth(40)
-	ti.Focus()
-	m.sessions.filter = ti
-	m.sessions.filtered = nil
+	m.sessions = newSessionsPanelState()
 	return m, tea.Batch(client.ListSessionsCmd(m.deps.Ctx, m.deps.Sessions), textinput.Blink)
 }
 
@@ -218,6 +216,20 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if m.sessions.view == sessionsTranscript {
 		return m, nil, false
+	}
+	if m.browsingStartupSessions {
+		if key.Matches(msg, m.keys.Close) {
+			return m, tea.Quit, true
+		}
+		if msg.String() == "n" {
+			if !m.modelsReconciled {
+				m.statusMsg = m.deps.Theme.Style("muted").Render("loading model defaults…")
+				return m, nil, true
+			}
+			m.sessions = sessionsState{}
+			m.phase = phaseConnecting
+			return m, m.createSessionCmd(), true
+		}
 	}
 	if key.Matches(msg, m.keys.NextTab) {
 		m = m.switchSessionsTab()
@@ -486,6 +498,7 @@ func (m Model) adoptAuthoritativeTranscript() (tea.Model, tea.Cmd, bool) {
 	m.conv = loaded
 	m.restartedThisRun = true
 	m.sessions = sessionsState{}
+	m.browsingStartupSessions = false
 	m.phase = phaseIdle
 	m.stuck = true
 	m.statusMsg = "continuing chat " + sanitizeTerminal(row.Title) + " — type to add a turn"
@@ -585,7 +598,11 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	}
 	if st.err != nil {
 		b.WriteString(th.Style("errorText").Render("could not list sessions"))
-		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
+		if st.startup {
+			b.WriteString("\n" + th.Style("muted").Render(sessionsPanelHint(hk, true)))
+		} else {
+			b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
+		}
 		return b.String()
 	}
 	if len(st.filtered) == 0 {
@@ -595,7 +612,7 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 			labels := []string{"chats", "scheduled runs", "child runs", "other sessions"}
 			b.WriteString(th.Style("muted").Render("no " + labels[st.tab] + " found"))
 		}
-		b.WriteString("\n" + th.Style("muted").Render(sessionsEmptyHint(hk)))
+		b.WriteString("\n" + th.Style("muted").Render(sessionsPanelHint(hk, st.startup)))
 		return b.String()
 	}
 	for i, s := range st.filtered {
@@ -635,11 +652,14 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	} else if selected.Capabilities.Inspect {
 		action = "inspect"
 	}
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": "+action+"  "+sessionsEmptyHint(hk)))
+	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": "+action+"  "+sessionsPanelHint(hk, st.startup)))
 	return b.String()
 }
 
-func sessionsEmptyHint(hk helpKeys) string {
+func sessionsPanelHint(hk helpKeys, startup bool) string {
+	if startup {
+		return hk.nextTab + ": switch  n: new chat  " + hk.closeOnly + ": quit"
+	}
 	return hk.nextTab + ": switch  " + hk.closeOnly + ": close"
 }
 

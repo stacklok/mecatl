@@ -8,9 +8,11 @@ package ui
 
 import (
 	"context"
+	"errors"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
@@ -179,6 +181,10 @@ type Deps struct {
 	// starts. Its authoritative transcript is adopted without CreateSession; nil
 	// preserves the new-session default.
 	Resume *client.ResumeSelection
+	// BrowseSessions launches into the same inventory used by /sessions without
+	// creating a throwaway session. New-chat creation remains gated on the startup
+	// model-list reconcile.
+	BrowseSessions bool
 	// InitialPrompt is a CLI-supplied seed prompt auto-submitted once the first
 	// session is ready (the equivalent of typing the prompt and pressing enter).
 	// Empty = today's behavior (no seed). Cleared after the first use so a
@@ -319,6 +325,11 @@ type Model struct {
 
 	phase     phase
 	sessionID string
+	// browsingStartupSessions keeps the launch picker lifecycle distinct from the
+	// ordinary in-chat /sessions overlay. modelsReconciled gates n so a persisted
+	// selection cannot race the startup ListModels result.
+	browsingStartupSessions bool
+	modelsReconciled        bool
 	// sessionDetailsOpen is the read-only /session surface. The metadata fields
 	// below are refreshed from the current session snapshot; zero timestamps are
 	// rendered as unknown rather than guessed.
@@ -818,6 +829,18 @@ func New(deps Deps) Model {
 		// env-based) so the header hot path reads a bool, never os.Environ().
 		emojiOK: emojiCapable(),
 	}
+	if deps.BrowseSessions {
+		m.phase = phaseIdle
+		m.browsingStartupSessions = true
+		m.modelsReconciled = deps.Models == nil
+		m.sessions = newSessionsPanelState()
+		m.sessions.startup = true
+		m.ta.Blur()
+		if deps.Sessions == nil {
+			m.sessions.loading = false
+			m.sessions.err = errors.New("session inventory unavailable")
+		}
+	}
 	if resume := deps.Resume; resume != nil {
 		m.phase = phaseIdle
 		m.sessionID = resume.Row.ID
@@ -981,6 +1004,16 @@ type startupResumeReadyMsg struct{}
 // fallback leg. With no lister wired (old server / persistence off) it fires
 // CreateSession directly (the historical path, with an empty selection).
 func (m Model) Init() tea.Cmd {
+	if m.deps.BrowseSessions {
+		cmds := []tea.Cmd{m.sp.Tick}
+		if m.deps.Models != nil {
+			cmds = append(cmds, client.ListModelsCmd(m.deps.Ctx, m.deps.Models))
+		}
+		if m.deps.Sessions != nil {
+			cmds = append(cmds, client.ListSessionsCmd(m.deps.Ctx, m.deps.Sessions), textinput.Blink)
+		}
+		return tea.Batch(cmds...)
+	}
 	if m.deps.Resume != nil {
 		return tea.Batch(m.sp.Tick, func() tea.Msg { return startupResumeReadyMsg{} })
 	}

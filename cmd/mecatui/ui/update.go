@@ -365,6 +365,8 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 // warning on top.
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
 	m = m.bindSessionID(msg.SessionID)
+	m.browsingStartupSessions = false
+	m.sessions = sessionsState{}
 	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,

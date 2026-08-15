@@ -109,7 +109,7 @@ func run(argv []string) error {
 		return runLogin(res.remaining)
 	}
 
-	fs, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining)
+	fs, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining, res.browseSessions)
 	if err != nil {
 		return err
 	}
@@ -199,7 +199,7 @@ func run(argv []string) error {
 	wsDefault, wsDefaultSet := store.LoadWorkspace(uiWorkspace)
 	globalDefault := store.LoadGlobalDefault()
 
-	deps := ui.Deps{
+	deps := applyLaunchIntent(cfg, ui.Deps{
 		Session:             &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode},
 		Conv:                cl,
 		MCP:                 cl,
@@ -260,7 +260,7 @@ func run(argv []string) error {
 		// auto-submitted once the first session is ready (interactive-seed, NOT a
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: cliconfig.JoinPromptBody(cfg.prompt, cfg.promptFileBody),
-	}
+	})
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
@@ -279,6 +279,14 @@ func run(argv []string) error {
 	})
 	maybeWriteFinalSessionHandoff(os.Stderr, finalModel, runErr, interrupted)
 	return runErr
+}
+
+// applyLaunchIntent threads command-derived launch state into the ui at the
+// composition boundary. Keeping this projection separate makes the command path
+// testable without starting a transport or a Bubble Tea program.
+func applyLaunchIntent(cfg config, deps ui.Deps) ui.Deps {
+	deps.BrowseSessions = cfg.browseSessions
+	return deps
 }
 
 // emitAuthFileWarning is the command-root's single warning emission seam.

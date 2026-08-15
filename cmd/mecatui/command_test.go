@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"io"
@@ -10,7 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 )
 
 // resolveTransportMode is a PURE seam (no os.Args, no os.Exit, no I/O), so
@@ -46,6 +52,176 @@ func TestResolveConnectStripsCommandWordAndAddress(t *testing.T) {
 	}
 	if len(res.remaining) != 2 || res.remaining[0] != "--workspace" {
 		t.Errorf("remaining = %v, want [--workspace /tmp/w]", res.remaining)
+	}
+}
+
+func TestResolveSessionsLaunchForLocalAndConnect(t *testing.T) {
+	tests := []struct {
+		name    string
+		argv    []string
+		mode    transportMode
+		address string
+	}{
+		{name: "local", argv: []string{"mecatui", "sessions", "--workspace", "/tmp/w"}, mode: modeLocal},
+		{name: "connect", argv: []string{"mecatui", "connect", "10.0.0.5:8080", "sessions", "--workspace", "/tmp/w"}, mode: modeConnect, address: "10.0.0.5:8080"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveTransportMode(tt.argv)
+			if res.err != nil {
+				t.Fatalf("resolve: %v", res.err)
+			}
+			if res.mode != tt.mode || res.address != tt.address || !res.browseSessions {
+				t.Fatalf("resolution = %+v, want mode=%q address=%q browseSessions=true", res, tt.mode, tt.address)
+			}
+			if len(res.remaining) != 2 || res.remaining[0] != "--workspace" {
+				t.Fatalf("remaining = %v, want [--workspace /tmp/w]", res.remaining)
+			}
+		})
+	}
+}
+
+type sessionsLaunchCreator struct {
+	createCalls int
+	rows        []client.SessionListItem
+}
+
+func (f *sessionsLaunchCreator) CreateSession(context.Context, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error) {
+	f.createCalls++
+	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSession must not be called")
+}
+
+func (f *sessionsLaunchCreator) CreateSessionInWorkspace(context.Context, string, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error) {
+	f.createCalls++
+	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSessionInWorkspace must not be called")
+}
+
+func (f *sessionsLaunchCreator) CreateSessionWithCarryover(context.Context, string, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error) {
+	f.createCalls++
+	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSessionWithCarryover must not be called")
+}
+
+func (*sessionsLaunchCreator) CloseSession(context.Context, string) error { return nil }
+
+func (*sessionsLaunchCreator) GetSession(context.Context, string) (client.SessionSnapshot, error) {
+	return client.SessionSnapshot{}, nil
+}
+
+func (*sessionsLaunchCreator) SetMode(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (*sessionsLaunchCreator) ForkSession(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (f *sessionsLaunchCreator) ListSessions(context.Context) ([]client.SessionListItem, error) {
+	return f.rows, nil
+}
+
+func TestSessionsLaunchComposesIntoStartupPickerWithoutCreatingSession(t *testing.T) {
+	tests := []struct {
+		name string
+		argv []string
+	}{
+		{name: "local", argv: []string{"mecatui", "sessions"}},
+		{name: "connect", argv: []string{"mecatui", "connect", "127.0.0.1:9090", "sessions"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveTransportMode(tt.argv)
+			if res.err != nil {
+				t.Fatalf("resolve transport: %v", res.err)
+			}
+			_, cfg, err := parseTransportFlags(res.mode, io.Discard, res.remaining, res.browseSessions)
+			if err != nil {
+				t.Fatalf("parse flags: %v", err)
+			}
+
+			creator := &sessionsLaunchCreator{rows: []client.SessionListItem{{
+				ID: "stored-session", Title: "existing chat", Kind: client.SessionKindMain,
+				Capabilities: client.SessionInventoryCapabilities{PublicChat: true},
+			}}}
+			deps := applyLaunchIntent(cfg, ui.Deps{
+				Session: creator, Sessions: creator, Theme: theme.New("aztec", theme.AztecPalette()),
+				Ctx: context.Background(), NoAltScreen: true,
+			})
+			if !deps.BrowseSessions {
+				t.Fatal("launch intent did not reach ui dependencies")
+			}
+
+			m := ui.New(deps)
+			if cmd := m.Init(); cmd == nil {
+				t.Fatal("startup picker did not initialize")
+			}
+			mm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+			m = mm.(ui.Model)
+			rows, err := creator.ListSessions(context.Background())
+			if err != nil {
+				t.Fatalf("list sessions: %v", err)
+			}
+			mm, _ = m.Update(client.SessionsListedMsg{Sessions: rows})
+			m = mm.(ui.Model)
+
+			view := m.View().Content
+			if !strings.Contains(view, "existing chat") || !strings.Contains(view, "n: new chat") {
+				t.Fatalf("startup view did not reach the sessions picker:\n%s", view)
+			}
+			if got := creator.createCalls; got != 0 {
+				t.Fatalf("startup picker created %d sessions, want zero", got)
+			}
+		})
+	}
+}
+
+func TestSessionsLaunchRejectsSeedAndResumeFlags(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"--prompt-file", "task.md"}, want: "--prompt-file"},
+		{args: []string{"--resume", "session-id"}, want: "--resume"},
+		{args: []string{"--resume-latest"}, want: "--resume-latest"},
+		{args: []string{"-p", "hello"}, want: "-p/--prompt"},
+		{args: []string{"--prompt", "hello"}, want: "-p/--prompt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			cfg := config{browseSessions: true}
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.StringVar(&cfg.prompt, "prompt", "", "")
+			fs.StringVar(&cfg.prompt, "p", "", "")
+			fs.StringVar(&cfg.promptFile, "prompt-file", "", "")
+			fs.StringVar(&cfg.resumeID, "resume", "", "")
+			fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "")
+			if err := fs.Parse(tt.args); err != nil {
+				t.Fatal(err)
+			}
+			err := validateSessionsLaunch(cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "sessions") {
+				t.Fatalf("error = %v, want sessions conflict naming %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSessionsLaunchParserRejectsConflictsBeforePromptFileIO(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, mode := range []transportMode{modeLocal, modeConnect} {
+		for _, tc := range []struct {
+			args []string
+			want string
+		}{
+			{args: []string{"--prompt-file", filepath.Join(t.TempDir(), "missing")}, want: "--prompt-file"},
+			{args: []string{"--resume", "session-id"}, want: "--resume"},
+			{args: []string{"--resume-latest"}, want: "--resume-latest"},
+			{args: []string{"-p", "hello"}, want: "-p/--prompt"},
+		} {
+			_, _, err := parseTransportFlags(mode, io.Discard, tc.args, true)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "sessions") {
+				t.Errorf("mode=%s args=%v error=%v, want sessions conflict naming %q", mode, tc.args, err, tc.want)
+			}
+		}
 	}
 }
 
@@ -625,8 +801,13 @@ func TestLocalPostureCheckRuns(t *testing.T) {
 
 func helpRenderOut(t *testing.T, mode transportMode, argv []string) string {
 	t.Helper()
+	return helpRenderOutForLaunch(t, mode, false, argv)
+}
+
+func helpRenderOutForLaunch(t *testing.T, mode transportMode, browseSessions bool, argv []string) string {
+	t.Helper()
 	var buf strings.Builder
-	_, _, err := parseTransportFlags(mode, &buf, argv)
+	_, _, err := parseTransportFlags(mode, &buf, argv, browseSessions)
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseTransportFlags(%v, %v): %v", mode, argv, err)
 	}
@@ -686,6 +867,29 @@ func TestBareHelpRealRendererShowsCommonFlags(t *testing.T) {
 	// Remote-only flags do NOT appear in the bare common help.
 	if hasFlagHeader(out, "auth-token") {
 		t.Errorf("bare help leaked remote-only --auth-token as a flag header:\n%s", out)
+	}
+}
+
+func TestSessionsHelpUsesLaunchGrammarAndOmitsConflicts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode transportMode
+		want string
+	}{
+		{name: "local", mode: modeLocal, want: "Usage: mecatui sessions [flags]"},
+		{name: "connect", mode: modeConnect, want: "Usage: mecatui connect ADDRESS sessions [flags]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := helpRenderOutForLaunch(t, tc.mode, true, []string{"--help"})
+			if !strings.Contains(out, tc.want) || !strings.Contains(out, "without creating a session") {
+				t.Fatalf("sessions help missing launch contract:\n%s", out)
+			}
+			for _, conflict := range []string{"prompt", "p", "prompt-file", "resume", "resume-latest"} {
+				if hasFlagHeader(out, conflict) {
+					t.Errorf("sessions help includes conflicting --%s:\n%s", conflict, out)
+				}
+			}
+		})
 	}
 }
 

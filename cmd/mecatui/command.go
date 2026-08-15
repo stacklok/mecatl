@@ -45,10 +45,11 @@ const (
 // error (unknown command, connect missing/flag-first ADDRESS); main prints it
 // and exits non-zero WITHOUT resolving a transport.
 type transportResolution struct {
-	mode      transportMode
-	address   string // connect target; "" for the bare/local mode
-	remaining []string
-	err       error
+	mode           transportMode
+	address        string // connect target; "" for the bare/local mode
+	browseSessions bool   // launch directly into the shared stored-session inventory
+	remaining      []string
+	err            error
 }
 
 // resolveTransportMode classifies argv (the FULL arg vector, argv[0] included as
@@ -91,11 +92,21 @@ func resolveTransportMode(argv []string) transportResolution {
 			// Usage hook renders the connect help (no ADDRESS required for --help).
 			return transportResolution{mode: modeConnect, remaining: args[2:]}
 		}
-		return transportResolution{
-			mode:      modeConnect,
-			address:   args[2],
-			remaining: stripLeading(args, 3),
+		remaining := stripLeading(args, 3)
+		browseSessions := len(remaining) > 0 && remaining[0] == "sessions"
+		if browseSessions {
+			remaining = remaining[1:]
 		}
+		return transportResolution{
+			mode:           modeConnect,
+			address:        args[2],
+			browseSessions: browseSessions,
+			remaining:      remaining,
+		}
+	}
+
+	if first == "sessions" {
+		return transportResolution{mode: modeLocal, browseSessions: true, remaining: args[2:]}
 	}
 
 	// `mecatui login` (issue #265): CLI-only interactive ToolHive LLM OIDC login.
@@ -146,7 +157,8 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback\n")
 	_, _ = fmt.Fprintf(out, "probe) — the canonical default. The subcommands:\n\n")
 	_, _ = fmt.Fprintf(out, "Commands:\n")
-	_, _ = fmt.Fprintf(out, "  connect ADDRESS   dial a running mecated at ADDRESS (host:port); never probe/embed\n")
+	_, _ = fmt.Fprintf(out, "  sessions          browse stored sessions before creating or continuing a chat\n")
+	_, _ = fmt.Fprintf(out, "  connect ADDRESS   dial a running mecated at ADDRESS (host:port); append 'sessions' to browse first\n")
 	_, _ = fmt.Fprintf(out, "  login             run the interactive ToolHive LLM OIDC browser flow (in-process, no session)\n")
 	_, _ = fmt.Fprintf(out, "\nRun 'mecatui --help' for the bare-mode common flags, 'mecatui <command> --help'\n")
 	_, _ = fmt.Fprintf(out, "for command-specific flags, and '--help-all' on either for the exhaustive reference.\n")
@@ -154,7 +166,7 @@ func writeTopLevelHelp(out io.Writer) {
 
 // unknownCommandError builds the error message for an unknown leading bare word.
 func unknownCommandError(arg string) error {
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  connect ADDRESS   dial a running mecated at ADDRESS\n  login             run the interactive ToolHive LLM OIDC browser flow\n\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help' or 'mecatui connect --help'", arg)
+	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  sessions          browse stored sessions before creating or continuing a chat\n  connect ADDRESS   dial a running mecated at ADDRESS\n  login             run the interactive ToolHive LLM OIDC browser flow\n\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help' or 'mecatui connect --help'", arg)
 }
 
 // connectUsageError builds the error message for a bare/flag-first `connect`

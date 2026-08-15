@@ -286,6 +286,26 @@ func writeConnectCommonHelp(out io.Writer, fs *flag.FlagSet) {
 	renderGroupedCommon(out, fs, commonFlagNames(modeConnect))
 }
 
+func writeSessionsCommonHelp(out io.Writer, fs *flag.FlagSet, mode transportMode) {
+	usage := "mecatui sessions [flags]"
+	if mode == modeConnect {
+		usage = "mecatui connect ADDRESS sessions [flags]"
+	}
+	_, _ = fmt.Fprintf(out, "Usage: %s\n\n", usage)
+	_, _ = fmt.Fprintf(out, "Browse stored sessions without creating a session. Press enter to continue or\n")
+	_, _ = fmt.Fprintf(out, "inspect, n to create a new chat, or esc to quit. Prompt and resume flags conflict\n")
+	_, _ = fmt.Fprintf(out, "with this launch mode.\n\n")
+	common := commonFlagNames(mode)
+	for name := range sessionsLaunchConflictingFlags {
+		delete(common, name)
+	}
+	renderGroupedCommon(out, fs, common)
+}
+
+var sessionsLaunchConflictingFlags = map[string]bool{
+	"p": true, "prompt": true, "prompt-file": true, "resume": true, "resume-latest": true,
+}
+
 // renderGroupedCommon writes flags grouped by their assigned group heading,
 // preserving groupOrder and skipping empty groups. Flags WITHIN each group are
 // sorted by name for deterministic ordering.
@@ -333,6 +353,26 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 		}
 		_, _ = fmt.Fprintf(out, "\n")
 	}
+}
+
+func writeSessionsHelpAll(out io.Writer, fs *flag.FlagSet, mode transportMode) {
+	usage := "mecatui sessions [flags]"
+	if mode == modeConnect {
+		usage = "mecatui connect ADDRESS sessions [flags]"
+	}
+	_, _ = fmt.Fprintf(out, "Usage: %s\n\nFlags:\n", usage)
+	exclude := make(map[string]bool, len(sessionsLaunchConflictingFlags))
+	for name := range sessionsLaunchConflictingFlags {
+		exclude[name] = true
+	}
+	if mode == modeConnect {
+		for name, m := range flagApplicabilityByFlag {
+			if !m.connect {
+				exclude[name] = true
+			}
+		}
+	}
+	cliconfig.PrintDefaultsExcluding(out, fs, exclude)
 }
 
 // writeBareHelpAll renders the exhaustive flag list for the bare `mecatui

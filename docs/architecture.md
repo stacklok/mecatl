@@ -289,7 +289,11 @@ inline by sending `ResumeApproval` on the same stream. The server it talks to is
 either one it **hosts in-process** over a UNIX socket (`cmd/mecatui/embed` →
 `app.Build`, the default — bare `mecatui` always embeds, never probes) or an
 external `mecated` it dials via `mecatui connect ADDRESS` — so a single binary
-works with no daemon. The render packages stay pure: they render **purely
+works with no daemon. The `sessions` launch intent is orthogonal to that transport:
+`mecatui sessions` and `mecatui connect ADDRESS sessions` enter the same stored-session
+inventory without first creating a session, then continue/inspect through the existing
+authoritative transcript path or create only when the operator requests a new chat. The
+render packages stay pure: they render **purely
 from proto `Event`s** and are bound by the inward-only layering rule. The
 `contracts/gen` + grpc + `internal/app` surface lives only in `cmd/mecatui/client`,
 `cmd/mecatui/embed`, and the `cmd/mecatui` main; the `ui` (Bubble Tea
