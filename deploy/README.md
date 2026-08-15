@@ -132,7 +132,7 @@ not assign historical records to a caller.
 `raw-driver-networkpolicy.yaml`, which permits ingress to pods labelled
 `app.kubernetes.io/component: raw-driver` only from the mecak8s agent pod.
 Tenant workloads must not use that label and must reach the authenticated public
-service instead. Until remote drivers receive caller claims (ADR 0103), deploy a
+service instead. Until remote drivers receive caller claims (ADR 0213), deploy a
 raw driver with that label and its listener on TCP 9090 in the same namespace;
 do not expose it through a Service, Ingress, or tenant NetworkPolicy.
 

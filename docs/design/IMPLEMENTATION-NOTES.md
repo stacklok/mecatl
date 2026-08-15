@@ -80,8 +80,8 @@ OAuth integration remains explicit, and OS-keyring/HSM acquisition, remote/Kuber
 mutation, and per-client routing remain separate work. A Secret-backed environment is a
 read-only process snapshot: durable rotation needs an external controller and restart or
 a future Kubernetes Secret `resourceVersion` CAS backend. See
-[ADR 0108](../adr/0108-credential-store.md) and
-[ADR 0111](../adr/0111-read-only-credential-source.md).
+[ADR 0218](../adr/0218-credential-store.md) and
+[ADR 0221](../adr/0221-read-only-credential-source.md).
 
 ---
 
@@ -96,7 +96,7 @@ session aggregate itself, it also seeds durable ownership through
 `Session.RestoreLabels(principal, "")`; children, forks, and resumed sessions inherit
 that owner.
 
-OIDC/JWKS mechanics live in the opt-in `authn/oidc` module (ADR 0103), not engine and
+OIDC/JWKS mechanics live in the opt-in `authn/oidc` module (ADR 0206), not engine and
 not a provider module. Its `Validator` wraps `toolhive-core/authn`, maps validation and
 IdP-availability failures onto module-owned sentinels, fails closed if verified claims
 do not project to a principal, and owns an explicit `Close` for the background refresh.
@@ -109,7 +109,7 @@ the server-root system context and all existing flag behavior.
 
 `engine/session/session.go` (`Session.Kind` / `Session.Relationship`) carries inert,
 durable creation metadata with a closed validated schema in `engine/session/kind.go`
-(ADR 0108): public creates and ADR-0065 peer/carryover forks remain `main` without
+(ADR 0217): public creates and ADR-0065 peer/carryover forks remain `main` without
 lineage; scheduler fires, Subagent children, Parallel branches, and team members are
 stamped by their trusted producer paths. `engine/session/session.go` (`New`) keeps its
 existing signature and creates `main`; intention-revealing constructors create the
@@ -162,7 +162,7 @@ on a reused session at the run-entry funnel (`loadAndReopen`):
   "retryable" instead of permanently bricking the session. Recovery makes retry
   POSSIBLE, not guaranteed — a permanent-cause failure (auth/config) simply
   fails again with the conversation context intact, and the user can clear. Since
-  ADR 0077 (issue #318) the subagent `resume:` path uses this seam too: a failed
+  ADR 0200 (issue #318) the subagent `resume:` path uses this seam too: a failed
   CHILD recovers exactly like a main session (see the Subagent resume note
   below), because a long-running direct-write child's accumulated cost includes
   mutations already applied to the real tree.
@@ -434,7 +434,7 @@ it at request time and add `X-Mecatl-Session-ID` through SDK per-request options
 session identity. Absent or Go-illegal header values are omitted without changing
 the inference request; legal values remain exact. The proprietary field is
 correlation-only, never auth, tracing, idempotency, provider state, user/safety
-identity, or cache identity ([ADR 0110](../adr/0110-provider-session-correlation-header.md)).
+identity, or cache identity ([ADR 0216](../adr/0216-provider-session-correlation-header.md)).
 
 ## Application — `engine/agent/` (subagent workspace policy)
 
@@ -1409,7 +1409,7 @@ team-member transcript (`team-<teamID>-<member>`) cannot be resumed through Suba
 via `InspectMember`) — the same gate `InspectSubagent` uses. The child is reloaded and its terminal
 state recovered at the AGENT layer (the `loadAndReopen` discipline): `StateCompleted` → `Reopen()`,
 `StateCancelled` → `Interrupt()` (history-repair, no dangling tool_use), `StateIdle` → run as-is,
-`StateFailed` → `Recover()` (history-repair with the FAILURE-accurate close-out wording — ADR 0077,
+`StateFailed` → `Recover()` (history-repair with the FAILURE-accurate close-out wording — ADR 0200,
 issue #318; it used to be refused on the premise that "a failed child carries no accumulated-user-context
 cost", which a 50+-turn direct-write child with mutations already applied to the real tree falsifies),
 any other state (e.g. a snapshot still recorded `running` — a process that died mid-turn) →
@@ -1872,7 +1872,7 @@ now script a second clean end (their first one legitimately draws the nudge). No
 change: the loop still emits exactly THREE operator lines.
 
 **Background Bash commands (issue #23 commands half — `background: true` on Bash +
-BashStatus; ADR 0090).** The open half of #23 after ADR 0015's background subagents:
+BashStatus; ADR 0201).** The open half of #23 after ADR 0015's background subagents:
 a long-running shell command (a dev server, a watch loop, a slow build) detaches
 instead of blocking the turn. **The tool is the AGENT loop's own Bash**
 (`engine/agent/bashtool.go`, `BashTool` / `NewBashTool`), NOT the fstools adapter's —
@@ -2374,7 +2374,7 @@ mutating-tool backstop because `MemberToolNames()` derives from `MemberTools`); 
 **LastText/completed-task digest** for members that recorded NO finding (rescues a limit-cut-off
 member whose `LastText` is otherwise the only trace); (3) the **lead's drained inbox**.
 `neutraliseFraming`'s header list is extended for every new synthesis/round-0 section header so
-an injected body cannot forge one. A lead stopped by its lifetime turn budget — or, since ADR 0077,
+an injected body cannot forge one. A lead stopped by its lifetime turn budget — or, since ADR 0200,
 by one round that ended in `StopError` — is still *resumable*, so the ONE synthesis turn runs even
 then (§5 special-case). `runTurn` picks the recovery seam from the session's STATE
 (`StateFailed → Recover`, else `Reopen`) rather than from `stop`, because `terminateComplete` lands a
@@ -2382,7 +2382,7 @@ text-bearing `StopError` turn in `StateCompleted`; `memberRT.nonResumable` is no
 transition itself fails (in practice: a CANCELLED member, whose `Reopen` is illegal by design), and
 that is the one case that still yields an empty `Report` → the structured fallback.
 
-**Bounded member retry (ADR 0077, the last #318 acceptance bullet).** Recovering the
+**Bounded member retry (ADR 0200, the last #318 acceptance bullet).** Recovering the
 session made the member drivable, but `stopped` still descheduled it, so a member that hit ONE
 transient stall was benched for the rest of the run. `runTurn` now leaves an errored member
 SCHEDULABLE while it is under `Supervisor.memberErrorRetries` (`agent.WithMemberErrorRetries`, default
@@ -2916,7 +2916,7 @@ a `settings.yaml` TTL key, and Anthropic's 1h TTL via OpenRouter (no TTL
 concept on that path). See [ADR 0100](../adr/0100-provider-prompt-caching.md)
 for the full rationale and the rejected mixed-TTL alternative.
 
-### OpenRouter downstream-provider steering + echo (issue #480, ADR 0104)
+### OpenRouter downstream-provider steering + echo (issue #480, ADR 0210)
 
 OpenRouter is a meta-provider: one model id fans out to several **downstream**
 inference providers (Anthropic, Bedrock, Vertex, DeepInfra, …). Two halves, both
@@ -3800,7 +3800,7 @@ its OWN `openrouter.Model` (composition maps it to `modelEntry` — no import cy
 `id`/`name`/`context_length`/`top_provider.max_completion_tokens`→OutputLimit (the output
 ceiling, captured for the resolvers)/`architecture.input_modalities`/`supported_parameters∋{reasoning,tools}`.
 
-### `authfile` + `openaicodex` — manual ChatGPT subscription adjunct (ADR 0104)
+### `authfile` + `openaicodex` — manual ChatGPT subscription adjunct (ADR 0215)
 
 `internal/adapter/authfile` accepts one additional strict leaf only at
 `providers.openai-codex.oauth`: required non-empty string `access_token`, optional
@@ -4776,7 +4776,7 @@ the remote tool offers none (it saves the context budget, not the remote-hop
 bandwidth). See ADR 0063 for the rejected alternatives (persist-to-scratch + `jq(1)`,
 hand-rolled JSON-path, shell-out to `jq(1)`, a general `QueryJson` tool).
 
-## Caller ownership classification guard (`internal/adapter/server/classification.go`, issue #368, ADR 0102 decision 2)
+## Caller ownership classification guard (`internal/adapter/server/classification.go`, issue #368, ADR 0212 decision 2)
 
 The per-kind ownership table `internal/adapter/server/ownership.go` decides is
 mechanically inventoried, not left to a future implementer's memory. Four
@@ -4851,7 +4851,7 @@ name in `boundaries` must resolve to a valid table entry (else
 "stale table entry" half) — a renamed/removed method leaves a dangling row
 the guard also catches, not just a new unclassified one.
 
-See [ADR 0102](../adr/0102-caller-ownership-enforcement.md) and
+See [ADR 0212](../adr/0212-caller-ownership-enforcement.md) and
 [`docs/architecture.md`](../architecture.md)'s "Caller ownership enforcement"
 section for the narrative and the per-kind decision the table classifies.
 
@@ -5362,11 +5362,11 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
   files are body-only in a no-fs session: the body injects fine, asset reads fail honestly
   with not-exist through the nofs workspace (and the posture note tells the model so).
 
-### Version-aware Workspace mutation and the execution-environment seam (ADR 0104 + ADR 0105 + ADR 0106)
+### Version-aware Workspace mutation and the execution-environment seam (ADR 0208 + ADR 0211 + ADR 0214)
 
 A coding agent ultimately needs one execution environment whose filesystem and command namespace are
-affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0104 fixes the
-layering and the version protocol; ADR 0105 IMPLEMENTS the runtime seam (issue #462). Durable identity
+affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0208 fixes the
+layering and the version protocol; ADR 0211 IMPLEMENTS the runtime seam (issue #462). Durable identity
 lives cycle-safely in `session.EnvironmentRef{Kind, ID}` (stdlib-only, so it CAN ride the
 snapshot/event log without pulling tool types in — but in phase 2 it is an IN-PROCESS identity only,
 NOT yet a snapshot field; persistence/remote transport are deferred to phase 3); the minimal immutable
@@ -5384,7 +5384,7 @@ and Team use the CHILD Environment. Composition wires the forker's bound-runner 
 (`forker.WithRunner`, the same envscrub/gitenv hardening as the parent runner); the Service binds the
 main `CommandRunner` + a `CommandRunnerFactory` for worktree-bound sessions.
 
-**Persistence/reattachment (ADR 0106, issue #462 phase 3).** `EnvironmentRef` is now a DURABLE
+**Persistence/reattachment (ADR 0214, issue #462 phase 3).** `EnvironmentRef` is now a DURABLE
 snapshot field: `session.Session.EnvironmentRef` is an inert exported label (the same posture as
 `Profile`/`ProviderID`), persisted via `sessnap.Snapshot.EnvironmentRef` (Go 1.26 `omitzero`, so a
 default/local session stays byte-identical to a pre-phase-3 snapshot; a legacy snapshot restores the
@@ -5455,7 +5455,7 @@ evicted on `CloseSession` / editor disconnect. Rebuilding a default Environment 
 including the next user run — resets its ledger, so Edit/overwrite is refused until Read
 records a version through that instance. The overrides are in-memory (restart loses them);
 a restarted session re-derives its Environment through the same rehydration path (no-fs
-profile, ACP adapter reconnect). **EnvironmentRef is now a DURABLE snapshot field (ADR 0106, issue #462 phase 3):** `EnvironmentRef` persists via `sessnap.Snapshot.EnvironmentRef` (Go 1.26 `omitzero` — a default/local session stays byte-identical to a pre-phase-3 snapshot); a non-in-tree Kind reattaches a live `Environment` at run entry through `server.Config.EnvironmentResolver` (nil/mismatch/nil-Workspace fails loudly with `ErrFailedPrecondition`, never a silent local fallback; the in-tree Kinds never reach the resolver — they re-derive through the factories; the resolver does NOT trigger per-session engine rehydration — environment reattachment and engine rehydration are INDEPENDENT). A default `local`/`nofs` ref is stamped at `createSession`; a legacy zero ref is stamped from the first resolved live Environment on the next save (no migration sweep). See the Persistence/reattachment subsection above for the full detail.
+profile, ACP adapter reconnect). **EnvironmentRef is now a DURABLE snapshot field (ADR 0214, issue #462 phase 3):** `EnvironmentRef` persists via `sessnap.Snapshot.EnvironmentRef` (Go 1.26 `omitzero` — a default/local session stays byte-identical to a pre-phase-3 snapshot); a non-in-tree Kind reattaches a live `Environment` at run entry through `server.Config.EnvironmentResolver` (nil/mismatch/nil-Workspace fails loudly with `ErrFailedPrecondition`, never a silent local fallback; the in-tree Kinds never reach the resolver — they re-derive through the factories; the resolver does NOT trigger per-session engine rehydration — environment reattachment and engine rehydration are INDEPENDENT). A default `local`/`nofs` ref is stamped at `createSession`; a legacy zero ref is stamped from the first resolved live Environment on the next save (no migration sweep). See the Persistence/reattachment subsection above for the full detail.
 
 ### Path-escape posture (`docs/acceptance/path-escape-posture.md` + ADR 0080)
 
@@ -6209,7 +6209,7 @@ FIELDS on the manager (`SetScheduler` / `setModelsPointer`), never a reach back
 into the Service. `*server.Service` DELEGATES its nine `port.ScheduleManager`
 verbs + `GetFire` to the embedded manager, so the RPC surface is byte-identical.
 `EmitScheduleEvent` is the ONE exception and lives on the **Service**, not the
-manager (ADR 0100 decision 5): a schedule lifecycle event has to be stamped with
+manager (ADR 0204 decision 5): a schedule lifecycle event has to be stamped with
 `Event.Actor` by the same single `appendEvent` chokepoint as every other durable
 append, and that chokepoint is the Service's. It takes a `ctx` for exactly that
 reason — the old manager-side body built a fresh `context.Background()`, which
@@ -6226,7 +6226,7 @@ catalog gains `Schedule` (mutating) + `ScheduleQuery` (read-only), exactly like
 the six memory tools (ADR 0073 decision 1: "registered in the catalog for every
 session that has a backing `ScheduleStore`").
 
-**Run-context origin attribution (ADR 0104).** There is no schedule-manager wrapper.
+**Run-context origin attribution (ADR 0209).** There is no schedule-manager wrapper.
 The shared run constructor in `engine/agent/loop.go` (`startRun`) applies
 `withSessionOrigin` immediately after deriving the cancellation context; both the
 normal `Run` path and `ResumeApproval` therefore carry the executing session id.
@@ -6994,7 +6994,7 @@ to extract a shared `ChildActivity` value object — not before** (recorded in t
   footer (a `⑂` segment). Default-tab precedence (plan Q5): `teamLive > parallelLive > haveSubagents >
   haveParallel > haveTeam > Subagents`. Rendered from relayed Events ONLY (no internal/proto import).
 
-## MCP OAuth controller (ADR 0110)
+## MCP OAuth controller (ADR 0220)
 
 `internal/adapter/mcp/oauth.go` (`OAuthController`) is an optional adapter-local
 `auth.OAuthHandler`. `ServerConfig.OAuth` constructs one controller before the first dial;
@@ -7035,7 +7035,7 @@ separate exact-resource marker for its audience-bound bearer, remains no-proxy/D
 and rejects cleartext except for an exact private-origin opt-in; an allowlist entry alone
 never grants credential egress. Static `Authorization` and OAuth are mutually exclusive.
 Preregistered confidential and CIMD clients are the only supported registrations; DCR and a
-broad production claim remain blocked on ADR 0109's official-SDK hooks. Construction and
+broad production claim remain blocked on ADR 0219's official-SDK hooks. Construction and
 credential restore inherit the caller's `Connect` cancellation; `Close` cancels and joins
 all controller operations before releasing owned transport state.
 
@@ -7073,7 +7073,7 @@ The shipped `mecated mcp login SERVER [--no-browser] [--permission-config PATH .
 command is the sole runtime constructor. The repeatable permission-config option selects trusted
 operator settings only, never OAuth values. It uses the canonical operator profile loader, requires a mutable local Store,
 and emits an authorization URL to stdout only in explicit no-browser mode. Normal serving,
-ACP, mecatequi, and mecak8s keep the presenter nil. ADR 0109's metadata-profile blockers
+ACP, mecatequi, and mecak8s keep the presenter nil. ADR 0219's metadata-profile blockers
 remain open.
 
 ## Operator MCP profiles (ADR 0113)

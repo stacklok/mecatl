@@ -1183,7 +1183,7 @@ type Event struct {
 	// join/winner facts + per-branch metadata + fork paths, never branch content).
 	Parallel *ParallelPayload
 	// Actor is the verified caller who ACTED — who drove the request this event
-	// belongs to (ADR 0100 decision 5). It is LOG-ONLY and DERIVE-AT-APPEND: every
+	// belongs to (ADR 0204 decision 5). It is LOG-ONLY and DERIVE-AT-APPEND: every
 	// emit site — the loop included — leaves it nil (the loop is storage-agnostic
 	// and knows nothing about principals), and the server relay's single appendEvent
 	// chokepoint stamps it from the CONTEXT PRINCIPAL just before the durable

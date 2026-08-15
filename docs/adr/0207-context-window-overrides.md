@@ -1,4 +1,4 @@
-# ADR 0103 — Operator-owned exact context-window overrides
+# ADR 0207 — Operator-owned exact context-window overrides
 
 - Status: Accepted
 - Date: 2026-08-12

@@ -355,7 +355,7 @@ type Session struct {
 	// Workspace is the root directory tools operate against (the session cwd).
 	Workspace string
 	// EnvironmentRef is the resolved execution-environment identity this session
-	// runs against (ADR 0105 phase 3, issue #462). The aggregate STORES it but never
+	// runs against (ADR 0211 phase 3, issue #462). The aggregate STORES it but never
 	// interprets it — the EnvironmentKind/ID pair is opaque here, and resolution to a
 	// live tool.Environment lives entirely in composition (server.Config.
 	// EnvironmentResolver for a non-in-tree Kind). It is the durable identity half of
@@ -410,11 +410,11 @@ type Session struct {
 	// session is ownerless (a pre-ship snapshot, or a deployment with no identity
 	// verifier wired). It is a WRITE-ONCE label stamped through RestoreLabels —
 	// never a public setter, and never fabricated when identity is absent
-	// (ADR 0100 decision 4). The aggregate STORES it and never interprets it: no
+	// (ADR 0204 decision 4). The aggregate STORES it and never interprets it: no
 	// enforcement, no filtering, display + audit only.
 	Owner *Principal
 	// Authority is Track C's label, shipped INERT here so the contended
-	// engine/api/*.txt + CHANGELOG regeneration is paid once (ADR 0100
+	// engine/api/*.txt + CHANGELOG regeneration is paid once (ADR 0204
 	// consequences). Nothing in this plan reads or writes it beyond the snapshot
 	// round-trip; the zero value means "unset". Stamped through RestoreLabels.
 	Authority Authority

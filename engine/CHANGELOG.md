@@ -22,7 +22,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Changed below.
 
 - **Session discovery taxonomy and bounded metadata paging** (issue #471,
-  [ADR 0108](../docs/adr/0108-session-discovery-continuation.md)) —
+  [ADR 0217](../docs/adr/0217-session-discovery-continuation.md)) —
   `session.SessionKind` / `session.SessionRelationship` define the validated
   main, scheduled, Subagent, Parallel-branch, team-member, and legacy-unknown
   vocabulary. `port.SessionDiscoveryMeta`, `SessionMetadataPager`, cursor/page
@@ -124,21 +124,21 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   bump).
 
 - **`session.PrincipalFromClaims` and `session.GrantTypeFromClaims`**
-  ([ADR 0103](../docs/adr/0103-oidc-authn-module.md)) — stdlib-only projection
+  ([ADR 0206](../docs/adr/0206-oidc-authn-module.md)) — stdlib-only projection
   helpers for embedders that verify credentials outside the engine. Projection
   requires non-empty string `iss` and `sub`, preserves strings byte-exactly,
   never fabricates anonymous identity or derives the `system` grant, and keeps
   JWT/OIDC dependencies out of the engine. New exported functions: Added (a
   minor bump).
 - **`session.(*Principal).SameIdentity`** (issue #368,
-  [ADR 0102](../docs/adr/0102-caller-ownership-enforcement.md)) — compares the
+  [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) — compares the
   immutable `(Issuer, Subject)` owner identity without treating presentation or
   grant metadata as authority. Ownership enforcement uses this single
   projection for callers, resource owners, and explicitly classified system
   actors. A new exported method: Added (a minor bump).
 
 - **Caller-identity labels on the session aggregate** (issue #367,
-  [ADR 0100](../docs/adr/0100-caller-identity-threading.md)) — the joint
+  [ADR 0204](../docs/adr/0204-caller-identity-threading.md)) — the joint
   field-prep addition for the caller-identity track (`Owner`) and Track C
   (`Authority`), landed together so the generated-surface regeneration is paid
   once:
@@ -176,7 +176,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   silently becoming an aliasing bug. A new exported method: Added (a minor bump).
 
 - **`port.SessionMeta.Owner`** (issue #367,
-  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 4) — the
+  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 4) — the
   session owner on the cheap picker projection, so a `MetaLister` listing (which
   skips `Load` entirely) renders the owner column IDENTICALLY to the
   `Load`-per-row fallback instead of leaving it empty on the fast path. Nil for
@@ -184,7 +184,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   unowned, never as somebody else. A new struct field: Added (a minor bump).
 
 - **`session.Event.Actor`** (issue #367,
-  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 5) — the
+  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 5) — the
   verified caller a durable-log event is attributed to, so an event read in
   isolation names its actor. It is LOG-ONLY and DERIVE-AT-APPEND: every emit
   site — the agent loop included — leaves it nil (the loop is storage- and
@@ -198,7 +198,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   minor bump).
 
 - **`port.ScheduleSpec.Owner`** (issue #367,
-  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 6) — the
+  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 6) — the
   verified caller a schedule is attributed to, captured ONCE at create time and
   never derived at fire time (retention sweeps the origin session while the
   schedule lives on, so a fire-time lookup would read a session that no longer
@@ -209,7 +209,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Added (a minor bump).
 
 - **`session.WithPrincipal` / `session.PrincipalFromContext`** (issue #367,
-  [ADR 0100](../docs/adr/0100-caller-identity-threading.md) decision 2) — the
+  [ADR 0204](../docs/adr/0204-caller-identity-threading.md) decision 2) — the
   context seam the verified caller rides on. No port interface gains a principal
   parameter; the principal travels in the `context.Context` under an unexported
   empty-struct key. Absent identity reads back as a nil `*Principal`, never a
@@ -227,7 +227,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   of which was observed), then `resetToIdle()`s exactly like the other three
   seams (`Counters` reset, `Usage` preserved). Classified Added (minor).
 
-- **Version-aware file/Edit foundation (ADR 0104, issue #462)** — the
+- **Version-aware file/Edit foundation (ADR 0208, issue #462)** — the
   `tool.Workspace` surface gains explicit, unambiguous mutation operations and
   a version-bearing read, so the agent-facing Read/Edit/Write tools never
   silently clobber a concurrent change:
@@ -248,7 +248,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   New exported identifiers are Added per COMPATIBILITY.md; the interface method
   changes and `FileSystem.Write` removal are the breaking half recorded below.
 
-- **In-process `tool.Environment` seam** (ADR 0105, issue #462 phase 2) — the
+- **In-process `tool.Environment` seam** (ADR 0211, issue #462 phase 2) — the
   concrete, immutable execution environment a `Tool.Execute` runs against,
   replacing the per-call `tool.Workspace` + (for Bash) the construction-time
   `CommandRunner` with a single bound seam:
@@ -274,7 +274,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   merger signature changes are the breaking half recorded below. The removed
   `WorkspaceForker`/`ForkMerger` interfaces are recorded under Removed.
 
-- **`session.Session.EnvironmentRef` persisted** (ADR 0106, issue #462 phase 3)
+- **`session.Session.EnvironmentRef` persisted** (ADR 0214, issue #462 phase 3)
   — the resolved execution-environment identity is now a durable, inert exported
   field on `session.Session` (the same write-once-label posture as
   `Profile`/`ProviderID`/`ModelID`):
@@ -293,7 +293,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   (a minor bump). The COMPATIBILITY.md "Session reconstruction contract" classifies
   `EnvironmentRef` as a not-event-carried identity label (like `Owner`/`Authority`).
   A remote transport itself remains deferred — the ref is durable identity, not a
-  transport contract. See ADR 0106.
+  transport contract. See ADR 0214.
 
 - **`session.ToValidUTF8` and `session.RepairToolResult`** (issue #402) — the
   UTF-8 repair primitives that close the Converse-stream kill. A tool can hand
@@ -545,17 +545,17 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
  (chore(engine): api snapshot + CHANGELOG for the ADR-0079 payload widening)
 
 - **`agent.WithMemberErrorRetries` + `agent.MemberOutcome.ErrorRounds` +
-  `session.TeamMemberDisposition.ErrorRounds`** (issue #318, ADR 0077) —
+  `session.TeamMemberDisposition.ErrorRounds`** (issue #318, ADR 0200) —
   the bounded MEMBER RETRY that closes #318's last acceptance bullet ("a team
   member that hits one transient stall still participates in later rounds").
-  ADR 0077 made a failed member's session RECOVERABLE, which rescued the lead's
+  ADR 0200 made a failed member's session RECOVERABLE, which rescued the lead's
   synthesis turn but still descheduled the member for the rest of the run.
   `WithMemberErrorRetries(n)` is a new `SupervisorOption` (default **1**) capping
   how many `StopError` rounds a member is retried through before it is benched with
   the same disposition it received before this release (`stopped` +
   `StopReasonError`, tasks released). `WithMemberErrorRetries(0)` restores
   bench-on-the-first-errored-round — the SCHEDULING half only. It does NOT restore
-  the pre-ADR-0077 behaviour of the same round: a member whose round ends in
+  the pre-ADR-0200 behaviour of the same round: a member whose round ends in
   `StopError` still has its session RECOVERED (`session.Session.Recover`) rather than
   latched `nonResumable`, so a failed LEAD still runs its synthesis turn either way.
   That half has no knob — see the "A FAILED delegated child is now resumable" entry
@@ -735,7 +735,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Changed for a pre-v1 minor bump.
 
 - **Session taxonomy fields on the existing aggregate** (issue #471,
-  [ADR 0108](../docs/adr/0108-session-discovery-continuation.md)) —
+  [ADR 0217](../docs/adr/0217-session-discovery-continuation.md)) —
   `session.Session.Kind` and `session.Session.Relationship` are additive for keyed
   literals but breaking for external unkeyed literals. The required
   `port.SessionStore` and existing `port.SessionMeta` shapes remain unchanged.
@@ -743,7 +743,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Learned-skill linkage and durable admission on existing learning structs (issue #510)** — `learning.Candidate.Name` preserves historical title/body procedure decoding while naming new materializable skills; `learning.ProposalRecord.SkillID` links an explicitly materialized draft; `learning.SkillProvenance.Origin` represents the explicit unevidenced legacy-model import case; `SkillProvenance.ValidationDisposition` and `SkillVersion.Disposition` preserve similarity admission across exact retries/restarts; and `ProposalRepository.LinkSkillDraft` extends the existing repository interface. Struct additions are breaking for unkeyed literals and the interface method addition is breaking for external implementations, so these changes are classified Changed under the compatibility contract.
 
-- **Completed trajectory owner attribution** (issue #509, ADR 0108) —
+- **Completed trajectory owner attribution** (issue #509, ADR 0204) —
   `learning.Trajectory.Principal` adds the copied verified session owner used by
   host coordinators for principal-partitioned durable proposals. The field is
   additive for keyed literals but breaking for external unkeyed literals under
@@ -764,7 +764,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   not merely Added. `prompt.OperatorProfileConfig` itself is a new type.
 
 - **`Tool.Execute`, the observed/parent seams, `Engine.Run`/`ResumeApproval`,
-  and `CommandRunner`/`CommandStreamer` now take `tool.Environment`** (ADR 0105,
+  and `CommandRunner`/`CommandStreamer` now take `tool.Environment`** (ADR 0211,
   issue #462 phase 2) — the per-call `tool.Workspace` parameter is replaced by
   the bound `tool.Environment` on:
   - `tool.Tool.Execute(ctx, in, env tool.Environment)` (was `ws tool.Workspace`);
@@ -788,7 +788,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   skill read roots) is preserved. The in-repo callers and tests are updated.
 
 - **`tool.EnvironmentForker` and `tool.EnvironmentMerger` replace the removed
-  `tool.WorkspaceForker`/`tool.ForkMerger`** (ADR 0105, issue #462 phase 2) —
+  `tool.WorkspaceForker`/`tool.ForkMerger`** (ADR 0211, issue #462 phase 2) —
   the two isolation seams are REPLACED (not maintained in parallel):
   `WorkspaceForker.Fork(ctx, base Workspace, ...) (child Workspace, ...)` becomes
   `EnvironmentForker.Fork(ctx, base Environment, ...) (child Environment, ...)`;
@@ -798,7 +798,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   child namespace. The OLD interfaces are removed (see Removed); the new
   interfaces are Added above.
 
-- **`tool.FileSystem.Write` removed** (ADR 0104, issue #462) — the
+- **`tool.FileSystem.Write` removed** (ADR 0208, issue #462) — the
   unconditional-mutation seam is deleted from the `tool.FileSystem` interface.
   The agent-facing tools never used it: they go through the version-bearing
   `Workspace.CreateFile`/`ReplaceFile` pair. Concrete adapter Workspaces retain
@@ -806,10 +806,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `tool.FileSystem` and `tool.Workspace`; `osfs.FileSystem.Write` is removed
   entirely because it had no live callers and used a divergent resolver.
   Removing a method from an exported interface is breaking for implementors;
-  under the pre-v1 policy it ships in a minor bump. See ADR 0104.
+  under the pre-v1 policy it ships in a minor bump. See ADR 0208.
 
 - **Schedule-origin binding is now run-context attribution**
-  ([ADR 0104](../docs/adr/0104-schedule-origin-run-context.md)) — removed the
+  ([ADR 0209](../docs/adr/0209-schedule-origin-run-context.md)) — removed the
   exported `agent.OriginBinder` interface, `agent.Deps.OriginBinder` field,
   `agent.SessionOriginScheduleManager` (its constructor and all ten methods), and
   the `BindSessionOrigin` method that type carried. `Engine.Run` stamps the
@@ -867,7 +867,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
      back-to-back and duplicated the clause byte-for-byte).
   Consumers asserting on the old copy must adjust. No new exported symbol.
 
-- **A FAILED delegated child is now resumable** (ADR 0077, issue #318) — a
+- **A FAILED delegated child is now resumable** (ADR 0200, issue #318) — a
   BEHAVIOUR change with NO exported signature change, so it is classified Changed
   (behaviour only; `engine/api/*.txt` is unaffected). The `Subagent` tool's
   `resume: <agentId>` used to hard-refuse a child persisted in
@@ -910,7 +910,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Removed
 
-- **BREAKING:** `tool.WorkspaceForker` and `tool.ForkMerger` — removed (ADR 0105,
+- **BREAKING:** `tool.WorkspaceForker` and `tool.ForkMerger` — removed (ADR 0211,
   issue #462 phase 2). The two isolation seams are REPLACED by
   `tool.EnvironmentForker` and `tool.EnvironmentMerger` (see Added); the old
   interfaces are not maintained in parallel.
@@ -919,7 +919,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `ForkMerger.Merge(ctx, forkRoot string, parentWS Workspace)` becomes
   `EnvironmentMerger.Merge(ctx, child, parent Environment)`. Removing exported
   interfaces is breaking for implementors; under the pre-v1 policy it ships in a
-  minor bump. See ADR 0105.
+  minor bump. See ADR 0211.
 
 ### Added
 

@@ -203,7 +203,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			// through the ONE stamping path (Service.appendEvent), which attributes
 			// each event to the caller on this ctx — the scheduler's SYSTEM
 			// principal, the thing that actually acted. The schedule's owner stays
-			// on the fire SESSION (ADR 0100 decisions 5 + 6).
+			// on the fire SESSION (ADR 0204 decisions 5 + 6).
 			svc.AppendRunEvent(logCtx, sess.ID, ev)
 			// RecordFireProgress on turn-boundary / activity events (issue #386):
 			// NOT every chunk — once per EvToolCall / EvTurnEnd / EvResult, so a
@@ -281,7 +281,7 @@ func schedulerOwnerContext(ctx context.Context, owner *session.Principal) contex
 	return session.WithPrincipal(ctx, owner)
 }
 
-// fireSessionOwner projects the SCHEDULE's captured owner (ADR 0100 decision 6)
+// fireSessionOwner projects the SCHEDULE's captured owner (ADR 0204 decision 6)
 // onto the fire session's owner: the same (issuer, subject) identity, with
 // GrantType client_credentials — a fire is automated, not interactive, and the
 // grant type says so honestly while attribution still collapses to the

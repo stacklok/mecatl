@@ -1,4 +1,4 @@
-// Package syscaller stamps the EXPLICIT system principal (ADR 0100 decision 7)
+// Package syscaller stamps the EXPLICIT system principal (ADR 0204 decision 7)
 // on the root context of every internal goroutine that has no caller.
 //
 // Internal work — the session GC, the two dream consolidators, the scheduler's

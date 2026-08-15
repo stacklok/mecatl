@@ -1,4 +1,4 @@
-# ADR 0096 — Diagnostic-only posture reporting
+# ADR 0202 — Diagnostic-only posture reporting
 
 - Status: Accepted
 - Date: 2026-08-05

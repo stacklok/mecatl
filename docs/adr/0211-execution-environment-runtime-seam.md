@@ -1,14 +1,14 @@
-# ADR 0105 — Execution-environment runtime seam
+# ADR 0211 — Execution-environment runtime seam
 
 - Status: Accepted
 - Date: 2026-08-13
 - Scope: `engine/tool` (`Environment`, `EnvironmentForker`, `EnvironmentMerger`, `Tool.Execute`, `CommandRunner`/`CommandStreamer`); `engine/session` (`EnvironmentRef`, `EnvironmentKind`); `internal/adapter/forker`; per-session Environment ownership in `internal/adapter/server`; ACP/no-fs override construction in `internal/adapter/acp`
-- Supersedes: [ADR 0104](./0104-execution-environment.md) — ONLY for the staged deferral of the `Environment`/runner/forker/merger runtime signatures (ADR 0104 decisions 1–3, which deliberately left the runtime seam unimplemented). ADR 0104's version-aware file mutation (decision 4–6) remains authoritative and is NOT superseded.
-- Superseded by: [ADR 0106](./0106-environment-persistence.md) — ONLY for decision 6 (the phase-3 deferral of `EnvironmentRef` snapshot persistence and reattachment). This ADR's runtime seam (decisions 1–5) remains authoritative and is NOT superseded.
+- Supersedes: [ADR 0208](./0208-execution-environment.md) — ONLY for the staged deferral of the `Environment`/runner/forker/merger runtime signatures (ADR 0208 decisions 1–3, which deliberately left the runtime seam unimplemented). ADR 0208's version-aware file mutation (decision 4–6) remains authoritative and is NOT superseded.
+- Superseded by: [ADR 0214](./0214-environment-persistence.md) — ONLY for decision 6 (the phase-3 deferral of `EnvironmentRef` snapshot persistence and reattachment). This ADR's runtime seam (decisions 1–5) remains authoritative and is NOT superseded.
 
 ## Context
 
-ADR 0104 established the execution-environment *direction* and shipped the
+ADR 0208 established the execution-environment *direction* and shipped the
 version-aware file-mutation protocol, but deliberately deferred the runtime seam:
 it stated the future `tool.Environment` type would be added "only when a concrete
 second execution backend proves the seam," and left `Tool.Execute` taking a bare
@@ -115,7 +115,7 @@ for no-fs, re-registers the override); the ref is not yet a reattachment input.
 No stdio MCP or command-spawning transport is implied. A remote service must
 provide true backend compare-and-swap and explicit lifecycle semantics when
 designed; local adapters continue to make only the narrower same-live-Workspace
-guarantee ADR 0104 states.
+guarantee ADR 0208 states.
 
 ## Consequences
 
@@ -149,7 +149,7 @@ guarantee ADR 0104 states.
 
 ## See also
 
-- [ADR 0104 — Execution environments and version-aware file mutation](./0104-execution-environment.md)
+- [ADR 0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md)
   — the version-aware file-mutation protocol (decisions 4–6) remains
   authoritative; this ADR supersedes ONLY its staged deferral of the runtime seam
   (decisions 1–3).

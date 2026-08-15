@@ -1,4 +1,4 @@
-# ADR 0109 — Qualify the official MCP SDK authorization-code profile
+# ADR 0219 — Qualify the official MCP SDK authorization-code profile
 
 - Status: Accepted
 - Date: 2026-08-14

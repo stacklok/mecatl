@@ -1,4 +1,4 @@
-# ADR 0104 — OpenRouter downstream-provider steering + routing echo
+# ADR 0210 — OpenRouter downstream-provider steering + routing echo
 
 - Status: Accepted
 - Date: 2026-08-12

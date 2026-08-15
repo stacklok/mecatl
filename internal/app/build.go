@@ -5016,7 +5016,7 @@ func registerSkillDraft(ctx context.Context, cfg Config, cat *tool.Catalog, exis
 // exits on shutdown) and the same LLM provider as the agent.
 func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) {
 	// No caller: the consolidator runs as the explicit system principal
-	// (ADR 0100 decision 7).
+	// (ADR 0204 decision 7).
 	ctx = syscaller.Context(ctx, syscaller.RootMemoryConsolidation)
 	if cfg.MemoryConsolidateInterval <= 0 {
 		cfg.diag().Log(ctx, port.LevelInfo, "memory consolidation DISABLED")
@@ -5045,7 +5045,7 @@ func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.Memory
 // interval/store/provider prerequisites are present and a consolidator was started.
 func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) bool {
 	// No caller: the consolidator runs as the explicit system principal
-	// (ADR 0100 decision 7).
+	// (ADR 0204 decision 7).
 	ctx = syscaller.Context(ctx, syscaller.RootUserModelConsolidation)
 	if cfg.UserModelConsolidateInterval <= 0 || store == nil || provider == nil {
 		cfg.diag().Log(ctx, port.LevelInfo, "user-model consolidation DISABLED")

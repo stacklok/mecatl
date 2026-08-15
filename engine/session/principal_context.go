@@ -10,7 +10,7 @@ type principalKey struct{}
 //
 // A nil p returns ctx UNCHANGED — storing "no identity" must never produce a
 // value that reads back as a present-but-empty principal. Absent identity is a
-// nil *Principal, never a fabricated one (ADR 0100 decision 2).
+// nil *Principal, never a fabricated one (ADR 0204 decision 2).
 //
 // The principal is stored as a COPY, so a later mutation through the caller's
 // pointer cannot change what the context reports.

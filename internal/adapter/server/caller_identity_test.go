@@ -27,7 +27,7 @@ import (
 // --- the offline fake verifier ----------------------------------------------
 //
 // Token VALIDATION (signature, alg, iss/aud/exp/nbf) is delegated to the
-// validator behind server.PrincipalValidator (ADR 0100 decision 3) and is NOT
+// validator behind server.PrincipalValidator (ADR 0204 decision 3) and is NOT
 // mecatl's code — so the tests here script the seam rather than mint real JWTs.
 // What is under test is mecatl's EDGE behaviour: a verified principal reaches
 // the handler context, a rejection never falls through to the handler, a
@@ -301,7 +301,7 @@ func TestCallerIdentity_Scenario1_BadTokensRejected(t *testing.T) {
 // TestCallerIdentity_Scenario1_NoAuthByteIdentical pins AC1.3: with no verifier
 // wired (and no static token), a request with no credentials is processed
 // unauthenticated — the handler runs and sees a NIL principal. No user is
-// invented (the ToolHive anonymous-middleware anti-pattern ADR 0100 rejects),
+// invented (the ToolHive anonymous-middleware anti-pattern ADR 0204 rejects),
 // and the response carries no auth challenge: the default no-token path (the
 // TUI's) is unchanged.
 func TestCallerIdentity_Scenario1_NoAuthByteIdentical(t *testing.T) {
@@ -870,7 +870,7 @@ func TestCallerIdentityStreamInterceptor(t *testing.T) {
 // namespace (mecatl:internal, or the system grant) are all 401-class rejections.
 //
 // Why each matters: an empty principal is exactly the fabricated-anonymous
-// caller ADR 0100 decision 2 rejects, arriving through the front door; and an
+// caller ADR 0204 decision 2 rejects, arriving through the front door; and an
 // external token presenting the internal issuer is byte-identical to a system
 // caller at every downstream consumer — including the isolation track (#368),
 // which will read it to make decisions.

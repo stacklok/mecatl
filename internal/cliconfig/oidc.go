@@ -1,6 +1,6 @@
 // Package cliconfig: OIDC caller-identity wiring shared by the server mains
 // (cmd/mecated, cmd/mecak8s), so the flag names, the required-audience rule and
-// the fail-CLOSED startup decision cannot drift between them (ADR 0100
+// the fail-CLOSED startup decision cannot drift between them (ADR 0204
 // decision 3).
 //
 // Token VALIDATION is not implemented here and never will be: it is delegated to
@@ -93,7 +93,7 @@ func (c OIDCConfig) InsecureIssuerWarning() string {
 // Enabled reports whether the operator asked for caller identity.
 func (c OIDCConfig) Enabled() bool { return c.Issuer != "" }
 
-// DefaultMaxJWKSStaleness is the bounded-by-default key-cache policy (ADR 0101).
+// DefaultMaxJWKSStaleness is the bounded-by-default key-cache policy (ADR 0205).
 const DefaultMaxJWKSStaleness = time.Hour
 
 // RegisterOIDCFlags registers the caller-identity flags on fs. Both server
@@ -154,7 +154,7 @@ func OIDCValidator(ctx context.Context, c OIDCConfig) (server.PrincipalValidator
 		c.NewValidator = defaultNewValidator
 	}
 	// The validator's background JWKS refresh has no caller: it runs as the
-	// explicit system principal (ADR 0100 decision 7).
+	// explicit system principal (ADR 0204 decision 7).
 	v, err := c.NewValidator(syscaller.Context(ctx, syscaller.RootJWKSRefresh), c)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOIDCMisconfigured, err)

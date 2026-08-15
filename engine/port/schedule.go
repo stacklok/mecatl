@@ -339,7 +339,7 @@ type ScheduleSpec struct {
 	// class as the other spec rejections). An empty OriginSessionID is always
 	// valid (delivery is OFF — the byte-identical pre-delivery posture).
 	OriginSessionID session.SessionID
-	// Owner is the verified caller the schedule is attributed to (ADR 0100
+	// Owner is the verified caller the schedule is attributed to (ADR 0204
 	// decision 6). It is captured ONCE at create time — never derived at fire
 	// time, because the origin session may be swept by retention while the
 	// schedule lives on. The capture rule is the CREATE SEAM's business (the

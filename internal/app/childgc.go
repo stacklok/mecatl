@@ -325,7 +325,7 @@ func (g *childGC) sweepPartition(ctx context.Context, entries []port.StoredSessi
 // Build AFTER the Service exists.
 func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool) {
 	// The sweeper has no caller: it runs as the explicit system principal
-	// (ADR 0100 decision 7), never an absent one.
+	// (ADR 0204 decision 7), never an absent one.
 	ctx = syscaller.Context(ctx, syscaller.RootChildGC)
 	policy := childGCPolicy{
 		retention:             cfg.ChildRetention,

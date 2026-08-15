@@ -1,4 +1,4 @@
-# ADR 0114 — Pin MCP transport-error semantics that do not replay rejected calls
+# ADR 0223 — Pin MCP transport-error semantics that do not replay rejected calls
 
 - Status: Accepted
 - Date: 2026-08-15
@@ -30,7 +30,7 @@ No tagged SDK release contains that exact qualified revision yet. Waiting for a
 tag leaves mutating-call replay possible; floating to a newer tag without
 qualification would not establish that it contains equivalent behavior.
 
-ADR 0109's OAuth qualification remains necessary. These transport fixes do not
+ADR 0219's OAuth qualification remains necessary. These transport fixes do not
 remove its metadata and authorization-profile constraints.
 
 ## Decision
@@ -68,10 +68,10 @@ Qualify this boundary with the real SDK streamable-HTTP client and server over
 loopback. Tests count handshakes, requests, and mutation side effects; require a
 rejected call not to replay; prove the same session remains usable; prove a
 plain missing session reconnects exactly once; and bound cancellation and
-failed-connect cleanup. Keep the complete ADR 0109 OAuth qualification suite
+failed-connect cleanup. Keep the complete ADR 0219 OAuth qualification suite
 unchanged.
 
-Retain ADR 0109's residual OAuth limits: RFC 9728 metadata and an exact resource
+Retain ADR 0219's residual OAuth limits: RFC 9728 metadata and an exact resource
 with one authorization server, S256, Basic-only confidential clients, bounded
 repeated rejection, no automatic invalid-grant reauthorization, no durable
 dynamic client registration, and caller-owned redirect/destination policy.
@@ -95,11 +95,11 @@ adapter remains coupled only to exported sentinels and concrete legacy network
 signatures, not SDK internals.
 
 OAuth capability does not broaden. Operators still carry the limitations and
-network-policy responsibilities recorded in ADR 0109.
+network-policy responsibilities recorded in ADR 0219.
 
 ## See also
 
 - [ADR 0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
-- [ADR 0109 — Qualify the official MCP SDK authorization-code profile](./0109-mcp-oauth-sdk-profile.md)
+- [ADR 0219 — Qualify the official MCP SDK authorization-code profile](./0219-mcp-oauth-sdk-profile.md)
 - [Extensibility architecture](../architecture/extensibility.md)
 - [Production readiness](../design/PRODUCTION-READINESS.md)

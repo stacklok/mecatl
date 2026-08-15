@@ -913,7 +913,7 @@ func TestFSWorkspaceLedgerCrossForm(t *testing.T) {
 }
 
 // TestFSWorkspaceLedgerNotBlockedByParkedRPC proves the split synchronization
-// (ADR 0103): the ledger mutex (ledgerMu) is independent of the RPC CAS mutex
+// (ADR 0208): the ledger mutex (ledgerMu) is independent of the RPC CAS mutex
 // (callMu), so a parked RPC mutation holding callMu NEVER blocks a ledger
 // RecordRead/RecordedVersion. Before the split (a single mu for both), a wedged
 // fs/* round-trip would have wedged the ledger too.

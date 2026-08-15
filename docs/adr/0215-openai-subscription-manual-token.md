@@ -1,4 +1,4 @@
-# ADR 0104 — OpenAI subscription with a manual access token
+# ADR 0215 — OpenAI subscription with a manual access token
 
 - Status: Accepted
 - Date: 2026-08-05

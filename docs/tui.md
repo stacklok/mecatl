@@ -889,7 +889,7 @@ single-line passthrough) shows no toggle hint. `esc` or
 `ctrl+t` returns to the modal; the verdict keys work from inside the view.
 `ctrl+t` routes by ask type: plan asks keep the scrollable plan-review view and
 Edit/Write asks keep the in-modal diff expand — see
-[ADR 0108](./adr/0108-mecatui-ask-args-view.md).
+[ADR 0222](./adr/0222-mecatui-ask-args-view.md).
 
 For hand-testing the modal's long-args surfaces without driving a live run,
 `MECATUI_DEBUG_ASK=1` registers a `/debug-ask` built-in that injects a fake

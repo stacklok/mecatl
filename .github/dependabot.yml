@@ -45,7 +45,7 @@ updates:
           - minor
           - patch
 
-  # Opt-in caller-identity adapter module (ADR 0103; not a provider).
+  # Opt-in caller-identity adapter module (ADR 0206; not a provider).
   - package-ecosystem: gomod
     directory: "/authn/oidc"
     schedule:

@@ -1,6 +1,6 @@
 package agent_test
 
-// Review finding 2 (issue #368, ADR 0102): a durable delegation id previously
+// Review finding 2 (issue #368, ADR 0212): a durable delegation id previously
 // derived ONLY from the provider tool-call id — a value the LLM API supplies
 // and does not guarantee unique across independent conversations, let alone
 // across owners (two different top-level sessions). These tests pin the fix

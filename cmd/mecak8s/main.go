@@ -43,7 +43,7 @@ func run() error {
 	ctx, stop := signalCtx()
 	defer stop()
 
-	// Observability (issue #343, ADR 0097): OPT-IN. With no --otlp-* / --metrics-addr
+	// Observability (issue #343, ADR 0098): OPT-IN. With no --otlp-* / --metrics-addr
 	// flags this is a no-op (byte-identical default). The flush defer runs BEFORE
 	// built.Close() (LIFO), so the OTLP flush completes before the service tears
 	// down on the SIGTERM path.

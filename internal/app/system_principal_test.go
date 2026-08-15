@@ -46,7 +46,7 @@ func TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess(t *te
 
 // TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem pins AC2.2: every
 // internal goroutine root runs under an EXPLICIT system principal, never an
-// absent one (ADR 0100 decision 7).
+// absent one (ADR 0204 decision 7).
 //
 // The set is enumerated ONCE — syscaller.Roots is the registry, and this table
 // must cover it exactly. A goroutine that registers a root but forgets the wrap

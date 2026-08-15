@@ -1,5 +1,5 @@
 // Package remoteenv is a deterministic, in-process, protocol-level reference fake
-// of a REMOTE execution environment (ADR 0106, issue #462 phase 3). It is a
+// of a REMOTE execution environment (ADR 0214, issue #462 phase 3). It is a
 // CONTRACT PROOF only — it has NO network, NO external dependency, and NO global
 // singleton. It proves the phase-3 persistence/reattachment/fork/merge contract
 // against a non-in-tree EnvironmentKind without waiting for a real vendor

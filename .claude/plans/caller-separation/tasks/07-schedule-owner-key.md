@@ -18,7 +18,7 @@ callers, Alice and Bob) found that `CreateSchedule`'s collision guard
 (`internal/adapter/server/schedule_manager.go`) checks the globally-keyed schedule
 `Name` before the create-time owner is resolved, so a name already used by a
 *different* owner is rejected with a distinguishing "already exists" error instead of
-the absence-style behavior ADR-0102 decision 1 requires for every other cross-owner
+the absence-style behavior ADR-0212 decision 1 requires for every other cross-owner
 collision in this plan. The store's unconditional upsert-by-name (`Save` in both
 `internal/adapter/redisstore/schedulestore.go` and
 `internal/adapter/store/jsonlstore/schedulestore.go`) makes this a latent cross-tenant
@@ -62,7 +62,7 @@ constraints, but stay within this shape)
   namespace to operate over regardless of whether OIDC is enabled.
 - No migration: this is a breaking, no-migration change, consistent with this plan's
   existing "no adoption of ownerless historical records" posture (already documented
-  in `docs/acceptance/caller-separation.md`'s Out of scope table and ADR-0102's
+  in `docs/acceptance/caller-separation.md`'s Out of scope table and ADR-0212's
   deferred decisions).
 - Product decision (confirmed, breaking change accepted): two different owners MAY use
   the identical schedule name without collision — full parity with memory's "equal

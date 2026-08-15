@@ -1,5 +1,5 @@
-# Appends the four caller-identity flags to the agent's args (ADR 0100
-# decision 3; ADR 0101).
+# Appends the four caller-identity flags to the agent's args (ADR 0204
+# decision 3; ADR 0205).
 #
 # A JSON6902 `add` to `args/-`, NOT a strategic-merge patch: a container's `args`
 # is an ATOMIC list, so a strategic merge that mentioned `args` would REPLACE the

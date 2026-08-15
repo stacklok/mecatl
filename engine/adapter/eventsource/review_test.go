@@ -242,7 +242,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
 	//     Profile, ProviderID, ModelID, ReasoningEffort, Kind, Relationship, CreatedAt
-	//   not-event-carried identity labels (ADR 0100/0106): Owner, Authority,
+	//   not-event-carried identity labels (ADR 0204/0106): Owner, Authority,
 	//     EnvironmentRef — the event annotation is log-only and the fold neither
 	//     requires nor re-derives any of them, so a folded session keeps the
 	//     snapshot-restored value (ownerless stays ownerless, a zero ref stays

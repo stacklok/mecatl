@@ -6,7 +6,7 @@ import (
 )
 
 // TestLedgerKey is the ONE comprehensive table test for the I/O-free lexical
-// ledger-key normalization (ADR 0103). It pins every convergence class the
+// ledger-key normalization (ADR 0208). It pins every convergence class the
 // osfs/ACP adapters previously duplicated in their own local ledgerKey tests:
 // relative vs absolute-in-root cross-form matching in BOTH directions,
 // `..`-carrying lexical alias convergence, out-of-root absolute keying by the

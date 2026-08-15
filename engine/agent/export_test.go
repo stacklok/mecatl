@@ -6,5 +6,5 @@ package agent
 
 // WithSessionOrigin exposes withSessionOrigin so the external tests can build an
 // origin-bearing context directly, instead of only through Engine.Run. Kept
-// test-only on purpose — see the withSessionOrigin doc-comment (ADR 0104).
+// test-only on purpose — see the withSessionOrigin doc-comment (ADR 0209).
 var WithSessionOrigin = withSessionOrigin

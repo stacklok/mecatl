@@ -968,7 +968,7 @@ func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.Session
 	return out
 }
 
-// toProtoPrincipal maps the verified owner (ADR 0100) to its proto form. A nil
+// toProtoPrincipal maps the verified owner (ADR 0204) to its proto form. A nil
 // principal maps to a nil message — an ABSENT owner must stay absent on the wire,
 // never a present-but-empty "anonymous" one. Every string goes through valid()
 // (the UTF-8 scrubber every other wire string uses): the issuer/subject come from

@@ -40,7 +40,7 @@ type Snapshot struct {
 	Messages   []messageDTO           `json:"messages"`
 	Pending    *session.PendingAsk    `json:"pending,omitempty"`
 	StopReason session.StopReason     `json:"stop_reason,omitempty"`
-	// Kind and Relationship are the validated producer taxonomy from ADR 0108.
+	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
 	Relationship session.SessionRelationship `json:"relationship,omitzero"`
@@ -86,7 +86,7 @@ type Snapshot struct {
 	// event-side subagentCausePayload so the snapshot and the subagent.end event
 	// carry the same persisted cause.
 	LastError string `json:"last_error,omitempty"`
-	// Owner is the verified caller the session is attributed to (ADR 0100). A
+	// Owner is the verified caller the session is attributed to (ADR 0204). A
 	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
 	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
 	// byte-identical to a pre-ship one — purely additive, no format-tag bump.
@@ -100,7 +100,7 @@ type Snapshot struct {
 	// snapshot with no "authority" key decoding to the zero value.
 	Authority session.Authority `json:"authority,omitempty"`
 	// EnvironmentRef is the resolved execution-environment identity this session
-	// runs against (ADR 0106, issue #462 phase 3). The ref is a value type
+	// runs against (ADR 0214, issue #462 phase 3). The ref is a value type
 	// (EnvironmentKind + opaque ID); a zero ref {Kind:"", ID:""} is the
 	// "unspecified" value. It uses Go 1.26's `omitzero` (NOT `omitempty`, which
 	// never omits a non-empty struct) so a default/local session with no remote

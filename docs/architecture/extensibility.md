@@ -34,7 +34,7 @@ attempt per call, serialized under a mutex. A structured JSON-RPC 400/404 or HTT
 429/502/503/504 is instead a one-call failure: the live session is retained and
 the operation is never replayed automatically. See
 [ADR 0056](../adr/0056-mcp-client-reconnect.md) and
-[ADR 0114](../adr/0114-mcp-sdk-transport-error-semantics.md). The client also holds the
+[ADR 0223](../adr/0223-mcp-sdk-transport-error-semantics.md). The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
 `notifications/{tools,prompts,resources}/list_changed` invalidate the cached
 snapshots (lazily re-listed on the next read); live catalog refresh is
@@ -79,8 +79,8 @@ OAuth remains unavailable to per-session/inline/discovered MCP, and DCR remains
 unsupported. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
 cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
 Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static
-headers retain their existing origin-scoped behavior. See [ADR 0109](../adr/0109-mcp-oauth-sdk-profile.md)
-for the constrained dependency profile, [ADR 0110](../adr/0110-mcp-oauth-controller.md)
+headers retain their existing origin-scoped behavior. See [ADR 0219](../adr/0219-mcp-oauth-sdk-profile.md)
+for the constrained dependency profile, [ADR 0220](../adr/0220-mcp-oauth-controller.md)
 for controller ownership, [ADR 0112](../adr/0112-mcp-oauth-loopback-runtime.md) for the
 opt-in host runtime, and [ADR 0113](../adr/0113-operator-mcp-auth-profiles.md) for profile
 and command wiring.

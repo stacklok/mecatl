@@ -1,4 +1,4 @@
-# ADR 0110 — Adapter-local MCP OAuth controller
+# ADR 0220 — Adapter-local MCP OAuth controller
 
 - Status: Accepted
 - Date: 2026-08-14
@@ -8,7 +8,7 @@
 
 ## Context
 
-ADR 0109 qualified the official MCP Go SDK's public authorization-code behavior and
+ADR 0219 qualified the official MCP Go SDK's public authorization-code behavior and
 identified limits that cannot be corrected safely through its current hooks. The MCP
 adapter still needed one owner for durable tokens, concurrent authorization challenges,
 reconnect reuse, and OAuth-specific network policy without implementing OAuth discovery
@@ -70,7 +70,7 @@ HTTP egress boundaries rather than treated as proof of SDK selection. CIMD remai
 only because this gate prevents a selected foreign server from receiving a code or token;
 DCR remains disabled because no equivalent durable-registration/lifecycle gate exists. No
 profile may weaken the exact-issuer egress rule. Do not claim broad production readiness
-until the ADR 0109 metadata-profile blockers are fixed upstream and requalified.
+until the ADR 0219 metadata-profile blockers are fixed upstream and requalified.
 
 ## Consequences
 
@@ -85,7 +85,7 @@ login are unsupported. Operator-facing deployment remains deferred.
 
 ## See also
 
-- [ADR 0109 — Qualified official SDK profile](./0109-mcp-oauth-sdk-profile.md)
-- [ADR 0108 — Internal encrypted credential store](./0108-credential-store.md)
+- [ADR 0219 — Qualified official SDK profile](./0219-mcp-oauth-sdk-profile.md)
+- [ADR 0218 — Internal encrypted credential store](./0218-credential-store.md)
 - [Extensibility architecture](../architecture/extensibility.md)
 - [Production-readiness tracker](../design/PRODUCTION-READINESS.md)

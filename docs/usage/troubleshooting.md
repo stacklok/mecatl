@@ -43,7 +43,7 @@ URL, or troubleshooting output.
 | `unreachable`, timeout, HTTP 5xx, or retry exhaustion | DNS/TLS/network or a transient private-service failure. Before the first successful model list, Codex contributes no inventory; after success, process-local last-known-good rows may remain visible while current inference still fails. | Check connectivity to `chatgpt.com`, wait, and retry. Restart is required only if you changed the credential; a stale visible model list is not proof inference is healthy. |
 
 The backend is undocumented and may change or revoke third-party compatibility.
-See [ADR 0104](../adr/0104-openai-subscription-manual-token.md) for that boundary.
+See [ADR 0215](../adr/0215-openai-subscription-manual-token.md) for that boundary.
 
 **`--openai requires OPENAI_API_KEY to be set`** (the `cmd/mecademo` demo only)
 The demo's `--openai` flag was passed but no key is in the environment.

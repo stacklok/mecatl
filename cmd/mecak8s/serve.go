@@ -125,7 +125,7 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 
 	errCh := make(chan error, 3)
 
-	// Metrics loopback listener (issue #343, ADR 0097): when --metrics-addr is
+	// Metrics loopback listener (issue #343, ADR 0098): when --metrics-addr is
 	// set, mount the admin mux (/metrics + the runtime-introspection surface) on a
 	// SEPARATE loopback listener. The Registry comes from the observability
 	// handles (non-nil when metricsAddr is set — buildObservability runs Setup for

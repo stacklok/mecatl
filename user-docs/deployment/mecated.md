@@ -155,7 +155,7 @@ revocation. An otherwise valid token remains acceptable until its normal expiry.
 The JWKS cache is process-local and not persisted; a restarted process fetches
 current keys again. The flags are identical on `mecak8s`. Full reference:
 [usage.md](https://github.com/stacklok/mecatl/blob/main/docs/usage.md) and
-[ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-caller-identity-threading.md).
+[ADR 0204](https://github.com/stacklok/mecatl/blob/main/docs/adr/0204-caller-identity-threading.md).
 
 #### Daemon config file (`daemon.yaml`)
 

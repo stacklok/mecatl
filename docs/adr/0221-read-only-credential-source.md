@@ -1,4 +1,4 @@
-# ADR 0111 — Read-only environment credential source and OAuth refresh posture
+# ADR 0221 — Read-only environment credential source and OAuth refresh posture
 
 - Status: Accepted
 - Date: 2026-08-14
@@ -8,7 +8,7 @@
 
 ## Context
 
-ADRs 0108 and 0110 established a host-internal split between credential reads and
+ADRs 0218 and 0220 established a host-internal split between credential reads and
 conditional writes, then initially required MCP OAuth to receive one mutable Store.
 Kubernetes commonly projects a Secret into a pod environment, but that projection is not
 a compare-and-swap persistence surface. Treating it as mutable would either lose refresh
@@ -56,7 +56,7 @@ coordinate replicas. The default posture remains fail-closed.
 
 ## See also
 
-- [ADR 0108 — Internal encrypted credential store](./0108-credential-store.md)
-- [ADR 0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
+- [ADR 0218 — Internal encrypted credential store](./0218-credential-store.md)
+- [ADR 0220 — Adapter-local MCP OAuth controller](./0220-mcp-oauth-controller.md)
 - [Architecture overview](../architecture.md#internal-credential-store)
 - [Implementation notes](../design/IMPLEMENTATION-NOTES.md#credential-store)

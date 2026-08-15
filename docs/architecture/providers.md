@@ -85,7 +85,7 @@ Provider clients never hold it globally, so concurrent sessions cannot cross-sta
 An absent or Go-illegal HTTP field value omits the header without failing inference;
 the value is otherwise byte-exact. It is not auth, tracing, idempotency, provider
 state, safety/user identity, or a cache key. See
-[ADR 0110](../adr/0110-provider-session-correlation-header.md).
+[ADR 0216](../adr/0216-provider-session-correlation-header.md).
 
 **The provider-neutral seam**: the loop only ever sees `port.Chunk`; no OpenAI
 type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`,
@@ -204,7 +204,7 @@ before (the default path is byte-identical). A composition-only `providerConstru
 seam (mirroring `envDetector`) lets the offline e2e back two real provider ids with
 mocks; production leaves it nil.
 
-**OpenRouter downstream-provider routing (issue #480, ADR 0104).** OpenRouter is a
+**OpenRouter downstream-provider routing (issue #480, ADR 0210).** OpenRouter is a
 *meta-provider* — one model id is served by several **downstream** inference
 providers (Anthropic, Amazon Bedrock, Google Vertex, …) that OpenRouter
 load-balances across on price. mecatl exposes both halves: **steering** via the
@@ -222,7 +222,7 @@ prompt-cache prefix untouched. The routed downstream echoes back as
 `port.ChunkProviderRoute` (parsed from the terminal `response.completed` raw JSON's
 `openrouter_metadata`, fail-empty) → the client-visible `session.EvProviderRoute`
 (`"provider.route"`), absent on a cache hit — never fabricated. See
-[`docs/adr/0104-openrouter-downstream-provider-steering.md`](../adr/0104-openrouter-downstream-provider-steering.md).
+[`docs/adr/0210-openrouter-downstream-provider-steering.md`](../adr/0210-openrouter-downstream-provider-steering.md).
 
 **Intent-driven availability (issue #262, ADR 0064).** Every provider above is
 **key-driven** — available iff a credential resolves. The ToolHive LLM gateway proxy

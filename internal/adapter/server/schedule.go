@@ -192,7 +192,7 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 // It routes through the ONE appendEvent chokepoint so the lifecycle events are
 // stamped with the acting caller exactly like the fire's run events — the
 // scheduler's system principal for a tick fire, the requester for a manual
-// FireNow (ADR 0100 decision 5: every durable append path stamps). ctx is the
+// FireNow (ADR 0204 decision 5: every durable append path stamps). ctx is the
 // caller's; it is cancel-detached here so a fire's finished/cancelled ctx cannot
 // abort the durable append, while its VALUES (the principal) survive.
 func (s *Service) EmitScheduleEvent(ctx context.Context, payload session.SchedulePayload) {

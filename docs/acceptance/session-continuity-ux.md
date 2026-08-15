@@ -3,7 +3,7 @@
 **Phase:** durable session discovery, inspection, continuation, and CLI handoff  
 **Status:** landed, 2026-08-14. Aggregate implementation plus one panel repair wave complete.  
 **Issues:** [stacklok/mecatl#471](https://github.com/stacklok/mecatl/issues/471), [stacklok/mecatl#473](https://github.com/stacklok/mecatl/issues/473), [stacklok/mecatl#525](https://github.com/stacklok/mecatl/issues/525).  
-**ADR:** [ADR-0108](../adr/0108-session-discovery-continuation.md) — durable session taxonomy, authoritative transcript, bounded inventory, and continuation safety.  
+**ADR:** [ADR-0217](../adr/0217-session-discovery-continuation.md) — durable session taxonomy, authoritative transcript, bounded inventory, and continuation safety.<br>
 **Accumulator branch:** `acc/session-continuity-ux` (off latest `origin/main`).
 
 The smallest set of work that lets an operator identify the active session, discover and
@@ -13,7 +13,7 @@ their parent-owned lifecycle; this plan does not invent whole-team or Parallel r
 
 ## Why these scope cuts
 
-- [ADR-0108](../adr/0108-session-discovery-continuation.md) keeps IDs opaque, makes kind/capabilities server-authored, and uses a snapshot-derived transcript for continuation.
+- [ADR-0217](../adr/0217-session-discovery-continuation.md) keeps IDs opaque, makes kind/capabilities server-authored, and uses a snapshot-derived transcript for continuation.
 - [ADR-0038](../adr/0038-event-sourced-rehydration.md) separates authoritative snapshot state from optional EventLog activity replay.
 - [ADR-0065](../adr/0065-conversation-fork.md) keeps peer forking distinct from continuing the same chat and deliberately omits fork lineage.
 - [ADR-0015](../adr/0015-background-subagents.md) keeps Subagent resume parent/model-owned and Parallel/team children inspect-only from mecatui.
@@ -26,10 +26,10 @@ their parent-owned lifecycle; this plan does not invent whole-team or Parallel r
 A test host creates every built-in session family and round-trips it through every in-tree
 store/source path. The taxonomy is inert metadata, but the server uses it in addition to the
 legacy prefix guard when deciding whether a public chat prompt may drive the aggregate.
-This follows [ADR-0108](../adr/0108-session-discovery-continuation.md), [the domain model](../architecture/domain-model.md), and [the ports chapter](../architecture/ports.md).
+This follows [ADR-0217](../adr/0217-session-discovery-continuation.md), [the domain model](../architecture/domain-model.md), and [the ports chapter](../architecture/ports.md).
 
 **Acceptance:**
-- AC1.1: Main, scheduled, Subagent, Parallel-branch, and team-member sessions round-trip the exact kind and relationship fields required by ADR-0108 through snapshot, metadata-list, event-source creation metadata, and every in-tree store/driver adapter.
+- AC1.1: Main, scheduled, Subagent, Parallel-branch, and team-member sessions round-trip the exact kind and relationship fields required by ADR-0217 through snapshot, metadata-list, event-source creation metadata, and every in-tree store/driver adapter.
   - verify: `TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip`
 - AC1.2: Public create/fork/carryover requests can create only `main`; callers cannot stamp or override scheduled/child relationships.
   - verify: `TestADR_0108_PublicCreateCannotForgeKind`
@@ -48,7 +48,7 @@ Public chat prompts and trusted scheduler fires converge on the existing run-ent
 after different kind gates. Delegated and scheduled sessions cannot be driven through the
 public chat surface, including custom-ID children, while the scheduler remains able to drive
 its own fire. Legacy prefixes remain a defense-in-depth compatibility gate under
-[ADR-0108](../adr/0108-session-discovery-continuation.md) and [`AGENTS.md`](../../AGENTS.md).
+[ADR-0217](../adr/0217-session-discovery-continuation.md) and [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
 - AC2.1: Public `StartRunContent` rejects every explicitly-stamped Subagent, Parallel-branch, team-member, and scheduled session regardless of ID spelling.
@@ -69,7 +69,7 @@ its own fire. Legacy prefixes remain a defense-in-depth compatibility gate under
 A client obtains one coherent snapshot-derived transcript matching the conversation the next
 model request will use. EventLog remains an independently-labelled optional activity replay;
 EOF is never treated as transcript completeness. Inventory is cursor-bounded and stable.
-This implements [ADR-0108](../adr/0108-session-discovery-continuation.md) without weakening
+This implements [ADR-0217](../adr/0217-session-discovery-continuation.md) without weakening
 [ADR-0038](../adr/0038-event-sourced-rehydration.md).
 
 **Acceptance:**
@@ -121,7 +121,7 @@ authoritative snapshot transcript, not EventLog. The TUI remains a proto-free cl
 
 While connected, `/session` shows the current chat's exact metadata. Clipboard copy returns
 the opaque ID byte-for-byte; terminal rendering uses a safe reversible quoted form under
-[ADR-0108](../adr/0108-session-discovery-continuation.md). The header stays compact and the
+[ADR-0217](../adr/0217-session-discovery-continuation.md). The header stays compact and the
 affordance is discoverable under existing TUI help conventions.
 
 **Acceptance:**
@@ -187,17 +187,17 @@ run API.
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Resume an entire Team or a Parallel branch | future orchestration durability work | [ADR-0014](../adr/0014-agent-teams.md), [ADR-0108](../adr/0108-session-discovery-continuation.md) |
+| Resume an entire Team or a Parallel branch | future orchestration durability work | [ADR-0014](../adr/0014-agent-teams.md), [ADR-0217](../adr/0217-session-discovery-continuation.md) |
 | Prompt a child directly as a top-level chat | never under this plan | [`AGENTS.md`](../../AGENTS.md) child-session run-entry invariant |
 | Treat EventLog EOF as authoritative transcript completeness | never under this plan | [ADR-0038](../adr/0038-event-sourced-rehydration.md) |
-| Make bare `mecatui` resume latest by default | possible later opt-in | [ADR-0108](../adr/0108-session-discovery-continuation.md) |
+| Make bare `mecatui` resume latest by default | possible later opt-in | [ADR-0217](../adr/0217-session-discovery-continuation.md) |
 | Track peer-fork/carryover lineage or add title renaming | separate follow-up | [ADR-0065](../adr/0065-conversation-fork.md) |
 | Generic gRPC cross-process reattachment to awaiting approval | separate protocol feature | [`AGENTS.md`](../../AGENTS.md) awaiting-only seam |
 | End/Detach remote runtime resources on clean mecatui exit | separate lifecycle issue | [ADR-0027](../adr/0027-cloud-native.md) resource inventory discipline |
 
 ## Cross-cutting deliverables
 
-- Promote ADR-0108 to Accepted with Scenario 1; after acceptance it is frozen.
+- Promote ADR-0217 to Accepted with Scenario 1; after acceptance it is frozen.
 - Regenerate protobufs/contracts and the engine API baseline/CHANGELOG when applicable.
 - Extend store/source/driver conformance for taxonomy and paging.
 - Update `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/tui.md`, `docs/usage.md`, CLI help, and `user-docs/` in the same PR.
@@ -212,7 +212,7 @@ last so its handoff observes every rebind path.
 
 Issue #473 already has an older, uncommitted worktree in this checkout. Do not edit or merge
 it in place. Reuse its tests/ideas only by a deliberate transplant onto the accumulator after
-Scenarios 1–4, resolving overlap against ADR-0108 rather than keeping its older classifier.
+Scenarios 1–4, resolving overlap against ADR-0217 rather than keeping its older classifier.
 
 ## Named tests landing in this plan
 

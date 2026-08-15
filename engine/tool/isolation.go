@@ -3,7 +3,7 @@ package tool
 import "context"
 
 // EnvironmentForker is the environment-isolation seam for fork-join parallelism
-// (harness pattern 8, ADR 0105). It produces an isolated CHILD Environment (Workspace +
+// (harness pattern 8, ADR 0211). It produces an isolated CHILD Environment (Workspace +
 // command runner bound to the child namespace + ref) derived from a base
 // Environment so a forked agent loop can read — and, when its catalog allows
 // it, WRITE — without racing on, or mutating, the shared base tree.

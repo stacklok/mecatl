@@ -1871,7 +1871,7 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 // ctx is the SERVER-ROOT context: the validator owns background JWKS refresh, so
 // it must outlive any request. EVERY failure here is fatal and the daemon
 // refuses to start — silently falling back to the unauthenticated path would
-// turn an authenticated deployment into an open one (ADR 0100).
+// turn an authenticated deployment into an open one (ADR 0204).
 func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authenticator, error) {
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {

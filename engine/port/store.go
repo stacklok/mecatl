@@ -112,7 +112,7 @@ type SessionMeta struct {
 	// multimodal-only first prompt) carries "" here; the caller may fall back to
 	// the lazy deriveTitle walk via a full Load if it needs the derived value.
 	Title string
-	// Owner is the verified caller the session is attributed to (ADR 0100), or
+	// Owner is the verified caller the session is attributed to (ADR 0204), or
 	// nil when the session is ownerless.
 	Owner *session.Principal
 }

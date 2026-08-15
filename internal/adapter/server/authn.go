@@ -23,7 +23,7 @@ import (
 )
 
 // PrincipalValidator verifies a bearer credential and returns the caller it
-// vouches for (ADR 0100 decision 3). Validation itself — JWT parse, signature,
+// vouches for (ADR 0204 decision 3). Validation itself — JWT parse, signature,
 // alg, issuer/audience/exp/nbf, JWKS fetch and rotation — is DELEGATED to the
 // implementation (toolhive-core/authn); mecatl hand-rolls none of it. This
 // narrow interface is the seam: the edge only decides what to do with the
@@ -86,7 +86,7 @@ func (c SecurityConfig) authEnabled() bool { return c.AuthToken != "" }
 // identityConfigured reports whether caller identity is on, i.e. whether a
 // verifier is wired. It is deliberately INDEPENDENT of authEnabled(): a
 // shared-token deployment has one credential and zero subjects, and an OIDC
-// deployment may have subjects and no static token (ADR 0100 decision 2).
+// deployment may have subjects and no static token (ADR 0204 decision 2).
 // Neither predicate may gate the other's behaviour.
 func (c SecurityConfig) identityConfigured() bool { return c.Validator != nil }
 
@@ -398,7 +398,7 @@ func (a *Authenticator) identify(ctx context.Context, bearer string, present boo
 //
 //   - Identity is the (Issuer, Subject) PAIR; a principal missing either half
 //     cannot be attributed to anyone. A wholly empty one is exactly the
-//     fabricated-anonymous caller ADR 0100 decision 2 rejects, arriving through
+//     fabricated-anonymous caller ADR 0204 decision 2 rejects, arriving through
 //     the front door.
 //   - GrantType must be inside the closed enum: an out-of-enum value would flow
 //     to every downstream consumer as an unrecognised, unhandled case.

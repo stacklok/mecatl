@@ -14,7 +14,7 @@ func newLabelSession(t *testing.T) *session.Session {
 }
 
 // TestRestoreLabelsIsWriteOnce pins the write-once contract of the owner label
-// (ADR 0100 decision 4): a second RestoreLabels with a DIFFERENT owner is
+// (ADR 0204 decision 4): a second RestoreLabels with a DIFFERENT owner is
 // refused, so a restore path can never silently re-own a session.
 func TestRestoreLabelsIsWriteOnce(t *testing.T) {
 	t.Parallel()
@@ -56,7 +56,7 @@ func TestRestoreLabelsIdempotentForSameOwner(t *testing.T) {
 
 // TestRestoreLabelsNilOwnerLeavesOwnerUnset pins the ownerless path: restoring a
 // nil owner (a pre-ship / no-auth session) leaves the label unset and is never
-// an error — the byte-identical no-auth path of ADR 0100.
+// an error — the byte-identical no-auth path of ADR 0204.
 func TestRestoreLabelsNilOwnerLeavesOwnerUnset(t *testing.T) {
 	t.Parallel()
 
@@ -120,7 +120,7 @@ func TestPrincipalClone(t *testing.T) {
 	}
 }
 
-// TestPrincipalGrantTypesAreTheThreeValues pins ADR 0100 decision 1: the grant
+// TestPrincipalGrantTypesAreTheThreeValues pins ADR 0204 decision 1: the grant
 // type is a small closed enum of exactly user / client_credentials / system.
 func TestPrincipalGrantTypesAreTheThreeValues(t *testing.T) {
 	t.Parallel()
@@ -145,10 +145,10 @@ func TestPrincipalGrantTypesAreTheThreeValues(t *testing.T) {
 	}
 }
 
-// TestADR_0102_VerifiedIssuerSubjectPairIsOwnerIdentity pins ADR 0102 decision
+// TestADR_0212_VerifiedIssuerSubjectPairIsOwnerIdentity pins ADR 0212 decision
 // 1: ownership is the exact verifier-emitted issuer/subject pair. Display and
 // grant metadata do not select an owner, and issuer text is never normalized.
-func TestADR_0102_VerifiedIssuerSubjectPairIsOwnerIdentity(t *testing.T) {
+func TestADR_0212_VerifiedIssuerSubjectPairIsOwnerIdentity(t *testing.T) {
 	t.Parallel()
 
 	owner := &session.Principal{Issuer: "https://issuer.example/realm", Subject: "same", GrantType: session.GrantTypeUser, Name: "Alice"}

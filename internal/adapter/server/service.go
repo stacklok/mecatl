@@ -207,7 +207,7 @@ type Config struct {
 	// ACP / cloud deployments. The factory returns nil when Bash is disabled.
 	CommandRunnerFactory func(root string) tool.CommandRunner
 	// EnvironmentResolver, when non-nil, resolves a persisted session.EnvironmentRef
-	// to a LIVE tool.Environment for a non-in-tree Kind (ADR 0106, issue #462 phase
+	// to a LIVE tool.Environment for a non-in-tree Kind (ADR 0214, issue #462 phase
 	// 3). It is the reattachment half of the Environment seam: a restarted process
 	// reads the persisted ref off a loaded session and reattaches a live
 	// Environment to the SAME backend (a remote worker, a container) rather than
@@ -1203,7 +1203,7 @@ type createSessionOpts struct {
 	// (byte-identical default).
 	sourceSessionID session.SessionID
 	// owner overrides the context principal as the created session's owner
-	// (ADR 0100 decision 4). ownerSet distinguishes "WithOwner was called
+	// (ADR 0204 decision 4). ownerSet distinguishes "WithOwner was called
 	// (possibly with nil — an explicitly ownerless session)" from "never
 	// called", which falls back to session.PrincipalFromContext.
 	owner    *session.Principal
@@ -1239,7 +1239,7 @@ func WithSourceSession(id session.SessionID) CreateSessionOption {
 }
 
 // WithOwner overrides the owner a CreateSession* call stamps on the new session
-// (ADR 0100 decision 4). By DEFAULT the owner comes from the verified principal
+// (ADR 0204 decision 4). By DEFAULT the owner comes from the verified principal
 // on the context (session.PrincipalFromContext) — a caller can never name its
 // own owner in the request body, which is why CreateSessionRequest has no owner
 // field. This option is the in-process injection seam for a caller that already
@@ -1265,7 +1265,7 @@ func WithScheduledRelationship(scheduleName string, origin session.SessionID) Cr
 // resolveOwner picks the owner a create stamps: the explicit WithOwner value
 // when the option was passed (nil included — see WithOwner), else the verified
 // principal riding the context. An absent principal yields nil — the ownerless
-// no-auth path, byte-identical to the pre-ADR-0100 behaviour. It NEVER
+// no-auth path, byte-identical to the pre-ADR-0204 behaviour. It NEVER
 // fabricates one.
 func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principal {
 	if opts.ownerSet {
@@ -2163,7 +2163,7 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 		sel.ReasoningEffort = effortOverride
 	}
 	profile := profileForSession(src)
-	// The fork inherits the SOURCE's owner (ADR 0100 decision 4), NOT the
+	// The fork inherits the SOURCE's owner (ADR 0204 decision 4), NOT the
 	// principal of whoever called ForkSession — otherwise fork is an
 	// ownership-laundering path. An ownerless source forks ownerless.
 	if err := setSessionLabels(forked, sel, profile, src.Owner); err != nil {
@@ -2234,7 +2234,7 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	if src.State == session.StateRunning || src.State == session.StateAwaiting {
 		return nil, nil, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
 	}
-	// The SOURCE's owner travels with the carried history (ADR 0100 decision 4):
+	// The SOURCE's owner travels with the carried history (ADR 0204 decision 4):
 	// a fork is attributed to whoever owned the session it copied, never to the
 	// caller doing the forking — otherwise fork is an ownership-laundering path
 	// (copy someone else's session, become its owner). An ownerless source
@@ -2814,7 +2814,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		if !isRemoteEnvironmentRef(sess.EnvironmentRef) && (sess.Profile == string(ProfileNoFS) || sess.Workspace == "") {
 			// rehydrateSession re-registered the no-fs environment override (same as
 			// create); read it back so the resolution below uses the complete override.
-			// A REMOTE EnvironmentRef (ADR 0106) is excluded: its Environment is
+			// A REMOTE EnvironmentRef (ADR 0214) is excluded: its Environment is
 			// reattached at run entry through the EnvironmentResolver, NOT relabeled
 			// no-fs from its empty persisted Workspace (a remote backend's filesystem
 			// is not a local root). Reading the no-fs override here would preempt the
@@ -2839,11 +2839,11 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// CommandRunner. Use it directly — never guess a ref or runner from the
 		// override's presence (issue #462 phase-2 finding #2). Stamp the default ref
 		// from the live override so a legacy zero-ref session persists it on the next
-		// save (ADR 0106, issue #462 phase 3).
+		// save (ADR 0214, issue #462 phase 3).
 		stampDefaultEnvironmentRef(sess)
 		return engine, envOverride, nil
 	}
-	// ENVIRONMENT REATTACHMENT (ADR 0106, issue #462 phase 3): a loaded session
+	// ENVIRONMENT REATTACHMENT (ADR 0214, issue #462 phase 3): a loaded session
 	// with a PERSISTED non-in-tree EnvironmentRef (a remote worker, a container)
 	// reattaches a LIVE Environment through the configured resolver. This runs
 	// ONLY when no in-process override is registered (a remote session registers
@@ -2883,14 +2883,14 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		return nil, tool.Environment{}, err
 	}
 	// Stamp the resolved default ref from the live Environment so a legacy
-	// zero-ref session persists it on the next ordinary save (ADR 0106, issue
+	// zero-ref session persists it on the next ordinary save (ADR 0214, issue
 	// #462 phase 3 — no migration sweep).
 	stampDefaultEnvironmentRef(sess)
 	return engine, env, nil
 }
 
 // isRemoteEnvironmentRef reports whether ref names a non-in-tree backend that
-// requires an EnvironmentResolver to reattach (ADR 0106). The zero ref and the
+// requires an EnvironmentResolver to reattach (ADR 0214). The zero ref and the
 // in-tree Kinds (local/mem/nofs) return false; any other Kind returns true. The
 // in-tree set is closed here (the session package owns the constants); a
 // future remote transport adds its own Kind label and this predicate returns
@@ -2907,7 +2907,7 @@ func isRemoteEnvironmentRef(ref session.EnvironmentRef) bool {
 }
 
 // resolveEnvironmentRef reattaches a LIVE tool.Environment for a persisted
-// non-in-tree EnvironmentRef via the configured EnvironmentResolver (ADR 0106,
+// non-in-tree EnvironmentRef via the configured EnvironmentResolver (ADR 0214,
 // issue #462 phase 3). It validates the returned Environment's Ref() equals
 // the requested ref and carries a non-nil Workspace; a nil resolver, a ref
 // mismatch, or a nil-Workspace result fails loudly (ErrFailedPrecondition),
@@ -2966,7 +2966,7 @@ func (s *Service) buildSessionEnvironment(sess *session.Session, ws tool.Workspa
 
 // defaultEnvironmentRef computes the resolved default EnvironmentRef for a
 // session from its workspace/profile. It is the SINGLE source for the in-tree
-// default ref (ADR 0106, issue #462 phase 3 — finding #6 collapsed the
+// default ref (ADR 0214, issue #462 phase 3 — finding #6 collapsed the
 // duplicate derivation): buildSessionEnvironment uses it for the LIVE
 // Environment's ref, and stampDefaultEnvironmentRef uses it for the ref STAMPED
 // at create time so the next ordinary save persists it. The two therefore
@@ -3025,7 +3025,7 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // the shared engine with zero rehydration overhead, exactly as before. The
 // empty-workspace check stays as the SECOND defense (a no-fs session that
 // somehow persisted no profile label still rehydrates) — but it is GUARDED
-// against a REMOTE EnvironmentRef (ADR 0106, issue #462 phase 3): a remote
+// against a REMOTE EnvironmentRef (ADR 0214, issue #462 phase 3): a remote
 // session carries an empty persisted Workspace (its filesystem lives in the
 // remote backend, not on a local root), so the empty-workspace arm must NOT
 // fire for it — that would relabel it no-fs (profileForSession → ProfileNoFS),
@@ -3065,7 +3065,7 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 // the second-defense empty-workspace inference. It is the shared profile source for the
 // mode→model rebuild (CASE 1) so a no-fs session that switches mode rebuilds the no-FS
 // catalog, never silently escalating onto the FS tools. A REMOTE EnvironmentRef
-// (ADR 0106, issue #462 phase 3) is excluded from the empty-workspace inference: a
+// (ADR 0214, issue #462 phase 3) is excluded from the empty-workspace inference: a
 // remote session carries an empty persisted Workspace (its filesystem lives in the
 // remote backend), so inferring no-fs from it would relabel the session and register a
 // no-fs environment override that preempts the EnvironmentResolver. A remote session
@@ -3776,7 +3776,7 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 // An Append failure is best-effort: it WARNs and never aborts the run (a broken
 // durable log must not break the live stream).
 //
-// It is ALSO the SINGLE site that stamps session.Event.Actor (ADR 0100 decision
+// It is ALSO the SINGLE site that stamps session.Event.Actor (ADR 0204 decision
 // 5): the attribution is derive-at-append, read from the CONTEXT PRINCIPAL — the
 // verified caller who drove this request — so the loop stays storage- and
 // identity-agnostic and every emit site leaves Actor nil. Callers pass a

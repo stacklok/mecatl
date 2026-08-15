@@ -1,14 +1,14 @@
-# ADR 0106 — Execution-environment persistence and reattachment
+# ADR 0214 — Execution-environment persistence and reattachment
 
 - Status: Accepted
 - Date: 2026-08-13
 - Scope: `engine/session` (`Session.EnvironmentRef`, snapshot persistence); `engine/adapter/sessnap` (`Snapshot.EnvironmentRef`); `internal/adapter/server` (`Config.EnvironmentResolver`, run-entry reattachment, create-time ref stamping); `internal/adapter/remoteenv` (the in-process reference fake); `engine/COMPATIBILITY.md` (Session reconstruction contract)
-- Supersedes: [ADR 0105](./0105-execution-environment-runtime-seam.md) — ONLY for its phase-3 deferral (decision 6, which deliberately left `EnvironmentRef` an in-process identity and reattachment unimplemented). ADR 0105's runtime seam (the `Environment`/`EnvironmentForker`/`EnvironmentMerger`/`Tool.Execute`/`CommandRunner` signatures, decisions 1–5) remains authoritative and is NOT superseded. [ADR 0104](./0104-execution-environment.md)'s version-aware file mutation is likewise untouched.
+- Supersedes: [ADR 0211](./0211-execution-environment-runtime-seam.md) — ONLY for its phase-3 deferral (decision 6, which deliberately left `EnvironmentRef` an in-process identity and reattachment unimplemented). ADR 0211's runtime seam (the `Environment`/`EnvironmentForker`/`EnvironmentMerger`/`Tool.Execute`/`CommandRunner` signatures, decisions 1–5) remains authoritative and is NOT superseded. [ADR 0208](./0208-execution-environment.md)'s version-aware file mutation is likewise untouched.
 - Superseded by: none
 
 ## Context
 
-ADR 0105 (the runtime seam) made `session.EnvironmentRef` an in-process identity: it carried the
+ADR 0211 (the runtime seam) made `session.EnvironmentRef` an in-process identity: it carried the
 backend-family `Kind` + opaque `ID` on a live `tool.Environment`, but it was deliberately NOT a
 snapshot field. A process restart re-derived the `Environment` through the existing per-session
 engine rehydration path (which rebuilds the engine for a persisted provider/model selector and,
@@ -19,18 +19,18 @@ The deferred work is the persistence/reattachment half: make the ref durable so 
 can reattach a live `Environment` to the SAME backend (a remote worker, a container) instead of
 silently re-deriving one from the workspace/profile, and prove the reattachment/fork/merge contract
 over a non-in-tree `EnvironmentKind` without waiting for a real vendor transport. The risk is the
-opposite of ADR 0105's: an EnvironmentResolver wired at run entry could silently trigger per-session
+opposite of ADR 0211's: an EnvironmentResolver wired at run entry could silently trigger per-session
 engine rehydration for a default provider/model, conflating two independent concerns
 (engine rehydration rebuilds the ENGINE for a persisted selector; environment reattachment
 reattaches the ENVIRONMENT for a persisted ref). A ref that names a backend the server cannot
 resolve must fail loudly, never silently fall back to a local workspace (that would be the same
-silent-degradation class ADR 0105 closed for the no-fs override).
+silent-degradation class ADR 0211 closed for the no-fs override).
 
 ## Decision
 
 ### 1. Persist `Session.EnvironmentRef` as an inert exported field
 
-`session.Session.EnvironmentRef` (added in ADR 0105) is now a DURABLE, inert exported field, the
+`session.Session.EnvironmentRef` (added in ADR 0211) is now a DURABLE, inert exported field, the
 same write-once-label posture as `Profile`/`ProviderID`/`ModelID`/`ReasoningEffort`: the aggregate
 stores it and never interprets it. `sessnap.Snapshot.EnvironmentRef` round-trips it through
 `Of`/`Restore`. It uses Go 1.26's `omitzero` (NOT `omitempty`, which never omits a non-empty struct)
@@ -83,7 +83,7 @@ This ADR does NOT choose RPCs, leases, upload protocols, path syntax, credential
 backend CAS tokens, or cleanup ownership for a remote execution service. The ref is durable
 identity, not a transport contract. A remote service must provide true backend compare-and-swap and
 explicit lifecycle semantics when designed; local adapters continue to make only the narrower
-same-live-`Workspace` guarantee ADR 0104 states. No stdio MCP or command-spawning transport is
+same-live-`Workspace` guarantee ADR 0208 states. No stdio MCP or command-spawning transport is
 implied.
 
 ## Consequences
@@ -105,7 +105,7 @@ implied.
 
 - `sessnap.Snapshot` gains a struct field that uses `omitzero` (the first snapshot field to do so;
   the prior struct fields use pointers for true omitempty, which `EnvironmentRef`'s value-type
-  design rejects — ADR 0105 made it a plain comparable struct to avoid heap escapes on the hot
+  design rejects — ADR 0211 made it a plain comparable struct to avoid heap escapes on the hot
   dispatch path). `omitzero` requires Go 1.26, which the module already targets.
 - The fake is contract proof only: it does not exercise a real network, real CAS, or real cleanup,
   and a vendor transport will need its own conformance against the same contract.
@@ -117,8 +117,8 @@ implied.
 
 ## See also
 
-- [ADR 0104 — execution environments and version-aware file mutation](./0104-execution-environment.md)
-- [ADR 0105 — execution-environment runtime seam](./0105-execution-environment-runtime-seam.md)
+- [ADR 0208 — execution environments and version-aware file mutation](./0208-execution-environment.md)
+- [ADR 0211 — execution-environment runtime seam](./0211-execution-environment-runtime-seam.md)
 - [Architecture — ports and adapter boundaries](../architecture.md)
 - [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
 - [ADR 0027 — cloud-native state and resource inventory](./0027-cloud-native.md)

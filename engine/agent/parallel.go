@@ -1065,7 +1065,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
 		return res, session.StopError
 	}
-	// The branch is attributed to the PARENT session's owner (ADR 0100 decision 4).
+	// The branch is attributed to the PARENT session's owner (ADR 0204 decision 4).
 	caps.inheritOwner(childSess)
 
 	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt})

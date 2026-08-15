@@ -1,4 +1,4 @@
-# ADR 0100 — Caller identity: accept a principal, thread it everywhere, record the owner
+# ADR 0204 — Caller identity: accept a principal, thread it everywhere, record the owner
 
 - Status: Accepted
 - Date: 2026-08-07

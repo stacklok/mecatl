@@ -13,7 +13,7 @@ accumulator: acc/session-continuity-ux
 
 # Repair brief
 
-Replace vacuous rebind-matrix tests that merely call `bindSessionID` with real reducer/command journeys for stored continuation, model carryover, effort fork, and worktree switch, proving `/session` copy and exit handoff observe the final adopted ID. Add coverage for exact resume when listing is unavailable. Verify schedule-fire inspection returns to the prior active main chat and labels unknown rows honestly instead of treating them as child runs. Preserve the existing behavior only when it matches ADR-0108; otherwise make the smallest correction and refresh only affected goldens.
+Replace vacuous rebind-matrix tests that merely call `bindSessionID` with real reducer/command journeys for stored continuation, model carryover, effort fork, and worktree switch, proving `/session` copy and exit handoff observe the final adopted ID. Add coverage for exact resume when listing is unavailable. Verify schedule-fire inspection returns to the prior active main chat and labels unknown rows honestly instead of treating them as child runs. Preserve the existing behavior only when it matches ADR-0217; otherwise make the smallest correction and refresh only affected goldens.
 
 ## Protected acceptance criteria
 

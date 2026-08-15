@@ -1,4 +1,4 @@
-# ADR 0090 — Background Bash commands
+# ADR 0201 — Background Bash commands
 
 - Status: Accepted
 - Date: 2026-08-04

@@ -267,7 +267,7 @@ func (w *fsWorkspace) Write(ctx context.Context, path string, data []byte) error
 // only if the buffer does not already exist. It fails (wrapping fs.ErrExist) if
 // the editor's buffer already holds the path (checked via fs/read_text_file,
 // mirroring Stat's buffer-aware existence). The compare+write is serialized
-// under callMu (the RPC CAS sequence — ADR 0103 §5), so a concurrent
+// under callMu (the RPC CAS sequence — ADR 0208 §5), so a concurrent
 // CreateFile/ReplaceFile on the same instance cannot race. The ledger is NOT
 // held across the RPC: callMu and ledgerMu are independent.
 func (w *fsWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
@@ -306,7 +306,7 @@ func (w *fsWorkspace) CreateFile(ctx context.Context, path string, data []byte) 
 // ReplaceFile conditionally replaces the buffer content at path, only if the
 // editor's current buffer version equals old. It reads the buffer, mints the
 // current version, compares, and writes — all under callMu (the RPC CAS
-// sequence — ADR 0103 §5). On a version mismatch it returns a
+// sequence — ADR 0208 §5). On a version mismatch it returns a
 // *tool.VersionMismatchError; on a missing buffer it returns an error wrapping
 // fs.ErrNotExist. Because fs/write_text_file is unconditional, the CAS is only
 // as atomic as callMu; there is exactly one fsWorkspace per session, so a

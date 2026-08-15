@@ -167,7 +167,7 @@ type parentCaps struct {
 	// The ctx is the run's ctx so a Run.Cancel propagates into the classifier turn
 	// (issue #94); see SubagentModelRouter.
 	routeTask func(ctx context.Context, taskPrompt string) (category, model, reason string, ok bool)
-	// owner is the PARENT session's verified owner (ADR 0100 decision 4), handed
+	// owner is the PARENT session's verified owner (ADR 0204 decision 4), handed
 	// down so every child session (subagent-/parallel-/team-) is attributed to the
 	// same principal as the session that spawned it. It is read off the parent
 	// AGGREGATE, deliberately NOT off the ambient context: a child must inherit
@@ -193,7 +193,7 @@ type parentCaps struct {
 }
 
 // inheritOwner stamps the parent session's owner onto a freshly-minted child
-// session (ADR 0100 decision 4). It is the ONE point every child family goes
+// session (ADR 0204 decision 4). It is the ONE point every child family goes
 // through, so subagent/parallel/team children cannot drift apart. Write-once via
 // the aggregate (Session is an aggregate — never poke the field); on a fresh
 // child the slot is empty so this cannot collide, and a nil owner is a no-op —
@@ -2402,7 +2402,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if !ok {
 		return errResult, nil
 	}
-	// The child is attributed to the PARENT session's owner (ADR 0100 decision 4).
+	// The child is attributed to the PARENT session's owner (ADR 0204 decision 4).
 	caps.inheritOwner(child)
 	// Tear down the run workspace after the child fully drains. For a writable
 	// (direct-write) child this is a no-op — cleanupWS is the no-op returned by
@@ -2738,7 +2738,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		endOnError(errResult)
 		return
 	}
-	// The child is attributed to the PARENT session's owner (ADR 0100 decision 4).
+	// The child is attributed to the PARENT session's owner (ADR 0204 decision 4).
 	b.caps.inheritOwner(child)
 	// RESUME-START persist, mirroring prepareChildSession: refresh the resumed
 	// snapshot's last-modified time so the child-session GC's age pass never
@@ -3038,7 +3038,7 @@ func subagentErrorBody(cause, final string) string {
 
 // subagentErrorResumeHint is the MODEL-VISIBLE next-action instruction stamped on a
 // FAILED delegation. A failed child is now recoverable through `resume` (issue #318,
-// docs/adr/0077-resume-a-failed-subagent.md), and a capability the model is never told
+// docs/adr/0200-resume-a-failed-subagent.md), and a capability the model is never told
 // about is a capability it cannot use — the model-visible-affordance rule (ADR 0070),
 // the same reason the StopNoProgress note and the no-summary floor carry their own resume
 // hints.
@@ -3830,7 +3830,7 @@ func (t *SubagentTool) loadOwnedResumeSession(ctx context.Context, callID sessio
 // error result and the replayed history stays provider-valid. Per Recover's own
 // contract, recovery makes retry POSSIBLE, not guaranteed: a permanent-cause child
 // re-fails cleanly, which is strictly better than never being able to try. See
-// docs/adr/0077-resume-a-failed-subagent.md.
+// docs/adr/0200-resume-a-failed-subagent.md.
 //
 // It returns the recovered session on success, or a model-addressable error ToolResult
 // (ok=false) on a load failure or non-resumable state.

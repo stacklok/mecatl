@@ -1,4 +1,4 @@
-# Kustomize overlay: caller identity (OIDC) for the mecak8s agent (ADR 0100).
+# Kustomize overlay: caller identity (OIDC) for the mecak8s agent (ADR 0204).
 #
 # OPT-IN. The base deploys with identity OFF, which is byte-identical to a mecatl
 # without caller identity — this overlay is for a deployment that wants every
@@ -16,7 +16,7 @@
 # not ship SSRF relaxation.
 #
 # The raw-driver NetworkPolicy is intentionally part of this overlay.  Until
-# ADR 0103's caller propagation exists, a raw driver is trusted shared
+# ADR 0213's caller propagation exists, a raw driver is trusted shared
 # infrastructure: only the mecak8s agent workload may reach it.  Tenant pods
 # must use the authenticated public service, not a raw driver endpoint.
 #

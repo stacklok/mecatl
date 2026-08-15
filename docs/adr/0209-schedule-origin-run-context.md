@@ -1,4 +1,4 @@
-# ADR 0104 — Attribute schedule origins through the run context
+# ADR 0209 — Attribute schedule origins through the run context
 
 - Status: Accepted
 - Date: 2026-08-12
@@ -63,7 +63,7 @@ later would be breaking, so the narrower surface is the reversible direction. If
 export ever happens, `validateScheduleOrigin` must first gain an ownership check — that
 the caller's principal matches the origin session's owner — because today the only thing
 preventing an embedder from naming an arbitrary session (and inheriting its owner via
-`captureScheduleOwner`, ADR 0100 decision 6) is that no exported writer exists.
+`captureScheduleOwner`, ADR 0204 decision 6) is that no exported writer exists.
 
 The origin's context key stays in `engine/agent` rather than beside `session.Principal`
 in the domain leaf. The principal has writers outside the engine core, which forces an
@@ -75,5 +75,5 @@ unified.
 
 - [Architecture guide](../architecture.md)
 - [ADR 0075 — Fire-result delivery](./0075-fire-result-delivery.md)
-- [ADR 0100 — Caller-identity threading](./0100-caller-identity-threading.md)
+- [ADR 0204 — Caller-identity threading](./0204-caller-identity-threading.md)
 - [ADR 0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)

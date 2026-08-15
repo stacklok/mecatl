@@ -8,7 +8,7 @@
 
 ## Context
 
-ADR 0110 added an adapter-local OAuth controller but intentionally left presentation to
+ADR 0220 added an adapter-local OAuth controller but intentionally left presentation to
 its embedding. A browser callback is host interaction, not agent-loop behavior: putting it
 in `engine/`, ACP, or the long-running daemon would mix local-user presence with remote
 session transport. Reimplementing discovery, PKCE, exchange, or persistence around a
@@ -51,12 +51,12 @@ controller record.
 
 The runtime supports only callbacks that can reach the same machine and profiles compatible
 with random loopback ports and paths. Production readiness remains blocked on the metadata
-profile constraints recorded by ADR 0109 and on canonical profile/key wiring. There is no
+profile constraints recorded by ADR 0219 and on canonical profile/key wiring. There is no
 ACP or default-daemon login claim.
 
 ## See also
 
-- [ADR 0109 — Qualify the official MCP SDK authorization-code profile](./0109-mcp-oauth-sdk-profile.md)
-- [ADR 0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
+- [ADR 0219 — Qualify the official MCP SDK authorization-code profile](./0219-mcp-oauth-sdk-profile.md)
+- [ADR 0220 — Adapter-local MCP OAuth controller](./0220-mcp-oauth-controller.md)
 - [Extensibility architecture](../architecture/extensibility.md)
 - [Production readiness](../design/PRODUCTION-READINESS.md)

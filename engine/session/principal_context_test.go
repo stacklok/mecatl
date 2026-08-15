@@ -8,7 +8,7 @@ import (
 )
 
 // TestInvariant_no_fabricated_principal pins the AGENTS.md invariant
-// "no fabricated principal" (ADR 0100 decision 2): the context seam round-trips
+// "no fabricated principal" (ADR 0204 decision 2): the context seam round-trips
 // a verified principal, and an ABSENT principal reads back as nil — never a
 // fabricated anonymous value. A nil stored through WithPrincipal must read back
 // as absent too, so a caller cannot launder "no identity" into a non-nil empty

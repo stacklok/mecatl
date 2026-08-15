@@ -33,7 +33,7 @@ correlation-only—not authentication, tracing, idempotency, provider conversati
 state, safety/user identity, or a cache key. Missing or Go-illegal HTTP header values
 are omitted without failing the model call. Custom providers may use the context
 helper without adding a field to `LLMRequest`. See
-[ADR 0110](https://github.com/stacklok/mecatl/blob/main/docs/adr/0110-provider-session-correlation-header.md).
+[ADR 0216](https://github.com/stacklok/mecatl/blob/main/docs/adr/0216-provider-session-correlation-header.md).
 
 **`Capabilities`** reports which non-text prompt content the provider accepts. The composition layer computes a capability intersection (model-level modalities ∩ adapter capabilities) and uses it to gate multimodal content at the ACP surface — rejecting unsupported image or audio parts loudly rather than silently dropping them. A decorator that wraps another `LLMProvider` **must** forward the inner provider's `Capabilities()` unchanged; replacing it with the zero value breaks multimodal gating.
 

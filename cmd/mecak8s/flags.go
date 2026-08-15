@@ -9,7 +9,7 @@
 // / `perf-mcp` subcommands, no ACP (mecated-only), and NO --store-dir (storage-free:
 // state lives in Redis and the k8s API server). It shares the SAME provider +
 // model-alias/model-slot flag wiring (internal/cliconfig) so the three-mains
-// wiring cannot drift. Telemetry (issue #343, ADR 0097) is OPT-IN: a loopback
+// wiring cannot drift. Telemetry (issue #343, ADR 0098) is OPT-IN: a loopback
 // --metrics-addr mounts the admin mux's /metrics for scrape, and --otlp-* pushes
 // traces/metrics to a collector. Both default off — the pre-telemetry posture.
 //
@@ -214,7 +214,7 @@ type config struct {
 	schedulerMinInterval        time.Duration
 	schedulerMaxConcurrentFires int
 
-	// Headless telemetry (issue #343, ADR 0097): OPT-IN. --metrics-addr mounts a
+	// Headless telemetry (issue #343, ADR 0098): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape,
 	// ADR 0018 decision 6: loopback only, fail-closed on a non-loopback bind).
 	// --otlp-* push traces/metrics to a collector (opt-in twin for non-scrape
@@ -366,7 +366,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "enable the Parallel fan-out tool (parallel isolated child branches)")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "enable the experimental agent-teams capability (CreateTeam / SpawnTeammate / RunTeam)")
 
-	// Headless telemetry (issue #343, ADR 0097): OPT-IN. --metrics-addr mounts a
+	// Headless telemetry (issue #343, ADR 0098): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape).
 	// --otlp-* push traces/metrics to a collector (the opt-in twin for non-scrape
 	// deployments). All empty (default) leaves the pipeline off.
@@ -473,7 +473,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		NoBash:                 cfg.noBash,
 		RedisURL:               cfg.redisURL,
 		// OwnershipEnforced mirrors cmd/mecated's wiring: the OIDC verifier being
-		// enabled IS the caller-isolation on-switch (ADR 0102). Without this line
+		// enabled IS the caller-isolation on-switch (ADR 0212). Without this line
 		// mecak8s attributes ownership correctly but never enforces it — every
 		// caller-owned application boundary silently falls back to its
 		// ownerless-compatibility path, and deploy/mecak8s-oidc's isolation claim
@@ -544,7 +544,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// unresolved ask is auto-denied / routed to the opt-in ask-reviewer.
 		Interactive: !cfg.headless,
 		Diagnostics: diag,
-		// Observability (issue #343, ADR 0097): OPT-IN. With no --otlp-* flags the
+		// Observability (issue #343, ADR 0098): OPT-IN. With no --otlp-* flags the
 		// handles are zero-valued (nil) — the byte-identical no-metrics posture.
 		Sink:              obs.Sink,
 		ToolCallRecorder:  obs.ToolCallRecorder,

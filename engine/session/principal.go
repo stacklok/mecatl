@@ -6,7 +6,7 @@ import (
 )
 
 // GrantType names how a Principal was authenticated. It is a closed enum of
-// exactly three values (ADR 0100 decision 1); the zero value is deliberately
+// exactly three values (ADR 0204 decision 1); the zero value is deliberately
 // NOT a member, so an unset grant type is never mistaken for a valid one.
 type GrantType string
 
@@ -33,7 +33,7 @@ func (g GrantType) Valid() bool {
 }
 
 // Principal is the verified caller a session or schedule is attributed to
-// (ADR 0100 decision 1). Identity is the (Issuer, Subject) PAIR, never Subject
+// (ADR 0204 decision 1). Identity is the (Issuer, Subject) PAIR, never Subject
 // alone — two IdPs or realms collide on `sub`.
 //
 // It is a pure value object: comparable, stdlib-only, and deliberately narrow.
@@ -42,7 +42,7 @@ func (g GrantType) Valid() bool {
 // ToolHive's PrincipalInfo; ToolHive is not imported.
 //
 // Absent identity is a nil *Principal, NEVER a fabricated anonymous one (the
-// ToolHive anonymous-middleware anti-pattern ADR 0100 rejects).
+// ToolHive anonymous-middleware anti-pattern ADR 0204 rejects).
 type Principal struct {
 	// Issuer is the IdP that minted the token (the canonical `iss` claim).
 	Issuer string
@@ -144,12 +144,12 @@ func (p *Principal) SameIdentity(other *Principal) bool {
 // Authority is Track C's placeholder label on the Session aggregate. It is
 // INERT in the caller-identity plan: nothing reads or writes it beyond the
 // snapshot round-trip. It ships now so the contended engine/api/*.txt
-// regeneration and CHANGELOG note are paid once (ADR 0100 consequences).
+// regeneration and CHANGELOG note are paid once (ADR 0204 consequences).
 // The zero value ("") means "unset".
 type Authority string
 
 // ErrOwnerAlreadySet is returned by RestoreLabels when the session already
-// carries a DIFFERENT owner. The owner is write-once (ADR 0100 decision 4).
+// carries a DIFFERENT owner. The owner is write-once (ADR 0204 decision 4).
 var ErrOwnerAlreadySet = errors.New("session: owner already set")
 
 // RestoreLabels stamps the write-once identity labels (Owner, Authority) on the

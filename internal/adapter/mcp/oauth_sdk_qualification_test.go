@@ -165,7 +165,7 @@ func TestSDKAuthorizationCodeBoundsRepeatedProtectedRejection(t *testing.T) {
 	}
 	// The pinned SDK gives the JSON-RPC initialize path one connection-level
 	// replay in addition to each transport-level OAuth retry. Assert that the
-	// observed discrepancy remains bounded; ADR 0109 excludes repeated rejection
+	// observed discrepancy remains bounded; ADR 0219 excludes repeated rejection
 	// from the qualified production profile pending an upstream correction.
 	if got := fixture.count("unauthorized"); got != 4 {
 		t.Errorf("protected attempts = %d, want bounded pinned-SDK behavior of 4", got)
@@ -356,7 +356,7 @@ func TestSDKAuthorizationCodePinnedIneligible403Behavior(t *testing.T) {
 	}
 	// This pins an unsafe dependency discrepancy, not supported behavior: the
 	// transport retries a 403 carrying invalid_token even though the handler
-	// starts no authorization flow. ADR 0109 excludes this path from future
+	// starts no authorization flow. ADR 0219 excludes this path from future
 	// production wiring until the official SDK is corrected or mediated.
 	if got := fixture.count("ineligible-forbidden"); got != 4 {
 		t.Errorf("ineligible 403 attempts = %d, want bounded pinned transport behavior of 4", got)

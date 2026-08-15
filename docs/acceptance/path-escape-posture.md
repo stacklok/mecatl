@@ -22,7 +22,7 @@ harness can demonstrate, not which packages exist on disk.
 - [ADR-0047](../adr/0047-absolute-path-resolution.md) — the frozen decision that
   defines `resolveInRoot`, the canonicalize-then-reject serving contract, and the
   Glob/Grep-no-behavioural-change rule this plan relaxes *the decision of* (never
-  the vetting). ADR 0104 separately makes ledger keying I/O-free and lexical.
+  the vetting). ADR 0208 separately makes ledger keying I/O-free and lexical.
 - The guardrail matcher keys on tool **name** only
   ([`internal/adapter/modelhook/matcher.go`](../../internal/adapter/modelhook/matcher.go)
   `ruleMatches`), never on call args — so "gate on the guardrails decision" cannot

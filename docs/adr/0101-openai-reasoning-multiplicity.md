@@ -191,7 +191,7 @@ lossy; nothing here forecloses it.
   the OpenAI request/stream mapping and the anthropic packing precedent.
 - `user-docs/extension-points/llm-provider.md` — the contract an out-of-tree
   adapter author reads (outside the linked corpus; named, not linked).
-- [ADR 0097](./0097-permanent-provider-error-signal.md) — the permanent-error
+- [ADR 0203](./0203-permanent-provider-error-signal.md) — the permanent-error
   signal this rejection travels under, and why it is not retried generically.
 - [ADR 0016](./0016-multi-provider.md) — the provider-neutral `LLMRequest`
   discipline that keeps this fix inside the adapter.

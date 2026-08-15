@@ -187,7 +187,7 @@ not mecatl's heavy dependency cone. See [ADR 0036](docs/adr/0036-engine-module.m
 | Path | Contents |
 |---|---|
 | `go.work`, `go.mod`, `engine/go.mod`, `authn/oidc/go.mod` | the committed Go workspace and the root, importable-engine, and opt-in OIDC module manifests |
-| `authn/oidc` | reusable OIDC bearer validation that projects verified claims into `session.Principal` without exposing ToolHive types ([ADR 0103](docs/adr/0103-oidc-authn-module.md)) |
+| `authn/oidc` | reusable OIDC bearer validation that projects verified claims into `session.Principal` without exposing ToolHive types ([ADR 0206](docs/adr/0206-oidc-authn-module.md)) |
 | `engine/COMPATIBILITY.md`, `engine/CHANGELOG.md`, `engine/api/*.txt` | the engine public-API stability contract: policy, change record, and committed surface snapshots (the `api-compat` gate, [ADR 0037](docs/adr/0037-engine-stability-contract.md)) |
 | `engine/session`, `engine/governance`, `engine/tool`, `engine/prompt` | the domain (aggregate, permission/hook types, tool catalog + FS interfaces, prompt assembly) |
 | `engine/port` | the port interfaces the loop consumes |

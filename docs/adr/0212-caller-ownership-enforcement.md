@@ -1,4 +1,4 @@
-# ADR 0102 — Enforce caller ownership at every application access path
+# ADR 0212 — Enforce caller ownership at every application access path
 
 - Status: Accepted
 - Date: 2026-08-11
@@ -8,7 +8,7 @@
 
 ## Context
 
-[ADR 0100](./0100-caller-identity-threading.md) introduced a verified `session.Principal`
+[ADR 0204](./0204-caller-identity-threading.md) introduced a verified `session.Principal`
 and durable session and schedule owners, deliberately without authorization. That makes
 attribution possible but leaves every application path able to operate on an ID supplied
 by any authenticated caller. The exposed paths are not limited to durable stores: an
@@ -17,7 +17,7 @@ round trip, and model-facing delegation/memory tools can reach shared ports dire
 
 The driver protocol remains explicitly trusted infrastructure in this phase. It is an
 out-of-process raw-port boundary and cannot enforce the application decision until the
-separate B-lite work in [ADR 0103](./0103-driver-caller-ownership.md) lands. Its trust
+separate B-lite work in [ADR 0213](./0213-driver-caller-ownership.md) lands. Its trust
 requirement must therefore be explicit rather than implied by the application's checks.
 
 ## Decision
@@ -62,7 +62,7 @@ requirement must therefore be explicit rather than implied by the application's 
    named in the same kind table; all other system access is denied. The model-facing
    posture ladder is orthogonal and cannot turn ownership enforcement off.
 
-6. **Declare and verify the driver trust boundary until ADR 0103.** A raw driver endpoint
+6. **Declare and verify the driver trust boundary until ADR 0213.** A raw driver endpoint
    is deployment-internal only: a supported OIDC deployment must select and prove one
    concrete boundary (NetworkPolicy, mTLS pinning, or a Unix socket) that admits the
    mecatl workload and denies a tenant peer. It is not tenant-reachable and must not be
@@ -79,13 +79,13 @@ path.
 This adds classification work whenever an object-touching method is introduced and
 requires negative tests for non-store access paths. It does not secure a directly
 reachable raw driver endpoint; operators must preserve the stated deployment boundary
-until ADR 0103 is implemented.
+until ADR 0213 is implemented.
 
 ## See also
 
-- [ADR 0100](./0100-caller-identity-threading.md) — principal and durable owner
+- [ADR 0204](./0204-caller-identity-threading.md) — principal and durable owner
   attribution.
-- [ADR 0103](./0103-driver-caller-ownership.md) — the deferred driver enforcement
+- [ADR 0213](./0213-driver-caller-ownership.md) — the deferred driver enforcement
   boundary.
 - [Issue #368](https://github.com/stacklok/mecatl/issues/368) — application caller
   isolation.

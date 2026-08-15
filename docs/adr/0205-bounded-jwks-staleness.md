@@ -1,4 +1,4 @@
-# ADR 0101 — Bound cached JWKS staleness
+# ADR 0205 — Bound cached JWKS staleness
 
 - Status: Accepted
 - Date: 2026-08-11
@@ -48,5 +48,5 @@ on an old on-disk key cache because none exists.
 
 ## See also
 
-- [ADR 0100](./0100-caller-identity-threading.md) — caller identity and the shared OIDC validator
+- [ADR 0204](./0204-caller-identity-threading.md) — caller identity and the shared OIDC validator
 - [ADR 0027](./0027-cloud-native.md) — process-owned JWKS cache lifecycle and restart policy

@@ -16,7 +16,7 @@ accumulator: acc/caller-separation
 Establish the narrow core/application seam that compares only the verifier-emitted
 `(Issuer, Subject)` pair, distinguishes no-principal compatibility from OIDC isolation,
 and binds an immutable owner atomically on creation/retry. Keep concrete server and
-adapter types out of `engine/agent`; follow ADR-0102.
+adapter types out of `engine/agent`; follow ADR-0212.
 
 ## Acceptance criteria
 

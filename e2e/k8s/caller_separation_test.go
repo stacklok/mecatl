@@ -1,7 +1,7 @@
 //go:build kind_e2e
 
 // These journeys are the derived proof for issue #368 (caller separation,
-// ADR-0102): they were written AFTER hand-driving the equivalent curl journeys
+// ADR-0212): they were written AFTER hand-driving the equivalent curl journeys
 // against a real kind cluster (real Dex tokens for alice@example.com/bob@example.com,
 // real mecak8s pods built from this commit) and observing the actual responses —
 // the same discipline caller_identity_test.go's own header describes. Two real

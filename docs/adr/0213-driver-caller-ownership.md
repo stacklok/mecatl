@@ -1,4 +1,4 @@
-# ADR 0103 — Enforce caller ownership at remote driver boundaries
+# ADR 0213 — Enforce caller ownership at remote driver boundaries
 
 - Status: Accepted
 - Date: 2026-08-11
@@ -8,7 +8,7 @@
 
 ## Context
 
-[ADR 0102](./0102-caller-ownership-enforcement.md) protects every application-facing
+[ADR 0212](./0212-caller-ownership-enforcement.md) protects every application-facing
 path, but a remote driver exposes raw storage ports beyond that service boundary. It
 cannot infer a caller from a session ID, and copying an owner label from a snapshot or
 request makes ownership client-asserted. Forwarding a user's bearer token would spread
@@ -20,7 +20,7 @@ not scopes or authority; and application policy is not rebuilt in the driver.
 
 ## Decision
 
-1. **Make B-lite a separate follow-up to ADR 0102.** Until it lands, a driver is
+1. **Make B-lite a separate follow-up to ADR 0212.** Until it lands, a driver is
    declared trusted deployment infrastructure. It is never tenant-reachable.
 
 2. **Accept a principal claim only from the authenticated mecatl workload.** The claim
@@ -60,7 +60,7 @@ not scopes or authority; and application policy is not rebuilt in the driver.
 ## Consequences
 
 A direct driver client cannot select another caller's record merely by knowing its ID,
-and driver-side enforcement shares ADR 0102's identity comparison semantics without
+and driver-side enforcement shares ADR 0212's identity comparison semantics without
 receiving policy authority. Separate infrastructure operations prevent a scheduler or
 retention worker from becoming a universal principal bypass.
 
@@ -71,8 +71,8 @@ or make arbitrary existing driver clients compatible with enforcement.
 
 ## See also
 
-- [ADR 0102](./0102-caller-ownership-enforcement.md) — application ownership decision.
-- [ADR 0100](./0100-caller-identity-threading.md) — credential-free principal model.
+- [ADR 0212](./0212-caller-ownership-enforcement.md) — application ownership decision.
+- [ADR 0204](./0204-caller-identity-threading.md) — credential-free principal model.
 - [Issue #452](https://github.com/stacklok/mecatl/issues/452) — B-lite delivery issue.
 - [`AGENTS.md`](../../AGENTS.md) — `engine/` layering and no-fabricated-principal
   invariants.

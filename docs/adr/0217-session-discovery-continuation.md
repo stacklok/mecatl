@@ -1,4 +1,4 @@
-# ADR 0108 — Session discovery uses durable kind metadata and an authoritative transcript
+# ADR 0217 — Session discovery uses durable kind metadata and an authoritative transcript
 
 - Status: Accepted
 - Date: 2026-08-14

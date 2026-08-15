@@ -79,7 +79,7 @@ name→Tool registry with `Register`/`MustRegister`/`Lookup`/`Tools`. Its
 level**: in `ModePlan` only `ReadOnly()` tools are exposed, ordered by name.
 
 `FileSystem`, `Workspace`, and `Environment` live here (not in `port`) to break
-the `port↔tool` cycle. `Tool.Execute` takes a `tool.Environment` (ADR 0105) — an
+the `port↔tool` cycle. `Tool.Execute` takes a `tool.Environment` (ADR 0211) — an
 immutable, per-namespace capability bundle carrying a `Workspace`
 (`env.Workspace()`), an optional bound `CommandRunner` (`env.CommandRunner()`; nil
 when the namespace has no shell), and a backend identity ref
@@ -88,7 +88,7 @@ when the namespace has no shell), and a backend identity ref
 `ErrNoShell` when it is nil. `Workspace` scopes all paths to one root (rejecting
 `../` escapes), exposes the
 read-only `Root/Read/Stat` surface plus `Glob/Grep`, and carries the version-aware
-mutation protocol from [ADR 0104](../adr/0104-execution-environment.md).
+mutation protocol from [ADR 0208](../adr/0208-execution-environment.md).
 `ReadVersion` returns content plus an opaque `FileVersion`; `RecordRead` stores
 that exact version with no I/O, and `RecordedVersion` is the I/O-free ledger
 lookup. Ledger keys use lexical Clean/Rel only: ordinary absolute-root/relative
@@ -104,7 +104,7 @@ Service factory builds a fresh Environment per run, while existing no-fs/ACP
 overrides (registered via `SetSessionEnvironment`) retain their owner-defined
 lifetime. Restarting the process loses in-memory overrides; a restarted session
 re-derives its Environment through the same rehydration path (no-fs profile,
-ACP adapter reconnect). As of ADR 0106, `EnvironmentRef` is a DURABLE snapshot
+ACP adapter reconnect). As of ADR 0214, `EnvironmentRef` is a DURABLE snapshot
 field: a non-in-tree ref persists and reattaches a live `Environment` at run
 entry through `server.Config.EnvironmentResolver` (the in-tree Kinds never reach
 it; a nil/mismatch/nil-Workspace result fails loudly). A legacy zero ref is
@@ -135,19 +135,19 @@ deliberately excludes it. The `osfs` adapter ships a local `/bin/sh`
 `CommandRunner` (output-capped, context-bounded, process-group-killed on
 cancel); a runner may also execute remotely or refuse with `tool.ErrNoShell`. A
 shell-less deployment simply omits Bash, and an OS sandbox would wrap this seam.
-[ADR 0105](../adr/0105-execution-environment-runtime-seam.md) implements the
+[ADR 0211](../adr/0211-execution-environment-runtime-seam.md) implements the
 runtime seam: a coding agent runs in an execution environment (`tool.Environment`)
 whose `Workspace` and bound `CommandRunner` address one namespace. The
 `tool.Environment` carries identity (`session.EnvironmentRef`) plus those two
 capabilities; the forker/merger are `tool.EnvironmentForker`/
 `tool.EnvironmentMerger` (returning/receiving complete `Environment`s), and
 governance remains outside. `EnvironmentRef` is an in-process identity in phase 2
-— snapshot persistence and remote transport are deferred to phase 3. [ADR 0106](../adr/0106-environment-persistence.md)
+— snapshot persistence and remote transport are deferred to phase 3. [ADR 0214](../adr/0214-environment-persistence.md)
 implements the phase-3 persistence/reattachment half: `EnvironmentRef` is a durable
 snapshot field, and `server.Config.EnvironmentResolver` reattaches a live
 `Environment` for a non-in-tree Kind (the `internal/adapter/remoteenv` reference
 fake proves the contract). The
-version-aware file-mutation foundation is [ADR 0104](../adr/0104-execution-environment.md).
+version-aware file-mutation foundation is [ADR 0208](../adr/0208-execution-environment.md).
 
 `tool.MemoryStore` and `tool.EnvironmentForker` live alongside it for the same
 layering reason (the tools that need them depend on the interface, not a
@@ -179,7 +179,7 @@ same spawn/wait tail as `Run`; a runner without it declines background calls
 honestly): the job streams interleaved stdout+stderr into a bounded 64 KiB tail
 ring (`engine/agent/tailbuffer.go`), so `BashStatus` shows the RECENT output a
 head-capped capture would have lost. See
-[ADR 0090](../adr/0090-background-bash.md) and
+[ADR 0201](../adr/0201-background-bash.md) and
 [subagents & teams](subagents-and-teams.md) for the registry family mechanics.
 
 ## Prerequisites

@@ -72,7 +72,7 @@ func (WriteTool) Spec() tool.ToolSpec {
 func (WriteTool) ReadOnly() bool { return false }
 
 // Execute writes the file, enforcing read-before-overwrite on existing paths
-// via the version protocol (ADR 0103): a NEW file uses create-only; an
+// via the version protocol (ADR 0208): a NEW file uses create-only; an
 // EXISTING file requires a recorded version, re-reads the current version, and
 // finishes with a conditional replace against that current version. No
 // unconditional operation is used by the agent-facing Write tool.

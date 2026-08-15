@@ -1,4 +1,4 @@
-# ADR 0103 — Ship reusable OIDC caller identity as an opt-in module
+# ADR 0206 — Ship reusable OIDC caller identity as an opt-in module
 
 - Status: Accepted
 - Date: 2026-08-12
@@ -42,5 +42,5 @@ integration proof, while the failing standalone check is the explicit release ga
 ## See also
 
 - [Architecture guide](../architecture.md)
-- [ADR 0100 — Caller identity threading](./0100-caller-identity-threading.md)
-- [ADR 0101 — Bounded JWKS staleness](./0101-bounded-jwks-staleness.md)
+- [ADR 0204 — Caller identity threading](./0204-caller-identity-threading.md)
+- [ADR 0205 — Bounded JWKS staleness](./0205-bounded-jwks-staleness.md)

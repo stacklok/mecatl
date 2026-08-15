@@ -74,7 +74,7 @@ type ScheduleManagerConfig struct {
 	// OwnershipEnforced mirrors server.Config.OwnershipEnforced (true only when
 	// the request edge has a verifier wired). It gates whether the manager
 	// namespaces the store-facing schedule key by verified caller (issue #368,
-	// ADR-0102 decision 1): a schedule Name is a caller-chosen, human-readable
+	// ADR-0212 decision 1): a schedule Name is a caller-chosen, human-readable
 	// key exactly like a memory key, so two DIFFERENT owners may legitimately
 	// pick the identical name without colliding — mirroring
 	// memory.CallerStore's owner-digest scheme. When false (no verifier wired,
@@ -286,7 +286,7 @@ func (m *scheduleManager) requireCaller(ctx context.Context) bool {
 }
 
 // ownerScheduleNamespace derives the store-facing key namespace a schedule
-// name is scoped into (issue #368, ADR-0102 decision 1): a digest of the
+// name is scoped into (issue #368, ADR-0212 decision 1): a digest of the
 // verified caller's (Issuer, Subject) pair, mirroring
 // memory.CallerStore.scoped's owner-digest scheme. It returns "" when the
 // manager was constructed without ownership enforcement (no verifier wired) —
@@ -384,7 +384,7 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	// distinct method).
 	//
 	// The check (and the eventual write) run against the OWNER-NAMESPACED
-	// physical key (issue #368, ADR-0102 decision 1), not the bare literal
+	// physical key (issue #368, ADR-0212 decision 1), not the bare literal
 	// name: a name already used by a DIFFERENT owner must be absence-style
 	// (indistinguishable from "name available"), never a distinguishing
 	// "already exists" — the collision guard is scoped to THIS caller's own
@@ -392,7 +392,7 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	literalName := spec.Name
 	physicalName := m.physicalScheduleName(ctx, literalName)
 	applyScheduleDefaults(&spec)
-	// Capture the owner ONCE, here (ADR 0100 decision 6). A caller can never
+	// Capture the owner ONCE, here (ADR 0204 decision 6). A caller can never
 	// name it in the request body (protoToScheduleSpec drops any inbound owner,
 	// the same discipline that keeps an owner field off CreateSessionRequest) —
 	// it is derived from the create SURFACE. The origin session's owner comes
@@ -634,11 +634,11 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 	return next, nil
 }
 
-// captureScheduleOwner resolves the owner a schedule is created with (ADR 0100
+// captureScheduleOwner resolves the owner a schedule is created with (ADR 0204
 // decision 6), by CREATE SURFACE:
 //
 //   - the Schedule-TOOL path runs inside a session, and the spec arrives with
-//     OriginSessionID already stamped (ADR 0104: startRun binds the executing
+//     OriginSessionID already stamped (ADR 0209: startRun binds the executing
 //     session id onto the run context, and the tool reads it there when it
 //     builds the spec) — so the owner is that EXECUTING session's owner. The
 //     tool's caller context belongs to whoever prompted the run, which is not
@@ -653,7 +653,7 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 // (nil for an ownerless or absent origin). It is threaded in rather than re-read
 // here: a childgc sweep landing between the two reads would turn a validated,
 // owned create into a silently OWNERLESS schedule — the exact deletion hazard
-// ADR 0100 decision 6 exists for.
+// ADR 0204 decision 6 exists for.
 func captureScheduleOwner(ctx context.Context, spec port.ScheduleSpec, originOwner *session.Principal) *session.Principal {
 	if spec.OriginSessionID == "" {
 		return session.PrincipalFromContext(ctx)
@@ -827,7 +827,7 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	// to the zero value (which the reconcile update path would otherwise do on
 	// every restart, destroying the audit trail).
 	spec.CreatedAt = existing.Spec.CreatedAt
-	// The owner is WRITE-ONCE (ADR 0100 decision 4/6): an Update carries the
+	// The owner is WRITE-ONCE (ADR 0204 decision 4/6): an Update carries the
 	// captured owner forward verbatim, so editing a schedule can never re-own it
 	// to the updating caller.
 	spec.Owner = existing.Spec.Owner

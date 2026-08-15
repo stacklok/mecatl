@@ -4,7 +4,7 @@
 - Date: 2026-07-27
 - Scope: the scheduled-tasks feature's delivery channel — routing a fire's result back into the conversation that created it ("remind me of X", "ping me when Y", "monitor this PR every 30m"), closing ADR 0073's explicitly-deferred follow-up
 - Supersedes: [ADR 0059](./0059-scheduled-tasks.md) — **decision #8's "pull-only delivery v1" posture only.** The durable registry, tick loop, claim-before-fire, fresh-session-per-fire, posture-pinning, and the fenced-untrusted carried-context rendering all stand.
-- Superseded by: [ADR 0104](./0104-schedule-origin-run-context.md) — **the origin-binding mechanism only.** The `Deps.OriginBinder` wrapper-state binding is replaced by run-context attribution; the `OriginSessionID` contract, the durable delivery queue, the turn-boundary drain, and the fenced-untrusted note rendering all stand.
+- Superseded by: [ADR 0209](./0209-schedule-origin-run-context.md) — **the origin-binding mechanism only.** The `Deps.OriginBinder` wrapper-state binding is replaced by run-context attribution; the `OriginSessionID` contract, the durable delivery queue, the turn-boundary drain, and the fenced-untrusted note rendering all stand.
 
 ## Context
 

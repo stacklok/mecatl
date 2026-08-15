@@ -76,7 +76,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 				MaxFires:  3,
 				Mutating:  true,
 				CreatedAt: time.Unix(1_700_000_000, 0),
-				// The captured owner (ADR 0100 decision 6) must survive the
+				// The captured owner (ADR 0204 decision 6) must survive the
 				// round-trip on EVERY transport — a schedule outlives its origin
 				// session, so the store is the only place the attribution lives.
 				Owner: &session.Principal{

@@ -27,7 +27,7 @@ self-contained task (multi-step investigation or build/test/git work) to a **chi
    **On `resume`** (a Subagent call carrying `resume: <agentId>`) it instead RELOADS the
    persisted child by that id and recovers its terminal state — `completed` → `Reopen()`,
    `cancelled` → `Interrupt()` (history-repair), `failed` → `Recover()` (history-repair;
-   ADR 0077, issue #318 — matching the main session's `failed → Recover → idle` seam, since
+   ADR 0200, issue #318 — matching the main session's `failed → Recover → idle` seam, since
    a long-running direct-write child accumulates applied mutations and discarding it costs
    more than a main session's transcript). Only a NON-terminal state — a snapshot still
    recorded `running` — is refused. It then
@@ -73,7 +73,7 @@ verbatim), or pass it as `resume` to CONTINUE that subagent with a follow-up pro
 (default engine only, fresh fork + a resume note — the read-only staleness note, or the
 edits-survived note when the resumed child's OWN earlier run wrote to the real tree and
 this call is `read-write` again). EVERY terminal is resumable, `failed`
-included (ADR 0077): a failed child recovers through `session.Session.Recover`, and its
+included (ADR 0200): a failed child recovers through `session.Session.Recover`, and its
 error result carries a store-gated resume hint so the model can discover the path — the
 hint states what actually carries over (conversation yes, workspace no). A direct-write
 child's failure/timeout instead carries ONE combined resume-or-discard decision that names
@@ -124,7 +124,7 @@ RunTeam path has its own member cancel: the `CancelTeammate(team_id, member)` un
 member directly through `Supervisor.CancelMember` — no parent registry on that path.
 
 **Background Bash jobs ride the same registry as a NON-delegation family**
-(`docs/adr/0090-background-bash.md`). A `background: true` call on the `Bash`
+(`docs/adr/0201-background-bash.md`). A `background: true` call on the `Bash`
 tool registers a `bash-cmd` entry (`bashcmd-<callID>` — a bare process, NO child
 session/engine, no `subagent.*` events, no InspectSubagent/resume), returns the
 job id immediately, and detaches the drive; the run-scoped cancel-at-end drain,

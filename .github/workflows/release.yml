@@ -40,7 +40,7 @@
 # so a provider release never fires this container build, and an image release
 # never re-tags a provider module.
 #
-# Authn-module note (ADR 0103): the reusable OIDC validator is the separate
+# Authn-module note (ADR 0206): the reusable OIDC validator is the separate
 # github.com/stacklok/mecatl/authn/oidc module, released as authn/oidc/vX.Y.Z.
 # It is not a provider module. Its path-prefixed tags likewise do not match the
 # root image trigger below.

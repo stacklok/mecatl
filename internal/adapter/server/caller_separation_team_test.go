@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked pins the ADR 0102
+// TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked pins the ADR 0212
 // live-team boundaries: lookup, run, and cleanup are all absence-shaped for a foreign
 // caller, while the owner retains each operation.
 func TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked(t *testing.T) {

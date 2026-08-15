@@ -14,7 +14,7 @@ import (
 )
 
 // TestCallerSeparation_Scenario4_RawDriverIsTenantInaccessible pins AC4.5's
-// deployment boundary until ADR 0103 carries caller claims to remote drivers:
+// deployment boundary until ADR 0213 carries caller claims to remote drivers:
 // the OIDC overlay admits only the mecak8s agent workload to a raw driver and
 // gives a tenant-labelled peer no matching ingress rule.
 func TestCallerSeparation_Scenario4_RawDriverIsTenantInaccessible(t *testing.T) {

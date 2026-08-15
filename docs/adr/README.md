@@ -28,17 +28,17 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0006 — v1 step-chain](./0006-v1-step-chain.md) *(historical)*
 - [0007 — Twelve-patterns audit](./0007-twelve-patterns-audit.md) *(historical)*
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
-- [0104 — Session families get a bounded, injective, non-reversible physical name](./0104-session-family-physical-naming.md) *(NUMBER COLLIDES with the three entries below — renumber on merge)*
-- [0108 — Session discovery uses durable kind metadata and an authoritative transcript](./0108-session-discovery-continuation.md)
-- [0104 — Operator-owned exact context-window overrides](./0104-context-window-overrides.md) *(the file's own heading says "ADR 0103" — a pre-existing origin/main title/filename mismatch, not introduced here; NUMBER COLLIDES with the other three entries)*
-- [0104 — Attribute schedule origins through the run context](./0104-schedule-origin-run-context.md) *(this branch's own ADR, superseding ADR 0075's origin-binding mechanism; NUMBER COLLIDES with the other three entries — renumber on merge)*
-- [0108 — Internal encrypted credential-store substrate](./0108-credential-store.md)
-- [0109 — Qualify the official MCP SDK authorization-code profile](./0109-mcp-oauth-sdk-profile.md)
-- [0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
-- [0111 — Read-only environment credential source and OAuth refresh posture](./0111-read-only-credential-source.md)
+- [0104 — Session families get a bounded, injective, non-reversible physical name](./0104-session-family-physical-naming.md)
+- [0217 — Session discovery uses durable kind metadata and an authoritative transcript](./0217-session-discovery-continuation.md)
+- [0207 — Operator-owned exact context-window overrides](./0207-context-window-overrides.md)
+- [0209 — Attribute schedule origins through the run context](./0209-schedule-origin-run-context.md) *(supersedes ADR 0075's origin-binding mechanism)*
+- [0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)
+- [0219 — Qualify the official MCP SDK authorization-code profile](./0219-mcp-oauth-sdk-profile.md)
+- [0220 — Adapter-local MCP OAuth controller](./0220-mcp-oauth-controller.md)
+- [0221 — Read-only environment credential source and OAuth refresh posture](./0221-read-only-credential-source.md)
 - [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
-- [0114 — Pin MCP transport-error semantics that do not replay rejected calls](./0114-mcp-sdk-transport-error-semantics.md)
+- [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
@@ -51,14 +51,14 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0065 — Conversation fork: peer session from a history snapshot](./0065-conversation-fork.md)
 - [0073 — Schedule tool](./0073-schedule-tool.md)
 - [0074 — Many loops per server; scheduler shape](./0074-many-loops-scheduler-shape.md)
-- [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md) *(origin-binding mechanism superseded by 0104)*
-- [0104 — Attribute schedule origins through the run context](./0104-schedule-origin-run-context.md) *(supersedes 0075's wrapper-state origin binding)*
+- [0075 — Fire-result delivery: a scheduled fire reports back into the originating chat](./0075-fire-result-delivery.md) *(origin-binding mechanism superseded by 0209)*
+- [0209 — Attribute schedule origins through the run context](./0209-schedule-origin-run-context.md) *(supersedes 0075's wrapper-state origin binding)*
 - [0097 — Scheduled fires are observable in-flight: a first-class persisted lifecycle stage](./0097-scheduled-fire-inflight-state.md)
 - [0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor](./0096-live-feed-reconnect.md)
 - [0103 — mecatui seed prompt (`-p`/`--prompt`, `--prompt-file`)](./0103-mecatui-seed-prompt.md)
 - [0076 — The schedule manager is store-shaped and pre-Service; the shared catalog carries the Schedule tool](./0076-schedule-shared-catalog.md)
 - [0081 — `RulesSource` port for `.claude/rules` discovery](./0081-rules-source-port.md)
-- [0097 — Neutral permanent-provider-error signal (`port.PermanentError` → `ResultPayload.Permanent` → `EvRecoverNotice`)](./0097-permanent-provider-error-signal.md)
+- [0203 — Neutral permanent-provider-error signal (`port.PermanentError` → `ResultPayload.Permanent` → `EvRecoverNotice`)](./0203-permanent-provider-error-signal.md)
 - [0099 — External transcript import (`mecated import`)](./0099-external-transcript-import.md)
 
 ### Memory & context
@@ -74,10 +74,10 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0111 — Hardened publication and recovery for agent-owned skills](./0111-hardened-agent-owned-skill-publication.md)
 
 ### Core tools & shell
-- [0090 — Background Bash commands](./0090-background-bash.md)
-- [0104 — Execution environments and version-aware file mutation](./0104-execution-environment.md) *(runtime-seam deferral superseded by 0105; version protocol authoritative)*
-- [0105 — Execution-environment runtime seam](./0105-execution-environment-runtime-seam.md) *(supersedes 0104 decisions 1–3; phase-3 persistence deferral superseded by 0106)*
-- [0106 — Execution-environment persistence and reattachment](./0106-environment-persistence.md) *(supersedes 0105 decision 6 only)*
+- [0201 — Background Bash commands](./0201-background-bash.md)
+- [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
+- [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
+- [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*
 
 ### Agents, teams & delegation
 - [0013 — Agent definitions](./0013-agent-definitions.md)
@@ -90,7 +90,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0066 — Route unpinned agent-defs and writable explorers; explicit `inherit` is the pin](./0066-route-unpinned-and-writable-delegations.md)
 - [0077 — Direct-write writable Subagent (no fork, no merge-back)](./0077-direct-write-subagent.md)
 - [0079 — Converge delegation observability on two tiers (bounded previews for Subagent/Parallel)](./0079-delegation-observability-convergence.md)
-- [0077 — A failed delegated child is resumable (Recover, not refuse)](./0077-resume-a-failed-subagent.md)
+- [0200 — A failed delegated child is resumable (Recover, not refuse)](./0200-resume-a-failed-subagent.md)
 
 ### Providers & APIs
 - [0016 — Multi-provider](./0016-multi-provider.md)
@@ -107,21 +107,22 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0071 — Seamless model switch: always keep the conversation](./0071-seamless-model-switch.md)
 - [0083 — Routing reason on delegation-start events](./0083-routing-reason-on-delegation-start.md)
 - [0093 — Ship the real LLM provider adapters as opt-in Go modules under provider/](./0093-provider-modules.md)
-- [0104 — OpenAI subscription with a manual access token](./0104-openai-subscription-manual-token.md)
-- [0110 — Correlate provider requests with the active session](./0110-provider-session-correlation-header.md)
+- [0210 — OpenRouter downstream-provider steering](./0210-openrouter-downstream-provider-steering.md)
+- [0215 — OpenAI subscription with a manual access token](./0215-openai-subscription-manual-token.md)
+- [0216 — Correlate provider requests with the active session](./0216-provider-session-correlation-header.md)
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
 - [0057 — MCP server notifications](./0057-mcp-server-notifications.md)
 - [0063 — MCP structured results: fail-closed + CallMcpWithQuery](./0063-mcp-structured-failclosed-callmcpwithquery.md)
 - [0078 — MCP typed tool results](./0078-mcp-typed-tool-results.md)
-- [0108 — Internal encrypted credential-store substrate](./0108-credential-store.md)
-- [0109 — Qualify the official MCP SDK authorization-code profile](./0109-mcp-oauth-sdk-profile.md)
-- [0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
-- [0111 — Read-only environment credential source and OAuth refresh posture](./0111-read-only-credential-source.md)
+- [0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)
+- [0219 — Qualify the official MCP SDK authorization-code profile](./0219-mcp-oauth-sdk-profile.md)
+- [0220 — Adapter-local MCP OAuth controller](./0220-mcp-oauth-controller.md)
+- [0221 — Read-only environment credential source and OAuth refresh posture](./0221-read-only-credential-source.md)
 - [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
-- [0114 — Pin MCP transport-error semantics that do not replay rejected calls](./0114-mcp-sdk-transport-error-semantics.md)
+- [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)
@@ -149,12 +150,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0092 — Project-trust suppression pin](./0092-no-project-trust-pin.md) *(superseded by 0095)*
 - [0094 — Opt-in project ingestion: two-axis positive grants](./0094-opt-in-project-ingestion.md) *(superseded by 0095)*
 - [0095 — Root-aware project trust](./0095-root-aware-project-trust.md) *(the authoritative #359 trust decision; supersedes 0092 + 0094)*
-- [0096 — Diagnostic-only posture reporting](./0096-diagnostic-only-posture-reporting.md) *(orthogonal reporting surface; relates to 0095)*
-- [0100 — Caller identity: accept a principal, thread it everywhere, record the owner](./0100-caller-identity-threading.md) *(agent-identity Track A; audit-trail phase)*
-- [0101 — Bound cached JWKS staleness](./0101-bounded-jwks-staleness.md)
-- [0103 — Ship reusable OIDC caller identity as an opt-in module](./0103-oidc-authn-module.md)
-- [0102 — Enforce caller ownership at every application access path](./0102-caller-ownership-enforcement.md) *(agent-identity Track A; application isolation; NUMBER COLLIDES with 0102-toolhive-direct-mode.md from origin/main — renumber on merge)*
-- [0103 — Enforce caller ownership at remote driver boundaries](./0103-driver-caller-ownership.md) *(B-lite follow-up to application isolation; NUMBER COLLIDES with 0103-oidc-authn-module.md above — renumber on merge)*
+- [0202 — Diagnostic-only posture reporting](./0202-diagnostic-only-posture-reporting.md) *(orthogonal reporting surface; relates to 0095)*
+- [0204 — Caller identity: accept a principal, thread it everywhere, record the owner](./0204-caller-identity-threading.md) *(agent-identity Track A; audit-trail phase)*
+- [0205 — Bound cached JWKS staleness](./0205-bounded-jwks-staleness.md)
+- [0206 — Ship reusable OIDC caller identity as an opt-in module](./0206-oidc-authn-module.md)
+- [0212 — Enforce caller ownership at every application access path](./0212-caller-ownership-enforcement.md) *(agent-identity Track A; application isolation)*
+- [0213 — Enforce caller ownership at remote driver boundaries](./0213-driver-caller-ownership.md) *(B-lite follow-up to application isolation)*
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
 - [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)
@@ -171,7 +172,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0032 — First-class worktree binding for a session](./0032-worktree-binding.md)
 - [0087 — Staged mecatui transport migration](./0087-mecatui-staged-transport-migration.md) *(superseded by 0089)*
 - [0088 — Explicit daemon.yaml (listener topology config)](./0088-daemon-config-file.md)
-- [0108 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0108-mecatui-ask-args-view.md)
+- [0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0222-mecatui-ask-args-view.md)
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

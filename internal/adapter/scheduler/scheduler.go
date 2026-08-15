@@ -144,7 +144,7 @@ type Config struct {
 	// decides the kind; the callback decides where it lands. The ctx is the
 	// firing caller's, so the durable append can attribute the event to whoever
 	// acted (a tick fire descends from Start's system-principal root; a manual
-	// FireNow keeps its requester) — ADR 0100 decision 5.
+	// FireNow keeps its requester) — ADR 0204 decision 5.
 	EmitScheduleEvent func(ctx context.Context, payload session.SchedulePayload)
 	// ScheduleMetrics is the OPTIONAL composition-injected metrics callback
 	// (issue #233, Phase 2b). It is nil-safe (nil = no metrics recorded — the
@@ -526,7 +526,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	// The lifecycle root has no caller: every context the tick, fire, delivery
 	// and reconcile paths use descends from here (context.WithoutCancel keeps
 	// values), so this ONE wrap runs them all as the explicit system principal
-	// (ADR 0100 decision 7). FireNow is deliberately NOT wrapped — a manual fire
+	// (ADR 0204 decision 7). FireNow is deliberately NOT wrapped — a manual fire
 	// keeps its requester's identity.
 	ctx = syscaller.Context(ctx, syscaller.RootScheduler)
 	if s.cfg.Fire == nil {

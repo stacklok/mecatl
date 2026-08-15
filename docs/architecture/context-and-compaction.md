@@ -15,7 +15,7 @@ metadata, the models.dev catalog, then the 128K fallback. Alias and slot routing
 first, so configuration keys are final provider/model IDs; the same resolver feeds
 compaction, engine introspection, session echoes, model listings, per-session engines,
 and provider-bound children. The operator-owned exact-map decision is recorded in
-[ADR 0104](../adr/0104-context-window-overrides.md).
+[ADR 0207](../adr/0207-context-window-overrides.md).
 
 - **`TokenCounter`** (`engine/agent/tokencount.go`) estimates message-slice token cost.
   The default `HeuristicTokenCounter` (≈chars/4) needs no dependencies; the

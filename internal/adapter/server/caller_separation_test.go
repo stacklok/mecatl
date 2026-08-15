@@ -280,7 +280,7 @@ func TestCallerSeparation_Scenario2_ScheduleNotFoundDoesNotLeakPhysicalKey(t *te
 // TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide pins
 // AC6.1: a schedule name already used by a DIFFERENT owner is not a collision
 // at all — the create-seam namespaces the store-facing key by verified owner
-// (issue #368, ADR-0102 decision 1), so two owners may use the identical
+// (issue #368, ADR-0212 decision 1), so two owners may use the identical
 // literal name, each independently loadable/updatable/deletable.
 func TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
@@ -558,7 +558,7 @@ func callerScheduleWithOrigin(name string, origin session.SessionID) port.Schedu
 }
 
 // TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected pins review
-// finding 1 (issue #368, ADR 0102): under ownership enforcement, a caller who
+// finding 1 (issue #368, ADR 0212): under ownership enforcement, a caller who
 // merely KNOWS another caller's session id must not be able to name it as a
 // schedule's OriginSessionID — that field is what the fire delivery path later
 // trusts to enqueue the fire's content into. The create must be rejected

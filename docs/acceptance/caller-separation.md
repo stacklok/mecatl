@@ -3,7 +3,7 @@
 **Phase:** capability — application caller isolation
 **Status:** in-progress, 2026-08-11. Synthesized from issue #368 and the caller-identity spike.
 **Issue:** [stacklok/mecatl#368](https://github.com/stacklok/mecatl/issues/368).
-**ADR:** [ADR-0102](../adr/0102-caller-ownership-enforcement.md) — the shared application ownership decision and the trusted-driver boundary.
+**ADR:** [ADR-0212](../adr/0212-caller-ownership-enforcement.md) — the shared application ownership decision and the trusted-driver boundary.
 **Accumulator branch:** `acc/caller-separation` (stacked from
 `368-caller-separation`, currently #367; final PR base is
 `368-caller-separation`, not `main`).
@@ -12,7 +12,7 @@ The smallest set of work that lets an OIDC-authenticated caller reach only that
 caller's sessions, schedules, teams, memory, event streams, and live runs—regardless
 of whether the identifier comes from an API client or a model-facing tool. A refusal is
 indistinguishable from absence. The raw remote-driver boundary remains explicitly
-trusted infrastructure; [ADR-0103](../adr/0103-driver-caller-ownership.md) and issue
+trusted infrastructure; [ADR-0213](../adr/0213-driver-caller-ownership.md) and issue
 [#452](https://github.com/stacklok/mecatl/issues/452) are the separate B-lite follow-up.
 
 The document is scenario-first: each scenario describes something a running harness
@@ -20,10 +20,10 @@ can demonstrate rather than a package-level implementation task.
 
 ## Why these scope cuts
 
-- [ADR-0100](../adr/0100-caller-identity-threading.md) already owns verified
+- [ADR-0204](../adr/0204-caller-identity-threading.md) already owns verified
   principal ingestion, durable session/schedule owners, and explicit system principals;
   this plan adds enforcement rather than changing attribution.
-- [ADR-0102](../adr/0102-caller-ownership-enforcement.md) makes application access
+- [ADR-0212](../adr/0212-caller-ownership-enforcement.md) makes application access
   exhaustive and per-request, but leaves direct remote driver enforcement to B-lite.
 - [`AGENTS.md` — the layering rule](../../AGENTS.md) keeps ownership policy in the
   core/application seams and keeps concrete server/proto/adapter types out of
@@ -35,11 +35,11 @@ can demonstrate rather than a package-level implementation task.
 
 A service with the #367 OIDC verifier creates Alice's and Bob's owned sessions,
 schedules, teams, and memory entries. The owner is the durable `(Issuer, Subject)` pair
-from ADR-0100. OIDC mode rejects every pre-identity ownerless resource rather than
+from ADR-0204. OIDC mode rejects every pre-identity ownerless resource rather than
 assigning it to the first reader; a deployment without a verifier preserves the existing
 ownerless compatibility path. Creation binds ownership atomically with visibility, and
 fork/carryover first authorize the source before copying history. This builds on
-[ADR-0100](../adr/0100-caller-identity-threading.md) and the no-fabricated-principal
+[ADR-0204](../adr/0204-caller-identity-threading.md) and the no-fabricated-principal
 invariant in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
@@ -78,7 +78,7 @@ project memory (`Remember`/`Recall`/`SearchMemory`/`Forget`). Equal logical keys
 collapse the stores. Every persisted access consults the one per-kind ownership decision.
 Lists return the caller's own rows, not an empty placeholder, and derived objects resolve
 their owner through the parent. This is the application decision and kind-table contract
-in [ADR-0102](../adr/0102-caller-ownership-enforcement.md).
+in [ADR-0212](../adr/0212-caller-ownership-enforcement.md).
 
 **Acceptance:**
 - AC2.1: Alice and Bob can each store and retrieve a user-model-memory entry using the
@@ -110,7 +110,7 @@ in [ADR-0102](../adr/0102-caller-ownership-enforcement.md).
 A live run is not necessarily represented by a fresh storage access. Approval,
 cancellation, mode changes, plan approval, persistence, and model-facing child/memory
 tools therefore enforce the same decision on every request. This is the non-store
-coverage required by issue #368 and [ADR-0102](../adr/0102-caller-ownership-enforcement.md).
+coverage required by issue #368 and [ADR-0212](../adr/0212-caller-ownership-enforcement.md).
 
 **Acceptance:**
 - AC3.1: Bob cannot prompt Alice's session twice; each attempt is refused as absent and
@@ -151,11 +151,11 @@ coverage required by issue #368 and [ADR-0102](../adr/0102-caller-ownership-enfo
 
 ### Scenario 4 — system work is explicit, narrow, and auditable
 
-The scheduler, child GC, and memory consolidators have no human caller, but ADR-0100
+The scheduler, child GC, and memory consolidators have no human caller, but ADR-0204
 already gives them explicit system principals. This scenario limits them to the shared
 infrastructure operations named in the ownership table; system identity is not a
 universal bypass. The posture ladder remains unrelated to ownership
-([ADR-0102](../adr/0102-caller-ownership-enforcement.md)).
+([ADR-0212](../adr/0212-caller-ownership-enforcement.md)).
 
 **Acceptance:**
 - AC4.1: A due schedule owned by Alice runs from the scheduler's explicit system
@@ -192,7 +192,7 @@ designated application-facade, in-memory-registry, event-relay, cache/index, and
 model-tool boundaries. Each resolves to exactly one caller-owned, derived,
 shared-infrastructure, or explicit-exempt classification. A new owned boundary cannot
 ship unclassified, while an exemption remains visible for review. The guard enforces
-ADR-0102 rather than relying on a future implementer to remember every store, service,
+ADR-0212 rather than relying on a future implementer to remember every store, service,
 and model-facing path.
 
 **Acceptance:**
@@ -248,10 +248,10 @@ change consistent with this plan's existing ownerless-historical-data posture.
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Remote driver-side claim propagation, authenticated peer checks, and remote-store enforcement | issue [#452](https://github.com/stacklok/mecatl/issues/452) | [ADR-0103](../adr/0103-driver-caller-ownership.md) |
-| Driver ownership registry, workspace-root digest, and enforced-driver cutover | issue [#452](https://github.com/stacklok/mecatl/issues/452) | [ADR-0103](../adr/0103-driver-caller-ownership.md) |
-| Sharing, delegated authority, labels, and signing | later agent-identity tracks | [ADR-0100](../adr/0100-caller-identity-threading.md) |
-| Migration or first-reader adoption of ownerless historical records | deliberately excluded | [ADR-0102](../adr/0102-caller-ownership-enforcement.md) |
+| Remote driver-side claim propagation, authenticated peer checks, and remote-store enforcement | issue [#452](https://github.com/stacklok/mecatl/issues/452) | [ADR-0213](../adr/0213-driver-caller-ownership.md) |
+| Driver ownership registry, workspace-root digest, and enforced-driver cutover | issue [#452](https://github.com/stacklok/mecatl/issues/452) | [ADR-0213](../adr/0213-driver-caller-ownership.md) |
+| Sharing, delegated authority, labels, and signing | later agent-identity tracks | [ADR-0204](../adr/0204-caller-identity-threading.md) |
+| Migration or first-reader adoption of ownerless historical records | deliberately excluded | [ADR-0212](../adr/0212-caller-ownership-enforcement.md) |
 
 ## Sequencing recommendation
 
@@ -293,11 +293,11 @@ concrete task split.
 ## Deferred decisions and known risks
 
 - **Raw remote drivers remain a trust boundary.** This plan does not claim they are
-  caller-enforced; deployment isolation is mandatory until ADR-0103 is delivered.
+  caller-enforced; deployment isolation is mandatory until ADR-0213 is delivered.
 - **Ownerless historical data is unavailable in OIDC mode.** There is no adoption or
   migration path in this plan.
 - **Driver B-lite has no migration.** Enforced driver mode will treat records without
-  registry ownership as absent, per ADR-0103.
+  registry ownership as absent, per ADR-0213.
 - **The preserved-fork LRU (`engine/agent/forkreaper.go`) is one unpartitioned,
   process-wide cache (cap 8), found by an adversarial pass over this plan.** A
   high-volume caller's Parallel winners can evict a low-volume caller's still-

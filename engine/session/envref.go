@@ -1,6 +1,6 @@
 // Package session — EnvironmentRef.
 //
-// This file is part of issue #462 (ADR 0105): the in-process
+// This file is part of issue #462 (ADR 0211): the in-process
 // Environment seam. EnvironmentRef is the small, cycle-safe, stdlib-only
 // identity value a tool.Environment carries. It names the backend FAMILY a
 // Workspace/CommandRunner pair was minted against (local, mem, nofs, later
@@ -9,7 +9,7 @@
 // pointer) so it is comparable and never escapes to the heap on the hot
 // dispatch path.
 //
-// PHASE 3 (ADR 0106): EnvironmentRef is now a snapshot field. It persists
+// PHASE 3 (ADR 0214): EnvironmentRef is now a snapshot field. It persists
 // across a process restart as an inert exported field on session.Session
 // (sessnap.Snapshot.EnvironmentRef), round-tripped through Of/Restore. A
 // restored session with a non-zero ref reattaches a live Environment through
@@ -51,7 +51,7 @@ const (
 // pulling tool types in — it is the identity half of the Environment seam,
 // kept separate from the capability half (tool.Environment).
 //
-// PHASE 3 (ADR 0106): this is a DURABLE identity. It persists on the snapshot
+// PHASE 3 (ADR 0214): this is a DURABLE identity. It persists on the snapshot
 // (sessnap.Snapshot.EnvironmentRef) so a restarted process can reattach a live
 // Environment to the SAME backend. The session package interprets NEITHER
 // field — it only stores and carries them. A zero ref restored from a legacy

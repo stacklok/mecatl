@@ -301,7 +301,7 @@ type ScheduleSpec struct {
 	// with StopTimeout when it lapses. Per-fire: each fire gets a fresh deadline
 	// from its own start instant. The store stores it inertly.
 	FireTimeout *durationpb.Duration `protobuf:"bytes,19,opt,name=fire_timeout,json=fireTimeout,proto3" json:"fire_timeout,omitempty"`
-	// owner is the verified caller the schedule is attributed to (ADR 0100
+	// owner is the verified caller the schedule is attributed to (ADR 0204
 	// decision 6), captured ONCE at create time from the create SURFACE — the
 	// executing session's owner on the Schedule-tool path, the context principal
 	// on an out-of-band REST/CLI create. It is READ-ONLY on the wire: a create or

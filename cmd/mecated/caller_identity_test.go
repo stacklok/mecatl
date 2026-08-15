@@ -13,7 +13,7 @@ import (
 // the OIDC flags set but validator construction failing (an unreachable JWKS and
 // no --oidc-jwks-uri static override), the server REFUSES TO START. It must
 // never degrade silently to the unauthenticated path — that is the classic
-// misconfigured-verifier fail-open (ADR 0100 decision 3).
+// misconfigured-verifier fail-open (ADR 0204 decision 3).
 func TestCallerIdentity_Scenario1_MisconfiguredOIDCFailsToStart(t *testing.T) {
 	t.Parallel()
 

@@ -1633,7 +1633,7 @@ func (x *ListSessionsRequest) GetCursor() string {
 	return ""
 }
 
-// Principal is the verified caller an object is attributed to (ADR 0100 — caller
+// Principal is the verified caller an object is attributed to (ADR 0204 — caller
 // identity, threaded). Identity is the (issuer, subject) PAIR, never subject alone:
 // two IdPs or realms collide on `sub`. It carries NO scopes, NO credentials and NO
 // claims map — attribution only; enforcement is the isolation track's.
@@ -1746,7 +1746,7 @@ type SessionSummary struct {
 	// may derive a fallback). Populated from the snapshot Title (or the lazy
 	// fallback) by ListSessions.
 	Title string `protobuf:"bytes,7,opt,name=title,proto3" json:"title,omitempty"`
-	// owner is the verified caller the session is attributed to (ADR 0100), stamped
+	// owner is the verified caller the session is attributed to (ADR 0204), stamped
 	// write-once at CreateSession from the validated token — never from the request
 	// body. UNSET for an ownerless session (a no-auth deployment, or a session
 	// persisted before the owner label existed; nothing backfills it).

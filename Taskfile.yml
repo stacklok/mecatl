@@ -45,7 +45,7 @@ tasks:
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
       - cd engine && go build ./...
-      # authn/oidc is the opt-in caller-identity adapter module (ADR 0103),
+      # authn/oidc is the opt-in caller-identity adapter module (ADR 0206),
       # separate from both the dependency-free engine and provider modules.
       - cd authn/oidc && go build ./...
       # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each its
@@ -308,7 +308,7 @@ tasks:
   deploy:check:
     desc: |
       Validate every deploy/ kustomize root WITHOUT a cluster: schema-check the
-      rendered manifests and assert the caller-identity boundaries (ADR 0100).
+      rendered manifests and assert the caller-identity boundaries (ADR 0204).
       Needs kustomize + kubeconform; needs NO cluster and NO KO_DOCKER_REPO, so
       it runs in CI and on a laptop.
     preconditions:
@@ -773,8 +773,10 @@ tasks:
       - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference docs/configuration-reference.md
 
   docs:check:
-    desc: Gate doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
+    desc: Gate ADR-number uniqueness and stale moved paths, then doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
+      - go test ./docs/lint -run '^TestRealADRNumberUniqueness$'
+      - go test ./docs/lint -run '^TestNoStaleMovedADRSlugs$'
       - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 check . --strict
 
   docs:model:

@@ -655,7 +655,7 @@ linters:
           deny:
             - pkg: os
               desc: 'agent (application loop) must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
-        # --- authn/oidc opt-in caller-identity module (ADR 0103) ---------------
+        # --- authn/oidc opt-in caller-identity module (ADR 0206) ---------------
         # Production verification depends only on stdlib, the narrow engine
         # principal projection, and ToolHive's authn implementation. Tests are
         # exempt per the repository convention for local fixtures.

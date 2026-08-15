@@ -1,4 +1,4 @@
-# ADR 0097 — Neutral permanent-provider-error signal
+# ADR 0203 — Neutral permanent-provider-error signal
 
 - Status: Accepted
 - Date: 2026-08-05

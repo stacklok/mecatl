@@ -2,7 +2,7 @@
 
 **Status:** landed, 2026-08-11
 **Issue:** [stacklok/mecatl#367](https://github.com/stacklok/mecatl/issues/367)
-**Rationale:** [ADR 0100](../adr/0100-caller-identity-threading.md); cached-JWKS availability policy: [ADR 0101](../adr/0101-bounded-jwks-staleness.md).
+**Rationale:** [ADR 0204](../adr/0204-caller-identity-threading.md); cached-JWKS availability policy: [ADR 0205](../adr/0205-bounded-jwks-staleness.md).
 
 Caller identity is optional OIDC authentication and durable attribution. A verified
 principal is carried in the request context, sessions and schedules retain their
@@ -67,7 +67,7 @@ configuration belong in the [architecture guide](../architecture.md) and
 ### Deployment boundary
 
 - AC5.1: A configured validator fails closed at startup when initial key material
-  cannot be obtained. Cached JWKS behavior follows ADR 0101: after the configured
+  cannot be obtained. Cached JWKS behavior follows ADR 0205: after the configured
   staleness bound, an unavailable refresh is 503-class rather than an authentication
   success or 401.
   - verify: `TestCallerIdentity_Scenario1_MisconfiguredOIDCFailsToStart`,

@@ -389,7 +389,7 @@ func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args s
 		MaxFires:  args.MaxFires,
 		Timezone:  args.Timezone,
 		// The origin comes from the RUN CONTEXT and from nowhere else, and this
-		// literal is the only place it is ever set (ADR 0104). scheduleArgs has
+		// literal is the only place it is ever set (ADR 0209). scheduleArgs has
 		// no origin field, so a model-supplied one cannot reach it — do NOT add
 		// an `args.Origin ?: ctx` fallback, which is exactly the forgery this
 		// closes. An unbound context yields the empty id, which means NO

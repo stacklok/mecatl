@@ -503,7 +503,7 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 		cfg.diag().Log(ctx, port.LevelInfo, "Schedule tool ENABLED (Schedule); permission: allow (built-in default, overridable to ask/deny via settings)")
 	}
 	// No origin wiring here: the Schedule tool stamps OriginSessionID from the
-	// run context itself (fire-result-delivery, ADR 0104), so there is nothing
+	// run context itself (fire-result-delivery, ADR 0209), so there is nothing
 	// composition can forget to wrap.
 	//
 	// The READ-ONLY half (AC1.4): list/inspect live on a separate query tool so

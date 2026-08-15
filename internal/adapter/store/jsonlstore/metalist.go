@@ -30,7 +30,7 @@ type metaSnapshot struct {
 	Relationship session.SessionRelationship `json:"relationship,omitzero"`
 	Workspace    string                      `json:"workspace"`
 	CreatedAt    time.Time                   `json:"created_at"`
-	// Owner is the session's verified owner (ADR 0100). Decoding it here is
+	// Owner is the session's verified owner (ADR 0204). Decoding it here is
 	// what keeps the cheap fast path's row IDENTICAL to the Load-per-row
 	// fallback's; a pre-owner snapshot simply has no key and stays nil.
 	Owner *session.Principal `json:"owner,omitempty"`

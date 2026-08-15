@@ -198,7 +198,7 @@ session restored onto the shared engine by `needsRehydration` keeps the tool
   reimplemented after this plan landed — `Engine.Run` stamps the executing
   session id onto the run context and the create seam reads it there, replacing
   the `OriginBinder` wiring this AC originally named
-  ([ADR-0104](../adr/0104-schedule-origin-run-context.md)). The observable
+  ([ADR-0209](../adr/0209-schedule-origin-run-context.md)). The observable
   behaviour is unchanged, which is why the verifier below still holds.
   - verify: `TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired`
 - AC3.4: A default-profile session persisted, then reloaded via

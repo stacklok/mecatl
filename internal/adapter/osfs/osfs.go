@@ -674,7 +674,7 @@ func LocalizeInRoot(path string) (string, bool) {
 
 // pathLocks is a fixed process-wide set of striped mutexes. Hashing a physical
 // canonical mutation target to the same stripe serializes aliases of that file across
-// Workspace instances over the same root (ADR 0103). Stripe collisions only
+// Workspace instances over the same root (ADR 0208). Stripe collisions only
 // serialize unrelated files; the fixed array avoids an unbounded path-key map.
 //
 // This is PROCESS-SCOPED same-process cooperation, not a POSIX lock:
@@ -692,7 +692,7 @@ func LocalizeInRoot(path string) (string, bool) {
 //     *os.Root, which refuses a symlink traversal that escapes the root, but a
 //     race against an in-root symlink swap is not closed by the lock alone.
 //     A future remote backend provides true backend CAS, which closes the gap
-//     by making the conditional replace atomic at the storage layer (ADR 0103,
+//     by making the conditional replace atomic at the storage layer (ADR 0208,
 //     remote transport deferred).
 const pathLockStripes = 256
 
@@ -714,7 +714,7 @@ func pathLock(canon string) *sync.Mutex {
 // Workspace is the session-scoped seam over the real OS filesystem. It composes
 // a FileSystem, performs an in-Go recursive Grep, and carries the read-ledger
 // plus the explicit create-only / conditional-replace mutation operations
-// (ADR 0103). Command execution is NOT part of the Workspace: it lives behind
+// (ADR 0208). Command execution is NOT part of the Workspace: it lives behind
 // the separate CommandRunner type (see NewCommandRunner) so the harness can run
 // without any shell at all.
 type Workspace struct {
@@ -936,7 +936,7 @@ func (w *Workspace) readResolved(rel string, root *os.Root, leaf string) ([]byte
 // CreateFile creates a NEW file at path with the given content, atomically. It
 // fails (wrapping fs.ErrExist) if a file already exists. Parent directories are
 // created as needed. It serializes aliases through process-wide physical-target
-// lock striping and performs the create with O_CREATE|O_EXCL (ADR 0103 §5).
+// lock striping and performs the create with O_CREATE|O_EXCL (ADR 0208 §5).
 func (w *Workspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
 	rel, root, leaf, release, err := w.lockMutationTarget(ctx, path)
 	if err != nil {
@@ -958,7 +958,7 @@ func (w *Workspace) CreateFile(ctx context.Context, path string, data []byte) (t
 // an error wrapping fs.ErrNotExist. It serializes against other same-path
 // mutations through process-wide canonical-path lock striping, so the
 // compare+write is atomic with respect to cooperating Workspace writers
-// (ADR 0103 §5).
+// (ADR 0208 §5).
 func (w *Workspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
 	rel, root, leaf, release, err := w.lockMutationTarget(ctx, path)
 	if err != nil {

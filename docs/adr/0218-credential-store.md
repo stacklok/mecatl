@@ -1,4 +1,4 @@
-# ADR 0108 — Internal encrypted credential-store substrate
+# ADR 0218 — Internal encrypted credential-store substrate
 
 - Status: Accepted
 - Date: 2026-08-14

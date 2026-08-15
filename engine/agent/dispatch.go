@@ -1167,7 +1167,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		caps.forkHistory = func() []session.Message {
 			return session.ForkSnapshot(sess.Conversation)
 		}
-		// The parent session's owner (ADR 0100 decision 4) rides down so every
+		// The parent session's owner (ADR 0204 decision 4) rides down so every
 		// child session it spawns is attributed to the SAME principal. Read off
 		// the aggregate, never off the ambient context — see parentCaps.owner.
 		caps.owner = sess.Owner

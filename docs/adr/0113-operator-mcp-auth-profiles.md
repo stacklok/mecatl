@@ -42,7 +42,7 @@ secret references, or adapter errors. Kubernetes can consume read-only environme
 credentials without giving a pod a browser or mutable local store.
 
 OAuth remains deliberately narrow. Broad production readiness is still blocked on the
-upstream SDK metadata-profile gates identified by ADR 0109; this decision does not claim
+upstream SDK metadata-profile gates identified by ADR 0219; this decision does not claim
 general OAuth interoperability or ACP-supplied OAuth profile/authorization support.
 
 ## See also

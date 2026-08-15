@@ -9,7 +9,7 @@ import (
 // TrackedClientKeysForTest returns the post-validation rate-limiter's per-client
 // bucket keys (empty when rate limiting is disabled). It lets an external test
 // assert WHAT the limiter keys on — the verified (iss, sub) rather than the raw
-// token — and that a rejected token creates no post-validation bucket (ADR 0100
+// token — and that a rejected token creates no post-validation bucket (ADR 0204
 // decision 3).
 func (a *Authenticator) TrackedClientKeysForTest() []string {
 	if a.limiters == nil {

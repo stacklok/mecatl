@@ -181,7 +181,7 @@ func TestScheduleSharedCatalog_Scenario3_SystemPromptCarriesScheduleNote(t *test
 }
 
 // TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired pins AC3.3 (ADR
-// 0075, superseded for origin attribution by ADR 0104): the SHARED engine's
+// 0075, superseded for origin attribution by ADR 0209): the SHARED engine's
 // run-context attribution + DeliveryQueue are live once the manager is bound, so a schedule created from a shared-engine session stamps
 // its OriginSessionID, and the fire's result is delivered back into that chat.
 // The whole arc rides the PRODUCTION seams — no test-fire shortcut: the

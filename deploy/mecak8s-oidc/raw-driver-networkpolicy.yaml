@@ -1,4 +1,4 @@
-# Raw gRPC drivers predate caller propagation (ADR 0103).  They are trusted
+# Raw gRPC drivers predate caller propagation (ADR 0213).  They are trusted
 # infrastructure, not tenant-facing services: only the mecak8s agent may reach
 # a pod that opts into this label.  A tenant pod must not receive the `agent`
 # component label.

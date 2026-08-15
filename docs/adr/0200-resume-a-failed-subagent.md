@@ -1,4 +1,4 @@
-# ADR 0077 — A failed delegated child is resumable (Recover, not refuse)
+# ADR 0200 — A failed delegated child is resumable (Recover, not refuse)
 
 - Status: Accepted
 - Date: 2026-07-29

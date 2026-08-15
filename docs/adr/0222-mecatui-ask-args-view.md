@@ -1,4 +1,4 @@
-# ADR 0108 — mecatui: ctrl+t routes by ask type; full-screen ask-args view
+# ADR 0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view
 
 - Status: Accepted
 - Date: 2026-08-14
