@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -8,6 +9,78 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
+
+type rollbackLifecycleClient struct {
+	response client.LearnedSkill
+	calls    int
+}
+
+func (*rollbackLifecycleClient) ListLearnedSkills(context.Context, string) ([]client.LearnedSkill, error) {
+	return nil, nil
+}
+func (*rollbackLifecycleClient) GetLearnedSkill(context.Context, string, string, string, string) (client.LearnedSkill, error) {
+	return client.LearnedSkill{}, nil
+}
+func (*rollbackLifecycleClient) MutateLearnedSkill(context.Context, string, client.LearnedSkill) (client.LearnedSkill, error) {
+	return client.LearnedSkill{}, nil
+}
+func (f *rollbackLifecycleClient) RollbackLearnedSkill(_ context.Context, source client.LearnedSkill) (client.LearnedSkill, error) {
+	f.calls++
+	if source.Version != "v2" || source.Revision != "r2" || source.Supersedes != "v1" {
+		return client.LearnedSkill{}, errors.New("unexpected rollback source")
+	}
+	return f.response, nil
+}
+func (*rollbackLifecycleClient) ListSkillChanges(context.Context, string) ([]client.SkillChange, error) {
+	return nil, nil
+}
+func (*rollbackLifecycleClient) DiffLearnedSkill(context.Context, client.LearnedSkill) (string, error) {
+	return "", nil
+}
+func (*rollbackLifecycleClient) ListSkills(context.Context) ([]client.Skill, error) { return nil, nil }
+
+func TestLearnedSkillRollbackAcceptsTargetVersionExactlyOnce(t *testing.T) {
+	active := client.LearnedSkill{Project: "/project", ID: "skill-1", Name: "review", OwnerAgent: "agent", Version: "v2", Revision: "r2", State: "active", Supersedes: "v1", Generation: 7}
+	target := client.LearnedSkill{Project: "/project", ID: "skill-1", Name: "review", OwnerAgent: "agent", Version: "v1", Revision: "r3", State: "active", Generation: 8, PublicationStatus: "published"}
+	lifecycle := &rollbackLifecycleClient{response: target}
+	m := Model{deps: Deps{Skills: lifecycle, Theme: theme.New("aztec", theme.AztecPalette())}, skills: skillsState{
+		view: skillsDetail, detail: &active, learned: []client.LearnedSkill{active}, project: "/project",
+		generations: map[string]uint64{"/project": 7}, requestID: 41,
+	}}
+
+	msg := client.RollbackLearnedSkillCmd(context.Background(), lifecycle, active, 41)()
+	unrelated := msg.(client.LearnedSkillMsg)
+	unrelated.Skill = &client.LearnedSkill{Project: "/project", ID: "skill-1", OwnerAgent: "agent", Version: "v9", Revision: "bad"}
+	unrelated.PublicationError = "conflict"
+	updated, handled := m.updateSkillsMsg(unrelated)
+	unchanged := updated.(Model)
+	if !handled || unchanged.skills.detail.Version != "v2" || unchanged.skills.err != nil || unchanged.skills.generations["/project"] != 7 {
+		t.Fatalf("unrelated rollback response changed selected source: detail=%#v err=%v generations=%v", unchanged.skills.detail, unchanged.skills.err, unchanged.skills.generations)
+	}
+
+	updated, handled = m.updateSkillsMsg(msg)
+	got := updated.(Model)
+	if !handled || lifecycle.calls != 1 || got.skills.detail == nil || got.skills.detail.Version != "v1" || got.skills.detail.Revision != "r3" || got.skills.generations["/project"] != 8 || got.skills.detail.PublicationStatus != "published" {
+		t.Fatalf("rollback not committed: handled=%v calls=%d detail=%#v generations=%v", handled, lifecycle.calls, got.skills.detail, got.skills.generations)
+	}
+	if len(got.skills.learned) != 1 || got.skills.learned[0].Version != "v1" {
+		t.Fatalf("inventory did not move to rollback target: %#v", got.skills.learned)
+	}
+	if view := stripANSIstr(renderSkillsOverlay(got.deps.Theme, got.skills, client.Capabilities{LearnedSkills: true}, defaultHelpKeys(), 100, 40)); !strings.Contains(view, "version: v1") {
+		t.Fatalf("rollback target not shown in detail:\n%s", view)
+	}
+
+	// The committed response is no longer valid once the detail moved off its v2/r2
+	// source. A replay must not alter state or surface a conflict over the successful
+	// rollback.
+	stale := msg.(client.LearnedSkillMsg)
+	stale.PublicationError = "conflict"
+	replayed, _ := got.updateSkillsMsg(stale)
+	got = replayed.(Model)
+	if got.skills.detail.Version != "v1" || got.skills.detail.Revision != "r3" || got.skills.err != nil || got.skills.generations["/project"] != 8 {
+		t.Fatalf("stale rollback response changed committed state: detail=%#v err=%v generations=%v", got.skills.detail, got.skills.err, got.skills.generations)
+	}
+}
 
 func TestLearnedSkillDetailSanitizesAndShowsLifecycleActions(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())

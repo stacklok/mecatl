@@ -55,15 +55,19 @@ type LearnedSkillsMsg struct {
 	Err         error
 }
 type LearnedSkillMsg struct {
-	Skill             *LearnedSkill
-	Project           string
-	Generation        uint64
-	SelectedSkillID   string
-	SelectedVersion   string
-	RequestID         uint64
-	PublicationStatus string
-	PublicationError  string
-	Err               error
+	Skill              *LearnedSkill
+	Project            string
+	Generation         uint64
+	SelectedSkillID    string
+	SelectedOwnerAgent string
+	SelectedVersion    string
+	ExpectedRevision   string
+	TargetVersion      string
+	Action             string
+	RequestID          uint64
+	PublicationStatus  string
+	PublicationError   string
+	Err                error
 }
 type SkillChangesMsg struct {
 	Changes []SkillChange
@@ -263,19 +267,19 @@ func ListLearnedSkillsCmd(ctx context.Context, c LearnedSkillClient, project str
 func GetLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.GetLearnedSkill(ctx, s.Project, s.ID, s.OwnerAgent, s.Version)
-		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, RequestID: requestID, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedOwnerAgent: s.OwnerAgent, SelectedVersion: s.Version, RequestID: requestID, Err: err}
 	}
 }
 func MutateLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, action string, s LearnedSkill, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.MutateLearnedSkill(ctx, action, s)
-		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, RequestID: requestID, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedOwnerAgent: s.OwnerAgent, SelectedVersion: s.Version, ExpectedRevision: s.Revision, TargetVersion: s.Version, Action: action, RequestID: requestID, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
 	}
 }
 func RollbackLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.RollbackLearnedSkill(ctx, s)
-		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, RequestID: requestID, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedOwnerAgent: s.OwnerAgent, SelectedVersion: s.Version, ExpectedRevision: s.Revision, TargetVersion: s.Supersedes, Action: "rollback", RequestID: requestID, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
 	}
 }
 

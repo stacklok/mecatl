@@ -299,10 +299,17 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 		return m, true
 	}
 	if detail, ok := msg.(client.LearnedSkillMsg); ok {
-		if detail.RequestID != m.skills.requestID || detail.Generation < m.skills.generations[detail.Project] || m.skills.detail != nil && (detail.Project != m.skills.detail.Project || detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedVersion != m.skills.detail.Version) {
+		if detail.RequestID != m.skills.requestID || detail.Generation < m.skills.generations[detail.Project] {
 			return m, true
 		}
-		if detail.Skill != nil && (detail.Skill.Project != detail.Project || detail.Skill.ID != detail.SelectedSkillID || detail.Skill.Version != detail.SelectedVersion) {
+		if m.skills.detail != nil && (detail.Project != m.skills.detail.Project || detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedOwnerAgent != "" && detail.SelectedOwnerAgent != m.skills.detail.OwnerAgent || detail.SelectedVersion != m.skills.detail.Version || detail.ExpectedRevision != "" && detail.ExpectedRevision != m.skills.detail.Revision) {
+			return m, true
+		}
+		targetVersion := detail.SelectedVersion
+		if detail.Action == "rollback" {
+			targetVersion = detail.TargetVersion
+		}
+		if detail.Err == nil && detail.Skill != nil && (detail.Skill.Project != detail.Project || detail.Skill.ID != detail.SelectedSkillID || detail.SelectedOwnerAgent != "" && detail.Skill.OwnerAgent != detail.SelectedOwnerAgent || detail.Skill.Version != targetVersion) {
 			return m, true
 		}
 		if detail.Err != nil {
@@ -321,7 +328,7 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 				m.skills.err = nil
 			}
 			for i := range m.skills.learned {
-				if m.skills.learned[i].Project == value.Project && m.skills.learned[i].ID == value.ID && m.skills.learned[i].Version == value.Version {
+				if m.skills.learned[i].Project == value.Project && m.skills.learned[i].ID == value.ID && (m.skills.learned[i].Version == value.Version || detail.Action == "rollback" && m.skills.learned[i].Version == detail.SelectedVersion) {
 					m.skills.learned[i] = value
 				}
 			}
