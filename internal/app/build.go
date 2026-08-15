@@ -2948,9 +2948,14 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 			return nil, nil, nil, fmt.Errorf("dial session-store driver %q: %w", cfg.SessionStoreURL, err)
 		}
 		cfg.diag().Log(context.Background(), port.LevelInfo, "session store: grpc driver", "target", cfg.SessionStoreURL)
+		st, err := grpcdriver.NewSessionStore(context.Background(), conn)
+		if err != nil {
+			closeFn()
+			return nil, nil, nil, fmt.Errorf("negotiate session-store driver %q: %w", cfg.SessionStoreURL, err)
+		}
 		// The EventLog over a session-store driver is nil unless --event-log-url
 		// names one; nil here = the relay records nothing.
-		return grpcdriver.NewSessionStore(conn), nil, closeFn, nil
+		return st, nil, closeFn, nil
 	}
 	if cfg.StoreDir == "" {
 		cfg.diag().Log(context.Background(), port.LevelInfo, "session store: in-memory")

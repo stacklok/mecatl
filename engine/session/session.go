@@ -406,6 +406,9 @@ type Session struct {
 	// It is "" for a session with no genuine prompt yet (lazy display-time
 	// fallback applies). The aggregate never interprets it.
 	Title string
+	// TitleProvenance records whether Title came from the first genuine prompt or
+	// an explicit operator rename. The zero value means legacy/unknown.
+	TitleProvenance TitleProvenance
 	// Owner is the verified caller this session is attributed to, or nil when the
 	// session is ownerless (a pre-ship snapshot, or a deployment with no identity
 	// verifier wired). It is a WRITE-ONCE label stamped through RestoreLabels —
@@ -1033,7 +1036,21 @@ const maxTitleRunes = 120
 func (s *Session) SetTitle(text string) {
 	if s.Title == "" && strings.TrimSpace(text) != "" {
 		s.Title = ClampTitle(text)
+		s.TitleProvenance = TitleProvenanceFirstPrompt
 	}
+}
+
+// RenameTitle replaces the title at an operator's explicit request. Unlike
+// SetTitle it is intentionally not set-once. Blank titles are rejected and the
+// shared title helper applies the same whitespace and length rules as prompt titles.
+func (s *Session) RenameTitle(text string) error {
+	title := ClampTitle(text)
+	if title == "" {
+		return fmt.Errorf("session: title must not be blank")
+	}
+	s.Title = title
+	s.TitleProvenance = TitleProvenanceOperator
+	return nil
 }
 
 // StopReason reports why the run should stop. It is a DERIVED predicate: it

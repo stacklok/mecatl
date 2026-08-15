@@ -60,7 +60,12 @@ The TUI header shows a compact `#<digest>` for the active session rather than a 
 opaque ID. Type `/session` to inspect the safely quoted full ID, title, state, workspace,
 known timestamps, provider, and model; press `c` in that overlay to copy the exact ID.
 Use `/sessions` separately to Continue a stored chat or Inspect scheduled, child, and
-unknown/other runs without changing the active chat. To make that same inventory the
+unknown/other runs without changing the active chat. Its selected-row hints come from
+server capabilities: `y` copies the exact ID, `v` views without attaching, `f` forks an
+eligible main chat, `r` edits its title, and `d` confirms permanent deletion. Rename,
+fork, and delete are revalidated at execution; failure leaves the active prompt target
+unchanged, and the currently attached chat must be switched away before deletion.
+To make that same inventory the
 first interactive view, run `mecatui sessions [flags]` for the embedded server or
 `mecatui connect ADDRESS sessions [flags]` for a remote server. These forms create no
 throwaway session: `enter` continues or inspects, inspection `esc` goes Back, `n` creates

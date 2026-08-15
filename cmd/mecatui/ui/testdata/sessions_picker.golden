@@ -4,7 +4,7 @@
 
 ▶ ✓ 5m ago 12t Fix the flaky CI  #60d09667  (gpt-5)
 
-enter: continue  tab: switch  esc: close
+enter: continue  y: copy ID  v: view  f: fork  r: rename  d: delete  tab: switch  esc: close
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

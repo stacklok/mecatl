@@ -37,7 +37,7 @@ func TestGRPCSessionStoreConformance(t *testing.T) {
 		conn := dialBufconn(t, func(gs *grpc.Server) {
 			driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
 		})
-		return NewSessionStore(conn)
+		return mustNewSessionStore(t, conn)
 	})
 }
 
@@ -50,7 +50,7 @@ func TestGRPCSessionStorePrunableConformance(t *testing.T) {
 		conn := dialBufconn(t, func(gs *grpc.Server) {
 			driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
 		})
-		return NewSessionStore(conn)
+		return mustNewSessionStore(t, conn)
 	})
 }
 
@@ -59,7 +59,7 @@ func TestSessionContinuityUX_Scenario3_PagerConformance(t *testing.T) {
 		conn := dialBufconn(t, func(gs *grpc.Server) {
 			driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
 		})
-		return NewSessionStore(conn)
+		return mustNewSessionStore(t, conn)
 	})
 }
 

@@ -90,6 +90,9 @@ func assertEquivalent(t *testing.T, got, want *session.Session) {
 	if got.Title != want.Title {
 		t.Errorf("Title = %q, want %q", got.Title, want.Title)
 	}
+	if got.TitleProvenance != want.TitleProvenance {
+		t.Errorf("TitleProvenance = %q, want %q", got.TitleProvenance, want.TitleProvenance)
+	}
 	if got.Usage != want.Usage {
 		t.Errorf("Usage = %+v, want %+v", got.Usage, want.Usage)
 	}

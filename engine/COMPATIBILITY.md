@@ -138,18 +138,20 @@ honour.
 | recorded stop reason (`RecordedStopReason`) | **MUST** | `EvResult.Stop` |
 | pending ask (`PendingAsk`, when awaiting) | **MUST** | the trailing `EvPermissionAsk` with no following `EvApproval`/`EvResult` |
 | cumulative `Usage` | **MUST** | the **SUM** of every per-run `EvResult.Usage` (each `EvResult.Usage` is PER-RUN; the budget brake reads the cumulative aggregate) |
-| `Title` | **MUST** (best-effort) | seeded from the FIRST genuine `EvUserPrompt` (via `session.SetTitle`, set-once + clamped); a synthesised-summary `EvUserPrompt` does not seed. For a compacted session the opener's `EvUserPrompt` was emitted before the compaction, so the title survives compaction. |
+| `Title` and `TitleProvenance` | **MUST** | authoritative values supplied out-of-band via `eventsource.SessionMeta`; for legacy metadata with an empty title, `Title` is seeded from the FIRST genuine `EvUserPrompt` via `session.SetTitle` (set-once + clamped), which also records `first-prompt` provenance. A synthesised-summary `EvUserPrompt` does not seed. For a compacted session the opener's `EvUserPrompt` was emitted before the compaction, so the fallback survives compaction. An operator-authored title cannot be reconstructed from events and therefore must be supplied. |
 | creation metadata: id, mode, limits, workspace, profile, provider/model selector, reasoning-effort, **session kind and relationship**, createdAt | **MUST** (supplied out-of-band) | **NOT in any event** — provided by the caller via `eventsource.SessionMeta`; an absent legacy kind restores as fail-closed `unknown` |
 | identity labels: `Owner` (the verified caller), `Authority` (Track C, inert), `EnvironmentRef` (ADR 0106) | **not event-carried** — safe to lose on a pure fold | the snapshot (`sessnap`, restored by direct assignment / the write-once `Session.RestoreLabels`). Per [ADR 0100](../docs/adr/0100-caller-identity-threading.md) / [ADR 0106](../docs/adr/0106-environment-persistence.md) the event annotation is log-only and the fold neither requires nor re-derives any of them, so a fold-rebuilt session keeps whatever the snapshot restored — an ownerless one stays ownerless, a zero ref stays zero (composition stamps it from the first resolved live Environment on the next run) (**never** fabricated or backfilled). |
 | `Counters` (turns / tool calls / consecutive failures) | run-scoped — reflects the **latest run segment** (they reset on `Reopen`), derived from the latest run's events | `EvTurnStart` (turns), `EvToolResult` (tool calls / consecutive failures) |
 | run plumbing (diagnostics binding, askID serials, ctx) | safe to lose — rebuilt fresh | n/a |
 
 **Creation metadata is not in events.** No event carries the session id, mode, limits,
-workspace, profile, provider/model selector, reasoning-effort, session kind/relationship,
-or createdAt. The caller — who created the session — supplies them alongside the stream
-(there is deliberately no `EvSessionCreated`; ADR 0038 notes it as a possible future).
-`eventsource.SessionMeta` is the reference shape. Kind/relationship combinations are
-validated during folding; missing legacy kind metadata becomes `unknown`, never `main`.
+workspace, profile, provider/model selector, reasoning-effort, authoritative title/provenance,
+session kind/relationship, or createdAt. The caller — who created or discovered the session —
+supplies them alongside the stream (there is deliberately no `EvSessionCreated`; ADR 0038
+notes it as a possible future). `eventsource.SessionMeta` is the reference shape.
+Kind/relationship combinations are validated during folding; missing legacy kind metadata
+becomes `unknown`, never `main`. Legacy metadata may omit title/provenance; only that case
+falls back to the first genuine user-prompt event.
 
 User-role turns (the genuine client prompt AND the harness-authored synthetic
 continuations — the no-progress nudge, the background-pending nudge, the

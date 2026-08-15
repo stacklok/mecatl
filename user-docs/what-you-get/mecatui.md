@@ -125,6 +125,15 @@ New-chat creation waits for saved model defaults to be reconciled. Seed-prompt f
 
 `/sessions` opens a searchable inventory in four tabs: **Chats**, **Scheduled runs**, **Child runs**, and **Other**. Unknown legacy or custom rows appear under Other instead of being mislabeled as children. Rows show state, time, turns, title, model, and a short digest handle; the chat you are currently using is marked **`[current]`**. The search applies to the selected tab and matches the row's title, model, workspace, digest, and available relationship details.
 
+The selected row shows only actions the server advertises: **`y`** copies its exact
+opaque ID, **`v`** opens its authoritative transcript without attaching, **`f`** forks
+an eligible main chat and adopts the peer, **`r`** edits its persisted title, and
+**`d`** asks before permanent deletion. `esc` cancels the rename or delete prompt.
+The currently attached chat cannot be deleted from its own row; switch first.
+Server-side ownership, kind, active/awaiting, and lease checks run again when an
+action executes, so stale inventory data fails safely without changing the active chat.
+Scheduled, child, and unknown rows expose only the actions valid for their kind.
+
 The main header uses that same compact digest instead of exposing the full opaque ID. Type `/session` to see the active chat's safely quoted full ID and metadata (title, state, workspace, known timestamps, provider, and model), then press `c` to copy the exact ID. Clipboard failure or a session switch is reported rather than shown as a successful stale copy.
 
 Press `enter` on a Chat to **Continue** it when the server says it is publicly continuable. mecatui loads the authoritative snapshot transcript first, then makes that chat the active prompt target. Scheduled, Child, and inspect-capable Other runs are normally **Inspect** instead: their same authoritative snapshot transcript opens read-only, without changing your active chat. This is deliberately non-destructive — `esc` is **Back** to the inventory. If a transcript cannot be loaded completely, mecatui does not continue it; the error view offers **`r` Retry** or **Back**. The durable event log may help live delivery catch-up, but it is not used as the conversation transcript or as proof that a transcript is complete.

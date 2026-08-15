@@ -21,14 +21,22 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   New identifiers are Added (minor); the additive `Trajectory` fields are classified
   Changed below.
 
-- **Session discovery taxonomy and bounded metadata paging** (issue #471,
+- **Remote session-store capability negotiation** (issue #557) —
+  `port.SessionDeleteSupport` lets a compatibility-shaped `PrunableStore` report
+  that its negotiated backend cannot delete sessions, so inventory consumers
+  fail closed without removing the existing `List`/`Delete` operation surface.
+  The new optional interface is Added (minor).
+
+- **Session discovery taxonomy, title provenance, and bounded metadata paging** (issues #471 and #557,
   [ADR 0108](../docs/adr/0108-session-discovery-continuation.md)) —
   `session.SessionKind` / `session.SessionRelationship` define the validated
   main, scheduled, Subagent, Parallel-branch, team-member, and legacy-unknown
-  vocabulary. `port.SessionDiscoveryMeta`, `SessionMetadataPager`, cursor/page
+  vocabulary. `session.TitleProvenance` records legacy/unknown, first-prompt, or
+  operator authorship, and `session.(*Session).RenameTitle` applies a bounded explicit
+  rename. `port.SessionDiscoveryMeta`, `SessionMetadataPager`, cursor/page
   values, and reference conformance add optional bounded discovery without
   changing the required `SessionStore` Save/Load interface. New identifiers are
-  Added (minor); additions to `session.Session` are classified Changed below.
+  Added (minor); additions to existing exported structs are classified Changed below.
 
 - **Per-model-call session identity context** (issue #543) —
   `port.WithSessionID` and `port.SessionIDFromContext` carry the exact active
@@ -734,12 +742,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   additive for keyed literals but breaking for external unkeyed literals; classified
   Changed for a pre-v1 minor bump.
 
-- **Session taxonomy fields on the existing aggregate** (issue #471,
+- **Session taxonomy and title-provenance fields on existing structs** (issues #471 and #557,
   [ADR 0108](../docs/adr/0108-session-discovery-continuation.md)) —
-  `session.Session.Kind` and `session.Session.Relationship` are additive for keyed
-  literals but breaking for external unkeyed literals. The required
-  `port.SessionStore` and existing `port.SessionMeta` shapes remain unchanged.
-  Classified Changed/breaking for a pre-v1 minor bump.
+  `session.Session.Kind`, `session.Session.Relationship`, and
+  `session.Session.TitleProvenance` and `port.SessionDiscoveryMeta.TitleProvenance` are
+  additive for keyed literals but breaking for external unkeyed literals. The required
+  `port.SessionStore` interface and existing `port.SessionMeta` shape remain unchanged. Classified Changed/breaking for a pre-v1
+  minor bump.
 
 - **Learned-skill linkage and durable admission on existing learning structs (issue #510)** — `learning.Candidate.Name` preserves historical title/body procedure decoding while naming new materializable skills; `learning.ProposalRecord.SkillID` links an explicitly materialized draft; `learning.SkillProvenance.Origin` represents the explicit unevidenced legacy-model import case; `SkillProvenance.ValidationDisposition` and `SkillVersion.Disposition` preserve similarity admission across exact retries/restarts; and `ProposalRepository.LinkSkillDraft` extends the existing repository interface. Struct additions are breaking for unkeyed literals and the interface method addition is breaking for external implementations, so these changes are classified Changed under the compatibility contract.
 

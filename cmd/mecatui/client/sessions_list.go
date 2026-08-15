@@ -34,6 +34,7 @@ const (
 	CapabilityReasonActiveElsewhere        CapabilityReason = "active_elsewhere"
 	CapabilityReasonTranscriptUnavailable  CapabilityReason = "transcript_unavailable"
 	CapabilityReasonEnvironmentUnavailable CapabilityReason = "environment_unavailable"
+	CapabilityReasonStorageUnsupported     CapabilityReason = "storage_unsupported"
 	CapabilityReasonUnknown                CapabilityReason = "unknown"
 )
 
@@ -54,24 +55,42 @@ type SessionInventoryCapabilities struct {
 	Inspect                 bool
 	AuthoritativeTranscript bool
 	ActivityReplay          bool
+	CopyID                  bool
+	ViewTranscript          bool
+	Fork                    bool
+	Rename                  bool
+	Delete                  bool
+}
+
+// SessionInventoryActionReasons carries the server reason for each disabled action.
+type SessionInventoryActionReasons struct {
+	PublicChat     CapabilityReason
+	Inspect        CapabilityReason
+	CopyID         CapabilityReason
+	ViewTranscript CapabilityReason
+	Fork           CapabilityReason
+	Rename         CapabilityReason
+	Delete         CapabilityReason
 }
 
 // SessionListItem is one server-authored stored-session inventory row. ID remains
 // the only value sent back to APIs; Kind, Relationship, capabilities and reason
 // code are display/action metadata and are never inferred from ID spelling.
 type SessionListItem struct {
-	ID           string
-	ModifiedAt   int64
-	State        string
-	Turns        int32
-	ModelID      string
-	CreatedAt    int64
-	Title        string
-	Workspace    string
-	Kind         SessionKind
-	Relationship SessionRelationship
-	Capabilities SessionInventoryCapabilities
-	ReasonCode   CapabilityReason
+	ID              string
+	ModifiedAt      int64
+	State           string
+	Turns           int32
+	ModelID         string
+	CreatedAt       int64
+	Title           string
+	TitleProvenance string
+	Workspace       string
+	Kind            SessionKind
+	Relationship    SessionRelationship
+	Capabilities    SessionInventoryCapabilities
+	Reasons         SessionInventoryActionReasons
+	ReasonCode      CapabilityReason
 }
 
 // SessionsListedMsg carries one session inventory listing result.
@@ -112,10 +131,11 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 			branchIndex = &v
 		}
 		caps := s.GetCapabilities()
+		reasons := caps.GetReasons()
 		out = append(out, SessionListItem{
 			ID: s.GetSessionId(), ModifiedAt: s.GetModifiedAtUnix(), State: s.GetState(),
 			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: s.GetTitle(),
-			Workspace: s.GetWorkspace(), Kind: SessionKind(s.GetKind()),
+			TitleProvenance: s.GetTitleProvenance(), Workspace: s.GetWorkspace(), Kind: SessionKind(s.GetKind()),
 			Relationship: SessionRelationship{
 				ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
 				ScheduleName: rel.GetScheduleName(), OriginSessionID: rel.GetOriginSessionId(),
@@ -124,6 +144,13 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 			Capabilities: SessionInventoryCapabilities{
 				PublicChat: caps.GetPublicChat(), Inspect: caps.GetInspect(),
 				AuthoritativeTranscript: caps.GetAuthoritativeTranscript(), ActivityReplay: caps.GetActivityReplay(),
+				CopyID: caps.GetCopyId(), ViewTranscript: caps.GetViewTranscript(), Fork: caps.GetFork(),
+				Rename: caps.GetRename(), Delete: caps.GetDelete(),
+			},
+			Reasons: SessionInventoryActionReasons{
+				PublicChat: CapabilityReason(reasons.GetPublicChat()), Inspect: CapabilityReason(reasons.GetInspect()),
+				CopyID: CapabilityReason(reasons.GetCopyId()), ViewTranscript: CapabilityReason(reasons.GetViewTranscript()),
+				Fork: CapabilityReason(reasons.GetFork()), Rename: CapabilityReason(reasons.GetRename()), Delete: CapabilityReason(reasons.GetDelete()),
 			},
 			ReasonCode: CapabilityReason(s.GetReasonCode()),
 		})

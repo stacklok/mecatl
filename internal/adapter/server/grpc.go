@@ -135,6 +135,29 @@ func (h *HarnessServer) CloseSession(ctx context.Context, req *mecatlv1.CloseSes
 	return &mecatlv1.CloseSessionResponse{}, nil
 }
 
+// RenameSession explicitly replaces an idle main session's persisted title.
+func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameSessionRequest) (*mecatlv1.RenameSessionResponse, error) {
+	if req.GetSessionId() == "" || strings.TrimSpace(req.GetTitle()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id and non-blank title are required")
+	}
+	sess, err := h.svc.RenameSession(ctx, session.SessionID(req.GetSessionId()), req.GetTitle())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.ResolvedModel(sess.ID), h.svc.capabilities())}, nil
+}
+
+// DeleteSession physically removes an idle main session and store-managed sidecars.
+func (h *HarnessServer) DeleteSession(ctx context.Context, req *mecatlv1.DeleteSessionRequest) (*mecatlv1.DeleteSessionResponse, error) {
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	if err := h.svc.DeleteSession(ctx, session.SessionID(req.GetSessionId())); err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.DeleteSessionResponse{}, nil
+}
+
 // ForkSession creates a peer session from an existing session's history snapshot
 // (ADR 0065). The new session inherits the source's mode, workspace, limits, and
 // provider/model/profile labels; same provider and model only, with the ONE
@@ -730,6 +753,8 @@ func toStatus(err error) error {
 		// No durable EventLog (cloud-native Phase 3a) is configured: the
 		// StreamSessionEvents read-back surface is not available on this
 		// deployment. Unimplemented (HTTP 501).
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrSessionDeleteUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())

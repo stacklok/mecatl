@@ -10,10 +10,16 @@ func TestSetTitleOnce(t *testing.T) {
 	if s.Title != "" {
 		t.Fatalf("new session Title = %q, want empty", s.Title)
 	}
+	if s.TitleProvenance != TitleProvenanceUnknown {
+		t.Fatalf("new session TitleProvenance = %q, want unknown", s.TitleProvenance)
+	}
 	// First genuine prompt sticks.
 	s.SetTitle("Fix the flaky CI job")
 	if got, want := s.Title, "Fix the flaky CI job"; got != want {
 		t.Fatalf("after first SetTitle Title = %q, want %q", got, want)
+	}
+	if s.TitleProvenance != TitleProvenanceFirstPrompt {
+		t.Fatalf("after SetTitle provenance = %q, want first-prompt", s.TitleProvenance)
 	}
 	// A second prompt does NOT overwrite (set-once).
 	s.SetTitle("Refactor the auth layer")
@@ -53,6 +59,33 @@ func TestSetTitleClamps(t *testing.T) {
 	// Clamped to maxTitleRunes (120) + "…".
 	if got, want := s.Title, strings.Repeat("x", maxTitleRunes)+"…"; got != want {
 		t.Fatalf("clamped Title len = %d, want %d (+…)", len([]rune(got)), maxTitleRunes+1)
+	}
+}
+
+func TestRenameTitle(t *testing.T) {
+	s := newTestSession(Limits{})
+	if err := s.RenameTitle("  Operator title  "); err != nil {
+		t.Fatalf("RenameTitle: %v", err)
+	}
+	if got, want := s.Title, "Operator title"; got != want {
+		t.Fatalf("Title = %q, want %q", got, want)
+	}
+	if s.TitleProvenance != TitleProvenanceOperator {
+		t.Fatalf("TitleProvenance = %q, want operator", s.TitleProvenance)
+	}
+
+	if err := s.RenameTitle(strings.Repeat("x", 200)); err != nil {
+		t.Fatalf("RenameTitle long: %v", err)
+	}
+	if got, want := s.Title, strings.Repeat("x", maxTitleRunes)+"…"; got != want {
+		t.Fatalf("clamped Title = %q, want %q", got, want)
+	}
+
+	if err := s.RenameTitle(" \t\n "); err == nil {
+		t.Fatal("RenameTitle blank succeeded, want error")
+	}
+	if got, want := s.Title, strings.Repeat("x", maxTitleRunes)+"…"; got != want {
+		t.Fatalf("blank rename changed Title = %q, want %q", got, want)
 	}
 }
 

@@ -91,7 +91,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.effort, action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
 		{key: "/schedule", action: "browse & manage scheduled tasks", available: caps.Scheduling, gated: true},
 		{key: "/session", action: "show active session details and copy its exact ID"},
-		{key: "/sessions", action: "continue chats or inspect scheduled and child runs"},
+		{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
 		{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
 		{key: hk.expandTools, action: "expand/collapse details"},
 	})

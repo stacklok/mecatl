@@ -41,10 +41,12 @@
 // CONTRACT LIMITATION (engine/COMPATIBILITY.md, ADR 0038), not a bug.
 //
 // CREATION METADATA is supplied via SessionMeta: the id, mode, limits, workspace,
-// profile, provider/model selector, and createdAt are creation facts that NO event
-// carries, so the caller (who created the session and thus knows them) provides them
-// alongside the stream. There is deliberately no EvSessionCreated event (ADR 0038
-// records that as a possible future).
+// profile, provider/model selector, reasoning effort, authoritative title/provenance,
+// kind/relationship, and createdAt are facts that NO event carries, so the caller
+// (who created or discovered the session and thus knows them) provides them alongside
+// the stream. A legacy empty title falls back to the first genuine EvUserPrompt.
+// There is deliberately no EvSessionCreated event (ADR 0038 records that as a
+// possible future).
 //
 // USER MESSAGES: the loop emits a log-only EvUserPrompt at every site it records a
 // user-role message — the genuine client prompt AND the harness-authored synthetic
@@ -95,6 +97,10 @@ type SessionMeta struct {
 	// when unset. Opaque to the domain; carried so the rehydrated session re-mints
 	// the same-effort per-session engine via the factory.
 	ReasoningEffort string
+	// Title and TitleProvenance are authoritative creation/discovery metadata when
+	// supplied. A legacy empty title is derived from the first genuine user event.
+	Title           string
+	TitleProvenance session.TitleProvenance
 	// Kind and Relationship are the trusted producer taxonomy supplied alongside
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
@@ -151,6 +157,8 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
+	s.Title = meta.Title
+	s.TitleProvenance = meta.TitleProvenance
 
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its

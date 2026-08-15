@@ -64,6 +64,7 @@ const (
 	SessionStoreService_List_FullMethodName         = "/mecatl.driver.v1.SessionStoreService/List"
 	SessionStoreService_PageMetadata_FullMethodName = "/mecatl.driver.v1.SessionStoreService/PageMetadata"
 	SessionStoreService_Delete_FullMethodName       = "/mecatl.driver.v1.SessionStoreService/Delete"
+	SessionStoreService_Capabilities_FullMethodName = "/mecatl.driver.v1.SessionStoreService/Capabilities"
 )
 
 // SessionStoreServiceClient is the client API for SessionStoreService service.
@@ -94,6 +95,9 @@ type SessionStoreServiceClient interface {
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
 	Delete(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error)
+	// Capabilities negotiates optional additive operations. Old drivers return
+	// UNIMPLEMENTED and are treated as supporting only Save/Load.
+	Capabilities(ctx context.Context, in *SessionStoreCapabilitiesRequest, opts ...grpc.CallOption) (*SessionStoreCapabilitiesResponse, error)
 }
 
 type sessionStoreServiceClient struct {
@@ -154,6 +158,16 @@ func (c *sessionStoreServiceClient) Delete(ctx context.Context, in *DeleteSessio
 	return out, nil
 }
 
+func (c *sessionStoreServiceClient) Capabilities(ctx context.Context, in *SessionStoreCapabilitiesRequest, opts ...grpc.CallOption) (*SessionStoreCapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionStoreCapabilitiesResponse)
+	err := c.cc.Invoke(ctx, SessionStoreService_Capabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionStoreServiceServer is the server API for SessionStoreService service.
 // All implementations must embed UnimplementedSessionStoreServiceServer
 // for forward compatibility.
@@ -182,6 +196,9 @@ type SessionStoreServiceServer interface {
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
 	Delete(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error)
+	// Capabilities negotiates optional additive operations. Old drivers return
+	// UNIMPLEMENTED and are treated as supporting only Save/Load.
+	Capabilities(context.Context, *SessionStoreCapabilitiesRequest) (*SessionStoreCapabilitiesResponse, error)
 	mustEmbedUnimplementedSessionStoreServiceServer()
 }
 
@@ -206,6 +223,9 @@ func (UnimplementedSessionStoreServiceServer) PageMetadata(context.Context, *Pag
 }
 func (UnimplementedSessionStoreServiceServer) Delete(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedSessionStoreServiceServer) Capabilities(context.Context, *SessionStoreCapabilitiesRequest) (*SessionStoreCapabilitiesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Capabilities not implemented")
 }
 func (UnimplementedSessionStoreServiceServer) mustEmbedUnimplementedSessionStoreServiceServer() {}
 func (UnimplementedSessionStoreServiceServer) testEmbeddedByValue()                             {}
@@ -318,6 +338,24 @@ func _SessionStoreService_Delete_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SessionStoreService_Capabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SessionStoreCapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionStoreServiceServer).Capabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionStoreService_Capabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionStoreServiceServer).Capabilities(ctx, req.(*SessionStoreCapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SessionStoreService_ServiceDesc is the grpc.ServiceDesc for SessionStoreService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -344,6 +382,10 @@ var SessionStoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _SessionStoreService_Delete_Handler,
+		},
+		{
+			MethodName: "Capabilities",
+			Handler:    _SessionStoreService_Capabilities_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

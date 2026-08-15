@@ -233,7 +233,9 @@ The HTTP adapter wraps the same service. Every event is one SSE `data:` line car
 | `POST /v1/sessions` | `{workspace, mode?, limits?, provider_id?, model_id?, profile?, source_session_id?}` | `201` `{session_id}` |
 | `GET /v1/sessions/{id}` | — | `200` session snapshot |
 | `POST /v1/sessions/{id}/mode` | `{mode}` | `200` updated session snapshot; rejected mid-turn |
-| `DELETE /v1/sessions/{id}` | — | `204` — close the session |
+| `POST /v1/sessions/{id}/rename` | `{title}` | `200` updated snapshot; permanently records operator-authored title provenance |
+| `POST /v1/sessions/{id}/delete` | — | `204` — permanently delete an idle main session and store-managed sidecars; active/awaiting/leased/non-main targets are rejected |
+| `DELETE /v1/sessions/{id}` | — | `204` — close runtime session resources without physically deleting stored history |
 | `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` |
 | `POST /v1/sessions/{id}/approve` | `{ask_id, verdict}` (`allow_once`\|`allow_always`\|`deny`; legacy `{ask_id, allow}` bool still accepted) | `204` |
 | `POST /v1/sessions/{id}/cancel` | — | `204` |

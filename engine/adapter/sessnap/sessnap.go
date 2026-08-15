@@ -66,7 +66,8 @@ type Snapshot struct {
 	// Profile / ProviderID / Parts). Persisting it lets a restarted process show
 	// the label without re-deriving it. It is an inert stored label (like
 	// Profile), restored by direct assignment, NOT a state transition.
-	Title string `json:"title,omitempty"`
+	Title           string                  `json:"title,omitempty"`
+	TitleProvenance session.TitleProvenance `json:"title_provenance,omitempty"`
 	// Usage is the cumulative run-token accounting, a POINTER for true omitempty
 	// (matching the Pending precedent): a zero Usage marshals nothing and a v1
 	// snapshot with no "usage" key decodes to a nil pointer => the zero Usage on
@@ -175,6 +176,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		ModelID:         s.ModelID,
 		ReasoningEffort: s.ReasoningEffort,
 		Title:           s.Title,
+		TitleProvenance: s.TitleProvenance,
 		Authority:       s.Authority,
 		Kind:            s.Kind,
 		Relationship:    relationship,
@@ -231,6 +233,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.ReasoningEffort = snap.ReasoningEffort
 	s.EnvironmentRef = snap.EnvironmentRef
 	s.Title = snap.Title
+	s.TitleProvenance = snap.TitleProvenance
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).

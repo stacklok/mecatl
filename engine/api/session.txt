@@ -23,6 +23,7 @@
     method func (*Session).RecordedStopReason() (StopReason, bool)
     method func (*Session).Recover() error
     method func (*Session).Rehome(workspace string) error
+    method func (*Session).RenameTitle(text string) error
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ResetUsage() error
@@ -145,6 +146,9 @@ const StopPlanIterate StopReason = "plan_iterate"
 const StopStructuredOutput StopReason = "structured_output"
 const StopTimeout StopReason = "timeout"
 const Tier4SummaryMarker untyped string = "[earlier turns summarised]"
+const TitleProvenanceFirstPrompt TitleProvenance = "first-prompt"
+const TitleProvenanceOperator TitleProvenance = "operator"
+const TitleProvenanceUnknown TitleProvenance = ""
 const VerdictAllowAlways ApprovalVerdict = 2
 const VerdictAllowOnce ApprovalVerdict = 1
 const VerdictDeny ApprovalVerdict = 0
@@ -223,7 +227,7 @@ type Principal struct{Issuer string; Subject string; GrantType GrantType; Name s
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool}
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""}
@@ -235,6 +239,7 @@ type TeamMemberDisposition struct{Name string; Disposition string; Reason string
 type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; RoutingReason string; Model string}
 type TeamPayload struct{ParentCallID string; TeamID string; Roster []TeamMemberSpec; Member string; MemberSessionID string; InnerKind EventType; Text string; ToolName string; Detail string; IsError bool; Rounds int; Stop StopReason; Usage Usage; ContextUsed int64; ContextWindow int64; Tasks []TeamTaskSnapshot; Findings []TeamFindingSnapshot; Dispositions []TeamMemberDisposition; Cause string}
 type TeamTaskSnapshot struct{ID string; Description string; State string; Assignee string; Deps []string}
+type TitleProvenance string
 type ToolCall struct{ID ToolCallID "json:\"ID\""; Name string "json:\"Name\""; Args json.RawMessage "json:\"Args\""; ItemID string "json:\"item_id,omitempty\""}
 type ToolCallID string
 type ToolResult struct{CallID ToolCallID; Content string; IsError bool; Parts []Content "json:\"Parts,omitempty\""}

@@ -134,6 +134,18 @@ func (s *sessionStoreServer) Load(ctx context.Context, req *driverv1.LoadRequest
 	}, nil
 }
 
+func (s *sessionStoreServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	_, prunable := s.store.(port.PrunableStore)
+	_, pager := s.store.(port.SessionMetadataPager)
+	deleteSupported := prunable
+	if support, ok := s.store.(port.SessionDeleteSupport); ok {
+		deleteSupported = support.SupportsSessionDelete()
+	}
+	return &driverv1.SessionStoreCapabilitiesResponse{
+		List: prunable, MetadataPaging: pager, Delete: deleteSupported,
+	}, nil
+}
+
 // List serves the retention seam by type-asserting the wrapped backend for
 // port.PrunableStore. A backend that is a plain Save/Load store answers
 // UNIMPLEMENTED — the protocol's documented "cannot enumerate" posture; the
@@ -216,7 +228,8 @@ func metadataToProto(meta port.SessionDiscoveryMeta) (*driverv1.SessionMetadataE
 	}
 	entry := &driverv1.SessionMetadataEntry{
 		SessionId: string(meta.ID), State: string(meta.State), Turns: int32(meta.Turns),
-		ModelId: meta.ModelID, Title: meta.Title, Workspace: meta.Workspace, Kind: string(meta.Kind),
+		ModelId: meta.ModelID, Title: meta.Title, TitleProvenance: string(meta.TitleProvenance),
+		Workspace: meta.Workspace, Kind: string(meta.Kind),
 		ParentSessionId: string(meta.Relationship.ParentSessionID), CallId: string(meta.Relationship.CallID),
 		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID),
 		TeamId: meta.Relationship.TeamID, MemberName: meta.Relationship.MemberName,

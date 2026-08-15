@@ -21,15 +21,16 @@ import (
 // pinned by TestMetaSnapshotTagsAreSessnapSubset (a reflection tripwire so the
 // mirror cannot silently drift).
 type metaSnapshot struct {
-	ID           session.SessionID           `json:"id"`
-	State        session.State               `json:"state"`
-	Counters     session.Counters            `json:"counters"`
-	ModelID      string                      `json:"model_id,omitempty"`
-	Title        string                      `json:"title,omitempty"`
-	Kind         session.SessionKind         `json:"kind,omitempty"`
-	Relationship session.SessionRelationship `json:"relationship,omitzero"`
-	Workspace    string                      `json:"workspace"`
-	CreatedAt    time.Time                   `json:"created_at"`
+	ID              session.SessionID           `json:"id"`
+	State           session.State               `json:"state"`
+	Counters        session.Counters            `json:"counters"`
+	ModelID         string                      `json:"model_id,omitempty"`
+	Title           string                      `json:"title,omitempty"`
+	TitleProvenance session.TitleProvenance     `json:"title_provenance,omitempty"`
+	Kind            session.SessionKind         `json:"kind,omitempty"`
+	Relationship    session.SessionRelationship `json:"relationship,omitzero"`
+	Workspace       string                      `json:"workspace"`
+	CreatedAt       time.Time                   `json:"created_at"`
 	// Owner is the session's verified owner (ADR 0100). Decoding it here is
 	// what keeps the cheap fast path's row IDENTICAL to the Load-per-row
 	// fallback's; a pre-owner snapshot simply has no key and stays nil.
@@ -134,6 +135,7 @@ func (st *Store) discoveryMetaList(_ context.Context) ([]port.SessionDiscoveryMe
 			meta.Turns = m.Counters.Turns
 			meta.ModelID = m.ModelID
 			meta.Title = m.Title
+			meta.TitleProvenance = m.TitleProvenance
 			meta.Workspace = m.Workspace
 			meta.Kind = kind
 			meta.Relationship = m.Relationship

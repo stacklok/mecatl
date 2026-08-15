@@ -2047,6 +2047,99 @@ func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*sessio
 	return sess, nil
 }
 
+// RenameSession applies an explicit operator title change to an owned main
+// session. Authorization, kind/state/liveness checks, and lease acquisition are
+// serialized under the same per-session mutex used by prompt starts.
+func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title string) (*session.Session, error) {
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	sess, absent, err := s.managementTarget(ctx, id, false)
+	if err != nil {
+		return nil, err
+	}
+	if absent {
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := sess.RenameTitle(title); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+		return nil, fmt.Errorf("%w: rename session: %v", ErrInternal, err)
+	}
+	return sess, nil
+}
+
+// DeleteSession physically removes an owned main session and all store-managed
+// sidecars. Absence and foreign ownership are both idempotent success, preventing
+// deletion from becoming an ownership oracle. Infrastructure failures remain loud.
+func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error {
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	sess, absent, err := s.managementTarget(ctx, id, true)
+	if err != nil || absent {
+		return err
+	}
+	prunable, ok := s.cfg.Store.(port.PrunableStore)
+	if !ok {
+		return ErrSessionDeleteUnsupported
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := prunable.Delete(ctx, sess.ID); err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			return nil
+		}
+		if errors.Is(err, port.ErrPruneUnsupported) {
+			return ErrSessionDeleteUnsupported
+		}
+		return fmt.Errorf("%w: delete session: %v", ErrInternal, err)
+	}
+	s.CloseSession(id)
+	return nil
+}
+
+// managementTarget performs the common management authorization and eligibility
+// gate. The caller must hold runEntryMu for id. concealAbsence makes missing and
+// foreign sessions indistinguishable idempotent success for DeleteSession.
+func (s *Service) managementTarget(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
+	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			if concealAbsence {
+				return nil, true, nil
+			}
+			return nil, false, fmt.Errorf("%w: %q", ErrNotFound, id)
+		}
+		return nil, false, fmt.Errorf("%w: load session: %v", ErrInternal, err)
+	}
+	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
+		if concealAbsence {
+			return nil, true, nil
+		}
+		return nil, false, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	// Session IDs are opaque handles. Repairing malformed persisted bytes would
+	// silently change the identity returned by RenameSession's wire response.
+	if !utf8.ValidString(string(sess.ID)) {
+		return nil, false, fmt.Errorf("%w: persisted session has an invalid UTF-8 id", ErrInternal)
+	}
+	if sess.Kind != session.SessionKindMain || hasLegacyNonChatPrefix(id) {
+		return nil, false, fmt.Errorf("%w: session is not a main session", ErrFailedPrecondition)
+	}
+	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || s.IsLive(id) {
+		return nil, false, fmt.Errorf("%w: session is active or awaiting approval", ErrFailedPrecondition)
+	}
+	return sess, false, nil
+}
+
 // SetMode changes the permission posture of the session under id and persists
 // the change, returning the updated session. It is the out-of-band mode-switch
 // seam (ACP session/set_mode). It applies to the LIVE session when a run is
@@ -2115,15 +2208,13 @@ func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*sessi
 // provider/model/profile labels (ADR 0065). Same provider and model only; the ONE
 // permitted selector delta is an optional reasoning-effort override (ADR 0068).
 //
-// The source is loaded via the run-entry funnel (loadAndReopen), so a terminal
+// The source is authorized and checked for main-kind, liveness, and awaiting state
+// under runEntryMu, then leased before terminal recovery or snapshotting. A terminal
 // source is recovered to idle first (completed→Reopen / cancelled→Interrupt /
-// failed→Recover) and approval replay runs. A running/awaiting source is rejected
-// with ErrFailedPrecondition (fork requires a turn boundary) — loadAndReopen's
-// switch only handles terminal states, so the running/awaiting check runs AFTER
-// it returns. The snapshot is session.ForkSnapshot (fresh backing array, trailing
-// orphans stripped, tool-pairing-valid), seeded via session.SeedHistory into a
-// fresh session.New aggregate. The new session starts idle with zeroed
-// Counters/Usage but inherits the source's history verbatim (not re-fenced —
+// failed→Recover) and approval replay runs. The snapshot is session.ForkSnapshot
+// (fresh backing array, trailing orphans stripped, tool-pairing-valid), seeded via
+// session.SeedHistory into a fresh session.New aggregate. The new session starts
+// with zeroed Counters/Usage but inherits the source's history verbatim (not re-fenced —
 // peer-trust parity, same as the subagent fork).
 //
 // title overrides the forked session's title when non-empty; empty inherits the
@@ -2140,15 +2231,25 @@ func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*sessi
 // (non-default selector / no-fs profile / worktree workspace), mirroring
 // createSession's branching on sessionNeedsPerFactory; a default-FS fork rides the
 // shared engine (zero overhead, no registry entry). The MaxSessionEngines cap is
-// enforced by the rehydrate path. No runEntryMu is taken (the new session has no
-// run; the source is loaded, not driven). Returns the new id.
+// enforced by the rehydrate path. Returns the new id.
 func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, title, effortOverride string) (session.SessionID, error) {
-	src, err := s.loadAndReopen(ctx, srcID)
+	unlock := s.runEntryMu.lock(srcID)
+	defer unlock()
+	src, absent, err := s.managementTarget(ctx, srcID, false)
 	if err != nil {
 		return "", err
 	}
-	if src.State == session.StateRunning || src.State == session.StateAwaiting {
-		return "", fmt.Errorf("%w: fork requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
+	if absent {
+		return "", fmt.Errorf("%w: %q", ErrNotFound, srcID)
+	}
+	release, err := s.acquireMutationLease(ctx, srcID)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	src, err = s.reopenLoadedSession(ctx, src)
+	if err != nil {
+		return "", err
 	}
 	snap := session.ForkSnapshot(src.Conversation)
 	forked := session.New(s.cfg.NewID(), src.Mode, src.Workspace, src.Limits, s.cfg.Now())
@@ -2170,9 +2271,12 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 		return "", err
 	}
 	if title != "" {
-		forked.Title = title
+		if err := forked.RenameTitle(title); err != nil {
+			return "", fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		}
 	} else {
 		forked.Title = src.Title
+		forked.TitleProvenance = src.TitleProvenance
 	}
 	// Save first, then rehydrate: a rehydrate failure (e.g. ErrTooManySessionEngines)
 	// leaves a valid persisted session that self-heals at the next StartRunContent
@@ -4041,6 +4145,26 @@ const autoApproveWaitTimeout = 30 * time.Second
 // verdict terminates the run.
 const autoApprovePollInterval = 10 * time.Millisecond
 
+// acquireMutationLease acquires a lease for one serialized management mutation
+// and returns its cleanup. A lease already held for the session lifetime is left
+// untouched; a lease newly acquired by this mutation is released on every exit.
+// The caller must hold runEntryMu for id.
+func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID) (func(), error) {
+	s.mu.Lock()
+	_, preHeld := s.heldLeases[id]
+	s.mu.Unlock()
+	if err := s.acquireLease(ctx, id); err != nil {
+		return func() {}, err
+	}
+	s.mu.Lock()
+	_, held := s.heldLeases[id]
+	s.mu.Unlock()
+	if preHeld || !held {
+		return func() {}, nil
+	}
+	return func() { s.releaseLease(id) }, nil
+}
+
 // acquireLease takes (or confirms) the cross-process single-writer lease for id
 // (cloud-native Phase 4). It is called at the run-entry seam AFTER the
 // per-session runEntryMu so same-process exclusion stays cheap and the
@@ -4945,6 +5069,9 @@ type SessionSummary struct {
 	// (walks the conversation for the first genuine user prompt). Empty for a
 	// session with no genuine prompt.
 	Title string
+	// TitleProvenance reports whether the title is prompt-derived, operator-authored,
+	// or legacy/unknown.
+	TitleProvenance session.TitleProvenance
 	// Workspace is the stored session root used for search and display.
 	Workspace string
 	// Owner is the verified caller the session is attributed to.
@@ -4952,8 +5079,10 @@ type SessionSummary struct {
 	// Kind and Relationship are the durable trusted-producer taxonomy.
 	Kind         session.SessionKind
 	Relationship session.SessionRelationship
-	// Capabilities and ReasonCode describe the public actions valid for this row.
+	// Capabilities and Reasons describe each public action valid for this row.
+	// ReasonCode is the legacy aggregate public-chat reason.
 	Capabilities SessionInventoryCapabilities
+	Reasons      SessionInventoryActionReasons
 	ReasonCode   CapabilityReason
 }
 
@@ -4963,6 +5092,22 @@ type SessionInventoryCapabilities struct {
 	Inspect                 bool
 	AuthoritativeTranscript bool
 	ActivityReplay          bool
+	CopyID                  bool
+	ViewTranscript          bool
+	Fork                    bool
+	Rename                  bool
+	Delete                  bool
+}
+
+// SessionInventoryActionReasons carries one closed reason for each disabled action.
+type SessionInventoryActionReasons struct {
+	PublicChat     CapabilityReason
+	Inspect        CapabilityReason
+	CopyID         CapabilityReason
+	ViewTranscript CapabilityReason
+	Fork           CapabilityReason
+	Rename         CapabilityReason
+	Delete         CapabilityReason
 }
 
 // CapabilityReason is a stable machine-readable explanation for a disabled
@@ -4979,7 +5124,9 @@ const (
 	CapabilityReasonActiveElsewhere CapabilityReason = "active_elsewhere"
 	// CapabilityReasonTranscriptUnavailable means no complete snapshot transcript can be loaded.
 	CapabilityReasonTranscriptUnavailable CapabilityReason = "transcript_unavailable"
-	// CapabilityReasonUnknown means the row cannot prove public-chat eligibility.
+	// CapabilityReasonStorageUnsupported means the configured store cannot perform the action.
+	CapabilityReasonStorageUnsupported CapabilityReason = "storage_unsupported"
+	// CapabilityReasonUnknown means the row cannot prove action eligibility.
 	CapabilityReasonUnknown CapabilityReason = "unknown"
 )
 
@@ -5034,19 +5181,40 @@ func decodeInventoryCursor(token string) (*port.SessionMetadataCursor, error) {
 	return &port.SessionMetadataCursor{ModifiedAt: time.Unix(0, cursor.ModifiedAtUnixNano), ID: session.SessionID(cursor.SessionID)}, nil
 }
 
-func inventoryCapabilities(kind session.SessionKind, id session.SessionID, state session.State, live bool) (SessionInventoryCapabilities, CapabilityReason) {
-	caps := SessionInventoryCapabilities{Inspect: true}
+func inventoryCapabilities(kind session.SessionKind, id session.SessionID, state session.State, live bool) (SessionInventoryCapabilities, SessionInventoryActionReasons) {
+	caps := SessionInventoryCapabilities{Inspect: true, CopyID: id != ""}
+	reasons := SessionInventoryActionReasons{
+		PublicChat: CapabilityReasonUnknown, CopyID: CapabilityReasonUnknown,
+		ViewTranscript: CapabilityReasonTranscriptUnavailable, Fork: CapabilityReasonUnknown,
+		Rename: CapabilityReasonUnknown, Delete: CapabilityReasonUnknown,
+	}
+	if caps.CopyID {
+		reasons.CopyID = ""
+	}
 	if kind != session.SessionKindMain || hasLegacyNonChatPrefix(id) {
-		return caps, CapabilityReasonInspectOnlyKind
+		reasons.PublicChat = CapabilityReasonInspectOnlyKind
+		reasons.Fork = CapabilityReasonInspectOnlyKind
+		reasons.Rename = CapabilityReasonInspectOnlyKind
+		reasons.Delete = CapabilityReasonInspectOnlyKind
+		return caps, reasons
 	}
 	if state == session.StateAwaiting {
-		return caps, CapabilityReasonAwaitingApproval
+		reasons.PublicChat = CapabilityReasonAwaitingApproval
+		reasons.Fork = CapabilityReasonAwaitingApproval
+		reasons.Rename = CapabilityReasonAwaitingApproval
+		reasons.Delete = CapabilityReasonAwaitingApproval
+		return caps, reasons
 	}
-	if live {
-		return caps, CapabilityReasonActiveElsewhere
+	if state == session.StateRunning || live {
+		reasons.PublicChat = CapabilityReasonActiveElsewhere
+		reasons.Fork = CapabilityReasonActiveElsewhere
+		reasons.Rename = CapabilityReasonActiveElsewhere
+		reasons.Delete = CapabilityReasonActiveElsewhere
+		return caps, reasons
 	}
-	caps.PublicChat = true
-	return caps, ""
+	caps.PublicChat, caps.Fork, caps.Rename = true, true, true
+	reasons.PublicChat, reasons.Fork, reasons.Rename = "", "", ""
+	return caps, reasons
 }
 
 func validSessionRelationshipUTF8(relationship session.SessionRelationship) bool {
@@ -5151,6 +5319,16 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	return out, nil
 }
 
+func sessionDeleteSupported(store port.SessionStore) bool {
+	if _, ok := store.(port.PrunableStore); !ok {
+		return false
+	}
+	if support, ok := store.(port.SessionDeleteSupport); ok {
+		return support.SupportsSessionDelete()
+	}
+	return true
+}
+
 func (s *Service) summaryFromDiscoveryMeta(meta port.SessionDiscoveryMeta) SessionSummary {
 	created := int64(0)
 	if !meta.CreatedAt.IsZero() {
@@ -5160,14 +5338,26 @@ func (s *Service) summaryFromDiscoveryMeta(meta port.SessionDiscoveryMeta) Sessi
 	if kind == "" {
 		kind = session.SessionKindUnknown
 	}
-	caps, reason := inventoryCapabilities(kind, meta.ID, meta.State, s.IsLive(meta.ID))
+	caps, reasons := inventoryCapabilities(kind, meta.ID, meta.State, s.IsLive(meta.ID))
 	caps.AuthoritativeTranscript = meta.State != ""
+	caps.ViewTranscript = caps.AuthoritativeTranscript
+	if caps.ViewTranscript {
+		reasons.ViewTranscript = ""
+	}
+	deletableStore := sessionDeleteSupported(s.cfg.Store)
+	caps.Delete = caps.Rename && deletableStore
+	if caps.Delete {
+		reasons.Delete = ""
+	} else if caps.Rename && !deletableStore {
+		reasons.Delete = CapabilityReasonStorageUnsupported
+	}
 	caps.ActivityReplay = s.cfg.EventLog != nil
 	return SessionSummary{
 		SessionID: string(meta.ID), ModifiedAtUnix: meta.ModifiedAt.Unix(), State: string(meta.State),
 		Turns: meta.Turns, ModelID: meta.ModelID, CreatedAtUnix: created, Title: meta.Title,
-		Workspace: meta.Workspace, Owner: meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
-		Capabilities: caps, ReasonCode: reason,
+		TitleProvenance: meta.TitleProvenance,
+		Workspace:       meta.Workspace, Owner: meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
+		Capabilities: caps, Reasons: reasons, ReasonCode: reasons.PublicChat,
 	}
 }
 
@@ -5269,10 +5459,10 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			}
 		}
 		kind := session.SessionKindUnknown
-		caps, reason := inventoryCapabilities(kind, r.ID, "", s.IsLive(r.ID))
+		caps, reasons := inventoryCapabilities(kind, r.ID, "", s.IsLive(r.ID))
 		summary := SessionSummary{
 			SessionID: string(r.ID), ModifiedAtUnix: r.ModifiedAt.Unix(),
-			Kind: kind, Capabilities: caps, ReasonCode: reason,
+			Kind: kind, Capabilities: caps, Reasons: reasons, ReasonCode: reasons.PublicChat,
 		}
 		if sess, lerr := s.cfg.Store.Load(ctx, r.ID); lerr == nil && sess != nil {
 			if !s.ownsResource(ctx, sess.Owner) {
@@ -5285,6 +5475,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 				summary.ModelID = sess.ModelID
 			}
 			summary.Title = DeriveTitle(sess)
+			summary.TitleProvenance = sess.TitleProvenance
 			summary.Workspace = sess.Workspace
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.
@@ -5294,8 +5485,18 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 				summary.Kind = session.SessionKindUnknown
 			}
 			summary.Relationship = sess.Relationship
-			summary.Capabilities, summary.ReasonCode = inventoryCapabilities(summary.Kind, sess.ID, sess.State, s.IsLive(sess.ID))
+			summary.Capabilities, summary.Reasons = inventoryCapabilities(summary.Kind, sess.ID, sess.State, s.IsLive(sess.ID))
+			summary.ReasonCode = summary.Reasons.PublicChat
 			summary.Capabilities.AuthoritativeTranscript = true
+			summary.Capabilities.ViewTranscript = true
+			summary.Reasons.ViewTranscript = ""
+			deletableStore := sessionDeleteSupported(s.cfg.Store)
+			summary.Capabilities.Delete = summary.Capabilities.Rename && deletableStore
+			if summary.Capabilities.Delete {
+				summary.Reasons.Delete = ""
+			} else if summary.Capabilities.Rename && !deletableStore {
+				summary.Reasons.Delete = CapabilityReasonStorageUnsupported
+			}
 			summary.Capabilities.ActivityReplay = s.cfg.EventLog != nil
 		}
 		out = append(out, summary)

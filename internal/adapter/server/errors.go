@@ -107,6 +107,9 @@ var (
 	// than pretending an unknown id. ListSessions does NOT use it (it degrades to
 	// an empty list via PrunableStore instead).
 	ErrNoEventLog = errors.New("server: no durable event log configured")
+	// ErrSessionDeleteUnsupported means the configured store cannot physically
+	// remove snapshots and their sidecars.
+	ErrSessionDeleteUnsupported = errors.New("server: session deletion is not supported by the configured store")
 	// ErrSchedulerNotRunning is returned by FireNow when a ScheduleStore IS
 	// available (Create/Get/List/etc. all work) but no scheduler.Scheduler is
 	// wired on this process (s.scheduler == nil — e.g. --scheduler was not

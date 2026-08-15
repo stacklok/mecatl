@@ -70,6 +70,15 @@ func dialBufconn(t *testing.T, register func(gs *grpc.Server), serverOpts ...grp
 	return dialBufconnListener(t, startBufconnServer(t, register, serverOpts...))
 }
 
+func mustNewSessionStore(t *testing.T, conn grpc.ClientConnInterface) *SessionStore {
+	t.Helper()
+	st, err := NewSessionStore(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+	return st
+}
+
 // newWiredSessionStore returns a grpcdriver SessionStore client over a
 // bufconn server wrapping a fresh memstore.
 func newWiredSessionStore(t *testing.T) *SessionStore {
@@ -77,7 +86,92 @@ func newWiredSessionStore(t *testing.T) *SessionStore {
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
 	})
-	return NewSessionStore(conn)
+	return mustNewSessionStore(t, conn)
+}
+
+type oldSessionStoreServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func TestSessionStoreCapabilityNegotiationOldAndNewDrivers(t *testing.T) {
+	t.Run("old driver is base-only", func(t *testing.T) {
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionStoreServiceServer(gs, oldSessionStoreServer{})
+		})
+		st := mustNewSessionStore(t, conn)
+		if _, ok := any(st).(port.PrunableStore); !ok {
+			t.Fatal("old driver client lost unconditional PrunableStore compatibility")
+		}
+		if _, ok := any(st).(port.SessionMetadataPager); !ok {
+			t.Fatal("old driver client lost unconditional SessionMetadataPager compatibility")
+		}
+		if st.SupportsSessionDelete() {
+			t.Fatal("old driver advertised delete support")
+		}
+		if _, err := st.List(context.Background()); !errors.Is(err, port.ErrPruneUnsupported) {
+			t.Fatalf("old driver List error = %v, want ErrPruneUnsupported", err)
+		}
+		if _, err := st.PageSessionMetadata(context.Background(), port.SessionMetadataPageRequest{Limit: 1}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
+			t.Fatalf("old driver PageSessionMetadata error = %v, want unsupported", err)
+		}
+	})
+
+	t.Run("wrapped capable backend reports every optional operation", func(t *testing.T) {
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
+		})
+		st := mustNewSessionStore(t, conn)
+		if !st.list || !st.metadataPaging || !st.SupportsSessionDelete() {
+			t.Fatalf("negotiated capabilities = list:%v metadata:%v delete:%v, want all true", st.list, st.metadataPaging, st.delete)
+		}
+	})
+}
+
+type blockingSessionCapabilitiesServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func (blockingSessionCapabilitiesServer) Capabilities(ctx context.Context, _ *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type failingSessionCapabilitiesServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func (failingSessionCapabilitiesServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unavailable, "capability backend unavailable")
+}
+
+func TestNewSessionStoreFailsClosedOnCapabilityProbeFailure(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionStoreServiceServer(gs, blockingSessionCapabilitiesServer{})
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		st, err := NewSessionStore(ctx, conn)
+		if st != nil {
+			t.Fatalf("timed-out negotiation returned partial store %T", st)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("negotiation error = %v, want deadline classification", err)
+		}
+	})
+
+	t.Run("rpc failure", func(t *testing.T) {
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterSessionStoreServiceServer(gs, failingSessionCapabilitiesServer{})
+		})
+		st, err := NewSessionStore(context.Background(), conn)
+		if st != nil {
+			t.Fatalf("failed negotiation returned partial store %T", st)
+		}
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("negotiation error = %v, want Unavailable", err)
+		}
+	})
 }
 
 // TestLoadMissWrapsSentinel pins the §C table's not-found row: a driver
@@ -104,7 +198,7 @@ func TestLoadUnknownFormatIsInfraError(t *testing.T) {
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterSessionStoreServiceServer(gs, unknownFormatServer{})
 	})
-	st := NewSessionStore(conn)
+	st := mustNewSessionStore(t, conn)
 	_, err := st.Load(context.Background(), "any-id")
 	if err == nil {
 		t.Fatal("Load(unknown format) = nil error, want an infra error")
@@ -136,7 +230,7 @@ func TestSaveNilSessionNoRPC(t *testing.T) {
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterSessionStoreServiceServer(gs, counter)
 	})
-	st := NewSessionStore(conn)
+	st := mustNewSessionStore(t, conn)
 	err := st.Save(context.Background(), nil)
 	if !errors.Is(err, sessnap.ErrNilSession) {
 		t.Errorf("Save(nil) error = %v, want errors.Is(_, sessnap.ErrNilSession)", err)
@@ -282,19 +376,20 @@ func (s saveLoadOnlyStore) Load(ctx context.Context, id session.SessionID) (*ses
 	return s.inner.Load(ctx, id)
 }
 
-// TestListDeleteUnimplementedForNonPrunableBackend pins the server wrapper's
-// degradation posture AND the client's sentinel mapping: a backend that is a
-// plain Save/Load store answers List/Delete with UNIMPLEMENTED, which the
-// harness-side client wraps as port.ErrPruneUnsupported — the "this seam will
-// never work here" signal the composition sweeper uses to log one INFO and
-// stickily disable itself, so a thin remote driver is never swept (and never
-// WARNed about every sweep) rather than fatal.
-func TestListDeleteUnimplementedForNonPrunableBackend(t *testing.T) {
+// TestListDeleteUnsupportedForNonPrunableBackend pins capability negotiation:
+// a wrapped plain Save/Load backend reports both operations unsupported, and the
+// client keeps its unconditional PrunableStore methods while returning the
+// existing sentinel without issuing an unsupported operation RPC.
+func TestListDeleteUnsupportedForNonPrunableBackend(t *testing.T) {
 	ctx := context.Background()
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(saveLoadOnlyStore{inner: memstore.New()}))
 	})
-	st := NewSessionStore(conn)
+	st := mustNewSessionStore(t, conn)
+
+	if support := port.SessionDeleteSupport(st); support.SupportsSessionDelete() {
+		t.Fatal("non-prunable backend advertised delete support")
+	}
 
 	_, err := st.List(ctx)
 	if err == nil {
@@ -302,9 +397,6 @@ func TestListDeleteUnimplementedForNonPrunableBackend(t *testing.T) {
 	}
 	if !errors.Is(err, port.ErrPruneUnsupported) {
 		t.Errorf("List error = %v, want errors.Is(_, port.ErrPruneUnsupported)", err)
-	}
-	if want := codes.Unimplemented.String(); !strings.Contains(err.Error(), want) {
-		t.Errorf("List error %q should still carry the driver's %v detail", err, codes.Unimplemented)
 	}
 	if err := st.Delete(ctx, "any-id"); err == nil {
 		t.Fatal("Delete over a non-prunable backend = nil error, want UNIMPLEMENTED")
@@ -319,6 +411,10 @@ type notFoundDeleteServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
 }
 
+func (notFoundDeleteServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return &driverv1.SessionStoreCapabilitiesResponse{Delete: true}, nil
+}
+
 func (notFoundDeleteServer) Delete(context.Context, *driverv1.DeleteSessionRequest) (*driverv1.DeleteSessionResponse, error) {
 	return nil, status.Error(codes.NotFound, "no such session")
 }
@@ -331,7 +427,7 @@ func TestDeleteToleratesDriverNotFound(t *testing.T) {
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterSessionStoreServiceServer(gs, notFoundDeleteServer{})
 	})
-	st := NewSessionStore(conn)
+	st := mustNewSessionStore(t, conn)
 	if err := st.Delete(context.Background(), "ghost"); err != nil {
 		t.Errorf("Delete mapping a driver NOT_FOUND = %v, want nil (idempotent success)", err)
 	}

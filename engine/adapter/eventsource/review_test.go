@@ -237,11 +237,13 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	// Every EXPORTED field of session.Session the reconstruction contract considers.
 	// Classification (kept in sync with COMPATIBILITY.md "Session reconstruction
 	// contract"):
-	//   reconstructed-from-events: Conversation, State, Usage, Title
-	//     (Title is seeded from the first genuine EvUserPrompt via SetTitle)
+	//   reconstructed-from-events: Conversation, State, Usage; legacy Title and
+	//     TitleProvenance fallback (seeded from the first genuine EvUserPrompt via
+	//     SetTitle)
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
-	//     Profile, ProviderID, ModelID, ReasoningEffort, Kind, Relationship, CreatedAt
+	//     Profile, ProviderID, ModelID, ReasoningEffort, Title, TitleProvenance,
+	//     Kind, Relationship, CreatedAt
 	//   not-event-carried identity labels (ADR 0100/0106): Owner, Authority,
 	//     EnvironmentRef — the event annotation is log-only and the fold neither
 	//     requires nor re-derives any of them, so a folded session keeps the
@@ -253,7 +255,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "Kind": {},
 		"Relationship": {}, "CreatedAt": {},
-		"Title": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
+		"Title": {}, "TitleProvenance": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,
 		"session.Session — classify the new field in COMPATIBILITY.md's reconstruction contract")
