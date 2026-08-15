@@ -615,7 +615,10 @@ type SubagentPayload struct {
 	// only.
 	IsError bool
 	// ToolCount is the running (EvSubagentTool) or final (EvSubagentEnd) number of
-	// child tool calls observed.
+	// child tool calls STARTED. It is CUMULATIVE and stamped on EVERY projection, so
+	// a client assigns it (never sums) with no InnerKind guard — it is always current,
+	// never 0-after-positive. (Counted at the call, not the result, because a result
+	// may never arrive on a cancel.)
 	ToolCount int
 	// Text is a BOUNDED preview of the child's message/result text — control-byte
 	// scrubbed and rune-capped by clampPreview in engine/agent, never the raw,
@@ -628,12 +631,16 @@ type SubagentPayload struct {
 	// on EvSubagentTool for the tool.call / tool.result inner kinds when a preview
 	// is available.
 	Detail string
-	// InnerKind discriminates which inner child event kind the preview came from
-	// (message.delta / tool.call / tool.result / result). Set on EvSubagentTool
-	// alongside Text / Detail. A child's permission.ask is never projected.
+	// InnerKind discriminates which inner child event kind the projection came from
+	// (message.delta / tool.call / tool.result / result / turn.end) and which preview
+	// fields it populates (Text/Detail). A turn.end projection carries NO Text/Detail;
+	// it only advances Usage. A child's permission.ask is never projected.
 	InnerKind EventType
-	// Usage is the child run's cumulative token accounting. Set on EvSubagentEnd
-	// only.
+	// Usage is the child run's cumulative provider-reported token accounting. Like
+	// ToolCount it is CUMULATIVE and stamped on EVERY projection (zero until the
+	// first turn.end), so a client assigns it with no InnerKind guard and a dropped
+	// frame cannot drift the figure. It is provider truth only — the issue-#82
+	// display-only estimate is never folded in.
 	Usage Usage
 	// Stop is the child run's terminal stop reason. Set on EvSubagentEnd only.
 	Stop StopReason

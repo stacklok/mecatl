@@ -219,7 +219,10 @@ type SubagentMsg struct {
 	// message text); empty on start/end and from an older server (the ui then renders
 	// a bare chip, exactly the pre-ADR-0079 shape). The server clamp-scrubs every
 	// preview (control bytes out, ≤200 runes); the ui caps again on render. ToolCount
-	// (the running total) rides every subagent.tool event regardless of InnerKind.
+	// (tools started) and Usage (provider-reported) are CUMULATIVE totals stamped on
+	// EVERY subagent.tool event regardless of InnerKind — always current, so the ui
+	// assigns them unconditionally, never sums, and never reads 0-after-positive. A
+	// turn.end InnerKind advances Usage mid-run with no Text/Detail.
 	InnerKind  string
 	Text       string
 	Detail     string

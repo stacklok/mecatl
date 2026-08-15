@@ -96,6 +96,81 @@ func TestSubagentFleetCounts(t *testing.T) {
 	}
 }
 
+// TestSubagentFleetLiveUsage locks the live-usage projection: a turn.end subagent.tool
+// carrying the child's cumulative usage updates the fleet lane (and the inline card's
+// subUsage) MID-RUN, before subagent.end lands, so the roster/live line read a live ↑↓
+// instead of a zero until the terminal. The wiring runs through the REAL Update path
+// (applySubagent → fleetTool / addSubagentTo).
+func TestSubagentFleetLiveUsage(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	// A mid-run turn.end projection carrying the cumulative usage up to this turn.
+	liveUsage := client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1", InnerKind: "turn.end",
+		Usage: client.Usage{InputTokens: 1200, OutputTokens: 340}, ToolCount: 1}
+	m = seedSubagents(m, "p1",
+		startSub("p1", "c1", "audit auth"),
+		toolSubPreview("p1", "c1", "tool.result", "Grep", "matches", 1),
+		liveUsage,
+	)
+	ln := findFleetLane(m.conv.subagentFleet, "c1")
+	if ln == nil {
+		t.Fatal("fleet lane c1 missing")
+		return
+	}
+	// The lane shows the live usage BEFORE any subagent.end — done is still false.
+	if ln.done {
+		t.Fatal("lane unexpectedly done before subagent.end")
+	}
+	if ln.usage.InputTokens != 1200 || ln.usage.OutputTokens != 340 {
+		t.Fatalf("fleet lane live usage = %+v, want {1200 340} mid-run", ln.usage)
+	}
+	// The inline card's live usage (subagentLiveLine reads b.subUsage) advances too.
+	if b := m.conv.subagentBlock("p1"); b == nil {
+		t.Fatal("inline subagent block p1 missing")
+	} else if b.subUsage.InputTokens != 1200 || b.subUsage.OutputTokens != 340 {
+		t.Fatalf("inline card subUsage = %+v, want {1200 340} mid-run", b.subUsage)
+	}
+}
+
+// TestSubagentLiveUsageDoesNotResetToolCount pins the cumulative-totals contract:
+// ToolCount and Usage are stamped on EVERY projection (always current), so assigning
+// them unconditionally can never reset the lane mid-run. The lane counts toolsStarted
+// monotonically (the count advances at the call, ahead of the result) and the usage
+// climbs on every projection that carries a fresh cumulative figure.
+func TestSubagentLiveUsageDoesNotResetToolCount(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	// helper: a projection carrying the current cumulative totals (as the wire now does).
+	proj := func(innerKind string, toolCount int, in, out int64) client.SubagentMsg {
+		msg := client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
+			InnerKind: innerKind, ToolCount: toolCount, Usage: client.Usage{InputTokens: in, OutputTokens: out}}
+		return msg
+	}
+	m = seedSubagents(m, "p1",
+		startSub("p1", "c1", "audit auth"),
+		proj("tool.call", 1, 0, 0),     // Read starts (count 1, no usage yet)
+		proj("tool.result", 1, 0, 0),   // Read resolves (count unchanged)
+		proj("message.delta", 1, 0, 0), // text, totals unchanged
+		proj("turn.end", 1, 500, 120),  // turn 1 usage lands
+		proj("tool.call", 2, 500, 120), // Grep starts (count 2, usage still 500/120)
+		proj("tool.result", 2, 500, 120),
+	)
+	ln := findFleetLane(m.conv.subagentFleet, "c1")
+	if ln == nil {
+		t.Fatal("fleet lane c1 missing")
+		return
+	}
+	if ln.toolCount != 2 {
+		t.Fatalf("fleet lane toolCount = %d, want 2 (monotonic, current on every projection)", ln.toolCount)
+	}
+	if ln.usage.InputTokens != 500 || ln.usage.OutputTokens != 120 {
+		t.Fatalf("fleet lane usage = %+v, want the cumulative {500 120}", ln.usage)
+	}
+	if b := m.conv.subagentBlock("p1"); b == nil {
+		t.Fatal("inline card p1 missing")
+	} else if b.subToolCount != 2 {
+		t.Fatalf("inline card subToolCount = %d, want 2 (monotonic)", b.subToolCount)
+	}
+}
+
 // TestSubagentFleetEmpty asserts no fleet → no footer segment + no overlay-enabling.
 func TestSubagentFleetEmpty(t *testing.T) {
 	c := &conversation{}

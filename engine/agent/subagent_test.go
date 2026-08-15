@@ -248,6 +248,75 @@ func TestSubagentReturnsOnlyFinalString(t *testing.T) {
 	}
 }
 
+// TestSubagentProjectsLiveUsage pins the live cumulative-usage projection: each
+// child turn.end yields a subagent.tool whose Usage is the child's running total
+// (engine-accumulated, provider-reported), so a client renders a live ↑↓ mid-run
+// instead of a zero until subagent.end. The terminal subagent.end Usage still
+// carries the authoritative cumulative figure, and the two agree.
+func TestSubagentProjectsLiveUsage(t *testing.T) {
+	childRead := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "ok"), nil
+		}}
+	// Turn 1: a read tool call + usage {10 in, 4 out}. Turn 2: a text answer + usage
+	// {6 in, 2 out}. The live projections must read 10/4 after turn 1 and 16/6 after
+	// turn 2; the terminal end carries the same 16/6 cumulative.
+	childLLM := mockllm.New(
+		mockllm.ChunksTurn(
+			mockllm.ToolCallChunk(toolCall("k1", "Read", `{"path":"x.go"}`)),
+			mockllm.UsageChunk(session.Usage{InputTokens: 10, OutputTokens: 4}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+		mockllm.ChunksTurn(
+			mockllm.TextChunk("done reading"),
+			mockllm.UsageChunk(session.Usage{InputTokens: 6, OutputTokens: 2}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+	)
+	childEngine := childEngineWith(childLLM, catalogWith(t, childRead))
+	task := agent.NewSubagentTool(childEngine)
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"investigate"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)})
+	sess := newSession(t, session.Limits{})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	evs := drain(r)
+
+	var turnEndUsages []session.Usage
+	var endUsage session.Usage
+	for _, ev := range evs {
+		if ev.Type != session.EvSubagentTool && ev.Type != session.EvSubagentEnd {
+			continue
+		}
+		p := ev.Subagent
+		if p == nil {
+			continue
+		}
+		switch {
+		case ev.Type == session.EvSubagentTool && p.InnerKind == session.EvTurnEnd:
+			turnEndUsages = append(turnEndUsages, p.Usage)
+		case ev.Type == session.EvSubagentEnd:
+			endUsage = p.Usage
+		}
+	}
+	// Two turns → two live cumulative projections: 10/4 then 16/6.
+	if len(turnEndUsages) != 2 {
+		t.Fatalf("want 2 turn.end projections carrying usage; got %d (%v)", len(turnEndUsages), turnEndUsages)
+	}
+	if turnEndUsages[0] != (session.Usage{InputTokens: 10, OutputTokens: 4}) {
+		t.Fatalf("first live usage = %+v, want the turn-1 figure {10 4}", turnEndUsages[0])
+	}
+	if turnEndUsages[1] != (session.Usage{InputTokens: 16, OutputTokens: 6}) {
+		t.Fatalf("second live usage = %+v, want the cumulative {16 6}", turnEndUsages[1])
+	}
+	// The terminal figure agrees with the last live projection (cumulative).
+	if endUsage != (session.Usage{InputTokens: 16, OutputTokens: 6}) {
+		t.Fatalf("subagent.end usage = %+v, want cumulative {16 6}", endUsage)
+	}
+}
+
 // TestSubagentGoalClampedSymmetrically proves the forwarded subagent.start Goal
 // stays a single, bounded line even when the model supplies a long, MULTI-LINE
 // explicit description — the description path is clamped identically to the prompt

@@ -4023,55 +4023,19 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 	// Track child callID → tool name so a tool.result can be attributed to its
 	// tool.call name without re-deriving it from the (clamped) args preview.
 	names := map[session.ToolCallID]string{}
+	// turnUsage accumulates the child's CUMULATIVE provider-reported usage across the
+	// drain, independent of the terminal `usage` (read from EvResult). Each EvTurnEnd
+	// projection carries the running total so a client renders a live ↑↓ mid-run
+	// instead of a zero until subagent.end. Estimates are EXCLUDED (the issue-#82
+	// fallback is display-only, never cumulative/budget — provider truth only).
+	var turnUsage session.Usage
 	for ev := range run.Events() {
 		if emit != nil {
-			// Project ONLY the four preview kinds (ADR 0079); skip everything else
-			// BEFORE allocating the payload (turn.start, hooks, compaction, asks…)
-			// so a dropped event costs nothing.
-			if ev.Type != session.EvToolCall && ev.Type != session.EvToolResult &&
-				ev.Type != session.EvMessageDelta && ev.Type != session.EvResult {
-				goto handle
-			}
-			payload := &session.SubagentPayload{
-				ParentCallID: parentCallID,
-				ChildID:      childID,
-				InnerKind:    ev.Type,
-			}
-			project := false
-			switch ev.Type {
-			case session.EvToolCall:
-				if ev.ToolCall != nil {
-					names[ev.ToolCall.ID] = ev.ToolCall.Name
-					payload.ToolName = ev.ToolCall.Name
-					payload.Detail = clampPreview(string(ev.ToolCall.Args))
-					project = true
-				}
-			case session.EvToolResult:
-				if ev.ToolResult != nil {
-					toolCount++
-					payload.ToolName = names[ev.ToolResult.CallID]
-					payload.IsError = ev.ToolResult.IsError
-					payload.ToolCount = toolCount
-					payload.Detail = clampPreview(ev.ToolResult.Content)
-					project = true
-				}
-			case session.EvMessageDelta:
-				if strings.TrimSpace(ev.Text) != "" {
-					payload.Text = clampPreview(ev.Text)
-					project = true
-				}
-			case session.EvResult:
-				if ev.Result != nil {
-					payload.Text = clampPreview(ev.Result.Text)
-					payload.ToolCount = toolCount
-					project = true
-				}
-			}
-			if project {
-				emit(session.Event{Type: session.EvSubagentTool, Subagent: payload})
-			}
+			// Project ONLY the preview kinds (ADR 0079) plus EvTurnEnd (the live-usage
+			// projection); a non-projected event is dropped before any allocation.
+			toolCount, turnUsage = projectChildEvent(emit, ev, names, parentCallID, childID, toolCount, turnUsage)
 		}
-	handle:
+		// handle:
 		if text, st, ok := handleChildEvent(run, ev, posture); ok {
 			finalText, stop = text, st
 			if ev.Result != nil {
@@ -4083,6 +4047,93 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 		}
 	}
 	return finalText, stop, cause, usage, toolCount
+}
+
+// projectChildEvent maps ONE child event to its redacted subagent.tool projection and
+// emits it, advancing the running cumulative totals. It is the per-event half of
+// drainChildObserved, split out to keep that drain loop's complexity readable. It
+// returns the updated toolCount and turnUsage.
+//
+// ToolCount and Usage are stamped on EVERY projection — both are CUMULATIVE and always
+// current, so a client assigns either with no InnerKind guard (no projection reads
+// 0-after-positive). toolCount is tools-STARTED (a call, not a result: a result may
+// never arrive on a cancel); turnUsage is provider-reported usage (the issue-#82
+// display-only estimate is never folded in).
+func projectChildEvent(emit func(session.Event), ev session.Event, names map[session.ToolCallID]string, parentCallID, childID string, toolCount int, turnUsage session.Usage) (int, session.Usage) {
+	// Project ONLY the preview kinds (ADR 0079) plus EvTurnEnd (the live-usage
+	// projection); a non-projected event is dropped before any allocation.
+	switch ev.Type {
+	case session.EvToolCall, session.EvToolResult, session.EvMessageDelta,
+		session.EvResult, session.EvTurnEnd:
+	default:
+		return toolCount, turnUsage
+	}
+	// Count a tool when it STARTS and accumulate usage BEFORE the payload build, so the
+	// current projection and every later one carry the new totals.
+	if ev.Type == session.EvToolCall && ev.ToolCall != nil {
+		toolCount++
+	}
+	if ev.Type == session.EvTurnEnd && ev.TurnEnd != nil && !ev.TurnEnd.Estimated {
+		turnUsage = turnUsage.Add(ev.TurnEnd.Usage)
+	}
+	payload := &session.SubagentPayload{
+		ParentCallID: parentCallID,
+		ChildID:      childID,
+		InnerKind:    ev.Type,
+		ToolCount:    toolCount,
+		Usage:        turnUsage,
+	}
+	var project bool
+	switch ev.Type {
+	case session.EvToolCall:
+		project = projectChildToolCall(payload, ev, names)
+	case session.EvToolResult:
+		project = projectChildToolResult(payload, ev, names)
+	case session.EvMessageDelta:
+		project = strings.TrimSpace(ev.Text) != ""
+		if project {
+			payload.Text = clampPreview(ev.Text)
+		}
+	case session.EvResult:
+		project = ev.Result != nil
+		if project {
+			payload.Text = clampPreview(ev.Result.Text)
+		}
+	case session.EvTurnEnd:
+		// EvTurnEnd carries no content fields (Text/Detail stay empty); its usage was
+		// applied at the accumulator above. Project only when it carries REAL usage —
+		// a zero or estimated turn adds nothing new.
+		project = ev.TurnEnd != nil && !ev.TurnEnd.Estimated && ev.TurnEnd.Usage != (session.Usage{})
+	}
+	if project {
+		emit(session.Event{Type: session.EvSubagentTool, Subagent: payload})
+	}
+	return toolCount, turnUsage
+}
+
+// projectChildToolCall populates the payload from a child EvToolCall and records the
+// callID→name mapping so a later tool.result can be attributed without re-deriving it
+// from the clamped args preview. Returns false when the event carries no call.
+func projectChildToolCall(payload *session.SubagentPayload, ev session.Event, names map[session.ToolCallID]string) bool {
+	if ev.ToolCall == nil {
+		return false
+	}
+	names[ev.ToolCall.ID] = ev.ToolCall.Name
+	payload.ToolName = ev.ToolCall.Name
+	payload.Detail = clampPreview(string(ev.ToolCall.Args))
+	return true
+}
+
+// projectChildToolResult populates the payload from a child EvToolResult, resolving the
+// tool name from the recorded call. Returns false when the event carries no result.
+func projectChildToolResult(payload *session.SubagentPayload, ev session.Event, names map[session.ToolCallID]string) bool {
+	if ev.ToolResult == nil {
+		return false
+	}
+	payload.ToolName = names[ev.ToolResult.CallID]
+	payload.IsError = ev.ToolResult.IsError
+	payload.Detail = clampPreview(ev.ToolResult.Content)
+	return true
 }
 
 // drainChild consumes the child Run's Event channel to completion, auto-denying

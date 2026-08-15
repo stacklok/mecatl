@@ -587,16 +587,21 @@ func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, rout
 // block's trace per the event's InnerKind: a tool.call sets the live current tool
 // and appends a pending chip (with its bounded arg preview); a tool.result
 // finalises the chip (error state + result preview); a message.delta extends a
-// capped message line. The trace is capped at maxTraceEntries (oldest entries
-// dropped); the count is the authoritative running total carried by the event, not
-// len(trace). Returns false when no match.
+// capped message line. A turn.end carries the child's cumulative usage, which the
+// live status line (subagentLiveLine) renders mid-run; the trace is capped at
+// maxTraceEntries (oldest entries dropped); the count is the authoritative running
+// total carried by the event, not len(trace). Returns false when no match.
 func (c *conversation) addSubagentTool(msg client.SubagentMsg) bool {
 	b := c.subagentBlock(msg.ParentCallID)
 	if b == nil {
 		return false
 	}
 	b.subagent = true
+	// ToolCount and Usage are cumulative totals stamped on every projection (see
+	// SubagentPayload docs), so they are assigned unconditionally — always current,
+	// never 0-after-positive. A turn.end projection advances the live usage mid-run.
 	b.subToolCount = msg.ToolCount
+	b.subUsage = msg.Usage
 	b.subTrace, b.subCurrent = routeTraceEvent(b.subTrace, b.subCurrent, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
 	return true
 }
@@ -684,7 +689,12 @@ func (c *conversation) fleetTool(msg client.SubagentMsg) {
 	}
 	ln := c.fleetLane(msg.ChildID)
 	ln.isError = msg.IsError
+	// ToolCount and Usage are cumulative totals stamped on every projection (see
+	// SubagentPayload docs): assigned unconditionally, always current, never
+	// 0-after-positive. A turn.end projection advances the live ↑↓ mid-run; end
+	// still overwrites with the authoritative terminal figure via fleetEnd.
 	ln.toolCount = msg.ToolCount
+	ln.usage = msg.Usage
 	ln.trace, ln.current = routeTraceEvent(ln.trace, ln.current, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
 }
 
