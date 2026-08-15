@@ -30,6 +30,22 @@ func TestMarkdownNoTrailingPadding(t *testing.T) {
 	}
 }
 
+// TestMarkdownOrderedListMarkerSpacing pins the ordered-list marker separator:
+// glamour renders the item number from Styles.Enumeration, and the marker→text
+// separator is that style's BlockPrefix (stock glamour styles set ". " — see
+// glamour styles.go). The from-scratch GlamourStyle must set it too, or an
+// ordered list renders "1First item" (number and text run together).
+func TestMarkdownOrderedListMarkerSpacing(t *testing.T) {
+	r := newTestRenderer()
+	out := stripANSIstr(r.markdown("1. First item\n2. Second item\n"))
+	if !strings.Contains(out, "1. First item") {
+		t.Errorf("ordered-list marker lost its separator:\n%s", out)
+	}
+	if !strings.Contains(out, "2. Second item") {
+		t.Errorf("ordered-list marker lost its separator:\n%s", out)
+	}
+}
+
 // TestMarkdownReservesFinalColumn locks the reserve-final-column hygiene: no
 // rendered markdown line may occupy the terminal's FINAL column, measured under
 // BOTH width methods. This is retained hygiene (mirroring the Width(r.width-2)
