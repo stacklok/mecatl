@@ -80,7 +80,7 @@ func (t Theme) GlamourStyle() ansi.StyleConfig {
 			Color:  strptr(p.BorderSubtle),
 			Format: "\n─────────────────────\n",
 		},
-		Item:        ansi.StylePrimitive{Color: strptr(p.MdText)},
+		Item: ansi.StylePrimitive{Color: strptr(p.MdText)},
 		// BlockPrefix is the marker→text separator glamour appends after the
 		// rendered number ("1" + ". " → "1. text"); without it an ordered list
 		// renders "1First item". Stock glamour styles set this (styles.go); our
