@@ -68,10 +68,16 @@ and tool listing through a random IPv4-loopback callback. The strict operator-ti
 `mcp.servers` schema and the single `internal/cliconfig` loader feed all three headless
 roots. Normal serve, ACP, mecatequi, and mecak8s install no presenter; only
 `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]` authorizes a
-mutable local profile, selecting operator settings through the same resolver and precedence as
-serve. The global manager/controllers close before loader-owned Stores and Readers. OAuth is
-not available for ACP, per-session MCP, inline agent definitions, or discovered servers
-(ADR 0113).
+mutable local profile, selecting trusted operator settings through the same resolver and
+precedence as serve; the option never carries OAuth values. A hermetic cross-boundary gate
+proves login-process exit, a first warm serving process, lazy refresh with durable
+refresh-token rotation, a second warm process, and transparent MCP-session reconnect through
+the model-visible global catalog. No reauthorization occurs across either restart or
+reconnect. The global manager/controllers close before loader-owned Stores and Readers. ACP
+cannot provide OAuth profiles or install/drive authorization, but after operator
+authorization ACP sessions may invoke the shared global OAuth-backed tools under ordinary
+permissions. OAuth is not available for per-session MCP, inline agent definitions, or
+discovered servers (ADR 0113).
 
 The explicit environment Reader maps one configured opaque key to one configured lookup
 function and strict base64 environment value. It does no global lookup, listing, or

@@ -35,6 +35,19 @@ export MCP_GITHUB_TOKEN=ghp_…
 mecated serve --mcp-server github=https://mcp.example.com/github …
 ```
 
+## OAuth operator profiles
+
+For servers that use OAuth, define an operator `mcp.servers` profile rather than putting
+credentials in a URL or command line. A mutable local profile is authorized once with
+`mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]`; the repeatable
+permission-config option selects trusted operator settings only and never carries OAuth values.
+Normal serving then warm-restores the encrypted record,
+refreshes lazily, persists refresh-token rotation, and remains warm after restart. Serving
+and ACP never open a browser. Environment-backed profiles are read-only and require an
+external Secret update plus process restart. Keep `static_bearer` as a rollback profile when
+the server supports it. See the
+[operator configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md#global-mcp-authentication-profiles).
+
 **ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
 
 ---
@@ -219,8 +232,10 @@ mecated mcp login github --permission-config /etc/mecatl/settings.yaml
 
 Serving and batch commands never launch a browser. Kubernetes should normally use an
 externally provisioned, read-only environment credential and restart the pod after
-rotation; the login command deliberately cannot mutate it. OAuth is not available through
-ACP, client-supplied/inline/discovered MCP, and dynamic client registration is not yet
+rotation; the login command deliberately cannot mutate it. ACP cannot provide OAuth profiles
+or install/drive authorization, but after operator authorization ACP sessions may invoke the
+shared global OAuth-backed tools under ordinary permissions. OAuth is not available for
+client-supplied/inline/discovered MCP, and dynamic client registration is not yet
 supported. Broad interoperability still depends on upstream SDK metadata-profile gates.
 See the [configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md)
 and [ADR 0113](https://github.com/stacklok/mecatl/blob/main/docs/adr/0113-operator-mcp-auth-profiles.md).

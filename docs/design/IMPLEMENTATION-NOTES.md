@@ -7041,8 +7041,9 @@ and controller close on every path while the injected store stays caller-owned. 
 project to context/runtime categories or fixed `ErrMCPLoginConfig`/`ErrMCPLoginFailed`
 without endpoint or credential-bearing causes.
 
-The shipped `mecated mcp login SERVER [--no-browser]` command is the sole runtime
-constructor. It uses the canonical operator profile loader, requires a mutable local Store,
+The shipped `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]`
+command is the sole runtime constructor. The repeatable permission-config option selects trusted
+operator settings only, never OAuth values. It uses the canonical operator profile loader, requires a mutable local Store,
 and emits an authorization URL to stdout only in explicit no-browser mode. Normal serving,
 ACP, mecatequi, and mecak8s keep the presenter nil. ADR 0109's metadata-profile blockers
 remain open.
@@ -7059,8 +7060,29 @@ all resulting Stores/Readers. The three command roots install the same profile r
 `Built.Close` shuts down the service and global MCP manager/controllers before closing the
 profile lifecycle. Environment Readers are the intended Kubernetes posture: credentials are
 externally provisioned and a rotated value requires restart. They cannot be targeted by the
-login command. OAuth applies only to named global static profiles, never ACP, client MCP,
-inline agent definitions, or ToolHive-discovered servers.
+login command. OAuth applies only to named global static profiles. ACP cannot provide OAuth
+profiles or install/drive authorization, but after operator authorization ACP sessions may invoke
+the shared global OAuth-backed tools under ordinary permissions. Client MCP, inline agent
+definitions, and ToolHive-discovered servers cannot add OAuth.
+
+`internal/app/mcp_oauth_acceptance_test.go` (`TestMCPOAuthHermeticAcceptance`) is the final
+hermetic composition gate. It uses external test package `app_test` because the production
+command-side `internal/cliconfig` package imports `internal/app`; importing it from package
+`app` itself would create a cycle. At that exact boundary the test directly drives the real
+`permconfig` operator resolver, `cliconfig.LoadMCPProfiles`/`MCPProfileResolver`, and
+`MCPProfiles.OAuthServer` selection used by login; only loopback admission and environment
+lookup remain injected test seams. It extends `internal/app/mcplogin_test.go`'s official-SDK
+`loginFixture` rather than copying the qualification matrices: one ordered loopback scenario
+drives operator settings, explicit login, encrypted-store process exit, `Build`, global
+catalog dispatch, short-expiry lazy refresh with rotated-refresh persistence, a second process
+restart, and the real 404/session-missing reconnect. It also pins close ordering, headless
+clean-store fail-soft behavior, ACP client MCP's nil-OAuth boundary, and `static_bearer`/`none`
+regressions. Protocol matrices remain in `internal/adapter/mcp`; this gate proves their
+composition only. Distinct canary classes are scanned across diagnostics/errors,
+model-facing tool/result text, ACP/config boundaries, and generated configuration output;
+failures name only the class, never the value. The elapsed-time expiry leg is bounded and is
+the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
+clock.
 
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 

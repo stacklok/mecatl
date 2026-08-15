@@ -50,18 +50,16 @@ The `--redis-url` flag exists **only on `cmd/mecak8s`**. `mecated` does not expo
 
 :::note[MCP OAuth credentials from Kubernetes Secrets]
 
-The host-internal MCP OAuth adapter can now be embedded with an explicit read-only
-credential Reader backed by one base64 environment value. **`mecak8s` does not wire this
-source yet**: there is no flag, settings key, browser flow, or Kubernetes Secret writer in
-this release. The selected name must use the `MECATL_` prefix and the strict uppercase
+`mecak8s` wires the operator profile's explicit read-only credential Reader from one
+base64 environment value; it installs no browser presenter and no Kubernetes Secret writer.
+The selected name must use the `MECATL_` prefix and the strict uppercase
 `[A-Z_][A-Z0-9_]{0,127}` grammar — for example,
 `MECATL_MCP_OAUTH_CREDENTIAL` — so the credential is removed from every agent-facing
 shell environment. A Secret projected as an environment variable is immutable for the running
-pod. An embedding that opts into this Reader can warm-restore a valid credential, but
-persistent rotation requires an external controller to update the Secret and restart the
-pod, or a future Secret backend using Kubernetes `resourceVersion` compare-and-swap.
-In-memory refresh is explicit and process-local; the default fails before refresh network
-when no writer exists.
+pod. The Reader warm-restores a valid credential. Persistent rotation requires an external
+controller to update the Secret followed by a rolling pod restart, or a future Secret backend
+using Kubernetes `resourceVersion` compare-and-swap. In-memory refresh is explicit and
+process-local; the default fails before refresh network when no writer exists.
 
 :::
 

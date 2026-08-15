@@ -224,7 +224,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "Commands:\n")
 	_, _ = fmt.Fprintf(out, "  serve                   start the network daemon (gRPC + HTTP/SSE)\n")
 	_, _ = fmt.Fprintf(out, "  acp                     serve the Agent Client Protocol over stdio\n")
-	_, _ = fmt.Fprintf(out, "  mcp login SERVER        authorize an operator-configured OAuth MCP server\n")
+	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize an operator-configured OAuth MCP server\n")
 	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
 	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
@@ -258,7 +258,7 @@ func resolveMCPSubcommand(args []string) commandResolution {
 }
 
 func writeMCPHelp(out io.Writer) {
-	_, _ = fmt.Fprintln(out, "Usage: mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]\n\nAuthorize one operator-configured OAuth MCP server.")
+	_, _ = fmt.Fprintln(out, "Usage: mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]\n\nAuthorize one operator-configured OAuth MCP server. --permission-config selects trusted operator settings only; it never supplies OAuth values.")
 }
 
 func mcpUsageError(argv []string) error {
@@ -267,9 +267,9 @@ func mcpUsageError(argv []string) error {
 		sub = argv[2]
 	}
 	if sub == "" {
-		return errors.New("mcp: missing subcommand\navailable subcommands:\n  mcp login SERVER [--no-browser]    authorize a configured OAuth server")
+		return errors.New("mcp: missing subcommand\navailable subcommands:\n  mcp login SERVER [--no-browser] [--permission-config PATH ...]    authorize a configured OAuth server")
 	}
-	return fmt.Errorf("mcp: unknown subcommand %q\navailable subcommands:\n  mcp login SERVER [--no-browser]    authorize a configured OAuth server", sub)
+	return fmt.Errorf("mcp: unknown subcommand %q\navailable subcommands:\n  mcp login SERVER [--no-browser] [--permission-config PATH ...]    authorize a configured OAuth server", sub)
 }
 
 // configUsageError builds the error message for a bare/unknown `config` invocation.

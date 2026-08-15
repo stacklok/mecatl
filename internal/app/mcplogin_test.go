@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"bytes"
@@ -26,13 +26,19 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
 const (
-	loginClientID     = "login-client"
-	loginClientSecret = "login-secret-canary"
-	loginAccessToken  = "login-access-canary"
+	loginClientID              = "login-client"
+	loginClientSecret          = "login-secret-canary"
+	loginAccessToken           = "login-access-canary"
+	loginRefreshToken          = "login-refresh-canary"
+	loginRotatedAccessToken    = "login-rotated-access-canary"
+	loginRotatedRefreshToken   = "login-rotated-refresh-canary"
+	loginSuccessorAccessToken  = "login-successor-access-canary"
+	loginSuccessorRefreshToken = "login-successor-refresh-canary"
 )
 
 type loginBrowser struct {
@@ -79,16 +85,24 @@ func (b *loginBrowser) Open(ctx context.Context, authorizationURL string) error 
 type loginFixture struct {
 	server         *httptest.Server
 	mcpServer      *mcpsdk.Server
+	mcpHandler     http.Handler
 	mu             sync.Mutex
 	codes          map[string]loginCode
 	authorize      int
 	token          int
+	refresh        int
+	refreshTokens  map[string]int
+	metadata       int
 	authorized     int
+	toolCalls      int
+	unexpectedAuth int
 	sessionsOpened int
 	sessionsClosed int
 	failToken      bool
 	keepRejecting  bool
 	publicResource bool
+	acceptedBearer string
+	initialExpiry  int
 	failClose      bool
 	blockMCP       <-chan struct{}
 	blockMCPMethod string
@@ -106,7 +120,7 @@ type loginCode struct {
 
 func newLoginFixture(t *testing.T) *loginFixture {
 	t.Helper()
-	f := &loginFixture{codes: make(map[string]loginCode)}
+	f := &loginFixture{codes: make(map[string]loginCode), refreshTokens: make(map[string]int), acceptedBearer: loginAccessToken, initialExpiry: 3600}
 	f.mcpServer = mcpsdk.NewServer(
 		&mcpsdk.Implementation{Name: "login-fixture", Version: "1"},
 		&mcpsdk.ServerOptions{GetSessionID: func() string {
@@ -117,11 +131,14 @@ func newLoginFixture(t *testing.T) *loginFixture {
 		}},
 	)
 	mcpsdk.AddTool(f.mcpServer, &mcpsdk.Tool{Name: "ready", Description: "ready"}, func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
-		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, nil, nil
+		f.mu.Lock()
+		f.toolCalls++
+		f.mu.Unlock()
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "fixture-ready"}}}, nil, nil
 	})
-	mcpHandler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return f.mcpServer }, nil)
+	f.mcpHandler = f.newMCPHandler()
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.serveHTTP(mcpHandler, w, r)
+		f.serveHTTP(w, r)
 	}))
 	t.Cleanup(f.server.Close)
 	return f
@@ -129,12 +146,36 @@ func newLoginFixture(t *testing.T) *loginFixture {
 
 func (f *loginFixture) origin() string   { return f.server.URL }
 func (f *loginFixture) resource() string { return f.server.URL + "/mcp" }
-func (f *loginFixture) issuer() string   { return f.server.URL + "/as" }
+func (f *loginFixture) issuer() string   { return f.server.URL }
+
+func (f *loginFixture) newMCPHandler() http.Handler {
+	return mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return f.mcpServer }, nil)
+}
+
+type loginFixtureCounts struct {
+	authorize, token, refresh, metadata, authenticated, toolCalls, unexpectedAuth, opened, closed int
+}
+
+func (f *loginFixture) snapshot() loginFixtureCounts {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return loginFixtureCounts{
+		authorize: f.authorize, token: f.token, refresh: f.refresh, metadata: f.metadata,
+		authenticated: f.authorized, toolCalls: f.toolCalls, unexpectedAuth: f.unexpectedAuth,
+		opened: f.sessionsOpened, closed: f.sessionsClosed,
+	}
+}
 
 func (f *loginFixture) counts() (authorize, token, authenticated int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.authorize, f.token, f.authorized
+}
+
+func (f *loginFixture) refreshRequestCount(token string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refreshTokens[token]
 }
 
 func (f *loginFixture) sessionCounts() (opened, closed int) {
@@ -159,9 +200,13 @@ func (f *loginFixture) callbackAddress() string {
 	return u.Host
 }
 
-func (f *loginFixture) serveHTTP(mcpHandler http.Handler, w http.ResponseWriter, r *http.Request) {
+func (f *loginFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/mcp":
+		f.mu.Lock()
+		handler := f.mcpHandler
+		acceptedBearer := f.acceptedBearer
+		f.mu.Unlock()
 		if r.Method == http.MethodDelete && f.failClose {
 			f.mu.Lock()
 			f.sessionsClosed++
@@ -169,7 +214,7 @@ func (f *loginFixture) serveHTTP(mcpHandler http.Handler, w http.ResponseWriter,
 			panic(http.ErrAbortHandler)
 		}
 		if f.publicResource {
-			mcpHandler.ServeHTTP(w, r)
+			handler.ServeHTTP(w, r)
 			if r.Method == http.MethodDelete {
 				f.mu.Lock()
 				f.sessionsClosed++
@@ -177,7 +222,13 @@ func (f *loginFixture) serveHTTP(mcpHandler http.Handler, w http.ResponseWriter,
 			}
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer "+loginAccessToken || f.keepRejecting {
+		authorization := r.Header.Get("Authorization")
+		if authorization != "Bearer "+acceptedBearer || f.keepRejecting {
+			if authorization != "" && authorization != "Bearer "+loginAccessToken && authorization != "Bearer "+loginRotatedAccessToken && authorization != "Bearer "+acceptedBearer {
+				f.mu.Lock()
+				f.unexpectedAuth++
+				f.mu.Unlock()
+			}
 			w.Header().Set("WWW-Authenticate", `Bearer scope="read"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -204,21 +255,27 @@ func (f *loginFixture) serveHTTP(mcpHandler http.Handler, w http.ResponseWriter,
 				return
 			}
 		}
-		mcpHandler.ServeHTTP(w, r)
+		handler.ServeHTTP(w, r)
 		if r.Method == http.MethodDelete {
 			f.mu.Lock()
 			f.sessionsClosed++
 			f.mu.Unlock()
 		}
 	case strings.Contains(r.URL.Path, ".well-known/oauth-protected-resource"):
+		f.mu.Lock()
+		f.metadata++
+		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(oauthex.ProtectedResourceMetadata{
 			Resource: f.resource(), AuthorizationServers: []string{f.issuer()}, ScopesSupported: []string{"read"},
 		})
 	case strings.Contains(r.URL.Path, ".well-known/oauth-authorization-server"):
+		f.mu.Lock()
+		f.metadata++
+		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(oauthex.AuthServerMeta{
-			Issuer: f.issuer(), AuthorizationEndpoint: f.issuer() + "/authorize", TokenEndpoint: f.issuer() + "/token",
+			Issuer: f.issuer(), AuthorizationEndpoint: f.origin() + "/as/authorize", TokenEndpoint: f.origin() + "/as/token",
 			ScopesSupported: []string{"read"}, ResponseTypesSupported: []string{"code"}, GrantTypesSupported: []string{"authorization_code", "refresh_token"},
 			TokenEndpointAuthMethodsSupported: []string{"client_secret_basic"}, CodeChallengeMethodsSupported: []string{"S256"}, AuthorizationResponseIssParameterSupported: true,
 		})
@@ -262,6 +319,7 @@ func (f *loginFixture) serveToken(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.token++
 	fail := f.failToken
+	initialExpiry := f.initialExpiry
 	f.mu.Unlock()
 	if fail {
 		http.Error(w, `{"error":"server_error","error_description":"token-failure-canary"}`, http.StatusInternalServerError)
@@ -274,6 +332,31 @@ func (f *loginFixture) serveToken(w http.ResponseWriter, r *http.Request) {
 	clientID, secret, ok := r.BasicAuth()
 	clientID, _ = url.QueryUnescape(clientID)
 	secret, _ = url.QueryUnescape(secret)
+	if !ok || clientID != loginClientID || secret != loginClientSecret {
+		http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+		return
+	}
+	if r.Form.Get("grant_type") == "refresh_token" {
+		refreshToken := r.Form.Get("refresh_token")
+		var accessToken, successorRefreshToken string
+		switch refreshToken {
+		case loginRefreshToken:
+			accessToken, successorRefreshToken = loginRotatedAccessToken, loginRotatedRefreshToken
+		case loginRotatedRefreshToken:
+			accessToken, successorRefreshToken = loginSuccessorAccessToken, loginSuccessorRefreshToken
+		default:
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			return
+		}
+		f.mu.Lock()
+		f.refresh++
+		f.refreshTokens[refreshToken]++
+		f.acceptedBearer = accessToken
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": accessToken, "token_type": "Bearer", "refresh_token": successorRefreshToken, "expires_in": 3600, "scope": "read"})
+		return
+	}
 	f.mu.Lock()
 	record, found := f.codes[r.Form.Get("code")]
 	if found && !record.used {
@@ -284,12 +367,12 @@ func (f *loginFixture) serveToken(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Unlock()
 	verifier := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
-	if !found || !ok || clientID != loginClientID || secret != loginClientSecret || base64.RawURLEncoding.EncodeToString(verifier[:]) != record.challenge || r.Form.Get("redirect_uri") != record.redirect || r.Form.Get("resource") != record.resource {
+	if !found || base64.RawURLEncoding.EncodeToString(verifier[:]) != record.challenge || r.Form.Get("redirect_uri") != record.redirect || r.Form.Get("resource") != record.resource {
 		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"access_token": loginAccessToken, "token_type": "Bearer", "refresh_token": "login-refresh-canary", "expires_in": 3600, "scope": "read"})
+	_ = json.NewEncoder(w).Encode(map[string]any{"access_token": loginAccessToken, "token_type": "Bearer", "refresh_token": loginRefreshToken, "expires_in": initialExpiry, "scope": "read"})
 }
 
 func loginConfig(t *testing.T, fixture *loginFixture, store credentialstore.Store) mcp.ServerConfig {
@@ -319,7 +402,7 @@ func TestLoginMCPRestoresEncryptedCredentialAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
+	if err := app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
 		t.Fatalf("initial login: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -337,7 +420,7 @@ func TestLoginMCPRestoresEncryptedCredentialAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
+	if err := app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
 		t.Fatalf("login after restart: %v", err)
 	}
 	authorize, tokens, authenticated := fixture.counts()
@@ -356,7 +439,7 @@ func TestLoginMCPCleansUpTemporarySession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
+	if err := app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
 		t.Fatal(err)
 	}
 	issued, closed := fixture.sessionCounts()
@@ -384,7 +467,7 @@ func TestLoginMCPCancellationAfterCallbackReleasesRuntime(t *testing.T) {
 	fixture.blockAuthenticatedMCP("tools/list", block, blocked)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
-	go func() { result <- LoginMCP(ctx, loginConfig(t, fixture, store), runtime) }()
+	go func() { result <- app.LoginMCP(ctx, loginConfig(t, fixture, store), runtime) }()
 
 	select {
 	case <-blocked:
@@ -413,7 +496,7 @@ func TestLoginMCPCancellationAfterCallbackReleasesRuntime(t *testing.T) {
 	_ = listener.Close()
 
 	fixture.blockAuthenticatedMCP("", nil, nil)
-	if err := LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
+	if err := app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
 		t.Fatalf("subsequent login after cancellation: %v", err)
 	}
 	if browser.calls.Load() != 1 {
@@ -438,11 +521,11 @@ func TestLoginMCPRejectsPublicResourceWithoutOAuthCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime)
-	if !errors.Is(err, ErrMCPLoginFailed) {
+	err = app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime)
+	if !errors.Is(err, app.ErrMCPLoginFailed) {
 		t.Fatalf("public-resource login error = %v", err)
 	}
-	if !errors.Is(err, ErrMCPLoginCredential) || err.Error() != ErrMCPLoginCredential.Error() || strings.Contains(err.Error(), fixture.server.URL) {
+	if !errors.Is(err, app.ErrMCPLoginCredential) || err.Error() != app.ErrMCPLoginCredential.Error() || strings.Contains(err.Error(), fixture.server.URL) {
 		t.Fatalf("public-resource failure was not redacted: %v", err)
 	}
 	authorize, tokens, _ := fixture.counts()
@@ -466,7 +549,7 @@ func TestLoginMCPCloseFailureIsCleanupError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); !errors.Is(err, ErrMCPLoginCleanup) || err.Error() != ErrMCPLoginCleanup.Error() {
+	if err := app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); !errors.Is(err, app.ErrMCPLoginCleanup) || err.Error() != app.ErrMCPLoginCleanup.Error() {
 		t.Fatalf("close failure = %v, want redacted cleanup category", err)
 	}
 	opened, closed := fixture.sessionCounts()
@@ -488,7 +571,7 @@ func TestLoginMCPNoBrowserAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	if err := LoginMCP(ctx, loginConfig(t, fixture, store), runtime); !errors.Is(err, context.DeadlineExceeded) {
+	if err := app.LoginMCP(ctx, loginConfig(t, fixture, store), runtime); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancelled login = %v", err)
 	}
 	if strings.Count(output.String(), "http://") != 1 {
@@ -510,7 +593,7 @@ func TestLoginMCPSerializesSharedRuntime(t *testing.T) {
 			t.Fatal(openErr)
 		}
 		cfg := loginConfig(t, fixture, store)
-		go func() { errs <- LoginMCP(context.Background(), cfg, runtime) }()
+		go func() { errs <- app.LoginMCP(context.Background(), cfg, runtime) }()
 	}
 	for range fixtures {
 		if err := <-errs; err != nil {
@@ -560,7 +643,7 @@ func TestLoginMCPRejectsInvalidShapesBeforeRuntime(t *testing.T) {
 			} else {
 				mutate(&cfg)
 			}
-			if err := LoginMCP(context.Background(), cfg, selectedRuntime); !errors.Is(err, ErrMCPLoginConfig) {
+			if err := app.LoginMCP(context.Background(), cfg, selectedRuntime); !errors.Is(err, app.ErrMCPLoginConfig) {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -583,8 +666,8 @@ func TestLoginMCPRedactsConnectFailure(t *testing.T) {
 	}
 	cfg := loginConfig(t, fixture, store)
 	cfg.URL = fixture.server.URL + "/missing-connect-canary"
-	err = LoginMCP(context.Background(), cfg, runtime)
-	if !errors.Is(err, ErrMCPLoginConnect) || !errors.Is(err, ErrMCPLoginFailed) {
+	err = app.LoginMCP(context.Background(), cfg, runtime)
+	if !errors.Is(err, app.ErrMCPLoginConnect) || !errors.Is(err, app.ErrMCPLoginFailed) {
 		t.Fatalf("error = %v", err)
 	}
 	if strings.Contains(err.Error(), "missing-connect-canary") || strings.Contains(err.Error(), fixture.server.URL) {
@@ -607,8 +690,8 @@ func TestLoginMCPRedactsAuthenticationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime)
-	if !errors.Is(err, ErrMCPLoginAuthorization) || !errors.Is(err, ErrMCPLoginFailed) {
+	err = app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime)
+	if !errors.Is(err, app.ErrMCPLoginAuthorization) || !errors.Is(err, app.ErrMCPLoginFailed) {
 		t.Fatalf("error = %v", err)
 	}
 	for _, secret := range []string{"token-failure-canary", loginClientSecret, loginAccessToken, fixture.server.URL} {

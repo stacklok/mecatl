@@ -23,11 +23,15 @@ profiles with legacy CLI entries and constructs credential sources for `mecated`
 `mecatequi`, and `mecak8s`. The MCP manager/controllers close before those sources.
 
 Normal serving, ACP, and batch roots install no OAuth presenter. The only shipped
-interactive entry point is `mecated mcp login SERVER [--no-browser]`. It selects a
+interactive entry point is `mecated mcp login SERVER [--no-browser] [--permission-config
+PATH ...]`. The repeatable permission-config option selects trusted operator settings only;
+it never carries OAuth values. The command selects a
 profile case-insensitively, requires OAuth with a mutable local encrypted store, and
 constructs the loopback runtime only after configuration and storage validation.
 Environment-backed credentials are externally provisioned and require a process restart.
-OAuth is not added to ACP, per-session MCP, inline agent definitions, or ToolHive
+ACP cannot provide OAuth profiles or install/drive authorization; after operator authorization,
+ACP sessions may invoke the shared global OAuth-backed tools under ordinary permissions. OAuth is
+not added to per-session MCP, inline agent definitions, or ToolHive
 discovery. Dynamic client registration remains unsupported.
 
 ## Consequences
@@ -39,7 +43,7 @@ credentials without giving a pod a browser or mutable local store.
 
 OAuth remains deliberately narrow. Broad production readiness is still blocked on the
 upstream SDK metadata-profile gates identified by ADR 0109; this decision does not claim
-general OAuth interoperability or ACP OAuth support.
+general OAuth interoperability or ACP-supplied OAuth profile/authorization support.
 
 ## See also
 

@@ -59,9 +59,19 @@ preregistered confidential clients require Basic and `client_secret_post` is den
 network send. The shipped roots resolve strict operator-tier `mcp.servers` profiles
 through one loader: `none`, environment-referenced `static_bearer`, or OAuth backed by a
 mutable encrypted local Store or read-only environment Reader. Normal serving and ACP
-never install a presenter. Only `mecated mcp login SERVER [--no-browser]` authorizes a
-local Store; environment credentials are preprovisioned and picked up after restart.
-OAuth remains unavailable to ACP, per-session/inline/discovered MCP, and DCR remains
+never install a presenter. Only `mecated mcp login SERVER [--no-browser]
+[--permission-config PATH ...]` authorizes a local Store; the repeatable permission-config
+option selects trusted operator settings only and never carries OAuth values. Environment
+credentials are preprovisioned and picked up after restart. The
+combined path is guarded offline through operator resolution → explicit login → encrypted
+store close/reopen → `app.Build` global catalog → model tool call → lazy refresh rotation →
+second process restart → real dropped-session reconnect. The same gate verifies manager-before-
+profile-source teardown and scans diagnostics, errors, model-facing results, and generated
+configuration projections for distinct secret canaries. Headless startup with a clean store
+fails soft with a login remedy and no presenter; ACP consumes the already-built catalog and
+cannot provide OAuth profiles or authorize. After operator authorization, ACP sessions may
+invoke the shared global OAuth-backed tools under ordinary permissions.
+OAuth remains unavailable to per-session/inline/discovered MCP, and DCR remains
 unsupported. The ordinary MCP client has an OAuth-mode-only exact-resource capability and
 cross-origin redirect gate so its audience-bound bearer cannot be reattached elsewhere.
 Static `Authorization` and OAuth are mutually exclusive; OAuth-disabled static

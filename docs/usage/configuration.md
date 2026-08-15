@@ -26,19 +26,40 @@ variables rather than containing values. See the [generated reference](../config
 for the complete strict schema.
 
 Local OAuth credentials require an absolute `credentials.local.root` and a canonical
-base64-encoded 32-byte key in `credentials.local.key_env`. Authorize that profile once:
+base64-encoded 32-byte key in `credentials.local.key_env`. Generate the key outside YAML,
+keep the root owner-only, and put only references in settings:
 
 ```console
+$ umask 077
+$ key_dir="$HOME/.local/state"
+$ mkdir -p "$key_dir"
+$ chmod 700 "$key_dir"
+$ key_file="$key_dir/mecatl-mcp.key"
+$ openssl rand -base64 32 >"$key_file"
+$ chmod 600 "$key_file"
+$ export MECATL_MCP_CREDENTIAL_KEY=$(cat "$key_file")
+$ export MECATL_MCP_CLIENT_SECRET='value-from-your-secret-manager'
 $ mecated mcp login github
 $ mecated mcp login github --no-browser  # prints the authorization URL to this terminal
 ```
 
-The command accepts one server and only `--no-browser`; issuer, client, scope, secret,
-root, and network policy remain settings. Normal serve/ACP, mecatequi, and mecak8s never
-open a browser. Environment-backed OAuth records are read-only and intended for
-Kubernetes: provision the opaque record externally and restart the pod after rotation.
-They cannot be populated by `mecated mcp login`. DCR and OAuth for ACP, per-session MCP,
-inline agents, or discovered ToolHive servers are not supported.
+The full command is `mecated mcp login SERVER [--no-browser] [--permission-config
+PATH ...]`. The repeatable `--permission-config` selects trusted operator settings files;
+it does not supply OAuth values. Issuer, client, scope, secret, root, and network policy remain
+settings. Start serving after login and verify the
+`mcp__<server>__*` inventory. Startup restores the encrypted credential without another
+browser interaction. Expired access tokens refresh lazily; a mutable local store persists
+refresh-token rotation, so the next process restart remains warm. If identity metadata
+(profile, principal, client, scopes, or resource) changes, run login again. To roll back,
+replace the whole profile with `static_bearer` or `none` and restart.
+
+Normal serve/ACP, mecatequi, and mecak8s never open a browser. Environment-backed OAuth
+records are read-only and intended for Kubernetes: provision the opaque record externally
+and restart pods after rotation. They cannot be populated by `mecated mcp login`. DCR and
+ACP cannot provide OAuth profiles or install/drive authorization; after operator authorization,
+ACP sessions may invoke the shared global OAuth-backed tools under ordinary permissions. OAuth
+for per-session MCP, inline agents, or discovered ToolHive servers is not
+supported.
 
 The legacy `--mcp-server name=URL` and `MCP_<NAME>_TOKEN` path remains supported. A
 same-name legacy CLI entry replaces the whole settings profile case-insensitively.

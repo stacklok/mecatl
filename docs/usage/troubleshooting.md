@@ -7,9 +7,15 @@ authorization URL, secret references, and adapter errors. For a mutable local pr
 the exact remedy it prints: `mecated mcp login <server>` (add `--no-browser` only when
 you want the authorization URL on stdout). For an environment-backed profile, preprovision
 the opaque credential and restart the process; the environment Reader is immutable and the
-login command will reject it. Repeated failure after successful login may indicate that the
-credential identity changed (profile/principal/client/scopes/resource) or an upstream SDK
-metadata-profile incompatibility. There is no ACP OAuth or DCR fallback.
+login command will reject it. `invalid_grant` after a prior login usually means the refresh
+token was revoked/consumed or the credential identity changed (profile, principal, client,
+scopes, or resource): stop serving that profile, rerun `mecated mcp login <server>`, verify a
+warm startup, then resume traffic. If rollout fails, restore the previous whole profile
+(`static_bearer` where supported, or `none`) and restart; never enable browser behavior in a
+daemon to repair it. A persistent failure may instead be an upstream SDK metadata-profile
+incompatibility. ACP cannot provide OAuth profiles or install/drive authorization; after operator
+authorization it may invoke the shared global OAuth-backed tools under ordinary permissions. There
+is no per-session ACP OAuth or DCR fallback.
 
 **`no LLM provider available: set one of ANTHROPIC_API_KEY (Claude), OPENAI_API_KEY (OpenAI), or OPENROUTER_API_KEY (one key, many models — a good first choice) …`**
 You started `mecated` with no provider key in the environment. Set

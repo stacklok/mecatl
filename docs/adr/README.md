@@ -37,6 +37,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
 - [0111 — Read-only environment credential source and OAuth refresh posture](./0111-read-only-credential-source.md)
 - [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
+- [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
@@ -113,6 +114,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0057 — MCP server notifications](./0057-mcp-server-notifications.md)
 - [0063 — MCP structured results: fail-closed + CallMcpWithQuery](./0063-mcp-structured-failclosed-callmcpwithquery.md)
 - [0078 — MCP typed tool results](./0078-mcp-typed-tool-results.md)
+- [0108 — Internal encrypted credential-store substrate](./0108-credential-store.md)
+- [0109 — Qualify the official MCP SDK authorization-code profile](./0109-mcp-oauth-sdk-profile.md)
+- [0110 — Adapter-local MCP OAuth controller](./0110-mcp-oauth-controller.md)
+- [0111 — Read-only environment credential source and OAuth refresh posture](./0111-read-only-credential-source.md)
+- [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
+- [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

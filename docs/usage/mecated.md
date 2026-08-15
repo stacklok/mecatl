@@ -399,12 +399,18 @@ window (retryable) and the **post-first-chunk** stream (terminal).
 | `--toolhive` | `true` | discover MCP servers from the **running ToolHive workloads** (the embedded ToolHive library lists already-running workloads and reads their HTTP proxy URLs; mecatl **never** starts or spawns a workload). Fails soft to zero servers when no container runtime is reachable. Same trust class as `--mcp-server`. |
 | `--toolhive-group` | `""` | ToolHive group to discover workloads from (empty → the `default` group). Only consulted with `--toolhive`. |
 
-The host library now contains an opt-in, random-loopback OAuth login runtime and a one-shot
-composition operation for an **already-resolved** OAuth server profile. It is not wired to
-`mecated`: there is currently **no `mecated mcp login` command**, OAuth profile loader, or
-credential-store key acquisition. Those arrive only after issue #523 provides one canonical
-profile path. Do not put OAuth endpoints or secrets on argv, and do not infer browser
-permission from ACP or daemon stdio. See [ADR 0112](../adr/0112-mcp-oauth-loopback-runtime.md).
+Operator-tier `mcp.servers` profiles are wired through the same resolver for login and
+serve. For a mutable local OAuth profile, keep the client secret and canonical base64
+32-byte store key in referenced `MECATL_*` variables, then run
+`mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]`. Subsequent serve
+processes warm-restore the
+encrypted record; lazy access-token refresh persists a rotated refresh token for the next
+restart. Serving, ACP, mecatequi, and mecak8s never install a browser presenter. A missing
+local credential degrades safely and prints the login command; an environment-backed
+profile is read-only and must be provisioned externally. Rolling back to `none` or
+`static_bearer` is a whole-profile settings change followed by restart. See
+[configuration](configuration.md#global-mcp-authentication-profiles) and
+[ADR 0113](../adr/0113-operator-mcp-auth-profiles.md).
 
 #### Security & transport (auth, TLS, rate limiting)
 

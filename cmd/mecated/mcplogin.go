@@ -70,18 +70,17 @@ func parseMCPLoginArgs(args []string, out io.Writer) (mcpLoginArgs, error) {
 }
 
 func selectMCPLoginServer(profiles *cliconfig.MCPProfiles, name string) (mcp.ServerConfig, error) {
+	if server, ok := profiles.OAuthServer(name); ok {
+		if server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
+			return mcp.ServerConfig{}, fmt.Errorf("MCP server %q uses read-only environment credentials; environment credentials cannot be mutated, so set mcp.servers[].auth.oauth.credentials.mode: local", server.Name)
+		}
+		return server, nil
+	}
 	if profiles != nil {
 		for _, server := range profiles.Servers {
-			if !strings.EqualFold(server.Name, name) {
-				continue
-			}
-			if server.OAuth == nil {
+			if strings.EqualFold(server.Name, name) {
 				return mcp.ServerConfig{}, fmt.Errorf("MCP server %q is not OAuth-enabled; set mcp.servers[].auth.mode: oauth", server.Name)
 			}
-			if server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
-				return mcp.ServerConfig{}, fmt.Errorf("MCP server %q uses read-only environment credentials; environment credentials cannot be mutated, so set mcp.servers[].auth.oauth.credentials.mode: local", server.Name)
-			}
-			return server, nil
 		}
 	}
 	return mcp.ServerConfig{}, fmt.Errorf("MCP server %q is not configured; add it under mcp.servers[] with auth.mode: oauth", name)

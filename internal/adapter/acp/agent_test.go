@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -618,24 +621,64 @@ func stubEngine(t *testing.T) *agent.Engine {
 }
 
 // TestSessionNewAcceptsHTTPMCP asserts a client-provided streaming-HTTP MCP server
-// is accepted on session/new: the per-session engine factory is invoked with one
-// spec whose URL and headers map correctly, and a session id is returned.
+// remains an ACP-owned declaration: it is passed to the per-session factory with
+// its header, but initialize and a complete prompt emit no auth, elicitation, or
+// browser round-trip and never contact an OAuth endpoint.
 func TestSessionNewAcceptsHTTPMCP(t *testing.T) {
+	var oauthCalls atomic.Int32
+	oauthFixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		oauthCalls.Add(1)
+		http.Error(w, "unexpected OAuth fixture call", http.StatusInternalServerError)
+	}))
+	defer oauthFixture.Close()
+
 	fake := &fakeSessionEngine{engine: stubEngine(t)}
 	svc := newServiceCfg(t, mockllm.New(), nil, func(c *server.Config) { c.SessionEngine = fake.factory })
-	a := acp.NewAgent(svc)
+	e, cleanup := startAgent(t, svc)
+	defer cleanup()
 
-	params := fmt.Sprintf(`{"cwd":%q,"mcpServers":[{"type":"http","name":"docs","url":"https://example.test/mcp","headers":[{"name":"Authorization","value":"Bearer x"}]}]}`, t.TempDir())
-	out, err := a.Handle(context.Background(), "session/new", json.RawMessage(params), true)
-	if err != nil {
-		t.Fatalf("session/new with http MCP: %v", err)
+	initResult := e.call("initialize", map[string]any{"protocolVersion": 1})
+	var initialized struct {
+		AuthMethods []any `json:"authMethods"`
 	}
-	b, _ := json.Marshal(out)
+	if err := json.Unmarshal(initResult, &initialized); err != nil || len(initialized.AuthMethods) != 0 {
+		t.Fatalf("initialize auth methods = %s, err=%v", initResult, err)
+	}
+
+	const acpHeaderCanary = "acp-header-secret-canary"
+	newResult := e.call("session/new", map[string]any{
+		"cwd": t.TempDir(),
+		"mcpServers": []any{map[string]any{
+			"type": "http", "name": "docs", "url": oauthFixture.URL + "/mcp",
+			"headers": []any{map[string]any{"name": "Authorization", "value": "Bearer " + acpHeaderCanary}},
+		}},
+	})
+	if strings.Contains(string(newResult), acpHeaderCanary) {
+		t.Fatal("session/new response exposed an MCP authorization header")
+	}
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
-	if jerr := json.Unmarshal(b, &ns); jerr != nil || ns.SessionID == "" {
-		t.Fatalf("session/new result: %s err=%v", b, jerr)
+	if err := json.Unmarshal(newResult, &ns); err != nil || ns.SessionID == "" {
+		t.Fatalf("session/new result: %s err=%v", newResult, err)
+	}
+	promptResult := e.call("session/prompt", map[string]any{
+		"sessionId": ns.SessionID,
+		"prompt":    []any{map[string]any{"type": "text", "text": "finish without authentication"}},
+	})
+	var prompt struct {
+		StopReason string `json:"stopReason"`
+	}
+	if err := json.Unmarshal(promptResult, &prompt); err != nil || prompt.StopReason != "end_turn" {
+		t.Fatalf("session/prompt result: %s err=%v", promptResult, err)
+	}
+	select {
+	case request := <-e.reqs:
+		t.Fatalf("ACP client MCP declaration emitted unexpected %q request", request.Method)
+	default:
+	}
+	if got := oauthCalls.Load(); got != 0 {
+		t.Fatalf("ACP client MCP declaration contacted OAuth fixture %d times", got)
 	}
 
 	fake.mu.Lock()
@@ -647,11 +690,14 @@ func TestSessionNewAcceptsHTTPMCP(t *testing.T) {
 		t.Fatalf("factory got %d specs, want 1: %+v", len(fake.specs), fake.specs)
 	}
 	spec := fake.specs[0]
-	if spec.Name != "docs" || spec.URL != "https://example.test/mcp" {
+	if spec.Name != "docs" || spec.URL != oauthFixture.URL+"/mcp" {
 		t.Fatalf("spec name/url = %q/%q", spec.Name, spec.URL)
 	}
-	if spec.Headers["Authorization"] != "Bearer x" {
-		t.Fatalf("spec headers = %v, want Authorization: Bearer x", spec.Headers)
+	if spec.OAuth != nil {
+		t.Fatal("ACP client MCP declaration unexpectedly gained an OAuth presenter/controller")
+	}
+	if spec.Headers["Authorization"] != "Bearer "+acpHeaderCanary {
+		t.Fatalf("spec Authorization header did not preserve the input value")
 	}
 }
 

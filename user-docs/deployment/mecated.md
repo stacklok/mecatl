@@ -35,8 +35,13 @@ The minimal invocation starts the server on loopback with an in-memory session
 store. No persistence, no auth — the single-user localhost trust model.
 
 Global MCP OAuth profiles are operator settings. Serving never opens a browser; authorize
-a mutable local profile explicitly with `mecated mcp login SERVER` (or
-`--no-browser`). ACP has no OAuth presenter. See [MCP client](/what-you-get/mcp-client.md).
+a mutable local profile explicitly with `mecated mcp login SERVER [--no-browser]
+[--permission-config PATH ...]`. The repeatable permission-config option selects trusted
+operator settings only, never OAuth values. Serving then warm-restores the encrypted record, persists lazy refresh-token
+rotation, and remains warm after restart. Roll back with a whole `static_bearer`/`none`
+profile change and restart. ACP cannot provide OAuth profiles or install/drive authorization;
+after operator authorization it may invoke the shared global OAuth-backed tools under ordinary
+permissions. See [MCP client](/what-you-get/mcp-client.md).
 
 Default addresses:
 

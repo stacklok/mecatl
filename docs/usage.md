@@ -20,9 +20,6 @@ an editor that spawned it.
 > (`--tls-cert` / `--tls-key`), mutual TLS (`--client-ca`), and rate limiting
 > (`--rate-limit` / `--rate-burst`) — see [mecated](usage/mecated.md).
 >
-> MCP OAuth loopback support is currently a host-library operation only. There is no
-> `mecated mcp login` command until issue #523 supplies the shared OAuth profile resolver
-> and credential-store key acquisition; see the [MCP section](usage/mecated.md#mcp--toolhive).
 
 > **How to read this guide:** sections 1–4 (install → quickstart → mecated →
 > guardrails) are a **linear new-operator path**; the remaining sections are
