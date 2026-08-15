@@ -127,6 +127,18 @@ const (
 	ReasonPolicyAlways             AdmissionReason = "policy_always"
 	ReasonPolicyNever              AdmissionReason = "policy_never"
 	ReasonHostRequested            AdmissionReason = "host_requested"
+	ReasonHardTrigger              AdmissionReason = "hard"
+	ReasonWeightedThreshold        AdmissionReason = "weighted"
+	ReasonDuplicate                AdmissionReason = "duplicate"
+	ReasonRateLimit                AdmissionReason = "rate_limit"
+	ReasonQueueFull                AdmissionReason = "queue_full"
+	ReasonCoordinatorClosed        AdmissionReason = "closed"
+	ReasonTimeout                  AdmissionReason = "timeout"
+	ReasonReflectionFailed         AdmissionReason = "reflection_failed"
+	ReasonAbstained                AdmissionReason = "abstained"
+	ReasonStaged                   AdmissionReason = "staged"
+	ReasonPromoted                 AdmissionReason = "promoted"
+	ReasonConflicted               AdmissionReason = "conflicted"
 )
 
 // Valid reports whether r belongs to the closed admission-reason vocabulary.
@@ -139,7 +151,10 @@ func (r AdmissionReason) Valid() bool {
 		ReasonRepeatedToolSequence, ReasonSubstantialSuccess,
 		ReasonModelTurnsModifier, ReasonSuccessfulToolsModifier,
 		ReasonRunTokensModifier, ReasonPolicyAlways, ReasonPolicyNever,
-		ReasonHostRequested:
+		ReasonHostRequested, ReasonHardTrigger, ReasonWeightedThreshold,
+		ReasonDuplicate, ReasonRateLimit, ReasonQueueFull, ReasonCoordinatorClosed,
+		ReasonTimeout, ReasonReflectionFailed, ReasonAbstained, ReasonStaged,
+		ReasonPromoted, ReasonConflicted:
 		return true
 	default:
 		return false

@@ -37,14 +37,34 @@ func DetectSignals(in Input) []Signal {
 	return signals
 }
 
-// DetectSignalsScoped returns deterministic standard and trusted host-supplied
-// signals that have at least one evidence reference in the current-run span.
-// DetectSignals remains unchanged for compatibility with historical reflection.
+// DetectSignalsScoped returns deterministic standard signals whose complete
+// pattern evidence belongs to the genuine current run. Trusted host signals are
+// deliberately limited to contradiction and host-requested provenance; callers
+// cannot forge built-in evidence classes.
 func DetectSignalsScoped(in Input, scope DetectionScope) []Signal {
 	if err := ValidateInput(in); err != nil || !scope.Current.Valid(len(in.Trajectory.Messages)) {
 		return nil
 	}
-	all := append(cloneSignals(in.Signals), DetectSignals(Input{Trajectory: in.Trajectory, Events: in.Events, Existing: in.Existing})...)
+	current := in.Trajectory.Messages[scope.Current.Start:scope.Current.End]
+	trajectory := NewTrajectory(in.Trajectory.SessionID, in.Trajectory.Workspace, in.Trajectory.Stop, in.Trajectory.Usage, current)
+	trajectory.Principal = in.Trajectory.Principal.Clone()
+	trajectory.Kind = in.Trajectory.Kind
+	trajectory.Counters = in.Trajectory.Counters
+	trajectory.Current = MessageSpan{Start: 0, End: len(current)}
+	currentInput := NewInput(trajectory, nil, nil, in.Existing)
+	detected := DetectSignals(currentInput)
+	for i := range detected {
+		for j := range detected[i].Evidence {
+			detected[i].Evidence[j].Ordinal += scope.Current.Start
+		}
+	}
+	all := make([]Signal, 0, len(in.Signals)+len(detected))
+	for _, signal := range in.Signals {
+		if (signal.Kind == SignalContradiction || signal.Kind == SignalHostRequested) && signalHasOnlyCurrentEvidence(signal, scope.Current) {
+			all = append(all, signal)
+		}
+	}
+	all = append(all, detected...)
 	order := []SignalKind{
 		SignalExplicitRemember, SignalExplicitLearnProcedure,
 		SignalRepeatedCorrection, SignalContradiction, SignalFailureRecovery,
@@ -53,23 +73,25 @@ func DetectSignalsScoped(in Input, scope DetectionScope) []Signal {
 	result := make([]Signal, 0, len(all))
 	for _, kind := range order {
 		for _, signal := range all {
-			if signal.Kind != kind || !signalHasCurrentEvidence(signal, scope.Current) {
-				continue
+			if signal.Kind == kind {
+				result = append(result, signal)
+				break
 			}
-			result = append(result, signal)
-			break
 		}
 	}
 	return result
 }
 
-func signalHasCurrentEvidence(signal Signal, span MessageSpan) bool {
+func signalHasOnlyCurrentEvidence(signal Signal, span MessageSpan) bool {
+	if len(signal.Evidence) == 0 {
+		return signal.Kind == SignalContradiction || signal.Kind == SignalHostRequested
+	}
 	for _, ref := range signal.Evidence {
-		if ref.Locator == EvidenceMessage && span.Contains(ref.Ordinal) {
-			return true
+		if ref.Locator != EvidenceMessage || !span.Contains(ref.Ordinal) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func substantialSuccess(in Input) []EvidenceRef {

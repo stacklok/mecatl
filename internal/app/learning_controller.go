@@ -13,6 +13,7 @@ import (
 const (
 	learningCompletedTTL          = 24 * time.Hour
 	learningCompletedMax          = 1024
+	learningCooldownMax           = 1024
 	defaultReflectionOutputTokens = 4096
 )
 
@@ -41,9 +42,9 @@ func newAutomaticAdmissionController(cfg LearningAutomaticConfig, emit func(lear
 	return &automaticAdmissionController{cfg: cfg, now: time.Now, cooldowns: make(map[string]time.Time), completed: make(map[string]time.Time), emit: emit}
 }
 
-func (c *automaticAdmissionController) activity(kind learning.ActivityKind, sensitivity learning.Sensitivity, count int64) {
+func (c *automaticAdmissionController) activity(kind learning.ActivityKind, reason learning.AdmissionReason, sensitivity learning.Sensitivity, count int64) {
 	if c != nil && c.emit != nil {
-		c.emit(learning.Activity{Kind: kind, Reason: learning.ReasonBelowThreshold, Sensitivity: sensitivity, Count: count})
+		c.emit(learning.Activity{Kind: kind, Reason: reason, Sensitivity: sensitivity, Count: count})
 	}
 }
 
@@ -83,6 +84,11 @@ func (c *automaticAdmissionController) pruneLocked(now time.Time) {
 		}
 	}
 	c.reservations = kept
+	for principal, until := range c.cooldowns {
+		if !now.Before(until) {
+			delete(c.cooldowns, principal)
+		}
+	}
 	completedCutoff := now.Add(-learningCompletedTTL)
 	keptCompleted := c.completedOrder[:0]
 	for _, item := range c.completedOrder {
@@ -108,12 +114,12 @@ func (c *automaticAdmissionController) reserve(principal, digest string, tokens 
 	now := c.now()
 	c.pruneLocked(now)
 	if _, ok := c.completed[digest]; ok {
-		c.activity(learning.ActivityDuplicate, sensitivity, 1)
+		c.activity(learning.ActivityDuplicate, learning.ReasonDuplicate, sensitivity, 1)
 		return false
 	}
 	if class != learning.AdmissionHard && c.cfg.Cooldown > 0 {
 		if until := c.cooldowns[principal]; now.Before(until) {
-			c.activity(learning.ActivityRateLimited, sensitivity, 1)
+			c.activity(learning.ActivityRateLimited, learning.ReasonRateLimit, sensitivity, 1)
 			return false
 		}
 	}
@@ -129,15 +135,33 @@ func (c *automaticAdmissionController) reserve(principal, digest string, tokens 
 	if c.cfg.MaxReflections == 0 || c.cfg.MaxTokens == 0 || c.cfg.MaxReflectionsPerPrincipal == 0 || c.cfg.MaxTokensPerPrincipal == 0 ||
 		globalCount >= c.cfg.MaxReflections || globalTokens+tokens > c.cfg.MaxTokens ||
 		principalCount >= c.cfg.MaxReflectionsPerPrincipal || principalTokens+tokens > c.cfg.MaxTokensPerPrincipal {
-		c.activity(learning.ActivityRateLimited, sensitivity, 1)
+		c.activity(learning.ActivityRateLimited, learning.ReasonRateLimit, sensitivity, 1)
 		return false
 	}
 	c.reservations = append(c.reservations, learningReservation{at: now, tokens: tokens, principal: principal})
 	if class != learning.AdmissionHard && c.cfg.Cooldown > 0 {
-		c.cooldowns[principal] = now.Add(c.cfg.Cooldown)
+		c.setCooldownLocked(principal, now.Add(c.cfg.Cooldown))
 	}
-	c.activity(learning.ActivityReservedTokens, sensitivity, int64(tokens))
+	reason := learning.ReasonWeightedThreshold
+	if class == learning.AdmissionHard {
+		reason = learning.ReasonHardTrigger
+	}
+	c.activity(learning.ActivityReservedTokens, reason, sensitivity, int64(tokens))
 	return true
+}
+
+func (c *automaticAdmissionController) setCooldownLocked(principal string, until time.Time) {
+	if len(c.cooldowns) >= learningCooldownMax {
+		oldestPrincipal := ""
+		var oldest time.Time
+		for candidate, candidateUntil := range c.cooldowns {
+			if oldestPrincipal == "" || candidateUntil.Before(oldest) || candidateUntil.Equal(oldest) && candidate < oldestPrincipal {
+				oldestPrincipal, oldest = candidate, candidateUntil
+			}
+		}
+		delete(c.cooldowns, oldestPrincipal)
+	}
+	c.cooldowns[principal] = until
 }
 
 func (c *automaticAdmissionController) complete(digest string) {

@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -76,6 +77,39 @@ func sumPoint(t *testing.T, agg metricdata.Aggregation, key, value string) int64
 	}
 	t.Fatalf("no data point with %s=%q (points: %d)", key, value, len(sum.DataPoints))
 	return 0
+}
+
+func TestMetricsLearningActivitiesUseClosedContentFreeLabelsAndTokenUnits(t *testing.T) {
+	m, reader := newTestMetrics(t)
+	activities := []learning.Activity{
+		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivitySkipped, Reason: learning.ReasonBelowThreshold, Sensitivity: learning.Conservative, Count: 1},
+		{Kind: learning.ActivityDuplicate, Reason: learning.ReasonDuplicate, Count: 1},
+		{Kind: learning.ActivityRateLimited, Reason: learning.ReasonRateLimit, Count: 1},
+		{Kind: learning.ActivityQueueFull, Reason: learning.ReasonQueueFull, Count: 1},
+		{Kind: learning.ActivityClosed, Reason: learning.ReasonCoordinatorClosed, Count: 1},
+		{Kind: learning.ActivityTimedOut, Reason: learning.ReasonTimeout, Count: 1},
+		{Kind: learning.ActivityReservedTokens, Reason: learning.ReasonWeightedThreshold, Count: 4321},
+	}
+	for _, activity := range activities {
+		m.EmitLearning(activity)
+	}
+	agg := collect(t, reader)["mecatl.learning.activity"]
+	sum, ok := agg.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("learning aggregation = %T", agg)
+	}
+	allowed := map[attribute.Key]bool{attribute.Key(attrType): true, attribute.Key(attrReason): true, attribute.Key(attrSensitivity): true}
+	for _, point := range sum.DataPoints {
+		for _, attr := range point.Attributes.ToSlice() {
+			if !allowed[attr.Key] {
+				t.Fatalf("identity/content attribute leaked: %s", attr.Key)
+			}
+		}
+	}
+	if got := sumPoint(t, agg, attrType, string(learning.ActivityReservedTokens)); got != 4321 {
+		t.Fatalf("reserved token units = %d, want 4321", got)
+	}
 }
 
 func TestMetricsEventsTotal(t *testing.T) {

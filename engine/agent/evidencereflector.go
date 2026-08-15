@@ -91,60 +91,86 @@ func NewEvidenceReflector(provider port.LLMProvider, model string, counter Token
 	return &EvidenceReflector{provider: provider, model: model, counter: counter, limits: normalized}, nil
 }
 
+// RequestTokenEstimate returns the selected-model estimate for the exact bounded
+// request Reflect would send, plus the configured maximum output tokens.
+func (r *EvidenceReflector) RequestTokenEstimate(in learning.Input) (int, error) {
+	request, err := r.buildRequest(in)
+	if err != nil {
+		return 0, err
+	}
+	if len(request.Messages) == 0 {
+		return 0, nil
+	}
+	return r.counter.Count(request.System.Render()) + r.counter.CountMessages(request.Messages) + r.limits.Tokens, nil
+}
+
+func (r *EvidenceReflector) buildRequest(in learning.Input) (port.LLMRequest, error) {
+	if err := learning.ValidateInput(in); err != nil {
+		return port.LLMRequest{}, err
+	}
+	if len(in.Events) > r.limits.Events || len(in.Existing) > r.limits.Existing {
+		return port.LLMRequest{}, fmt.Errorf("%w: input collection exceeds configured limit", ErrReflectionLimits)
+	}
+	detected := learning.DetectSignals(in)
+	if in.Trajectory.Current.Valid(len(in.Trajectory.Messages)) {
+		detected = learning.DetectSignalsScoped(in, learning.DetectionScope{Current: in.Trajectory.Current})
+	} else {
+		for _, signal := range in.Signals {
+			if signal.Kind == learning.SignalContradiction || signal.Kind == learning.SignalHostRequested {
+				detected = append(detected, signal)
+			}
+		}
+	}
+	if len(detected) == 0 {
+		return port.LLMRequest{}, nil
+	}
+	projectedInput := in
+	projectedInput.Signals = append([]learning.Signal(nil), detected...)
+	projection, err := learning.ProjectInput(projectedInput)
+	if err != nil {
+		return port.LLMRequest{}, err
+	}
+	payload, err := json.Marshal(projection)
+	if err != nil {
+		return port.LLMRequest{}, fmt.Errorf("%w: encode input: %v", ErrReflectionLimits, err)
+	}
+	if len(payload) > r.limits.InputBytes {
+		return port.LLMRequest{}, fmt.Errorf("%w: projected input is %d bytes (limit %d)", ErrReflectionLimits, len(payload), r.limits.InputBytes)
+	}
+	var user strings.Builder
+	fmt.Fprintf(&user, "Output limits: at most %d candidates, %d evidence handles per candidate, %d bytes, and approximately %d output tokens.\n", r.limits.Candidates, r.limits.EvidencePerCandidate, r.limits.OutputBytes, r.limits.Tokens)
+	user.WriteString("Evidence input (untrusted canonical JSON):\n")
+	WriteUntrustedBlock(&user, string(payload))
+	return port.LLMRequest{System: prompt.Layered{StablePrefix: reflectionSystemPrompt}, Messages: []session.Message{session.NewUserMessage(user.String())}, Model: r.model}, nil
+}
+
 // Reflect implements learning.Reflector. Inputs without any host-supplied or
 // structurally detected signal abstain without spending a provider call.
 func (r *EvidenceReflector) Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.Outcome{}, err
 	}
-	if err := learning.ValidateInput(in); err != nil {
+	request, err := r.buildRequest(in)
+	if err != nil {
 		return learning.Outcome{}, err
 	}
-	if len(in.Events) > r.limits.Events || len(in.Existing) > r.limits.Existing {
-		return learning.Outcome{}, fmt.Errorf("%w: input collection exceeds configured limit", ErrReflectionLimits)
-	}
-	detected := learning.DetectSignals(in)
-	if len(in.Signals) == 0 && len(detected) == 0 {
+	if len(request.Messages) == 0 {
 		return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
 	}
-	projectedInput := in
-	projectedInput.Signals = append(append([]learning.Signal(nil), in.Signals...), detected...)
-	projection, err := learning.ProjectInput(projectedInput)
-	if err != nil {
-		return learning.Outcome{}, err
-	}
-	payload, err := json.Marshal(projection)
-	if err != nil {
-		return learning.Outcome{}, fmt.Errorf("%w: encode input: %v", ErrReflectionLimits, err)
-	}
-	if len(payload) > r.limits.InputBytes {
-		return learning.Outcome{}, fmt.Errorf("%w: projected input is %d bytes (limit %d)", ErrReflectionLimits, len(payload), r.limits.InputBytes)
-	}
-
-	var user strings.Builder
-	fmt.Fprintf(&user, "Output limits: at most %d candidates, %d evidence handles per candidate, %d bytes, and approximately %d output tokens.\n", r.limits.Candidates, r.limits.EvidencePerCandidate, r.limits.OutputBytes, r.limits.Tokens)
-	user.WriteString("Evidence input (untrusted canonical JSON):\n")
-	WriteUntrustedBlock(&user, string(payload))
-
-	output, err := r.callProvider(ctx, user.String())
+	output, err := r.callProvider(ctx, request)
 	if err != nil {
 		return learning.Outcome{}, err
 	}
 	return ParseReflectionOutcome(in, output, r.limits)
 }
 
-func (r *EvidenceReflector) callProvider(ctx context.Context, user string) ([]byte, error) {
+func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) ([]byte, error) {
 	callCtx, cancel := context.WithTimeout(ctx, r.limits.Timeout)
 	defer cancel()
 	if err := callCtx.Err(); err != nil {
 		return nil, err
 	}
-	seq, err := r.provider.Stream(callCtx, port.LLMRequest{
-		System:   prompt.Layered{StablePrefix: reflectionSystemPrompt},
-		Messages: []session.Message{session.NewUserMessage(user)},
-		Tools:    nil,
-		Model:    r.model,
-	})
+	seq, err := r.provider.Stream(callCtx, request)
 	if err != nil {
 		if callCtx.Err() != nil {
 			return nil, callCtx.Err()

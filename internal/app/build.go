@@ -1789,6 +1789,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		ReflectSession: func(ctx context.Context, sess *session.Session) (server.ReflectionReceipt, error) {
 			reflectionCfg := cfg
 			reflectionProvider := provider
+			reflectionCfg.Workspace = sess.Workspace
 			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity = learningPolicyForWorkspace(cfg, sess.Workspace)
 			reflectionCfg.Model = sess.ModelID
 			if sess.ProviderID != "" {
@@ -2386,6 +2387,7 @@ func sessionEngineFactory(
 		// the shared wiring, so no collaborator is silently dropped and a non-default
 		// provider never contaminates compaction/counting.
 		learningCfg := cfg
+		learningCfg.Workspace = workspace
 		learningCfg.LearningMode, learningCfg.LearningSensitivity = learningPolicyForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
@@ -3183,7 +3185,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	sharedPolicy := newEscapePolicy(policy, cfg.Posture,
 		withEscapeGuardrailRoute(buildGuardrailsEscapeChecker(cfg, reg, provider)))
 	var learningAdmission *learningAdmission
-	if cfg.LearningMode != learning.Off {
+	if cfg.operatorLearningMode != learning.Off {
 		learningAdmission = newLearningAdmission(cfg.UserModelReviewInterval)
 		learningAdmission.controller = newAutomaticAdmissionController(cfg.LearningAutomatic, cfg.LearningMetricsEmitter)
 	}
@@ -4488,11 +4490,9 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	if userModelStore != nil && provider != nil {
 		if base := resolveUserModelDir(cfg.UserModelDir); base != "" {
 			reflectionDir := filepath.Join(base, "reflections")
-			if cfg.LearningMode != learning.Off {
-				reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
-				previousClose := mcpClose
-				mcpClose = func() { reflectionCoordinator.Close(); previousClose() }
-			}
+			reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
+			previousClose := mcpClose
+			mcpClose = func() { reflectionCoordinator.Close(); previousClose() }
 			if cfg.LearningMode == learning.Off {
 				if _, statErr := os.Stat(filepath.Join(reflectionDir, "proposals.json")); statErr == nil {
 					store, openErr := reflectionstore.New(reflectionDir)

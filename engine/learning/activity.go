@@ -5,20 +5,19 @@ type ActivityKind string
 
 // Activity kinds cover admission, reflection outcomes, transitions, and reservation counts.
 const (
-	ActivityAdmitted           ActivityKind = "admitted"
-	ActivitySkipped            ActivityKind = "skipped"
-	ActivityRateLimited        ActivityKind = "rate_limited"
-	ActivityDuplicate          ActivityKind = "duplicate"
-	ActivityQueueFull          ActivityKind = "queue_full"
-	ActivityClosed             ActivityKind = "closed"
-	ActivityAbstained          ActivityKind = "abstained"
-	ActivityStaged             ActivityKind = "staged"
-	ActivityPromoted           ActivityKind = "promoted"
-	ActivityConflicted         ActivityKind = "conflicted"
-	ActivityFailed             ActivityKind = "failed"
-	ActivityTimedOut           ActivityKind = "timed_out"
-	ActivityProposalTransition ActivityKind = "proposal_transition"
-	ActivityReservedTokens     ActivityKind = "reserved_tokens"
+	ActivityAdmitted       ActivityKind = "admitted"
+	ActivitySkipped        ActivityKind = "skipped"
+	ActivityRateLimited    ActivityKind = "rate_limited"
+	ActivityDuplicate      ActivityKind = "duplicate"
+	ActivityQueueFull      ActivityKind = "queue_full"
+	ActivityClosed         ActivityKind = "closed"
+	ActivityAbstained      ActivityKind = "abstained"
+	ActivityStaged         ActivityKind = "staged"
+	ActivityPromoted       ActivityKind = "promoted"
+	ActivityConflicted     ActivityKind = "conflicted"
+	ActivityFailed         ActivityKind = "failed"
+	ActivityTimedOut       ActivityKind = "timed_out"
+	ActivityReservedTokens ActivityKind = "reserved_tokens"
 )
 
 // Valid reports whether k belongs to the closed activity vocabulary.
@@ -27,7 +26,7 @@ func (k ActivityKind) Valid() bool {
 	case ActivityAdmitted, ActivitySkipped, ActivityRateLimited, ActivityDuplicate,
 		ActivityQueueFull, ActivityClosed, ActivityAbstained, ActivityStaged,
 		ActivityPromoted, ActivityConflicted, ActivityFailed, ActivityTimedOut,
-		ActivityProposalTransition, ActivityReservedTokens:
+		ActivityReservedTokens:
 		return true
 	default:
 		return false

@@ -31,6 +31,55 @@ func TestThresholdPolicyBoundariesAndHardProvenance(t *testing.T) {
 	}
 }
 
+func TestThresholdPolicyCurrentScopeRejectsCrossBoundaryPatterns(t *testing.T) {
+	call := func(id, name string) session.Message {
+		return session.Message{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: session.ToolCallID(id), Name: name}}}
+	}
+	result := func(id string, failed bool) session.Message {
+		return session.Message{Role: session.RoleTool, ToolResult: &session.ToolResult{CallID: session.ToolCallID(id), Content: "result", IsError: failed}}
+	}
+	tests := map[string][]session.Message{
+		"failure recovery":    {session.NewUserMessage("old"), call("f", "Read"), result("f", true), session.NewUserMessage("current"), call("s", "Read"), result("s", false)},
+		"repeated correction": {session.NewUserMessage("no, old"), session.NewUserMessage("actually, current")},
+		"repeated sequence":   {session.NewUserMessage("old"), call("a", "Read"), call("b", "Grep"), session.NewUserMessage("current"), call("c", "Read"), call("d", "Grep")},
+		"substantial success": {session.NewUserMessage("old"), call("a", "Read"), result("a", false), call("b", "Read"), result("b", false), session.NewUserMessage("current"), call("c", "Read"), result("c", false), {Role: session.RoleAssistant, Text: "done"}},
+	}
+	for name, messages := range tests {
+		t.Run(name, func(t *testing.T) {
+			start := 0
+			for i, message := range messages {
+				if message.Role == session.RoleUser && message.Text == "current" || message.Text == "actually, current" {
+					start = i
+				}
+			}
+			tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
+			tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: start, End: len(messages)}, session.Counters{Turns: 5, ToolCalls: 8}
+			got := (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: learning.NewInput(tr, nil, nil, nil)})
+			if got.Admitted || len(got.Signals) != 0 {
+				t.Fatalf("cross-boundary evidence admitted: %+v", got)
+			}
+		})
+	}
+}
+
+func TestThresholdPolicyUsesLatestConsecutiveExplicitRequestAndRejectsForgedSignal(t *testing.T) {
+	messages := []session.Message{session.NewUserMessage("remember that old preference"), session.NewUserMessage("remember that current preference")}
+	tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
+	tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: 1, End: 2}, session.Counters{Turns: 2}
+	decision := (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(learning.AdmissionRequest{Input: learning.NewInput(tr, nil, nil, nil)})
+	if !decision.Admitted || decision.Class != learning.AdmissionHard || len(decision.Signals) == 0 || decision.Signals[0].Evidence[0].Ordinal != 1 {
+		t.Fatalf("current explicit request = %+v", decision)
+	}
+
+	ordinary := learning.NewTrajectory("ordinary", "/ws", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("summarize this")})
+	ordinary.Kind, ordinary.Current, ordinary.Counters = session.SessionKindMain, learning.MessageSpan{Start: 0, End: 1}, session.Counters{Turns: 2}
+	forged := learning.NewInput(ordinary, nil, []learning.Signal{{Kind: learning.SignalExplicitRemember}}, nil)
+	decision = (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: forged})
+	if decision.Admitted || decision.Class == learning.AdmissionHard {
+		t.Fatalf("caller-forged explicit signal admitted: %+v", decision)
+	}
+}
+
 func TestSensitivityStrictOrderAndThresholds(t *testing.T) {
 	for _, tc := range []struct {
 		token     string

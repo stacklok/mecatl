@@ -177,15 +177,15 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	}
 	reservationTokens := 0
 	if automatic {
-		material, materialErr := reflectionInputMaterial(input, defaultReflectionJobBytes)
-		if materialErr != nil {
-			return reflectionReceipt{}, materialErr
+		estimator, ok := o.reflector.(interface {
+			RequestTokenEstimate(learning.Input) (int, error)
+		})
+		if !ok {
+			return reflectionReceipt{}, errors.New("automatic reflection requires an exact request token estimator")
 		}
-		reservationTokens = defaultReflectionOutputTokens
-		if o.tokenCounter != nil {
-			reservationTokens += o.tokenCounter.Count(string(material))
-		} else {
-			reservationTokens += len(material) / 4
+		reservationTokens, digestErr = estimator.RequestTokenEstimate(input)
+		if digestErr != nil {
+			return reflectionReceipt{}, digestErr
 		}
 	}
 	if o.coordinator == nil {
@@ -227,16 +227,17 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	receipt, err := o.coordinator.Enqueue(o.job(input, signals, owner, automaticDigest, reserve, complete))
 	if automatic && o.metrics != nil {
 		kind := learning.ActivityKind("")
+		reason := learning.AdmissionReason("")
 		switch receipt.Disposition {
 		case reflectionDuplicate:
-			kind = learning.ActivityDuplicate
+			kind, reason = learning.ActivityDuplicate, learning.ReasonDuplicate
 		case reflectionQueueFull:
-			kind = learning.ActivityQueueFull
+			kind, reason = learning.ActivityQueueFull, learning.ReasonQueueFull
 		case reflectionClosed:
-			kind = learning.ActivityClosed
+			kind, reason = learning.ActivityClosed, learning.ReasonCoordinatorClosed
 		}
 		if kind.Valid() {
-			o.metrics(learning.Activity{Kind: kind, Sensitivity: o.sensitivity, Count: 1})
+			o.metrics(learning.Activity{Kind: kind, Reason: reason, Sensitivity: o.sensitivity, Count: 1})
 		}
 	}
 	if err != nil || async || receipt.Disposition != reflectionQueued && receipt.Disposition != reflectionDuplicate {
@@ -258,7 +259,13 @@ func (o *reflectionObserver) emitAdmission(decision learning.AdmissionDecision) 
 		kind = learning.ActivityAdmitted
 	}
 	reason := learning.ReasonBelowThreshold
-	if len(decision.Reasons) > 0 {
+	if decision.Admitted {
+		if decision.Class == learning.AdmissionHard {
+			reason = learning.ReasonHardTrigger
+		} else {
+			reason = learning.ReasonWeightedThreshold
+		}
+	} else if len(decision.Reasons) > 0 {
 		reason = decision.Reasons[0]
 	}
 	o.metrics(learning.Activity{Kind: kind, Reason: reason, Sensitivity: o.sensitivity, Count: 1})
@@ -268,21 +275,25 @@ func (o *reflectionObserver) emitReflection(receipt reflectionReceipt) {
 	if o == nil || o.metrics == nil {
 		return
 	}
-	emit := func(kind learning.ActivityKind, count int) {
+	emit := func(kind learning.ActivityKind, reason learning.AdmissionReason, count int) {
 		if count > 0 {
-			o.metrics(learning.Activity{Kind: kind, Sensitivity: o.sensitivity, Count: int64(count)})
+			o.metrics(learning.Activity{Kind: kind, Reason: reason, Sensitivity: o.sensitivity, Count: int64(count)})
 		}
 	}
+	if receipt.Disposition == reflectionTimedOut {
+		emit(learning.ActivityTimedOut, learning.ReasonTimeout, 1)
+		return
+	}
 	if receipt.Disposition == reflectionFailed {
-		emit(learning.ActivityFailed, 1)
+		emit(learning.ActivityFailed, learning.ReasonReflectionFailed, 1)
 		return
 	}
 	if receipt.Abstained {
-		emit(learning.ActivityAbstained, 1)
+		emit(learning.ActivityAbstained, learning.ReasonAbstained, 1)
 	}
-	emit(learning.ActivityStaged, receipt.Staged)
-	emit(learning.ActivityPromoted, receipt.Promoted)
-	emit(learning.ActivityConflicted, receipt.Conflicted)
+	emit(learning.ActivityStaged, learning.ReasonStaged, receipt.Staged)
+	emit(learning.ActivityPromoted, learning.ReasonPromoted, receipt.Promoted)
+	emit(learning.ActivityConflicted, learning.ReasonConflicted, receipt.Conflicted)
 }
 
 func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal, owner *session.Principal, dedupeKey string, reserve func() bool, complete func(reflectionReceipt)) reflectionJob {

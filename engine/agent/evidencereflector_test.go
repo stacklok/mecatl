@@ -39,6 +39,42 @@ func modelOutcome(candidate learning.Candidate, handles ...string) []byte {
 	return encoded
 }
 
+type byteTokenCounter struct{}
+
+func (byteTokenCounter) Count(text string) int { return len(text) }
+func (byteTokenCounter) CountMessages(messages []session.Message) int {
+	total := 0
+	for _, message := range messages {
+		total += len(message.Text)
+	}
+	return total
+}
+
+func TestEvidenceReflectorReservationEstimateCoversExactRequestAndOutput(t *testing.T) {
+	input, _ := admittedInput(t)
+	input.Trajectory.Current = learning.MessageSpan{Start: 0, End: len(input.Trajectory.Messages)}
+	var request port.LLMRequest
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { request = req })}, mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
+	reflector, err := agent.NewEvidenceReflector(provider, "selected-model", byteTokenCounter{}, agent.ReflectionLimits{Tokens: 123})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := reflector.RequestTokenEstimate(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = reflector.Reflect(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	actual := len(request.System.Render()) + len(request.Messages[0].Text) + 123
+	if reserved < actual || reserved != actual {
+		t.Fatalf("reserved=%d actual bounded request=%d", reserved, actual)
+	}
+	if !strings.Contains(request.Messages[0].Text, "explicit_remember") {
+		t.Fatal("exact request omitted detected signals")
+	}
+}
+
 func TestEvidenceReflectorOneProviderCallZeroToolsAndSelectedModel(t *testing.T) {
 	input, _ := admittedInput(t)
 	encoded := modelOutcome(learning.Candidate{

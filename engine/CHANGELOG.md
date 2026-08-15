@@ -16,7 +16,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Configurable learning-trigger policy ([ADR 0112](../docs/adr/0112-configurable-learning-trigger-policy.md))** —
   `learning` adds strict sensitivity, scoped signal detection, closed admission
   request/decision/class/reason contracts, pure threshold/always/never policies,
-  host-requested provenance, message spans, and content-free activity metrics.
+  host-requested provenance, message spans, content-free activity metrics, and
+  `agent.EvidenceReflector.RequestTokenEstimate` for exact bounded-request reservation.
   New identifiers are Added (minor); the additive `Trajectory` fields are classified
   Changed below.
 

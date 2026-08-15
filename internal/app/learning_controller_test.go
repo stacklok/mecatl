@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,6 +26,33 @@ func TestAutomaticAdmissionControllerHardBypassesCooldownButNotBudgets(t *testin
 	}
 	if c.reserve("p", "three", 100, learning.AdmissionHard, learning.Balanced) {
 		t.Fatal("hard trigger bypassed principal count budget")
+	}
+}
+
+func TestAutomaticAdmissionControllerCooldownMapBoundedAndPruned(t *testing.T) {
+	now := time.Unix(100, 0)
+	cfg := defaultLearningAutomaticConfig()
+	cfg.Window, cfg.Cooldown = time.Minute, 24*time.Hour
+	cfg.MaxReflections, cfg.MaxTokens = 5000, 1_000_000
+	cfg.MaxReflectionsPerPrincipal, cfg.MaxTokensPerPrincipal = 2, 1_000_000
+	c := newAutomaticAdmissionController(cfg, nil)
+	c.now = func() time.Time { return now }
+	for i := 0; i < learningCooldownMax+100; i++ {
+		principal := fmt.Sprintf("principal-%04d", i)
+		if !c.reserve(principal, fmt.Sprintf("digest-%04d", i), 1, learning.AdmissionWeighted, learning.Balanced) {
+			t.Fatalf("reservation %d rejected", i)
+		}
+		now = now.Add(cfg.Window + time.Second)
+	}
+	if got := len(c.cooldowns); got != learningCooldownMax {
+		t.Fatalf("cooldowns = %d, want bound %d", got, learningCooldownMax)
+	}
+	now = now.Add(cfg.Cooldown)
+	if !c.reserve("fresh", "fresh", 1, learning.AdmissionWeighted, learning.Balanced) {
+		t.Fatal("fresh reservation rejected after expiry")
+	}
+	if got := len(c.cooldowns); got != 1 {
+		t.Fatalf("expired cooldowns retained: %d", got)
 	}
 }
 

@@ -25,8 +25,12 @@ tokens each add one only after a base signal exists. Conservative, balanced, and
 thresholds are 6, 4, and 3; balanced is the default.
 
 A genuine principal-authored explicit remember or learn-procedure request in the verified
-current prompt is hard admission. It bypasses score, weighted cooldown, and the deprecated
-interval downsampler, but not count/token budgets or coordinator capacity. Weighted
+current prompt is hard admission. Caller-supplied explicit signal kinds carry no authority;
+only deterministic detection over the correctly reindexed current-run slice can establish
+hard intent. Every built-in multi-message detector likewise requires its complete pattern in
+that slice, so historical/current boundary matches fail closed. It bypasses score, weighted
+cooldown, and the deprecated interval downsampler, but not count/token budgets or coordinator
+capacity. Weighted
 admission accepts only a benign main-session `end_turn`; hard admission additionally accepts
 max-turn, max-tool-call, and run-budget stops. Invalid or compacted-away current spans fail
 closed. Authenticated explicit `/reflect` uses host-requested provenance and bypasses all
@@ -34,10 +38,15 @@ automatic admission state, while remaining subject to coordinator, provider, tim
 ownership, and staging policy.
 
 Wrap the coordinator with process-local one-hour sliding count and reserved-token budgets,
-per-principal limits, a ten-minute weighted cooldown, in-flight joins, and a 24-hour/1024-entry
-completed-digest LRU. Reserve the selected reflection model's estimated bounded canonical
-input plus a 4096-token output cap only after queue capacity succeeds and before provider
-work. Failures, timeouts, and abstentions consume reservations. Restart resets this state by
+per-principal limits, a ten-minute weighted cooldown, a bounded 1024-entry cooldown map,
+in-flight joins, and a 24-hour/1024-entry completed-digest LRU. Reserve the selected
+reflection model token counter's estimate of the exact bounded provider request (system
+prompt, signal projection, framing instructions, and message envelope) plus its 4096-token
+output cap only after queue capacity succeeds and before provider work. The Build-owned
+coordinator is lazy but exists whenever explicit reflection capability is configured,
+including effective startup mode `off`; this keeps `/reflect` on the same bounded path and
+lets a startup project's tighten-only `off` coexist with automatic observation on another
+operator-permitted root. Failures, timeouts, and abstentions consume reservations. Restart resets this state by
 design. `Close` rejects new work and cancels and joins workers; there is no startup or
 shutdown catch-up sweep.
 

@@ -38,6 +38,7 @@ const (
 	reflectionClosed      reflectionDisposition = "closed"
 	reflectionCompleted   reflectionDisposition = "completed"
 	reflectionFailed      reflectionDisposition = "failed"
+	reflectionTimedOut    reflectionDisposition = "timed_out"
 	reflectionRateLimited reflectionDisposition = "rate_limited"
 )
 
@@ -499,8 +500,11 @@ func (c *reflectionCoordinator) run(item queuedReflection) {
 	if err != nil {
 		receipt.Disposition = reflectionFailed
 		failure := "reflection failed"
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			failure = "reflection cancelled or timed out"
+		if errors.Is(err, context.DeadlineExceeded) {
+			receipt.Disposition = reflectionTimedOut
+			failure = "reflection timed out"
+		} else if errors.Is(err, context.Canceled) {
+			failure = "reflection cancelled"
 		}
 		receipt.Err = failure
 		if !errors.Is(err, context.Canceled) || c.ctx.Err() == nil {
