@@ -84,12 +84,12 @@ func TestMetricsLearningActivitiesUseClosedContentFreeLabelsAndTokenUnits(t *tes
 	activities := []learning.Activity{
 		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1},
 		{Kind: learning.ActivitySkipped, Reason: learning.ReasonBelowThreshold, Sensitivity: learning.Conservative, Count: 1},
-		{Kind: learning.ActivityDuplicate, Reason: learning.ReasonDuplicate, Count: 1},
-		{Kind: learning.ActivityRateLimited, Reason: learning.ReasonRateLimit, Count: 1},
-		{Kind: learning.ActivityQueueFull, Reason: learning.ReasonQueueFull, Count: 1},
-		{Kind: learning.ActivityClosed, Reason: learning.ReasonCoordinatorClosed, Count: 1},
-		{Kind: learning.ActivityTimedOut, Reason: learning.ReasonTimeout, Count: 1},
-		{Kind: learning.ActivityReservedTokens, Reason: learning.ReasonWeightedThreshold, Count: 4321},
+		{Kind: learning.ActivityDuplicate, Reason: learning.ReasonDuplicate, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityRateLimited, Reason: learning.ReasonRateLimit, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityQueueFull, Reason: learning.ReasonQueueFull, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityClosed, Reason: learning.ReasonCoordinatorClosed, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityTimedOut, Reason: learning.ReasonTimeout, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityReservedTokens, Reason: learning.ReasonWeightedThreshold, Sensitivity: learning.Balanced, Count: 4321},
 	}
 	for _, activity := range activities {
 		m.EmitLearning(activity)
@@ -109,6 +109,79 @@ func TestMetricsLearningActivitiesUseClosedContentFreeLabelsAndTokenUnits(t *tes
 	}
 	if got := sumPoint(t, agg, attrType, string(learning.ActivityReservedTokens)); got != 4321 {
 		t.Fatalf("reserved token units = %d, want 4321", got)
+	}
+}
+
+func TestMetricsLearningActivitiesRejectValuesOutsideClosedVocabularies(t *testing.T) {
+	m, reader := newTestMetrics(t)
+	kinds := []learning.ActivityKind{
+		learning.ActivityAdmitted, learning.ActivitySkipped, learning.ActivityRateLimited,
+		learning.ActivityDuplicate, learning.ActivityQueueFull, learning.ActivityClosed,
+		learning.ActivityAbstained, learning.ActivityStaged, learning.ActivityPromoted,
+		learning.ActivityConflicted, learning.ActivityFailed, learning.ActivityTimedOut,
+		learning.ActivityReservedTokens,
+	}
+	reasons := []learning.AdmissionReason{
+		learning.ReasonBelowThreshold, learning.ReasonInvalidCurrentSpan, learning.ReasonNonMainSession,
+		learning.ReasonIneligibleStop, learning.ReasonTrivialRun, learning.ReasonExplicitRemember,
+		learning.ReasonExplicitLearnProcedure, learning.ReasonRepeatedCorrection,
+		learning.ReasonTrustedHostContradiction, learning.ReasonFailureRecovery,
+		learning.ReasonRepeatedToolSequence, learning.ReasonSubstantialSuccess,
+		learning.ReasonModelTurnsModifier, learning.ReasonSuccessfulToolsModifier,
+		learning.ReasonRunTokensModifier, learning.ReasonPolicyAlways, learning.ReasonPolicyNever,
+		learning.ReasonHostRequested, learning.ReasonHardTrigger, learning.ReasonWeightedThreshold,
+		learning.ReasonDuplicate, learning.ReasonRateLimit, learning.ReasonQueueFull,
+		learning.ReasonCoordinatorClosed, learning.ReasonTimeout, learning.ReasonReflectionFailed,
+		learning.ReasonAbstained, learning.ReasonStaged, learning.ReasonPromoted, learning.ReasonConflicted,
+	}
+	sensitivities := []learning.Sensitivity{learning.Conservative, learning.Balanced, learning.Eager}
+	for _, kind := range kinds {
+		m.EmitLearning(learning.Activity{Kind: kind, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1})
+	}
+	for _, reason := range reasons {
+		m.EmitLearning(learning.Activity{Kind: learning.ActivityAdmitted, Reason: reason, Sensitivity: learning.Balanced, Count: 1})
+	}
+	for _, sensitivity := range sensitivities {
+		m.EmitLearning(learning.Activity{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: sensitivity, Count: 1})
+	}
+	for _, invalid := range []learning.Activity{
+		{Kind: "injected", Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1000},
+		{Kind: learning.ActivityAdmitted, Reason: "model-content", Sensitivity: learning.Balanced, Count: 1000},
+		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Sensitivity(255), Count: 1000},
+		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.SensitivityUnset, Count: 1000},
+	} {
+		m.EmitLearning(invalid)
+	}
+
+	agg := collect(t, reader)["mecatl.learning.activity"]
+	sum, ok := agg.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("learning aggregation = %T", agg)
+	}
+	allowedKinds, allowedReasons, allowedSensitivities := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, value := range kinds {
+		allowedKinds[string(value)] = true
+	}
+	for _, value := range reasons {
+		allowedReasons[string(value)] = true
+	}
+	for _, value := range sensitivities {
+		allowedSensitivities[value.String()] = true
+	}
+	var total int64
+	for _, point := range sum.DataPoints {
+		total += point.Value
+		for key, allowed := range map[attribute.Key]map[string]bool{
+			attribute.Key(attrType): allowedKinds, attribute.Key(attrReason): allowedReasons, attribute.Key(attrSensitivity): allowedSensitivities,
+		} {
+			value, present := point.Attributes.Value(key)
+			if !present || !allowed[value.AsString()] {
+				t.Fatalf("point has invalid %s=%q", key, value.AsString())
+			}
+		}
+	}
+	if want := int64(len(kinds) + len(reasons) + len(sensitivities)); total != want {
+		t.Fatalf("accepted activity count = %d, want %d", total, want)
 	}
 }
 

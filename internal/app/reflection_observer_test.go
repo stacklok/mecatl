@@ -2,12 +2,16 @@ package app
 
 import (
 	"context"
+	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memorypromotion"
 	"github.com/stacklok/mecatl/engine/adapter/memproposal"
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
@@ -57,6 +61,100 @@ func reflectionOutcomeFixture(t *testing.T, kind learning.CandidateKind) (learni
 		t.Fatal(err)
 	}
 	return input, learning.Outcome{Kind: learning.OutcomeProposed, Candidates: []learning.Candidate{validated}}, digest
+}
+
+func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
+	var mu sync.Mutex
+	var activities []learning.Activity
+	emitted := make(chan learning.Activity, 8)
+	emitter := func(activity learning.Activity) {
+		mu.Lock()
+		activities = append(activities, activity)
+		mu.Unlock()
+		emitted <- activity
+	}
+	automatic := defaultLearningAutomaticConfig()
+	automatic.Cooldown = 0
+	automatic.MaxReflections = 1
+	cfg := Config{
+		Model: "test-model", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
+		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
+	}
+	admission := newLearningAdmission(1)
+	admission.controller = newAutomaticAdmissionController(cfg.LearningAutomatic, cfg.LearningMetricsEmitter)
+	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1, Capacity: 2, Timeout: time.Second})
+	t.Cleanup(coordinator.Close)
+	provider := mockllm.New(mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
+	memory := memmemory.New()
+	observer, ok := buildReflectionObserver(cfg, provider, cfg.Model, memory, nil, memproposal.New(), coordinator, admission).(*reflectionObserver)
+	if !ok {
+		t.Fatal("automatic reflection observer was not built")
+	}
+
+	trajectory := func(id, prompt string) learning.Trajectory {
+		messages := []session.Message{session.NewUserMessage(prompt)}
+		result := learning.NewTrajectory(session.SessionID(id), "/workspace", session.StopEndTurn, session.Usage{}, messages)
+		result.Kind = session.SessionKindMain
+		result.Current = learning.MessageSpan{Start: 0, End: len(messages)}
+		return result
+	}
+	first := trajectory("first-private-session", "Please remember that private preference")
+	input := learning.NewInput(first, nil, nil, memoryExisting(context.Background(), memory))
+	estimator := observer.reflector.(interface {
+		RequestTokenEstimate(learning.Input) (int, error)
+	})
+	reserved, err := estimator.RequestTokenEstimate(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observer.Observe(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	waitForLearningActivity(t, emitted, learning.ActivityAbstained)
+
+	second := trajectory("second-private-session", "Please remember another private preference")
+	if err := observer.Observe(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	waitForLearningActivity(t, emitted, learning.ActivityRateLimited)
+
+	mu.Lock()
+	got := append([]learning.Activity(nil), activities...)
+	mu.Unlock()
+	want := []learning.Activity{
+		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityReservedTokens, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: int64(reserved)},
+		{Kind: learning.ActivityAbstained, Reason: learning.ReasonAbstained, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1},
+		{Kind: learning.ActivityRateLimited, Reason: learning.ReasonRateLimit, Sensitivity: learning.Balanced, Count: 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("learning activities = %#v, want %#v", got, want)
+	}
+	activityType := reflect.TypeFor[learning.Activity]()
+	wantFields := []string{"Kind", "Reason", "Sensitivity", "Count"}
+	if activityType.NumField() != len(wantFields) {
+		t.Fatalf("learning activity exposes %d fields, want only %v", activityType.NumField(), wantFields)
+	}
+	for i, name := range wantFields {
+		if activityType.Field(i).Name != name {
+			t.Fatalf("learning activity field %d = %q, want %q", i, activityType.Field(i).Name, name)
+		}
+	}
+}
+
+func waitForLearningActivity(t *testing.T, emitted <-chan learning.Activity, kind learning.ActivityKind) {
+	t.Helper()
+	for {
+		select {
+		case activity := <-emitted:
+			if activity.Kind == kind {
+				return
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for learning activity %q", kind)
+		}
+	}
 }
 
 func TestExplicitReflectionRunsWhenAutomaticModeOff(t *testing.T) {

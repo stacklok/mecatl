@@ -570,20 +570,16 @@ func (m *Metrics) EmitSchedule(payload session.SchedulePayload, duration time.Du
 
 // EmitLearning records only closed activity/reason/sensitivity labels.
 func (m *Metrics) EmitLearning(activity learning.Activity) {
-	if m == nil || !activity.Kind.Valid() || activity.Count <= 0 {
+	if m == nil || !activity.Kind.Valid() || !activity.Reason.Valid() || activity.Count <= 0 {
 		return
 	}
-	reason := "none"
-	if activity.Reason.Valid() {
-		reason = string(activity.Reason)
-	}
 	sensitivity := activity.Sensitivity.String()
-	if activity.Sensitivity == learning.SensitivityUnset {
-		sensitivity = learning.Balanced.String()
+	if _, err := learning.ParseSensitivity(sensitivity); err != nil {
+		return
 	}
 	m.learningActivities.Add(context.Background(), activity.Count, withAttrs(nil,
 		attribute.String(attrType, string(activity.Kind)),
-		attribute.String(attrReason, reason),
+		attribute.String(attrReason, string(activity.Reason)),
 		attribute.String(attrSensitivity, sensitivity),
 	))
 }
