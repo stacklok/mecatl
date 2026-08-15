@@ -37,6 +37,7 @@ func authoritativeKeys() []string {
 	collect("guardrails", permconfig.GuardrailsSection{})
 	collect("guardrails.rules", permconfig.GuardrailRuleSpec{})
 	collect("learning", permconfig.LearningSection{})
+	collect("learning.automatic", permconfig.LearningAutomaticSection{})
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})

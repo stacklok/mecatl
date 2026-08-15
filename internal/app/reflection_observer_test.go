@@ -33,6 +33,8 @@ func reflectionOutcomeFixture(t *testing.T, kind learning.CandidateKind) (learni
 	trajectory := learning.NewTrajectory("source-session", "/project/root", session.StopEndTurn, session.Usage{}, []session.Message{
 		session.NewUserMessage("Remember that I prefer concise Go examples"),
 	})
+	trajectory.Current = learning.MessageSpan{Start: 0, End: len(trajectory.Messages)}
+	trajectory.Kind = session.SessionKindMain
 	input := learning.NewInput(trajectory, nil, nil, nil)
 	ref, err := learning.MessageEvidenceRef(input, 0, "")
 	if err != nil {
@@ -304,6 +306,7 @@ func TestAutoPromotionRejectsHarnessAuthoredUserContinuations(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			trajectory := learning.NewTrajectory("eligibility", "/trusted", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage(tc.text)})
+			trajectory.Current = learning.MessageSpan{Start: 0, End: len(trajectory.Messages)}
 			input := learning.NewInput(trajectory, nil, []learning.Signal{{Kind: learning.SignalExplicitRemember}}, nil)
 			ref, err := learning.MessageEvidenceRef(input, 0, "")
 			if err != nil {

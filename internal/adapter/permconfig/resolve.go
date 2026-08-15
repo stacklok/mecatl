@@ -239,6 +239,15 @@ func (r *Resolver) OperatorPlanModeAutoApprove() bool {
 	return r.operatorPlanModeAutoApprove
 }
 
+// OperatorLearning returns the complete operator-tier learning policy. Callers
+// must treat it as immutable.
+func (r *Resolver) OperatorLearning() *LearningSection {
+	if r == nil {
+		return nil
+	}
+	return r.operatorLearning
+}
+
 // OperatorLearningMode returns the operator-tier learning mode token, or empty
 // when no learning subtree was configured.
 func (r *Resolver) OperatorLearningMode() string {
@@ -251,10 +260,24 @@ func (r *Resolver) OperatorLearningMode() string {
 // ProjectLearningModes returns project-tier mode tokens in precedence order.
 // Composition applies them only as autonomy ceilings (off < review < auto).
 func (r *Resolver) ProjectLearningModes(ws tool.WorkspaceReader) []string {
+	settings := r.ProjectLearningSettings(ws)
+	modes := make([]string, 0, len(settings))
+	for _, setting := range settings {
+		if token := strings.TrimSpace(setting.Mode); token != "" {
+			modes = append(modes, token)
+		}
+	}
+	return modes
+}
+
+// ProjectLearningSettings returns strict project learning subtrees in precedence
+// order. Composition applies only mode and sensitivity as tighten-only ceilings;
+// Automatic is operator-only and ignored with a warning.
+func (r *Resolver) ProjectLearningSettings(ws tool.WorkspaceReader) []*LearningSection {
 	if r == nil || ws == nil {
 		return nil
 	}
-	var modes []string
+	var result []*LearningSection
 	for _, src := range r.sources {
 		if src.claude {
 			continue
@@ -264,12 +287,11 @@ func (r *Resolver) ProjectLearningModes(ws tool.WorkspaceReader) []string {
 			continue
 		}
 		cfg, err := parseYAML(data)
-		if err != nil || cfg.Learning == nil || strings.TrimSpace(cfg.Learning.Mode) == "" {
-			continue
+		if err == nil && cfg.Learning != nil {
+			result = append(result, cfg.Learning)
 		}
-		modes = append(modes, strings.TrimSpace(cfg.Learning.Mode))
 	}
-	return modes
+	return result
 }
 
 // OperatorModelSlots returns the operator-tier models: subtree (user-global + CLI

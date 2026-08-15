@@ -171,7 +171,7 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 			case providerOpenAI:
 				turns = []mockllm.Turn{mockllm.TextTurn("default completion"), mockllm.TextTurn(`{"kind":"abstained"}`)}
 			case providerOpenRouter:
-				turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn(`{"kind":"abstained"}`)}
+				turns = []mockllm.Turn{mockllm.TextTurn("selected completion 1"), mockllm.TextTurn(`{"kind":"abstained"}`), mockllm.TextTurn("selected completion 2"), mockllm.TextTurn(`{"kind":"abstained"}`)}
 			default:
 				turns = []mockllm.Turn{mockllm.TextTurn("unused")}
 			}
@@ -220,12 +220,12 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 	}
 
 	runSelected("Remember that I prefer short examples")
-	if got := providers[providerOpenRouter].Calls(); got != 1 {
-		t.Fatalf("selected provider calls after globally skipped completion = %d, want 1 (no reviewer call)", got)
+	if got := waitCalls(providers[providerOpenRouter], 2); got != 2 {
+		t.Fatalf("selected provider calls after hard trigger = %d, want 2 (run + review)", got)
 	}
 	runSelected("Remember that I prefer Go examples")
-	if got := waitCalls(providers[providerOpenRouter], 3); got != 3 {
-		t.Fatalf("selected provider calls after next global admission = %d, want 3 (two runs + one review)", got)
+	if got := waitCalls(providers[providerOpenRouter], 4); got != 4 {
+		t.Fatalf("selected provider calls after second hard trigger = %d, want 4 (two runs + two reviews)", got)
 	}
 }
 
@@ -412,6 +412,7 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 			workspace := t.TempDir()
 			provider := mockllm.New(
 				mockllm.TextTurn("completed"),
+				mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`),
 				mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`),
 			)
 			cfg := Config{

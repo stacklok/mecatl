@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -129,13 +130,15 @@ func LatencyViews() []sdkmetric.View {
 // values are bounded domain enums (event/stop/tool names) or low-cardinality
 // flags — never a session id or free text.
 const (
-	attrType    = "type"    // event type
-	attrStop    = "stop"    // run stop reason
-	attrTool    = "tool"    // tool name
-	attrError   = "error"   // tool error outcome ("true"/"false")
-	attrKind    = "kind"    // token kind (input/output/cache_read/cache_write/reasoning)
-	attrRole    = "role"    // engine role family (the closed Role* set below)
-	attrOutcome = "outcome" // schedule fire outcome (fired/skipped/failed)
+	attrType        = "type"        // event type
+	attrStop        = "stop"        // run stop reason
+	attrTool        = "tool"        // tool name
+	attrError       = "error"       // tool error outcome ("true"/"false")
+	attrKind        = "kind"        // token kind (input/output/cache_read/cache_write/reasoning)
+	attrRole        = "role"        // engine role family (the closed Role* set below)
+	attrOutcome     = "outcome"     // schedule fire outcome (fired/skipped/failed)
+	attrReason      = "reason"      // closed learning admission reason
+	attrSensitivity = "sensitivity" // conservative/balanced/eager
 )
 
 // Role family values for the attrRole label. This is a CLOSED, bounded set —
@@ -216,6 +219,9 @@ type Metrics struct {
 	// Shares the latencyBucketBoundaries explicit-bucket ladder via
 	// scheduleFireDurationInstrument in latencyInstruments.
 	scheduleFireDuration metric.Float64Histogram
+	// learningActivities counts closed, content-free admission/reflection/proposal
+	// activity and reserved tokens. No identity or digest label is accepted.
+	learningActivities metric.Int64Counter
 }
 
 // Compile-time interface checks.
@@ -345,6 +351,13 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 		metric.WithUnit("s"),
 	); err != nil {
 		return nil, fmt.Errorf("telemetry: schedule fire duration histogram: %w", err)
+	}
+
+	if m.learningActivities, err = meter.Int64Counter(
+		"mecatl.learning.activity",
+		metric.WithDescription("Content-free learning admissions, outcomes, transitions, and reserved tokens."),
+	); err != nil {
+		return nil, fmt.Errorf("telemetry: learning activity counter: %w", err)
 	}
 
 	return m, nil
@@ -553,6 +566,26 @@ func (m *Metrics) EmitSchedule(payload session.SchedulePayload, duration time.Du
 	if duration > 0 {
 		m.scheduleFireDuration.Record(context.Background(), duration.Seconds(), outcomeAttr)
 	}
+}
+
+// EmitLearning records only closed activity/reason/sensitivity labels.
+func (m *Metrics) EmitLearning(activity learning.Activity) {
+	if m == nil || !activity.Kind.Valid() || activity.Count <= 0 {
+		return
+	}
+	reason := "none"
+	if activity.Reason.Valid() {
+		reason = string(activity.Reason)
+	}
+	sensitivity := activity.Sensitivity.String()
+	if activity.Sensitivity == learning.SensitivityUnset {
+		sensitivity = learning.Balanced.String()
+	}
+	m.learningActivities.Add(context.Background(), activity.Count, withAttrs(nil,
+		attribute.String(attrType, string(activity.Kind)),
+		attribute.String(attrReason, reason),
+		attribute.String(attrSensitivity, sensitivity),
+	))
 }
 
 // roleAttr builds the one-element attribute prefix carrying the role label.

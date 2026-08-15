@@ -19,6 +19,11 @@ func (f *fakeLearningSettings) Advance() (string, string, string, error) {
 	return f.from, f.to, f.restart, f.err
 }
 
+func (f *fakeLearningSettings) AdvanceSensitivity() (string, string, string, error) {
+	f.calls++
+	return f.from, f.to, f.restart, f.err
+}
+
 func TestLearningBuiltinUsesAdapterOwnedSelectionAndLabels(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	settings := &fakeLearningSettings{from: "Off", to: "Review", restart: "saved; restart mecatui"}

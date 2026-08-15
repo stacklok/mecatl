@@ -209,11 +209,10 @@ func appendLearningBuiltin(out []builtin, w wiredCollaborators) []builtin {
 	if !w.Learning {
 		return out
 	}
-	return append(out, builtin{
-		name: "learning",
-		desc: "cycle completed-trajectory learning mode (restart required)",
-		run:  Model.runLearning,
-	})
+	return append(out,
+		builtin{name: "learning", desc: "cycle completed-trajectory learning mode (restart required)", run: Model.runLearning},
+		builtin{name: "learning-sensitivity", desc: "cycle automatic learning sensitivity (restart required)", run: Model.runLearningSensitivity},
+	)
 }
 
 // appendDebugAskBuiltin registers /debug-ask ONLY under the env-gated Deps.DebugAsk
@@ -357,6 +356,16 @@ func (m Model) runLearning() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.statusMsg = m.deps.Theme.Style("success").Render("learning: " + from + " → " + to + "; " + restart)
+	return m, nil
+}
+
+func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
+	from, to, restart, err := m.deps.Learning.AdvanceSensitivity()
+	if err != nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("learning sensitivity: " + err.Error())
+		return m, nil
+	}
+	m.statusMsg = m.deps.Theme.Style("success").Render("learning sensitivity: " + from + " → " + to + "; " + restart)
 	return m, nil
 }
 

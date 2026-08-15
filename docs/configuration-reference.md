@@ -101,6 +101,14 @@ Optional completed-trajectory observation policy. Off means no automatic complet
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `learning.mode` | `string` | `off` | Mode controls automatic completed-trajectory observation: off (default; no automatic reflection), review (signal-gated reflection stages durable proposals without memory writes), or auto (stage first, then conservatively promote only eligible non-conflicting facts). Operator settings establish the ceiling; project settings may only tighten it under off < review < auto and never raise autonomy. It does not override separately configured maintenance schedules such as --user-model-consolidate-interval. |
+| `learning.sensitivity` | `string` | `balanced` | Sensitivity controls weighted automatic admission. Empty means balanced. |
+| `learning.automatic` | `learningautomaticsection` | `(absent)` | Automatic is operator-only process-local rate policy. |
+| `learning.automatic.cooldown` | `duration` | `10m` | Cooldown is the per-principal weighted-admission cooldown; zero disables it. |
+| `learning.automatic.window` | `duration` | `1h` | Window is the sliding count/token window, strictly 1m..24h. |
+| `learning.automatic.max_reflections` | `int` | `8` | MaxReflections is the process-wide count cap; zero disables automatic reflection. |
+| `learning.automatic.max_tokens` | `int` | `100000` | MaxTokens is the process-wide reserved-token cap; zero disables automatic reflection. |
+| `learning.automatic.max_reflections_per_principal` | `int` | `4` | MaxReflectionsPerPrincipal is the per-principal count cap; zero disables automatic reflection. |
+| `learning.automatic.max_tokens_per_principal` | `int` | `50000` | MaxTokensPerPrincipal is the per-principal reserved-token cap; zero disables automatic reflection. |
 
 ## `models`
 

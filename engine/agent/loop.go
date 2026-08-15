@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -667,6 +668,10 @@ type Run struct {
 	operatorProfile       []tool.MemoryEntry
 	operatorProfileLoaded bool
 	operatorProfileWarned bool
+	// currentPrompt is the accepted genuine prompt for this run. Completion locates
+	// it in the final history; if compaction removed it, automatic admission gets an
+	// invalid span and fails closed.
+	currentPrompt *session.Message
 }
 
 // runSerial mints the process-unique Run.serial discriminator (see Run.serial).
@@ -1633,6 +1638,10 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	if rerr := sess.RecordUserPromptWithParts(finalText, parts, nil); rerr != nil {
 		return false, "", fmt.Errorf("agent: record user prompt: %w", rerr)
 	}
+	if messages := sess.Conversation.Messages; len(messages) > 0 {
+		owned := learning.NewTrajectory(sess.ID, sess.Workspace, session.StopNone, session.Usage{}, messages[len(messages)-1:])
+		r.currentPrompt = &owned.Messages[0]
+	}
 	// Seed the session Title ONCE from this genuine prompt (set-once guard in
 	// SetTitle: only the first non-empty prompt sticks). The loop calls SetTitle
 	// ONLY here at recordPrompt (the genuine site), never at recordContinuation
@@ -2404,6 +2413,16 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 	}
 	tr := learning.NewTrajectory(sess.ID, sess.Workspace, reason, usage, sess.Conversation.Messages)
 	tr.Principal = sess.Owner.Clone()
+	tr.Kind = sess.Kind
+	tr.Counters = sess.Counters
+	if r.currentPrompt != nil {
+		for i := len(tr.Messages) - 1; i >= 0; i-- {
+			if session.IsGenuineUserPrompt(tr.Messages[i]) && reflect.DeepEqual(tr.Messages[i], *r.currentPrompt) {
+				tr.Current = learning.MessageSpan{Start: i, End: len(tr.Messages)}
+				break
+			}
+		}
+	}
 	if err := e.deps.LearningObserver.Observe(ctx, tr); err != nil {
 		r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)
 	}

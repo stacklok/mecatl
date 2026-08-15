@@ -39,6 +39,28 @@ func TestLearningSettingsWiringMatchesTransport(t *testing.T) {
 	}
 }
 
+func TestOperatorLearningSettingsCyclesSensitivityAndPreservesMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(path, []byte("# retained\nlearning:\n  mode: review\n  sensitivity: conservative\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := &operatorLearningSettings{path: path}
+	from, to, restart, err := settings.AdvanceSensitivity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from != "Conservative (mode Review)" || to != "Balanced (mode Review)" || !strings.Contains(restart, "restart") {
+		t.Fatalf("labels = %q %q %q", from, to, restart)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "# retained") || !strings.Contains(string(body), "mode: review") || !strings.Contains(string(body), "sensitivity: balanced") {
+		t.Fatalf("saved body:\n%s", body)
+	}
+}
+
 func TestOperatorLearningSettingsPreservesUnrelatedYAMLAndComments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mecatl", "settings.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -52,7 +74,7 @@ func TestOperatorLearningSettingsPreservesUnrelatedYAMLAndComments(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if from != "Off" || to != "Review" || !strings.Contains(restart, "restart mecatui") {
+	if from != "Off (sensitivity Balanced)" || to != "Review (sensitivity Balanced)" || !strings.Contains(restart, "restart mecatui") {
 		t.Fatalf("Advance = %q, %q, %q", from, to, restart)
 	}
 	b, err := os.ReadFile(path)

@@ -708,9 +708,32 @@ memory-promotion policy rejects unsafe/transient facts, never overwrites conflic
 revisions, routes procedure candidates into the evaluated learned-skill pipeline, and uses per-candidate presence-and-version CAS. Memory revisions carry
 an optional proposal id, allowing a crashed promoting claim to reconcile without a duplicate write.
 Batches may partially promote by design because each candidate is its own atomic convergence unit.
-Standard composition signal-gates completions into one bounded Build-owned coordinator with fair
-per-principal queues, digest singleflight, pre-admission per-job and aggregate byte budgets, reserved-before-admission receipts, job timeouts, cancellation receipts, and joined shutdown. Review stages only; auto promotes operator facts only from explicit principal-authored remember evidence and project facts only from principal-authored evidence at the exact trusted configured root. Tool/assistant/repository-only evidence stages for review. In off mode the proposal repository stays lazy and the dormant coordinator starts workers only if explicit synchronous reflection is requested; there is no public async mode. Project candidates from an admitted non-launch root remain staged/reviewable but cannot auto-promote, approve, or undo until a safe exact-root lifecycle store exists, and reflection does not read launch-root project memory for those inputs; untrusted project material is not ingested. The standard proposal repository defaults
-beside the user-model store. The gRPC and HTTP surfaces expose explicit completed-session
+Standard composition applies `learning.ThresholdPolicy` before one bounded Build-owned
+coordinator ([ADR 0112](adr/0112-configurable-learning-trigger-policy.md)). Standard weights are
+5/5/4/3/2 for repeated correction, trusted host contradiction, failure recovery, repeated stable
+tool sequence, and substantial success; modifiers never admit alone. Conservative/balanced/eager
+thresholds are 6/4/3. Detection is scoped to a verified current-run message span. Weighted work is
+main-session benign `end_turn` only; a genuine current principal prompt carrying explicit remember
+or learn-procedure intent is hard admission on the bounded clean-limit stops too. Non-main,
+failed/cancelled/awaiting, plan, no-progress, timeout, structured-output, and unverifiable compacted
+spans fail closed before a provider call.
+
+A process-owned controller adds a ten-minute weighted per-principal cooldown, one-hour sliding
+process/principal count and reserved-token windows, trajectory-digest in-flight joins, and a
+24-hour/1024-entry completed-digest LRU. Reservation uses the selected provider/model token counter
+for bounded canonical input plus a 4096-token output cap. It happens after queue capacity succeeds
+and before provider work; failure, timeout, and abstention still consume it. Queue-full does not.
+The controller, coordinator queues, and caches reset on restart; durable proposals remain
+idempotent. Shutdown rejects admission, cancels active jobs, joins workers, and performs no catch-up.
+Budgets are process-local, so multiple replicas multiply aggregate capacity.
+
+Review and auto share admission; only downstream staging/promotion differs. Auto promotes operator
+facts only from explicit principal-authored current-prompt evidence and project facts only at the
+exact trusted configured root. Tool/assistant/repository/history-only evidence stages for review.
+Authenticated explicit reflection carries host-requested provenance and bypasses automatic policy,
+cooldown, budgets, and completed cache while retaining provider, queue, timeout, ownership, and
+stage/promotion controls. In off mode there is no automatic observer, controller, coordinator worker,
+or provider call; persistence initializes lazily for explicit operations. The gRPC and HTTP surfaces expose explicit completed-session
 reflection, bounded caller-partitioned list/detail, CAS approve/reject, and compensating undo;
 capability bits keep older/unconfigured servers honest. Source-session ownership and proposal
 principal are verified, project partitions remain reviewable but project promotion is root/trust-gated, and evidence detail reports only

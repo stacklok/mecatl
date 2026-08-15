@@ -168,7 +168,12 @@ Optional fields with non-trivial defaults:
 ## Optional evidence reflection
 
 Embedders can use `engine/learning` to construct an owned, bounded reflection input and
-run its pure structural signal detector. `agent.NewEvidenceReflector` adds an optional
+run its compatibility structural signal detector or the current-span-scoped detector.
+`learning.ThresholdPolicy` is the pure standard admission policy over closed sensitivity,
+class, reason, request, and decision contracts; `AlwaysPolicy` and `NeverPolicy` are simple
+host alternatives. `Trajectory` additively carries session kind, run counters, and a verified
+current message span. `learning.Activity` is the closed content-free metrics projection.
+`agent.NewEvidenceReflector` adds an optional
 single-call model-backed reflector over an injected provider, selected model, token
 counter, and explicit limits. It has no tools or filesystem access and returns only a
 strictly evidence-backed proposal set or explicit abstention.

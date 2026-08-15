@@ -32,12 +32,13 @@ var (
 type reflectionDisposition string
 
 const (
-	reflectionQueued    reflectionDisposition = "queued"
-	reflectionDuplicate reflectionDisposition = "duplicate"
-	reflectionQueueFull reflectionDisposition = "queue_full"
-	reflectionClosed    reflectionDisposition = "closed"
-	reflectionCompleted reflectionDisposition = "completed"
-	reflectionFailed    reflectionDisposition = "failed"
+	reflectionQueued      reflectionDisposition = "queued"
+	reflectionDuplicate   reflectionDisposition = "duplicate"
+	reflectionQueueFull   reflectionDisposition = "queue_full"
+	reflectionClosed      reflectionDisposition = "closed"
+	reflectionCompleted   reflectionDisposition = "completed"
+	reflectionFailed      reflectionDisposition = "failed"
+	reflectionRateLimited reflectionDisposition = "rate_limited"
 )
 
 type reflectionReceipt struct {
@@ -56,6 +57,11 @@ type reflectionJob struct {
 	input     learning.Input
 	reflector learning.Reflector
 	process   func(context.Context, string, learning.Outcome) (reflectionReceipt, error)
+	// dedupeKey is the canonical trajectory digest shared by automatic and explicit
+	// submissions. reserve runs under coordinator admission after capacity checks.
+	dedupeKey string
+	reserve   func() bool
+	complete  func(reflectionReceipt)
 }
 
 type queuedReflection struct {
@@ -271,7 +277,10 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 	}
 	sum := sha256.Sum256(material)
 	digest := hex.EncodeToString(sum[:])
-	key := job.principal + "\x00" + string(job.input.Trajectory.SessionID) + "\x00" + digest
+	if job.dedupeKey != "" {
+		digest = job.dedupeKey
+	}
+	key := job.principal + "\x00" + digest
 	baseID := reflectionJobID(key)
 
 	c.mu.Lock()
@@ -300,6 +309,18 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 		c.mu.Unlock()
 		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection receipt capacity full", "job_id", id, "queued", queued, "principal_queued", principalQueued)
 		return receipt, nil
+	}
+	if job.reserve != nil && !job.reserve() {
+		delete(c.receipts, id)
+		for i, receiptID := range c.receiptOrder {
+			if receiptID == id {
+				c.receiptOrder = append(c.receiptOrder[:i], c.receiptOrder[i+1:]...)
+				break
+			}
+		}
+		queued := c.queued
+		c.mu.Unlock()
+		return reflectionReceipt{ID: baseID, Disposition: reflectionRateLimited, Queued: queued}, nil
 	}
 	if len(c.queues[job.principal]) == 0 && c.running[job.principal] == 0 {
 		c.active = append(c.active, job.principal)
@@ -421,6 +442,9 @@ func (c *reflectionCoordinator) dequeue() (queuedReflection, bool) {
 }
 
 func (c *reflectionCoordinator) finish(item queuedReflection, receipt reflectionReceipt) {
+	if item.job.complete != nil {
+		item.job.complete(receipt)
+	}
 	c.mu.Lock()
 	delete(c.pending, item.key)
 	c.running[item.job.principal]--

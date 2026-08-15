@@ -26,6 +26,11 @@ type reflectionObserver struct {
 	trusted          bool
 	projectWorkspace string
 	admission        *learningAdmission
+	policy           learning.AdmissionPolicy
+	controller       *automaticAdmissionController
+	tokenCounter     agent.TokenCounter
+	sensitivity      learning.Sensitivity
+	metrics          func(learning.Activity)
 	procedure        func(context.Context, learning.ProposalRecord, learning.Mode) error
 }
 
@@ -146,13 +151,47 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	if o.trusted && trajectory.Workspace == o.projectWorkspace {
 		stores = append(stores, o.projectMemory)
 	}
-	input := learning.NewInput(trajectory, events, nil, memoryExisting(ctx, stores...))
-	signals := learning.DetectSignals(input)
-	if automatic && len(signals) == 0 {
-		return reflectionReceipt{}, nil
+	hostSignals := []learning.Signal(nil)
+	if !automatic {
+		hostSignals = []learning.Signal{{Kind: learning.SignalHostRequested}}
+	}
+	input := learning.NewInput(trajectory, events, hostSignals, memoryExisting(ctx, stores...))
+	signals := append([]learning.Signal(nil), hostSignals...)
+	signals = append(signals, learning.DetectSignals(input)...)
+	decision := learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionHostRequested, Reasons: []learning.AdmissionReason{learning.ReasonHostRequested}, Signals: signals}
+	if automatic {
+		policy := o.policy
+		if policy == nil {
+			policy = learning.ThresholdPolicy{Sensitivity: o.sensitivity}
+		}
+		decision = policy.Decide(learning.AdmissionRequest{Input: input})
+		o.emitAdmission(decision)
+		if !decision.Admitted {
+			return reflectionReceipt{}, nil
+		}
+		signals = decision.Signals
+	}
+	automaticDigest, digestErr := automaticTrajectoryDigest(reflectionPrincipal(owner), input)
+	if digestErr != nil {
+		return reflectionReceipt{}, digestErr
+	}
+	reservationTokens := 0
+	if automatic {
+		material, materialErr := reflectionInputMaterial(input, defaultReflectionJobBytes)
+		if materialErr != nil {
+			return reflectionReceipt{}, materialErr
+		}
+		reservationTokens = defaultReflectionOutputTokens
+		if o.tokenCounter != nil {
+			reservationTokens += o.tokenCounter.Count(string(material))
+		} else {
+			reservationTokens += len(material) / 4
+		}
 	}
 	if o.coordinator == nil {
-		outcome, err := o.reflector.Reflect(ctx, input)
+		jobCtx, cancel := context.WithTimeout(ctx, defaultReflectionJobTimeout)
+		defer cancel()
+		outcome, err := o.reflector.Reflect(jobCtx, input)
 		if err != nil {
 			return reflectionReceipt{Disposition: reflectionFailed}, err
 		}
@@ -165,16 +204,41 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 			receipt.Abstained = true
 			return receipt, nil
 		}
-		processed, err := o.job(input, signals, owner).process(ctx, digest, outcome)
+		processed, err := o.job(input, signals, owner, "", nil, nil).process(jobCtx, digest, outcome)
 		processed.ID, processed.Disposition = receipt.ID, reflectionCompleted
 		return processed, err
 	}
-	// The legacy interval is a process-wide admission/debounce after the signal
-	// gate, so trivial completions neither spend a call nor consume its cadence.
-	if automatic && o.admission != nil && !o.admission.admit() {
+	// The legacy interval is a post-threshold downsampler. Hard and explicit
+	// requests bypass it; 0/1 are inert.
+	if automatic && decision.Class == learning.AdmissionWeighted && o.admission != nil && !o.admission.admit() {
 		return reflectionReceipt{}, nil
 	}
-	receipt, err := o.coordinator.Enqueue(o.job(input, signals, owner))
+	var reserve func() bool
+	var complete func(reflectionReceipt)
+	if automatic && o.controller != nil {
+		reserve = func() bool {
+			return o.controller.reserve(reflectionPrincipal(owner), automaticDigest, reservationTokens, decision.Class, o.sensitivity)
+		}
+		complete = func(receipt reflectionReceipt) {
+			o.controller.complete(automaticDigest)
+			o.emitReflection(receipt)
+		}
+	}
+	receipt, err := o.coordinator.Enqueue(o.job(input, signals, owner, automaticDigest, reserve, complete))
+	if automatic && o.metrics != nil {
+		kind := learning.ActivityKind("")
+		switch receipt.Disposition {
+		case reflectionDuplicate:
+			kind = learning.ActivityDuplicate
+		case reflectionQueueFull:
+			kind = learning.ActivityQueueFull
+		case reflectionClosed:
+			kind = learning.ActivityClosed
+		}
+		if kind.Valid() {
+			o.metrics(learning.Activity{Kind: kind, Sensitivity: o.sensitivity, Count: 1})
+		}
+	}
 	if err != nil || async || receipt.Disposition != reflectionQueued && receipt.Disposition != reflectionDuplicate {
 		return receipt, err
 	}
@@ -185,12 +249,51 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	return done, nil
 }
 
-func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal, owner *session.Principal) reflectionJob {
+func (o *reflectionObserver) emitAdmission(decision learning.AdmissionDecision) {
+	if o == nil || o.metrics == nil {
+		return
+	}
+	kind := learning.ActivitySkipped
+	if decision.Admitted {
+		kind = learning.ActivityAdmitted
+	}
+	reason := learning.ReasonBelowThreshold
+	if len(decision.Reasons) > 0 {
+		reason = decision.Reasons[0]
+	}
+	o.metrics(learning.Activity{Kind: kind, Reason: reason, Sensitivity: o.sensitivity, Count: 1})
+}
+
+func (o *reflectionObserver) emitReflection(receipt reflectionReceipt) {
+	if o == nil || o.metrics == nil {
+		return
+	}
+	emit := func(kind learning.ActivityKind, count int) {
+		if count > 0 {
+			o.metrics(learning.Activity{Kind: kind, Sensitivity: o.sensitivity, Count: int64(count)})
+		}
+	}
+	if receipt.Disposition == reflectionFailed {
+		emit(learning.ActivityFailed, 1)
+		return
+	}
+	if receipt.Abstained {
+		emit(learning.ActivityAbstained, 1)
+	}
+	emit(learning.ActivityStaged, receipt.Staged)
+	emit(learning.ActivityPromoted, receipt.Promoted)
+	emit(learning.ActivityConflicted, receipt.Conflicted)
+}
+
+func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal, owner *session.Principal, dedupeKey string, reserve func() bool, complete func(reflectionReceipt)) reflectionJob {
 	principal := reflectionPrincipal(owner)
 	return reflectionJob{
 		principal: principal,
 		input:     input,
 		reflector: o.reflector,
+		dedupeKey: dedupeKey,
+		reserve:   reserve,
+		complete:  complete,
 		process: func(ctx context.Context, digest string, outcome learning.Outcome) (reflectionReceipt, error) {
 			return processReflectionOutcome(memoryadapter.WithWorkspace(reflectionContext(ctx, owner), input.Trajectory.Workspace), o.repository,
 				o.operatorMemory, o.projectMemory, principal, input,
@@ -213,8 +316,12 @@ func evidenceRefEqual(a, b learning.EvidenceRef) bool {
 // Both fact kinds require an explicit principal-authored remember request. Trusted
 // project facts additionally require the exact configured root.
 func autoPromotionEligible(input learning.Input, candidate learning.Candidate, trusted bool, projectWorkspace string) bool {
+	current := input.Trajectory.Current
+	if !current.Valid(len(input.Trajectory.Messages)) {
+		return false
+	}
 	userEvidence := func(ref learning.EvidenceRef) bool {
-		return ref.Locator == learning.EvidenceMessage && ref.Ordinal >= 0 && ref.Ordinal < len(input.Trajectory.Messages) && session.IsGenuineUserPrompt(input.Trajectory.Messages[ref.Ordinal])
+		return ref.Locator == learning.EvidenceMessage && current.Contains(ref.Ordinal) && ref.Ordinal >= 0 && ref.Ordinal < len(input.Trajectory.Messages) && session.IsGenuineUserPrompt(input.Trajectory.Messages[ref.Ordinal])
 	}
 	if candidate.Kind == learning.CandidateProjectFact && (!trusted || input.Trajectory.Workspace == "" || input.Trajectory.Workspace != projectWorkspace) {
 		return false
@@ -404,6 +511,9 @@ func buildConfiguredReflectionObserver(
 	if selected, ok := resolveSlotModel(cfg, slotReflection, model); ok && selected != "" {
 		model = selected
 	}
+	if cfg.LearningSensitivity == learning.SensitivityUnset {
+		cfg.LearningSensitivity = learning.Balanced
+	}
 	modelCfg := cfg
 	modelCfg.Model = model
 	reflector, err := agent.NewEvidenceReflector(provider, model, buildTokenCounter(modelCfg), agent.ReflectionLimits{})
@@ -418,6 +528,15 @@ func buildConfiguredReflectionObserver(
 	return &reflectionObserver{
 		coordinator: coordinator, reflector: reflector, repository: repository,
 		operatorMemory: operatorMemory, projectMemory: projectMemory,
-		mode: cfg.LearningMode, trusted: projectIngestionAdmitted(cfg), projectWorkspace: cfg.Workspace, admission: admission, procedure: processProcedure,
+		mode: cfg.LearningMode, trusted: projectIngestionAdmitted(cfg), projectWorkspace: cfg.Workspace,
+		admission: admission, policy: learning.ThresholdPolicy{Sensitivity: cfg.LearningSensitivity},
+		controller: func() *automaticAdmissionController {
+			if admission != nil {
+				return admission.controller
+			}
+			return nil
+		}(),
+		tokenCounter: buildTokenCounter(modelCfg), sensitivity: cfg.LearningSensitivity,
+		metrics: cfg.LearningMetricsEmitter, procedure: processProcedure,
 	}
 }

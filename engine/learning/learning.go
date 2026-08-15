@@ -71,6 +71,12 @@ type Trajectory struct {
 	Stop      session.StopReason
 	Usage     session.Usage
 	Messages  []session.Message
+	// Kind identifies the trusted producer. Automatic admission accepts main only.
+	Kind session.SessionKind
+	// Counters are the completed current run's model/tool counters.
+	Counters session.Counters
+	// Current is the verified half-open message span for the current run.
+	Current MessageSpan
 	// Principal is a copied completed-session owner for host partitioning.
 	Principal *session.Principal
 }

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
@@ -10,12 +11,54 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
+const (
+	defaultLearningCooldown = 10 * time.Minute
+	defaultLearningWindow   = time.Hour
+)
+
+// LearningAutomaticConfig is the process-local automatic-reflection budget.
+type LearningAutomaticConfig struct {
+	Cooldown                   time.Duration
+	Window                     time.Duration
+	MaxReflections             int
+	MaxTokens                  int
+	MaxReflectionsPerPrincipal int
+	MaxTokensPerPrincipal      int
+}
+
+func defaultLearningAutomaticConfig() LearningAutomaticConfig {
+	return LearningAutomaticConfig{Cooldown: defaultLearningCooldown, Window: defaultLearningWindow,
+		MaxReflections: 8, MaxTokens: 100000, MaxReflectionsPerPrincipal: 4, MaxTokensPerPrincipal: 50000}
+}
+
 // foldLearningMode resolves the operator setting, legacy compatibility flag, and
 // admitted project tighten-only ceiling. Project config can lower autonomy, never raise it.
 func foldLearningMode(cfg Config) (Config, error) {
 	mode := cfg.LearningMode
+	sensitivity := cfg.LearningSensitivity
+	if sensitivity == learning.SensitivityUnset {
+		sensitivity = learning.Balanced
+	}
+	automatic := defaultLearningAutomaticConfig()
 	resolver, _ := cfg.permResolver.(*permconfig.Resolver)
-	operatorToken := resolver.OperatorLearningMode()
+	operator := resolver.OperatorLearning()
+	operatorToken := ""
+	if operator != nil {
+		operatorToken = operator.Mode
+		if operator.Sensitivity != "" {
+			parsed, err := learning.ParseSensitivity(operator.Sensitivity)
+			if err != nil {
+				return cfg, err
+			}
+			sensitivity = parsed
+		}
+		if a := operator.Automatic; a != nil {
+			automatic = LearningAutomaticConfig{Cooldown: a.Cooldown, Window: a.Window,
+				MaxReflections: a.MaxReflections, MaxTokens: a.MaxTokens,
+				MaxReflectionsPerPrincipal: a.MaxReflectionsPerPrincipal,
+				MaxTokensPerPrincipal:      a.MaxTokensPerPrincipal}
+		}
+	}
 	if operatorToken != "" {
 		parsed, err := learning.ParseMode(operatorToken)
 		if err != nil {
@@ -32,36 +75,61 @@ func foldLearningMode(cfg Config) (Config, error) {
 			"--user-model-review is deprecated; use learning.mode: auto in operator settings.yaml")
 	}
 	cfg.operatorLearningMode = mode
-	resolved := learningModeForWorkspace(cfg, cfg.Workspace)
+	cfg.operatorLearningSensitivity = sensitivity
+	cfg.LearningAutomatic = automatic
+	resolved, resolvedSensitivity := learningPolicyForWorkspace(cfg, cfg.Workspace)
 	cfg.LearningMode = resolved
-	cfg.diag().Log(context.Background(), port.LevelInfo, "automatic learning mode resolved", "mode", resolved.String())
+	cfg.LearningSensitivity = resolvedSensitivity
+	cfg.diag().Log(context.Background(), port.LevelInfo, "automatic learning policy resolved",
+		"mode", resolved.String(), "sensitivity", resolvedSensitivity.String(),
+		"cooldown", automatic.Cooldown, "window", automatic.Window,
+		"max_reflections", automatic.MaxReflections, "max_tokens", automatic.MaxTokens,
+		"max_reflections_per_principal", automatic.MaxReflectionsPerPrincipal,
+		"max_tokens_per_principal", automatic.MaxTokensPerPrincipal)
+	if cfg.UserModelReviewInterval > 1 {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "--user-model-review-interval is deprecated; it now down-samples only admitted weighted reflections", "interval", cfg.UserModelReviewInterval)
+	}
 	return cfg, nil
 }
 
-func learningModeForWorkspace(cfg Config, root string) learning.Mode {
+func learningPolicyForWorkspace(cfg Config, root string) (learning.Mode, learning.Sensitivity) {
 	mode := cfg.operatorLearningMode
+	sensitivity := cfg.operatorLearningSensitivity
 	resolver, _ := cfg.permResolver.(*permconfig.Resolver)
 	if resolver == nil || !projectIngestionAdmittedForRoot(cfg, root) {
-		return mode
+		return mode, sensitivity
 	}
 	ws, err := osfs.NewWorkspace(root)
 	if err != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "learning: cannot read project mode; keeping operator mode", "workspace", root, "error", err)
-		return mode
+		cfg.diag().Log(context.Background(), port.LevelWarn, "learning: cannot read project policy; keeping operator policy", "workspace", root, "error", err)
+		return mode, sensitivity
 	}
-	for _, token := range resolver.ProjectLearningModes(ws) {
-		project, err := learning.ParseMode(token)
-		if err != nil {
-			cfg.diag().Log(context.Background(), port.LevelWarn, "learning: invalid project mode ignored", "workspace", root, "error", err)
-			continue
+	for _, setting := range resolver.ProjectLearningSettings(ws) {
+		if setting.Automatic != nil {
+			cfg.diag().Log(context.Background(), port.LevelWarn, "learning: ignoring project automatic limits; learning.automatic is operator-only", "workspace", root)
 		}
-		if project < mode {
-			mode = project
-		} else if project > mode {
-			cfg.diag().Log(context.Background(), port.LevelWarn,
-				"learning: ignoring project mode that would raise operator autonomy",
-				"operator_mode", mode.String(), "project_mode", project.String(), "workspace", root)
+		if token := setting.Mode; token != "" {
+			project, err := learning.ParseMode(token)
+			if err != nil {
+				cfg.diag().Log(context.Background(), port.LevelWarn, "learning: invalid project mode ignored", "workspace", root, "error", err)
+			} else if project < mode {
+				mode = project
+			} else if project > mode {
+				cfg.diag().Log(context.Background(), port.LevelWarn,
+					"learning: ignoring project mode that would raise operator autonomy",
+					"operator_mode", mode.String(), "project_mode", project.String(), "workspace", root)
+			}
+		}
+		if token := setting.Sensitivity; token != "" {
+			project, err := learning.ParseSensitivity(token)
+			if err != nil {
+				cfg.diag().Log(context.Background(), port.LevelWarn, "learning: invalid project sensitivity ignored", "workspace", root, "error", err)
+			} else if project < sensitivity {
+				sensitivity = project
+			} else if project > sensitivity {
+				cfg.diag().Log(context.Background(), port.LevelWarn, "learning: ignoring project sensitivity that would raise automatic admission", "workspace", root)
+			}
 		}
 	}
-	return mode
+	return mode, sensitivity
 }

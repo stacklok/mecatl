@@ -59,16 +59,17 @@ is deliberately absent if no session was established, startup/the TUI failed, or
 interrupted or forced the exit; normal stdout remains available to scripts. See the
 [`docs/tui.md` startup continuation reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#continue-a-chat-at-startup).
 
-## Changing completed-trajectory learning (`/learning`)
+## Changing completed-trajectory learning (`/learning`, `/learning-sensitivity`)
 
-`/learning` cycles the operator setting through **Off → Review → Auto** in
+`/learning` cycles the operator setting through **Off → Review → Auto** and
+`/learning-sensitivity` cycles **Conservative → Balanced → Eager** in
 `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving unrelated YAML and comments. Off means
 no automatic completed-trajectory reflection. Review signal-gates eligible completions and
 stages evidence-backed proposals without changing memory; Auto uses the same stage-first path
 and may conservatively promote eligible non-conflicting facts. These modes do not control a separately configured `--user-model-consolidate-interval`,
-which remains an independent process-wide maintenance schedule. The setting is build-time:
-restart local mecatui after saving. In connect mode, mecatui never edits local settings;
-change `learning.mode` on the remote server host and restart that remote server.
+which remains an independent process-wide maintenance schedule. The commands report both pending values and require a local restart; there is no live
+mutation API. In connect mode, mecatui never edits local settings; change `learning.mode` or
+`learning.sensitivity` on the remote server host and restart that remote server.
 
 ## Reviewing reflections (`/reflections`, `/reflect`)
 

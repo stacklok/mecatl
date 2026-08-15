@@ -95,15 +95,19 @@ const (
 	SignalExplicitRemember SignalKind = "explicit_remember"
 	// SignalExplicitLearnProcedure marks an explicit request to retain a reusable procedure.
 	SignalExplicitLearnProcedure SignalKind = "explicit_learn_procedure"
-	// SignalContradiction is supplied by a host with cross-session knowledge.
+	// SignalContradiction is supplied by a trusted host with cross-session knowledge.
 	SignalContradiction SignalKind = "contradiction"
+	// SignalHostRequested marks an authenticated explicit reflection request. It is
+	// host provenance, not evidence that automatic learning should run.
+	SignalHostRequested SignalKind = "host_requested"
 )
 
 // Valid reports whether k belongs to the closed signal vocabulary.
 func (k SignalKind) Valid() bool {
 	switch k {
 	case SignalSubstantialSuccess, SignalRepeatedCorrection, SignalFailureRecovery,
-		SignalRepeatedToolSequence, SignalExplicitRemember, SignalExplicitLearnProcedure, SignalContradiction:
+		SignalRepeatedToolSequence, SignalExplicitRemember, SignalExplicitLearnProcedure,
+		SignalContradiction, SignalHostRequested:
 		return true
 	default:
 		return false
@@ -176,6 +180,9 @@ type Input struct {
 func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, existing []ExistingFact) Input {
 	ownedTrajectory := NewTrajectory(trajectory.SessionID, trajectory.Workspace, trajectory.Stop, trajectory.Usage, canonicalMessages(trajectory.Messages))
 	ownedTrajectory.Principal = trajectory.Principal.Clone()
+	ownedTrajectory.Kind = trajectory.Kind
+	ownedTrajectory.Counters = trajectory.Counters
+	ownedTrajectory.Current = trajectory.Current
 	return Input{
 		Trajectory: ownedTrajectory,
 		Events:     projectSessionEvents(events),

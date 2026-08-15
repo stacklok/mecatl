@@ -458,19 +458,21 @@ tasks) appear
 only when the connected server advertises those capabilities (and, for
 `/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/models`/`/worktrees`/`/schedule`, the matching client
 collaborator is wired). The fixed palette order is
-`clear, help, mcp, agents, team, skills, soul, usermodel, reflections, reflect, models, effort, worktrees, schedule, learning` (locked by a test).
+`clear, help, mcp, agents, team, skills, soul, usermodel, reflections, reflect, models, effort, worktrees, schedule, learning, learning-sensitivity` (locked by a test).
 `/learning` is local embedded-server operator-settings UX: each invocation selects the
 next Off→Review→Auto value in `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving
-unrelated YAML and comments, and reports that restart is required. These labels describe
+unrelated YAML and comments. `/learning-sensitivity` independently cycles
+Conservative→Balanced→Eager. Both report the complete pending mode+sensitivity and that a
+restart is required; neither provides a live mutation API. These labels describe
 completed-trajectory observation only: Off disables automatic reflection, Review stages
 bounded evidence-backed proposals for operator approval, and Auto additionally promotes only
 standard-policy-eligible, non-conflicting facts. Explicit `/reflect` remains available in Off when
 the server has a configured reflection provider/repository.
 They do not control a separately configured `--user-model-consolidate-interval`; that
 process-wide schedule remains operator-authorized even when a project lowers the effective
-mode to Off. In `mecatui connect` mode, `/learning` is read-only: it never mutates the
-client's local settings file and tells the operator to edit `learning.mode` on the remote
-server host and restart that server.
+mode to Off. In `mecatui connect` mode, `/learning` and `/learning-sensitivity` are
+read-only: they never mutate the client's local settings file and tell the operator to edit
+the mode or sensitivity on the remote server host and restart that server.
 `/agents` and `/team` are distinct: `/agents` is the **definition inventory** (a
 palette-only `ListAgents` snapshot, gated on `caps.agents`), while `/team` opens
 the **live overlay** of a team that has actually run (gated on `caps.teams`).

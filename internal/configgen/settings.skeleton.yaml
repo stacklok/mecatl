@@ -129,6 +129,25 @@
 #   # override separately configured maintenance schedules such as
 #   # --user-model-consolidate-interval.
 #   mode: off
+#   # Sensitivity controls weighted automatic admission. Empty means balanced.
+#   sensitivity: balanced
+#   # Automatic is operator-only process-local rate policy.
+#   automatic:
+#     # Cooldown is the per-principal weighted-admission cooldown; zero disables it.
+#     cooldown: 10m
+#     # Window is the sliding count/token window, strictly 1m..24h.
+#     window: 1h
+#     # MaxReflections is the process-wide count cap; zero disables automatic reflection.
+#     max_reflections: 8
+#     # MaxTokens is the process-wide reserved-token cap; zero disables automatic
+#     # reflection.
+#     max_tokens: 100000
+#     # MaxReflectionsPerPrincipal is the per-principal count cap; zero disables automatic
+#     # reflection.
+#     max_reflections_per_principal: 4
+#     # MaxTokensPerPrincipal is the per-principal reserved-token cap; zero disables
+#     # automatic reflection.
+#     max_tokens_per_principal: 50000
 
 #| === models === (tier: operator + project)
 #| Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and the

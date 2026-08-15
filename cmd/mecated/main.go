@@ -1148,6 +1148,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		ToolCallRecorder:       recorder,
 		MetricsRoleScoper:      roleScoper,
 		ScheduleMetricsEmitter: metrics.EmitSchedule,
+		LearningMetricsEmitter: metrics.EmitLearning,
 		Diagnostics:            diag,
 		// Plan-mode auto-approve (issue #206 Wave 6a): the OPT-IN operator flag.
 		PlanModeAutoApprove: cfg.planModeAutoApprove,

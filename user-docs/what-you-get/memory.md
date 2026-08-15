@@ -122,15 +122,31 @@ Set the operator file `$XDG_CONFIG_HOME/mecatl/settings.yaml` to:
 ```yaml
 learning:
   mode: auto
+  sensitivity: balanced
+  automatic:
+    cooldown: 10m
+    window: 1h
+    max_reflections: 8
+    max_tokens: 100000
+    max_reflections_per_principal: 4
+    max_tokens_per_principal: 50000
 ```
 
-After an eligible clean completion, mecatl detects a conservative structural signal and
-enqueues an owned trajectory snapshot on one bounded process-wide reflection coordinator.
+After an eligible main-session completion, mecatl scores only evidence in the verified current
+run. Balanced requires 4 points (conservative 6, eager 3); modifiers cannot admit by
+themselves. A genuine current prompt that explicitly asks to remember or learn is a hard
+trigger, but tool/WebFetch/WebSearch/MCP, repository, historical, event-only, and
+assistant-only text cannot manufacture one. Hard triggers bypass score and weighted cooldown,
+not count/token budgets or coordinator capacity. The sliding budgets and duplicate cache are
+process-local and reset on restart; multiple replicas multiply aggregate capacity. Failed,
+timed-out, and abstaining reflections consume their reservation, while queue-full does not.
+There is no startup or shutdown catch-up.
+
 `review` durably stages valid evidence-backed proposals without changing memory. `auto` stages
 first, then promotes operator facts only when the candidate cites the genuine user message carrying an explicit remember request. Tool/WebFetch/WebSearch/MCP, repository, event-only, and assistant-only evidence stays staged. Project facts use a separate narrow rule: candidates from any non-empty session workspace remain staged and inspectable in that project's partition, but auto-promotion, approval, and undo require the exact trusted configured workspace and an available convergence-capable project memory store. Operator facts continue to follow operator policy. Proposal detail re-checks source ownership and evidence digests and shows a bounded, redacted canonical preview before approval; unavailable, changed, or cross-owner evidence has no preview and cannot be promoted. Ambiguous, conflicting, sensitive, and unsupported
 material remains staged or rejected. Procedures first persist a `deferred_unsupported` crash checkpoint, then the learned-skill pipeline evaluates them: review stages PASS/ABSTAIN and rejects FAIL; auto also activates PASS into the live catalog. `off`
-means no automatic observer, started coordinator worker, eager proposal repository, or reflection provider call. Explicit reflection remains synchronous: it lazily initializes persistence, starts bounded coordinator workers for that job, and uses the completed session's persisted provider/model. A project may lower the operator
-setting, never raise it. The legacy `--user-model-review` flag is a deprecated `auto` alias
+means no automatic observer, controller/coordinator worker, eager proposal repository, or reflection provider call. Authenticated explicit reflection remains synchronous: it lazily initializes persistence, bypasses automatic admission/budgets/cache, and uses the completed session's persisted provider/model; without genuine current-prompt promotion provenance it remains stage-only. A project may lower the operator
+mode and sensitivity, never raise them; project automatic limits are ignored. The legacy `--user-model-review` flag is a deprecated `auto` alias
 for one compatibility window. Proposal data defaults beside the user-model store under
 `reflections/`.
 

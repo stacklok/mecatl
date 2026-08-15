@@ -42,6 +42,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -645,15 +646,92 @@ type LearningSection struct {
 	// autonomy. It does not override separately configured maintenance schedules such
 	// as --user-model-consolidate-interval.
 	Mode string `yaml:"mode"`
+	// Sensitivity controls weighted automatic admission. Empty means balanced.
+	Sensitivity string `yaml:"sensitivity"`
+	// Automatic is operator-only process-local rate policy.
+	Automatic *LearningAutomaticSection `yaml:"automatic"`
+}
+
+// LearningAutomaticSection is the strict process-local automatic-admission budget.
+type LearningAutomaticSection struct {
+	// Cooldown is the per-principal weighted-admission cooldown; zero disables it.
+	Cooldown time.Duration `yaml:"cooldown"`
+	// Window is the sliding count/token window, strictly 1m..24h.
+	Window time.Duration `yaml:"window"`
+	// MaxReflections is the process-wide count cap; zero disables automatic reflection.
+	MaxReflections int `yaml:"max_reflections"`
+	// MaxTokens is the process-wide reserved-token cap; zero disables automatic reflection.
+	MaxTokens int `yaml:"max_tokens"`
+	// MaxReflectionsPerPrincipal is the per-principal count cap; zero disables automatic reflection.
+	MaxReflectionsPerPrincipal int `yaml:"max_reflections_per_principal"`
+	// MaxTokensPerPrincipal is the per-principal reserved-token cap; zero disables automatic reflection.
+	MaxTokensPerPrincipal int `yaml:"max_tokens_per_principal"`
+}
+
+func durationScalar(node *yaml.Node, name string) (time.Duration, error) {
+	if node == nil || node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+		return 0, fmt.Errorf("%s: must be a duration string", name)
+	}
+	value, err := time.ParseDuration(node.Value)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	return value, nil
+}
+
+// UnmarshalYAML strictly decodes and bounds the automatic-admission policy.
+func (s *LearningAutomaticSection) UnmarshalYAML(node *yaml.Node) error {
+	s.Cooldown, s.Window = 10*time.Minute, time.Hour
+	s.MaxReflections, s.MaxTokens = 8, 100000
+	s.MaxReflectionsPerPrincipal, s.MaxTokensPerPrincipal = 4, 50000
+	var cooldown, window yaml.Node
+	if err := decodeStrictMapping(node, "learning.automatic", map[string]any{
+		"cooldown": &cooldown, "window": &window,
+		"max_reflections": &s.MaxReflections, "max_tokens": &s.MaxTokens,
+		"max_reflections_per_principal": &s.MaxReflectionsPerPrincipal,
+		"max_tokens_per_principal":      &s.MaxTokensPerPrincipal,
+	}); err != nil {
+		return err
+	}
+	var err error
+	if cooldown.Kind != 0 {
+		if s.Cooldown, err = durationScalar(&cooldown, "learning.automatic.cooldown"); err != nil {
+			return err
+		}
+		if s.Cooldown < 0 {
+			return fmt.Errorf("learning.automatic.cooldown: must be nonnegative")
+		}
+	}
+	if window.Kind != 0 {
+		if s.Window, err = durationScalar(&window, "learning.automatic.window"); err != nil {
+			return err
+		}
+		if s.Window < time.Minute || s.Window > 24*time.Hour {
+			return fmt.Errorf("learning.automatic.window: must be between 1m and 24h")
+		}
+	}
+	for name, value := range map[string]int{"max_reflections": s.MaxReflections, "max_tokens": s.MaxTokens, "max_reflections_per_principal": s.MaxReflectionsPerPrincipal, "max_tokens_per_principal": s.MaxTokensPerPrincipal} {
+		if value < 0 || value > 1_000_000_000 {
+			return fmt.Errorf("learning.automatic.%s: must be between 0 and 1000000000", name)
+		}
+	}
+	return nil
 }
 
 // UnmarshalYAML strictly decodes learning.mode and validates its closed vocabulary.
 func (s *LearningSection) UnmarshalYAML(node *yaml.Node) error {
-	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode}); err != nil {
+	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "sensitivity": &s.Sensitivity, "automatic": &s.Automatic}); err != nil {
 		return err
 	}
-	if _, err := learning.ParseMode(s.Mode); err != nil {
-		return err
+	if s.Mode != "" {
+		if _, err := learning.ParseMode(s.Mode); err != nil {
+			return err
+		}
+	}
+	if s.Sensitivity != "" {
+		if _, err := learning.ParseSensitivity(s.Sensitivity); err != nil {
+			return err
+		}
 	}
 	return nil
 }

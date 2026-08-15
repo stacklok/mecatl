@@ -1,3 +1,4 @@
+    ifacemethod func (AdmissionPolicy).Decide(AdmissionRequest) AdmissionDecision
     ifacemethod func (Observer).Observe(context.Context, Trajectory) error
     ifacemethod func (ProposalRepository).ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error)
     ifacemethod func (ProposalRepository).ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error)
@@ -19,24 +20,56 @@
     ifacemethod func (SkillRepository).Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error)
     ifacemethod func (SkillRepository).Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     ifacemethod func (SkillValidator).Validate(context.Context, SkillValidationRequest) (SkillValidation, error)
+    method func (ActivityKind).Valid() bool
+    method func (AdmissionClass).Valid() bool
+    method func (AdmissionReason).Valid() bool
+    method func (AlwaysPolicy).Decide(req AdmissionRequest) AdmissionDecision
     method func (CandidateKind).Valid() bool
     method func (EvaluationVerdict).Valid() bool
+    method func (MessageSpan).Contains(ordinal int) bool
+    method func (MessageSpan).Valid(messageCount int) bool
     method func (Mode).Next() Mode
     method func (Mode).String() string
+    method func (NeverPolicy).Decide(AdmissionRequest) AdmissionDecision
     method func (OutcomeKind).Valid() bool
     method func (ProposalStatus).Valid() bool
+    method func (Sensitivity).Next() Sensitivity
+    method func (Sensitivity).String() string
+    method func (Sensitivity).Threshold() int
     method func (SignalKind).Valid() bool
     method func (SkillState).Valid() bool
+    method func (ThresholdPolicy).Decide(req AdmissionRequest) AdmissionDecision
     method func (ValidationDisposition).Valid() bool
+const ActivityAbstained ActivityKind = "abstained"
+const ActivityAdmitted ActivityKind = "admitted"
+const ActivityClosed ActivityKind = "closed"
+const ActivityConflicted ActivityKind = "conflicted"
+const ActivityDuplicate ActivityKind = "duplicate"
+const ActivityFailed ActivityKind = "failed"
+const ActivityPromoted ActivityKind = "promoted"
+const ActivityProposalTransition ActivityKind = "proposal_transition"
+const ActivityQueueFull ActivityKind = "queue_full"
+const ActivityRateLimited ActivityKind = "rate_limited"
+const ActivityReservedTokens ActivityKind = "reserved_tokens"
+const ActivitySkipped ActivityKind = "skipped"
+const ActivityStaged ActivityKind = "staged"
+const ActivityTimedOut ActivityKind = "timed_out"
+const AdmissionHard AdmissionClass = "hard"
+const AdmissionHostRequested AdmissionClass = "host_requested"
+const AdmissionSkipped AdmissionClass = "skipped"
+const AdmissionWeighted AdmissionClass = "weighted"
 const Auto Mode = 2
+const Balanced Sensitivity = 2
 const CandidateOperatorFact CandidateKind = "operator_fact"
 const CandidateProcedure CandidateKind = "procedure"
 const CandidateProjectFact CandidateKind = "project_fact"
+const Conservative Sensitivity = 1
 const DecisionApprove DecisionKind = "approve"
 const DecisionDefer DecisionKind = "defer"
 const DecisionReject DecisionKind = "reject"
 const DefaultProposalPageSize untyped int = 50
 const DefaultSkillPageSize untyped int = 50
+const Eager Sensitivity = 3
 const EvaluationAbstain EvaluationVerdict = "abstain"
 const EvaluationFail EvaluationVerdict = "fail"
 const EvaluationPass EvaluationVerdict = "pass"
@@ -83,11 +116,31 @@ const ProposalRejected ProposalStatus = "rejected"
 const ProposalSkillMaterialized ProposalStatus = "skill_materialized"
 const ProposalStaged ProposalStatus = "staged"
 const ProposalUndone ProposalStatus = "undone"
+const ReasonBelowThreshold AdmissionReason = "below_threshold"
+const ReasonExplicitLearnProcedure AdmissionReason = "explicit_learn_procedure"
+const ReasonExplicitRemember AdmissionReason = "explicit_remember"
+const ReasonFailureRecovery AdmissionReason = "failure_recovery"
+const ReasonHostRequested AdmissionReason = "host_requested"
+const ReasonIneligibleStop AdmissionReason = "ineligible_stop"
+const ReasonInvalidCurrentSpan AdmissionReason = "invalid_current_span"
+const ReasonModelTurnsModifier AdmissionReason = "model_turns_modifier"
+const ReasonNonMainSession AdmissionReason = "non_main_session"
+const ReasonPolicyAlways AdmissionReason = "policy_always"
+const ReasonPolicyNever AdmissionReason = "policy_never"
+const ReasonRepeatedCorrection AdmissionReason = "repeated_correction"
+const ReasonRepeatedToolSequence AdmissionReason = "repeated_tool_sequence"
+const ReasonRunTokensModifier AdmissionReason = "run_tokens_modifier"
+const ReasonSubstantialSuccess AdmissionReason = "substantial_success"
+const ReasonSuccessfulToolsModifier AdmissionReason = "successful_tools_modifier"
+const ReasonTrivialRun AdmissionReason = "trivial_run"
+const ReasonTrustedHostContradiction AdmissionReason = "trusted_host_contradiction"
 const Review Mode = 1
+const SensitivityUnset Sensitivity = 0
 const SignalContradiction SignalKind = "contradiction"
 const SignalExplicitLearnProcedure SignalKind = "explicit_learn_procedure"
 const SignalExplicitRemember SignalKind = "explicit_remember"
 const SignalFailureRecovery SignalKind = "failure_recovery"
+const SignalHostRequested SignalKind = "host_requested"
 const SignalRepeatedCorrection SignalKind = "repeated_correction"
 const SignalRepeatedToolSequence SignalKind = "repeated_tool_sequence"
 const SignalSubstantialSuccess SignalKind = "substantial_success"
@@ -102,6 +155,7 @@ const ValidationAccept ValidationDisposition = "accept"
 const ValidationExactDuplicate ValidationDisposition = "exact_duplicate"
 const ValidationSimilarStageHint ValidationDisposition = "similar_stage_hint"
 func DetectSignals(in Input) []Signal
+func DetectSignalsScoped(in Input, scope DetectionScope) []Signal
 func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (ProposalID, error)
 func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func EvidenceHandle(ref EvidenceRef) string
@@ -111,6 +165,7 @@ func NewCandidate(in Input, candidate Candidate) (Candidate, error)
 func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, existing []ExistingFact) Input
 func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory
 func ParseMode(s string) (Mode, error)
+func ParseSensitivity(value string) (Sensitivity, error)
 func ProjectInput(in Input) (Projection, error)
 func ResolveEvidence(in Input, ref EvidenceRef) error
 func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
@@ -126,10 +181,19 @@ func ValidateSkillCandidate(in Input, candidate Candidate) error
 func ValidateSkillEvaluation(e SkillEvaluation) error
 func ValidateSkillPartition(partition SkillPartition, ownerAgent string) error
 func ValidateSkillProvenance(p SkillProvenance) error
+type Activity struct{Kind ActivityKind; Reason AdmissionReason; Sensitivity Sensitivity; Count int64}
+type ActivityKind string
+type AdmissionClass string
+type AdmissionDecision struct{Admitted bool; Class AdmissionClass; Score int; Threshold int; Reasons []AdmissionReason; Signals []Signal}
+type AdmissionPolicy interface{Decide(AdmissionRequest) AdmissionDecision}
+type AdmissionReason string
+type AdmissionRequest struct{Input Input}
+type AlwaysPolicy struct{}
 type Candidate struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key,omitempty\""; Value string "json:\"value,omitempty\""; Description string "json:\"description,omitempty\""; Name string "json:\"name,omitempty\""; Title string "json:\"title,omitempty\""; Body string "json:\"body,omitempty\""; Evidence []EvidenceRef "json:\"evidence\""}
 type CandidateKind string
 type Decision struct{Kind DecisionKind "json:\"kind\""; Actor string "json:\"actor,omitempty\""; Reason string "json:\"reason,omitempty\""; At time.Time "json:\"at\""}
 type DecisionKind string
+type DetectionScope struct{Current MessageSpan}
 type EvaluationVerdict string
 type EventProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Type session.EventType "json:\"type\""; Seq int64 "json:\"seq\""; Turn int "json:\"turn\""; Text string "json:\"text,omitempty\""; ToolCall *ToolProjection "json:\"tool_call,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Stop session.StopReason "json:\"stop,omitempty\""}
 type EvidenceEventData struct{Type session.EventType; Seq int64; Turn int; Text string; ToolCall *ToolProjection; ToolResult *ResultProjection; Stop session.StopReason}
@@ -139,7 +203,9 @@ type EvidenceRef struct{SessionID session.SessionID "json:\"session_id\""; Locat
 type ExistingFact struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key\""; Value string "json:\"value\""; Description string "json:\"description,omitempty\""}
 type Input struct{Trajectory Trajectory "json:\"trajectory\""; Events []EvidenceEventData "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""}
 type MessageProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Role session.Role "json:\"role\""; Text string "json:\"text,omitempty\""; ToolCalls []ToolProjection "json:\"tool_calls,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
+type MessageSpan struct{Start int "json:\"start\""; End int "json:\"end\""}
 type Mode uint8
+type NeverPolicy struct{}
 type Observer interface{Observe(context.Context, Trajectory) error}
 type Outcome struct{Kind OutcomeKind "json:\"kind\""; Candidates []Candidate "json:\"candidates,omitempty\""}
 type OutcomeKind string
@@ -157,6 +223,7 @@ type ProposalVersion string
 type Reflector interface{Reflect(context.Context, Input) (Outcome, error)}
 type ResultProjection struct{CallID session.ToolCallID "json:\"call_id\""; Content string "json:\"content,omitempty\""; IsError bool "json:\"is_error,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
 type Revision string
+type Sensitivity uint8
 type Signal struct{Kind SignalKind "json:\"kind\""; Evidence []EvidenceRef "json:\"evidence,omitempty\""}
 type SignalKind string
 type SignalProjection struct{Kind SignalKind "json:\"kind\""; Evidence []string "json:\"evidence,omitempty\""}
@@ -183,8 +250,9 @@ type SkillValidation struct{Disposition ValidationDisposition; Duplicate *SkillI
 type SkillValidationRequest struct{Partition SkillPartition; OwnerAgent string; Bundle SkillBundle; Provenance SkillProvenance; Assets []string; Inventory []SkillInventoryItem}
 type SkillValidator interface{Validate(context.Context, SkillValidationRequest) (SkillValidation, error)}
 type SkillVersion struct{ID SkillID "json:\"id\""; Version VersionID "json:\"version\""; Revision Revision "json:\"revision\""; State SkillState "json:\"state\""; OwnerAgent string "json:\"owner_agent\""; Partition SkillPartition "json:\"partition\""; Bundle SkillBundle "json:\"bundle\""; Provenance SkillProvenance "json:\"provenance\""; Disposition ValidationDisposition "json:\"validation_disposition,omitempty\""; Evaluations []SkillEvaluation "json:\"evaluations,omitempty\""; Receipts []SkillReceipt "json:\"receipts,omitempty\""; Supersedes VersionID "json:\"supersedes,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type ThresholdPolicy struct{Sensitivity Sensitivity}
 type ToolProjection struct{ID session.ToolCallID "json:\"id\""; Name string "json:\"name\""}
-type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Principal *session.Principal}
+type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Kind session.SessionKind; Counters session.Counters; Current MessageSpan; Principal *session.Principal}
 type ValidationDisposition string
 type VersionID string
 var ErrInvalidCandidate error

@@ -37,6 +37,41 @@ func DetectSignals(in Input) []Signal {
 	return signals
 }
 
+// DetectSignalsScoped returns deterministic standard and trusted host-supplied
+// signals that have at least one evidence reference in the current-run span.
+// DetectSignals remains unchanged for compatibility with historical reflection.
+func DetectSignalsScoped(in Input, scope DetectionScope) []Signal {
+	if err := ValidateInput(in); err != nil || !scope.Current.Valid(len(in.Trajectory.Messages)) {
+		return nil
+	}
+	all := append(cloneSignals(in.Signals), DetectSignals(Input{Trajectory: in.Trajectory, Events: in.Events, Existing: in.Existing})...)
+	order := []SignalKind{
+		SignalExplicitRemember, SignalExplicitLearnProcedure,
+		SignalRepeatedCorrection, SignalContradiction, SignalFailureRecovery,
+		SignalRepeatedToolSequence, SignalSubstantialSuccess, SignalHostRequested,
+	}
+	result := make([]Signal, 0, len(all))
+	for _, kind := range order {
+		for _, signal := range all {
+			if signal.Kind != kind || !signalHasCurrentEvidence(signal, scope.Current) {
+				continue
+			}
+			result = append(result, signal)
+			break
+		}
+	}
+	return result
+}
+
+func signalHasCurrentEvidence(signal Signal, span MessageSpan) bool {
+	for _, ref := range signal.Evidence {
+		if ref.Locator == EvidenceMessage && span.Contains(ref.Ordinal) {
+			return true
+		}
+	}
+	return false
+}
+
 func substantialSuccess(in Input) []EvidenceRef {
 	if in.Trajectory.Stop != session.StopEndTurn {
 		return nil

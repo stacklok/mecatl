@@ -71,7 +71,36 @@ same-name legacy CLI entry replaces the whole settings profile case-insensitivel
 ```yaml
 learning:
   mode: off # off | review | auto
+  sensitivity: balanced # conservative | balanced | eager
+  automatic:
+    cooldown: 10m
+    window: 1h
+    max_reflections: 8
+    max_tokens: 100000
+    max_reflections_per_principal: 4
+    max_tokens_per_principal: 50000
 ```
+
+Sensitivity thresholds are conservative=6, balanced=4, and eager=3. The standard
+weights are repeated correction/trusted host contradiction=5, failure recovery=4,
+repeated stable tool sequence=3, and substantial success=2. Four model turns, five
+successful tool calls, and 12,000 run tokens each add one only when a base signal
+exists. Weighted admission accepts only a benign main-session `end_turn`. A genuine
+current principal prompt that explicitly asks to remember a fact or learn a procedure
+is hard admission on `end_turn`, `max_turns`, `max_tool_calls`, or `budget`: it bypasses
+the score, cooldown, and deprecated interval downsampler, but still consumes count and
+reserved-token budgets and coordinator capacity. Historical, tool, web, MCP, assistant,
+and repository text cannot hard-trigger. An unverifiable post-compaction current span
+fails closed.
+
+The automatic limits are sliding, process-local reservations. Zero for any maximum
+disables automatic reflection under that bound; cooldown zero disables only cooldown.
+The window must be 1m–24h. A reservation estimates the selected reflection model's
+bounded canonical input plus a 4096-token output cap and remains consumed after failure,
+timeout, or abstention. Queue-full does not consume it. Restart resets windows,
+cooldowns, and the 24-hour/1024-entry duplicate cache by design. There is no startup or
+shutdown catch-up. In a multi-replica deployment each replica owns a separate budget,
+so aggregate spend may be the configured limit multiplied by replica count.
 
 `review` signal-gates eligible clean completions into the process-wide reflection
 coordinator and durably stages valid proposals without changing memory. `auto` uses the same
@@ -81,8 +110,7 @@ sensitive, and unsupported material is not written. Procedures are first durably
 materialized and evaluated: review stages PASS/ABSTAIN and rejects FAIL; auto additionally
 activates only PASS. `off` performs no automatic procedure materialization; explicit drafts/imports
 remain inactive. `off` installs no automatic observer/started coordinator worker or eager proposal repository and makes no automatic reflection provider
-call. Explicit reflection remains bounded and synchronous, lazily initializes persistence, starts the dormant coordinator for that job, and uses the completed session's persisted provider/model. A project `.mecatl/settings.yaml` may only tighten the operator ceiling
-(`off < review < auto`). Explicit memory/user-model tools remain available in every mode.
+call. Authenticated explicit reflection remains bounded and synchronous, lazily initializes persistence, bypasses automatic admission/cooldown/budgets/recent-completed state, and uses the completed session's persisted provider/model; without genuine current-prompt promotion provenance its output remains stage-only. A project `.mecatl/settings.yaml` may only tighten the operator mode and sensitivity; its `automatic` subtree is warning-ignored/operator-only. Explicit memory/user-model tools remain available in every mode.
 The proposal store defaults to a `reflections/` directory beside the conventional or configured
 user-model store; in off mode that directory/flock is not created until the first explicit reflection or proposal operation.
 

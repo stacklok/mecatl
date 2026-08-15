@@ -220,7 +220,12 @@ It surfaces three ways:
   scope overrides these built-in floors.
 - **Staged reflection (`learning.mode`):** `off` is the default and attaches no
   automatic completion observer; explicit reflection remains available through its lazy path.
-  `review` reflects eligible clean completions and stages bounded, evidence-backed proposals
+  `review` and `auto` share the configurable threshold admission policy: balanced is the
+  default (conservative/balanced/eager thresholds 6/4/3), and process-local cooldown/count/token
+  limits are configured under `learning.automatic`. Genuine current principal remember/learn
+  requests are hard but still budgeted; historical/tool/web/MCP/assistant/repository text cannot
+  hard-trigger. Restart resets those process-local budgets and no shutdown catch-up runs.
+  `review` reflects admitted main-session completions and stages bounded, evidence-backed proposals
   without writing memory. `auto` uses the same stage-first path and then promotes only
   conservative standard-policy-eligible, non-conflicting facts. Evidence-backed procedures use
   the versioned learned-skill lifecycle: `review` evaluates and stages PASS/ABSTAIN (FAIL rejects),
@@ -239,7 +244,8 @@ It surfaces three ways:
   re-checks source ownership and evidence digests and exposes a bounded, redacted canonical
   preview before approval; changed, unavailable, and cross-owner evidence is not previewed or
   promotable. `--user-model-review` remains as a deprecated `auto` alias and
-  `--user-model-review-interval` still debounces admitted completions. Reflection never reopens
+  `--user-model-review-interval` is now only a deprecated post-threshold weighted downsampler
+  (`0`/`1` inert; hard triggers bypass). Reflection never reopens
   or re-runs the user's session.
 - **Scheduled consolidation:** `--user-model-consolidate-interval > 0` independently
   authorizes a process-wide `dream` consolidator over the cross-project `user/` namespace.

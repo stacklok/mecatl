@@ -101,6 +101,7 @@ type Converser interface {
 // mode and returns display-ready labels plus restart guidance. Policy ordering stays outside ui.
 type LearningSettings interface {
 	Advance() (fromLabel, toLabel, restart string, err error)
+	AdvanceSensitivity() (fromLabel, toLabel, restart string, err error)
 }
 
 // Deps are the ui's injected collaborators and presentation config. The ui
