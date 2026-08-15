@@ -657,6 +657,66 @@ func TestDragReSplicesAfterDeltaUsesFreshBase(t *testing.T) {
 	assertHighlightOnlyOnRow(t, m, wantRow)
 }
 
+// TestGestureInDirtyWindowDoesNotFlashBack covers the gap
+// TestDragReSplicesAfterDeltaUsesFreshBase deliberately leaves: that test always
+// pairs the streaming delta with its renderTickMsg flush, so selBase is already
+// refreshed before the next gesture. But a streamed delta only marks the view
+// DIRTY (the flush is deferred to the frame-cadence tick) — a mouse gesture that
+// lands in the window BETWEEN the delta and the tick would re-splice the STALE
+// selBase and SetContent it, reverting the viewport to the pre-delta conversation
+// (a visible "flash back" to an earlier state). snapshotSelection must re-capture
+// the base from the live conversation whenever the view is dirty, so the splice
+// always starts from current content. Here a delta lands in the dirty window
+// (viewDirty set, tick not yet fired) before the extending drag, and the post-drag
+// viewport must still carry the new token (not the pre-delta content).
+func TestGestureInDirtyWindowDoesNotFlashBack(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m.deps.NoAltScreen = false
+	m.deps.Clipboard = &fakeClipboard{}
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-dirty-window"},
+	)
+	// A settled multi-turn conversation that overflows the viewport.
+	for i := 0; i < 8; i++ {
+		m.conv.addUser("question " + strings.Repeat("x", 30))
+		m.conv.appendAssistant(strings.Repeat("answer line\n", 12))
+	}
+	m.phase = phaseRunning
+	m.stuck = true
+	m.refreshView()
+
+	top := convTopRow(m)
+	y := top + 5
+
+	// Anchor + extend a selection (non-empty, so it stays active).
+	m, _ = pressMouse(m, tea.MouseLeft, 10, y)
+	m, _ = motionMouse(m, 20, y)
+	if !m.sel.active || m.sel.empty() {
+		t.Fatal("press+drag should open a non-empty selection")
+	}
+
+	// A streaming delta lands in the dirty window: the conversation advances and the
+	// view is marked dirty, but the frame-cadence render tick has NOT fired yet (so
+	// selBase has not been refreshed by refreshView). Appending directly + setting
+	// viewDirty is exactly what the AssistantDeltaMsg reducer does (appendAssistant +
+	// markDirty) minus the tick arm.
+	m.conv.appendAssistant("IN-FLIGHT DELTA TOKEN\n")
+	m.viewDirty = true
+
+	// DRAG again INSIDE the dirty window: snapshotSelection must re-capture the fresh
+	// base (grown by the delta) rather than re-splice the stale pre-delta one.
+	m, _ = motionMouse(m, 30, y)
+
+	// TEETH: the post-drag viewport must contain the in-flight token. A stale base
+	// re-splice would SetContent the pre-delta content, dropping the token (flash back).
+	// Assert on the ANSI-STRIPPED content: the markdown render interleaves style codes
+	// with the text, so a literal substring match on the raw output is unreliable.
+	if !strings.Contains(ansi.Strip(m.vp.GetContent()), "IN-FLIGHT DELTA TOKEN") {
+		t.Error("post-drag viewport lost the in-flight delta — snapshotSelection re-spliced a STALE base (flash back)")
+	}
+}
+
 // openSelectionSGR returns the full open SGR (fg+bg, up to and including the 'm')
 // the resolved "selection" theme style emits — the prefix that must immediately
 // precede a styled span in a styleSelection/StyleRanges render.

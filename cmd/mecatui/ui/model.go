@@ -792,12 +792,14 @@ type Model struct {
 	// selBase is the UNSTYLED content the active selection's highlight is spliced
 	// onto (styleSelection) — the conversation render WITHOUT any selection styling.
 	// It is captured the moment a selection becomes active (a press / word / line
-	// gesture) and refreshed by refreshView (a full conversation re-render). A pure
-	// GEOMETRY change (drag / edge-autoscroll, via snapshotSelection) re-splices THIS
-	// base in place rather than re-rendering the whole conversation — so the highlight
-	// follows the new span without a content rebuild and the viewport's scroll/line
-	// geometry is undisturbed (matching the old in-place highlight). Empty when no
-	// selection is active.
+	// gesture) and refreshed by refreshView (a full conversation re-render) — and by
+	// snapshotSelection itself when a gesture races a pending delta (the viewDirty
+	// guard, so a stale base is never spliced). A pure GEOMETRY change (drag /
+	// edge-autoscroll, via snapshotSelection) re-splices THIS base in place rather
+	// than re-rendering the whole conversation — so the highlight follows the new
+	// span without a content rebuild and the viewport's scroll/line geometry is
+	// undisturbed (matching the old in-place highlight). Empty when no selection is
+	// active.
 	selBase string
 
 	// gatewayNotice is the rendered idle footer-left notice fired ONCE per process

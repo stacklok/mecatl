@@ -3870,6 +3870,19 @@ func snapshotSelection(m *Model) {
 	// vpView cache must be invalidated so the next View() reflects the new content.
 	m.rend.invalidateVPView()
 	base := m.selBase
+	// selBase is refreshed by refreshView, but a streamed delta only marks the view
+	// dirty (deferred to the frame-cadence tick) — it does NOT re-render. A gesture
+	// that lands in that dirty window (delta arrived, tick not yet fired) would
+	// otherwise re-splice the STALE base and SetContent it, reverting the viewport to
+	// the pre-delta conversation (a "flash back" to an earlier state). Re-capture the
+	// base from the LIVE conversation whenever it is dirty so the splice always starts
+	// from current content. This re-renders the conversation, but only on a gesture
+	// that races a pending delta — never on the streaming hot path (which has no
+	// active selection gesture between deltas).
+	if m.viewDirty {
+		base = m.rend.renderConversation(&m.conv, m.expandTools)
+		m.selBase = base
+	}
 	if base == "" {
 		// Defensive: no base captured (e.g. a test that set raw viewport content then
 		// pointed a selection at it without a press). Adopt the current viewport content
