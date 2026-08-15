@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/skillconformance"
+	"github.com/stacklok/mecatl/engine/adapter/skilllifecycle"
+	"github.com/stacklok/mecatl/engine/adapter/skillvalidation"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/skillstore"
@@ -48,6 +50,54 @@ func TestLazyStartupAndReopen(t *testing.T) {
 		t.Fatalf("reopen=%#v found=%v err=%v", got, found, err)
 	}
 }
+
+func TestSimilarStageHintSurvivesReopenAndRetryCannotAutoActivate(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "skills")
+	store, err := skillstore.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := learning.SkillDraftInput{
+		Partition: partition(), OwnerAgent: "agent-a",
+		Bundle:     bundle("reviews", "Inspect focused changes and report actionable findings before merging safely."),
+		Provenance: provenance("similar"),
+	}
+	candidate := skilllifecycle.Candidate{
+		Draft: input, Mode: learning.Review, Automatic: true,
+		Inventory: []learning.SkillInventoryItem{{Name: "review", AgentOwned: true, OwnerAgent: "agent-a", Bundle: bundle("review", "Inspect focused changes and report actionable findings before merging safely.")}},
+	}
+	pipeline := skilllifecycle.Pipeline{Repository: store, Validator: skillvalidation.Validator{}, Evaluator: passSkillEvaluator{}}
+	first, err := pipeline.Process(context.Background(), candidate)
+	if err != nil || first.State != learning.SkillStaged {
+		t.Fatalf("initial process=%+v err=%v", first, err)
+	}
+
+	reopened, err := skillstore.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := &countingSkillPublisher{}
+	pipeline.Repository, pipeline.Publisher = reopened, published
+	candidate.Mode = learning.Auto
+	second, err := pipeline.Process(context.Background(), candidate)
+	if err != nil || second.State != learning.SkillStaged || second.Published || published.calls != 0 {
+		t.Fatalf("retry=%+v publishes=%d err=%v", second, published.calls, err)
+	}
+	got, found, err := reopened.Get(context.Background(), partition(), "agent-a", second.SkillID, second.Version)
+	if err != nil || !found || got.Disposition != learning.ValidationSimilarStageHint || got.Provenance.ValidationDisposition != learning.ValidationSimilarStageHint {
+		t.Fatalf("reopened disposition=%q provenance=%q found=%v err=%v", got.Disposition, got.Provenance.ValidationDisposition, found, err)
+	}
+}
+
+type passSkillEvaluator struct{}
+
+func (passSkillEvaluator) Evaluate(context.Context, learning.SkillEvaluationRequest) (learning.SkillEvaluation, error) {
+	return learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"fixture"}}, nil
+}
+
+type countingSkillPublisher struct{ calls int }
+
+func (p *countingSkillPublisher) Publish(context.Context) error { p.calls++; return nil }
 
 func TestConcurrentInstancesCASAndNoLostCreate(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "skills")

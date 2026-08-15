@@ -178,7 +178,7 @@ func TestSkillsRequestEpochSurvivesCloseReopen(t *testing.T) {
 	if m.skills.requestID <= first {
 		t.Fatalf("reopened epoch=%d, first=%d", m.skills.requestID, first)
 	}
-	updated, handled := m.updateSkillsMsg(client.LearnedSkillsMsg{RequestID: first, Project: m.skills.project, Generation: 99, Skills: []client.LearnedSkill{{ID: "stale"}}})
+	updated, handled := m.updateSkillsMsg(client.LearnedSkillsMsg{RequestID: first, Project: m.skills.project, Generations: map[string]uint64{"": 99}, Skills: []client.LearnedSkill{{ID: "stale"}}})
 	if !handled {
 		t.Fatal("learned response was not handled")
 	}

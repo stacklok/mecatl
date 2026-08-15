@@ -48,11 +48,11 @@ type SkillChange struct {
 	InspectAvailable, UndoAvailable            bool
 }
 type LearnedSkillsMsg struct {
-	Skills     []LearnedSkill
-	Project    string
-	Generation uint64
-	RequestID  uint64
-	Err        error
+	Skills      []LearnedSkill
+	Project     string
+	Generations map[string]uint64
+	RequestID   uint64
+	Err         error
 }
 type LearnedSkillMsg struct {
 	Skill             *LearnedSkill
@@ -119,21 +119,21 @@ func (c *Client) ListLearnedSkills(ctx context.Context, project string) ([]Learn
 	return values, err
 }
 
-func (c *Client) ListLearnedSkillsPage(ctx context.Context, project string) ([]LearnedSkill, uint64, error) {
+func (c *Client) ListLearnedSkillsPage(ctx context.Context, project string) ([]LearnedSkill, map[string]uint64, error) {
 	projects := []string{""}
 	if project != "" {
 		projects = append(projects, project)
 	}
 	var out []LearnedSkill
-	var generation uint64
+	generations := make(map[string]uint64, len(projects))
 	for _, partition := range projects {
 		cursor := ""
 		for {
 			resp, err := c.svc.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: partition, Cursor: cursor, Limit: learning.MaxSkillPageSize})
 			if err != nil {
-				return nil, generation, err
+				return nil, generations, err
 			}
-			generation = max(generation, resp.GetGeneration())
+			generations[partition] = resp.GetGeneration()
 			for _, value := range resp.GetSkills() {
 				skill := mapLearnedSkill(value)
 				skill.Project, skill.Generation = resp.GetProject(), resp.GetGeneration()
@@ -145,7 +145,7 @@ func (c *Client) ListLearnedSkillsPage(ctx context.Context, project string) ([]L
 			cursor = resp.GetNextCursor()
 		}
 	}
-	return out, generation, nil
+	return out, generations, nil
 }
 func (c *Client) GetLearnedSkill(ctx context.Context, project, id, owner, version string) (LearnedSkill, error) {
 	resp, err := c.svc.GetLearnedSkill(ctx, &mecatlv1.GetLearnedSkillRequest{Project: project, Id: id, OwnerAgent: owner, Version: version})
@@ -243,21 +243,21 @@ func mapLearnedSkill(value *mecatlv1.LearnedSkillVersion) LearnedSkill {
 }
 
 type learnedSkillPager interface {
-	ListLearnedSkillsPage(context.Context, string) ([]LearnedSkill, uint64, error)
+	ListLearnedSkillsPage(context.Context, string) ([]LearnedSkill, map[string]uint64, error)
 }
 
 func ListLearnedSkillsCmd(ctx context.Context, c LearnedSkillClient, project string, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		if pager, ok := c.(learnedSkillPager); ok {
-			values, generation, err := pager.ListLearnedSkillsPage(ctx, project)
-			return LearnedSkillsMsg{Skills: values, Project: project, Generation: generation, RequestID: requestID, Err: err}
+			values, generations, err := pager.ListLearnedSkillsPage(ctx, project)
+			return LearnedSkillsMsg{Skills: values, Project: project, Generations: generations, RequestID: requestID, Err: err}
 		}
 		values, err := c.ListLearnedSkills(ctx, project)
-		var generation uint64
+		generations := make(map[string]uint64, 2)
 		for _, value := range values {
-			generation = max(generation, value.Generation)
+			generations[value.Project] = max(generations[value.Project], value.Generation)
 		}
-		return LearnedSkillsMsg{Skills: values, Project: project, Generation: generation, RequestID: requestID, Err: err}
+		return LearnedSkillsMsg{Skills: values, Project: project, Generations: generations, RequestID: requestID, Err: err}
 	}
 }
 func GetLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill, requestID uint64) tea.Cmd {

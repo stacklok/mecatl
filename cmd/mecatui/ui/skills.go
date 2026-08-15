@@ -40,20 +40,20 @@ const skillsBodyLines = 14
 // value-copy semantics hold. scroll is the 0-based index of the first visible
 // rendered row (clamped in the key handlers, reset on each RPC result).
 type skillsState struct {
-	view       skillsView
-	loading    bool  // the ListSkills RPC is in flight
-	err        error // the ListSkills error, rendered distinctly (nil on success)
-	skills     []client.Skill
-	filtered   []client.Skill  // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
-	filter     textinput.Model // the type-to-filter input; focused while the panel is open
-	scroll     int             // first visible rendered body row (clamped in the key handlers)
-	learned    []client.LearnedSkill
-	cursor     int
-	detail     *client.LearnedSkill
-	diff       string
-	project    string
-	generation uint64
-	requestID  uint64
+	view        skillsView
+	loading     bool  // the ListSkills RPC is in flight
+	err         error // the ListSkills error, rendered distinctly (nil on success)
+	skills      []client.Skill
+	filtered    []client.Skill  // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
+	filter      textinput.Model // the type-to-filter input; focused while the panel is open
+	scroll      int             // first visible rendered body row (clamped in the key handlers)
+	learned     []client.LearnedSkill
+	cursor      int
+	detail      *client.LearnedSkill
+	diff        string
+	project     string
+	generations map[string]uint64 // independent publication/catalog epoch per global/project partition
+	requestID   uint64
 }
 
 // openSkills opens the inventory panel and fires the ListSkills RPC. Only
@@ -241,6 +241,14 @@ func (m Model) syncSkillsFilter() Model {
 	return m
 }
 
+func cloneSkillGenerations(in map[string]uint64) map[string]uint64 {
+	out := make(map[string]uint64, len(in))
+	for partition, generation := range in {
+		out[partition] = generation
+	}
+	return out
+}
+
 // updateSkillsMsg reduces a client.SkillsMsg into the overlay state. It fires no
 // follow-up command (the panel is a single-shot read), so it returns only the
 // model + handled flag; handled=false for any other message so Update can fall
@@ -272,21 +280,29 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 		return m, true
 	}
 	if learned, ok := msg.(client.LearnedSkillsMsg); ok {
-		if learned.RequestID != m.skills.requestID || learned.Project != m.skills.project || learned.Generation < m.skills.generation {
+		if learned.RequestID != m.skills.requestID || learned.Project != m.skills.project {
 			return m, true
+		}
+		for partition, generation := range learned.Generations {
+			if generation < m.skills.generations[partition] {
+				return m, true
+			}
 		}
 		if learned.Err != nil {
 			m.skills.err = learned.Err
 		} else {
 			m.skills.learned = learned.Skills
 			m.skills.cursor = 0
-			m.skills.generation = learned.Generation
+			m.skills.generations = cloneSkillGenerations(learned.Generations)
 			m.skills.err = nil
 		}
 		return m, true
 	}
 	if detail, ok := msg.(client.LearnedSkillMsg); ok {
-		if detail.RequestID != m.skills.requestID || detail.Generation < m.skills.generation || m.skills.detail != nil && (detail.Project != m.skills.detail.Project || detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedVersion != m.skills.detail.Version) {
+		if detail.RequestID != m.skills.requestID || detail.Generation < m.skills.generations[detail.Project] || m.skills.detail != nil && (detail.Project != m.skills.detail.Project || detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedVersion != m.skills.detail.Version) {
+			return m, true
+		}
+		if detail.Skill != nil && (detail.Skill.Project != detail.Project || detail.Skill.ID != detail.SelectedSkillID || detail.Skill.Version != detail.SelectedVersion) {
 			return m, true
 		}
 		if detail.Err != nil {
@@ -299,7 +315,8 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 		if detail.Skill != nil {
 			value := *detail.Skill
 			m.skills.detail, m.skills.view = &value, skillsDetail
-			m.skills.generation = max(m.skills.generation, detail.Generation)
+			m.skills.generations = cloneSkillGenerations(m.skills.generations)
+			m.skills.generations[detail.Project] = detail.Generation
 			if detail.PublicationError == "" {
 				m.skills.err = nil
 			}

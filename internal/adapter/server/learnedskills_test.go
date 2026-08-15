@@ -47,6 +47,59 @@ func TestLearnedSkillAPIIsPartitionedCASAndPublishes(t *testing.T) {
 	}
 }
 
+func TestLearnedSkillRollbackExternalCollisionFailsBeforeDurableMutation(t *testing.T) {
+	repository := memskill.New()
+	ctx := context.Background()
+	partition := learning.SkillPartition{Principal: reflectionPrincipal(nil)}
+	first := createActiveLearnedSkill(t, repository, partition, "protected", "first")
+	second := createActiveLearnedSkill(t, repository, partition, "protected", "second")
+	first, _, err := repository.Get(ctx, partition, "agent", first.ID, first.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{cfg: Config{
+		LearnedSkills:             repository,
+		LearnedSkillNameAvailable: func(string) bool { return false },
+		SkillActionAvailable:      func(learning.SkillPartition, string) (bool, string) { return true, "" },
+	}}
+	_, err = svc.RollbackLearnedSkill(ctx, &mecatlv1.RollbackLearnedSkillRequest{
+		OwnerAgent: "agent", Id: string(second.ID), TargetVersion: string(first.Version), ExpectedRevision: string(second.Revision),
+	})
+	if !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("rollback collision err=%v", err)
+	}
+	firstAfter, _, getErr := repository.Get(ctx, partition, "agent", first.ID, first.Version)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	secondAfter, _, getErr := repository.Get(ctx, partition, "agent", second.ID, second.Version)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if firstAfter.State != learning.SkillArchived || secondAfter.State != learning.SkillActive || firstAfter.Revision != first.Revision || secondAfter.Revision != second.Revision {
+		t.Fatalf("collision mutated repository: first=%+v second=%+v", firstAfter, secondAfter)
+	}
+}
+
+func createActiveLearnedSkill(t *testing.T, repository learning.SkillRepository, partition learning.SkillPartition, name, body string) learning.SkillVersion {
+	t.Helper()
+	ctx := context.Background()
+	value, err := repository.CreateDraft(ctx, partition, "agent", learning.SkillBundle{Name: name, Description: "Protected", Body: body}, learning.SkillProvenance{Origin: learning.SkillProvenanceLegacyModel})
+	if err == nil {
+		value, err = repository.RecordEvaluation(ctx, partition, "agent", value.ID, value.Version, value.Revision, learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"f"}, At: time.Now()})
+	}
+	if err == nil {
+		value, err = repository.Stage(ctx, partition, "agent", value.ID, value.Version, value.Revision)
+	}
+	if err == nil {
+		value, err = repository.Activate(ctx, partition, "agent", value.ID, value.Version, value.Revision)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
 func TestDecodeLearnedSkillMutationIsStrictAndBounded(t *testing.T) {
 	for _, body := range []string{
 		`{"owner_agent":"a","owner_agent":"b"}`,

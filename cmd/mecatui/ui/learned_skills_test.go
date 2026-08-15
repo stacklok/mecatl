@@ -32,20 +32,50 @@ func TestLearnedSkillChangeReceiptSetsNonModalStatus(t *testing.T) {
 	}
 }
 
-func TestLearnedSkillResponsesUseRowPartitionAndRequestEpoch(t *testing.T) {
-	m := Model{skills: skillsState{view: skillsPanel, project: "/project", generation: 4, requestID: 9}}
-	global := client.LearnedSkill{ID: "global", Version: "v1", Project: "", Generation: 4}
-	updated, handled := m.updateSkillsMsg(client.LearnedSkillMsg{Skill: &global, Project: "", Generation: 4, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 9})
+func TestLearnedSkillResponsesUsePartitionEpochAndRowVersion(t *testing.T) {
+	m := Model{skills: skillsState{view: skillsPanel, project: "/project", requestID: 9}}
+	global := client.LearnedSkill{ID: "global", Version: "v1", Revision: "r1", Project: "", Generation: 4}
+	project := client.LearnedSkill{ID: "project", Version: "v2", Revision: "r2", Project: "/project", Generation: 5}
+	updated, handled := m.updateSkillsMsg(client.LearnedSkillsMsg{
+		Skills: []client.LearnedSkill{global, project}, Project: "/project",
+		Generations: map[string]uint64{"": 4, "/project": 5}, RequestID: 9,
+	})
 	got := updated.(Model)
-	if !handled || got.skills.detail == nil || got.skills.detail.Project != "" || got.skills.detail.ID != "global" {
-		t.Fatalf("global row did not open in its own partition: %#v", got.skills.detail)
+	if !handled || got.skills.generations[""] != 4 || got.skills.generations["/project"] != 5 {
+		t.Fatalf("partition generations not retained: %#v", got.skills.generations)
 	}
 
-	project := client.LearnedSkill{ID: "project", Version: "v2", Project: "/project", Generation: 5}
-	updated, _ = got.updateSkillsMsg(client.LearnedSkillMsg{Skill: &project, Project: "/project", Generation: 5, SelectedSkillID: "project", SelectedVersion: "v2", RequestID: 8})
+	// Opening the global row at generation 4 remains valid even though the project
+	// partition is already at 5. A single max epoch incorrectly dropped this.
+	got.skills.requestID = 10
+	updated, handled = got.updateSkillsMsg(client.LearnedSkillMsg{Skill: &global, Project: "", Generation: 4, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 10})
 	got = updated.(Model)
-	if got.skills.detail.ID != "global" {
-		t.Fatalf("late response replaced current detail: %#v", got.skills.detail)
+	if !handled || got.skills.detail == nil || got.skills.detail.ID != "global" {
+		t.Fatalf("valid lower-generation global row did not open: %#v", got.skills.detail)
+	}
+
+	mutated := global
+	mutated.Revision, mutated.Generation = "r3", 5
+	got.skills.requestID = 11
+	updated, _ = got.updateSkillsMsg(client.LearnedSkillMsg{Skill: &mutated, Project: "", Generation: 5, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 11})
+	got = updated.(Model)
+	if got.skills.detail.Revision != "r3" || got.skills.generations[""] != 5 || got.skills.generations["/project"] != 5 {
+		t.Fatalf("partition mutation not accepted independently: detail=%#v generations=%v", got.skills.detail, got.skills.generations)
+	}
+
+	stale := global
+	stale.Revision = "stale"
+	updated, _ = got.updateSkillsMsg(client.LearnedSkillMsg{Skill: &stale, Project: "", Generation: 4, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 11})
+	got = updated.(Model)
+	if got.skills.detail.Revision != "r3" {
+		t.Fatalf("stale partition response replaced detail: %#v", got.skills.detail)
+	}
+
+	wrongRow := mutated
+	wrongRow.ID = "other"
+	updated, _ = got.updateSkillsMsg(client.LearnedSkillMsg{Skill: &wrongRow, Project: "", Generation: 6, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 11})
+	if updated.(Model).skills.detail.Revision != "r3" {
+		t.Fatal("mismatched response row replaced selected detail")
 	}
 }
 

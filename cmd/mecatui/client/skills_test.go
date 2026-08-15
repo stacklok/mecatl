@@ -26,9 +26,17 @@ func (f *pagingSkillsClient) ListLearnedSkills(_ context.Context, in *mecatlv1.L
 		for i := range rows {
 			rows[i] = &mecatlv1.LearnedSkillVersion{Id: in.GetProject() + "first"}
 		}
-		return &mecatlv1.ListLearnedSkillsResponse{Skills: rows, NextCursor: "next", Project: in.GetProject(), Generation: 9}, nil
+		generation := uint64(4)
+		if in.GetProject() != "" {
+			generation = 5
+		}
+		return &mecatlv1.ListLearnedSkillsResponse{Skills: rows, NextCursor: "next", Project: in.GetProject(), Generation: generation}, nil
 	}
-	return &mecatlv1.ListLearnedSkillsResponse{Skills: []*mecatlv1.LearnedSkillVersion{{Id: in.GetProject() + "last"}}, Project: in.GetProject(), Generation: 9}, nil
+	generation := uint64(4)
+	if in.GetProject() != "" {
+		generation = 5
+	}
+	return &mecatlv1.ListLearnedSkillsResponse{Skills: []*mecatlv1.LearnedSkillVersion{{Id: in.GetProject() + "last"}}, Project: in.GetProject(), Generation: generation}, nil
 }
 
 func (f *pagingSkillsClient) ListSkillChanges(_ context.Context, in *mecatlv1.ListSkillChangesRequest, _ ...grpc.CallOption) (*mecatlv1.ListSkillChangesResponse, error) {
@@ -45,9 +53,9 @@ func (f *pagingSkillsClient) ListSkillChanges(_ context.Context, in *mecatlv1.Li
 func TestLearnedSkillsAndChangesExhaustGlobalAndProjectPages(t *testing.T) {
 	fake := &pagingSkillsClient{}
 	cl := newFakeClient(fake)
-	skills, generation, err := cl.ListLearnedSkillsPage(context.Background(), "/project")
-	if err != nil || len(skills) != 102 || generation != 9 {
-		t.Fatalf("skills=%d generation=%d err=%v", len(skills), generation, err)
+	skills, generations, err := cl.ListLearnedSkillsPage(context.Background(), "/project")
+	if err != nil || len(skills) != 102 || generations[""] != 4 || generations["/project"] != 5 {
+		t.Fatalf("skills=%d generations=%v err=%v", len(skills), generations, err)
 	}
 	changes, err := cl.ListSkillChanges(context.Background(), "/project")
 	if err != nil || len(changes) != 4 {
