@@ -3652,7 +3652,7 @@ the old exported `UserModelReviewer`, `NewUserModelObserver`, and `Review` remai
 standard Build no longer uses their direct-writing child engine. Dream and explicit memory tools remain
 independent CAS writers. The shipped gRPC/HTTP surface provides synchronous explicit reflection plus caller-partitioned proposal list/detail/decision/undo, and mecatui provides windowed review with exact canonical value/scope/description and stale-CAS refresh.
 
-**Configurable learning trigger (ADR 0112):** `engine/learning/admission.go`
+**Configurable learning trigger (ADR 0114):** `engine/learning/admission.go`
 (`ThresholdPolicy`) replaces the old `len(signals)` gate with a pure closed decision over the
 session kind, stop, verified current `MessageSpan`, standard weighted signals, counters, and run
 usage. `engine/agent/loop.go` (`observeCompletion`) snapshots Kind/Counters and locates the accepted

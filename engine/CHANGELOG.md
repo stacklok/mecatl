@@ -13,7 +13,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Configurable learning-trigger policy ([ADR 0112](../docs/adr/0112-configurable-learning-trigger-policy.md))** —
+- **Configurable learning-trigger policy ([ADR 0114](../docs/adr/0114-configurable-learning-trigger-policy.md))** —
   `learning` adds strict sensitivity, scoped signal detection, closed admission
   request/decision/class/reason contracts, pure threshold/always/never policies,
   host-requested provenance, message spans, content-free activity metrics, and
@@ -729,7 +729,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
-- **Learning trajectory current-run metadata ([ADR 0112](../docs/adr/0112-configurable-learning-trigger-policy.md))** —
+- **Learning trajectory current-run metadata ([ADR 0114](../docs/adr/0114-configurable-learning-trigger-policy.md))** —
   `learning.Trajectory` adds `Kind`, `Counters`, and `Current`. The fields are
   additive for keyed literals but breaking for external unkeyed literals; classified
   Changed for a pre-v1 minor bump.

@@ -709,7 +709,7 @@ revisions, routes procedure candidates into the evaluated learned-skill pipeline
 an optional proposal id, allowing a crashed promoting claim to reconcile without a duplicate write.
 Batches may partially promote by design because each candidate is its own atomic convergence unit.
 Standard composition applies `learning.ThresholdPolicy` before one bounded Build-owned
-coordinator ([ADR 0112](adr/0112-configurable-learning-trigger-policy.md)). Standard weights are
+coordinator ([ADR 0114](adr/0114-configurable-learning-trigger-policy.md)). Standard weights are
 5/5/4/3/2 for repeated correction, trusted host contradiction, failure recovery, repeated stable
 tool sequence, and substantial success; modifiers never admit alone. Conservative/balanced/eager
 thresholds are 6/4/3. Detection is scoped to a verified current-run message span. Weighted work is

@@ -1,4 +1,4 @@
-# ADR 0112 — Configurable learning-trigger policy
+# ADR 0114 — Configurable learning-trigger policy
 
 - Status: Accepted
 - Date: 2026-08-15
