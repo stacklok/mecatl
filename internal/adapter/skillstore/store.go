@@ -47,11 +47,12 @@ type manifest struct {
 // Store is a durable learning.SkillRepository. New is lazy: an empty repository
 // does not create its directory until the first mutation.
 type Store struct {
-	mu   sync.Mutex
-	dir  string
-	path string
-	lock *flock.Flock
-	now  func() time.Time
+	mu    sync.Mutex
+	dir   string
+	path  string
+	lock  *flock.Flock
+	now   func() time.Time
+	fault func(string) error // test-only crash-boundary injection; nil in production
 }
 
 var _ learning.SkillRepository = (*Store)(nil)
@@ -361,7 +362,7 @@ func syncDir(dir string) error {
 	return closeErr
 }
 
-func atomicWrite(path string, mode os.FileMode, raw []byte) error {
+func (s *Store) atomicWrite(kind, path string, mode os.FileMode, raw []byte) error {
 	dir := filepath.Dir(path)
 	file, err := os.CreateTemp(dir, ".skillstore-*.tmp")
 	if err != nil {
@@ -373,6 +374,9 @@ func atomicWrite(path string, mode os.FileMode, raw []byte) error {
 		_, err = file.Write(raw)
 	}
 	if err == nil {
+		err = s.inject(kind + ".fsync")
+	}
+	if err == nil {
 		err = file.Sync()
 	}
 	closeErr := file.Close()
@@ -382,10 +386,23 @@ func atomicWrite(path string, mode os.FileMode, raw []byte) error {
 	if err != nil {
 		return err
 	}
+	if err = s.inject(kind + ".rename"); err != nil {
+		return err
+	}
 	if err = os.Rename(name, path); err != nil {
 		return err
 	}
+	if err = s.inject(kind + ".dirsync"); err != nil {
+		return err
+	}
 	return syncDir(dir)
+}
+
+func (s *Store) inject(step string) error {
+	if s.fault == nil {
+		return nil
+	}
+	return s.fault(step)
 }
 
 func (s *Store) ensureVersion(bundle learning.SkillBundle, version learning.VersionID) error {
@@ -424,7 +441,7 @@ func (s *Store) ensureVersion(bundle learning.SkillBundle, version learning.Vers
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return atomicWrite(path, 0o600, raw)
+	return s.atomicWrite("body", path, 0o600, raw)
 }
 
 func (s *Store) save(doc manifest) error {
@@ -438,7 +455,7 @@ func (s *Store) save(doc manifest) error {
 	if len(raw) > maxManifest {
 		return learning.ErrSkillLimit
 	}
-	if err = atomicWrite(s.path, 0o600, raw); err != nil {
+	if err = s.atomicWrite("manifest", s.path, 0o600, raw); err != nil {
 		return fmt.Errorf("skillstore: save manifest: %w", err)
 	}
 	return nil
