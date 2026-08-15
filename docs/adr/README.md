@@ -38,6 +38,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0111 — Read-only environment credential source and OAuth refresh posture](./0111-read-only-credential-source.md)
 - [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
+- [0114 — Pin MCP transport-error semantics that do not replay rejected calls](./0114-mcp-sdk-transport-error-semantics.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
@@ -120,6 +121,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0111 — Read-only environment credential source and OAuth refresh posture](./0111-read-only-credential-source.md)
 - [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
+- [0114 — Pin MCP transport-error semantics that do not replay rejected calls](./0114-mcp-sdk-transport-error-semantics.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

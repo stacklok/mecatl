@@ -81,7 +81,19 @@ A glob prefix like `mcp__github__*` matches all tools from the `github` server.
 
 ## Reconnect behavior
 
-A connection drop — the MCP server restarts, returns HTTP 404 "session not found", or closes the transport — does not take the server out for the rest of the run. The client reconnects automatically.
+A concrete connection drop — the MCP server restarts, returns a plain HTTP 404
+"session not found", closes the transport, reaches EOF, or refuses the connection —
+does not take the server out for the rest of the run. The client reconnects
+automatically. A server-declared call failure is different: structured JSON-RPC
+400/404 responses and HTTP 429/502/503/504 responses are surfaced once on the
+existing session and are **not replayed automatically**. This distinction prevents
+a potentially mutating tool call from running twice after its response is rejected.
+
+The root currently pins the official Go SDK to the exact unreleased revision
+`v1.7.1-0.20260813084956-64e454e35c23` for these transport, cancellation, and
+failed-connect lifecycle fixes. It will move to the first tagged release that is
+verified to contain this revision or an equivalent successor; a merely newer tag
+is not sufficient.
 
 The reconnect logic sits on the server object (not on individual tool wrappers), so all tool calls, resource reads, and prompt expansions share one retry path:
 
@@ -236,8 +248,11 @@ rotation; the login command deliberately cannot mutate it. ACP cannot provide OA
 or install/drive authorization, but after operator authorization ACP sessions may invoke the
 shared global OAuth-backed tools under ordinary permissions. OAuth is not available for
 client-supplied/inline/discovered MCP, and dynamic client registration is not yet
-supported. Broad interoperability still depends on upstream SDK metadata-profile gates.
-See the [configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md)
+supported. OAuth remains constrained to RFC 9728 metadata with one exact
+resource/authorization server, S256, and Basic-authenticated confidential clients.
+Repeated authorization rejection is bounded; invalid grants are not automatically
+reauthorized; dynamic client registration is not durable; and the caller still owns
+redirect/destination policy. See the [configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md)
 and [ADR 0113](https://github.com/stacklok/mecatl/blob/main/docs/adr/0113-operator-mcp-auth-profiles.md).
 
 ---

@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -30,25 +34,19 @@ var errServerClosed = errors.New("mcp: server closed")
 // to the clear message via isConnectionDrop.
 var errReconnectFailed = errors.New("mcp: server unavailable after reconnect")
 
-// connectionDropSignatures are the unexported SDK sentinel strings that surface
-// as a dropped session. The SDK's errSessionMissing ("session not found") is
-// unexported (streamable.go TODO: "should we expose this error value ... to the
-// user?"), so a string match is unavoidable. "connection closed" matches the
-// exported ErrConnectionClosed's message too (belt-and-suspenders; errors.Is is
-// the primary check). "client is closing" is the jsonrpc2 ErrClientClosing text
-// the SDK wraps into ErrConnectionClosed. "connection refused" is the dial
-// failure when the server endpoint is down (the session is effectively dead, so
-// a reconnect attempt is appropriate). "rejected by transport" is the SDK's
-// internal ErrRejected marker for a transient transport failure (a half-open /
-// dropped connection on the POST), and "EOF" is the raw TCP reset a hard-stopped
-// server yields on CI — both mean the session is unusable and a reconnect is
-// the right response. nil is never a drop.
+// connectionDropSignatures are concrete fallback strings for transport/session
+// loss emitted by older SDKs that did not expose a sentinel. They are consulted
+// only after typed network causes and after ruling out a structured JSON-RPC peer
+// response: peer-controlled response text can contain any of these signatures
+// and must never trigger replay. "rejected by transport" is deliberately
+// excluded because it also wraps per-call failures. A concrete legacy
+// EOF/refused signature nested beneath that wrapper still matches. nil is never a drop.
 var connectionDropSignatures = []string{
 	"session not found",
 	"client is closing",
 	"connection closed",
 	"connection refused",
-	"rejected by transport",
+	"http: server closed idle connection",
 	"EOF",
 }
 
@@ -65,6 +63,21 @@ func isConnectionDrop(err error) bool {
 	}
 	if errors.Is(err, mcpsdk.ErrSessionMissing) {
 		return true
+	}
+	// ErrRejected is itself a public jsonrpc.Error, and the SDK joins it with
+	// the concrete client.Do cause. Preserve genuine network loss using only
+	// typed causes before treating all remaining JSON-RPC errors as peer faults.
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// The SDK wraps structured peer responses with %w. This check must precede
+	// every text fallback because Error.Message is controlled by the peer and
+	// may deliberately resemble a transport or session-loss error.
+	var rpcErr *jsonrpc.Error
+	if errors.As(err, &rpcErr) {
+		return false
 	}
 	msg := err.Error()
 	for _, sig := range connectionDropSignatures {

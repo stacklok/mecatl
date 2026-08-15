@@ -19,7 +19,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936
 	github.com/itchyny/gojq v0.12.19
-	github.com/modelcontextprotocol/go-sdk v1.7.1-0.20260803115424-0d0cdbc943f3
+	github.com/modelcontextprotocol/go-sdk v1.7.1-0.20260813084956-64e454e35c23
 	github.com/onsi/ginkgo/v2 v2.30.0
 	github.com/onsi/gomega v1.41.0
 	github.com/openai/openai-go/v3 v3.50.0

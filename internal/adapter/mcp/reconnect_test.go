@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -365,6 +368,23 @@ func TestIsConnectionDropClassifier(t *testing.T) {
 			true,
 		},
 		{
+			"wrapped ErrSessionMissing",
+			fmt.Errorf("%w: stale session", mcpsdk.ErrSessionMissing),
+			true,
+		},
+		{
+			"wrapped JSON-RPC error containing legacy session signature",
+			fmt.Errorf("transport rejected response: %w", &jsonrpc.Error{Code: -32000, Message: "session not found"}),
+			false,
+		},
+		{
+			"wrapped JSON-RPC error containing legacy transport signatures",
+			fmt.Errorf("outer connection closed: %w", &jsonrpc.Error{Code: -32000, Message: "client is closing: connection refused: EOF"}),
+			false,
+		},
+		{"typed EOF transport cause", fmt.Errorf("request failed: %w", io.EOF), true},
+		{"typed refused transport cause", fmt.Errorf("dial failed: %w", syscall.ECONNREFUSED), true},
+		{
 			"session not found string",
 			errors.New("failed to reconnect (session ID: abc): session not found"),
 			true,
@@ -372,8 +392,15 @@ func TestIsConnectionDropClassifier(t *testing.T) {
 		{"client is closing string", errors.New("client is closing"), true},
 		{"connection closed string", errors.New("connection closed by remote"), true},
 		{"connection refused string", errors.New("dial tcp: connection refused"), true},
+		{"closed idle HTTP connection", errors.New("Post http://x/mcp: http: server closed idle connection"), true},
 		{
-			"rejected by transport (SDK transient, CI EOF)",
+			"wrapped JSON-RPC error containing closed idle HTTP connection",
+			fmt.Errorf("transport rejected response: %w", &jsonrpc.Error{Code: -32000, Message: "http: server closed idle connection"}),
+			false,
+		},
+		{"generic rejected by transport", errors.New(`calling "tools/call": rejected by transport`), false},
+		{
+			"rejected wrapper with EOF",
 			errors.New(`calling "tools/call": sending "tools/call": rejected by transport: Post "http://127.0.0.1:34239/mcp": EOF`),
 			true,
 		},
@@ -441,14 +468,14 @@ func TestCallAfterCloseDoesNotDial(t *testing.T) {
 // ---- Fix 2: genuinely-down server surfaces a clear error ----
 
 // TestPermanentlyDownServerDialFailureClearError: when the server endpoint is
-// GENUINELY down (listener closed → "connection refused" dial failure, NOT a
-// 404 "session not found" drop), an echo call still surfaces the clear
-// "unavailable after reconnect" message — never the raw "connection refused" /
-// "dial tcp" transport string. The path: connect (live session), restart (drop
-// the live session), then stop (close the listener so the reconnect DIAL fails
-// with connection refused). The first post-restart call classifies as a drop
-// (the live session is dead) → triggers reconnect → reconnect dial fails →
-// errReconnectFailed → tool.go maps to the clear message.
+// GENUINELY down (listener closed → a concrete local Go transport failure such
+// as "connection refused", EOF, or "http: server closed idle connection", NOT
+// a 404 "session not found" drop), an echo call still surfaces the clear
+// "unavailable after reconnect" message — never the raw transport text. The
+// path: connect (live session), restart (drop the live session), then stop (close
+// the listener so the reconnect DIAL fails). The first post-restart call
+// classifies the local transport failure as a drop → triggers reconnect → the
+// reconnect dial fails → errReconnectFailed → tool.go maps to the clear message.
 func TestPermanentlyDownServerDialFailureClearError(t *testing.T) {
 	diag := &recordingDiag{}
 	rs := newRestartableServer(t)
@@ -470,10 +497,16 @@ func TestPermanentlyDownServerDialFailureClearError(t *testing.T) {
 		t.Errorf("error content = %q, want it to contain \"unavailable after reconnect\"", res.Content)
 	}
 	// The raw transport strings must NOT leak to the model-facing message.
-	for _, leak := range []string{"connection refused", "dial tcp", "session not found"} {
+	for _, leak := range []string{"connection refused", "dial tcp", "session not found", "server closed idle connection"} {
 		if strings.Contains(res.Content, leak) {
 			t.Errorf("error content leaked raw transport string %q: %s", leak, res.Content)
 		}
+	}
+	if got := diag.count("mcp server reconnecting"); got != 1 {
+		t.Errorf("reconnecting lines = %d, want 1 (the local transport failure must trigger reconnect)", got)
+	}
+	if got := diag.count("mcp server reconnect failed"); got != 1 {
+		t.Errorf("reconnect-failed lines = %d, want 1", got)
 	}
 }
 

@@ -27,10 +27,14 @@ transport is **streaming-HTTP only** (the project's hard constraint): the
 stdio/command transport is never used, so no MCP server is ever `os/exec`-spawned.
 `mcp.Connect` / `mcp.NewManager` dial the configured servers, and the discovered
 tools are registered into the catalog **namespaced** `mcp__<server>__<tool>` so a
-remote tool can never collide with or shadow a built-in. A dropped session (server
-restart / 404 / closed transport) is re-established transparently with a single
-bounded reconnect attempt per call, serialized under a mutex — see
-[ADR 0056](../adr/0056-mcp-client-reconnect.md). The client also holds the
+remote tool can never collide with or shadow a built-in. Concrete session loss
+(server restart, plain missing-session 404, closed transport, EOF, or refused
+connection) is re-established transparently with a single bounded reconnect
+attempt per call, serialized under a mutex. A structured JSON-RPC 400/404 or HTTP
+429/502/503/504 is instead a one-call failure: the live session is retained and
+the operation is never replayed automatically. See
+[ADR 0056](../adr/0056-mcp-client-reconnect.md) and
+[ADR 0114](../adr/0114-mcp-sdk-transport-error-semantics.md). The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
 `notifications/{tools,prompts,resources}/list_changed` invalidate the cached
 snapshots (lazily re-listed on the next read); live catalog refresh is

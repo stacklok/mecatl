@@ -463,6 +463,7 @@ func TestConnectCancellationDuringSDKHandshakeLeavesNoLiveOperation(t *testing.T
 			})
 			next := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return sdkServer }, nil)
 			started := make(chan struct{})
+			activityChanged := make(chan struct{}, 1)
 			var signaled, active atomic.Int32
 			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost {
@@ -477,7 +478,13 @@ func TestConnectCancellationDuringSDKHandshakeLeavesNoLiveOperation(t *testing.T
 					}
 					if json.Unmarshal(body, &message) == nil && message.Method == blockedMethod {
 						active.Add(1)
-						defer active.Add(-1)
+						defer func() {
+							active.Add(-1)
+							select {
+							case activityChanged <- struct{}{}:
+							default:
+							}
+						}()
 						if signaled.CompareAndSwap(0, 1) {
 							close(started)
 						}
@@ -514,8 +521,16 @@ func TestConnectCancellationDuringSDKHandshakeLeavesNoLiveOperation(t *testing.T
 			case <-time.After(time.Second):
 				t.Fatal("Connect did not return promptly after cancellation")
 			}
-			if active.Load() != 0 {
-				t.Fatalf("%d SDK handshake operations remained live", active.Load())
+			drainTimer := time.NewTimer(time.Second)
+			defer drainTimer.Stop()
+			for active.Load() != 0 {
+				select {
+				case <-activityChanged:
+				case <-drainTimer.C:
+					if n := active.Load(); n != 0 {
+						t.Fatalf("%d SDK handshake operations remained live", n)
+					}
+				}
 			}
 		})
 	}
