@@ -8,6 +8,7 @@
     ifacemethod func (ProposalRepository).StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)
     ifacemethod func (Reflector).Reflect(context.Context, Input) (Outcome, error)
     ifacemethod func (SkillEvaluator).Evaluate(context.Context, SkillEvaluationRequest) (SkillEvaluation, error)
+    ifacemethod func (SkillReceiptRepository).ListSkillReceipts(context.Context, SkillPartition, SkillReceiptList) (SkillReceiptPage, error)
     ifacemethod func (SkillRepository).Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     ifacemethod func (SkillRepository).Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     ifacemethod func (SkillRepository).CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error)
@@ -66,6 +67,7 @@ const MaxSkillFixtures untyped int = 32
 const MaxSkillOwnerBytes untyped int = 256
 const MaxSkillPageSize untyped int = 200
 const MaxSkillProposals untyped int = 16
+const MaxSkillReceiptHistory untyped int = 32768
 const MaxSkillReceipts untyped int = 32
 const MaxSkillSignals untyped int = 16
 const MaxSkillVersionsPerSkill untyped int = 32
@@ -171,6 +173,10 @@ type SkillPartition struct{Principal string "json:\"principal\""; Project string
 type SkillProvenance struct{Origin SkillProvenanceOrigin "json:\"origin,omitempty\""; ValidationDisposition ValidationDisposition "json:\"validation_disposition,omitempty\""; ProposalIDs []ProposalID "json:\"proposal_ids,omitempty\""; EvidenceRefs []EvidenceRef "json:\"evidence_refs,omitempty\""; Signals []Signal "json:\"signals,omitempty\""}
 type SkillProvenanceOrigin string
 type SkillReceipt struct{Operation string "json:\"operation\""; From SkillState "json:\"from\""; To SkillState "json:\"to\""; Version VersionID "json:\"version\""; At time.Time "json:\"at\""}
+type SkillReceiptList struct{After string; Limit int}
+type SkillReceiptPage struct{Records []SkillReceiptRecord; Next string}
+type SkillReceiptRecord struct{ID string; SkillID SkillID; Name string; OwnerAgent string; Version VersionID; Receipt SkillReceipt}
+type SkillReceiptRepository interface{ListSkillReceipts(context.Context, SkillPartition, SkillReceiptList) (SkillReceiptPage, error)}
 type SkillRepository interface{Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error); Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error); List(context.Context, SkillPartition, SkillList) (SkillPage, error); RecordEvaluation(context.Context, SkillPartition, string, SkillID, VersionID, Revision, SkillEvaluation) (SkillVersion, error); Reject(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error); Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
 type SkillState string
 type SkillValidation struct{Disposition ValidationDisposition; Duplicate *SkillInventoryItem; Similar []SkillInventoryItem}
@@ -192,6 +198,7 @@ var ErrProposalNotFound error
 var ErrProposalTransition error
 var ErrProposalVersionConflict error
 var ErrSkillConflict error
+var ErrSkillCursor error
 var ErrSkillLimit error
 var ErrSkillNameCollision error
 var ErrSkillNotFound error

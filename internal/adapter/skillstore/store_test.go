@@ -203,6 +203,75 @@ func TestRejectsSymlinksAndPathInputs(t *testing.T) {
 	}
 }
 
+func TestDurableReceiptIndexPagesHistoricalVersionsAfterReopen(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "skills")
+	store, err := skillstore.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	first := create(t, store, "history", "First body.", "first")
+	first, err = store.RecordEvaluation(ctx, partition(), "agent-a", first.ID, first.Version, first.Revision, evaluation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err = store.Stage(ctx, partition(), "agent-a", first.ID, first.Version, first.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Activate(ctx, partition(), "agent-a", first.ID, first.Version, first.Revision); err != nil {
+		t.Fatal(err)
+	}
+	second := create(t, store, "history", "Second body.", "second")
+	second, err = store.RecordEvaluation(ctx, partition(), "agent-a", second.ID, second.Version, second.Revision, evaluation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = store.Stage(ctx, partition(), "agent-a", second.ID, second.Version, second.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Activate(ctx, partition(), "agent-a", second.ID, second.Version, second.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := skillstore.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []learning.SkillReceiptRecord
+	cursor := ""
+	for {
+		page, pageErr := reopened.ListSkillReceipts(ctx, partition(), learning.SkillReceiptList{After: cursor, Limit: 2})
+		if pageErr != nil {
+			t.Fatal(pageErr)
+		}
+		if len(page.Records) > 2 {
+			t.Fatalf("oversized page: %d", len(page.Records))
+		}
+		got = append(got, page.Records...)
+		if page.Next == "" {
+			break
+		}
+		cursor = page.Next
+	}
+	if len(got) != 7 {
+		t.Fatalf("receipts=%d, want 7: %#v", len(got), got)
+	}
+	seenFirst := false
+	for _, record := range got {
+		if record.Version == first.Version {
+			seenFirst = true
+		}
+	}
+	if !seenFirst {
+		t.Fatal("historical-version receipts were lost")
+	}
+	if _, err = reopened.ListSkillReceipts(ctx, partition(), learning.SkillReceiptList{After: "invalid", Limit: 2}); !errors.Is(err, learning.ErrSkillCursor) {
+		t.Fatalf("invalid cursor error=%v", err)
+	}
+}
+
 func partition() learning.SkillPartition {
 	return learning.SkillPartition{Principal: "issuer\x00subject", Project: "project"}
 }

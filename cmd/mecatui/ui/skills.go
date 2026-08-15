@@ -65,7 +65,8 @@ func (m Model) openSkills() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.ta.Blur() // overlay owns the keyboard while open
-	m.skills = skillsState{view: skillsPanel, loading: true, project: m.deps.Workspace, requestID: 1}
+	m.skillsEpoch++
+	m.skills = skillsState{view: skillsPanel, loading: true, project: m.deps.Workspace, requestID: m.skillsEpoch}
 	// Open with the filter FOCUSED so the user can type to narrow immediately (the
 	// /models picker's headline affordance, mirrored here as read-only narrowing —
 	// there is no cursor/enter/select on this inventory). The filtered slice is
@@ -136,17 +137,20 @@ func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 			action = "archive"
 		case "v":
 			if m.skills.detail.Supersedes != "" {
-				m.skills.requestID++
+				m.skillsEpoch++
+				m.skills.requestID = m.skillsEpoch
 				return m, client.DiffLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail, m.skills.requestID), true
 			}
 		case "r":
 			if m.skills.detail.Supersedes != "" {
-				m.skills.requestID++
+				m.skillsEpoch++
+				m.skills.requestID = m.skillsEpoch
 				return m, client.RollbackLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail, m.skills.requestID), true
 			}
 		}
 		if action != "" {
-			m.skills.requestID++
+			m.skillsEpoch++
+			m.skills.requestID = m.skillsEpoch
 			return m, client.MutateLearnedSkillCmd(m.deps.Ctx, lifecycle, action, *m.skills.detail, m.skills.requestID), true
 		}
 		return m, nil, true
@@ -157,7 +161,8 @@ func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		selected := m.skills.learned[min(m.skills.cursor, len(m.skills.learned)-1)]
-		m.skills.requestID++
+		m.skillsEpoch++
+		m.skills.requestID = m.skillsEpoch
 		return m, client.GetLearnedSkillCmd(m.deps.Ctx, lifecycle, selected, m.skills.requestID), true
 	}
 	switch {

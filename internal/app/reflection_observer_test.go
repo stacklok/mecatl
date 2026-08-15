@@ -184,7 +184,7 @@ func TestProcessReflectionOutcomeProcedurePipelineActivatesPass(t *testing.T) {
 	if err != nil || len(skillsPage.Versions) != 1 {
 		t.Fatalf("skills=%+v err=%v", skillsPage, err)
 	}
-	metas, _ := catalog.ListSkills(context.Background())
+	metas := catalog.View(learning.SkillPartition{Principal: "principal", Project: input.Trajectory.Workspace}).Metas
 	if len(metas) != 1 || metas[0].Name != "review-go-changes" {
 		t.Fatalf("live metas=%+v", metas)
 	}

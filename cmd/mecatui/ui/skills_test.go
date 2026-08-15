@@ -166,6 +166,27 @@ func TestSkillsEscClosesPanel(t *testing.T) {
 	}
 }
 
+func TestSkillsRequestEpochSurvivesCloseReopen(t *testing.T) {
+	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
+	opened, _ := m.openSkills()
+	m = opened.(Model)
+	first := m.skills.requestID
+	closed, _ := m.closeSkills()
+	m = closed.(Model)
+	reopened, _ := m.openSkills()
+	m = reopened.(Model)
+	if m.skills.requestID <= first {
+		t.Fatalf("reopened epoch=%d, first=%d", m.skills.requestID, first)
+	}
+	updated, handled := m.updateSkillsMsg(client.LearnedSkillsMsg{RequestID: first, Project: m.skills.project, Generation: 99, Skills: []client.LearnedSkill{{ID: "stale"}}})
+	if !handled {
+		t.Fatal("learned response was not handled")
+	}
+	if got := updated.(Model).skills.learned; len(got) != 0 {
+		t.Fatalf("delayed response replaced reopened state: %#v", got)
+	}
+}
+
 // TestSkillsErrorRendered asserts a ListSkills failure surfaces in the panel
 // rather than silently degrading.
 func TestSkillsErrorRendered(t *testing.T) {

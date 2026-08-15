@@ -115,24 +115,37 @@ type LearnedSkillClient interface {
 }
 
 func (c *Client) ListLearnedSkills(ctx context.Context, project string) ([]LearnedSkill, error) {
+	values, _, err := c.ListLearnedSkillsPage(ctx, project)
+	return values, err
+}
+
+func (c *Client) ListLearnedSkillsPage(ctx context.Context, project string) ([]LearnedSkill, uint64, error) {
 	projects := []string{""}
 	if project != "" {
 		projects = append(projects, project)
 	}
 	var out []LearnedSkill
+	var generation uint64
 	for _, partition := range projects {
-		resp, err := c.svc.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: partition, Limit: learning.DefaultSkillPageSize})
-		if err != nil {
-			return nil, err
-		}
-		for _, value := range resp.GetSkills() {
-			skill := mapLearnedSkill(value)
-			skill.Project = resp.GetProject()
-			skill.Generation = resp.GetGeneration()
-			out = append(out, skill)
+		cursor := ""
+		for {
+			resp, err := c.svc.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: partition, Cursor: cursor, Limit: learning.MaxSkillPageSize})
+			if err != nil {
+				return nil, generation, err
+			}
+			generation = max(generation, resp.GetGeneration())
+			for _, value := range resp.GetSkills() {
+				skill := mapLearnedSkill(value)
+				skill.Project, skill.Generation = resp.GetProject(), resp.GetGeneration()
+				out = append(out, skill)
+			}
+			if resp.GetNextCursor() == "" {
+				break
+			}
+			cursor = resp.GetNextCursor()
 		}
 	}
-	return out, nil
+	return out, generation, nil
 }
 func (c *Client) GetLearnedSkill(ctx context.Context, project, id, owner, version string) (LearnedSkill, error) {
 	resp, err := c.svc.GetLearnedSkill(ctx, &mecatlv1.GetLearnedSkillRequest{Project: project, Id: id, OwnerAgent: owner, Version: version})
@@ -192,12 +205,19 @@ func (c *Client) ListSkillChanges(ctx context.Context, project string) ([]SkillC
 	}
 	var out []SkillChange
 	for _, partition := range projects {
-		resp, err := c.svc.ListSkillChanges(ctx, &mecatlv1.ListSkillChangesRequest{Project: partition, Limit: learning.DefaultSkillPageSize})
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range resp.GetChanges() {
-			out = append(out, mapSkillChange(r))
+		cursor := ""
+		for {
+			resp, err := c.svc.ListSkillChanges(ctx, &mecatlv1.ListSkillChangesRequest{Project: partition, Cursor: cursor, Limit: learning.MaxSkillPageSize})
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range resp.GetChanges() {
+				out = append(out, mapSkillChange(r))
+			}
+			if resp.GetNextCursor() == "" {
+				break
+			}
+			cursor = resp.GetNextCursor()
 		}
 	}
 	return out, nil
@@ -221,8 +241,17 @@ func mapLearnedSkill(value *mecatlv1.LearnedSkillVersion) LearnedSkill {
 	}
 	return out
 }
+
+type learnedSkillPager interface {
+	ListLearnedSkillsPage(context.Context, string) ([]LearnedSkill, uint64, error)
+}
+
 func ListLearnedSkillsCmd(ctx context.Context, c LearnedSkillClient, project string, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
+		if pager, ok := c.(learnedSkillPager); ok {
+			values, generation, err := pager.ListLearnedSkillsPage(ctx, project)
+			return LearnedSkillsMsg{Skills: values, Project: project, Generation: generation, RequestID: requestID, Err: err}
+		}
 		values, err := c.ListLearnedSkills(ctx, project)
 		var generation uint64
 		for _, value := range values {

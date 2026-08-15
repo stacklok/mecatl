@@ -400,8 +400,9 @@ type Config struct {
 	// publisher atomically refreshes the shared live Skill catalog after mutations.
 	LearnedSkills             learning.SkillRepository
 	PublishLearnedSkills      func(context.Context, learning.SkillPartition) error
-	RevokeLearnedSkill        func(string)
-	LiveSkillGeneration       func() uint64
+	BeginSkillPublication     func() func()
+	RevokeLearnedSkill        func(learning.SkillPartition, string)
+	LiveSkillGeneration       func(learning.SkillPartition) uint64
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool
 	LiveSkills                func(context.Context) []*mecatlv1.SkillInfo
@@ -1518,7 +1519,8 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		owner = srcOwner
 	}
 
-	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace)
+	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace) ||
+		s.cfg.LearnedSkills != nil && session.PrincipalFromContext(ctx) != nil
 	if !needPerSession {
 		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
@@ -2962,7 +2964,8 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // keep riding whatever engine gets (re)built for it without ever picking up
 // a heal that lands after the restart.
 func (s *Service) needsRehydration(sess *session.Session) bool {
-	return sess.Profile == string(ProfileNoFS) ||
+	return s.cfg.LearnedSkills != nil && sess.Owner != nil && sess.Owner.Issuer != "" && sess.Owner.Subject != "" ||
+		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
 		(sess.Workspace == "" && !isRemoteEnvironmentRef(sess.EnvironmentRef)) ||
@@ -4571,6 +4574,10 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
+	if s.cfg.BeginSkillPublication != nil {
+		unlock := s.cfg.BeginSkillPublication()
+		defer unlock()
+	}
 	if s.cfg.PublishLearnedSkills != nil {
 		if partition, err := s.skillPartition(ctx, ""); err == nil {
 			publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)

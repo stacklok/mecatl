@@ -63,7 +63,7 @@ func TestAtomicCatalogExternalPrecedenceAssetParityAndRefresh(t *testing.T) {
 	if conflicts := catalog.Refresh(external, source, []learning.SkillVersion{activeVersion("same", "agent body")}); len(conflicts) != 1 {
 		t.Fatalf("conflicts=%d", len(conflicts))
 	}
-	live := skillfs.NewLiveTool(catalog)
+	live := skillfs.NewLiveToolForPartitions(catalog, activeVersion("same", "").Partition)
 	result, _ := live.Execute(context.Background(), session.NewToolCall("c", "Skill", []byte(`{"name":"same"}`)), tool.Environment{})
 	if !strings.Contains(result.Content, "operator body") || strings.Contains(result.Content, "agent body") || !strings.Contains(result.Content, "references/check.md") {
 		t.Fatalf("collision result: %s", result.Content)
@@ -115,7 +115,8 @@ func TestLiveToolLearnedSkillIsCallerPartitioned(t *testing.T) {
 	sum := sha256.Sum256([]byte(partitionValue))
 	version := activeVersion("private", "alice body")
 	version.Partition.Principal = hex.EncodeToString(sum[:])
-	live := skillfs.NewLiveTool(skillfs.NewAtomicCatalog(nil, nil, []learning.SkillVersion{version}))
+	catalog := skillfs.NewAtomicCatalog(nil, nil, []learning.SkillVersion{version})
+	live := skillfs.NewLiveToolForPartitions(catalog, version.Partition)
 	call := session.NewToolCall("c", "Skill", []byte(`{"name":"private"}`))
 
 	allowed, _ := live.Execute(session.WithPrincipal(context.Background(), alice), call, tool.Environment{})
@@ -123,11 +124,12 @@ func TestLiveToolLearnedSkillIsCallerPartitioned(t *testing.T) {
 		t.Fatalf("owner could not execute learned skill: %#v", allowed)
 	}
 	bob := &session.Principal{Issuer: "issuer", Subject: "bob"}
-	denied, _ := live.Execute(session.WithPrincipal(context.Background(), bob), call, tool.Environment{})
+	foreign := skillfs.NewLiveTool(catalog)
+	denied, _ := foreign.Execute(session.WithPrincipal(context.Background(), bob), call, tool.Environment{})
 	if !denied.IsError || strings.Contains(denied.Content, "alice body") {
 		t.Fatalf("foreign caller executed learned skill: %#v", denied)
 	}
-	ownerless, _ := live.Execute(context.Background(), call, tool.Environment{})
+	ownerless, _ := foreign.Execute(context.Background(), call, tool.Environment{})
 	if !ownerless.IsError {
 		t.Fatalf("ownerless caller executed learned skill: %#v", ownerless)
 	}
@@ -146,7 +148,7 @@ func TestAtomicCatalogConcurrentReadersSeeCompleteGeneration(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 1000; i++ {
-			metas, _ := catalog.ListSkills(context.Background())
+			metas := catalog.View(activeVersion("old-a", "").Partition).Metas
 			got := metas[0].Name + "," + metas[1].Name
 			if got != "old-a,old-b" && got != "new-a,new-b" {
 				t.Errorf("mixed generation: %s", got)

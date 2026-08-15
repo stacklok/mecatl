@@ -19,6 +19,7 @@ const (
 	MaxSkillsPerPartition       = 1024
 	MaxSkillVersionsPerSkill    = 32
 	MaxSkillReceipts            = 32
+	MaxSkillReceiptHistory      = 32768
 	MaxSkillEvaluations         = 16
 	MaxSkillProposals           = 16
 	MaxSkillEvidence            = 32
@@ -111,6 +112,31 @@ type SkillReceipt struct {
 	At        time.Time  `json:"at"`
 }
 
+type SkillReceiptRecord struct {
+	ID         string
+	SkillID    SkillID
+	Name       string
+	OwnerAgent string
+	Version    VersionID
+	Receipt    SkillReceipt
+}
+
+type SkillReceiptList struct {
+	After string
+	Limit int
+}
+
+type SkillReceiptPage struct {
+	Records []SkillReceiptRecord
+	Next    string
+}
+
+// SkillReceiptRepository is the optional bounded durable lifecycle-history seam.
+// Cursors are opaque and stale/invalid cursors fail with ErrSkillCursor.
+type SkillReceiptRepository interface {
+	ListSkillReceipts(context.Context, SkillPartition, SkillReceiptList) (SkillReceiptPage, error)
+}
+
 // SkillVersion is an immutable body revision plus CAS-controlled lifecycle metadata.
 // Bundle, Version, Supersedes, OwnerAgent, Partition, and CreatedAt never change.
 type SkillVersion struct {
@@ -185,6 +211,7 @@ var (
 	ErrSkillLimit         = errors.New("learning: skill limit exceeded")
 	ErrSkillOwnerMismatch = errors.New("learning: skill owner mismatch")
 	ErrSkillNameCollision = errors.New("learning: skill name collision")
+	ErrSkillCursor        = errors.New("learning: invalid or stale skill cursor")
 )
 
 // SkillVersionID content-addresses a body-only bundle. Provenance and lifecycle do not affect it.

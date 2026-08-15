@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -21,11 +20,15 @@ const (
 	skillPublicationTimeout  = 5 * time.Second
 )
 
-func (s *Service) liveSkillGeneration() uint64 {
+func (s *Service) liveSkillGeneration(ctx context.Context, project string) uint64 {
 	if s.cfg.LiveSkillGeneration == nil {
 		return 0
 	}
-	return s.cfg.LiveSkillGeneration()
+	partition, err := s.skillPartition(ctx, project)
+	if err != nil {
+		return 0
+	}
+	return s.cfg.LiveSkillGeneration(partition)
 }
 
 func (s *Service) publishLearnedSkills(ctx context.Context, partition learning.SkillPartition, name string) (string, string) {
@@ -37,7 +40,7 @@ func (s *Service) publishLearnedSkills(ctx context.Context, partition learning.S
 	cancel()
 	if err != nil {
 		if s.cfg.RevokeLearnedSkill != nil {
-			s.cfg.RevokeLearnedSkill(name)
+			s.cfg.RevokeLearnedSkill(partition, name)
 		}
 		return "pending_reconciliation", safeSkillText(err.Error(), 1024)
 	}
@@ -67,6 +70,18 @@ func (s *Service) ListLearnedSkills(ctx context.Context, request *mecatlv1.ListL
 	if err != nil {
 		return nil, err
 	}
+	if s.cfg.BeginSkillPublication != nil {
+		unlock := s.cfg.BeginSkillPublication()
+		defer unlock()
+	}
+	if s.cfg.PublishLearnedSkills != nil {
+		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
+		publishErr := s.cfg.PublishLearnedSkills(publishCtx, partition)
+		cancel()
+		if publishErr != nil {
+			return nil, skillServiceError(publishErr)
+		}
+	}
 	limit := int(request.GetLimit())
 	if limit == 0 {
 		limit = learning.DefaultSkillPageSize
@@ -79,7 +94,7 @@ func (s *Service) ListLearnedSkills(ctx context.Context, request *mecatlv1.ListL
 	for i := range page.Versions {
 		out[i] = toProtoLearnedSkill(page.Versions[i])
 	}
-	return &mecatlv1.ListLearnedSkillsResponse{Skills: out, NextCursor: validLearningText(string(page.Next)), Generation: s.liveSkillGeneration(), Project: validLearningText(request.GetProject())}, nil
+	return &mecatlv1.ListLearnedSkillsResponse{Skills: out, NextCursor: validLearningText(string(page.Next)), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject())}, nil
 }
 
 func (s *Service) GetLearnedSkill(ctx context.Context, request *mecatlv1.GetLearnedSkillRequest) (*mecatlv1.GetLearnedSkillResponse, error) {
@@ -87,7 +102,7 @@ func (s *Service) GetLearnedSkill(ctx context.Context, request *mecatlv1.GetLear
 	if err != nil {
 		return nil, err
 	}
-	return &mecatlv1.GetLearnedSkillResponse{Skill: toProtoLearnedSkill(version), Generation: s.liveSkillGeneration(), Project: validLearningText(request.GetProject())}, nil
+	return &mecatlv1.GetLearnedSkillResponse{Skill: toProtoLearnedSkill(version), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject())}, nil
 }
 
 func (s *Service) getLearnedSkill(ctx context.Context, project, owner, id, version string) (learning.SkillVersion, error) {
@@ -121,7 +136,7 @@ func (s *Service) DiffLearnedSkillVersions(ctx context.Context, request *mecatlv
 		return nil, err
 	}
 	diff := fmt.Sprintf("--- %s\n+++ %s\n@@ description @@\n-%s\n+%s\n@@ body @@\n-%s\n+%s\n", from.Version, to.Version, safeSkillText(from.Bundle.Description, 4096), safeSkillText(to.Bundle.Description, 4096), safeSkillText(from.Bundle.Body, 12<<10), safeSkillText(to.Bundle.Body, 12<<10))
-	return &mecatlv1.DiffLearnedSkillVersionsResponse{Diff: safeSkillText(diff, maxLearnedSkillDiffBytes), Generation: s.liveSkillGeneration(), Project: validLearningText(request.GetProject()), SkillId: validLearningText(request.GetId()), FromVersion: validLearningText(request.GetFromVersion()), ToVersion: validLearningText(request.GetToVersion())}, nil
+	return &mecatlv1.DiffLearnedSkillVersionsResponse{Diff: safeSkillText(diff, maxLearnedSkillDiffBytes), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject()), SkillId: validLearningText(request.GetId()), FromVersion: validLearningText(request.GetFromVersion()), ToVersion: validLearningText(request.GetToVersion())}, nil
 }
 
 type skillMutation func(context.Context, learning.SkillPartition, string, learning.SkillID, learning.VersionID, learning.Revision) (learning.SkillVersion, error)
@@ -136,6 +151,10 @@ func (s *Service) mutateLearnedSkill(ctx context.Context, request *mecatlv1.Muta
 	partition, err := s.skillPartition(ctx, request.GetProject())
 	if err != nil {
 		return nil, err
+	}
+	if s.cfg.BeginSkillPublication != nil {
+		unlock := s.cfg.BeginSkillPublication()
+		defer unlock()
 	}
 	if s.cfg.SkillActionAvailable == nil {
 		return nil, fmt.Errorf("%w: learned-skill publication target is unavailable", ErrFailedPrecondition)
@@ -157,7 +176,7 @@ func (s *Service) mutateLearnedSkill(ctx context.Context, request *mecatlv1.Muta
 		return nil, skillServiceError(err)
 	}
 	status, publishErr := s.publishLearnedSkills(ctx, partition, value.Bundle.Name)
-	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(), Project: validLearningText(request.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
+	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 
 func (s *Service) ActivateLearnedSkill(ctx context.Context, r *mecatlv1.MutateLearnedSkillRequest) (*mecatlv1.MutateLearnedSkillResponse, error) {
@@ -190,6 +209,10 @@ func (s *Service) RollbackLearnedSkill(ctx context.Context, r *mecatlv1.Rollback
 	if err != nil {
 		return nil, err
 	}
+	if s.cfg.BeginSkillPublication != nil {
+		unlock := s.cfg.BeginSkillPublication()
+		defer unlock()
+	}
 	if s.cfg.SkillActionAvailable == nil {
 		return nil, fmt.Errorf("%w: learned-skill publication target is unavailable", ErrFailedPrecondition)
 	}
@@ -213,7 +236,7 @@ func (s *Service) RollbackLearnedSkill(ctx context.Context, r *mecatlv1.Rollback
 		return nil, skillServiceError(err)
 	}
 	status, publishErr := s.publishLearnedSkills(ctx, partition, value.Bundle.Name)
-	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(), Project: validLearningText(r.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
+	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(ctx, r.GetProject()), Project: validLearningText(r.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 
 func (s *Service) ListSkillChanges(ctx context.Context, r *mecatlv1.ListSkillChangesRequest) (*mecatlv1.ListSkillChangesResponse, error) {
@@ -231,45 +254,19 @@ func (s *Service) ListSkillChanges(ctx context.Context, r *mecatlv1.ListSkillCha
 	if err != nil {
 		return nil, err
 	}
-	var changes []*mecatlv1.SkillChangeReceipt
-	var after learning.SkillID
-	for {
-		page, listErr := s.cfg.LearnedSkills.List(ctx, partition, learning.SkillList{After: after, Limit: learning.MaxSkillPageSize})
-		if listErr != nil {
-			return nil, skillServiceError(listErr)
-		}
-		for _, version := range page.Versions {
-			for i, receipt := range version.Receipts {
-				changes = append(changes, protoSkillReceipt(version, i, receipt))
-			}
-		}
-		if page.Next == "" {
-			break
-		}
-		after = page.Next
+	receipts, ok := s.cfg.LearnedSkills.(learning.SkillReceiptRepository)
+	if !ok {
+		return nil, fmt.Errorf("%w: durable skill receipt index unavailable", ErrFailedPrecondition)
 	}
-	sort.Slice(changes, func(i, j int) bool {
-		if changes[i].GetAt().AsTime().Equal(changes[j].GetAt().AsTime()) {
-			return changes[i].GetId() < changes[j].GetId()
-		}
-		return changes[i].GetAt().AsTime().Before(changes[j].GetAt().AsTime())
-	})
-	start := 0
-	if cursor := r.GetCursor(); cursor != "" {
-		start = len(changes)
-		for i := range changes {
-			if changes[i].GetId() == cursor {
-				start = i + 1
-				break
-			}
-		}
+	page, err := receipts.ListSkillReceipts(ctx, partition, learning.SkillReceiptList{After: r.GetCursor(), Limit: limit})
+	if err != nil {
+		return nil, skillServiceError(err)
 	}
-	end := min(start+limit, len(changes))
-	next := ""
-	if end < len(changes) && end > start {
-		next = changes[end-1].GetId()
+	changes := make([]*mecatlv1.SkillChangeReceipt, len(page.Records))
+	for i, record := range page.Records {
+		changes[i] = protoSkillReceiptRecord(record)
 	}
-	return &mecatlv1.ListSkillChangesResponse{Changes: changes[start:end], NextCursor: next, Generation: s.liveSkillGeneration(), Project: validLearningText(r.GetProject())}, nil
+	return &mecatlv1.ListSkillChangesResponse{Changes: changes, NextCursor: validLearningText(page.Next), Generation: s.liveSkillGeneration(ctx, r.GetProject()), Project: validLearningText(r.GetProject())}, nil
 }
 
 func toProtoLearnedSkill(v learning.SkillVersion) *mecatlv1.LearnedSkillVersion {
@@ -284,6 +281,11 @@ func toProtoLearnedSkill(v learning.SkillVersion) *mecatlv1.LearnedSkillVersion 
 		out.Receipts = append(out.Receipts, protoSkillReceipt(v, i, receipt))
 	}
 	return out
+}
+
+func protoSkillReceiptRecord(record learning.SkillReceiptRecord) *mecatlv1.SkillChangeReceipt {
+	receipt := record.Receipt
+	return &mecatlv1.SkillChangeReceipt{Id: validLearningText(record.ID), SkillId: validLearningText(string(record.SkillID)), Name: validLearningText(record.Name), Version: validLearningText(string(receipt.Version)), Operation: validLearningText(receipt.Operation), FromState: validLearningText(string(receipt.From)), ToState: validLearningText(string(receipt.To)), At: timestampOrNil(receipt.At), InspectAvailable: true, UndoAvailable: receipt.To == learning.SkillActive}
 }
 
 func protoSkillReceipt(v learning.SkillVersion, index int, receipt learning.SkillReceipt) *mecatlv1.SkillChangeReceipt {
@@ -327,7 +329,7 @@ func skillServiceError(err error) error {
 		return fmt.Errorf("%w: learned skill", ErrNotFound)
 	case errors.Is(err, learning.ErrSkillConflict), errors.Is(err, learning.ErrSkillTransition), errors.Is(err, learning.ErrSkillNameCollision):
 		return fmt.Errorf("%w: %v", ErrProposalConflict, err)
-	case errors.Is(err, learning.ErrInvalidSkill), errors.Is(err, learning.ErrSkillOwnerMismatch), errors.Is(err, learning.ErrSkillLimit):
+	case errors.Is(err, learning.ErrInvalidSkill), errors.Is(err, learning.ErrSkillOwnerMismatch), errors.Is(err, learning.ErrSkillLimit), errors.Is(err, learning.ErrSkillCursor):
 		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	default:
 		return fmt.Errorf("%w: learned skill operation failed", ErrInternal)

@@ -1629,7 +1629,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if assets.liveSkills == nil {
 				return skillSnapshot(skillValues(assets.skills, assets.skillIndex))
 			}
-			metas, _ := assets.liveSkills.ListSkills(ctx)
+			view := assets.liveSkills.View(learnedSkillPartitions(ctx, "", cfg)...)
+			metas := view.Metas
 			out := make([]*mecatlv1.SkillInfo, 0, len(metas))
 			for _, meta := range metas {
 				info := &mecatlv1.SkillInfo{Name: session.ToValidUTF8(meta.Name), Description: session.ToValidUTF8(meta.Description)}
@@ -1651,18 +1652,29 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if partition.Project != "" {
 				partitions = append(partitions, partition)
 			}
-			return (learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: "", catalog: assets.liveSkills, external: assets.skills, source: assets.skillSource, serial: assets.skillPublication}).Publish(ctx)
+			return (learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: "", catalog: assets.liveSkills}).Publish(ctx)
 		},
-		RevokeLearnedSkill: func(name string) {
+		BeginSkillPublication: func() func() {
+			if assets.skillPublication == nil {
+				return func() {}
+			}
+			assets.skillPublication.mu.Lock()
+			return assets.skillPublication.mu.Unlock
+		},
+		RevokeLearnedSkill: func(partition learning.SkillPartition, name string) {
 			if assets.liveSkills != nil {
-				assets.liveSkills.RevokeLearned(name)
+				assets.liveSkills.RevokePartition(partition, name)
 			}
 		},
-		LiveSkillGeneration: func() uint64 {
+		LiveSkillGeneration: func(partition learning.SkillPartition) uint64 {
 			if assets.liveSkills == nil {
 				return 0
 			}
-			return assets.liveSkills.Snapshot().Generation
+			parts := []learning.SkillPartition{{Principal: partition.Principal}}
+			if partition.Project != "" {
+				parts = append(parts, partition)
+			}
+			return assets.liveSkills.View(parts...).Generation
 		},
 		SkillActionAvailable: func(partition learning.SkillPartition, owner string) (bool, string) {
 			if assets.liveSkills == nil || assets.learnedSkills == nil {
@@ -2292,14 +2304,20 @@ func sessionEngineFactory(
 		// Subagent per-def inline managers + the client mgr); assets.globalMgr is
 		// NEVER in it — Build owns its lifecycle (a per-session CloseSession must
 		// never tear down MCP for every other session).
+		// Caller-scoped lazy hydration: rebuild this authenticated session's global
+		// and admitted project generations from durable state before binding the
+		// Skill tool. A failed authoritative read clears only these partitions.
+		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, assets, workspace)
+
 		cat, closeFn := assembleCatalog(ctx, cfg, reg, store, hooks, &assets, catalogSession{
-			provider:   resolvedProvider,
-			providerID: resolvedProviderID,
-			model:      resolvedModel,
-			clientMgr:  mgr,
-			narrate:    false,
-			noFS:       noFS,
-			mode:       mode,
+			provider:        resolvedProvider,
+			providerID:      resolvedProviderID,
+			model:           resolvedModel,
+			clientMgr:       mgr,
+			narrate:         false,
+			noFS:            noFS,
+			mode:            mode,
+			skillPartitions: skillPartitions,
 		})
 
 		// Identical to the main engine in every NON-provider Deps field except the

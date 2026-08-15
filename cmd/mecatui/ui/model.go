@@ -396,6 +396,7 @@ type Model struct {
 	resolvedAsks    map[string]struct{}
 	mcp             mcpState       // MCP overlay state (view==mcpNone when closed)
 	skills          skillsState    // skills-inventory overlay state (view==skillsNone when closed)
+	skillsEpoch     uint64         // model-lifetime monotonic request epoch; never reset on close
 	skillChangeLast string         // newest bounded lifecycle receipt already announced
 	palette         paletteState   // slash-command palette (open when the input starts with "/")
 	mention         mentionState   // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette

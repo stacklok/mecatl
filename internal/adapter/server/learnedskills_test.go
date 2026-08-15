@@ -38,7 +38,7 @@ func TestLearnedSkillAPIIsPartitionedCASAndPublishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if activated.GetSkill().GetState() != string(learning.SkillActive) || published != 1 {
+	if activated.GetSkill().GetState() != string(learning.SkillActive) || published != 2 {
 		t.Fatalf("activate=%+v publishes=%d", activated, published)
 	}
 	_, err = svc.ArchiveLearnedSkill(context.Background(), &mecatlv1.MutateLearnedSkillRequest{OwnerAgent: "agent", Id: string(staged.ID), Version: string(staged.Version), ExpectedRevision: string(staged.Revision)})

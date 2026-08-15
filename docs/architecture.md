@@ -687,15 +687,7 @@ stay inactive, evidence-backed procedures are evaluated, FAIL rejects, PASS/ABST
 an auto-mode PASS with a bound publication target activates; similarity always forces review. The state-aware
 pipeline resumes after each durable boundary and republishes an already-active version during reconciliation.
 The existing reflection coordinator owns automatic work; there is no second queue or historical sweep.
-`skillfs.AtomicCatalog` publishes one complete immutable generation behind an atomic pointer, composing the
-path-free external `SkillSource` first and active learned bodies last. External logical assets preserve the
-ordinary `{name, asset}` behavior; body-only learned skills explicitly reject assets and add no paths or roots.
-The same pointer feeds shared, selector, and no-fs catalogs plus live `ListSkills`; external collisions remain
-visible and block learned activation. Archive is Active-only and rollback requires durable prior-active PASS
-proof. Caller/project-partitioned gRPC and HTTP methods provide bounded list/get/diff/receipt-count pages and CAS
-activate/reject/archive/rollback, with generation/selection correlation and publication status. Publication is
-cancel-detached and bounded after commit; failure revokes live learned content and startup/list refresh reconciles. Reflections links procedure proposals to learned skills, while `/skills`
-marks live agent-owned versions. The legacy direct filesystem promotion command remains deprecated.
+`skillfs.AtomicCatalog` retains the immutable path-free external `SkillSource` and independent immutable learned generations per principal/project partition. A caller-bound per-session `LiveTool` selects only that principal's global and admitted exact-project generations; its `Spec`, inventory, and `Execute` use the same selected snapshot, so metadata cannot leak before execution and Alice/Bob/project refreshes neither evict nor expose one another. External logical assets preserve the ordinary `{name, asset}` behavior and precedence; body-only learned skills reject assets and add no paths or roots. Archive is Active-only and rollback requires durable prior-active PASS proof. Caller/project-partitioned gRPC and HTTP methods provide bounded list/get/diff and stable receipt-index pages plus CAS activate/reject/archive/rollback. The receipt index retains bounded historical-version changes and rejects invalid or expired cursors. One publication gate serializes the external-collision check, durable transition, authoritative active-state reread, generation swap, and failure quarantine while the repository keeps cross-process flock/CAS. Uncertain state clears only the affected partition; a stale failure cannot revoke a newer success. Caller-scoped lazy hydration reconciles global and trusted project partitions on list/run after restart, so authenticated active skills need no new mutation. Reflections links procedure proposals to learned skills, while `/skills` marks live agent-owned versions. The legacy direct filesystem promotion command remains deprecated.
 
 ## Caller identity
 

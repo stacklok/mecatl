@@ -165,6 +165,10 @@ type catalogSession struct {
 	// plan-mode session carries the ReadOnly()==true plan-aware variant that
 	// stays advertised and hard-denies only the mutating create per call.
 	mode session.PermissionMode
+	// skillPartitions is the caller-bound global/project view captured while the
+	// per-session engine is assembled. The Skill tool's Spec and Execute therefore
+	// share one principal-scoped catalog selection.
+	skillPartitions []learning.SkillPartition
 }
 
 // assembleCatalog registers every tool family into a fresh catalog, in the
@@ -539,7 +543,11 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 // defeat the lazy-transfer design).
 func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a catalogAssets, s catalogSession) {
 	if a.liveSkills != nil {
-		if err := cat.Register(coreskillfs.NewLiveTool(a.liveSkills)); err != nil {
+		live := coreskillfs.NewLiveTool(a.liveSkills)
+		if len(s.skillPartitions) > 0 {
+			live = coreskillfs.NewLiveToolForPartitions(a.liveSkills, s.skillPartitions...)
+		}
+		if err := cat.Register(live); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "registering live skills failed; Skill tool disabled", "err", err)
 		}
 	} else if len(a.skills) > 0 {

@@ -43,6 +43,7 @@ type skillRecord struct {
 type manifest struct {
 	Format     string                                      `json:"format"`
 	Partitions map[string]map[learning.SkillID]skillRecord `json:"partitions"`
+	Receipts   map[string][]learning.SkillReceiptRecord    `json:"receipts,omitempty"`
 }
 
 // Store is a durable learning.SkillRepository. New is lazy: an empty repository
@@ -99,7 +100,7 @@ func rejectPathSymlinks(path string) error {
 }
 
 func emptyManifest() manifest {
-	return manifest{Format: "mecatl-skillstore/1", Partitions: map[string]map[learning.SkillID]skillRecord{}}
+	return manifest{Format: "mecatl-skillstore/1", Partitions: map[string]map[learning.SkillID]skillRecord{}, Receipts: map[string][]learning.SkillReceiptRecord{}}
 }
 
 func partitionKey(p learning.SkillPartition) string {
@@ -248,6 +249,9 @@ func (s *Store) load() (manifest, error) {
 	if doc.Format != "mecatl-skillstore/1" || doc.Partitions == nil {
 		return manifest{}, fmt.Errorf("%w: invalid manifest format", learning.ErrInvalidSkill)
 	}
+	if doc.Receipts == nil {
+		doc.Receipts = rebuildReceiptIndex(doc.Partitions)
+	}
 	if err = s.validateManifest(doc); err != nil {
 		return manifest{}, err
 	}
@@ -318,6 +322,21 @@ func (s *Store) validateManifest(doc manifest) error { //nolint:gocyclo // valid
 					return err
 				}
 			}
+		}
+	}
+	for key, history := range doc.Receipts {
+		if len(history) > learning.MaxSkillReceiptHistory {
+			return learning.ErrSkillLimit
+		}
+		if _, ok := doc.Partitions[key]; !ok && len(history) > 0 {
+			return fmt.Errorf("%w: receipt partition", learning.ErrInvalidSkill)
+		}
+		seen := map[string]bool{}
+		for _, record := range history {
+			if record.ID == "" || seen[record.ID] || record.SkillID == "" || record.Version == "" || record.Receipt.At.IsZero() || !record.Receipt.From.Valid() || !record.Receipt.To.Valid() {
+				return fmt.Errorf("%w: receipt index", learning.ErrInvalidSkill)
+			}
+			seen[record.ID] = true
 		}
 	}
 	return nil
@@ -712,6 +731,98 @@ func appendReceipt(value *learning.SkillVersion, operation string, from, to lear
 	}
 }
 
+func rebuildReceiptIndex(partitions map[string]map[learning.SkillID]skillRecord) map[string][]learning.SkillReceiptRecord {
+	out := make(map[string][]learning.SkillReceiptRecord, len(partitions))
+	for key, bucket := range partitions {
+		var history []learning.SkillReceiptRecord
+		for id, record := range bucket {
+			for versionIndex, version := range record.Versions {
+				for receiptIndex, receipt := range version.Receipts {
+					raw := fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%d\x00%d", receipt.At.UnixNano(), id, receipt.Version, receipt.Operation, versionIndex, receiptIndex)
+					sum := sha256.Sum256([]byte(raw))
+					history = append(history, learning.SkillReceiptRecord{ID: hex.EncodeToString(sum[:16]), SkillID: id, Name: record.Name, OwnerAgent: record.Owner, Version: version.Version, Receipt: receipt})
+				}
+			}
+		}
+		sortReceiptHistory(history)
+		if len(history) > learning.MaxSkillReceiptHistory {
+			history = append([]learning.SkillReceiptRecord(nil), history[len(history)-learning.MaxSkillReceiptHistory:]...)
+		}
+		out[key] = history
+	}
+	return out
+}
+
+func sortReceiptHistory(history []learning.SkillReceiptRecord) {
+	sort.SliceStable(history, func(i, j int) bool {
+		a, b := history[i], history[j]
+		if !a.Receipt.At.Equal(b.Receipt.At) {
+			return a.Receipt.At.Before(b.Receipt.At)
+		}
+		if a.SkillID != b.SkillID {
+			return a.SkillID < b.SkillID
+		}
+		if a.Version != b.Version {
+			return a.Version < b.Version
+		}
+		return a.ID < b.ID
+	})
+}
+
+func appendReceiptHistory(doc *manifest, key string, id learning.SkillID, record skillRecord, before []learning.SkillReceipt, had []bool) {
+	history := doc.Receipts[key]
+	for i := range record.Versions {
+		if len(record.Versions[i].Receipts) == 0 {
+			continue
+		}
+		receipt := record.Versions[i].Receipts[len(record.Versions[i].Receipts)-1]
+		if i < len(had) && had[i] && receipt == before[i] {
+			continue
+		}
+		raw := fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%d", receipt.At.UnixNano(), id, receipt.Version, receipt.Operation, len(history))
+		sum := sha256.Sum256([]byte(raw))
+		history = append(history, learning.SkillReceiptRecord{ID: hex.EncodeToString(sum[:16]), SkillID: id, Name: record.Name, OwnerAgent: record.Owner, Version: record.Versions[i].Version, Receipt: receipt})
+	}
+	sortReceiptHistory(history)
+	if len(history) > learning.MaxSkillReceiptHistory {
+		history = append([]learning.SkillReceiptRecord(nil), history[len(history)-learning.MaxSkillReceiptHistory:]...)
+	}
+	doc.Receipts[key] = history
+}
+
+// ListSkillReceipts pages the bounded durable receipt index without scanning skill versions.
+func (s *Store) ListSkillReceipts(ctx context.Context, p learning.SkillPartition, options learning.SkillReceiptList) (page learning.SkillReceiptPage, err error) {
+	if options.Limit <= 0 {
+		options.Limit = learning.DefaultSkillPageSize
+	}
+	if options.Limit > learning.MaxSkillPageSize {
+		return page, learning.ErrSkillLimit
+	}
+	err = s.locked(ctx, false, func(doc *manifest) error {
+		history := doc.Receipts[partitionKey(p)]
+		start := 0
+		if options.After != "" {
+			start = -1
+			for i := range history {
+				if history[i].ID == options.After {
+					start = i + 1
+					break
+				}
+			}
+			if start < 0 {
+				return learning.ErrSkillCursor
+			}
+		}
+		end := min(start+options.Limit, len(history))
+		page.Records = append([]learning.SkillReceiptRecord(nil), history[start:end]...)
+		if end < len(history) && end > start {
+			page.Next = history[end-1].ID
+		}
+		return nil
+	})
+	return page, err
+}
+
 func (s *Store) update(ctx context.Context, p learning.SkillPartition, owner string, id learning.SkillID, version learning.VersionID, expected learning.Revision, fn func(*skillRecord, int, time.Time) error) (out learning.SkillVersion, err error) {
 	if err = learning.ValidateSkillPartition(p, owner); err != nil {
 		return
@@ -722,6 +833,14 @@ func (s *Store) update(ctx context.Context, p learning.SkillPartition, owner str
 		record, index, locateErr := locate(bucket, owner, id, version)
 		if locateErr != nil {
 			return locateErr
+		}
+		receiptBefore := make([]learning.SkillReceipt, len(record.Versions))
+		receiptHad := make([]bool, len(record.Versions))
+		for i := range record.Versions {
+			if n := len(record.Versions[i].Receipts); n > 0 {
+				receiptBefore[i] = record.Versions[i].Receipts[n-1]
+				receiptHad[i] = true
+			}
 		}
 		if record.Versions[index].Revision != expected {
 			return learning.ErrSkillConflict
@@ -736,6 +855,7 @@ func (s *Store) update(ctx context.Context, p learning.SkillPartition, owner str
 		}
 		record.Versions[index].Revision = rev
 		record.Versions[index].UpdatedAt = now
+		appendReceiptHistory(doc, key, id, record, receiptBefore, receiptHad)
 		bucket[id] = record
 		doc.Partitions[key] = bucket
 		out = clone(record.Versions[index])
@@ -873,6 +993,13 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 			return learning.ErrSkillTransition
 		}
 		now := s.now().UTC()
+		receiptBefore := make([]learning.SkillReceipt, len(record.Versions))
+		receiptHad := make([]bool, len(record.Versions))
+		for i := range record.Versions {
+			if n := len(record.Versions[i].Receipts); n > 0 {
+				receiptBefore[i], receiptHad[i] = record.Versions[i].Receipts[n-1], true
+			}
+		}
 		appendReceipt(&record.Versions[active], "rollback_from", learning.SkillActive, learning.SkillArchived, now)
 		record.Versions[active].State = learning.SkillArchived
 		record.Versions[active].UpdatedAt = now
@@ -887,6 +1014,7 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 		if err != nil {
 			return err
 		}
+		appendReceiptHistory(doc, key, id, record, receiptBefore, receiptHad)
 		bucket[id] = record
 		doc.Partitions[key] = bucket
 		out = clone(record.Versions[targetIndex])

@@ -11,8 +11,31 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/skillmaterialize"
 	"github.com/stacklok/mecatl/engine/adapter/skillvalidation"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
+
+func learnedSkillPartitions(ctx context.Context, workspace string, cfg Config) []learning.SkillPartition {
+	global := learning.SkillPartition{Principal: reflectionPrincipal(session.PrincipalFromContext(ctx))}
+	out := []learning.SkillPartition{global}
+	if workspace != "" && projectIngestionAdmittedForRoot(cfg, workspace) {
+		out = append(out, learning.SkillPartition{Principal: global.Principal, Project: workspace})
+	}
+	return out
+}
+
+func hydrateLearnedSkillPartitions(ctx context.Context, cfg Config, assets catalogAssets, workspace string) []learning.SkillPartition {
+	partitions := learnedSkillPartitions(ctx, workspace, cfg)
+	if assets.liveSkills == nil || assets.learnedSkills == nil || len(partitions) == 0 {
+		return partitions
+	}
+	publisher := learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, catalog: assets.liveSkills, serial: assets.skillPublication}
+	if err := publisher.Publish(ctx); err != nil {
+		cfg.diag().Log(ctx, port.LevelWarn, "learned-skill hydration failed; caller partition quarantined", "err", err)
+	}
+	return partitions
+}
 
 func listActiveLearnedSkills(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, owner string) ([]learning.SkillVersion, error) {
 	var out []learning.SkillVersion
@@ -37,14 +60,12 @@ type learnedSkillPublisher struct {
 	partitions []learning.SkillPartition
 	owner      string
 	catalog    *skillfs.AtomicCatalog
-	external   []tool.SkillMeta
-	source     tool.SkillSource
 	serial     *learnedSkillPublication
 }
 
 func (p learnedSkillPublisher) Quarantine(name string) {
-	if p.catalog != nil {
-		p.catalog.RevokeLearned(name)
+	if p.catalog != nil && len(p.partitions) > 0 {
+		p.catalog.RevokePartition(p.partitions[len(p.partitions)-1], name)
 	}
 }
 
@@ -57,11 +78,12 @@ func (p learnedSkillPublisher) Publish(ctx context.Context) error {
 	for _, partition := range p.partitions {
 		versions, err := listActiveLearnedSkills(ctx, p.repository, partition, p.owner)
 		if err != nil {
+			p.catalog.ClearPartitions(p.partitions...)
 			return err
 		}
 		active = append(active, versions...)
 	}
-	p.catalog.Refresh(p.external, p.source, active)
+	p.catalog.RefreshPartitions(p.partitions, active)
 	return nil
 }
 
@@ -124,7 +146,11 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 			if partition != assets.skillPartition {
 				partitions = append(partitions, partition)
 			}
-			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills, external: assets.skills, source: assets.skillSource, serial: assets.skillPublication}
+			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills}
+			if assets.skillPublication != nil {
+				assets.skillPublication.mu.Lock()
+				defer assets.skillPublication.mu.Unlock()
+			}
 		} else if mode == learning.Auto {
 			// A shared process catalog cannot safely expose another caller/project
 			// partition. Keep it staged until a partition-bound catalog is available.
