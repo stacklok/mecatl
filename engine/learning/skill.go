@@ -87,10 +87,11 @@ const (
 )
 
 type SkillProvenance struct {
-	Origin       SkillProvenanceOrigin `json:"origin,omitempty"`
-	ProposalIDs  []ProposalID          `json:"proposal_ids,omitempty"`
-	EvidenceRefs []EvidenceRef         `json:"evidence_refs,omitempty"`
-	Signals      []Signal              `json:"signals,omitempty"`
+	Origin                SkillProvenanceOrigin `json:"origin,omitempty"`
+	ValidationDisposition ValidationDisposition `json:"validation_disposition,omitempty"`
+	ProposalIDs           []ProposalID          `json:"proposal_ids,omitempty"`
+	EvidenceRefs          []EvidenceRef         `json:"evidence_refs,omitempty"`
+	Signals               []Signal              `json:"signals,omitempty"`
 }
 
 type SkillEvaluation struct {
@@ -113,19 +114,20 @@ type SkillReceipt struct {
 // SkillVersion is an immutable body revision plus CAS-controlled lifecycle metadata.
 // Bundle, Version, Supersedes, OwnerAgent, Partition, and CreatedAt never change.
 type SkillVersion struct {
-	ID          SkillID           `json:"id"`
-	Version     VersionID         `json:"version"`
-	Revision    Revision          `json:"revision"`
-	State       SkillState        `json:"state"`
-	OwnerAgent  string            `json:"owner_agent"`
-	Partition   SkillPartition    `json:"partition"`
-	Bundle      SkillBundle       `json:"bundle"`
-	Provenance  SkillProvenance   `json:"provenance"`
-	Evaluations []SkillEvaluation `json:"evaluations,omitempty"`
-	Receipts    []SkillReceipt    `json:"receipts,omitempty"`
-	Supersedes  VersionID         `json:"supersedes,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	ID          SkillID               `json:"id"`
+	Version     VersionID             `json:"version"`
+	Revision    Revision              `json:"revision"`
+	State       SkillState            `json:"state"`
+	OwnerAgent  string                `json:"owner_agent"`
+	Partition   SkillPartition        `json:"partition"`
+	Bundle      SkillBundle           `json:"bundle"`
+	Provenance  SkillProvenance       `json:"provenance"`
+	Disposition ValidationDisposition `json:"validation_disposition,omitempty"`
+	Evaluations []SkillEvaluation     `json:"evaluations,omitempty"`
+	Receipts    []SkillReceipt        `json:"receipts,omitempty"`
+	Supersedes  VersionID             `json:"supersedes,omitempty"`
+	CreatedAt   time.Time             `json:"created_at"`
+	UpdatedAt   time.Time             `json:"updated_at"`
 }
 
 type SkillList struct {
@@ -245,6 +247,7 @@ func hasUnsafeControls(s string) bool {
 func ValidateSkillProvenance(p SkillProvenance) error {
 	links := len(p.ProposalIDs) + len(p.EvidenceRefs) + len(p.Signals)
 	if len(p.ProposalIDs) > MaxSkillProposals || len(p.EvidenceRefs) > MaxSkillEvidence || len(p.Signals) > MaxSkillSignals ||
+		(p.ValidationDisposition != "" && !p.ValidationDisposition.Valid()) ||
 		(links == 0 && p.Origin != SkillProvenanceLegacyModel) || (links != 0 && p.Origin == SkillProvenanceLegacyModel) ||
 		(p.Origin != "" && p.Origin != SkillProvenanceLegacyModel) {
 		return fmt.Errorf("%w: provenance", ErrInvalidSkill)
@@ -305,6 +308,10 @@ func ValidateSkillEvaluation(e SkillEvaluation) error {
 
 // ValidationDisposition describes logical admission without mutating a repository.
 type ValidationDisposition string
+
+func (d ValidationDisposition) Valid() bool {
+	return d == ValidationAccept || d == ValidationExactDuplicate || d == ValidationSimilarStageHint
+}
 
 const (
 	ValidationAccept           ValidationDisposition = "accept"

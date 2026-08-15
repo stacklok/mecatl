@@ -18,6 +18,7 @@ const (
 )
 
 type Publisher interface{ Publish(context.Context) error }
+type Quarantiner interface{ Quarantine(string) }
 
 type Candidate struct {
 	Draft     learning.SkillDraftInput
@@ -70,6 +71,7 @@ func (p Pipeline) Process(ctx context.Context, candidate Candidate) (Receipt, er
 	if err != nil {
 		return Receipt{}, err
 	}
+	in.Provenance.ValidationDisposition = validation.Disposition
 	version, err := p.Repository.CreateDraft(ctx, in.Partition, in.OwnerAgent, in.Bundle, in.Provenance)
 	if err != nil {
 		return Receipt{}, err
@@ -105,7 +107,7 @@ func (p Pipeline) Process(ctx context.Context, candidate Candidate) (Receipt, er
 			return receiptFor(version), err
 		}
 	}
-	activate := candidate.Mode == learning.Auto && evaluation.Verdict == learning.EvaluationPass && validation.Disposition != learning.ValidationSimilarStageHint
+	activate := candidate.Mode == learning.Auto && evaluation.Verdict == learning.EvaluationPass && version.Disposition != learning.ValidationSimilarStageHint
 	if version.State == learning.SkillStaged && activate && p.Publisher != nil {
 		version, err = p.Repository.Activate(ctx, in.Partition, in.OwnerAgent, version.ID, version.Version, version.Revision)
 		if err != nil {
@@ -121,6 +123,9 @@ func (p Pipeline) Process(ctx context.Context, candidate Candidate) (Receipt, er
 		err = p.Publisher.Publish(publishCtx)
 		cancel()
 		if err != nil {
+			if quarantiner, ok := p.Publisher.(Quarantiner); ok {
+				quarantiner.Quarantine(version.Bundle.Name)
+			}
 			receipt.PublicationError = bound(err.Error())
 		} else {
 			receipt.Published = true

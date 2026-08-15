@@ -2,6 +2,8 @@ package skillfs_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ type atomicSource struct {
 	bodies map[string]string
 	assets map[string][]tool.SkillAsset
 	data   map[string][]byte
+	onBody func()
 }
 
 func (atomicSource) ListSkills(context.Context) ([]tool.SkillMeta, error) { return nil, nil }
@@ -24,6 +27,9 @@ func (s atomicSource) SkillBody(_ context.Context, name string) (string, error) 
 	body, ok := s.bodies[name]
 	if !ok {
 		return "", tool.ErrSkillNotFound
+	}
+	if s.onBody != nil {
+		s.onBody()
 	}
 	return body, nil
 }
@@ -42,7 +48,8 @@ func (s atomicSource) ReadSkillAsset(_ context.Context, skill, asset string) ([]
 }
 
 func activeVersion(name, body string) learning.SkillVersion {
-	return learning.SkillVersion{State: learning.SkillActive, Bundle: learning.SkillBundle{Name: name, Description: name + " description", Body: body}}
+	sum := sha256.Sum256([]byte("ownerless"))
+	return learning.SkillVersion{State: learning.SkillActive, Partition: learning.SkillPartition{Principal: hex.EncodeToString(sum[:])}, Bundle: learning.SkillBundle{Name: name, Description: name + " description", Body: body}}
 }
 
 func TestAtomicCatalogExternalPrecedenceAssetParityAndRefresh(t *testing.T) {
@@ -76,6 +83,53 @@ func TestAtomicCatalogExternalPrecedenceAssetParityAndRefresh(t *testing.T) {
 	}
 	if _, err := catalog.ReadSkillAsset(context.Background(), "new-skill", "x.txt"); !errors.Is(err, tool.ErrSkillAssetNotFound) {
 		t.Fatalf("ReadSkillAsset error = %v", err)
+	}
+}
+
+func TestLiveToolExecutionBindsOneCatalogGeneration(t *testing.T) {
+	old := atomicSource{
+		bodies: map[string]string{"swap": "old body"},
+		assets: map[string][]tool.SkillAsset{"swap": {{Name: "old.txt", Size: 3}}},
+		data:   map[string][]byte{"swap\x00old.txt": []byte("old")},
+	}
+	newSource := atomicSource{
+		bodies: map[string]string{"swap": "new body"},
+		assets: map[string][]tool.SkillAsset{"swap": {{Name: "new.txt", Size: 3}}},
+		data:   map[string][]byte{"swap\x00new.txt": []byte("new")},
+	}
+	oldMeta := []tool.SkillMeta{{Name: "swap", Description: "old", HasAssets: true}}
+	newMeta := []tool.SkillMeta{{Name: "swap", Description: "new", HasAssets: true}}
+	catalog := skillfs.NewAtomicCatalog(oldMeta, old, nil)
+	old.onBody = func() { catalog.Refresh(newMeta, newSource, nil) }
+	catalog.Refresh(oldMeta, old, nil)
+
+	result, _ := skillfs.NewLiveTool(catalog).Execute(context.Background(), session.NewToolCall("c", "Skill", []byte(`{"name":"swap"}`)), tool.Environment{})
+	if !strings.Contains(result.Content, "old body") || !strings.Contains(result.Content, "old.txt") || strings.Contains(result.Content, "new.txt") {
+		t.Fatalf("execution mixed generations: %s", result.Content)
+	}
+}
+
+func TestLiveToolLearnedSkillIsCallerPartitioned(t *testing.T) {
+	alice := &session.Principal{Issuer: "issuer", Subject: "alice"}
+	partitionValue := alice.Issuer + "\x00" + alice.Subject
+	sum := sha256.Sum256([]byte(partitionValue))
+	version := activeVersion("private", "alice body")
+	version.Partition.Principal = hex.EncodeToString(sum[:])
+	live := skillfs.NewLiveTool(skillfs.NewAtomicCatalog(nil, nil, []learning.SkillVersion{version}))
+	call := session.NewToolCall("c", "Skill", []byte(`{"name":"private"}`))
+
+	allowed, _ := live.Execute(session.WithPrincipal(context.Background(), alice), call, tool.Environment{})
+	if allowed.IsError || !strings.Contains(allowed.Content, "alice body") {
+		t.Fatalf("owner could not execute learned skill: %#v", allowed)
+	}
+	bob := &session.Principal{Issuer: "issuer", Subject: "bob"}
+	denied, _ := live.Execute(session.WithPrincipal(context.Background(), bob), call, tool.Environment{})
+	if !denied.IsError || strings.Contains(denied.Content, "alice body") {
+		t.Fatalf("foreign caller executed learned skill: %#v", denied)
+	}
+	ownerless, _ := live.Execute(context.Background(), call, tool.Environment{})
+	if !ownerless.IsError {
+		t.Fatalf("ownerless caller executed learned skill: %#v", ownerless)
 	}
 }
 

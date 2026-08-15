@@ -29,7 +29,7 @@ func TestLearnedSkillAPIIsPartitionedCASAndPublishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	published := 0
-	svc := &Service{cfg: Config{LearnedSkills: repository, PublishLearnedSkills: func(context.Context) error { published++; return nil }, SkillActionAvailable: func(learning.SkillPartition, string) (bool, string) { return true, "" }}}
+	svc := &Service{cfg: Config{LearnedSkills: repository, PublishLearnedSkills: func(context.Context, learning.SkillPartition) error { published++; return nil }, SkillActionAvailable: func(learning.SkillPartition, string) (bool, string) { return true, "" }}}
 	listed, err := svc.ListLearnedSkills(context.Background(), &mecatlv1.ListLearnedSkillsRequest{Limit: 1})
 	if err != nil || len(listed.GetSkills()) != 1 {
 		t.Fatalf("list: %+v %v", listed, err)

@@ -1643,15 +1643,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return out
 		},
 		LearnedSkills: assets.learnedSkills,
-		PublishLearnedSkills: func(ctx context.Context) error {
+		PublishLearnedSkills: func(ctx context.Context, partition learning.SkillPartition) error {
 			if assets.liveSkills == nil || assets.learnedSkills == nil {
 				return nil
 			}
-			partitions := []learning.SkillPartition{assets.skillPartition}
-			if cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
-				partitions = append(partitions, learning.SkillPartition{Principal: assets.skillPartition.Principal, Project: cfg.Workspace})
+			partitions := []learning.SkillPartition{{Principal: partition.Principal}}
+			if partition.Project != "" {
+				partitions = append(partitions, partition)
 			}
-			return (learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills, external: assets.skills, source: assets.skillSource}).Publish(ctx)
+			return (learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: "", catalog: assets.liveSkills, external: assets.skills, source: assets.skillSource, serial: assets.skillPublication}).Publish(ctx)
 		},
 		RevokeLearnedSkill: func(name string) {
 			if assets.liveSkills != nil {
@@ -1668,11 +1668,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if assets.liveSkills == nil || assets.learnedSkills == nil {
 				return false, "learned-skill publication target is unavailable"
 			}
-			if owner != assets.skillOwner {
-				return false, "agent does not own this publication target"
-			}
-			if partition.Principal != assets.skillPartition.Principal {
-				return false, "caller partition is not bound to this publication target"
+			if owner == "" {
+				return false, "agent identity is required for this publication target"
 			}
 			if partition.Project != "" && (partition.Project != cfg.Workspace || !projectIngestionAdmittedForRoot(cfg, partition.Project)) {
 				return false, "project publication requires the exact trusted launch root"
@@ -4469,9 +4466,9 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build learned-skill store: %w", openErr)
 		}
 		learnedSkills = learned
-		active, listErr := listActiveLearnedSkills(ctx, learned, skillPartition, skillOwner)
+		active, listErr := listActiveLearnedSkills(ctx, learned, skillPartition, "")
 		if listErr == nil && cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
-			projectActive, projectErr := listActiveLearnedSkills(ctx, learned, learning.SkillPartition{Principal: skillPartition.Principal, Project: cfg.Workspace}, skillOwner)
+			projectActive, projectErr := listActiveLearnedSkills(ctx, learned, learning.SkillPartition{Principal: skillPartition.Principal, Project: cfg.Workspace}, "")
 			if projectErr != nil {
 				listErr = projectErr
 			} else {
@@ -4483,6 +4480,10 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("load active learned skills: %w", listErr)
 		}
 		liveSkills = coreskillfs.NewAtomicCatalog(seam.metas, seam.source, active)
+	}
+	var skillPublication *learnedSkillPublication
+	if liveSkills != nil {
+		skillPublication = &learnedSkillPublication{}
 	}
 
 	// ONE process-wide preserved-fork LRU shared by every Parallel tool (build-time
@@ -4505,19 +4506,20 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	}
 
 	assets := catalogAssets{
-		globalMgr:      mainMgr,
-		agentReg:       agentReg,
-		memStore:       memStore,
-		userModelStore: userModelStore,
-		skills:         seam.metas,
-		skillSource:    seam.source,
-		skillIndex:     seam.index,
-		liveSkills:     liveSkills,
-		learnedSkills:  learnedSkills,
-		skillPartition: skillPartition,
-		skillOwner:     skillOwner,
-		forkReaper:     forkReaper,
-		autoMerger:     autoMerger,
+		globalMgr:        mainMgr,
+		agentReg:         agentReg,
+		memStore:         memStore,
+		userModelStore:   userModelStore,
+		skills:           seam.metas,
+		skillSource:      seam.source,
+		skillIndex:       seam.index,
+		liveSkills:       liveSkills,
+		learnedSkills:    learnedSkills,
+		skillPublication: skillPublication,
+		skillPartition:   skillPartition,
+		skillOwner:       skillOwner,
+		forkReaper:       forkReaper,
+		autoMerger:       autoMerger,
 		// WebSearch provider (issue #26): resolved ONCE here via the backend ladder
 		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
 		// and threaded onto the assets so every per-session catalog reuses the SAME

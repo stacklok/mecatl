@@ -26,6 +26,7 @@
     method func (ProposalStatus).Valid() bool
     method func (SignalKind).Valid() bool
     method func (SkillState).Valid() bool
+    method func (ValidationDisposition).Valid() bool
 const Auto Mode = 2
 const CandidateOperatorFact CandidateKind = "operator_fact"
 const CandidateProcedure CandidateKind = "procedure"
@@ -167,7 +168,7 @@ type SkillInventoryItem struct{Name string; OwnerAgent string; AgentOwned bool; 
 type SkillList struct{After SkillID; Limit int; Name string; State SkillState; OwnerAgent string}
 type SkillPage struct{Versions []SkillVersion; Next SkillID}
 type SkillPartition struct{Principal string "json:\"principal\""; Project string "json:\"project,omitempty\""}
-type SkillProvenance struct{Origin SkillProvenanceOrigin "json:\"origin,omitempty\""; ProposalIDs []ProposalID "json:\"proposal_ids,omitempty\""; EvidenceRefs []EvidenceRef "json:\"evidence_refs,omitempty\""; Signals []Signal "json:\"signals,omitempty\""}
+type SkillProvenance struct{Origin SkillProvenanceOrigin "json:\"origin,omitempty\""; ValidationDisposition ValidationDisposition "json:\"validation_disposition,omitempty\""; ProposalIDs []ProposalID "json:\"proposal_ids,omitempty\""; EvidenceRefs []EvidenceRef "json:\"evidence_refs,omitempty\""; Signals []Signal "json:\"signals,omitempty\""}
 type SkillProvenanceOrigin string
 type SkillReceipt struct{Operation string "json:\"operation\""; From SkillState "json:\"from\""; To SkillState "json:\"to\""; Version VersionID "json:\"version\""; At time.Time "json:\"at\""}
 type SkillRepository interface{Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error); Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error); List(context.Context, SkillPartition, SkillList) (SkillPage, error); RecordEvaluation(context.Context, SkillPartition, string, SkillID, VersionID, Revision, SkillEvaluation) (SkillVersion, error); Reject(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error); Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
@@ -175,7 +176,7 @@ type SkillState string
 type SkillValidation struct{Disposition ValidationDisposition; Duplicate *SkillInventoryItem; Similar []SkillInventoryItem}
 type SkillValidationRequest struct{Partition SkillPartition; OwnerAgent string; Bundle SkillBundle; Provenance SkillProvenance; Assets []string; Inventory []SkillInventoryItem}
 type SkillValidator interface{Validate(context.Context, SkillValidationRequest) (SkillValidation, error)}
-type SkillVersion struct{ID SkillID "json:\"id\""; Version VersionID "json:\"version\""; Revision Revision "json:\"revision\""; State SkillState "json:\"state\""; OwnerAgent string "json:\"owner_agent\""; Partition SkillPartition "json:\"partition\""; Bundle SkillBundle "json:\"bundle\""; Provenance SkillProvenance "json:\"provenance\""; Evaluations []SkillEvaluation "json:\"evaluations,omitempty\""; Receipts []SkillReceipt "json:\"receipts,omitempty\""; Supersedes VersionID "json:\"supersedes,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type SkillVersion struct{ID SkillID "json:\"id\""; Version VersionID "json:\"version\""; Revision Revision "json:\"revision\""; State SkillState "json:\"state\""; OwnerAgent string "json:\"owner_agent\""; Partition SkillPartition "json:\"partition\""; Bundle SkillBundle "json:\"bundle\""; Provenance SkillProvenance "json:\"provenance\""; Disposition ValidationDisposition "json:\"validation_disposition,omitempty\""; Evaluations []SkillEvaluation "json:\"evaluations,omitempty\""; Receipts []SkillReceipt "json:\"receipts,omitempty\""; Supersedes VersionID "json:\"supersedes,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
 type ToolProjection struct{ID session.ToolCallID "json:\"id\""; Name string "json:\"name\""}
 type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Principal *session.Principal}
 type ValidationDisposition string

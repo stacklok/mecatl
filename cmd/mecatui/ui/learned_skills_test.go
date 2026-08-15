@@ -32,6 +32,23 @@ func TestLearnedSkillChangeReceiptSetsNonModalStatus(t *testing.T) {
 	}
 }
 
+func TestLearnedSkillResponsesUseRowPartitionAndRequestEpoch(t *testing.T) {
+	m := Model{skills: skillsState{view: skillsPanel, project: "/project", generation: 4, requestID: 9}}
+	global := client.LearnedSkill{ID: "global", Version: "v1", Project: "", Generation: 4}
+	updated, handled := m.updateSkillsMsg(client.LearnedSkillMsg{Skill: &global, Project: "", Generation: 4, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 9})
+	got := updated.(Model)
+	if !handled || got.skills.detail == nil || got.skills.detail.Project != "" || got.skills.detail.ID != "global" {
+		t.Fatalf("global row did not open in its own partition: %#v", got.skills.detail)
+	}
+
+	project := client.LearnedSkill{ID: "project", Version: "v2", Project: "/project", Generation: 5}
+	updated, _ = got.updateSkillsMsg(client.LearnedSkillMsg{Skill: &project, Project: "/project", Generation: 5, SelectedSkillID: "project", SelectedVersion: "v2", RequestID: 8})
+	got = updated.(Model)
+	if got.skills.detail.ID != "global" {
+		t.Fatalf("late response replaced current detail: %#v", got.skills.detail)
+	}
+}
+
 func TestLearnedSkillDetailShowsStaleErrorNonModally(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	skill := client.LearnedSkill{Name: "x"}

@@ -19,11 +19,13 @@ func (e evaluator) Evaluate(context.Context, learning.SkillEvaluationRequest) (l
 }
 
 type publisher struct {
-	calls int
-	err   error
+	calls       int
+	err         error
+	quarantined string
 }
 
 func (p *publisher) Publish(context.Context) error { p.calls++; return p.err }
+func (p *publisher) Quarantine(name string)        { p.quarantined = name }
 
 func TestPipelineModesAndVerdicts(t *testing.T) {
 	for _, tc := range []struct {
@@ -68,10 +70,17 @@ func TestPipelineResumeDispositionAndPublicationStatus(t *testing.T) {
 	})
 	t.Run("similar candidate stays staged in auto", func(t *testing.T) {
 		pub := &publisher{}
+		repository := memskill.New()
 		candidate := skilllifecycle.Candidate{Draft: evidenceDraft(), Mode: learning.Auto, Automatic: true, Inventory: []learning.SkillInventoryItem{{Name: "review-codes", Bundle: learning.SkillBundle{Body: "Inspect the change and run focused tests."}}}}
-		receipt, err := (skilllifecycle.Pipeline{Repository: memskill.New(), Validator: skillvalidation.Validator{}, Evaluator: evaluator{learning.EvaluationPass}, Publisher: pub}).Process(context.Background(), candidate)
+		pipeline := skilllifecycle.Pipeline{Repository: repository, Validator: skillvalidation.Validator{}, Evaluator: evaluator{learning.EvaluationPass}, Publisher: pub}
+		receipt, err := pipeline.Process(context.Background(), candidate)
 		if err != nil || receipt.State != learning.SkillStaged || pub.calls != 0 {
 			t.Fatalf("receipt=%+v calls=%d err=%v", receipt, pub.calls, err)
+		}
+		candidate.Inventory = nil
+		retried, err := pipeline.Process(context.Background(), candidate)
+		if err != nil || retried.State != learning.SkillStaged || pub.calls != 0 {
+			t.Fatalf("retry erased durable similarity: receipt=%+v calls=%d err=%v", retried, pub.calls, err)
 		}
 	})
 	t.Run("nil evaluator abstains", func(t *testing.T) {
@@ -83,7 +92,7 @@ func TestPipelineResumeDispositionAndPublicationStatus(t *testing.T) {
 	t.Run("committed activation reports publication failure", func(t *testing.T) {
 		pub := &publisher{err: errors.New("offline")}
 		receipt, err := (skilllifecycle.Pipeline{Repository: memskill.New(), Validator: skillvalidation.Validator{}, Evaluator: evaluator{learning.EvaluationPass}, Publisher: pub}).Process(context.Background(), skilllifecycle.Candidate{Draft: evidenceDraft(), Mode: learning.Auto, Automatic: true})
-		if err != nil || receipt.State != learning.SkillActive || receipt.PublicationError == "" || receipt.Published {
+		if err != nil || receipt.State != learning.SkillActive || receipt.PublicationError == "" || receipt.Published || pub.quarantined != receipt.Name {
 			t.Fatalf("receipt=%+v err=%v", receipt, err)
 		}
 	})

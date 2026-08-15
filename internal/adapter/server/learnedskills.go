@@ -28,12 +28,12 @@ func (s *Service) liveSkillGeneration() uint64 {
 	return s.cfg.LiveSkillGeneration()
 }
 
-func (s *Service) publishLearnedSkills(ctx context.Context, name string) (string, string) {
+func (s *Service) publishLearnedSkills(ctx context.Context, partition learning.SkillPartition, name string) (string, string) {
 	if s.cfg.PublishLearnedSkills == nil {
 		return "unavailable", "no publication target"
 	}
 	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
-	err := s.cfg.PublishLearnedSkills(publishCtx)
+	err := s.cfg.PublishLearnedSkills(publishCtx, partition)
 	cancel()
 	if err != nil {
 		if s.cfg.RevokeLearnedSkill != nil {
@@ -156,7 +156,7 @@ func (s *Service) mutateLearnedSkill(ctx context.Context, request *mecatlv1.Muta
 	if err != nil {
 		return nil, skillServiceError(err)
 	}
-	status, publishErr := s.publishLearnedSkills(ctx, value.Bundle.Name)
+	status, publishErr := s.publishLearnedSkills(ctx, partition, value.Bundle.Name)
 	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(), Project: validLearningText(request.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 
@@ -196,11 +196,23 @@ func (s *Service) RollbackLearnedSkill(ctx context.Context, r *mecatlv1.Rollback
 	if available, reason := s.cfg.SkillActionAvailable(partition, r.GetOwnerAgent()); !available {
 		return nil, fmt.Errorf("%w: %s", ErrFailedPrecondition, reason)
 	}
+	if s.cfg.LearnedSkillNameAvailable != nil {
+		target, found, getErr := s.cfg.LearnedSkills.Get(ctx, partition, r.GetOwnerAgent(), learning.SkillID(r.GetId()), learning.VersionID(r.GetTargetVersion()))
+		if getErr != nil {
+			return nil, skillServiceError(getErr)
+		}
+		if !found {
+			return nil, fmt.Errorf("%w: learned skill", ErrNotFound)
+		}
+		if !s.cfg.LearnedSkillNameAvailable(target.Bundle.Name) {
+			return nil, fmt.Errorf("%w: external skill %q has precedence", ErrFailedPrecondition, target.Bundle.Name)
+		}
+	}
 	value, err := s.cfg.LearnedSkills.Rollback(ctx, partition, r.GetOwnerAgent(), learning.SkillID(r.GetId()), learning.Revision(r.GetExpectedRevision()), learning.VersionID(r.GetTargetVersion()))
 	if err != nil {
 		return nil, skillServiceError(err)
 	}
-	status, publishErr := s.publishLearnedSkills(ctx, value.Bundle.Name)
+	status, publishErr := s.publishLearnedSkills(ctx, partition, value.Bundle.Name)
 	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(), Project: validLearningText(r.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 

@@ -51,6 +51,7 @@ type LearnedSkillsMsg struct {
 	Skills     []LearnedSkill
 	Project    string
 	Generation uint64
+	RequestID  uint64
 	Err        error
 }
 type LearnedSkillMsg struct {
@@ -59,6 +60,7 @@ type LearnedSkillMsg struct {
 	Generation        uint64
 	SelectedSkillID   string
 	SelectedVersion   string
+	RequestID         uint64
 	PublicationStatus string
 	PublicationError  string
 	Err               error
@@ -68,8 +70,12 @@ type SkillChangesMsg struct {
 	Err     error
 }
 type SkillDiffMsg struct {
-	Diff string
-	Err  error
+	Diff      string
+	Project   string
+	SkillID   string
+	Version   string
+	RequestID uint64
+	Err       error
 }
 
 // SkillsMsg carries a ListSkills result for the /skills panel. Err is set on
@@ -115,22 +121,15 @@ func (c *Client) ListLearnedSkills(ctx context.Context, project string) ([]Learn
 	}
 	var out []LearnedSkill
 	for _, partition := range projects {
-		cursor := ""
-		for {
-			resp, err := c.svc.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: partition, Cursor: cursor, Limit: learning.MaxSkillPageSize})
-			if err != nil {
-				return nil, err
-			}
-			for _, value := range resp.GetSkills() {
-				skill := mapLearnedSkill(value)
-				skill.Project = resp.GetProject()
-				skill.Generation = resp.GetGeneration()
-				out = append(out, skill)
-			}
-			cursor = resp.GetNextCursor()
-			if cursor == "" {
-				break
-			}
+		resp, err := c.svc.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: partition, Limit: learning.DefaultSkillPageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, value := range resp.GetSkills() {
+			skill := mapLearnedSkill(value)
+			skill.Project = resp.GetProject()
+			skill.Generation = resp.GetGeneration()
+			out = append(out, skill)
 		}
 	}
 	return out, nil
@@ -193,19 +192,12 @@ func (c *Client) ListSkillChanges(ctx context.Context, project string) ([]SkillC
 	}
 	var out []SkillChange
 	for _, partition := range projects {
-		cursor := ""
-		for {
-			resp, err := c.svc.ListSkillChanges(ctx, &mecatlv1.ListSkillChangesRequest{Project: partition, Cursor: cursor, Limit: learning.MaxSkillPageSize})
-			if err != nil {
-				return nil, err
-			}
-			for _, r := range resp.GetChanges() {
-				out = append(out, mapSkillChange(r))
-			}
-			cursor = resp.GetNextCursor()
-			if cursor == "" {
-				break
-			}
+		resp, err := c.svc.ListSkillChanges(ctx, &mecatlv1.ListSkillChangesRequest{Project: partition, Limit: learning.DefaultSkillPageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range resp.GetChanges() {
+			out = append(out, mapSkillChange(r))
 		}
 	}
 	return out, nil
@@ -229,32 +221,32 @@ func mapLearnedSkill(value *mecatlv1.LearnedSkillVersion) LearnedSkill {
 	}
 	return out
 }
-func ListLearnedSkillsCmd(ctx context.Context, c LearnedSkillClient, project string) tea.Cmd {
+func ListLearnedSkillsCmd(ctx context.Context, c LearnedSkillClient, project string, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		values, err := c.ListLearnedSkills(ctx, project)
 		var generation uint64
 		for _, value := range values {
 			generation = max(generation, value.Generation)
 		}
-		return LearnedSkillsMsg{Skills: values, Project: project, Generation: generation, Err: err}
+		return LearnedSkillsMsg{Skills: values, Project: project, Generation: generation, RequestID: requestID, Err: err}
 	}
 }
-func GetLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill) tea.Cmd {
+func GetLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.GetLearnedSkill(ctx, s.Project, s.ID, s.OwnerAgent, s.Version)
-		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, RequestID: requestID, Err: err}
 	}
 }
-func MutateLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, action string, s LearnedSkill) tea.Cmd {
+func MutateLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, action string, s LearnedSkill, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.MutateLearnedSkill(ctx, action, s)
-		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, RequestID: requestID, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
 	}
 }
-func RollbackLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill) tea.Cmd {
+func RollbackLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		value, err := c.RollbackLearnedSkill(ctx, s)
-		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
+		return LearnedSkillMsg{Skill: &value, Project: s.Project, Generation: value.Generation, SelectedSkillID: s.ID, SelectedVersion: s.Version, RequestID: requestID, PublicationStatus: value.PublicationStatus, PublicationError: value.PublicationError, Err: err}
 	}
 }
 
@@ -265,8 +257,11 @@ func ListSkillChangesCmd(ctx context.Context, c LearnedSkillClient, project stri
 	}
 }
 
-func DiffLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill) tea.Cmd {
-	return func() tea.Msg { value, err := c.DiffLearnedSkill(ctx, s); return SkillDiffMsg{Diff: value, Err: err} }
+func DiffLearnedSkillCmd(ctx context.Context, c LearnedSkillClient, s LearnedSkill, requestID uint64) tea.Cmd {
+	return func() tea.Msg {
+		value, err := c.DiffLearnedSkill(ctx, s)
+		return SkillDiffMsg{Diff: value, Project: s.Project, SkillID: s.ID, Version: s.Version, RequestID: requestID, Err: err}
+	}
 }
 
 // SkillLister is the subset of *Client the ui's /skills panel needs. Splitting

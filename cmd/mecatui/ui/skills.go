@@ -53,6 +53,7 @@ type skillsState struct {
 	diff       string
 	project    string
 	generation uint64
+	requestID  uint64
 }
 
 // openSkills opens the inventory panel and fires the ListSkills RPC. Only
@@ -64,7 +65,7 @@ func (m Model) openSkills() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.ta.Blur() // overlay owns the keyboard while open
-	m.skills = skillsState{view: skillsPanel, loading: true, project: m.deps.Workspace}
+	m.skills = skillsState{view: skillsPanel, loading: true, project: m.deps.Workspace, requestID: 1}
 	// Open with the filter FOCUSED so the user can type to narrow immediately (the
 	// /models picker's headline affordance, mirrored here as read-only narrowing —
 	// there is no cursor/enter/select on this inventory). The filtered slice is
@@ -78,7 +79,7 @@ func (m Model) openSkills() (tea.Model, tea.Cmd) {
 	m.skills.filtered = nil
 	cmds := []tea.Cmd{client.ListSkillsCmd(m.deps.Ctx, m.deps.Skills), textinput.Blink}
 	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
-		cmds = append(cmds, client.ListLearnedSkillsCmd(m.deps.Ctx, lifecycle, m.deps.Workspace))
+		cmds = append(cmds, client.ListLearnedSkillsCmd(m.deps.Ctx, lifecycle, m.deps.Workspace, m.skills.requestID))
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -135,15 +136,18 @@ func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 			action = "archive"
 		case "v":
 			if m.skills.detail.Supersedes != "" {
-				return m, client.DiffLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail), true
+				m.skills.requestID++
+				return m, client.DiffLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail, m.skills.requestID), true
 			}
 		case "r":
 			if m.skills.detail.Supersedes != "" {
-				return m, client.RollbackLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail), true
+				m.skills.requestID++
+				return m, client.RollbackLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail, m.skills.requestID), true
 			}
 		}
 		if action != "" {
-			return m, client.MutateLearnedSkillCmd(m.deps.Ctx, lifecycle, action, *m.skills.detail), true
+			m.skills.requestID++
+			return m, client.MutateLearnedSkillCmd(m.deps.Ctx, lifecycle, action, *m.skills.detail, m.skills.requestID), true
 		}
 		return m, nil, true
 	}
@@ -153,7 +157,8 @@ func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		selected := m.skills.learned[min(m.skills.cursor, len(m.skills.learned)-1)]
-		return m, client.GetLearnedSkillCmd(m.deps.Ctx, lifecycle, selected), true
+		m.skills.requestID++
+		return m, client.GetLearnedSkillCmd(m.deps.Ctx, lifecycle, selected, m.skills.requestID), true
 	}
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -239,6 +244,9 @@ func (m Model) syncSkillsFilter() Model {
 //nolint:gocyclo // inventory, lifecycle detail, receipt, and diff messages share one reducer
 func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 	if diff, ok := msg.(client.SkillDiffMsg); ok {
+		if diff.RequestID != m.skills.requestID || m.skills.detail == nil || diff.Project != m.skills.detail.Project || diff.SkillID != m.skills.detail.ID || diff.Version != m.skills.detail.Version {
+			return m, true
+		}
 		if diff.Err != nil {
 			m.skills.err = diff.Err
 		} else {
@@ -259,7 +267,7 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 		return m, true
 	}
 	if learned, ok := msg.(client.LearnedSkillsMsg); ok {
-		if learned.Project != m.skills.project || learned.Generation < m.skills.generation {
+		if learned.RequestID != m.skills.requestID || learned.Project != m.skills.project || learned.Generation < m.skills.generation {
 			return m, true
 		}
 		if learned.Err != nil {
@@ -273,7 +281,7 @@ func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
 		return m, true
 	}
 	if detail, ok := msg.(client.LearnedSkillMsg); ok {
-		if detail.Project != m.skills.project || detail.Generation < m.skills.generation || (m.skills.detail != nil && (detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedVersion != m.skills.detail.Version)) {
+		if detail.RequestID != m.skills.requestID || detail.Generation < m.skills.generation || m.skills.detail != nil && (detail.Project != m.skills.detail.Project || detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedVersion != m.skills.detail.Version) {
 			return m, true
 		}
 		if detail.Err != nil {

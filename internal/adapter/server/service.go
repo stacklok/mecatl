@@ -399,7 +399,7 @@ type Config struct {
 	// LearnedSkills exposes caller-partitioned, agent-owned lifecycle records. The
 	// publisher atomically refreshes the shared live Skill catalog after mutations.
 	LearnedSkills             learning.SkillRepository
-	PublishLearnedSkills      func(context.Context) error
+	PublishLearnedSkills      func(context.Context, learning.SkillPartition) error
 	RevokeLearnedSkill        func(string)
 	LiveSkillGeneration       func() uint64
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
@@ -4572,9 +4572,11 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
 	if s.cfg.PublishLearnedSkills != nil {
-		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
-		_ = s.cfg.PublishLearnedSkills(publishCtx)
-		cancel()
+		if partition, err := s.skillPartition(ctx, ""); err == nil {
+			publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
+			_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
+			cancel()
+		}
 	}
 	if s.cfg.LiveSkills != nil {
 		return s.cfg.LiveSkills(ctx)

@@ -91,6 +91,11 @@ func mergeProvenance(dst, src learning.SkillProvenance) (learning.SkillProvenanc
 	if dst.Origin == "" {
 		dst.Origin = src.Origin
 	}
+	if dst.ValidationDisposition == learning.ValidationSimilarStageHint || src.ValidationDisposition == learning.ValidationSimilarStageHint {
+		dst.ValidationDisposition = learning.ValidationSimilarStageHint
+	} else if dst.ValidationDisposition == "" {
+		dst.ValidationDisposition = src.ValidationDisposition
+	}
 	var err error
 	dst.ProposalIDs, err = mergeStrings(dst.ProposalIDs, src.ProposalIDs, learning.MaxSkillProposals)
 	if err != nil {
@@ -168,6 +173,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 			}
 			if rawA, _ := json.Marshal(merged); string(rawA) != mustJSON(record.versions[i].Provenance) {
 				record.versions[i].Provenance = merged
+				record.versions[i].Disposition = merged.ValidationDisposition
 				record.versions[i].Revision = s.revision()
 				record.versions[i].UpdatedAt = s.now().UTC()
 			}
@@ -178,7 +184,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 		}
 		now := s.now().UTC()
 		previous := record.versions[len(record.versions)-1]
-		v := learning.SkillVersion{ID: previous.ID, Version: versionID, Revision: s.revision(), State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Supersedes: previous.Version, CreatedAt: now, UpdatedAt: now}
+		v := learning.SkillVersion{ID: previous.ID, Version: versionID, Revision: s.revision(), State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Disposition: provenance.ValidationDisposition, Supersedes: previous.Version, CreatedAt: now, UpdatedAt: now}
 		record.versions = append(record.versions, clone(v))
 		return clone(v), nil
 	}
@@ -187,7 +193,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 	}
 	now := s.now().UTC()
 	id := skillID(p, owner, bundle.Name)
-	v := learning.SkillVersion{ID: id, Version: versionID, Revision: s.revision(), State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, CreatedAt: now, UpdatedAt: now}
+	v := learning.SkillVersion{ID: id, Version: versionID, Revision: s.revision(), State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Disposition: provenance.ValidationDisposition, CreatedAt: now, UpdatedAt: now}
 	bucket[id] = &skillRecord{owner: owner, name: bundle.Name, versions: []learning.SkillVersion{clone(v)}}
 	return clone(v), nil
 }

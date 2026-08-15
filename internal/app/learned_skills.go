@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
@@ -29,6 +30,8 @@ func listActiveLearnedSkills(ctx context.Context, repository learning.SkillRepos
 	}
 }
 
+type learnedSkillPublication struct{ mu sync.Mutex }
+
 type learnedSkillPublisher struct {
 	repository learning.SkillRepository
 	partitions []learning.SkillPartition
@@ -36,9 +39,20 @@ type learnedSkillPublisher struct {
 	catalog    *skillfs.AtomicCatalog
 	external   []tool.SkillMeta
 	source     tool.SkillSource
+	serial     *learnedSkillPublication
+}
+
+func (p learnedSkillPublisher) Quarantine(name string) {
+	if p.catalog != nil {
+		p.catalog.RevokeLearned(name)
+	}
 }
 
 func (p learnedSkillPublisher) Publish(ctx context.Context) error {
+	if p.serial != nil {
+		p.serial.mu.Lock()
+		defer p.serial.mu.Unlock()
+	}
 	var active []learning.SkillVersion
 	for _, partition := range p.partitions {
 		versions, err := listActiveLearnedSkills(ctx, p.repository, partition, p.owner)
@@ -110,7 +124,7 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 			if partition != assets.skillPartition {
 				partitions = append(partitions, partition)
 			}
-			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills, external: assets.skills, source: assets.skillSource}
+			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills, external: assets.skills, source: assets.skillSource, serial: assets.skillPublication}
 		} else if mode == learning.Auto {
 			// A shared process catalog cannot safely expose another caller/project
 			// partition. Keep it staged until a partition-bound catalog is available.

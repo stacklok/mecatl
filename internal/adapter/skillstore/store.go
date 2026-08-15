@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -204,18 +205,18 @@ func (s *Store) locked(ctx context.Context, write bool, fn func(*manifest) error
 }
 
 func boundedReadRegular(path string, limit int64) ([]byte, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("skillstore: non-regular file rejected: %s", path)
-	}
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("skillstore: non-regular file rejected: %s", path)
+	}
 	raw, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, err
@@ -291,6 +292,9 @@ func (s *Store) validateManifest(doc manifest) error { //nolint:gocyclo // valid
 				}
 				if err := learning.ValidateSkillProvenance(value.Provenance); err != nil {
 					return err
+				}
+				if value.Disposition != value.Provenance.ValidationDisposition || value.Disposition != "" && !value.Disposition.Valid() {
+					return fmt.Errorf("%w: corrupt validation disposition", learning.ErrInvalidSkill)
 				}
 				version, _ := learning.SkillVersionID(value.Bundle)
 				if version != value.Version || len(value.Evaluations) > learning.MaxSkillEvaluations || len(value.Receipts) > learning.MaxSkillReceipts {
@@ -486,6 +490,11 @@ func mergeProvenance(dst, src learning.SkillProvenance) (learning.SkillProvenanc
 	if dst.Origin == "" {
 		dst.Origin = src.Origin
 	}
+	if dst.ValidationDisposition == learning.ValidationSimilarStageHint || src.ValidationDisposition == learning.ValidationSimilarStageHint {
+		dst.ValidationDisposition = learning.ValidationSimilarStageHint
+	} else if dst.ValidationDisposition == "" {
+		dst.ValidationDisposition = src.ValidationDisposition
+	}
 	var err error
 	dst.ProposalIDs, err = mergeStrings(dst.ProposalIDs, src.ProposalIDs, learning.MaxSkillProposals)
 	if err != nil {
@@ -584,6 +593,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 						return revErr
 					}
 					record.Versions[i].Provenance = merged
+					record.Versions[i].Disposition = merged.ValidationDisposition
 					record.Versions[i].Revision = rev
 					record.Versions[i].UpdatedAt = s.now().UTC()
 					bucket[id] = record
@@ -602,7 +612,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 				return revErr
 			}
 			now := s.now().UTC()
-			value := learning.SkillVersion{ID: id, Version: version, Revision: rev, State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Supersedes: record.Versions[len(record.Versions)-1].Version, CreatedAt: now, UpdatedAt: now}
+			value := learning.SkillVersion{ID: id, Version: version, Revision: rev, State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Disposition: provenance.ValidationDisposition, Supersedes: record.Versions[len(record.Versions)-1].Version, CreatedAt: now, UpdatedAt: now}
 			record.Versions = append(record.Versions, clone(value))
 			bucket[id] = record
 			doc.Partitions[key] = bucket
@@ -620,7 +630,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 			return revErr
 		}
 		now := s.now().UTC()
-		value := learning.SkillVersion{ID: id, Version: version, Revision: rev, State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, CreatedAt: now, UpdatedAt: now}
+		value := learning.SkillVersion{ID: id, Version: version, Revision: rev, State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Disposition: provenance.ValidationDisposition, CreatedAt: now, UpdatedAt: now}
 		bucket[id] = skillRecord{Owner: owner, Name: bundle.Name, Versions: []learning.SkillVersion{clone(value)}}
 		doc.Partitions[key] = bucket
 		out = clone(value)
