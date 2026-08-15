@@ -525,6 +525,13 @@ arguments, and the human-readable reason. The client responds with a verdict:
 A run that parks awaiting an approval can be approved later — even after a process
 restart, the harness re-enters the loop at the pending ask when the verdict arrives.
 
+In `mecatui` the approval modal shows the args up front: the command renders in
+bright text with a left accent bar so it reads distinct from the surrounding
+metadata, long args **wrap** (a `Bash` ask decodes to the command text, never a
+raw JSON blob) and **scroll** inside the card, and `ctrl+t` opens a full-screen
+scrollable view of the whole arguments with the verdict buttons pinned at the
+bottom.
+
 In a **headless** deployment there is no human to ask. An unresolved ask is
 auto-denied by default, with one optional step before that: the
 `--subagent-ask-reviewer` (headless-only) inserts a tool-less, one-turn LLM reviewer

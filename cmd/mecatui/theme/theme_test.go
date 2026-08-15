@@ -36,7 +36,7 @@ func TestStylesCompiled(t *testing.T) {
 	want := []string{
 		"header", "footer", "viewport", "userBlock", "userLabel",
 		"assistantLabel", "toolCard", "toolName", "toolArgs", "toolOk",
-		"toolErr", "askCard", "askTitle", "askButton", "askButtonActive",
+		"toolErr", "askCard", "askTitle", "askArgs", "askButton", "askButtonActive",
 		"spinner", "muted", "warning", "dangerPill", "errorText", "selection",
 	}
 	th := New("aztec", aztecPalette)

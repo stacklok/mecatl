@@ -53,6 +53,7 @@ var validActions = map[string]struct{}{
 	"Help":             {},
 	"Effort":           {},
 	"SetGlobalDefault": {},
+	"RawArgs":          {},
 }
 
 // scope membership per action.
@@ -66,7 +67,7 @@ var (
 	}
 	overlayInternal = map[string]struct{}{
 		"Up": {}, "Down": {}, "Choose": {}, "Close": {}, "Refresh": {}, "Tasks": {}, "Findings": {},
-		"JumpTop": {}, "JumpEnd": {}, "NextTab": {}, "CancelChild": {},
+		"JumpTop": {}, "JumpEnd": {}, "NextTab": {}, "CancelChild": {}, "RawArgs": {},
 	}
 )
 
@@ -118,6 +119,41 @@ func Validate(res Resolved) error {
 	// 3) Reject collisions within globalOpen scope.
 	if err := rejectScopeCollisions(res, globalOpen, "global"); err != nil {
 		return err
+	}
+	// 3b) RawArgs and Refresh share default chord r in disjoint surfaces; an
+	// explicit rebind of either must keep them disjoint. With both at their
+	// defaults the two surfaces never coexist (an overlay never owns the keyboard
+	// while the permission modal's full-screen args view is open), so the
+	// overlay-internal scope check above deliberately does not fire on the shared
+	// default — only an operator rebind that re-overlaps the pair is rejected.
+	_, rawRebound := res.ByAction["RawArgs"]
+	_, refreshRebound := res.ByAction["Refresh"]
+	if rawRebound || refreshRebound {
+		raw := res.ByAction["RawArgs"]
+		if len(raw) == 0 {
+			raw = []string{"r"}
+		}
+		refresh := res.ByAction["Refresh"]
+		if len(refresh) == 0 {
+			refresh = []string{"r"}
+		}
+		if err := rejectPairOverlap(raw, refresh, "RawArgs", "Refresh"); err != nil {
+			return err
+		}
+	}
+	// 3c) RawArgs is consulted FIRST inside the full-screen ask-args view
+	// (onApprovalKey checks it before the verdict keys), so an explicit RawArgs
+	// rebind that overlaps a rebound Allow/AllowAlways/Deny chord would silently
+	// shadow that verdict INSIDE the view — a surface where those verdicts are
+	// live. Reject the overlap; absent chords can't shadow anything (precedence
+	// applies only to what is rebound), and the default r collides with none of
+	// the default a/w/d.
+	if rawRebound {
+		for _, verdict := range []string{"Allow", "AllowAlways", "Deny"} {
+			if err := rejectPairOverlap(res.ByAction["RawArgs"], res.ByAction[verdict], "RawArgs", verdict); err != nil {
+				return err
+			}
+		}
 	}
 	// 4) Approval consistency: Deny must not collide with Allow/AllowAlways/Submit/Cancel.
 	deny := res.ByAction["Deny"]

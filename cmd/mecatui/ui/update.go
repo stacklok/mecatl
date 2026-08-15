@@ -827,6 +827,10 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 		m.askQueue = append(m.askQueue, next)
 		return m.afterEvent()
 	}
+	// Record the phase this ask interrupted so advanceAsk can RESUME it on close
+	// (a wire ask pauses phaseRunning; a /debug-ask opens from phaseIdle and must
+	// NOT resume into a spinner-running phase that no run owns).
+	m.askResumePhase = m.phase
 	m.phase = phaseAwaitingApproval
 	m.activeTool = ""
 	m.toolProgress = ""
@@ -1237,6 +1241,14 @@ func (m *Model) relayout() {
 	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) {
 		m.openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
 	}
+	// The full-screen ask-args view, when open, is re-populated at the SAME
+	// position as the plan-review view above (BEFORE the bodyHeight early-return)
+	// so a resize/transient toggle re-wraps the args at the new geometry with the
+	// operator's YOffset preserved (openAskArgsView's fingerprint short-circuits
+	// a no-op).
+	if m.phase == phaseAwaitingApproval && m.argsViewOpen {
+		m.openAskArgsView(m.ask, len(m.askQueue))
+	}
 	if bodyHeight == m.vp.Height() {
 		return
 	}
@@ -1332,9 +1344,7 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// ctrl+t is a global render toggle (full vs capped tool output); it works in
 	// any phase and never feeds the textarea.
 	if key.Matches(msg, m.keys.ExpandTools) {
-		m.expandTools = !m.expandTools
-		m.refreshView()
-		return m, nil
+		return m.onExpandToolsKey()
 	}
 
 	// ctrl+v reads the OS clipboard into the prompt (image → staged attachment,
@@ -1355,6 +1365,27 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.dispatchPhaseKey(msg)
+}
+
+// onExpandToolsKey is the ctrl+t handler, extracted from onKey so onKey stays
+// under the cyclomatic cap. ctrl+t is a global render toggle (full vs capped
+// tool output); inside the permission modal it ROUTES by ask type (issue #488):
+// a non-diff, non-plan ask opens/closes the full-screen ask-args view INSTEAD
+// of toggling expandTools; a plan ask or an Edit/Write (diff-capable) ask keeps
+// the in-modal expand behaviour byte-for-byte.
+func (m Model) onExpandToolsKey() (tea.Model, tea.Cmd) {
+	if m.phase == phaseAwaitingApproval && !isPlanAsk(m.ask.Tool) && !isDiffCapableAskTool(m.ask.Tool) {
+		if m.argsViewOpen {
+			(&m).clearAskArgsView()
+		} else {
+			m.argsViewOpen = true
+			(&m).openAskArgsView(m.ask, len(m.askQueue))
+		}
+		return m, nil
+	}
+	m.expandTools = !m.expandTools
+	m.refreshView()
+	return m, nil
 }
 
 // dispatchPhaseKey is the per-phase key router, extracted from onKey so onKey
@@ -1725,6 +1756,25 @@ func isChildAsk(askID, sessionID string) bool {
 // operator can act after reading. up/down scroll the plan; left/right/tab move
 // the button focus (documented in the plan-review footer hint).
 func (m Model) onApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// The full-screen ask-args view owns the keyboard while open (issue #488):
+	// scroll keys route to argsVP, Cancel (esc) closes the view back to the
+	// modal, RawArgs (r) toggles the pretty/raw tier and re-populates. The
+	// verdict keys (A/W/D/enter/left/right/tab) fall through to the ordinary
+	// action handlers so the operator can resolve the ask from inside the view.
+	if m.argsViewOpen {
+		if mm, cmd, handled := m.onAskArgsScrollKey(msg); handled {
+			return mm, cmd
+		}
+		if key.Matches(msg, m.keys.Cancel) {
+			(&m).clearAskArgsView()
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.RawArgs) {
+			m.argsViewRaw = !m.argsViewRaw
+			(&m).openAskArgsView(m.ask, len(m.askQueue))
+			return m, nil
+		}
+	}
 	// A plan ask owns the keyboard for SCROLL keys: route them to planVP. This
 	// mirrors onScrollKey's m.vp routing (pgup/pgdn delegate to the viewport,
 	// home/end jump to top/bottom) so the scroll affordance is identical to the
@@ -1733,6 +1783,15 @@ func (m Model) onApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if isPlanAsk(m.ask.Tool) {
 		if mm, cmd, handled := m.onPlanScrollKey(msg); handled {
 			return mm, cmd
+		}
+	}
+	// A non-diff ask with hidden args rows owns the SCROLL keys for its in-card
+	// args mini-viewport (issue #488): pgup/pgdn and up/down move askVPOffset
+	// within the clamped range (no-op at the edges). left/right/tab keep button
+	// focus; the verdict keys fall through.
+	if !isPlanAsk(m.ask.Tool) && !isDiffCapableAskTool(m.ask.Tool) {
+		if mm, handled := m.onAskArgsMiniScrollKey(msg); handled {
+			return mm, nil
 		}
 	}
 	// The focus ring is {0:allow, 2:deny} for a two-button modal and
@@ -1785,6 +1844,21 @@ func focusVerdict(focus int) client.Verdict {
 	}
 }
 
+// dispatchClick executes a ClickAction from the hit-test registry — the SINGLE
+// executor for clickable regions (issue #555). Every action drives the SAME
+// path its key chord would (a verdict click is identical to pressing the
+// button's chord: set focus, then resolveAsk). New ClickAction kinds add ONE
+// case here; they never grow a parallel click path.
+func (m Model) dispatchClick(act ClickAction) (tea.Model, tea.Cmd) {
+	switch act.kind {
+	case clickAskVerdict:
+		m.ask.focus = act.focus
+		return m.resolveAsk(focusVerdict(act.focus))
+	default:
+		return m, nil
+	}
+}
+
 // advanceAsk advances the FIFO ask queue's head: it pops the next queued ask into
 // the visible m.ask slot (phase STAYS phaseAwaitingApproval — the successor modal
 // opens immediately), or — when the queue is empty — clears the modal and returns
@@ -1807,9 +1881,12 @@ func (m Model) advanceAsk() (Model, bool) {
 		// capacity-clamped append form instead because it appends into the very
 		// slice it splits.)
 		// First clear any prior plan-review viewport (the outgoing head may have
-		// been a plan ask; a non-plan successor must NOT inherit its planVP), then
-		// if the new head is itself a plan ask, populate a fresh planVP for it.
+		// been a plan ask; a non-plan successor must NOT inherit its planVP) and
+		// any open ask-args view (the view is per-ask — a queued successor opens
+		// its own), then if the new head is itself a plan ask, populate a fresh
+		// planVP for it.
 		(&m).clearPlanReview()
+		(&m).clearAskArgsView()
 		m.ask = m.askQueue[0]
 		m.askQueue = m.askQueue[1:]
 		if isPlanAsk(m.ask.Tool) {
@@ -1818,11 +1895,20 @@ func (m Model) advanceAsk() (Model, bool) {
 		return m, false
 	}
 	// No successor: clear any plan-review viewport (the closing ask may have been
-	// a plan ask) and close the modal, returning to phaseRunning.
+	// a plan ask) and any open ask-args view, and close the modal, resuming the
+	// phase the ask interrupted (phaseRunning for a wire ask, phaseIdle for a
+	// /debug-ask). Default a zero/unset resume phase to phaseRunning so the wire
+	// path is unchanged even if a test bypassed the reducer.
 	(&m).clearPlanReview()
+	(&m).clearAskArgsView()
 	m.ask = pendingAsk{}
-	m.phase = phaseRunning
-	return m, true
+	resume := m.askResumePhase
+	if resume != phaseIdle {
+		resume = phaseRunning
+	}
+	m.askResumePhase = 0
+	m.phase = resume
+	return m, resume == phaseRunning
 }
 
 // markAskResolved records an answered/retracted askID into the resolvedAsks
@@ -3267,8 +3353,10 @@ func (m Model) endRun(stop string) Model {
 	// A dead run's asks must not survive into idle: drop the visible modal, the FIFO
 	// queue behind it, and the answered-set dedupe (covers every endRun caller —
 	// ResultMsg, StreamErrMsg, StreamClosedMsg, cancel). The plan-review viewport
-	// is cleared alongside (the closing ask may have been a plan ask).
+	// and the ask-args view are cleared alongside (the closing ask may have been a
+	// plan ask, or had its full-screen args view open).
 	(&m).clearPlanReview()
+	(&m).clearAskArgsView()
 	m.ask = pendingAsk{}
 	m.askQueue = nil
 	m.resolvedAsks = nil
@@ -3299,10 +3387,37 @@ func (m Model) endRun(stop string) Model {
 // its Update handles the wheel natively; m.vp is left untouched (it is not the
 // visible body during a plan ask).
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.phase == phaseAwaitingApproval && m.argsViewOpen && m.argsVPReady {
+		// The full-screen ask-args view owns the wheel while open (issue #488) —
+		// same shape as the plan-review arm below.
+		var cmd tea.Cmd
+		m.argsVP, cmd = m.argsVP.Update(msg)
+		return m, cmd
+	}
 	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) && m.planVPReady {
 		var cmd tea.Cmd
 		m.planVP, cmd = m.planVP.Update(msg)
 		return m, cmd
+	}
+	if m.phase == phaseAwaitingApproval && !isPlanAsk(m.ask.Tool) && !isDiffCapableAskTool(m.ask.Tool) &&
+		m.askArgsWheelOverCard(msg) {
+		// The modal's in-card args mini-viewport scrolls ONLY when the cursor is
+		// over the card rect (a wheel elsewhere keeps scrolling the conversation
+		// behind the modal).
+		mo := msg.Mouse()
+		step := 3
+		if mo.Button == tea.MouseWheelUp {
+			step = -3
+		}
+		off := m.askVPOffset + step
+		if maxOff := m.askArgsMiniScrollRange(); off > maxOff {
+			off = maxOff
+		}
+		if off < 0 {
+			off = 0
+		}
+		m.askVPOffset = off
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
@@ -3311,6 +3426,21 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	m.rend.invalidateVPView()
 	m.syncStuck()
 	return m, cmd
+}
+
+// askArgsWheelOverCard reports whether a wheel event's cursor cell falls inside
+// the centered permission card's rect — the gate for routing the wheel to the
+// modal's in-card args mini-viewport rather than the conversation behind the
+// modal. It reads the card rect from approvalCardRect — the SAME source the
+// click hit-test consumes — so the wheel region and the click region can never
+// drift.
+func (m Model) askArgsWheelOverCard(msg tea.MouseWheelMsg) bool {
+	rect, _, ok := m.approvalCardRect()
+	if !ok {
+		return false
+	}
+	mo := msg.Mouse()
+	return rect.contains(mo.X, mo.Y)
 }
 
 // onMouseMsg fans the four mouse message types out to their handlers. It is one
@@ -3389,9 +3519,8 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 			if !mouseCaptureEnabled(m) {
 				return m, nil
 			}
-			if idx, ok := m.askButtonAt(mo.X, mo.Y); ok {
-				m.ask.focus = idx
-				return m.resolveAsk(focusVerdict(idx))
+			if act, ok := m.clickAt(mo.X, mo.Y); ok {
+				return m.dispatchClick(act)
 			}
 			return m, nil
 		}
@@ -3834,6 +3963,82 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.rend.invalidateVPView()
 	m.syncStuck()
 	return m, cmd
+}
+
+// askArgsMiniScrollRange computes the maximum clamped YOffset of the modal's
+// in-card args mini-viewport for the current ask/geometry: the wrapped args
+// line count minus the view rows the modal declares (the SAME arithmetic
+// permissionModalBodyParts lays out, so the scroll bound matches the render).
+// Returns 0 when nothing is hidden (the scroll keys then no-op).
+func (m Model) askArgsMiniScrollRange() (maxOff int) {
+	pretty, _, ok := askArgsContent(m.deps.Theme, m.ask)
+	if !ok || pretty == "" {
+		return 0
+	}
+	// The SAME layout the render path lays out (askArgsMiniViewport) — never a
+	// re-derived wrap/cap, so the scroll bound matches the frame by construction.
+	return askArgsMiniViewport(m.deps.Theme, pretty, m.width, m.vp.Height()).maxOffset
+}
+
+// onAskArgsMiniScrollKey moves the modal's in-card args mini-viewport
+// (askVPOffset) on a scroll key while the args full-screen view is NOT open.
+// Returns handled=true only when the key was a scroll key AND there are hidden
+// rows to scroll to; otherwise the key falls through to the action handlers.
+func (m Model) onAskArgsMiniScrollKey(msg tea.KeyPressMsg) (Model, bool) {
+	maxOff := m.askArgsMiniScrollRange()
+	if maxOff <= 0 {
+		return m, false
+	}
+	step := 0
+	switch {
+	case key.Matches(msg, m.keys.ScrollU):
+		step = -3
+	case key.Matches(msg, m.keys.ScrollD):
+		step = 3
+	case msg.String() == keyMenuUp:
+		step = -1
+	case msg.String() == keyMenuDown:
+		step = 1
+	default:
+		return m, false
+	}
+	off := m.askVPOffset + step
+	if off < 0 {
+		off = 0
+	}
+	if off > maxOff {
+		off = maxOff
+	}
+	m.askVPOffset = off
+	return m, true
+}
+
+// onAskArgsScrollKey routes a scroll key to the full-screen ask-args viewport
+// (argsVP) while the ask-args view is open — the args-view analogue of
+// onPlanScrollKey: pgup/pgdn delegate to the viewport, home/end jump to
+// top/bottom, and the arrow keys (up/down) scroll a line at a time. Returns
+// handled=true when the key was a scroll key it consumed; false otherwise so
+// onApprovalKey's close/toggle/action fall-through still runs.
+func (m Model) onAskArgsScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if !m.argsVPReady {
+		return m, nil, false
+	}
+	var cmd tea.Cmd
+	switch {
+	case key.Matches(msg, m.keys.ScrollTop):
+		m.argsVP.GotoTop()
+		return m, nil, true
+	case key.Matches(msg, m.keys.ScrollBottom):
+		m.argsVP.GotoBottom()
+		return m, nil, true
+	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.ScrollD):
+		m.argsVP, cmd = m.argsVP.Update(msg)
+		return m, cmd, true
+	case msg.String() == keyMenuUp, msg.String() == keyMenuDown:
+		m.argsVP, cmd = m.argsVP.Update(msg)
+		return m, cmd, true
+	}
+	return m, nil, false
 }
 
 // onPlanScrollKey routes a scroll key to the plan-review viewport (planVP) while

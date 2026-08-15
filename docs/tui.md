@@ -824,7 +824,11 @@ show the plain prompt-hint card.
 | in the permission modal: `w` | always allow (this session; offered for the main agent's asks only, not surfaced subagent asks; rebindable via `AllowAlways`) |
 | in the permission modal: `d`/`n`/`esc` | deny (rebindable via `Deny`) |
 | in the permission modal: `←`/`→`/`tab` | cycle the focused button; `enter` activates it |
-| in the permission modal / plan-review bar: left-click a button | activate it (same as its chord — **alt screen only**). Clicking anywhere else in the modal does nothing (it is a gate, not a form) |
+| in the permission modal (non-diff ask): `pgup`/`pgdn`, `↑`/`↓` | scroll the modal's in-card args region when rows are hidden (long args wrap; the `… · ctrl+t full args` hint shows when anything is hidden) |
+| in the permission modal (non-diff ask): `ctrl+t` | open the **full-screen ask-args view** (see below); plan asks and Edit/Write asks keep the in-modal expand behaviour instead |
+| in the full-screen ask-args view: `r` | toggle the args between the pretty tier (a Bash `{"command": …}` decodes to the command text, with a muted `timeout_ms: N` annotation when the envelope carries one) and the **verbatim wire args string** (rebindable via `RawArgs`; shown only when the tiers genuinely differ, hidden when they are byte-identical) |
+| in the full-screen ask-args view: `esc` / `ctrl+t` | back to the modal |
+| in the permission modal / plan-review bar / ask-args view: left-click a button | activate it (same as its chord — **alt screen only**). Clicking anywhere else in the modal does nothing (it is a gate, not a form) |
 | `pgup` / `pgdn` | scroll the conversation up / down |
 | `home` / `end` | jump to the top / bottom of the conversation (`end` resumes auto-follow) |
 | mouse wheel | scroll the conversation (**alt screen only**; see below) |
@@ -858,6 +862,37 @@ while asks are queued. Answering or denying the visible ask advances the queue (
 modal opens immediately); a cancelled child's queued ask is withdrawn in place (with a
 notice, since the count badge advertised it); any asks still queued when the run ends are
 dropped. The keys are unchanged — you only ever answer one modal at a time.
+
+**Long args wrap, scroll, and open full-screen.** A non-diff ask's args (a Bash
+`{"command": …}` decodes to the command text; anything else renders as pretty
+JSON) **wrap** inside the card — no more single unreadable line running off the
+edge. The command renders in the bright `askArgs` style with a tool-coloured
+left accent bar, so the thing being approved reads distinct from the muted
+reason/hint around it. The in-card args region caps at ten rows: when anything
+is hidden, a hint (`… · pgup/pgdn scroll · ctrl+t full args`) shows, and
+`pgup`/`pgdn`, `↑`/`↓`, or the mouse wheel over the card scroll the region in
+place. The card itself sizes to its content up to 132 columns on a wide
+terminal (still a centred card, not a full-width band). `ctrl+t`
+on a non-diff ask opens the **full-screen ask-args view**: the whole args fill
+the conversation region and scroll, and both that view and the modal mark a
+soft-wrapped command with a warning-coloured `↩` at the END of each continued
+row, so a wrap is never mistaken for a real newline in the args. The buttons
+pin to the bottom bar, and
+`r` toggles between the pretty tier and the **raw tier — the VERBATIM wire args
+string**, sanitized but otherwise untouched (the escape hatch that can never
+lie: "exactly what am I approving"). The toggle is offered whenever the tiers
+genuinely differ (any Bash ask, or an ask whose pretty tier re-indents the
+verbatim raw); an ask whose tiers are byte-identical (empty args, a non-JSON
+single-line passthrough) shows no toggle hint. `esc` or
+`ctrl+t` returns to the modal; the verdict keys work from inside the view.
+`ctrl+t` routes by ask type: plan asks keep the scrollable plan-review view and
+Edit/Write asks keep the in-modal diff expand — see
+[ADR 0108](./adr/0108-mecatui-ask-args-view.md).
+
+For hand-testing the modal's long-args surfaces without driving a live run,
+`MECATUI_DEBUG_ASK=1` registers a `/debug-ask` built-in that injects a fake
+long-args permission ask through the real reducer (deliberately env-var-only —
+it never appears in `--help`).
 
 The `?` overlay enumerates the rest of the chords — `ctrl+v` (paste a clipboard
 image), `ctrl+o`/`ctrl+r`/`ctrl+p` (MCP inventory / resources / prompts), `ctrl+a`
@@ -926,7 +961,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `Resources` | `ctrl+r` | global | MCP resources picker |
 | `Prompts` | `ctrl+p` | global | MCP prompts picker |
 | `Agents` | `ctrl+a` | global | unified agents overlay (subagents / parallel / teams) |
-| `ExpandTools` | `ctrl+t` | global | expand/collapse tool-card details & reasoning summaries |
+| `ExpandTools` | `ctrl+t` | global | expand/collapse tool-card details & reasoning summaries; in the permission modal, opens the full-screen args view for non-diff asks (in-modal diff expand for Edit/Write; untouched for plan asks) |
 | `Help` | `?` | global | this help overlay (on an empty prompt) |
 | `Effort` | `ctrl+e` | global | reasoning-effort picker |
 | `Up` | `up`, `k` | overlay | move the cursor up |
@@ -940,6 +975,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `JumpEnd` | `end`, `G` | overlay | jump to the last roster row |
 | `NextTab` | `tab` | overlay | agents overlay: switch tab |
 | `CancelChild` | `x` | overlay | agents overlay: cancel the selected running child |
+| `RawArgs` | `r` | overlay | full-screen ask-args view: toggle pretty ↔ raw args |
 | `SetGlobalDefault` | `ctrl+g` | overlay¹ (`/models` picker) | set the cursor row as the client global default |
 
 ¹ `SetGlobalDefault` is consulted only inside the `/models` picker, but it is in
@@ -947,6 +983,12 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 `overlayInternal`) — so its chord is not collision-checked against the other
 actions. Keep it `ctrl`-modified (the default `ctrl+g`): a bare `g` would be
 swallowed by the picker's filter input and by `ScrollTop`/`JumpTop`.
+
+`RawArgs` and `Refresh` share the default chord `r` in **disjoint surfaces** (the
+MCP overlay vs the full-screen ask-args view — an overlay never owns the keyboard
+while the permission modal is open), so the shared default passes validation; an
+explicit rebind of either must keep the pair disjoint, or startup fails with a
+`keymap:` error.
 
 #### What the override cannot reach — the textarea's own editing keys
 

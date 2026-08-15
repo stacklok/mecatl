@@ -1,0 +1,32 @@
+ mecatui  ·  session #b9ba2286  ·  mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+echo step-xxxxa-
+echo step-xxxxb-y
+echo step-xxxxc-yy
+echo step-xxxxd-yyy
+echo step-xxxxe-yyyy
+echo step-xxxxf-yyyyy
+echo step-xxxxg-yyyyyy
+echo step-xxxxh-
+echo step-xxxxi-y
+echo step-xxxxj-yy
+echo step-xxxxk-yyy
+echo step-xxxxl-yyyy
+echo step-xxxxm-yyyyy
+echo step-xxxxn-yyyyyy
+echo step-xxxxo-
+echo step-xxxxp-y
+echo step-xxxxq-yy
+╭───────────╮  ╭────────────╮  ╭──────────╮
+│  [A]llow  │  │  Al[w]ays  │  │  [D]eny  │
+╰───────────╯  ╰────────────╯  ╰──────────╯
+al[w]ays allows this exact command for the rest of this session
+scroll: ↑/↓ · pgup/pgdn · home/end · mouse wheel · r raw|pretty · esc back
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ⚠ awaiting approval                                                         ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

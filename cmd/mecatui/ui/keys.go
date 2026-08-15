@@ -90,6 +90,17 @@ type keyMap struct {
 	// any global control binding.
 	Findings key.Binding
 
+	// RawArgs toggles the full-screen ask-args view between the pretty tier (a
+	// decoded Bash command / pretty-printed JSON) and the raw JSON tier. It is a
+	// BARE 'r' consulted ONLY inside the full-screen ask-args view (onApprovalKey's
+	// argsViewOpen branch intercepts before the verdict keys), so it never collides
+	// with the textarea (blurred while the modal is open) nor with any global
+	// control binding. It shares the Refresh overlay chord's default 'r' — the two
+	// surfaces are disjoint (an overlay never owns the keyboard while the
+	// permission modal is open), and the validator keeps an explicit rebind of
+	// either from overlapping the other.
+	RawArgs key.Binding
+
 	// Jump bindings for the windowed agent-team roster (tedious to traverse with
 	// ↑/↓ at the 20–32-member scale the overlay exists for): home/g jump to the
 	// first member, end/G to the last. Page up/down reuse ScrollU/ScrollD (pgup/
@@ -290,6 +301,12 @@ func defaultKeys() keyMap {
 			key.WithKeys("f"),
 			key.WithHelp("f", "findings"),
 		),
+		// r: pretty↔raw toggle inside the full-screen ask-args view. Consulted only
+		// while that view owns the keyboard (the permission modal is open).
+		RawArgs: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "raw args"),
+		),
 		JumpTop: key.NewBinding(
 			key.WithKeys("home", "g"),
 			key.WithHelp("home/g", "first"),
@@ -425,6 +442,9 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		},
 		"Findings": func(chords []string) {
 			km.Findings = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Findings.Help().Desc))
+		},
+		"RawArgs": func(chords []string) {
+			km.RawArgs = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.RawArgs.Help().Desc))
 		},
 		"JumpTop": func(chords []string) {
 			km.JumpTop = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.JumpTop.Help().Desc))

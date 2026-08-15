@@ -3371,17 +3371,29 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   the SAME posture as every other permission ask (Write/Bash asks carry their args for
   operator review); the operator is the intended audience. Gauntlet #7 holds: the
   `EvApproval` payload carries ONLY tool NAME + verdict + askID + call id — NO args.
-- **The scrollable plan-approval modal (`cmd/mecatui/ui/permission.go`
-  (`renderPlanApprovalModal`), `cmd/mecatui/ui/permission.go` (`planBodyFromArgs`)).**
-  The mecatui modal parses the `plan` (falling back to `note`) out of `ask.Args` JSON and
-  renders it between the model line and the buttons so the operator can READ what they are
-  approving (not just "plan ready for operator approval"). A long plan is line-capped to
-  `maxPlanLines` (12) with a "+N more lines · ctrl+t expand" affordance, and the global
-  ctrl+t (`expandTools`) toggle reveals the full plan — the SAME established reveal
-  pattern as Edit/Write diffs and tool-result bodies. The model-authored plan text is
-  terminal-sanitized. Backwards/forwards compat: no `plan` arg → `note`; no note → the
-  reason line; malformed args JSON → the reason line (an older model that put the plan only
-  in message text never breaks the modal).
+- **The scrollable plan-approval view (`cmd/mecatui/ui/permission.go`
+  (`openPlanReviewView`), `cmd/mecatui/ui/permission.go` (`planBodyFromArgs`;
+  `renderPlanApprovalModal` no longer exists — the plan path is
+  `renderPlanReviewView` over the dedicated planVP viewport).** The mecatui
+  plan surface parses the `plan` (falling back to `note`) out of `ask.Args`
+  JSON and renders it scrollable in the conversation region (NOT the centered
+  card) with the verdict buttons pinned to the bottom bar, so the operator
+  READs what they are approving (not just "plan ready for operator approval").
+  The model-authored plan text is terminal-sanitized. Backwards/forwards
+  compat: no `plan` arg → `note`; no note → the reason line; malformed args
+  JSON → the reason line (an older model that put the plan only in message text
+  never breaks the modal). **The non-diff ask-args surface (issue #488, ADR
+  0108 — `cmd/mecatui/ui/permission.go` (`openAskArgsView`))** mirrors this
+  trio one-for-one: a non-diff, non-plan ask's args WRAP inside the centered
+  card (a Bash `{"command": …}` decodes to the command text), cap at six rows
+  plus a scroll/full-args hint, and `ctrl+t` opens the full-screen argsVP view
+  (raw JSON via the bare-`r` RawArgs toggle; the verdict keys/buttons work from
+  inside it) — ctrl+t routing by ask type is `isDiffCapableAskTool` (Edit/Write
+  keep the in-modal diff expand; plan asks untouched). The modal body builder
+  `cmd/mecatui/ui/permission.go` (`permissionModalBodyParts`) remains the
+  SINGLE source for render AND click hit-test (it measures the buttons row at
+  the structural point it writes them), so the added args/hint rows cannot
+  desync the click geometry.
 - **Verdict → mode (`engine/agent/loop.go` (`planApprovedTarget`)).** Allow-once →
   `ModeDefault`; allow-always → `ModeAccept`; deny → terminate CLEANLY with
   `engine/session/session.go` (`StopPlanIterate`) (the iterate pause — issue #206

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,6 +43,7 @@ type wiredCollaborators struct {
 	Scheduling  bool
 	Sessions    bool // /sessions picker — gated on inventory + authoritative transcript
 	Learning    bool // /learning operator-settings enum
+	DebugAsk    bool // /debug-ask — env-gated (MECATUI_DEBUG_ASK=1) fake-ask injector
 }
 
 // wiredCollaborators builds the struct from m.deps — the SINGLE construction
@@ -57,6 +60,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		Sessions: m.deps.Sessions != nil && m.deps.Transcript != nil,
 		Learning: m.deps.Learning != nil,
+		DebugAsk: m.deps.DebugAsk,
 	}
 }
 
@@ -187,6 +191,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		})
 	}
 	out = appendLearningBuiltin(out, w)
+	out = appendDebugAskBuiltin(out, w)
 	// /posture prints the server-wide operator posture tier + a line per defense.
 	// Gated on a non-empty caps.Posture (an older server omits the field), so it never
 	// appears against a server that cannot report it. Chrome only — it changes nothing.
@@ -208,6 +213,20 @@ func appendLearningBuiltin(out []builtin, w wiredCollaborators) []builtin {
 		name: "learning",
 		desc: "cycle completed-trajectory learning mode (restart required)",
 		run:  Model.runLearning,
+	})
+}
+
+// appendDebugAskBuiltin registers /debug-ask ONLY under the env-gated Deps.DebugAsk
+// (MECATUI_DEBUG_ASK=1) — a hand-testing affordance for the permission modal's
+// long-args surfaces (issue #488), never a documented feature.
+func appendDebugAskBuiltin(out []builtin, w wiredCollaborators) []builtin {
+	if !w.DebugAsk {
+		return out
+	}
+	return append(out, builtin{
+		name: "debug-ask",
+		desc: "(debug) inject a fake permission ask (long bash)",
+		run:  Model.runDebugAsk,
 	})
 }
 
@@ -351,6 +370,46 @@ func (m Model) runPosture() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// debugAskPayloads are the three canned long-args Bash commands /debug-ask
+// rotates through (issue #488): (a) one very long single-line pipeline, (b) a
+// compound &&/||/; command with pipes and redirections, (c) a heredoc carrying
+// real newlines. Each is injected JSON-encoded as {"command": …} so the modal's
+// pretty tier decodes it exactly like a wire ask.
+var debugAskPayloads = []string{
+	"find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' | awk -F: '{print $1}' | sort | uniq -c | sort -rn | head -40 | while read -r count file; do printf '%5d  %s\\n' \"$count\" \"$file\"; done | tee /tmp/test-counts.txt | column -t -s' '",
+	"git fetch origin main && git rebase origin/main || git merge --abort; cargo build --release 2>&1 | tee /tmp/build.log | grep -E 'error|warning' > /tmp/build-issues.txt; docker compose up -d --wait && curl -fsS http://localhost:8080/healthz || docker compose logs --tail=200",
+	"cat <<'EOF' > /tmp/report.md\n# Nightly report\n\n## Summary\n\n- total: 42\n- failed: 3\n- skipped: 1\n\n## Failures\n\n- pkg/foo: TestBar — timeout after 30s waiting on the fixture server\n- pkg/baz: TestQux — golden mismatch (see .scratch/qux.diff)\n- pkg/quux: TestCorge — nil dereference on empty input\n\n## Environment\n\nRun at $(date -u +%FT%TZ) against the staging workspace (us-east-1).\nRunner: nightly-04 · image sha256:9f86d08…\n\n## Next steps\n\nRe-run the three failing tests with -count=1 -v and attach the artifacts bundle to the tracker issue.\nEOF\nprintf 'wrote %s (%d bytes)\\n' /tmp/report.md \"$(wc -c < /tmp/report.md)\"",
+}
+
+// runDebugAsk injects a FAKE permission ask with long Bash args through the SAME
+// reducer the wire drives (applyPermissionAsk over a client.PermissionAskMsg), so
+// queueing, dedupe, focus, the (1 of N) badge, and the click geometry all
+// exercise for real. Registered only under MECATUI_DEBUG_ASK=1. Each invocation
+// rotates to the next canned payload (debugAskCycle). At phaseIdle the modal
+// opens directly (applyPermissionAsk does not gate on phase) — that is the
+// intended debug affordance, and a phaseAwaitingApproval invocation queues FIFO
+// behind the open modal exactly like a wire ask.
+func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
+	n := m.debugAskCycle
+	m.debugAskCycle++
+	cmd := debugAskPayloads[n%len(debugAskPayloads)]
+	args, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("debug-ask: marshal failed")
+		return m, nil
+	}
+	// The askID embeds the monotonic invocation counter so a re-injection after a
+	// resolve is never swallowed by the resolvedAsks dedupe. It is colon-free up
+	// to the trailing counter, so isChildAsk classifies it as a MAIN ask (the
+	// always button is offered — the modal shows all three buttons).
+	return m.applyPermissionAsk(client.PermissionAskMsg{
+		AskID:  fmt.Sprintf("sess-debug-ask-%d", n),
+		Tool:   "Bash",
+		Args:   string(args),
+		Reason: "debug ask (MECATUI_DEBUG_ASK) — not from the model",
+	})
+}
+
 // postureSummary renders the one-line /posture summary for a posture token. It is
 // pure (no Model) so it is directly testable. allow-all + main-substitution are on at
 // auto+yolo; the CHILD substitution (prompt-injection defense OFF) is yolo-only;
@@ -392,6 +451,7 @@ func allBuiltins() map[string]bool {
 	allWired := wiredCollaborators{
 		MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true,
 		Models: true, Worktrees: true, Scheduling: true, Sessions: true, Learning: true,
+		DebugAsk: true,
 	}
 	set := make(map[string]bool, 14)
 	for _, b := range builtinCommands(allCaps, allWired) {

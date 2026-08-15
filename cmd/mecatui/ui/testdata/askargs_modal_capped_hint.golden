@@ -1,0 +1,32 @@
+
+
+
+
+
+
+
+               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+               ┃                                                                   ┃
+               ┃  Permission required                                              ┃
+               ┃                                                                   ┃
+               ┃  Bash                                                             ┃
+               ┃  │ echo step-xxxxa-                                               ┃
+               ┃  │ echo step-xxxxb-y                                              ┃
+               ┃  │ echo step-xxxxc-yy                                             ┃
+               ┃  │ echo step-xxxxd-yyy                                            ┃
+               ┃  │ echo step-xxxxe-yyyy                                           ┃
+               ┃  │ echo step-xxxxf-yyyyy                                          ┃
+               ┃  │ echo step-xxxxg-yyyyyy                                         ┃
+               ┃  │ echo step-xxxxh-                                               ┃
+               ┃  │ echo step-xxxxi-y                                              ┃
+               ┃  │ echo step-xxxxj-yy                                             ┃
+               ┃                                                                   ┃
+               ┃  … pgup/pgdn scroll · ctrl+t full args                            ┃
+               ┃  Bash requires approval                                           ┃
+               ┃                                                                   ┃
+               ┃  ╭───────────╮  ╭────────────╮  ╭──────────╮                      ┃
+               ┃  │  [A]llow  │  │  Al[w]ays  │  │  [D]eny  │                      ┃
+               ┃  ╰───────────╯  ╰────────────╯  ╰──────────╯                      ┃
+               ┃  al[w]ays allows this exact command for the rest of this session  ┃
+               ┃                                                                   ┃
+               ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

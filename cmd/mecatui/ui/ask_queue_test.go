@@ -67,7 +67,7 @@ func TestAskEnqueuedWhileModalOpen(t *testing.T) {
 	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
 		t.Errorf("footer must carry the queue badge, got %q", footer)
 	}
-	modal := stripANSIstr(m.rend.renderPermissionModal(m.ask, false, len(m.askQueue), 100, 24))
+	modal := stripANSIstr(m.rend.renderPermissionModal(m.ask, false, len(m.askQueue), 100, 24, 0))
 	if !strings.Contains(modal, "Permission required (1 of 2)") {
 		t.Errorf("modal title must carry the queue badge, got %q", modal)
 	}
@@ -137,7 +137,7 @@ func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 	if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "(1 of") {
 		t.Errorf("the badge must vanish at queue-empty, footer = %q", footer)
 	}
-	modal := stripANSIstr(m.rend.renderPermissionModal(m.ask, false, len(m.askQueue), 100, 24))
+	modal := stripANSIstr(m.rend.renderPermissionModal(m.ask, false, len(m.askQueue), 100, 24, 0))
 	if strings.Contains(modal, "(1 of") {
 		t.Errorf("the modal title badge must vanish at queue-empty, got %q", modal)
 	}
@@ -303,6 +303,27 @@ func TestResetSessionDropsAskQueue(t *testing.T) {
 	}
 	if m.resolvedAsks != nil {
 		t.Errorf("resetSession must drop the answered-set, got %v", m.resolvedAsks)
+	}
+}
+
+// TestAskQueueBadgeWithLongArgsHeadAsk: a long-args Bash head ask with a queued
+// successor carries the (1 of 2) badge in BOTH the modal title and the args
+// view title — the wrap/cap work must not eat the badge.
+func TestAskQueueBadgeWithLongArgsHeadAsk(t *testing.T) {
+	m, _ := queuedAskModel(t) // A (Bash) visible, B (Write) queued
+	m.ask.Args = longBashArgs
+	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
+		t.Errorf("footer must carry the queue badge, got %q", footer)
+	}
+	modal := stripANSIstr(m.renderBody())
+	if !strings.Contains(modal, "Permission required (1 of 2)") {
+		t.Errorf("the long-args modal title must carry the queue badge, got %q", modal)
+	}
+	// Open the args view: the badge rides its title too.
+	m = openArgsView(t, m)
+	view := stripANSIstr(m.renderBody())
+	if !strings.Contains(view, "Ask args: Bash (1 of 2)") {
+		t.Errorf("the args view title must carry the queue badge, got %q", view)
 	}
 }
 

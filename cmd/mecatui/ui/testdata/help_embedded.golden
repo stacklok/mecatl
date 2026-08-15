@@ -16,6 +16,14 @@
 ┃    enter                 queue a follow-up (sends when the turn ends)                                                                                              ┃
 ┃    esc                   clear staged input / queue, else cancel run                                                                                               ┃
 ┃                                                                                                                                                                    ┃
+┃  While the permission modal is open                                                                                                                                ┃
+┃    a                     allow once                                                                                                                                ┃
+┃    w                     always allow (this session; main-agent asks only)                                                                                         ┃
+┃    d                     deny                                                                                                                                      ┃
+┃    ←/→/tab           cycle the focused button · enter activates it                                                                                                 ┃
+┃    ctrl+t                full-screen args (non-diff asks) · in-modal diff expand (Edit/Write)                                                                      ┃
+┃    r                     raw args in the full view                                                                                                                 ┃
+┃                                                                                                                                                                    ┃
 ┃  Inspect & control                                                                                                                                                 ┃
 ┃    ctrl+o                MCP inventory  [not enabled]                                                                                                              ┃
 ┃    ctrl+r                MCP resources  [not enabled]                                                                                                              ┃

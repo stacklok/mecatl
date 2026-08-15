@@ -439,7 +439,7 @@ func TestPermissionModalButtonsReflectKeyOverride(t *testing.T) {
 	r := newRenderer(theme.New("aztec", theme.AztecPalette()), keyMarkings(km))
 	r.setWidth(100)
 	ask := pendingAsk{Tool: "Edit", offerAlways: true, Args: `{"path":"a","old_string":"x","new_string":"y"}`}
-	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30))
+	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30, 0))
 	for _, want := range []string{"[Y] allow", "[Q] always allow", "[N] deny"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("modal buttons should carry the overridden standalone form %q: %q", want, got)
@@ -465,7 +465,7 @@ func TestPermissionModalButtonsDefaultBytesUnchanged(t *testing.T) {
 	r := newRenderer(theme.New("aztec", theme.AztecPalette()), defaultHelpKeys())
 	r.setWidth(100)
 	ask := pendingAsk{Tool: "Edit", offerAlways: true, Args: `{"path":"a","old_string":"x","new_string":"y"}`}
-	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30))
+	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30, 0))
 	for _, want := range []string{"[A]llow", "Al[w]ays", "[D]eny", "al[w]ays allows this exact command for the rest of this session"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("default modal buttons should stay the historical word-embedded form %q: %q", want, got)
@@ -486,7 +486,7 @@ func TestPermissionModalButtonsModifiedChordStandalone(t *testing.T) {
 	r := newRenderer(theme.New("aztec", theme.AztecPalette()), keyMarkings(km))
 	r.setWidth(100)
 	ask := pendingAsk{Tool: "Edit", offerAlways: true, Args: `{"path":"a","old_string":"x","new_string":"y"}`}
-	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30))
+	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30, 0))
 	for _, want := range []string{"[ctrl+y] allow", "[ctrl+q] always allow", "[ctrl+n] deny"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("modal buttons should carry the modified-chord standalone form %q: %q", want, got)

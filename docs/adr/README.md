@@ -169,6 +169,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0032 — First-class worktree binding for a session](./0032-worktree-binding.md)
 - [0087 — Staged mecatui transport migration](./0087-mecatui-staged-transport-migration.md) *(superseded by 0089)*
 - [0088 — Explicit daemon.yaml (listener topology config)](./0088-daemon-config-file.md)
+- [0108 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0108-mecatui-ask-args-view.md)
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

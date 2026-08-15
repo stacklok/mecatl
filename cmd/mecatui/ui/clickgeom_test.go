@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -217,6 +218,53 @@ func TestAskButtonAtGenericModalMissesResolveNothing(t *testing.T) {
 	}
 }
 
+// TestClickAtReturnsAskVerdictActions pins the region-registry path (issue
+// #555): the hit-test returns ClickAction payloads (not bare focus ints), each
+// approval button emits exactly one clickAskVerdict region, and the regions
+// tile the button rows with no overlap.
+func TestClickAtReturnsAskVerdictActions(t *testing.T) {
+	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
+	regions := m.approvalClickRegions()
+	if len(regions) != 3 {
+		t.Fatalf("a three-button modal must emit 3 regions, got %d", len(regions))
+	}
+	wantFoci := []int{0, 1, 2}
+	for i, r := range regions {
+		if r.action.kind != clickAskVerdict {
+			t.Errorf("region %d: action kind = %v, want clickAskVerdict", i, r.action.kind)
+		}
+		if r.action.focus != wantFoci[i] {
+			t.Errorf("region %d: action focus = %d, want %d", i, r.action.focus, wantFoci[i])
+		}
+		if r.rect.x1 <= r.rect.x0 || r.rect.y1 <= r.rect.y0 {
+			t.Errorf("region %d: empty rect %v", i, r.rect)
+		}
+	}
+	// clickAt returns the region's action for a cell inside it, and misses outside.
+	for _, r := range regions {
+		act, ok := m.clickAt(r.rect.x0, r.rect.y0)
+		if !ok || act != r.action {
+			t.Errorf("clickAt(%d,%d) = %+v, %v; want %+v", r.rect.x0, r.rect.y0, act, ok, r.action)
+		}
+	}
+	if _, ok := m.clickAt(0, 0); ok {
+		t.Error("a click at the frame corner must miss every approval region")
+	}
+}
+
+// TestClickAtOutsideApprovalPhaseIsEmpty pins that the registry reports no
+// regions when no ask owns the body (a click resolves nothing at idle/running).
+func TestClickAtOutsideApprovalPhaseIsEmpty(t *testing.T) {
+	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
+	m.phase = phaseRunning
+	if got := m.approvalClickRegions(); len(got) != 0 {
+		t.Errorf("phaseRunning must emit no approval regions, got %d", len(got))
+	}
+	if _, ok := m.clickAt(m.width/2, m.height/2); ok {
+		t.Error("no click may resolve outside phaseAwaitingApproval")
+	}
+}
+
 func TestAskButtonAtTwoButtonModalHasNoMiddle(t *testing.T) {
 	// A surfaced child ask (offerAlways=false) renders Allow · Deny only — the
 	// hit-test must expose exactly foci {0, 2}, never a middle "always" rect.
@@ -337,6 +385,65 @@ func TestApprovalMouseClickRequiresCapture(t *testing.T) {
 				t.Fatalf("uncaptured click resolved approval: cmd=%v phase=%v frames=%d", cmd != nil, m.phase, len(approvalFrames(send)))
 			}
 		})
+	}
+}
+
+// TestAskButtonAtArgsViewHitsEachButton pins the full-screen ask-args view's
+// hit-test (issue #488): with the view open, the GENERIC permission buttons sit
+// on the pinned bar at the bottom of the body region and each resolves a click
+// to its verdict — the SAME buttons as the modal (not the plan wording).
+func TestAskButtonAtArgsViewHitsEachButton(t *testing.T) {
+	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	byFocus := xsByFocusRow(hitScan(m))
+	if len(byFocus) != 3 {
+		t.Fatalf("the args view (offerAlways) must expose 3 buttons, got foci %v", keysOf(byFocus))
+	}
+	// The buttons must sit on the ask-view layout's buttons row, not wherever the
+	// centered modal would put them.
+	layout := m.argsReviewLayout(m.ask)
+	wantRow := convTopRow(m) + layout.buttonsRow
+	for focus, rows := range byFocus {
+		for row := range rows {
+			if row < wantRow || row >= wantRow+layout.buttonsHeight {
+				t.Errorf("focus %d hit on row %d, want within [%d,%d)", focus, row, wantRow, wantRow+layout.buttonsHeight)
+			}
+		}
+	}
+	// A click on the allow button resolves the ask (key-chord parity).
+	m.deps.NoAltScreen = false
+	x, y, ok := buttonCenter(m, 0)
+	if !ok {
+		t.Fatal("allow button must have hit geometry in the args view")
+	}
+	m = leftClick(t, m, x, y)
+	if m.phase != phaseRunning {
+		t.Errorf("clicking allow inside the args view must resolve → phaseRunning, got %v", m.phase)
+	}
+	if got := lastNotice(m); got != "permission allowed" {
+		t.Errorf("notice = %q, want 'permission allowed'", got)
+	}
+}
+
+// TestAskButtonAtLongArgsModalStable pins that a long-args modal (wrapped,
+// capped mini-viewport + hint line) still hits its buttons exactly — the added
+// region rows and the hint line never swallow the button band.
+func TestAskButtonAtLongArgsModalStable(t *testing.T) {
+	m := bashAskModel(t, longBashArgs)
+	byFocus := xsByFocusRow(hitScan(m))
+	if len(byFocus) != 3 {
+		t.Fatalf("the long-args modal must expose 3 buttons, got foci %v", keysOf(byFocus))
+	}
+	body, buttonsRow := m.permissionModalBody()
+	card := m.deps.Theme.Style("askCard").Render(body)
+	_, originY := centeredCardOrigin(lipgloss.Width(card), lipgloss.Height(card), m.width, m.vp.Height())
+	style := m.deps.Theme.Style("askCard")
+	wantRow := convTopRow(m) + originY + style.GetBorderTopSize() + style.GetPaddingTop() + buttonsRow
+	for focus, rows := range byFocus {
+		for row := range rows {
+			if row != wantRow && row != wantRow+1 && row != wantRow+2 {
+				t.Errorf("focus %d hit on row %d, want the button box rows from %d", focus, row, wantRow)
+			}
+		}
 	}
 }
 

@@ -180,7 +180,7 @@ func (t Theme) Color(slot string) color.Color {
 
 // Style returns the derived lipgloss.Style for a named UI element. Known names:
 // header, footer, viewport, userBlock, userLabel, assistantLabel, toolCard,
-// toolName, toolArgs, toolOk, toolErr, askCard, askTitle, askButton,
+// toolName, toolArgs, toolOk, toolErr, askCard, askTitle, askArgs, askButton,
 // askButtonActive, spinner, muted, warning, dangerPill, errorText. Unknown names
 // return an empty style so callers degrade gracefully rather than panic.
 func (t Theme) Style(name string) lipgloss.Style {
@@ -324,6 +324,15 @@ func (t *Theme) compile() {
 		"askTitle": lipgloss.NewStyle().
 			Foreground(col(p.Warning)).
 			Bold(true),
+		// askArgs: the command content INSIDE the permission modal — bright
+		// primary Text with a Tool-coloured left accent bar so the thing being
+		// approved reads distinct from the muted reason/hint metadata around it.
+		"askArgs": lipgloss.NewStyle().
+			Foreground(col(p.Text)).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderLeft(true).
+			BorderForeground(col(p.Tool)).
+			PaddingLeft(1),
 		"askButton": lipgloss.NewStyle().
 			Foreground(col(p.Text)).
 			Padding(0, 2).

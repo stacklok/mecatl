@@ -16,6 +16,31 @@ func keyMapFieldNames() []string {
 	return names
 }
 
+// TestDefaultRawArgsBinding pins the RawArgs default: a bare "r" (consulted
+// ONLY inside the full-screen ask-args view) with the "raw args" help text.
+func TestDefaultRawArgsBinding(t *testing.T) {
+	b := defaultKeys().RawArgs
+	keys := b.Keys()
+	if len(keys) != 1 || keys[0] != "r" {
+		t.Errorf("RawArgs default keys = %v, want [r]", keys)
+	}
+	if h := b.Help(); h.Key != "r" || h.Desc != "raw args" {
+		t.Errorf("RawArgs default help = %v, want {r raw args}", h)
+	}
+}
+
+// TestRawArgsKeyMarking pins the helpKeyMarkings seam: the rawArgs marking reads
+// the LIVE binding's first chord, falling back to "r" for an empty binding.
+func TestRawArgsKeyMarking(t *testing.T) {
+	if got := keyMarkings(defaultKeys()).rawArgs; got != "r" {
+		t.Errorf("default rawArgs marking = %q, want r", got)
+	}
+	km := applyKeyOverrides(defaultKeys(), map[string][]string{"RawArgs": {"ctrl+f20"}})
+	if got := keyMarkings(km).rawArgs; got != "ctrl+f20" {
+		t.Errorf("overridden rawArgs marking = %q, want ctrl+f20", got)
+	}
+}
+
 // TestEveryKeyHasOverrideSetter pins the rebindable-key parity invariant (issue #228
 // added EditBack): EVERY keyMap field must have an applyKeyOverrides setter, or that
 // key silently becomes non-rebindable. We probe the setter by overriding each action

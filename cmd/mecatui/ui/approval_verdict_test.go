@@ -78,6 +78,26 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 	}
 }
 
+// TestResolveAskResetsArgsViewState pins the lifecycle contract (issue #488):
+// resolving an ask whose args view/mini-viewport were used resets BOTH the
+// full-screen view state and the modal's mini-viewport offset, so the next ask
+// never inherits a stale scroll position or an open view.
+func TestResolveAskResetsArgsViewState(t *testing.T) {
+	m := openArgsView(t, bashAskModel(t, longBashArgs))
+	m.argsViewRaw = true
+	m.askVPOffset = 3
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if m.argsViewOpen || m.argsVPReady {
+		t.Error("resolve must close the full-screen args view")
+	}
+	if m.argsViewRaw {
+		t.Error("resolve must reset the raw toggle")
+	}
+	if m.askVPOffset != 0 {
+		t.Errorf("resolve must reset the mini-viewport offset, got %d", m.askVPOffset)
+	}
+}
+
 // TestApprovalWResolvesAlways: with always-allow offered, 'w' resolves the modal as
 // always-allow and records the always notice.
 func TestApprovalWResolvesAlways(t *testing.T) {
