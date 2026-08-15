@@ -13,6 +13,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Session discovery taxonomy and bounded metadata paging** (issue #471,
+  [ADR 0108](../docs/adr/0108-session-discovery-continuation.md)) —
+  `session.SessionKind` / `session.SessionRelationship` define the validated
+  main, scheduled, Subagent, Parallel-branch, team-member, and legacy-unknown
+  vocabulary. `port.SessionDiscoveryMeta`, `SessionMetadataPager`, cursor/page
+  values, and reference conformance add optional bounded discovery without
+  changing the required `SessionStore` Save/Load interface. New identifiers are
+  Added (minor); additions to `session.Session` are classified Changed below.
+
 - **Per-model-call session identity context** (issue #543) —
   `port.WithSessionID` and `port.SessionIDFromContext` carry the exact active
   session identity through the existing provider call context without widening
@@ -711,6 +720,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`session.SubagentPayload.RoutingReason` / `session.ParallelPayload.RoutingReason` / `session.TeamMemberSpec.RoutingReason`, the `session.RoutingReason*` gate constants, and `agent.WithPinnedAgents`** (issue #397) — the three delegation-start events now carry a bounded, bare-metadata reason WHY the OPT-IN semantic model router did not classify a delegation: EMPTY on a routed hit, otherwise one of the gate constants (`RoutingReasonPinnedModel` / `RoutingReasonAgentDefPinned` / `RoutingReasonResume` / `RoutingReasonFork` / `RoutingReasonRouterDisabled` / `RoutingReasonTargetUnavailable` / `RoutingReasonBreakerOpen` / `RoutingReasonAborted`) or a static classifier/composition miss code (`RouterMiss*`, `empty-model`, `category-selector-empty`, …). This lets a UI distinguish router-absent from pinned-model from agent-def-pinned from classifier-failure from breaker-open — previously every miss/gate collapsed to empty `routed_*`. `WithPinnedAgents` carries the composition-computed model-pin set separately from the routable set, so provider-switched and inline-MCP defs are not falsely attributed as model-pinned. If a routed engine factory declines its target, routed fields are cleared and `RoutingReasonTargetUnavailable` records the fallback while `Model` names the engine that actually ran. The Subagent gate attributes the explicit choice gates (resume / fork / per-call `model` / agent-def pin) ahead of the router-absent gate, so a pinned delegation is never mislabeled `router-disabled`. The reason is clamped at the emit site (`routingReasonPayload`, 200-rune cap) AND confined to an event-safe allowlist (`routingReasonEventSafe`): because the missReason channel is open to external engine compositions via the exported `Deps.SubagentModelRouter`, known detailed composition reasons are reduced to their static code and every other non-allowlisted reason (a provider error body, classifier output, a task excerpt) is substituted with the generic `routing-miss` label on the wire while the verbatim text stays in operator diagnostics — gauntlet #7. Classified Added per COMPATIBILITY.md (new struct fields, constants, and option constructor are a minor bump). See ADR 0083.
 
 ### Changed
+
+- **Session taxonomy fields on the existing aggregate** (issue #471,
+  [ADR 0108](../docs/adr/0108-session-discovery-continuation.md)) —
+  `session.Session.Kind` and `session.Session.Relationship` are additive for keyed
+  literals but breaking for external unkeyed literals. The required
+  `port.SessionStore` and existing `port.SessionMeta` shapes remain unchanged.
+  Classified Changed/breaking for a pre-v1 minor bump.
 
 - **Learned-skill linkage and durable admission on existing learning structs (issue #510)** — `learning.Candidate.Name` preserves historical title/body procedure decoding while naming new materializable skills; `learning.ProposalRecord.SkillID` links an explicitly materialized draft; `learning.SkillProvenance.Origin` represents the explicit unevidenced legacy-model import case; `SkillProvenance.ValidationDisposition` and `SkillVersion.Disposition` preserve similarity admission across exact retries/restarts; and `ProposalRepository.LinkSkillDraft` extends the existing repository interface. Struct additions are breaking for unkeyed literals and the interface method addition is breaking for external implementations, so these changes are classified Changed under the compatibility contract.
 
