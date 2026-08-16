@@ -298,7 +298,13 @@ external `mecated` it dials via `mecatui connect ADDRESS` — so a single binary
 works with no daemon. The `sessions` launch intent is orthogonal to that transport:
 `mecatui sessions` and `mecatui connect ADDRESS sessions` enter the same stored-session
 inventory without first creating a session, then continue/inspect through the existing
-authoritative transcript path or create only when the operator requests a new chat. The
+authoritative transcript path or create only when the operator requests a new chat. Each
+inventory row also carries server-authored action capabilities. The TUI uses those bits—not
+ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
+rename, and confirmed physical deletion. Fork/rename/delete are revalidated under the
+server's run-entry serialization with ownership, kind, state, liveness, and optional lease
+checks; a stale UI row therefore cannot bypass the server gates, and a failed action does
+not rebind the prompt target. The
 render packages stay pure: they render **purely
 from proto `Event`s** and are bound by the inward-only layering rule. The
 `contracts/gen` + grpc + `internal/app` surface lives only in `cmd/mecatui/client`,
@@ -432,9 +438,14 @@ subagent `fork:true` path already exercises — `session.ForkSnapshot`
 array and strips trailing unanswered tool calls (tool-pairing-valid), and
 `session.SeedHistory` (`engine/session/session.go`) loads it into a fresh
 `session.New` aggregate that starts idle with zeroed `Counters`/`Usage`. The
-source is loaded via the run-entry funnel (`loadAndReopen`), so a terminal source
-is recovered to idle first; a running/awaiting source is rejected with
-`ErrFailedPrecondition` (fork requires a turn boundary). The forked engine is
+source is authorized and revalidated under the same per-session run-entry mutex used by
+prompt starts and the rename/delete management paths. The gate accepts only owned main
+sessions at a turn boundary, rejects legacy child-ID prefixes even when stale metadata says
+`main`, and acquires the optional cross-process session lease before recovering or snapshotting
+the source. A terminal source is recovered to idle first; a running/awaiting source or a live
+in-process run is rejected with `ErrFailedPrecondition`. A mutation-scoped lease is released on
+every exit, while a lease already held by this process for the session lifetime is preserved.
+The forked engine is
 rehydrated ONLY when the source needed a per-session engine (non-default selector
 / no-fs profile / worktree workspace), mirroring `createSession`'s branching; a
 default-FS fork rides the shared engine. Same provider and model only — the

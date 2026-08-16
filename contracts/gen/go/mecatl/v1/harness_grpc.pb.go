@@ -47,6 +47,8 @@ const (
 	HarnessService_GetSessionTranscript_FullMethodName     = "/mecatl.v1.HarnessService/GetSessionTranscript"
 	HarnessService_SetMode_FullMethodName                  = "/mecatl.v1.HarnessService/SetMode"
 	HarnessService_CloseSession_FullMethodName             = "/mecatl.v1.HarnessService/CloseSession"
+	HarnessService_RenameSession_FullMethodName            = "/mecatl.v1.HarnessService/RenameSession"
+	HarnessService_DeleteSession_FullMethodName            = "/mecatl.v1.HarnessService/DeleteSession"
 	HarnessService_ForkSession_FullMethodName              = "/mecatl.v1.HarnessService/ForkSession"
 	HarnessService_Converse_FullMethodName                 = "/mecatl.v1.HarnessService/Converse"
 	HarnessService_ListMcpResources_FullMethodName         = "/mecatl.v1.HarnessService/ListMcpResources"
@@ -111,6 +113,10 @@ type HarnessServiceClient interface {
 	// unknown or already-closed session via the wire returns NotFound only for a
 	// never-created id; an already-released session succeeds.
 	CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error)
+	// RenameSession explicitly replaces an idle main session's title.
+	RenameSession(ctx context.Context, in *RenameSessionRequest, opts ...grpc.CallOption) (*RenameSessionResponse, error)
+	// DeleteSession physically removes an idle main session and its sidecars.
+	DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error)
 	// ForkSession creates a new peer session whose conversation history is a
 	// snapshot of an existing session's, inheriting the source's mode, workspace,
 	// limits, and provider/model/profile labels. Same provider and model only;
@@ -394,6 +400,26 @@ func (c *harnessServiceClient) CloseSession(ctx context.Context, in *CloseSessio
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CloseSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_CloseSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) RenameSession(ctx context.Context, in *RenameSessionRequest, opts ...grpc.CallOption) (*RenameSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenameSessionResponse)
+	err := c.cc.Invoke(ctx, HarnessService_RenameSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteSessionResponse)
+	err := c.cc.Invoke(ctx, HarnessService_DeleteSession_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -852,6 +878,10 @@ type HarnessServiceServer interface {
 	// unknown or already-closed session via the wire returns NotFound only for a
 	// never-created id; an already-released session succeeds.
 	CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error)
+	// RenameSession explicitly replaces an idle main session's title.
+	RenameSession(context.Context, *RenameSessionRequest) (*RenameSessionResponse, error)
+	// DeleteSession physically removes an idle main session and its sidecars.
+	DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error)
 	// ForkSession creates a new peer session whose conversation history is a
 	// snapshot of an existing session's, inheriting the source's mode, workspace,
 	// limits, and provider/model/profile labels. Same provider and model only;
@@ -1106,6 +1136,12 @@ func (UnimplementedHarnessServiceServer) SetMode(context.Context, *SetModeReques
 func (UnimplementedHarnessServiceServer) CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseSession not implemented")
 }
+func (UnimplementedHarnessServiceServer) RenameSession(context.Context, *RenameSessionRequest) (*RenameSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RenameSession not implemented")
+}
+func (UnimplementedHarnessServiceServer) DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteSession not implemented")
+}
 func (UnimplementedHarnessServiceServer) ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ForkSession not implemented")
 }
@@ -1330,6 +1366,42 @@ func _HarnessService_CloseSession_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).CloseSession(ctx, req.(*CloseSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_RenameSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).RenameSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_RenameSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).RenameSession(ctx, req.(*RenameSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_DeleteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).DeleteSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_DeleteSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).DeleteSession(ctx, req.(*DeleteSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2023,6 +2095,14 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CloseSession",
 			Handler:    _HarnessService_CloseSession_Handler,
+		},
+		{
+			MethodName: "RenameSession",
+			Handler:    _HarnessService_RenameSession_Handler,
+		},
+		{
+			MethodName: "DeleteSession",
+			Handler:    _HarnessService_DeleteSession_Handler,
 		},
 		{
 			MethodName: "ForkSession",

@@ -32,7 +32,7 @@
 ┃    ctrl+e                reasoning-effort picker                                                                                                                   ┃
 ┃    /schedule             browse & manage scheduled tasks                                                                                                           ┃
 ┃    /session              show active session details and copy its exact ID                                                                                         ┃
-┃    /sessions             continue chats or inspect scheduled and child runs                                                                                        ┃
+┃    /sessions             continue, inspect, or manage stored sessions                                                                                              ┃
 ┃    alt+m                 cycle permission mode (default / plan / accept-edits)                                                                                     ┃
 ┃    ctrl+t                expand/collapse details                                                                                                                   ┃
 ┃                                                                                                                                                                    ┃

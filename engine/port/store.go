@@ -35,10 +35,11 @@ var ErrSessionNotFound = errors.New("port: session not found")
 //     awaiting), the failure permanence flag (ResultPayload.Permanent — so a
 //     permanently-failed session reconstructs with FailurePermanence()==true and the
 //     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
-//     — the budget brake reads it), and the creation metadata the events do not carry
-//     (id, mode, limits, workspace, profile, provider/model selector, reasoning
-//     effort, session kind/relationship, createdAt — supplied out-of-band, e.g.
-//     eventsource.SessionMeta).
+//     — the budget brake reads it), and the metadata the events do not carry (id, mode,
+//     limits, workspace, profile, provider/model selector, reasoning effort,
+//     authoritative title/provenance, session kind/relationship, createdAt — supplied
+//     out-of-band, e.g. eventsource.SessionMeta). A legacy empty title/provenance may be
+//     derived from the first genuine EvUserPrompt.
 //   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
 //
@@ -121,17 +122,18 @@ type SessionMeta struct {
 // SessionMeta source-compatible while carrying the trusted taxonomy and workspace
 // needed by discovery clients.
 type SessionDiscoveryMeta struct {
-	ID           session.SessionID
-	ModifiedAt   time.Time
-	State        session.State
-	Turns        int
-	ModelID      string
-	CreatedAt    time.Time
-	Title        string
-	Owner        *session.Principal
-	Workspace    string
-	Kind         session.SessionKind
-	Relationship session.SessionRelationship
+	ID              session.SessionID
+	ModifiedAt      time.Time
+	State           session.State
+	Turns           int
+	ModelID         string
+	CreatedAt       time.Time
+	Title           string
+	TitleProvenance session.TitleProvenance
+	Owner           *session.Principal
+	Workspace       string
+	Kind            session.SessionKind
+	Relationship    session.SessionRelationship
 }
 
 // MetaLister is the OPTIONAL cheap-listing seam a SessionStore adapter may
@@ -276,4 +278,12 @@ type PrunableStore interface {
 	// Delete removes the session stored under id. An unknown id is success
 	// (idempotent); any returned error is an infrastructure failure.
 	Delete(ctx context.Context, id session.SessionID) error
+}
+
+// SessionDeleteSupport is the optional authoritative capability signal for a
+// SessionStore that implements PrunableStore for compatibility even when its
+// backend cannot delete sessions. Consumers should prefer this signal when it
+// is present; a PrunableStore without it supports deletion by contract.
+type SessionDeleteSupport interface {
+	SupportsSessionDelete() bool
 }

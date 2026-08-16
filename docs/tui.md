@@ -1232,6 +1232,18 @@ unchanged. A row with neither capability explains why it is unavailable (for
 example, awaiting approval, active elsewhere, unavailable transcript, or
 unavailable environment).
 
+The selected row's server-authored action capabilities also drive the footer and
+keys: **`y`** copies the exact opaque ID, **`v`** opens the authoritative
+transcript read-only without attaching, **`f`** forks an eligible main chat and
+adopts the peer only after the fork and transcript load both succeed, **`r`**
+opens a prefilled title form, and **`d`** opens permanent-delete confirmation.
+`esc` cancels the rename form or delete confirmation; `n` also cancels delete.
+The current attached chat cannot be deleted from its own inventory row—switch
+first. Rename/delete/fork are revalidated by the server, so a stale row can fail
+without rebinding the active chat. Scheduled, child, active, awaiting, and
+unknown rows show only the subset the server reports; hidden actions are also
+rejected if invoked.
+
 The snapshot transcript is the conversation source of truth. Durable event
 replay may support live delivery catch-up, but is not used to establish a
 conversation's completeness or to reconstruct it for Continue/Inspect. An

@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
@@ -94,12 +95,24 @@ func TestValidateDriverConfigExclusivity(t *testing.T) {
 	}
 }
 
+func startSessionStoreDriver(t *testing.T, store port.SessionStore) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	driverv1.RegisterSessionStoreServiceServer(server, grpcdriver.NewSessionStoreServer(store))
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
+	return listener.Addr().String()
+}
+
 // TestBuildStoreDriverURL pins the new buildStore branch: a SessionStoreURL
-// yields the grpcdriver client. Offline-safe — grpc.NewClient is lazy, so no
-// connection is attempted; the close func releases the (never-connected)
-// conn.
+// probes and yields the grpcdriver client.
 func TestBuildStoreDriverURL(t *testing.T) {
-	st, eventLog, closeFn, err := buildStore(Config{SessionStoreURL: "127.0.0.1:7443"})
+	target := startSessionStoreDriver(t, memstore.New())
+	st, eventLog, closeFn, err := buildStore(Config{SessionStoreURL: target})
 	if err != nil {
 		t.Fatalf("buildStore(driver URL): %v", err)
 	}
@@ -210,7 +223,8 @@ func TestBuildStoreEventLogURL(t *testing.T) {
 		}
 	})
 	t.Run("over a session-store driver (nil default)", func(t *testing.T) {
-		_, eventLog, closeFn, err := buildStore(Config{SessionStoreURL: "127.0.0.1:7443", EventLogURL: "127.0.0.1:7444"})
+		target := startSessionStoreDriver(t, memstore.New())
+		_, eventLog, closeFn, err := buildStore(Config{SessionStoreURL: target, EventLogURL: "127.0.0.1:7444"})
 		if err != nil {
 			t.Fatalf("buildStore(SessionStoreURL+EventLogURL): %v", err)
 		}

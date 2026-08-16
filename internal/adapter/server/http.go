@@ -26,6 +26,8 @@ import (
 //	POST   /v1/sessions               -> CreateSession (JSON)
 //	GET    /v1/sessions/{id}          -> GetSession (JSON snapshot)
 //	DELETE /v1/sessions/{id}          -> CloseSession (release session resources; 204)
+//	POST   /v1/sessions/{id}/rename   -> RenameSession (persist an explicit title)
+//	POST   /v1/sessions/{id}/delete   -> DeleteSession (physical snapshot + sidecars)
 //	POST   /v1/sessions/{id}/prompt   -> start a run; text/event-stream of Events
 //	POST   /v1/sessions/{id}/approve  -> resolve the paused ask on the run
 //	POST   /v1/sessions/{id}/cancel   -> cancel the in-flight run
@@ -48,6 +50,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/sessions/{id}/transcript", h.getSessionTranscript)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/mode", h.setMode)
 	h.mux.HandleFunc("DELETE /v1/sessions/{id}", h.closeSession)
+	h.mux.HandleFunc("POST /v1/sessions/{id}/rename", h.renameSession)
+	h.mux.HandleFunc("POST /v1/sessions/{id}/delete", h.deleteSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/prompt", h.prompt)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/approve", h.approve)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/plan:approve", h.approvePlan)
@@ -241,6 +245,9 @@ type sessionResp struct {
 	// deriveTitle fallback when the snapshot Title is empty). Omitted via
 	// omitempty only when both are empty (no genuine prompt).
 	Title string `json:"title,omitempty"`
+	// TitleProvenance records whether Title is prompt-derived, operator-authored,
+	// or legacy/unknown.
+	TitleProvenance string `json:"title_provenance,omitempty"`
 	// ResolvedModel mirrors the gRPC Session snapshot's resolved_model so the HTTP
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
@@ -435,14 +442,15 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		title = DeriveTitle(sess)
 	}
 	writeJSON(w, status, sessionResp{
-		SessionID:     string(sess.ID),
-		State:         string(sess.State),
-		Mode:          string(sess.Mode),
-		Workspace:     sess.Workspace,
-		Turns:         sess.Counters.Turns,
-		ToolCalls:     sess.Counters.ToolCalls,
-		Title:         title,
-		ResolvedModel: resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
+		SessionID:       string(sess.ID),
+		State:           string(sess.State),
+		Mode:            string(sess.Mode),
+		Workspace:       sess.Workspace,
+		Turns:           sess.Counters.Turns,
+		ToolCalls:       sess.Counters.ToolCalls,
+		Title:           title,
+		TitleProvenance: string(sess.TitleProvenance),
+		ResolvedModel:   resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
 	})
 }
 
@@ -787,6 +795,33 @@ func planModeFromString(s string) session.PermissionMode {
 func (h *HTTPHandler) closeSession(w http.ResponseWriter, r *http.Request) {
 	id := session.SessionID(r.PathValue("id"))
 	if err := h.svc.EndSession(r.Context(), id); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// renameSession handles POST /v1/sessions/{id}/rename.
+func (h *HTTPHandler) renameSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title string `json:"title"`
+	}
+	if err := decodeLearningJSON(r, 2<<10, &body, false); err != nil || strings.TrimSpace(body.Title) == "" {
+		writeError(w, http.StatusBadRequest, "a non-blank title is required")
+		return
+	}
+	sess, err := h.svc.RenameSession(r.Context(), session.SessionID(r.PathValue("id")), body.Title)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	h.writeSession(w, http.StatusOK, sess)
+}
+
+// deleteSession handles POST /v1/sessions/{id}/delete. DELETE on the base path
+// intentionally retains CloseSession's resource-release-only semantics.
+func (h *HTTPHandler) deleteSession(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.DeleteSession(r.Context(), session.SessionID(r.PathValue("id"))); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -1802,6 +1837,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		// No durable EventLog (cloud-native Phase 3a) is configured: the
 		// StreamSessionEvents read-back surface is not available on this
 		// deployment. 501 (gRPC Unimplemented).
+		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrSessionDeleteUnsupported):
 		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
 		writeError(w, http.StatusNotImplemented, err.Error())

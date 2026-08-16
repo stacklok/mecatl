@@ -95,7 +95,7 @@ func TestDialAssembledBearerMetadataOverBufconn(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	st := NewSessionStore(conn)
+	st := mustNewSessionStore(t, conn)
 	// Any RPC carries the credential; a Load miss is fine.
 	_, _ = st.Load(context.Background(), "whatever")
 	if want := "Bearer tok-123"; gotAuth != want {

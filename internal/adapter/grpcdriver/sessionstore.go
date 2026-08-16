@@ -54,27 +54,48 @@ var ErrNotFound = fmt.Errorf("grpcdriver: session not found: %w", port.ErrSessio
 // driver. Encode/decode happens HERE (sessnap), harness-side: the driver only
 // ever sees the opaque envelope.
 type SessionStore struct {
-	client driverv1.SessionStoreServiceClient
+	client         driverv1.SessionStoreServiceClient
+	list           bool
+	metadataPaging bool
+	delete         bool
 }
 
-// compile-time assertions that SessionStore satisfies the port plus the
-// optional retention seam. The client implements PrunableStore UNCONDITIONALLY
-// — a driver backed by a non-enumerable store answers List/Delete with
-// UNIMPLEMENTED, which this client maps to port.ErrPruneUnsupported (wrapped);
-// the composition sweeper recognises that sentinel, logs ONE INFO, and
-// stickily disables further sweeps, so such a driver degrades gracefully to
-// "never swept" (without a recurring WARN) rather than failing the harness.
+// compile-time assertions that SessionStore satisfies the base port and keeps
+// the optional operation interfaces unconditionally for compatibility. The
+// negotiated flags are authoritative: unsupported calls return the existing
+// port sentinels without advertising those operations to inventory consumers.
 var (
 	_ port.SessionStore         = (*SessionStore)(nil)
 	_ port.PrunableStore        = (*SessionStore)(nil)
 	_ port.SessionMetadataPager = (*SessionStore)(nil)
+	_ port.SessionDeleteSupport = (*SessionStore)(nil)
 )
 
-// NewSessionStore wraps an established driver connection (see Dial) as a
-// port.SessionStore.
-func NewSessionStore(conn grpc.ClientConnInterface) *SessionStore {
-	return &SessionStore{client: driverv1.NewSessionStoreServiceClient(conn)}
+const sessionCapabilityTimeout = 5 * time.Second
+
+// NewSessionStore wraps an established driver connection (see Dial), probing
+// optional operations once. UNIMPLEMENTED means an older Save/Load-only driver;
+// any other probe failure fails construction rather than guessing capabilities.
+func NewSessionStore(ctx context.Context, conn grpc.ClientConnInterface) (*SessionStore, error) {
+	st := &SessionStore{client: driverv1.NewSessionStoreServiceClient(conn)}
+	probeCtx, cancel := context.WithTimeout(ctx, sessionCapabilityTimeout)
+	defer cancel()
+	caps, err := st.client.Capabilities(probeCtx, &driverv1.SessionStoreCapabilitiesRequest{})
+	if status.Code(err) == codes.Unimplemented {
+		return st, nil
+	}
+	if err != nil {
+		return nil, rpcErr(probeCtx, "negotiate session-store capabilities", err)
+	}
+	st.list = caps.GetList()
+	st.metadataPaging = caps.GetMetadataPaging()
+	st.delete = caps.GetDelete()
+	return st, nil
 }
+
+// SupportsSessionDelete reports the negotiated backend capability. SessionStore
+// keeps implementing PrunableStore unconditionally for compatibility.
+func (st *SessionStore) SupportsSessionDelete() bool { return st.delete }
 
 // Save encodes s via sessnap and persists it under s.ID on the driver,
 // overwriting any prior snapshot. A nil session fails client-side with
@@ -129,6 +150,9 @@ func (st *SessionStore) Load(ctx context.Context, id session.SessionID) (*sessio
 // fails SAFE only because the sweep also never touches unprefixed ids; a
 // driver SHOULD return real times.
 func (st *SessionStore) List(ctx context.Context) ([]port.StoredSession, error) {
+	if !st.list {
+		return nil, fmt.Errorf("grpcdriver: list: %w", port.ErrPruneUnsupported)
+	}
 	resp, err := st.client.List(ctx, &driverv1.ListSessionsRequest{})
 	if err != nil {
 		if status.Code(err) == codes.Unimplemented {
@@ -196,6 +220,9 @@ func validateMetadataPage(page port.SessionMetadataPage, request port.SessionMet
 // metadata page. UNIMPLEMENTED is the optional pager's permanent unsupported
 // posture, not a transient transport failure.
 func (st *SessionStore) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	if !st.metadataPaging {
+		return port.SessionMetadataPage{}, fmt.Errorf("grpcdriver: page metadata: %w", port.ErrSessionMetadataPagingUnsupported)
+	}
 	req, err := pageMetadataRequest(request)
 	if err != nil {
 		return port.SessionMetadataPage{}, err
@@ -263,13 +290,14 @@ func metadataPageFromProto(resp *driverv1.PageSessionMetadataResponse) (port.Ses
 
 func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscoveryMeta {
 	meta := port.SessionDiscoveryMeta{
-		ID:        session.SessionID(entry.GetSessionId()),
-		State:     session.State(entry.GetState()),
-		Turns:     int(entry.GetTurns()),
-		ModelID:   entry.GetModelId(),
-		Title:     entry.GetTitle(),
-		Workspace: entry.GetWorkspace(),
-		Kind:      session.SessionKind(entry.GetKind()),
+		ID:              session.SessionID(entry.GetSessionId()),
+		State:           session.State(entry.GetState()),
+		Turns:           int(entry.GetTurns()),
+		ModelID:         entry.GetModelId(),
+		Title:           entry.GetTitle(),
+		TitleProvenance: session.TitleProvenance(entry.GetTitleProvenance()),
+		Workspace:       entry.GetWorkspace(),
+		Kind:            session.SessionKind(entry.GetKind()),
 		Relationship: session.SessionRelationship{
 			ParentSessionID: session.SessionID(entry.GetParentSessionId()),
 			CallID:          session.ToolCallID(entry.GetCallId()),
@@ -302,6 +330,9 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 // harness-side: a driver NOT_FOUND (a thin driver surfacing its primitive's
 // miss) maps to success, per the port.PrunableStore contract.
 func (st *SessionStore) Delete(ctx context.Context, id session.SessionID) error {
+	if !st.delete {
+		return fmt.Errorf("grpcdriver: delete: %w", port.ErrPruneUnsupported)
+	}
 	if _, err := st.client.Delete(ctx, &driverv1.DeleteSessionRequest{SessionId: string(id)}); err != nil {
 		if status.Code(err) == codes.NotFound {
 			return nil

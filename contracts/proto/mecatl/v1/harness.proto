@@ -52,6 +52,12 @@ service HarnessService {
   // never-created id; an already-released session succeeds.
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
 
+  // RenameSession explicitly replaces an idle main session's title.
+  rpc RenameSession(RenameSessionRequest) returns (RenameSessionResponse);
+
+  // DeleteSession physically removes an idle main session and its sidecars.
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
+
   // ForkSession creates a new peer session whose conversation history is a
   // snapshot of an existing session's, inheriting the source's mode, workspace,
   // limits, and provider/model/profile labels. Same provider and model only;
@@ -718,6 +724,8 @@ message SessionSummary {
   string reason_code = 12;
   // workspace is the stored session root used for inventory search/display.
   string workspace = 13;
+  // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
+  string title_provenance = 14;
 }
 
 // SessionRelationship carries the validated links appropriate to a session kind.
@@ -739,6 +747,25 @@ message SessionInventoryCapabilities {
   bool authoritative_transcript = 3;
   // activity_replay reports the independent optional EventLog replay plane.
   bool activity_replay = 4;
+  bool copy_id = 5;
+  bool view_transcript = 6;
+  bool fork = 7;
+  bool rename = 8;
+  bool delete = 9;
+  // reasons carries one closed machine-readable reason per disabled action.
+  SessionInventoryActionReasons reasons = 10;
+}
+
+// SessionInventoryActionReasons explains each disabled inventory action without
+// requiring a client to duplicate server eligibility policy.
+message SessionInventoryActionReasons {
+  string public_chat = 1;
+  string inspect = 2;
+  string copy_id = 3;
+  string view_transcript = 4;
+  string fork = 5;
+  string rename = 6;
+  string delete = 7;
 }
 
 // ListSessionsResponse carries one bounded stored-session inventory page, sorted
@@ -771,6 +798,21 @@ message CloseSessionRequest {
 
 // CloseSessionResponse is the empty acknowledgement.
 message CloseSessionResponse {}
+
+message RenameSessionRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string title = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message RenameSessionResponse {
+  Session session = 1;
+}
+
+message DeleteSessionRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message DeleteSessionResponse {}
 
 // ForkSessionRequest names the source session to fork from.
 message ForkSessionRequest {
@@ -826,6 +868,8 @@ message Session {
   // may derive a fallback). Populated from the snapshot Title (or the lazy
   // fallback in GetSession) — the loop seeds it once via session.SetTitle.
   string title = 10;
+  // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
+  string title_provenance = 12;
   // capabilities is the server's feature-advertisement snapshot (the SAME value
   // CreateSessionResponse carries). It rides the Session snapshot so a client
   // that re-hydrates a persisted session on restart or adopt (continue, /effort fork)

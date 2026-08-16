@@ -125,7 +125,8 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 		rows = append(rows, port.SessionDiscoveryMeta{
 			ID: id, ModifiedAt: st.savedAt[id], State: snap.State,
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
-			Title: snap.Title, Workspace: snap.Workspace, Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+			Title: snap.Title, TitleProvenance: snap.TitleProvenance, Workspace: snap.Workspace,
+			Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
 		})
 	}
 	st.mu.RUnlock()

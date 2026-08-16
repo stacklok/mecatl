@@ -37,6 +37,19 @@ const (
 	Tier4SummaryMarker      = "[earlier turns summarised]"
 )
 
+// TitleProvenance records who last authored a session title. The zero value is
+// legacy/unknown so snapshots written before provenance was introduced fail closed.
+type TitleProvenance string
+
+const (
+	// TitleProvenanceUnknown means the title's author is unavailable.
+	TitleProvenanceUnknown TitleProvenance = ""
+	// TitleProvenanceFirstPrompt means the first genuine prompt supplied the title.
+	TitleProvenanceFirstPrompt TitleProvenance = "first-prompt"
+	// TitleProvenanceOperator means an operator explicitly renamed the session.
+	TitleProvenanceOperator TitleProvenance = "operator"
+)
+
 // IsSynthesisedSummary reports whether a message's text is a harness-synthesised
 // compaction summary (the paths-summary OR the tier-4 LLM summary) rather than a
 // genuine user instruction. The back-snap and the title fallback use it to avoid

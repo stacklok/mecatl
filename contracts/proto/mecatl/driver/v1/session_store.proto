@@ -73,6 +73,10 @@ service SessionStoreService {
   // unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
   // harness client and mapped to success).
   rpc Delete(DeleteSessionRequest) returns (DeleteSessionResponse);
+
+  // Capabilities negotiates optional additive operations. Old drivers return
+  // UNIMPLEMENTED and are treated as supporting only Save/Load.
+  rpc Capabilities(SessionStoreCapabilitiesRequest) returns (SessionStoreCapabilitiesResponse);
 }
 
 // SessionSnapshot is the opaque snapshot envelope: a format tag plus the
@@ -185,12 +189,21 @@ message SessionMetadataEntry {
   string owner_name = 19;
   bool has_owner = 20;
   string workspace = 21;
+  // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
+  string title_provenance = 22;
 }
 
 message PageSessionMetadataResponse {
   repeated SessionMetadataEntry sessions = 1;
   SessionMetadataCursor next_cursor = 2;
   int32 total_count = 3;
+}
+
+message SessionStoreCapabilitiesRequest {}
+message SessionStoreCapabilitiesResponse {
+  bool list = 1;
+  bool metadata_paging = 2;
+  bool delete = 3;
 }
 
 // DeleteSessionRequest asks for the snapshot under session_id to be removed.

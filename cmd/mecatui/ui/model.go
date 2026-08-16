@@ -132,6 +132,9 @@ type Deps struct {
 	// is available whenever a lister + authoritative transcript loader are wired
 	// (a no-FS/cloud server with a durable SessionStore still has stored sessions).
 	Sessions client.SessionLister
+	// SessionManagement mutates stored main-chat metadata. nil leaves rename/delete
+	// undiscoverable even if a custom lister advertises those capabilities.
+	SessionManagement client.SessionManager
 	// Transcript is the authoritative snapshot-derived conversation surface used
 	// by /sessions for both continuation and read-only inspection. Event replay is
 	// optional activity and never substitutes for this seam.

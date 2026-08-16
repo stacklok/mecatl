@@ -49,6 +49,19 @@ type sessionIDCopyResultMsg struct {
 	err error
 }
 
+type inventorySessionIDCopiedMsg struct {
+	id  string
+	err error
+}
+
+type sessionForkedMsg struct {
+	sourceID   string
+	newID      string
+	snapshot   client.SessionSnapshot
+	transcript client.SessionTranscript
+	err        error
+}
+
 type sessionsState struct {
 	view     sessionsView
 	startup  bool // same /sessions renderer, with launch-only new/quit hints
@@ -63,6 +76,12 @@ type sessionsState struct {
 	selected client.SessionListItem
 	inspect  bool
 	loadErr  error
+
+	renaming      bool
+	renameInput   textinput.Model
+	confirmDelete bool
+	actionID      string
+	actionLoading bool
 
 	// Activity-replay fields are retained for the live-delivery catch-up and old
 	// schedule replay machinery. /sessions never uses them as conversation truth.
@@ -211,30 +230,57 @@ func (m Model) closeSessions() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.sessions.view == sessionsNone {
+	if m.sessions.view == sessionsNone || m.sessions.view == sessionsTranscript {
 		return m, nil, false
 	}
-	if m.sessions.view == sessionsTranscript {
-		return m, nil, false
+	if m.sessions.renaming {
+		return m.onSessionRenameKey(msg)
 	}
-	if m.browsingStartupSessions {
-		if key.Matches(msg, m.keys.Close) {
-			return m, tea.Quit, true
-		}
-		if msg.String() == "n" {
-			if !m.modelsReconciled {
-				m.statusMsg = m.deps.Theme.Style("muted").Render("loading model defaults…")
-				return m, nil, true
-			}
-			m.sessions = sessionsState{}
-			m.phase = phaseConnecting
-			return m, m.createSessionCmd(), true
-		}
+	if m.sessions.confirmDelete {
+		return m.onSessionDeleteConfirmKey(msg)
+	}
+	if m.sessions.actionLoading {
+		return m, nil, true
+	}
+	if mm, cmd, handled := m.onStartupSessionsKey(msg); handled {
+		return mm, cmd, true
 	}
 	if key.Matches(msg, m.keys.NextTab) {
 		m = m.switchSessionsTab()
 		return m, nil, true
 	}
+	if mm, cmd, handled := m.onSessionsNavigationKey(msg); handled {
+		return mm, cmd, true
+	}
+	if mm, cmd, handled := m.onSessionsActionKey(msg); handled {
+		return mm, cmd, true
+	}
+	var cmd tea.Cmd
+	m.sessions.filter, cmd = m.sessions.filter.Update(msg)
+	m = m.syncSessionsFilter()
+	return m, cmd, true
+}
+
+func (m Model) onStartupSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if !m.browsingStartupSessions {
+		return m, nil, false
+	}
+	if key.Matches(msg, m.keys.Close) {
+		return m, tea.Quit, true
+	}
+	if msg.String() != "n" {
+		return m, nil, false
+	}
+	if !m.modelsReconciled {
+		m.statusMsg = m.deps.Theme.Style("muted").Render("loading model defaults…")
+		return m, nil, true
+	}
+	m.sessions = sessionsState{}
+	m.phase = phaseConnecting
+	return m, m.createSessionCmd(), true
+}
+
+func (m Model) onSessionsNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		if m.sessions.filter.Value() != "" {
@@ -262,11 +308,26 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	case key.Matches(msg, m.keys.Choose):
 		return m.chooseSession()
+	default:
+		return m, nil, false
 	}
-	var cmd tea.Cmd
-	m.sessions.filter, cmd = m.sessions.filter.Update(msg)
-	m = m.syncSessionsFilter()
-	return m, cmd, true
+}
+
+func (m Model) onSessionsActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	switch msg.String() {
+	case "y":
+		return m.copyInventorySessionID()
+	case "v":
+		return m.viewInventorySession()
+	case "f":
+		return m.forkInventorySession()
+	case "r":
+		return m.openSessionRename()
+	case "d":
+		return m.openSessionDelete()
+	default:
+		return m, nil, false
+	}
 }
 
 func (m Model) syncSessionsFilter() Model {
@@ -367,6 +428,133 @@ func sessionDisplayHandles(rows []client.SessionListItem) map[string]string {
 	return out
 }
 
+func (m Model) selectedInventorySession() (client.SessionListItem, bool) {
+	if m.sessions.cursor < 0 || m.sessions.cursor >= len(m.sessions.filtered) {
+		return client.SessionListItem{}, false
+	}
+	return m.sessions.filtered[m.sessions.cursor], true
+}
+
+func (m Model) copyInventorySessionID() (tea.Model, tea.Cmd, bool) {
+	row, ok := m.selectedInventorySession()
+	if !ok || !row.Capabilities.CopyID {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(capabilityReasonText(row.Reasons.CopyID))
+		return m, nil, true
+	}
+	if row.ID == "" || !utf8.ValidString(row.ID) {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: invalid ID")
+		return m, nil, true
+	}
+	id, cb, ctx := row.ID, m.deps.Clipboard, m.deps.Ctx
+	return m, func() tea.Msg {
+		if cb != nil {
+			return inventorySessionIDCopiedMsg{id: id, err: cb.Write(ctx, "text/plain", []byte(id))}
+		}
+		return inventorySessionIDCopiedMsg{id: id}
+	}, true
+}
+
+func (m Model) viewInventorySession() (tea.Model, tea.Cmd, bool) {
+	row, ok := m.selectedInventorySession()
+	if !ok || !row.Capabilities.ViewTranscript {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(capabilityReasonText(row.Reasons.ViewTranscript))
+		return m, nil, true
+	}
+	return m.loadSessionTranscript(row, true)
+}
+
+func (m Model) forkInventorySession() (tea.Model, tea.Cmd, bool) {
+	row, ok := m.selectedInventorySession()
+	if !ok || !row.Capabilities.Fork || m.deps.Session == nil || m.deps.Transcript == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(capabilityReasonText(row.Reasons.Fork))
+		return m, nil, true
+	}
+	m.sessions.actionLoading = true
+	m.sessions.actionID = row.ID
+	session, transcript, ctx := m.deps.Session, m.deps.Transcript, m.deps.Ctx
+	return m, func() tea.Msg {
+		newID, err := session.ForkSession(ctx, row.ID, "")
+		if err != nil {
+			return sessionForkedMsg{sourceID: row.ID, err: err}
+		}
+		snapshot, err := session.GetSession(ctx, newID)
+		if err != nil {
+			return sessionForkedMsg{sourceID: row.ID, newID: newID, err: err}
+		}
+		loaded, err := transcript.GetSessionTranscript(ctx, newID)
+		if err != nil || !loaded.Complete || loaded.SessionID != newID {
+			if err == nil {
+				err = errIncompleteTranscript
+			}
+			return sessionForkedMsg{sourceID: row.ID, newID: newID, err: err}
+		}
+		return sessionForkedMsg{sourceID: row.ID, newID: newID, snapshot: snapshot, transcript: loaded}
+	}, true
+}
+
+func (m Model) openSessionRename() (tea.Model, tea.Cmd, bool) {
+	row, ok := m.selectedInventorySession()
+	if !ok || !row.Capabilities.Rename || m.deps.SessionManagement == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(capabilityReasonText(row.Reasons.Rename))
+		return m, nil, true
+	}
+	input := textinput.New()
+	input.SetWidth(50)
+	input.SetValue(row.Title)
+	input.Focus()
+	m.sessions.renaming = true
+	m.sessions.renameInput = input
+	m.sessions.actionID = row.ID
+	return m, textinput.Blink, true
+}
+
+func (m Model) onSessionRenameKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if key.Matches(msg, m.keys.Close) {
+		m.sessions.renaming = false
+		m.sessions.actionID = ""
+		return m, nil, true
+	}
+	if key.Matches(msg, m.keys.Choose) {
+		id, title := m.sessions.actionID, m.sessions.renameInput.Value()
+		m.sessions.renaming = false
+		m.sessions.actionLoading = true
+		return m, client.RenameSessionCmd(m.deps.Ctx, m.deps.SessionManagement, id, title), true
+	}
+	var cmd tea.Cmd
+	m.sessions.renameInput, cmd = m.sessions.renameInput.Update(msg)
+	return m, cmd, true
+}
+
+func (m Model) openSessionDelete() (tea.Model, tea.Cmd, bool) {
+	row, ok := m.selectedInventorySession()
+	if !ok || !row.Capabilities.Delete || m.deps.SessionManagement == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render(capabilityReasonText(row.Reasons.Delete))
+		return m, nil, true
+	}
+	if row.ID == m.sessionID && m.sessionID != "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot delete the current chat — switch to another chat first")
+		return m, nil, true
+	}
+	m.sessions.confirmDelete = true
+	m.sessions.actionID = row.ID
+	return m, nil, true
+}
+
+func (m Model) onSessionDeleteConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if key.Matches(msg, m.keys.Close) || msg.String() == "n" {
+		m.sessions.confirmDelete = false
+		m.sessions.actionID = ""
+		return m, nil, true
+	}
+	if msg.String() != "y" && !key.Matches(msg, m.keys.Choose) {
+		return m, nil, true
+	}
+	id := m.sessions.actionID
+	m.sessions.confirmDelete = false
+	m.sessions.actionLoading = true
+	return m, client.DeleteSessionCmd(m.deps.Ctx, m.deps.SessionManagement, id), true
+}
+
 func (m Model) chooseSession() (tea.Model, tea.Cmd, bool) {
 	if m.sessions.cursor < 0 || m.sessions.cursor >= len(m.sessions.filtered) {
 		return m, nil, false
@@ -378,7 +566,14 @@ func (m Model) chooseSession() (tea.Model, tea.Cmd, bool) {
 	}
 	inspect := !chosen.Capabilities.PublicChat && chosen.Capabilities.Inspect
 	if !chosen.Capabilities.PublicChat && !chosen.Capabilities.Inspect {
-		m.statusMsg = m.deps.Theme.Style("warning").Render(capabilityReasonText(chosen.ReasonCode))
+		reason := chosen.Reasons.PublicChat
+		if reason == "" {
+			reason = chosen.Reasons.Inspect
+		}
+		if reason == "" {
+			reason = chosen.ReasonCode // compatibility with older servers/tests.
+		}
+		m.statusMsg = m.deps.Theme.Style("warning").Render(capabilityReasonText(reason))
 		return m, nil, true
 	}
 	return m.loadSessionTranscript(chosen, inspect)
@@ -396,6 +591,8 @@ func capabilityReasonText(reason client.CapabilityReason) string {
 		return "the authoritative transcript is unavailable"
 	case client.CapabilityReasonEnvironmentUnavailable:
 		return "the chat environment is unavailable"
+	case client.CapabilityReasonStorageUnsupported:
+		return "this action is unsupported by session storage"
 	default:
 		return "this action is unavailable"
 	}
@@ -417,9 +614,16 @@ func (m Model) loadSessionTranscript(row client.SessionListItem, inspect bool) (
 }
 
 func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if mm, cmd, handled := m.updateSessionActionMsg(msg); handled {
+		return mm, cmd, true
+	}
 	switch sm := msg.(type) {
 	case client.SessionsListedMsg:
 		m.sessions.loading = false
+		selectedID := ""
+		if m.sessions.cursor >= 0 && m.sessions.cursor < len(m.sessions.filtered) {
+			selectedID = m.sessions.filtered[m.sessions.cursor].ID
+		}
 		if sm.Err != nil {
 			m.sessions.err = sm.Err
 			m.sessions.sessions = nil
@@ -428,7 +632,17 @@ func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.sessions.err = nil
 		m.sessions.sessions = sm.Sessions
+		if m.sessions.actionID != "" {
+			selectedID = m.sessions.actionID
+		}
 		m = m.syncSessionsFilter()
+		for i := range m.sessions.filtered {
+			if m.sessions.filtered[i].ID == selectedID {
+				m.sessions.cursor = i
+				break
+			}
+		}
+		m.sessions.actionID = ""
 		return m, nil, true
 	case client.SessionTranscriptMsg:
 		if m.sessions.view != sessionsTranscript || sm.SessionID != m.sessions.selected.ID {
@@ -448,6 +662,75 @@ func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.refreshView()
 			return m, nil, true
 		}
+		return m.adoptAuthoritativeTranscript()
+	default:
+		return m, nil, false
+	}
+}
+
+func (m Model) updateSessionActionMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	switch sm := msg.(type) {
+	case inventorySessionIDCopiedMsg:
+		if sm.err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + sanitizeTerminal(sm.err.Error()))
+			return m, nil, true
+		}
+		m.statusMsg = m.deps.Theme.Style("success").Render("copied exact session ID " + safeSessionID(sm.id))
+		return m, tea.SetClipboard(sm.id), true
+	case client.SessionRenamedMsg:
+		m.sessions.actionLoading = false
+		if sm.Err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not rename session: " + sanitizeTerminal(sm.Err.Error()))
+			return m, nil, true
+		}
+		for i := range m.sessions.sessions {
+			if m.sessions.sessions[i].ID == sm.SessionID {
+				m.sessions.sessions[i].Title = sm.Title
+				m.sessions.sessions[i].TitleProvenance = sm.TitleProvenance
+			}
+		}
+		if sm.SessionID == m.sessionID {
+			m.sessionTitle = sm.Title
+		}
+		m = m.syncSessionsFilter()
+		m.statusMsg = m.deps.Theme.Style("success").Render("renamed session")
+		if m.deps.Sessions != nil {
+			return m, client.ListSessionsCmd(m.deps.Ctx, m.deps.Sessions), true
+		}
+		return m, nil, true
+	case client.SessionDeletedMsg:
+		m.sessions.actionLoading = false
+		if sm.Err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not delete session: " + sanitizeTerminal(sm.Err.Error()))
+			return m, nil, true
+		}
+		kept := m.sessions.sessions[:0]
+		for _, row := range m.sessions.sessions {
+			if row.ID != sm.SessionID {
+				kept = append(kept, row)
+			}
+		}
+		m.sessions.sessions = kept
+		m.sessions.actionID = ""
+		m = m.syncSessionsFilter()
+		m.statusMsg = m.deps.Theme.Style("success").Render("deleted session")
+		return m, nil, true
+	case sessionForkedMsg:
+		m.sessions.actionLoading = false
+		if sm.sourceID != m.sessions.actionID {
+			return m, nil, true
+		}
+		if sm.err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not fork session: " + sanitizeTerminal(sm.err.Error()))
+			return m, nil, true
+		}
+		m.sessions.selected = client.SessionListItem{
+			ID: sm.newID, Title: sm.snapshot.Title, TitleProvenance: sm.snapshot.TitleProvenance,
+			State: sm.snapshot.State, Workspace: sm.snapshot.Workspace, CreatedAt: sm.snapshot.CreatedAt,
+			Kind: sm.transcript.Kind, Relationship: sm.transcript.Relationship,
+		}
+		m.sessions.transcript = conversationFromTranscript(sm.transcript.Messages)
+		m.sessions.inspect = false
 		return m.adoptAuthoritativeTranscript()
 	default:
 		return m, nil, false
@@ -592,29 +875,44 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	}
 	var b strings.Builder
 	b.WriteString(sessionsTabBar(th, st.tab) + "\n\n")
-	if st.loading {
-		b.WriteString(th.Style("muted").Render("loading…"))
+	if rendered, ok := renderSessionsPanelState(th, st, hk); ok {
+		b.WriteString(rendered)
 		return b.String()
 	}
-	if st.err != nil {
-		b.WriteString(th.Style("errorText").Render("could not list sessions"))
+	renderSessionRows(&b, th, st, current)
+	b.WriteString("\n" + th.Style("muted").Render(sessionActionsHint(st, hk)))
+	return b.String()
+}
+
+func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (string, bool) {
+	switch {
+	case st.renaming:
+		return th.Style("askTitle").Render("Rename session") + "\n\n" +
+			st.renameInput.View() + "\n\n" +
+			th.Style("muted").Render(hk.choose+": save  "+hk.closeOnly+": cancel"), true
+	case st.confirmDelete:
+		return th.Style("errorText").Render("Permanently delete session "+safeSessionID(st.actionID)+"?") + "\n\n" +
+			th.Style("muted").Render("y/"+hk.choose+": delete  "+hk.closeOnly+": cancel"), true
+	case st.loading || st.actionLoading:
+		return th.Style("muted").Render("loading…"), true
+	case st.err != nil:
+		hint := hk.closeOnly + ": close"
 		if st.startup {
-			b.WriteString("\n" + th.Style("muted").Render(sessionsPanelHint(hk, true)))
-		} else {
-			b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
+			hint = sessionsPanelHint(hk, true)
 		}
-		return b.String()
-	}
-	if len(st.filtered) == 0 {
+		return th.Style("errorText").Render("could not list sessions") + "\n" + th.Style("muted").Render(hint), true
+	case len(st.filtered) == 0:
+		message := "no " + []string{"chats", "scheduled runs", "child runs", "other sessions"}[st.tab] + " found"
 		if st.filter.Value() != "" {
-			b.WriteString(th.Style("muted").Render("no matches — clear search to see all"))
-		} else {
-			labels := []string{"chats", "scheduled runs", "child runs", "other sessions"}
-			b.WriteString(th.Style("muted").Render("no " + labels[st.tab] + " found"))
+			message = "no matches — clear search to see all"
 		}
-		b.WriteString("\n" + th.Style("muted").Render(sessionsPanelHint(hk, st.startup)))
-		return b.String()
+		return th.Style("muted").Render(message) + "\n" + th.Style("muted").Render(sessionsPanelHint(hk, st.startup)), true
+	default:
+		return "", false
 	}
+}
+
+func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, current string) {
 	for i, s := range st.filtered {
 		marker := "  "
 		if i == st.cursor {
@@ -642,6 +940,9 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 		}
 		b.WriteString(line + "\n")
 	}
+}
+
+func sessionActionsHint(st sessionsState, hk helpKeys) string {
 	selected := client.SessionListItem{}
 	if st.cursor >= 0 && st.cursor < len(st.filtered) {
 		selected = st.filtered[st.cursor]
@@ -652,8 +953,22 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	} else if selected.Capabilities.Inspect {
 		action = "inspect"
 	}
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": "+action+"  "+sessionsPanelHint(hk, st.startup)))
-	return b.String()
+	actions := []string{hk.choose + ": " + action}
+	for _, action := range []struct {
+		enabled bool
+		label   string
+	}{
+		{selected.Capabilities.CopyID, "y: copy ID"},
+		{selected.Capabilities.ViewTranscript, "v: view"},
+		{selected.Capabilities.Fork, "f: fork"},
+		{selected.Capabilities.Rename, "r: rename"},
+		{selected.Capabilities.Delete, "d: delete"},
+	} {
+		if action.enabled {
+			actions = append(actions, action.label)
+		}
+	}
+	return strings.Join(actions, "  ") + "  " + sessionsPanelHint(hk, st.startup)
 }
 
 func sessionsPanelHint(hk helpKeys, startup bool) string {

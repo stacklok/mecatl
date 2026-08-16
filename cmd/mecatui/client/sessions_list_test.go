@@ -44,11 +44,11 @@ func TestListSessionsFromProto(t *testing.T) {
 		{
 			"populated",
 			[]*mecatlv1.SessionSummary{
-				{SessionId: "s1", ModifiedAtUnix: 1700000000, State: "completed", Turns: 5, ModelId: "openai/gpt-4.5", CreatedAtUnix: 1699999000, Title: "Fix the CI"},
+				{SessionId: "s1", ModifiedAtUnix: 1700000000, State: "completed", Turns: 5, ModelId: "openai/gpt-4.5", CreatedAtUnix: 1699999000, Title: "Fix the CI", TitleProvenance: "operator", Capabilities: &mecatlv1.SessionInventoryCapabilities{PublicChat: true, Inspect: true, AuthoritativeTranscript: true, ActivityReplay: true, CopyId: true, ViewTranscript: true, Fork: true, Rename: true, Delete: true}},
 				{SessionId: "s2", ModifiedAtUnix: 1700000001, State: "idle", Turns: 0, ModelId: "anthropic/claude-3.5"},
 			},
 			[]SessionListItem{
-				{ID: "s1", ModifiedAt: 1700000000, State: "completed", Turns: 5, ModelID: "openai/gpt-4.5", CreatedAt: 1699999000, Title: "Fix the CI"},
+				{ID: "s1", ModifiedAt: 1700000000, State: "completed", Turns: 5, ModelID: "openai/gpt-4.5", CreatedAt: 1699999000, Title: "Fix the CI", TitleProvenance: "operator", Capabilities: SessionInventoryCapabilities{PublicChat: true, Inspect: true, AuthoritativeTranscript: true, ActivityReplay: true, CopyID: true, ViewTranscript: true, Fork: true, Rename: true, Delete: true}},
 				{ID: "s2", ModifiedAt: 1700000001, State: "idle", Turns: 0, ModelID: "anthropic/claude-3.5"},
 			},
 		},
@@ -69,6 +69,29 @@ func TestListSessionsFromProto(t *testing.T) {
 				t.Errorf("got %#v, want %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestListSessionsFromProtoCarriesPerActionReasons(t *testing.T) {
+	got := listSessionsFromProto([]*mecatlv1.SessionSummary{{
+		SessionId: "s1",
+		Capabilities: &mecatlv1.SessionInventoryCapabilities{Reasons: &mecatlv1.SessionInventoryActionReasons{
+			PublicChat: "inspect_only_kind", Inspect: "unknown", CopyId: "unknown",
+			ViewTranscript: "transcript_unavailable", Fork: "awaiting_approval",
+			Rename: "active_elsewhere", Delete: "storage_unsupported",
+		}},
+	}})
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	want := SessionInventoryActionReasons{
+		PublicChat: CapabilityReasonInspectOnlyKind, Inspect: CapabilityReasonUnknown,
+		CopyID: CapabilityReasonUnknown, ViewTranscript: CapabilityReasonTranscriptUnavailable,
+		Fork: CapabilityReasonAwaitingApproval, Rename: CapabilityReasonActiveElsewhere,
+		Delete: CapabilityReasonStorageUnsupported,
+	}
+	if !reflect.DeepEqual(got[0].Reasons, want) {
+		t.Fatalf("reasons = %+v, want %+v", got[0].Reasons, want)
 	}
 }
 

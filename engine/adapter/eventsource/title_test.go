@@ -25,6 +25,34 @@ func TestFoldDerivesTitleFromFirstGenuineEvUserPrompt(t *testing.T) {
 	if got, want := s.Title, "Fix the flaky CI job"; got != want {
 		t.Fatalf("Title = %q, want %q (seeded from first genuine EvUserPrompt)", got, want)
 	}
+	if got, want := s.TitleProvenance, session.TitleProvenanceFirstPrompt; got != want {
+		t.Fatalf("TitleProvenance = %q, want %q", got, want)
+	}
+}
+
+// TestFoldPreservesAuthoritativeTitleMetadata asserts an explicit rename survives a
+// pure event fold. Events do not carry renames, so SessionMeta must win over the
+// legacy first-prompt fallback for both title and provenance.
+func TestFoldPreservesAuthoritativeTitleMetadata(t *testing.T) {
+	m := meta()
+	m.Title = "Operator title"
+	m.TitleProvenance = session.TitleProvenanceOperator
+	evs := []session.Event{
+		{Type: session.EvUserPrompt, Turn: 0, UserPrompt: &session.UserPromptPayload{Text: "Original prompt"}},
+		{Type: session.EvTurnStart, Turn: 0},
+		{Type: session.EvResult, Turn: 0, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+	}
+
+	s, err := eventsource.Fold(m, seq(evs))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if got, want := s.Title, m.Title; got != want {
+		t.Fatalf("Title = %q, want authoritative metadata %q", got, want)
+	}
+	if got, want := s.TitleProvenance, m.TitleProvenance; got != want {
+		t.Fatalf("TitleProvenance = %q, want authoritative metadata %q", got, want)
+	}
 }
 
 // TestFoldNoTitleWhenNoGenuinePrompt asserts a stream with NO genuine user prompt

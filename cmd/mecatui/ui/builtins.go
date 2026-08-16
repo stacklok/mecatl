@@ -182,11 +182,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		})
 	}
 	// /sessions is available when inventory and authoritative transcript clients
-	// are wired. Chats can be continued; scheduled and child runs are inspected.
+	// are wired. Row capabilities drive continuation, inspection, and management.
 	if w.Sessions {
 		out = append(out, builtin{
 			name: "sessions",
-			desc: "continue chats or inspect scheduled and child runs",
+			desc: "continue, inspect, or manage stored sessions",
 			run:  Model.runSessions,
 		})
 	}

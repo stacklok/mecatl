@@ -191,6 +191,7 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 			meta.ModelID = sess.ModelID
 			meta.CreatedAt = sess.CreatedAt
 			meta.Title = sess.Title
+			meta.TitleProvenance = sess.TitleProvenance
 			meta.Workspace = sess.Workspace
 			meta.Kind = sess.Kind
 			meta.Relationship = sess.Relationship
