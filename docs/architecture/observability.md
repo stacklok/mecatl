@@ -114,11 +114,20 @@
   that stamp. Missing, corrupt, or stale catalogs rebuild from
   v2 metadata headers or bounded v1 tail projections; a fresh directory fingerprint
   before and after rebuild detects concurrent and other-`Store` family changes instead
-  of trusting process-local state. The catalog is derivative: snapshots remain the
+  of trusting process-local state. Catalog rebuild/publication uses a dedicated
+  process mutex plus a stable cross-process catalog flock; it never holds a
+  store-wide session-operation lock, so a blocked rebuild cannot delay another
+  family's Save, Load, event append, or tool audit. Obsolete generations and
+  interrupted catalog temporaries are reconciled only under that catalog lock.
+  The catalog is derivative: snapshots remain the
   sole transcript authority, and `port.SessionStore` is unchanged. A successful save lazily promotes only that
   session; the verified v2 snapshot is authoritative while a v1 file coexists,
   and first promotion preserves the v1 file's logical modification time and all
-  sidecar bytes. Snapshot replacement holds a stable per-family owner-only flock
+  sidecar bytes. Save, Delete, verified legacy-family promotion/removal,
+  EventLog.Append, and ToolCall all take the same stable per-family flock identity;
+  sidecar-first/snapshot-last deletion therefore cannot race a same-family append,
+  while unrelated families proceed independently. Snapshot replacement holds that
+  owner-only flock
   from inactive-temp recovery through same-directory write, file sync, atomic rename,
   and directory sync. Replacement temp names carry a random process-owner token and
   monotonic generation; only names that validate against that private protocol are
@@ -149,6 +158,10 @@
   continues across restart (see `docs/adr/0027-cloud-native.md`).
   A store may additionally implement the optional **`port.PrunableStore`**
   (`List`/`Delete`; `ErrPruneUnsupported` otherwise) — the retention MECHANISM.
+  Automatic retention consumes `SessionMetadataPager`, and stale-session
+  reconciliation consumes the catalog-backed `MetaList`; neither reloads full
+  conversations for discovery. Candidate deletion/settlement still rechecks the
+  existing durable state, process liveness, and lease protections after discovery.
   The POLICY lives in composition (`internal/app/childgc.go`, issue #38):
   persisted CHILD session snapshots (the `subagent-*`/`parallel-*`/`team-*` ids
   behind `InspectSubagent`/`InspectMember`/`resume:`) are GC-swept by age

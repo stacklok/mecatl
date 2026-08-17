@@ -85,8 +85,9 @@ var (
 // O(N × last-line-read) instead of O(N × filesize), because each file is
 // tail-read (seek near the end, find the last newline) rather than fully
 // scanned, and the unmarshal skips the conversation entirely. A file smaller
-// than the seek window is read whole (small file = fast). It reuses the same mu
-// as List/Save (one serialized reader per Store).
+// than the seek window is read whole (small file = fast). Catalog rebuilds use
+// a dedicated process mutex plus cross-process catalog flock; they never take a
+// store-wide session-operation lock.
 //
 // The last line is the LATEST snapshot (append-only, latest-line-wins), so the
 // metadata reflects the session's CURRENT state/turns/model/title, exactly as a
@@ -124,9 +125,18 @@ func metaSnapshotFromSession(s *session.Session) metaSnapshot {
 }
 
 func (st *Store) discoveryMetaList(ctx context.Context) ([]port.SessionDiscoveryMeta, error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.inventoryMu.Lock()
+	defer st.inventoryMu.Unlock()
+	var rows []port.SessionDiscoveryMeta
+	err := st.withInventoryCatalogLock(ctx, func() error {
+		var err error
+		rows, err = st.discoveryMetaListLocked(ctx)
+		return err
+	})
+	return rows, err
+}
 
+func (st *Store) discoveryMetaListLocked(ctx context.Context) ([]port.SessionDiscoveryMeta, error) {
 	// A durable catalog is derivative only. Every read first fingerprints the
 	// authoritative snapshot directory entries, so another Store's atomic save,
 	// create, remove, or promotion invalidates it without relying on process memory.
@@ -155,6 +165,9 @@ func (st *Store) discoveryMetaList(ctx context.Context) ([]port.SessionDiscovery
 			continue // a shared-directory writer changed the source during rebuild
 		}
 		if err := st.writeInventoryCatalog(after, rows); err != nil {
+			return nil, err
+		}
+		if err := st.reconcileInventoryArtifacts(after); err != nil {
 			return nil, err
 		}
 		return rows, nil
@@ -208,6 +221,18 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 	if request.Limit < 0 {
 		return port.SessionMetadataPage{}, fmt.Errorf("jsonlstore: metadata page limit must be non-negative")
 	}
+	st.inventoryMu.Lock()
+	defer st.inventoryMu.Unlock()
+	var page port.SessionMetadataPage
+	err := st.withInventoryCatalogLock(ctx, func() error {
+		var err error
+		page, err = st.pageSessionMetadataLocked(ctx, request)
+		return err
+	})
+	return page, err
+}
+
+func (st *Store) pageSessionMetadataLocked(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
 	scopeKey := inventoryGlobalScope
 	if request.OwnershipEnforced {
 		scopeKey = inventoryOwnerScope(request.Owner)
@@ -252,7 +277,7 @@ func (st *Store) readyInventoryCatalog(ctx context.Context, cursor *port.Session
 	if cursor != nil {
 		return inventoryCatalog{}, port.ErrSessionMetadataCursorRestart
 	}
-	if _, err := st.discoveryMetaList(ctx); err != nil {
+	if _, err := st.discoveryMetaListLocked(ctx); err != nil {
 		return inventoryCatalog{}, err
 	}
 	fingerprint, err = st.inventoryFingerprint()

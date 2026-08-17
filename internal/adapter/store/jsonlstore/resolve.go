@@ -126,7 +126,7 @@ var familyOrder = []sessionKind{kindTools, kindEvents, kindSnapshot}
 var sidecarKinds = []sessionKind{kindTools, kindEvents}
 
 // sessionResolver owns canonical and legacy paths, ownership checks, and
-// write-time migration. Store.mu serializes migration and writes.
+// write-time migration. Callers serialize migration with the stable family flock.
 type sessionResolver struct {
 	dir string
 }
@@ -322,7 +322,7 @@ func (r sessionResolver) currentSnapshotFor(id session.SessionID) (currentSnapsh
 // The read is a reverse TAIL read bounded by the latest record, never a full
 // scan: this runs on every Save, Append and ToolCall, and a snapshot file grows as
 // turns x conversation size, so a full scan per appended event was quadratic in
-// run length while holding Store.mu.
+// run length while holding the per-family mutation lock.
 func (r sessionResolver) canonicalOwnership(id session.SessionID) (bool, error) {
 	currentPresent, err := pathExists(r.currentSnapshotPath(id))
 	if err != nil || currentPresent {
@@ -659,8 +659,8 @@ func (r sessionResolver) migrateLegacyFamily(id session.SessionID) error {
 //     canonical namespace. os.Rename happily moves a directory, after which
 //     every Load/Save/Append for that id fails with EISDIR forever while List
 //     silently omits it; a FIFO is worse — readSnapshotLine's os.Open blocks
-//     indefinitely waiting for a writer while Store.mu is held, deadlocking
-//     the whole store.
+//     indefinitely waiting for a writer while the family lock is held, blocking
+//     every same-family mutation.
 //
 // A present destination with a present regular source is a genuine clash:
 // error rather than let os.Rename silently clobber already-migrated data.

@@ -2,6 +2,7 @@ package jsonlstore
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -19,6 +23,7 @@ const (
 	inventoryCatalogFormat   = "session-inventory-json/2"
 	inventoryCatalogDirName  = ".session-inventory"
 	inventoryCatalogFileName = "manifest.json"
+	inventoryCatalogLockName = "catalog.lock"
 	inventoryGlobalScope     = "all"
 )
 
@@ -54,6 +59,19 @@ func (st *Store) inventoryCatalogDir() string {
 
 func (st *Store) inventoryCatalogPath() string {
 	return filepath.Join(st.inventoryCatalogDir(), inventoryCatalogFileName)
+}
+
+func (st *Store) withInventoryCatalogLock(ctx context.Context, fn func() error) error {
+	fl := flock.New(filepath.Join(st.inventoryCatalogDir(), inventoryCatalogLockName), flock.SetPermissions(0o600))
+	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("jsonlstore: acquire inventory catalog lock: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("jsonlstore: acquire inventory catalog lock: lock not acquired")
+	}
+	defer func() { _ = fl.Close() }()
+	return fn()
 }
 
 // inventoryFingerprint observes only O(1) directory metadata for the two
@@ -218,6 +236,25 @@ func (st *Store) writeInventoryCatalog(fingerprint string, rows []port.SessionDi
 		return fmt.Errorf("jsonlstore: encode inventory catalog: %w", err)
 	}
 	return st.writeInventoryFile(st.inventoryCatalogPath(), data)
+}
+
+func (st *Store) reconcileInventoryArtifacts(generation string) error {
+	entries, err := os.ReadDir(st.inventoryCatalogDir())
+	if err != nil {
+		return fmt.Errorf("jsonlstore: scan inventory catalog artifacts: %w", err)
+	}
+	activePrefix := ".session-inventory-" + generation + "-"
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == inventoryCatalogFileName || name == inventoryCatalogLockName || strings.HasPrefix(name, activePrefix) ||
+			!strings.HasPrefix(name, ".session-inventory-") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(st.inventoryCatalogDir(), name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("jsonlstore: remove obsolete inventory artifact %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func (st *Store) writeInventoryFile(path string, data []byte) error {

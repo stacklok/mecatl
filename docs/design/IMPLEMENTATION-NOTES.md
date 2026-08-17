@@ -5869,12 +5869,21 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   process-local cache. Older v2 envelopes without the additive header remain
   readable and are projected once through their bounded current payload during
   rebuild. Catalog manifests and scope files are owner-only atomic replacements
-  and can always be discarded and reconstructed; narrower lock decomposition is
-  separate follow-on work.
+  and can always be discarded and reconstructed. Rebuild/publication is serialized
+  by a dedicated process mutex and stable cross-process catalog flock, never the
+  session-operation path; blocked inventory work therefore does not delay unrelated
+  Save, Load, EventLog.Append, or ToolCall. After publishing a manifest, that lock
+  also protects removal of obsolete generation files and interrupted catalog
+  temporaries. Composition consumes this same cheap projection for both automatic
+  retention (`SessionMetadataPager`) and stale-session reconciliation (`MetaList`),
+  while preserving their downstream state, liveness, and lease rechecks.
 
   `Append` writes a per-record format-tagged line
-  `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via the shared `mu`/`appendLine`;
-  `Read` scans ALL lines cumulatively (NOT latest-line-wins like the snapshot read),
+  `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via `appendLine` under the
+  stable family flock. Save, Delete, legacy promotion/removal, EventLog.Append,
+  and ToolCall share that one cross-process mutation identity; the family lock
+  covers the full sidecar-first/snapshot-last operation, while unrelated families
+  remain independent. `Read` scans ALL lines cumulatively (NOT latest-line-wins like the snapshot read),
   decodes each, and yields in append order, rejecting an unknown format tag as an infra
   error (a forward-incompatible log fails loud, not silently skips). `Delete` removes
   sidecars before each family snapshot, preserving the partial-failure-stays-visible

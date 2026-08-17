@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -101,12 +102,15 @@ type Store struct {
 	// resolver is the single authority for canonical and legacy family paths
 	// (including the plain root dir, resolver.dir — Store has no separate
 	// copy of it).
-	resolver              sessionResolver
-	mu                    sync.Mutex // serializes appends across files
+	resolver sessionResolver
+	// mu is confined to the sibling schedule store. Session-family mutations
+	// coordinate by their stable cross-process flock identity instead.
+	mu                    sync.Mutex
+	inventoryMu           sync.Mutex
 	snapshot              snapshotOps
 	durability            SnapshotDurabilityCapability
 	tempOwner             string
-	tempGeneration        uint64
+	tempGeneration        atomic.Uint64
 	inventoryWorkObserver func(inventoryWorkKind)
 }
 
@@ -323,8 +327,6 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	st.mu.Lock()
-	defer st.mu.Unlock()
 	path := st.resolver.currentSnapshotPath(s.ID)
 	return withSnapshotFamilyLock(context.Background(), path, func() error {
 		if err := reapSnapshotTemps(path); err != nil {
@@ -343,8 +345,8 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 		if err != nil {
 			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
 		}
-		st.tempGeneration++
-		return replaceCurrentSnapshot(path, data, modifiedAt, st.tempOwner, st.tempGeneration, st.snapshot, st.durability)
+		generation := st.tempGeneration.Add(1)
+		return replaceCurrentSnapshot(path, data, modifiedAt, st.tempOwner, generation, st.snapshot, st.durability)
 	})
 }
 
@@ -407,9 +409,15 @@ func replaceCurrentSnapshot(
 // presence prevents fallback; legacy is accepted only when its latest embedded
 // id exactly matches the requested id.
 func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session, error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	line, err := st.resolver.loadSnapshot(id)
+	if err := validateSessionID(id); err != nil {
+		return nil, err
+	}
+	var line []byte
+	err := withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+		var err error
+		line, err = st.resolver.loadSnapshot(id)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -475,8 +483,6 @@ type eventLogRecord struct {
 // removal load-bearing (see familyOrder in resolve.go): a sidecar without any
 // session snapshot is invisible here and can never be swept.
 func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
 	files, err := st.resolver.snapshotFiles()
 	if err != nil {
 		return nil, err
@@ -509,40 +515,43 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 // Delete either remove or be idempotent success, so an unreadable snapshot
 // must not be a third outcome.
 func (st *Store) Delete(_ context.Context, id session.SessionID) error {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	canonicalOwned, err := st.resolver.canonicalOwnership(id)
-	if err != nil {
+	if err := validateSessionID(id); err != nil {
 		return err
 	}
-	legacyOwned, err := st.resolver.legacyOwned(id)
-	if err != nil {
-		return err
-	}
-	for _, kind := range sidecarKinds {
-		if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
-			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
+	return withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+		canonicalOwned, err := st.resolver.canonicalOwnership(id)
+		if err != nil {
+			return err
+		}
+		legacyOwned, err := st.resolver.legacyOwned(id)
+		if err != nil {
+			return err
+		}
+		for _, kind := range sidecarKinds {
+			if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
+				return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
+			}
+			if legacyOwned {
+				if err := removeSessionFile(st.resolver.legacyPath(id, kind)); err != nil {
+					return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+				}
+			}
+		}
+		if canonicalOwned {
+			if err := removeSessionFile(st.resolver.canonicalPath(id, kindSnapshot)); err != nil {
+				return fmt.Errorf("jsonlstore: delete v1 %q: %w", id, err)
+			}
+			if err := removeSessionFile(st.resolver.currentSnapshotPath(id)); err != nil {
+				return fmt.Errorf("jsonlstore: delete current %q: %w", id, err)
+			}
 		}
 		if legacyOwned {
-			if err := removeSessionFile(st.resolver.legacyPath(id, kind)); err != nil {
+			if err := removeSessionFile(st.resolver.legacyPath(id, kindSnapshot)); err != nil {
 				return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
 			}
 		}
-	}
-	if canonicalOwned {
-		if err := removeSessionFile(st.resolver.canonicalPath(id, kindSnapshot)); err != nil {
-			return fmt.Errorf("jsonlstore: delete v1 %q: %w", id, err)
-		}
-		if err := removeSessionFile(st.resolver.currentSnapshotPath(id)); err != nil {
-			return fmt.Errorf("jsonlstore: delete current %q: %w", id, err)
-		}
-	}
-	if legacyOwned {
-		if err := removeSessionFile(st.resolver.legacyPath(id, kindSnapshot)); err != nil {
-			return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func removeSessionFile(path string) error {
@@ -588,21 +597,21 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	if err != nil {
 		return
 	}
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if err := st.resolver.prepareWrite(id); err != nil {
-		return
-	}
-	_ = appendLine(st.resolver.canonicalPath(id, kindTools), line)
+	_ = withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+		if err := st.resolver.prepareWrite(id); err != nil {
+			return err
+		}
+		return appendLine(st.resolver.canonicalPath(id, kindTools), line)
+	})
 }
 
 // Append records one relayed event under id as a format-tagged JSON line on the
 // per-session event log. It satisfies port.EventLog. The event is marshalled to
 // its session.Event JSON verbatim (already redacted at the relay) and wrapped in
 // the {"v":"eventlog-json/1","ev":...} envelope so Read can validate the format.
-// It reuses the same mu/appendLine as Save/ToolCall (one serialized writer per
-// Store), and is best-effort durable: the relay logs a WARN on a returned error
-// and never aborts the run.
+// It uses the same stable per-family cross-process mutation identity as
+// Save/Delete/ToolCall, and is best-effort durable: the relay logs a WARN on a
+// returned error and never aborts the run.
 func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Event) error {
 	if err := validateSessionID(id); err != nil {
 		return err
@@ -615,12 +624,12 @@ func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Even
 	if err != nil {
 		return fmt.Errorf("jsonlstore: marshal event record: %w", err)
 	}
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if err := st.resolver.prepareWrite(id); err != nil {
-		return err
-	}
-	return appendLine(st.resolver.canonicalPath(id, kindEvents), line)
+	return withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+		if err := st.resolver.prepareWrite(id); err != nil {
+			return err
+		}
+		return appendLine(st.resolver.canonicalPath(id, kindEvents), line)
+	})
 }
 
 // Read scans the per-session event log and yields every recorded event in append
@@ -632,9 +641,15 @@ func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Even
 // item, the standard iter.Seq2 error idiom).
 func (st *Store) Read(_ context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
-		st.mu.Lock()
-		path, present, err := st.resolver.readablePath(id, kindEvents)
-		st.mu.Unlock()
+		var (
+			path    string
+			present bool
+		)
+		err := withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+			var err error
+			path, present, err = st.resolver.readablePath(id, kindEvents)
+			return err
+		})
 		if err != nil {
 			yield(session.Event{}, fmt.Errorf("jsonlstore: resolve event file: %w", err))
 			return

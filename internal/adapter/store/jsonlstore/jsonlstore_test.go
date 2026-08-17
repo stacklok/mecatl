@@ -610,10 +610,9 @@ func TestEventLogReadMalformedRecordPaths(t *testing.T) {
 	}
 }
 
-// TestEventLogConcurrentAppend pins that the shared mu serializes concurrent Appends
-// across goroutines (run under -race): N goroutines append M events each; a final
-// Read sees exactly N*M well-formed records (no interleaved/torn line). It shares the
-// store's one mutex with Save/ToolCall, so this also guards the cross-file lock.
+// TestEventLogConcurrentAppend pins that the family flock serializes concurrent
+// Appends across goroutines (run under -race): N goroutines append M events each;
+// a final Read sees exactly N*M well-formed records (no interleaved/torn line).
 func TestEventLogConcurrentAppend(t *testing.T) {
 	ctx := context.Background()
 	st, _ := newStore(t)
