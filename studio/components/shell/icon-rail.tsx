@@ -1,6 +1,6 @@
 "use client";
 
-import { FOOTER_ITEM, NAV_ITEMS, type NavItem, type ViewKey } from "@/components/shell/nav-items";
+import { NAV_ITEMS, type NavItem, type ViewKey } from "@/components/shell/nav-items";
 import { cn } from "@/lib/utils";
 
 /**
@@ -74,8 +74,6 @@ export function IconRail({
       <div className="flex flex-1 flex-col gap-1 py-3">
         {NAV_ITEMS.map(renderItem)}
       </div>
-
-      <div className="border-t border-border py-2">{renderItem(FOOTER_ITEM)}</div>
 
       {/* Daemon reachability stays visible at all times. It used to sit in the
           old wide rail's footer; burying it in the profile menu would mean an

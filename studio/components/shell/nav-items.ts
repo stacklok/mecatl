@@ -32,11 +32,5 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { key: "skills", label: "Skills", icon: Sparkles, group: "Workspace" },
   { key: "memory", label: "Memory", icon: BookOpenCheck, group: "Workspace" },
   { key: "schedules", label: "Scheduled", icon: Clock3, group: "Workspace" },
+  { key: "settings", label: "Settings", icon: Settings },
 ];
-
-/** Pinned to the rail's footer block, as the console pins Org Settings. */
-export const FOOTER_ITEM: NavItem = {
-  key: "settings",
-  label: "Settings",
-  icon: Settings,
-};

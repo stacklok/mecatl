@@ -460,6 +460,38 @@ export default function Home() {
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  // Renaming only touches the local label. updatedAt is deliberately NOT bumped:
+  // it means "last activity", and re-titling a task is not activity — moving the
+  // row to the top of the list because someone fixed a typo would be wrong.
+  const renameTask = (id: string, title: string) => {
+    setTasks((current) =>
+      current.map((task) => (task.id === id ? { ...task, title } : task)),
+    );
+  };
+
+  // Local only: this drops the transcript Studio holds, not the session mecated
+  // persisted. The daemon GCs its own sessions, and a client cannot be the thing
+  // that decides a server-side session is finished with.
+  const deleteTask = (id: string) => {
+    setTasks((current) => {
+      const remaining = current.filter((task) => task.id !== id);
+      // Never leave the shell with nothing selected: the composer, the navbar
+      // title, and the conversation all read from the active task.
+      if (remaining.length === 0) {
+        const fresh: Task = { id: uid(), title: "New task", updatedAt: Date.now(), messages: [] };
+        setActiveId(fresh.id);
+        return [fresh];
+      }
+      if (id === activeId) {
+        // Fall through to whichever row now sits at the top of the list, which
+        // is the one the operator is looking at after the row disappears.
+        const next = [...remaining].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        setActiveId(next.id);
+      }
+      return remaining;
+    });
+  };
+
   // Skills are resolved by mecated at startup from its --skills-dir, so the
   // inventory is read straight from the daemon rather than cached in this app.
   useEffect(() => {
@@ -815,10 +847,15 @@ export default function Home() {
     if (!sawResult) throw new Error("The Mecatl connection closed before the task returned a final result.");
   };
 
-  const sendPrompt = async (event?: FormEvent, retryText?: string) => {
+  // overrideText sends a caller-supplied instruction instead of the composer's
+  // current value — used by the retry affordance and the suggestion tiles, both
+  // of which know their text before state could round-trip through setPrompt.
+  // An override never carries the CSV attachment: it is its own instruction,
+  // not a resend of whatever happens to be staged.
+  const sendPrompt = async (event?: FormEvent, overrideText?: string) => {
     event?.preventDefault();
-    const text = (retryText ?? prompt).trim();
-    const attachment = retryText === undefined ? csvAttachment : null;
+    const text = (overrideText ?? prompt).trim();
+    const attachment = overrideText === undefined ? csvAttachment : null;
     if ((!text && !attachment) || running || !active) return;
     const displayText = text || `Analyze ${attachment?.name}.`;
     const runText = attachmentPrompt(text, attachment ?? undefined);
@@ -1055,6 +1092,8 @@ export default function Home() {
           activeId={activeId}
           onSelectTask={setActiveId}
           onNewTask={newTask}
+          onRenameTask={renameTask}
+          onDeleteTask={deleteTask}
           className="hidden md:flex"
         />
       )}
@@ -1072,6 +1111,8 @@ export default function Home() {
           connection={connected}
           onSelectTask={setActiveId}
           onNewTask={newTask}
+          onRenameTask={renameTask}
+          onDeleteTask={deleteTask}
           workspaceName="stacklok/mecatl"
           workspaceSubLabel="main · local workspace"
           providerName={providerName}
@@ -1282,7 +1323,7 @@ export default function Home() {
               <p>Mecatl can inspect this repository, run commands, edit files, and coordinate subagents—with every action visible.</p>
               <div className="suggestions">
                 {["Explain how the agent loop works", "Find a good first issue to tackle", "Review the HTTP/SSE API", "Run the test suite and summarize failures"].map((suggestion) => (
-                  <button key={suggestion} onClick={() => setPrompt(suggestion)}>{suggestion}<span>↗</span></button>
+                  <button key={suggestion} disabled={running} onClick={() => void sendPrompt(undefined, suggestion)}>{suggestion}<span>↗</span></button>
                 ))}
               </div>
             </section>

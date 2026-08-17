@@ -1,7 +1,14 @@
 "use client";
 
-import { Ellipsis, SquarePen } from "lucide-react";
+import { Ellipsis, Pencil, SquarePen, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 /**
@@ -41,6 +48,8 @@ export function ChatPanel({
   activeId,
   onSelectTask,
   onNewTask,
+  onRenameTask,
+  onDeleteTask,
   className,
   onAfterSelect,
 }: {
@@ -48,10 +57,43 @@ export function ChatPanel({
   activeId: string;
   onSelectTask: (id: string) => void;
   onNewTask: () => void;
+  onRenameTask: (id: string, title: string) => void;
+  onDeleteTask: (id: string) => void;
   className?: string;
   onAfterSelect?: () => void;
 }) {
   const ordered = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
+  // Which row is in rename mode, and which row's menu is open. Both are row
+  // state rather than per-row component state so only one can be active at a
+  // time — two open menus or two edit fields would be a bug, not a feature.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  // Escape has to tell the blur handler not to save. It is a ref, not state,
+  // because blur fires in the same tick and must observe the flag synchronously.
+  const cancelledRef = useRef(false);
+
+  const beginRename = (id: string) => {
+    cancelledRef.current = false;
+    setEditingId(id);
+  };
+
+  /**
+   * Blur is the ONLY commit path — Enter and Escape just blur the field.
+   * Committing from the key handler as well means two paths racing over one
+   * edit, each needing to know whether the other already ran.
+   */
+  const finishRename = (id: string, value: string) => {
+    setEditingId(null);
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      return;
+    }
+    const next = value.trim();
+    // An empty title is a slip, not an instruction to erase the label; keep the
+    // existing one rather than leaving the row unidentifiable.
+    if (next) onRenameTask(id, next);
+  };
 
   return (
     <div
@@ -91,6 +133,9 @@ export function ChatPanel({
 
         {ordered.map((task) => {
           const isSelected = task.id === activeId;
+          const isEditing = task.id === editingId;
+          const menuOpen = task.id === menuId;
+
           return (
             <div
               key={task.id}
@@ -99,45 +144,153 @@ export function ChatPanel({
                 isSelected ? "border-brand-ink bg-accent" : "hover:bg-accent",
               )}
             >
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectTask(task.id);
-                  onAfterSelect?.();
-                }}
-                className="min-w-0 flex-1 text-left"
-              >
-                <span
-                  className={cn(
-                    "block truncate text-[0.85rem] font-medium",
-                    isSelected
-                      ? "text-brand-ink"
-                      : "text-muted-foreground group-hover:text-foreground",
-                  )}
+              {isEditing ? (
+                <input
+                  // Focused imperatively rather than with autoFocus: this is a
+                  // response to the operator choosing Rename, not a focus grab
+                  // on mount, and selecting the text means typing replaces the
+                  // old title instead of appending to it.
+                  //
+                  // Guarded on activeElement because an inline ref callback
+                  // re-runs on every parent render — and the parent re-renders
+                  // on every streamed chunk, which would re-select the field
+                  // under the operator mid-keystroke.
+                  ref={(node) => {
+                    if (node && document.activeElement !== node) {
+                      node.focus();
+                      node.select();
+                    }
+                  }}
+                  defaultValue={task.title}
+                  aria-label={`Rename ${task.title}`}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      cancelledRef.current = true;
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  onBlur={(event) => finishRename(task.id, event.currentTarget.value)}
+                  className="min-w-0 flex-1 rounded border border-input bg-background px-1.5 py-0.5 text-[0.85rem] font-medium text-foreground outline-none focus:border-ring"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectTask(task.id);
+                    onAfterSelect?.();
+                  }}
+                  onDoubleClick={() => beginRename(task.id)}
+                  className="min-w-0 flex-1 text-left"
                 >
-                  {task.title || "Untitled"}
-                </span>
-              </button>
-              {/* A single grid cell stacks the status/time and the overflow
-                  affordance, so the hover swap cannot reflow the row. */}
-              <div className="ml-2 grid w-8 shrink-0 items-center justify-items-center [grid-template-areas:'slot']">
-                {task.running ? (
                   <span
-                    className="size-2 rounded-full bg-brand [grid-area:slot]"
-                    title="Running"
-                  />
-                ) : (
-                  <span className="text-xs tabular-nums text-muted-foreground/50 [grid-area:slot] lg:group-hover:invisible">
-                    {compactAge(task.updatedAt)}
+                    className={cn(
+                      "block truncate text-[0.85rem] font-medium",
+                      isSelected
+                        ? "text-brand-ink"
+                        : "text-muted-foreground group-hover:text-foreground",
+                    )}
+                  >
+                    {task.title || "Untitled"}
                   </span>
-                )}
-                <span
-                  aria-hidden="true"
-                  className="flex w-7 items-center justify-center rounded text-muted-foreground opacity-0 [grid-area:slot] lg:group-hover:opacity-100"
-                >
-                  <Ellipsis className="size-4" />
-                </span>
-              </div>
+                </button>
+              )}
+
+              {!isEditing && (
+                // A single grid cell stacks the status/time and the overflow
+                // affordance, so the hover swap cannot reflow the row.
+                <div className="ml-2 grid w-8 shrink-0 items-center justify-items-center [grid-template-areas:'slot']">
+                  {task.running ? (
+                    <span
+                      className="size-2 rounded-full bg-brand [grid-area:slot]"
+                      title="Running"
+                    />
+                  ) : (
+                    <span
+                      className={cn(
+                        "text-xs tabular-nums text-muted-foreground/50 [grid-area:slot]",
+                        menuOpen ? "invisible" : "group-hover:invisible",
+                      )}
+                    >
+                      {compactAge(task.updatedAt)}
+                    </span>
+                  )}
+
+                  <DropdownMenu
+                    open={menuOpen}
+                    onOpenChange={(open) => {
+                      setMenuId(open ? task.id : null);
+                      if (!open) setConfirmingId(null);
+                    }}
+                  >
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={`Actions for ${task.title || "Untitled"}`}
+                        className={cn(
+                          "flex w-7 items-center justify-center rounded text-muted-foreground [grid-area:slot] hover:text-foreground",
+                          // Also revealed on keyboard focus, so the
+                          // menu is reachable without a pointer at all.
+                          menuOpen
+                            ? "opacity-100"
+                            : "pointer-events-none opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100",
+                        )}
+                      >
+                        <Ellipsis className="size-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-48">
+                      <DropdownMenuItem
+                        onSelect={() => beginRename(task.id)}
+                        className="cursor-pointer"
+                      >
+                        <Pencil className="mr-2 size-4 text-muted-foreground" />
+                        Rename
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        // A running task is mid-stream into this transcript;
+                        // deleting it would leave the run writing to a task the
+                        // list no longer has. Stop it first.
+                        disabled={task.running}
+                        // Two-step rather than a dialog: the first select arms
+                        // the confirm and keeps the menu open, so a mis-click
+                        // cannot destroy a transcript.
+                        onSelect={(event) => {
+                          if (confirmingId !== task.id) {
+                            event.preventDefault();
+                            setConfirmingId(task.id);
+                            return;
+                          }
+                          onDeleteTask(task.id);
+                          setConfirmingId(null);
+                        }}
+                        className={cn(
+                          "cursor-pointer",
+                          confirmingId === task.id && "text-destructive",
+                        )}
+                      >
+                        <Trash2
+                          className={cn(
+                            "mr-2 size-4",
+                            confirmingId === task.id
+                              ? "text-destructive"
+                              : "text-muted-foreground",
+                          )}
+                        />
+                        {task.running
+                          ? "Delete (stop it first)"
+                          : confirmingId === task.id
+                            ? "Click again to delete"
+                            : "Delete"}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
             </div>
           );
         })}

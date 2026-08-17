@@ -30,6 +30,8 @@ export function Navbar({
   connection,
   onSelectTask,
   onNewTask,
+  onRenameTask,
+  onDeleteTask,
   workspaceName,
   workspaceSubLabel,
   providerName,
@@ -45,6 +47,8 @@ export function Navbar({
   connection: "checking" | "online" | "offline";
   onSelectTask: (id: string) => void;
   onNewTask: () => void;
+  onRenameTask: (id: string, title: string) => void;
+  onDeleteTask: (id: string) => void;
   workspaceName: string;
   workspaceSubLabel: string;
   providerName: string;
@@ -77,6 +81,8 @@ export function Navbar({
                 activeId={activeId}
                 onSelectTask={onSelectTask}
                 onNewTask={onNewTask}
+                onRenameTask={onRenameTask}
+                onDeleteTask={onDeleteTask}
                 onAfterSelect={() => setDrawerOpen(false)}
                 className="w-[min(18rem,60vw)] border-r-0"
               />
