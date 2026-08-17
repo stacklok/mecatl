@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter, Merriweather } from "next/font/google";
 
+import { FontScaleProvider } from "@/components/font-scale";
 import { ThemeProvider } from "@/components/theme-provider";
 
 import "./globals.css";
@@ -42,7 +43,9 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${merriweather.variable} ${geistMono.variable} text-sm antialiased`}
       >
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <FontScaleProvider>{children}</FontScaleProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

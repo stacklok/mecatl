@@ -3,9 +3,10 @@
 import { Menu, Shuffle } from "lucide-react";
 import { useState } from "react";
 
+import type { ViewKey } from "@/components/shell/nav-items";
 import { TaskSidebar, type TaskSummary } from "@/components/shell/task-sidebar";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { UserMenu, type SettingsPanel } from "@/components/user-menu";
+import { UserMenu } from "@/components/user-menu";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,6 +22,8 @@ export function Navbar({
   running,
   routerStatus,
   onOpenRouter,
+  view,
+  onNavigate,
   tasks,
   activeId,
   connection,
@@ -30,13 +33,13 @@ export function Navbar({
   workspaceName,
   workspaceSubLabel,
   providerName,
-  controllerMode,
-  onOpenPanel,
 }: {
   title: string;
   running: boolean;
   routerStatus: { enabled: boolean; categories: number } | null;
   onOpenRouter: () => void;
+  view: ViewKey;
+  onNavigate: (view: ViewKey) => void;
   tasks: readonly TaskSummary[];
   activeId: string;
   connection: "checking" | "online" | "offline";
@@ -46,8 +49,6 @@ export function Navbar({
   workspaceName: string;
   workspaceSubLabel: string;
   providerName: string;
-  controllerMode: "managed" | "external";
-  onOpenPanel: (panel: SettingsPanel) => void;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -64,13 +65,15 @@ export function Navbar({
           <SheetContent side="left" className="w-64 max-w-[80vw] gap-0 p-0 md:hidden">
             <SheetTitle className="sr-only">Tasks</SheetTitle>
             <TaskSidebar
+              view={view}
+              onNavigate={onNavigate}
               tasks={tasks}
               activeId={activeId}
               connection={connection}
               relativeTime={relativeTime}
-              onSelect={onSelectTask}
+              onSelectTask={onSelectTask}
               onNewTask={onNewTask}
-              onNavigate={() => setDrawerOpen(false)}
+              onAfterNavigate={() => setDrawerOpen(false)}
               className="h-full w-full border-r-0"
             />
           </SheetContent>
@@ -116,8 +119,6 @@ export function Navbar({
         subLabel={workspaceSubLabel}
         connection={connection}
         providerName={providerName}
-        controllerMode={controllerMode}
-        onOpenPanel={onOpenPanel}
       />
     </header>
   );

@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
  * two read identically.
  */
 const GHOST_TRIGGER =
-  "h-7 gap-1 rounded-full border-0 bg-transparent px-2.5 text-sm font-normal text-foreground shadow-none hover:bg-zinc-200 dark:hover:bg-zinc-700";
+  "h-7 gap-1 rounded-full border-0 bg-transparent px-2.5 text-sm font-normal text-foreground shadow-none hover:bg-accent hover:text-accent-foreground";
 
 export type CsvAttachmentSummary = {
   id: string;
@@ -105,7 +105,7 @@ export function Composer({
         if (event.currentTarget === event.target) onDraggingChange(false);
       }}
       onDrop={onCsvDrop}
-      className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900"
+      className="relative rounded-2xl bg-secondary"
     >
       <input
         ref={csvInputRef}
@@ -118,10 +118,10 @@ export function Composer({
 
       <div
         className={cn(
-          "relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-500 dark:focus-within:border-zinc-400",
+          "relative rounded-2xl border bg-background transition-colors focus-within:border-ring",
           dragging
             ? "border-brand bg-brand/5 ring-2 ring-brand/20 dark:bg-brand/10"
-            : "border-zinc-300 dark:border-zinc-700",
+            : "border-input",
         )}
       >
         {dragging && (
@@ -205,7 +205,7 @@ export function Composer({
       </div>
 
       {/* Pulled up behind the input box so the outlines merge into one. */}
-      <div className="hide-scrollbar -mt-4 flex items-center gap-1 overflow-x-auto rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="hide-scrollbar -mt-4 flex items-center gap-1 overflow-x-auto rounded-b-2xl border border-t-0 border-input bg-secondary px-2 pt-5 pb-1.5">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" size="sm" className={GHOST_TRIGGER}>
@@ -233,7 +233,7 @@ export function Composer({
                 onSelect={() => onModeChange(option.value)}
                 className={cn(
                   "flex cursor-pointer flex-col items-start gap-0.5 rounded-lg px-3 py-2.5",
-                  mode === option.value && "bg-zinc-100 dark:bg-zinc-800",
+                  mode === option.value && "bg-accent",
                 )}
               >
                 <span className="text-sm font-medium">{option.label}</span>

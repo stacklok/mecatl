@@ -23,7 +23,13 @@ task studio:typecheck # tsc --noEmit
 
 ## Shape
 
-- `app/` — the client (a single `page.tsx` view plus `globals.css`).
+- `app/` — the client. `page.tsx` owns ALL state (the SSE stream, session id,
+  task transcripts, every panel's form state); `globals.css` holds the design
+  tokens plus the conversation/panel CSS.
+- `components/` — presentation only, no fetching. `shell/` is the rail + navbar
+  (+ `nav-items.ts`, the destination list), `chat/composer.tsx` the composer,
+  `settings/` the Settings page, `user-menu/` the profile menu, `ui/` the
+  shadcn primitives copied from the enterprise console.
 - `app/api/` + `lib/server-proxy.ts` — server-side same-origin proxies. External
   mode injects `MECATL_AUTH_TOKEN`; managed mode delegates to the controller.
 - `scripts/local-controller.mjs` — the supervisor on `127.0.0.1:8788`. Spawns and
@@ -37,6 +43,19 @@ task studio:typecheck # tsc --noEmit
 
 ## Rules that have teeth
 
+- **Destinations are VIEWS, not routes.** `page.tsx` holds the live SSE stream, so
+  navigating by URL would mean lifting that into a layout and remounting the
+  stream on every move. The rail switches a `view` value, and the conversation is
+  `display:none`d rather than unmounted so a run keeps streaming while the
+  operator reads Settings. Adding a real route means solving that first.
+- **Colour goes through a token, never a literal.** `globals.css` defines the
+  console's palette for `:root` and `.dark`; a hex or `zinc-*` class in a
+  component is a dark-mode bug waiting to happen. Tints use
+  `color-mix(in oklab, var(--token) N%, transparent)` so they re-derive on a
+  theme flip instead of staying light. The only literals left are the modal
+  scrim and its shadow, which are meant to be dark in both themes.
+- **Type sizes are rem, never px.** The font-scale control works by setting the
+  ROOT font-size, so a px value silently opts that text out of scaling.
 - **The workspace is resolved, never hardcoded.** The controller derives the repo
   root from its own location and reports it on `/status`; the client refuses to
   open a session until it has one. Do not reintroduce a literal path — the app
@@ -66,3 +85,13 @@ test at the observable seam; do not replace it with a source-text regex.
 `npm test` BUILDS before it asserts, so it is slower than it looks and it fails
 on a compile error before any test output appears. `npm run lint` and
 `npm run typecheck` are the fast feedback loop.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

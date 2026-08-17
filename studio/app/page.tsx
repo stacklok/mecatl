@@ -3,9 +3,10 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { decodeScheduleRows, parseMecatlEvent, type MecatlEvent, type ScheduleRow } from "../lib/protocol";
 import { Composer } from "@/components/chat/composer";
+import type { ViewKey } from "@/components/shell/nav-items";
 import { Navbar } from "@/components/shell/navbar";
 import { TaskSidebar } from "@/components/shell/task-sidebar";
-import type { SettingsPanel } from "@/components/user-menu";
+import { SettingsView } from "@/components/settings/settings-view";
 
 type ToolActivity = {
   id: string;
@@ -115,6 +116,16 @@ const starterTask: Task = {
   ],
 };
 
+// The navbar shows the active task's title on the chat view and the
+// destination's name everywhere else.
+const VIEW_TITLES: Record<ViewKey, string> = {
+  chat: "Chat",
+  skills: "Skills",
+  memory: "Memory",
+  schedules: "Scheduled",
+  settings: "Settings",
+};
+
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const permissionModeLabel = (mode: number) => mode === 3 ? "accept edits" : mode === 2 ? "plan" : mode === 1 ? "default" : "unset";
 // Distinct from relativeTime() below, which is past-only ("3m ago") for task rows.
@@ -213,13 +224,15 @@ export default function Home() {
   const [draggingCsv, setDraggingCsv] = useState(false);
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState<"checking" | "online" | "offline">("checking");
+  // Which left-rail destination is showing. A VIEW rather than a route, so the
+  // live SSE stream and every task transcript stay mounted while the operator
+  // reads their schedules — see components/shell/nav-items.ts.
+  const [view, setView] = useState<ViewKey>("chat");
   // The mobile nav drawer and the model popover are owned by Navbar and Composer
   // respectively — local to the component that renders the trigger.
-  const [credentialsOpen, setCredentialsOpen] = useState(false);
   const [controllerMode, setControllerMode] = useState<"managed" | "external">("managed");
   const [providerName, setProviderName] = useState("offline mock");
   const [authFile, setAuthFile] = useState("");
-  const [routerOpen, setRouterOpen] = useState(false);
   const [routerEnabled, setRouterEnabled] = useState(true);
   const [routerClassifierModel, setRouterClassifierModel] = useState("");
   const [routerDefaultCategory, setRouterDefaultCategory] = useState("routine");
@@ -230,25 +243,21 @@ export default function Home() {
   const [routerManagedBy, setRouterManagedBy] = useState<"studio" | "operator-settings">("studio");
   const [routerState, setRouterState] = useState<"idle" | "loading" | "saving" | "success" | "error">("idle");
   const [routerError, setRouterError] = useState("");
-  const [mcpOpen, setMcpOpen] = useState(false);
   const [mcpName, setMcpName] = useState("gateway");
   const [mcpUrl, setMcpUrl] = useState("https://connector-gateway.stacklok.dev/gw/mcp");
   const [mcpToken, setMcpToken] = useState("");
   const [mcpState, setMcpState] = useState<"idle" | "saving" | "success" | "error">("idle");
   const [mcpError, setMcpError] = useState("");
   const [mcpConnected, setMcpConnected] = useState<{ name: string; url: string } | null>(null);
-  const [skillsOpen, setSkillsOpen] = useState(false);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillsDir, setSkillsDir] = useState("");
   const [skillsState, setSkillsState] = useState<"idle" | "loading" | "error">("idle");
   const [skillsError, setSkillsError] = useState("");
-  const [memoryOpen, setMemoryOpen] = useState(false);
   const [userModel, setUserModel] = useState<UserModelIndex | null>(null);
   const [userModelWired, setUserModelWired] = useState(true);
   const [memoryDir, setMemoryDir] = useState("");
   const [memoryState, setMemoryState] = useState<"idle" | "loading" | "error">("idle");
   const [memoryError, setMemoryError] = useState("");
-  const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [schedulerWired, setSchedulerWired] = useState(true);
   const [schedulesState, setSchedulesState] = useState<"idle" | "loading" | "error">("idle");
@@ -326,7 +335,7 @@ export default function Home() {
         setMcpState("success");
         setConnected("online");
         setTasks((current) => current.map((task) => ({ ...task, sessionId: undefined })));
-        window.setTimeout(() => { setMcpOpen(false); setMcpState("idle"); }, 900);
+        window.setTimeout(() => setMcpState("idle"), 2500);
       } else {
         mcpPendingRef.current = null;
         setMcpState("error");
@@ -341,7 +350,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!mcpOpen) return;
+    if (view !== "settings") return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 2_500);
     void fetch("/api/mecatl-control/status", { signal: controller.signal, cache: "no-store" })
@@ -356,10 +365,10 @@ export default function Home() {
       .catch(() => undefined)
       .finally(() => window.clearTimeout(timeout));
     return () => { controller.abort(); window.clearTimeout(timeout); };
-  }, [mcpOpen]);
+  }, [view]);
 
   useEffect(() => {
-    if (!routerOpen) return;
+    if (view !== "settings") return;
     const controller = new AbortController();
     void Promise.all([
       fetch(`${API}/v1/models`, { signal: controller.signal, cache: "no-store" }).then(async (response) => response.ok ? response.json() : { models: [] }),
@@ -394,7 +403,7 @@ export default function Home() {
       setRouterError(message === "not found" ? "Restart the local Mecatl Studio process once to load the new semantic-router controller." : message);
     });
     return () => controller.abort();
-  }, [routerOpen, active?.model]);
+  }, [view, active?.model]);
 
   useEffect(() => {
     let disposed = false;
@@ -455,7 +464,7 @@ export default function Home() {
   // Skills are resolved by mecated at startup from its --skills-dir, so the
   // inventory is read straight from the daemon rather than cached in this app.
   useEffect(() => {
-    if (!skillsOpen) return;
+    if (view !== "skills") return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 5_000);
     void Promise.all([
@@ -478,20 +487,15 @@ export default function Home() {
       })
       .finally(() => window.clearTimeout(timeout));
     return () => { controller.abort(); window.clearTimeout(timeout); };
-  }, [skillsOpen]);
+  }, [view]);
 
-  const openSkills = () => {
-    setSkillsState("loading");
-    setSkillsError("");
-    setSkillsOpen(true);
-  };
 
   // The user model is a LIVE read of the store index, so it reflects facts the
   // agent saved since the daemon started — fetch on every open, never cache.
   // A disabled user model (--no-user-model) is a legitimate state, not an error:
   // mecated answers with a service error, which we render as "not wired".
   useEffect(() => {
-    if (!memoryOpen) return;
+    if (view !== "memory") return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 5_000);
     void Promise.all([
@@ -523,13 +527,8 @@ export default function Home() {
       })
       .finally(() => window.clearTimeout(timeout));
     return () => { controller.abort(); window.clearTimeout(timeout); };
-  }, [memoryOpen]);
+  }, [view]);
 
-  const openMemory = () => {
-    setMemoryState("loading");
-    setMemoryError("");
-    setMemoryOpen(true);
-  };
 
   // Scheduled tasks fire unattended, so this panel is the oversight surface for
   // them. A daemon with no ScheduleStore (mecated's in-memory default) answers
@@ -549,7 +548,7 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (!schedulesOpen) return;
+    if (view !== "schedules") return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 5_000);
     void (async () => {
@@ -565,15 +564,8 @@ export default function Home() {
       }
     })();
     return () => { controller.abort(); window.clearTimeout(timeout); };
-  }, [schedulesOpen]);
+  }, [view]);
 
-  const openSchedules = () => {
-    setSchedulesState("loading");
-    setSchedulesError("");
-    setScheduleNotice("");
-    setScheduleConfirmDelete("");
-    setSchedulesOpen(true);
-  };
 
   // Busy is per SCHEDULE, not panel-wide: a fire holds its request open for the
   // whole run, and freezing every other row's Pause/Delete for that long would
@@ -609,10 +601,30 @@ export default function Home() {
     }
   };
 
-  const openRouterSettings = () => {
-    setRouterState("loading");
-    setRouterError("");
-    setRouterOpen(true);
+  // Entering a destination primes that panel's loading state before its fetch
+  // effect runs, so the view never flashes an empty list first.
+  const navigate = (next: ViewKey) => {
+    if (next === "skills") {
+      setSkillsState("loading");
+      setSkillsError("");
+    }
+    if (next === "memory") {
+      setMemoryState("loading");
+      setMemoryError("");
+    }
+    if (next === "schedules") {
+      setSchedulesState("loading");
+      setSchedulesError("");
+      setScheduleNotice("");
+      setScheduleConfirmDelete("");
+    }
+    if (next === "settings") {
+      setRouterState("loading");
+      setRouterError("");
+      setMcpState("idle");
+      setMcpError("");
+    }
+    setView(next);
   };
 
   const createSession = async () => {
@@ -930,7 +942,7 @@ export default function Home() {
       setRouterStatus({ enabled: routerEnabled, categories: routerCategories.length });
       setConnected("online");
       setTasks((current) => current.map((task) => ({ ...task, sessionId: undefined })));
-      window.setTimeout(() => { setRouterOpen(false); setRouterState("idle"); }, 900);
+      window.setTimeout(() => setRouterState("idle"), 2500);
     } catch (caught) {
       setRouterState("error");
       setRouterError((caught as Error).message || "Could not save semantic routing settings.");
@@ -980,7 +992,7 @@ export default function Home() {
       setMcpState("success");
       setConnected("online");
       setTasks((current) => current.map((task) => ({ ...task, sessionId: undefined })));
-      window.setTimeout(() => { setMcpOpen(false); setMcpState("idle"); }, 900);
+      window.setTimeout(() => setMcpState("idle"), 2500);
     } catch (caught) {
       setMcpState("error");
       setMcpError((caught as Error).message || "Could not connect the MCP Gateway.");
@@ -1035,61 +1047,28 @@ export default function Home() {
     }
   };
 
-  const closeMcpModal = () => {
-    if (mcpOAuthWatchRef.current !== null) window.clearInterval(mcpOAuthWatchRef.current);
-    mcpOAuthWatchRef.current = null;
-    mcpOAuthPopupRef.current?.close();
-    mcpOAuthPopupRef.current = null;
-    setMcpState("idle");
-    setMcpError("");
-    setMcpOpen(false);
-  };
-
-  // One entry point for the six configuration dialogs, so the profile menu does
-  // not need to know which of them have a loader to prime first.
-  const openSettingsPanel = (panel: SettingsPanel) => {
-    switch (panel) {
-      case "provider":
-        setCredentialsOpen(true);
-        return;
-      case "router":
-        openRouterSettings();
-        return;
-      case "mcp":
-        setMcpState("idle");
-        setMcpError("");
-        setMcpOpen(true);
-        return;
-      case "skills":
-        openSkills();
-        return;
-      case "memory":
-        openMemory();
-        return;
-      case "schedules":
-        openSchedules();
-        return;
-    }
-  };
-
   return (
     <main className="studio-shell">
       <TaskSidebar
+        view={view}
+        onNavigate={navigate}
         tasks={tasks}
         activeId={activeId}
         connection={connected}
         relativeTime={relativeTime}
-        onSelect={setActiveId}
+        onSelectTask={setActiveId}
         onNewTask={newTask}
         className="hidden md:flex"
       />
 
       <section className="workspace-panel">
         <Navbar
-          title={active?.title || "New task"}
+          title={view === "chat" ? active?.title || "New task" : VIEW_TITLES[view]}
           running={running}
-          routerStatus={routerStatus}
-          onOpenRouter={openRouterSettings}
+          routerStatus={view === "chat" ? routerStatus : null}
+          onOpenRouter={() => navigate("settings")}
+          view={view}
+          onNavigate={navigate}
           tasks={tasks}
           activeId={activeId}
           connection={connected}
@@ -1099,11 +1078,202 @@ export default function Home() {
           workspaceName="stacklok/mecatl"
           workspaceSubLabel="main · local workspace"
           providerName={providerName}
-          controllerMode={controllerMode}
-          onOpenPanel={openSettingsPanel}
         />
 
-        <div className="conversation">
+        {view !== "chat" && (
+          <div className="panel-scroll">
+            {view === "settings" && (
+              <SettingsView
+                controllerMode={controllerMode}
+                providerName={providerName}
+                authFile={authFile}
+                routerState={routerState}
+                routerError={routerError}
+                routerManagedBy={routerManagedBy}
+                routerEnabled={routerEnabled}
+                setRouterEnabled={setRouterEnabled}
+                routerClassifierModel={routerClassifierModel}
+                setRouterClassifierModel={setRouterClassifierModel}
+                routerDefaultCategory={routerDefaultCategory}
+                setRouterDefaultCategory={setRouterDefaultCategory}
+                routerCategories={routerCategories}
+                routerModels={routerModels}
+                addRouterCategory={addRouterCategory}
+                removeRouterCategory={removeRouterCategory}
+                renameRouterCategory={renameRouterCategory}
+                updateRouterCategory={updateRouterCategory}
+                saveModelRouter={saveModelRouter}
+                mcpName={mcpName}
+                setMcpName={setMcpName}
+                mcpUrl={mcpUrl}
+                setMcpUrl={setMcpUrl}
+                mcpToken={mcpToken}
+                setMcpToken={setMcpToken}
+                mcpState={mcpState}
+                mcpError={mcpError}
+                mcpConnected={mcpConnected}
+                connectMcp={connectMcp}
+                signInToMcp={signInToMcp}
+              />
+            )}
+            {view === "skills" && (
+              <div className="panel-page">
+                <section className="panel-card" aria-labelledby="skills-title">
+                  <h2 id="skills-title">Agent skills</h2>
+                  <p>Skills are progressive-disclosure instruction bundles. Mecatl sees only each skill’s name and one-line summary until it chooses to load one, then the full <code>SKILL.md</code> enters context for that task.</p>
+                  {skillsState === "loading" ? <div className="router-loading">Loading the skills inventory…</div> : skillsState === "error" ? (
+                    <div className="credential-error" role="alert">{skillsError}</div>
+                  ) : skills.length === 0 ? (
+                    <div className="skills-empty">
+                      <strong>No skills discovered yet</strong>
+                      <p>Add a skill as <code>&lt;name&gt;/SKILL.md</code> inside the workspace skills directory, then reconnect the provider to pick it up.</p>
+                      {skillsDir && <code className="skills-path">{skillsDir}</code>}
+                    </div>
+                  ) : (
+                    <ul className="skills-list">
+                      {skills.map((skill) => (
+                        <li key={skill.name}>
+                          <strong>{skill.name}</strong>
+                          <small>{skill.description || "No summary in this skill’s frontmatter."}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {skills.length > 0 && <div className="input-hint">{skills.length} skill{skills.length === 1 ? "" : "s"} available to the model.</div>}
+                  <div className="key-safety"><span>✓</span><p>Discovery is scoped to this workspace only. A <code>SKILL.md</code> steers the model like <code>AGENTS.md</code>, so your personal and user-global skill directories are deliberately not loaded.</p></div>
+                  <div className="transport-note"><span>i</span> mecated resolves skills at startup. A newly added skill appears after the daemon restarts.</div>
+                </section>
+              </div>
+            )}
+            {view === "memory" && (
+              <div className="panel-page">
+                <section className="panel-card" aria-labelledby="memory-title">
+                  <h2 id="memory-title">Memory</h2>
+                  <p>Mecatl keeps two separate stores. The <strong>user model</strong> holds durable facts about you and follows you across every project; <strong>project memory</strong> holds notes scoped to this workspace. Both are curated by the agent — this panel only reads them.</p>
+
+                  {memoryState === "loading" ? <div className="router-loading">Reading the memory stores…</div> : memoryState === "error" ? (
+                    <div className="credential-error" role="alert">{memoryError}</div>
+                  ) : (
+                    <>
+                      <h3 className="memory-heading">User model <small>cross-project</small></h3>
+                      {!userModelWired ? (
+                        <div className="skills-empty">
+                          <strong>The user model is switched off</strong>
+                          <p>This daemon was started with <code>--no-user-model</code>, so no facts are stored and the <code>&lt;user-model&gt;</code> block never enters context.</p>
+                        </div>
+                      ) : (userModel?.entries.length ?? 0) === 0 ? (
+                        <div className="skills-empty">
+                          <strong>No facts saved yet</strong>
+                          <p>Mecatl writes here with <code>RememberUser</code> when it learns something durable about you. Ask it to remember something, or run the daemon with <code>--user-model-review</code> to have it extract facts after a session ends.</p>
+                        </div>
+                      ) : (
+                        <ul className="skills-list">
+                          {userModel?.entries.map((entry) => (
+                            <li key={entry.key}>
+                              <strong>{entry.key}</strong>
+                              <small>{entry.description || "No description recorded for this fact."}</small>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {userModelWired && userModel && (
+                        <div className="input-hint">
+                          {userModel.entries.length} fact{userModel.entries.length === 1 ? "" : "s"}
+                          {userModel.sizeBytes > 0 ? ` · ${formatBytes(userModel.sizeBytes)}` : ""}
+                          {userModel.sha256 ? ` · index ${userModel.sha256.slice(0, 7)}` : ""}
+                        </div>
+                      )}
+
+                      <h3 className="memory-heading">Project memory <small>this workspace</small></h3>
+                      <div className="skills-empty">
+                        {memoryDir ? (
+                          <>
+                            <strong>Enabled, not yet inspectable</strong>
+                            <p>Mecatl’s <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> tools are wired against the directory below, so the agent can use them today. The daemon exposes no read endpoint for this store yet — there is <code>GET /v1/usermodel</code> but no <code>/v1/memory</code> — so Studio cannot list the entries. This section fills in once that endpoint lands upstream.</p>
+                            <code className="skills-path">{memoryDir}</code>
+                          </>
+                        ) : (
+                          <>
+                            <strong>Not enabled in the running daemon</strong>
+                            <p>Per-project memory stays off in mecated until <code>--memory-dir</code> is passed, and this daemon was started without it — so <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> are not registered at all. Restart the local controller to pick it up.</p>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  <div className="key-safety"><span>✓</span><p>Read-only by design. Mecatl curates its own memory through injection-scanned tool calls; a value typed here would land in the model’s turn-0 context without passing that check. Ask the agent to remember or forget something instead.</p></div>
+                  <div className="transport-note"><span>i</span> The user model is read live on open, so a fact saved moments ago appears without restarting the daemon.</div>
+                </section>
+              </div>
+            )}
+            {view === "schedules" && (
+              <div className="panel-page">
+                <section className="panel-card" aria-labelledby="schedules-title">
+                  <h2 id="schedules-title">Scheduled tasks</h2>
+                  <p>A schedule fires an agent run on its own — on a cron cadence or once at a set time — with no one watching. This panel is the oversight surface: see what is armed, when it next runs, and stop it.</p>
+
+                  {schedulesState === "loading" ? <div className="router-loading">Reading the schedule registry…</div> : !schedulerWired ? (
+                    <div className="skills-empty">
+                      <strong>Scheduling is not available on this daemon</strong>
+                      <p>Scheduled tasks need a durable store that exposes a <code>ScheduleStore</code>. This daemon has none, so nothing can be armed.</p>
+                    </div>
+                  ) : schedules.length === 0 ? (
+                    <div className="skills-empty">
+                      <strong>Nothing scheduled</strong>
+                      <p>Ask Mecatl to schedule work — it authors schedules with its in-chat <code>Schedule</code> tool, and they show up here for you to inspect, pause, or delete.</p>
+                    </div>
+                  ) : (
+                    <ul className="schedule-list">
+                      {schedules.map((row) => (
+                        <li key={row.name} className={row.enabled ? "" : "paused"}>
+                          <div className="schedule-row-head">
+                            <strong>{row.name}</strong>
+                            <span className={`schedule-state ${row.fireStage !== "idle" ? "running" : row.enabled ? "armed" : "paused"}`}>{row.fireStage === "running" ? "running now" : row.fireStage === "claimed" ? "fire claimed" : row.enabled ? "armed" : "paused"}</span>
+                          </div>
+                          <small className="schedule-trigger">{triggerSummary(row)} · next {fireTime(row.nextFireAt)} · {row.fireCount} fire{row.fireCount === 1 ? "" : "s"}{row.lastFireAt !== null ? ` · last ${fireTime(row.lastFireAt)}` : ""}</small>
+                          <small className="schedule-prompt">{row.prompt || "No prompt recorded."}</small>
+                          <div className="schedule-badges">
+                            <span className={row.mutating ? "badge-write" : "badge-read"}>{row.mutating ? "can write" : "read-only"}</span>
+                            <span>{permissionModeLabel(row.mode)} mode</span>
+                          </div>
+                          {scheduleConfirmDelete === row.name ? (
+                            <div className="schedule-confirm">
+                              <span>Delete {row.name}? Its past fire transcripts stay in the session store.</span>
+                              <div>
+                                <button className="schedule-danger" disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "delete")}>Delete</button>
+                                <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete("")}>Keep</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="schedule-actions">
+                              {row.enabled
+                                ? <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "pause")}>Pause</button>
+                                : <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "resume")}>Resume</button>}
+                              <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "fire")}>{scheduleBusy === `${row.name}:fire` ? "Running…" : "Run now"}</button>
+                              <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete(row.name)}>Delete…</button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {schedulesError && <div className="credential-error" role="alert">{schedulesError}</div>}
+                  {scheduleNotice && <div className="input-hint">{scheduleNotice}</div>}
+                  {schedulerWired && schedules.length > 0 && <div className="input-hint">{schedules.filter((row) => row.enabled).length} of {schedules.length} armed.</div>}
+                  <div className="key-safety"><span>✓</span><p>A schedule that has not opted into writing runs in plan mode — the daemon rejects a non-mutating schedule that asks for anything wider. <strong>Run now</strong> fires immediately with the schedule&rsquo;s own permissions, so a mutating schedule can edit files with nobody at the keyboard.</p></div>
+                  <div className="transport-note"><span>i</span><p>Each fire runs as its own <code>sched--</code> session. Auto-firing needs a daemon with the scheduler tick loop enabled; this panel manages the registry either way.</p></div>
+                </section>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Hidden rather than unmounted: a run keeps streaming into this DOM
+            while the operator reads Settings, and returning preserves their
+            scroll position instead of snapping to the bottom. */}
+        <div className="conversation" style={{ display: view === "chat" ? undefined : "none" }}>
           {routingSummary.total > 0 && <section className="routing-summary" aria-label="Session routing summary">
             <div><span className="routing-summary-icon">⇄</span><p><strong>Session routing</strong><small>{routingSummary.routed} routed{routingSummary.unrouted ? ` · ${routingSummary.unrouted} inherited or pinned` : ""}</small></p></div>
             <div className="routing-summary-counts">{routingSummary.categories.map(([category, count]) => <span key={category}><b>{category}</b>{count}</span>)}</div>
@@ -1144,7 +1314,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="composer-wrap">
+        <div className="composer-wrap" style={{ display: view === "chat" ? undefined : "none" }}>
           {error && <div className="error-banner"><span>!</span><p>{error}</p><button className="retry-button" onClick={retryLastPrompt} disabled={running}>Retry</button><button onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
           <Composer
             prompt={prompt}
@@ -1169,256 +1339,11 @@ export default function Home() {
         </div>
       </section>
 
-      {credentialsOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setCredentialsOpen(false); }}>
-          <section className="credential-modal" role="dialog" aria-modal="true" aria-labelledby="credential-title">
-            <div className="modal-topline"><span className="openrouter-mark">LLM</span><button onClick={() => setCredentialsOpen(false)} aria-label="Close">×</button></div>
-            <h2 id="credential-title">Provider configuration</h2>
-            <div className="gateway-status"><span>●</span><p><strong>{providerName}</strong><small>{controllerMode === "external" ? "Owned by the external mecated deployment" : "Managed local daemon"}</small></p></div>
-            {controllerMode === "external" ? (
-              <div className="transport-note"><span>i</span><p>Provider selection and credentials stay with the remote daemon. Studio only receives the model inventory exposed by that deployment.</p></div>
-            ) : (
-              <>
-                <p>Studio never accepts or forwards provider secrets. Configure mecated&rsquo;s conventional credentials file, then restart Studio.</p>
-                {authFile && <code className="skills-path">{authFile}</code>}
-                <div className="key-safety"><span>✓</span><p>Set <code>MECATL_STUDIO_PROVIDER=openrouter</code> to select OpenRouter; put its API key under <code>providers.openrouter.api_key</code> in the auth file. A missing credential fails loudly instead of falling back.</p></div>
-              </>
-            )}
-          </section>
-        </div>
-      )}
 
-      {routerOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && routerState !== "saving") setRouterOpen(false); }}>
-          <section className="credential-modal router-modal" role="dialog" aria-modal="true" aria-labelledby="router-title">
-            <div className="modal-topline"><span className="router-mark">⇄</span><button onClick={() => setRouterOpen(false)} disabled={routerState === "saving"} aria-label="Close">×</button></div>
-            <h2 id="router-title">Semantic model routing</h2>
-            <p>Classify each unpinned delegation by intent, then run it on the ToolHive LLM gateway model assigned to that category.</p>
-            {routerState === "loading" ? <div className="router-loading">Loading gateway models and routing settings…</div> : (
-              <form onSubmit={saveModelRouter}>
-                {routerManagedBy === "operator-settings" && <div className="router-managed" role="status"><span>✓</span><p><strong>Imported operator policy is active</strong><small>This complete configuration also controls aliases, model slots, and guardrails. Router-only editing is locked to keep those settings intact.</small></p></div>}
-                <fieldset className="router-managed-fields" disabled={routerManagedBy === "operator-settings"}>
-                <label className="router-switch"><input type="checkbox" aria-label="Enable semantic routing" checked={routerEnabled} onChange={(event) => setRouterEnabled(event.target.checked)} /><span><strong>Semantic routing enabled</strong><small>The taxonomy enables routing. Turn this off to keep it configured but inactive.</small></span></label>
-                <div className="router-grid">
-                  <div><label htmlFor="router-classifier">Classifier model</label><input id="router-classifier" list="router-model-options" value={routerClassifierModel} onChange={(event) => setRouterClassifierModel(event.target.value)} placeholder="claude-haiku-4-5" /></div>
-                  <div><label htmlFor="router-default">Default category</label><select id="router-default" value={routerDefaultCategory} onChange={(event) => setRouterDefaultCategory(event.target.value)}>{routerCategories.map((category, index) => <option key={`${category.name}-${index}`} value={category.name}>{category.name || `Category ${index + 1}`}</option>)}</select></div>
-                </div>
-                <div className="input-hint">The classifier is one small extra call per routable delegation. Explicit model choices still take precedence.</div>
-                <datalist id="router-model-options">{routerModels.map((model) => <option key={model.id} value={model.id}>{model.display_name || model.id}</option>)}</datalist>
-                <div className="router-section-heading"><span>Routing categories</span><button type="button" onClick={addRouterCategory} disabled={routerCategories.length >= 8}>＋ Add category</button></div>
-                <div className="router-categories">
-                  {routerCategories.map((category, index) => (
-                    <fieldset className="router-category" key={index}>
-                      <legend>Category {index + 1}</legend>
-                      <button className="router-remove" type="button" onClick={() => removeRouterCategory(index)} disabled={routerCategories.length <= 2} aria-label={`Remove category ${index + 1}`}>×</button>
-                      <div className="router-grid">
-                        <div><label htmlFor={`router-name-${index}`}>Name</label><input id={`router-name-${index}`} value={category.name} onChange={(event) => renameRouterCategory(index, event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} placeholder="routine" /></div>
-                        <div><label htmlFor={`router-model-${index}`}>Gateway model</label><input id={`router-model-${index}`} list="router-model-options" value={category.model} onChange={(event) => updateRouterCategory(index, { model: event.target.value })} placeholder="claude-sonnet-5" /></div>
-                      </div>
-                      <label htmlFor={`router-description-${index}`}>Classifier description</label>
-                      <textarea id={`router-description-${index}`} value={category.description} onChange={(event) => updateRouterCategory(index, { description: event.target.value })} maxLength={300} placeholder="Describe the tasks that belong in this category. Keep categories distinct." />
-                    </fieldset>
-                  ))}
-                </div>
-                <div className="key-safety router-safety"><span>i</span><p>Routing applies to plain Subagents, unpinned agent definitions, team members, and parallel branches. It never changes the Provider bound to a Session.</p></div>
-                </fieldset>
-                {routerState === "error" && <div className="credential-error" role="alert">{routerError}</div>}
-                <button className={`connect-button ${routerState}`} type="submit" disabled={routerManagedBy === "operator-settings" || routerState === "saving" || routerCategories.length < 2 || !routerClassifierModel.trim() || !routerDefaultCategory || routerCategories.some((category) => !category.name.trim() || !category.description.trim() || !category.model.trim())}>
-                  {routerManagedBy === "operator-settings" ? "Managed by imported settings" : routerState === "saving" ? "Restarting Mecatl with router…" : routerState === "success" ? "Routing configured ✓" : "Save routing and restart Mecatl"}
-                </button>
-              </form>
-            )}
-          </section>
-        </div>
-      )}
 
-      {mcpOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeMcpModal(); }}>
-          <section className="credential-modal mcp-modal" role="dialog" aria-modal="true" aria-labelledby="mcp-title">
-            <div className="modal-topline"><span className="mcp-mark">◎</span><button onClick={closeMcpModal} aria-label="Close">×</button></div>
-            <h2 id="mcp-title">Connect an MCP Gateway</h2>
-            <p>Add a Streamable HTTP gateway. Mecatl will discover its tools, resources, and prompts and make them available to your tasks.</p>
-            {mcpConnected && <div className="gateway-status"><span>●</span><p><strong>Connected</strong><small>{mcpConnected.name} · {mcpConnected.url}</small></p></div>}
-            <form onSubmit={connectMcp}>
-              <div className="field-row">
-                <div><label htmlFor="mcp-name">Gateway name</label><input id="mcp-name" value={mcpName} onChange={(event) => setMcpName(event.target.value.replace(/[^A-Za-z0-9_]/g, ""))} placeholder="gateway" /></div>
-                <div className="url-field"><label htmlFor="mcp-url">Streamable HTTP URL</label><input id="mcp-url" type="url" value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://gateway.example.com/mcp" /></div>
-              </div>
-              <button className={`connect-button ${mcpState}`} type="button" disabled={!mcpName.trim() || !mcpUrl.trim() || mcpState === "saving"} onClick={() => void signInToMcp()}>
-                {mcpState === "saving" ? "Waiting for gateway sign-in…" : mcpState === "success" ? "Gateway connected ✓" : "Sign in to Gateway"}
-              </button>
-              <div className="input-hint">Uses the gateway’s OAuth sign-in with PKCE. No password or access token is stored by the browser.</div>
-              <label htmlFor="mcp-token">Existing bearer token <span className="optional">Advanced</span></label>
-              <input id="mcp-token" type="password" value={mcpToken} onChange={(event) => setMcpToken(event.target.value)} placeholder="Paste the gateway access token" autoComplete="off" />
-              <div className="input-hint">Only use this when your gateway administrator supplied a current access token.</div>
-              <div className="input-hint">Gateway URLs must use HTTPS. A local HTTP gateway is accepted only when the controller is explicitly started with <code>MECATL_ALLOW_INSECURE_LOOPBACK_MCP=1</code>.</div>
-              <div className="key-safety"><span>✓</span><p>Credentials stay in the loopback controller’s memory and are never stored in this app or repository.</p></div>
-              {mcpState === "error" && <div className="credential-error" role="alert">{mcpError || "The gateway rejected the connection."}</div>}
-              <button className="connect-button secondary-connect" type="submit" disabled={!mcpName.trim() || !mcpUrl.trim() || !mcpToken.trim() || mcpState === "saving"}>
-                Connect with existing token
-              </button>
-            </form>
-            <div className="transport-note"><span>i</span> Mecatl supports the MCP Streamable HTTP transport. Stdio and legacy SSE gateways are not supported.</div>
-          </section>
-        </div>
-      )}
 
-      {skillsOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSkillsOpen(false); }}>
-          <section className="credential-modal skills-modal" role="dialog" aria-modal="true" aria-labelledby="skills-title">
-            <div className="modal-topline"><span className="skills-mark">✦</span><button onClick={() => setSkillsOpen(false)} aria-label="Close">×</button></div>
-            <h2 id="skills-title">Agent skills</h2>
-            <p>Skills are progressive-disclosure instruction bundles. Mecatl sees only each skill’s name and one-line summary until it chooses to load one, then the full <code>SKILL.md</code> enters context for that task.</p>
-            {skillsState === "loading" ? <div className="router-loading">Loading the skills inventory…</div> : skillsState === "error" ? (
-              <div className="credential-error" role="alert">{skillsError}</div>
-            ) : skills.length === 0 ? (
-              <div className="skills-empty">
-                <strong>No skills discovered yet</strong>
-                <p>Add a skill as <code>&lt;name&gt;/SKILL.md</code> inside the workspace skills directory, then reconnect the provider to pick it up.</p>
-                {skillsDir && <code className="skills-path">{skillsDir}</code>}
-              </div>
-            ) : (
-              <ul className="skills-list">
-                {skills.map((skill) => (
-                  <li key={skill.name}>
-                    <strong>{skill.name}</strong>
-                    <small>{skill.description || "No summary in this skill’s frontmatter."}</small>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {skills.length > 0 && <div className="input-hint">{skills.length} skill{skills.length === 1 ? "" : "s"} available to the model.</div>}
-            <div className="key-safety"><span>✓</span><p>Discovery is scoped to this workspace only. A <code>SKILL.md</code> steers the model like <code>AGENTS.md</code>, so your personal and user-global skill directories are deliberately not loaded.</p></div>
-            <div className="transport-note"><span>i</span> mecated resolves skills at startup. A newly added skill appears after the daemon restarts.</div>
-          </section>
-        </div>
-      )}
 
-      {memoryOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setMemoryOpen(false); }}>
-          <section className="credential-modal skills-modal" role="dialog" aria-modal="true" aria-labelledby="memory-title">
-            <div className="modal-topline"><span className="memory-mark">❖</span><button onClick={() => setMemoryOpen(false)} aria-label="Close">×</button></div>
-            <h2 id="memory-title">Memory</h2>
-            <p>Mecatl keeps two separate stores. The <strong>user model</strong> holds durable facts about you and follows you across every project; <strong>project memory</strong> holds notes scoped to this workspace. Both are curated by the agent — this panel only reads them.</p>
 
-            {memoryState === "loading" ? <div className="router-loading">Reading the memory stores…</div> : memoryState === "error" ? (
-              <div className="credential-error" role="alert">{memoryError}</div>
-            ) : (
-              <>
-                <h3 className="memory-heading">User model <small>cross-project</small></h3>
-                {!userModelWired ? (
-                  <div className="skills-empty">
-                    <strong>The user model is switched off</strong>
-                    <p>This daemon was started with <code>--no-user-model</code>, so no facts are stored and the <code>&lt;user-model&gt;</code> block never enters context.</p>
-                  </div>
-                ) : (userModel?.entries.length ?? 0) === 0 ? (
-                  <div className="skills-empty">
-                    <strong>No facts saved yet</strong>
-                    <p>Mecatl writes here with <code>RememberUser</code> when it learns something durable about you. Ask it to remember something, or run the daemon with <code>--user-model-review</code> to have it extract facts after a session ends.</p>
-                  </div>
-                ) : (
-                  <ul className="skills-list">
-                    {userModel?.entries.map((entry) => (
-                      <li key={entry.key}>
-                        <strong>{entry.key}</strong>
-                        <small>{entry.description || "No description recorded for this fact."}</small>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {userModelWired && userModel && (
-                  <div className="input-hint">
-                    {userModel.entries.length} fact{userModel.entries.length === 1 ? "" : "s"}
-                    {userModel.sizeBytes > 0 ? ` · ${formatBytes(userModel.sizeBytes)}` : ""}
-                    {userModel.sha256 ? ` · index ${userModel.sha256.slice(0, 7)}` : ""}
-                  </div>
-                )}
-
-                <h3 className="memory-heading">Project memory <small>this workspace</small></h3>
-                <div className="skills-empty">
-                  {memoryDir ? (
-                    <>
-                      <strong>Enabled, not yet inspectable</strong>
-                      <p>Mecatl’s <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> tools are wired against the directory below, so the agent can use them today. The daemon exposes no read endpoint for this store yet — there is <code>GET /v1/usermodel</code> but no <code>/v1/memory</code> — so Studio cannot list the entries. This section fills in once that endpoint lands upstream.</p>
-                      <code className="skills-path">{memoryDir}</code>
-                    </>
-                  ) : (
-                    <>
-                      <strong>Not enabled in the running daemon</strong>
-                      <p>Per-project memory stays off in mecated until <code>--memory-dir</code> is passed, and this daemon was started without it — so <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> are not registered at all. Restart the local controller to pick it up.</p>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
-
-            <div className="key-safety"><span>✓</span><p>Read-only by design. Mecatl curates its own memory through injection-scanned tool calls; a value typed here would land in the model’s turn-0 context without passing that check. Ask the agent to remember or forget something instead.</p></div>
-            <div className="transport-note"><span>i</span> The user model is read live on open, so a fact saved moments ago appears without restarting the daemon.</div>
-          </section>
-        </div>
-      )}
-
-      {schedulesOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSchedulesOpen(false); }}>
-          <section className="credential-modal skills-modal" role="dialog" aria-modal="true" aria-labelledby="schedules-title">
-            <div className="modal-topline"><span className="schedule-mark">◷</span><button onClick={() => setSchedulesOpen(false)} aria-label="Close">×</button></div>
-            <h2 id="schedules-title">Scheduled tasks</h2>
-            <p>A schedule fires an agent run on its own — on a cron cadence or once at a set time — with no one watching. This panel is the oversight surface: see what is armed, when it next runs, and stop it.</p>
-
-            {schedulesState === "loading" ? <div className="router-loading">Reading the schedule registry…</div> : !schedulerWired ? (
-              <div className="skills-empty">
-                <strong>Scheduling is not available on this daemon</strong>
-                <p>Scheduled tasks need a durable store that exposes a <code>ScheduleStore</code>. This daemon has none, so nothing can be armed.</p>
-              </div>
-            ) : schedules.length === 0 ? (
-              <div className="skills-empty">
-                <strong>Nothing scheduled</strong>
-                <p>Ask Mecatl to schedule work — it authors schedules with its in-chat <code>Schedule</code> tool, and they show up here for you to inspect, pause, or delete.</p>
-              </div>
-            ) : (
-              <ul className="schedule-list">
-                {schedules.map((row) => (
-                  <li key={row.name} className={row.enabled ? "" : "paused"}>
-                    <div className="schedule-row-head">
-                      <strong>{row.name}</strong>
-                      <span className={`schedule-state ${row.fireStage !== "idle" ? "running" : row.enabled ? "armed" : "paused"}`}>{row.fireStage === "running" ? "running now" : row.fireStage === "claimed" ? "fire claimed" : row.enabled ? "armed" : "paused"}</span>
-                    </div>
-                    <small className="schedule-trigger">{triggerSummary(row)} · next {fireTime(row.nextFireAt)} · {row.fireCount} fire{row.fireCount === 1 ? "" : "s"}{row.lastFireAt !== null ? ` · last ${fireTime(row.lastFireAt)}` : ""}</small>
-                    <small className="schedule-prompt">{row.prompt || "No prompt recorded."}</small>
-                    <div className="schedule-badges">
-                      <span className={row.mutating ? "badge-write" : "badge-read"}>{row.mutating ? "can write" : "read-only"}</span>
-                      <span>{permissionModeLabel(row.mode)} mode</span>
-                    </div>
-                    {scheduleConfirmDelete === row.name ? (
-                      <div className="schedule-confirm">
-                        <span>Delete {row.name}? Its past fire transcripts stay in the session store.</span>
-                        <div>
-                          <button className="schedule-danger" disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "delete")}>Delete</button>
-                          <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete("")}>Keep</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="schedule-actions">
-                        {row.enabled
-                          ? <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "pause")}>Pause</button>
-                          : <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "resume")}>Resume</button>}
-                        <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "fire")}>{scheduleBusy === `${row.name}:fire` ? "Running…" : "Run now"}</button>
-                        <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete(row.name)}>Delete…</button>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {schedulesError && <div className="credential-error" role="alert">{schedulesError}</div>}
-            {scheduleNotice && <div className="input-hint">{scheduleNotice}</div>}
-            {schedulerWired && schedules.length > 0 && <div className="input-hint">{schedules.filter((row) => row.enabled).length} of {schedules.length} armed.</div>}
-            <div className="key-safety"><span>✓</span><p>A schedule that has not opted into writing runs in plan mode — the daemon rejects a non-mutating schedule that asks for anything wider. <strong>Run now</strong> fires immediately with the schedule&rsquo;s own permissions, so a mutating schedule can edit files with nobody at the keyboard.</p></div>
-            <div className="transport-note"><span>i</span><p>Each fire runs as its own <code>sched--</code> session. Auto-firing needs a daemon with the scheduler tick loop enabled; this panel manages the registry either way.</p></div>
-          </section>
-        </div>
-      )}
     </main>
   );
 }
