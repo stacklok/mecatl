@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -246,6 +248,136 @@ func TestSessionStorageContinuity_Scenario1_DiskFullPreservesCommittedSnapshot(t
 				t.Fatalf("committed sidecar changed: %q, %v", gotSidecar, err)
 			}
 		})
+	}
+}
+
+func TestSessionStorageContinuity_Scenario1_OrphanTemporaryRecovery(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	st, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	id := session.SessionID("orphan-recovery")
+	if err := st.Save(context.Background(), newSnapshotSession(id, "committed")); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+
+	path := st.resolver.currentSnapshotPath(id)
+	for generation := uint64(1); generation <= 4; generation++ {
+		name := snapshotTempPattern(path, "0123456789abcdef0123456789abcdef", generation)
+		f, createErr := os.CreateTemp(filepath.Dir(path), name)
+		if createErr != nil {
+			t.Fatalf("create orphan generation %d: %v", generation, createErr)
+		}
+		if closeErr := f.Close(); closeErr != nil {
+			t.Fatalf("close orphan generation %d: %v", generation, closeErr)
+		}
+	}
+	lookalike := path + ".tmp-unowned"
+	if err := os.WriteFile(lookalike, []byte("not owned by the temp protocol"), 0o600); err != nil {
+		t.Fatalf("write lookalike: %v", err)
+	}
+
+	// Reopening is startup recovery. It must reap only protocol-owned inactive
+	// generations while preserving both the committed snapshot and unrelated names.
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatalf("reopen New: %v", err)
+	}
+	assertNoSnapshotTemps(t, path)
+	if _, err := os.Stat(lookalike); err != nil {
+		t.Fatalf("unowned lookalike was reaped: %v", err)
+	}
+	got, err := reopened.Load(context.Background(), id)
+	if err != nil || got.Title != "committed" {
+		t.Fatalf("committed snapshot after startup recovery = title %q, err %v", got.Title, err)
+	}
+
+	// Repeated crash generations converge again on the next successful Save.
+	for generation := uint64(5); generation <= 8; generation++ {
+		f, createErr := os.CreateTemp(filepath.Dir(path), snapshotTempPattern(path, "fedcba9876543210fedcba9876543210", generation))
+		if createErr != nil {
+			t.Fatalf("create repeated orphan generation %d: %v", generation, createErr)
+		}
+		_ = f.Close()
+	}
+	if err := reopened.Save(context.Background(), newSnapshotSession(id, "new")); err != nil {
+		t.Fatalf("Save after repeated crashes: %v", err)
+	}
+	assertNoSnapshotTemps(t, path)
+}
+
+func TestSessionStorageContinuity_Scenario1_ActiveTemporaryNotReaped(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeEntered := make(chan string, 1)
+	releaseWrite := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseWrite) }) }
+	defer release()
+	ops := defaultSnapshotOps()
+	write := ops.write
+	ops.write = func(f *os.File, data []byte) (int, error) {
+		writeEntered <- f.Name()
+		<-releaseWrite
+		return write(f, data)
+	}
+	first, err := newStoreWithSnapshotOps(dir, ops)
+	if err != nil {
+		t.Fatalf("new first Store: %v", err)
+	}
+	id := session.SessionID("active-temp")
+	firstErr := make(chan error, 1)
+	go func() {
+		firstErr <- first.Save(context.Background(), newSnapshotSession(id, "first"))
+	}()
+	activePath := <-writeEntered
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("active temp missing before competing Store: %v", err)
+	}
+
+	// A second Store performs startup recovery against the same physical family.
+	// It must skip the flocked active generation rather than deleting it.
+	second, err := New(dir)
+	if err != nil {
+		t.Fatalf("new competing Store: %v", err)
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("competing startup reaped active temp: %v", err)
+	}
+
+	secondErr := make(chan error, 1)
+	go func() {
+		secondErr <- second.Save(context.Background(), newSnapshotSession(id, "second"))
+	}()
+	release()
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first Save after competing recovery: %v", err)
+	}
+	if err := <-secondErr; err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	got, err := second.Load(context.Background(), id)
+	if err != nil || got.Title != "second" {
+		t.Fatalf("serialized committed snapshot = title %q, err %v", got.Title, err)
+	}
+	assertNoSnapshotTemps(t, first.resolver.currentSnapshotPath(id))
+}
+
+func assertNoSnapshotTemps(t *testing.T, snapshotPath string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(snapshotPath))
+	if err != nil {
+		t.Fatalf("ReadDir snapshot directory: %v", err)
+	}
+	prefix := filepath.Base(snapshotPath) + snapshotTempMarker
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			t.Errorf("orphan snapshot temp remains: %s", entry.Name())
+		}
 	}
 }
 

@@ -28,6 +28,8 @@ package jsonlstore
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,10 +37,13 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
@@ -96,10 +101,12 @@ type Store struct {
 	// resolver is the single authority for canonical and legacy family paths
 	// (including the plain root dir, resolver.dir — Store has no separate
 	// copy of it).
-	resolver   sessionResolver
-	mu         sync.Mutex // serializes appends across files
-	snapshot   snapshotOps
-	durability SnapshotDurabilityCapability
+	resolver       sessionResolver
+	mu             sync.Mutex // serializes appends across files
+	snapshot       snapshotOps
+	durability     SnapshotDurabilityCapability
+	tempOwner      string
+	tempGeneration uint64
 }
 
 // compile-time assertions that Store satisfies both ports plus the optional
@@ -127,12 +134,23 @@ func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	if err := os.MkdirAll(resolver.canonicalDir(), 0o700); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
 	}
+	ownerBytes := make([]byte, 16)
+	if _, err := rand.Read(ownerBytes); err != nil {
+		return nil, fmt.Errorf("jsonlstore: create snapshot temp owner: %w", err)
+	}
 	durability := SnapshotDurabilityCapability{
 		AtomicReplace: atomicReplaceSupported(resolver.canonicalDir(), ops),
 		FileSync:      fileSyncSupported(resolver.canonicalDir(), ops),
 		DirectorySync: directorySyncSupported(resolver.canonicalDir(), ops),
 	}
-	return &Store{resolver: resolver, snapshot: ops, durability: durability}, nil
+	st := &Store{
+		resolver: resolver, snapshot: ops, durability: durability,
+		tempOwner: hex.EncodeToString(ownerBytes),
+	}
+	if err := st.reapSnapshotTempsAtStartup(); err != nil {
+		return nil, err
+	}
+	return st, nil
 }
 
 func atomicReplaceSupported(path string, ops snapshotOps) bool {
@@ -194,6 +212,99 @@ func (st *Store) SnapshotDurability() SnapshotDurabilityCapability {
 	return st.durability
 }
 
+const snapshotTempMarker = ".tmp-v1-"
+
+func snapshotTempPattern(snapshotPath, owner string, generation uint64) string {
+	return filepath.Base(snapshotPath) + snapshotTempMarker + owner + "-" + fmt.Sprintf("%016x", generation) + "-*"
+}
+
+func snapshotFamilyLockPath(snapshotPath string) string {
+	return strings.TrimSuffix(snapshotPath, currentSnapshotSuffix) + ".family.lock"
+}
+
+func snapshotPathFromTempName(dir, name string) (string, bool) {
+	marker := strings.LastIndex(name, snapshotTempMarker)
+	if marker < 0 {
+		return "", false
+	}
+	base := name[:marker]
+	if !strings.HasPrefix(base, sessionTokenPrefix) || !strings.HasSuffix(base, currentSnapshotSuffix) {
+		return "", false
+	}
+	parts := strings.Split(name[marker+len(snapshotTempMarker):], "-")
+	if len(parts) != 3 || len(parts[0]) != 32 || len(parts[1]) != 16 || parts[2] == "" {
+		return "", false
+	}
+	if _, err := hex.DecodeString(parts[0]); err != nil {
+		return "", false
+	}
+	if _, err := strconv.ParseUint(parts[1], 16, 64); err != nil {
+		return "", false
+	}
+	return filepath.Join(dir, base), true
+}
+
+func withSnapshotFamilyLock(ctx context.Context, snapshotPath string, fn func() error) error {
+	fl := flock.New(snapshotFamilyLockPath(snapshotPath), flock.SetPermissions(0o600))
+	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("jsonlstore: acquire snapshot family lock %q: %w", fl.Path(), err)
+	}
+	if !locked {
+		return fmt.Errorf("jsonlstore: acquire snapshot family lock %q: lock not acquired", fl.Path())
+	}
+	defer func() { _ = fl.Close() }()
+	return fn()
+}
+
+func reapSnapshotTemps(snapshotPath string) error {
+	entries, err := os.ReadDir(filepath.Dir(snapshotPath))
+	if err != nil {
+		return fmt.Errorf("jsonlstore: scan snapshot temporaries: %w", err)
+	}
+	for _, entry := range entries {
+		ownedPath, ok := snapshotPathFromTempName(filepath.Dir(snapshotPath), entry.Name())
+		if !ok || ownedPath != snapshotPath {
+			continue
+		}
+		if err := os.Remove(filepath.Join(filepath.Dir(snapshotPath), entry.Name())); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("jsonlstore: reap snapshot temporary %q: %w", entry.Name(), err)
+		}
+	}
+	return nil
+}
+
+func (st *Store) reapSnapshotTempsAtStartup() error {
+	entries, err := os.ReadDir(st.resolver.canonicalDir())
+	if err != nil {
+		return fmt.Errorf("jsonlstore: scan snapshot directory at startup: %w", err)
+	}
+	families := make(map[string]struct{})
+	for _, entry := range entries {
+		if path, ok := snapshotPathFromTempName(st.resolver.canonicalDir(), entry.Name()); ok {
+			families[path] = struct{}{}
+		}
+	}
+	for path := range families {
+		fl := flock.New(snapshotFamilyLockPath(path), flock.SetPermissions(0o600))
+		locked, lockErr := fl.TryLock()
+		if lockErr != nil {
+			_ = fl.Close()
+			return fmt.Errorf("jsonlstore: inspect snapshot family lock %q: %w", fl.Path(), lockErr)
+		}
+		if !locked {
+			_ = fl.Close()
+			continue
+		}
+		if err := reapSnapshotTemps(path); err != nil {
+			_ = fl.Close()
+			return err
+		}
+		_ = fl.Close()
+	}
+	return nil
+}
+
 // Save atomically replaces the adapter-private v2 current snapshot. Existing
 // v1 JSONL snapshots remain readable and are promoted lazily on the next save;
 // their file modification time becomes the v2 logical modification time.
@@ -210,30 +321,39 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if err := st.resolver.prepareWrite(s.ID); err != nil {
-		return err
-	}
-	modifiedAt, err := st.resolver.snapshotModifiedAt(s.ID, time.Now())
-	if err != nil {
-		return fmt.Errorf("jsonlstore: resolve snapshot modification time: %w", err)
-	}
-	data, err := json.Marshal(currentSnapshot{
-		Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Snapshot: payload,
+	path := st.resolver.currentSnapshotPath(s.ID)
+	return withSnapshotFamilyLock(context.Background(), path, func() error {
+		if err := reapSnapshotTemps(path); err != nil {
+			return err
+		}
+		if err := st.resolver.prepareWrite(s.ID); err != nil {
+			return err
+		}
+		modifiedAt, err := st.resolver.snapshotModifiedAt(s.ID, time.Now())
+		if err != nil {
+			return fmt.Errorf("jsonlstore: resolve snapshot modification time: %w", err)
+		}
+		data, err := json.Marshal(currentSnapshot{
+			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Snapshot: payload,
+		})
+		if err != nil {
+			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
+		}
+		st.tempGeneration++
+		return replaceCurrentSnapshot(path, data, modifiedAt, st.tempOwner, st.tempGeneration, st.snapshot, st.durability)
 	})
-	if err != nil {
-		return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
-	}
-	return replaceCurrentSnapshot(st.resolver.currentSnapshotPath(s.ID), data, modifiedAt, st.snapshot, st.durability)
 }
 
 func replaceCurrentSnapshot(
 	path string,
 	data []byte,
 	modifiedAt time.Time,
+	tempOwner string,
+	tempGeneration uint64,
 	ops snapshotOps,
 	durability SnapshotDurabilityCapability,
 ) (retErr error) {
-	tmp, err := ops.createTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*") //nolint:gosec // owner-only store dir
+	tmp, err := ops.createTemp(filepath.Dir(path), snapshotTempPattern(path, tempOwner, tempGeneration)) //nolint:gosec // owner-only store dir
 	if err != nil {
 		return fmt.Errorf("jsonlstore: create snapshot temp: %w", err)
 	}

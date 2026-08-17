@@ -102,9 +102,15 @@
   and logical modification time. A successful save lazily promotes only that
   session; the verified v2 snapshot is authoritative while a v1 file coexists,
   and first promotion preserves the v1 file's logical modification time and all
-  sidecar bytes. Snapshot replacement writes the complete same-directory temporary,
-  syncs the file, renames atomically, then syncs the directory where supported.
-  `Store.SnapshotDurability` exposes those three verified primitives: an unsupported
+  sidecar bytes. Snapshot replacement holds a stable per-family owner-only flock
+  from inactive-temp recovery through same-directory write, file sync, atomic rename,
+  and directory sync. Replacement temp names carry a random process-owner token and
+  monotonic generation; only names that validate against that private protocol are
+  cleanup candidates. Startup skips a family whose lock is live, while the next
+  successful Save waits for the lock and removes all prior inactive generations
+  before creating its own. Thus another process's active temp and the committed
+  snapshot are never reaped, and repeated crashes do not accumulate an unbounded
+  temp set. `Store.SnapshotDurability` exposes those three verified primitives: an unsupported
   sync primitive is reported as weaker durability rather than overclaiming host-crash
   safety. Failures before rename preserve the prior snapshot; a failure after rename
   is loud while the new snapshot remains authoritative.

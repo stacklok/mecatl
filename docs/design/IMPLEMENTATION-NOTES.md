@@ -5811,16 +5811,23 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   optional readable `.session.jsonl` v1 history, and parallel `.tools.jsonl` /
   `.events.jsonl` sidecars. Save writes a same-directory owner-only temporary,
   syncs it, atomically renames it over the v2 current snapshot, and syncs the
-  directory. The v2 envelope carries a format tag, the complete `sessnap` JSON,
-  and logical modification time; first lazy promotion preserves the v1 mtime,
-  aggregate bytes after restore, and sidecars, while later saves replace only
-  the v2 current file. `Store.SnapshotDurability` reports the verified atomic-
-  replace, file-sync, and directory-sync primitives; unsupported sync primitives
-  are an explicit weaker capability rather than a host-crash-safety claim. A
-  write, file-sync, or rename failure leaves the prior snapshot authoritative and
-  fails loudly; a directory-sync failure after rename reports an error with the
-  new snapshot already authoritative. Cross-process orphan-temporary coordination
-  remains separate work.
+  directory. Every snapshot family has a stable owner-only `.family.lock` flock
+  sentinel. Save holds that cross-process lock from orphan-temp cleanup through
+  legacy preparation, file sync, atomic rename, and directory sync. Temporaries
+  carry a random process-owner token plus a monotonic generation; startup takes
+  each discovered family's lock non-blockingly and reaps only names that validate
+  against that protocol, while a successful Save takes the lock and reaps every
+  prior inactive generation before creating its own. A live holder therefore keeps
+  its active temp, committed snapshots are never cleanup candidates, and repeated
+  crashes converge to at most the current in-progress temp on the next startup/save.
+  The v2 envelope carries a format tag, complete `sessnap` JSON, and logical
+  modification time; first lazy promotion preserves the v1 mtime, aggregate bytes
+  after restore, and sidecars, while later saves replace only the v2 current file.
+  `Store.SnapshotDurability` exposes the three verified replacement primitives;
+  unsupported sync primitives are an explicit weaker capability rather than a
+  host-crash-safety claim. A write, file-sync, or rename failure leaves the prior
+  snapshot authoritative and fails loudly; a directory-sync failure after rename
+  reports an error with the new snapshot already authoritative.
   The owner-only version directory makes canonical names physically disjoint
   from root-level legacy and schedule names.
   `internal/adapter/store/jsonlstore/resolve.go` (`sessionResolver`) is the single
