@@ -39,7 +39,10 @@ is in `docs/usage/configuration.md` and
   identifies or that are already available in the task context; never scan
   processes/services or unrelated files to discover them.
 - Read-only inspection and validator preflight are allowed before confirmation.
-  Any settings-file creation or modification requires explicit confirmation.
+  The proposed preflight may write only the generated, non-secret `learning:`
+  patch under the repository-local `.scratch/`; it is not a settings write and
+  must be removed after validation on success, failure, or cancellation. Any
+  settings-file creation or modification requires explicit confirmation.
 - Inspect an established relevant target with the **Read tool**, never `cat`. Read
   the complete file.
   A missing file is fine. Do not print, log, or rewrite unrelated values,
@@ -114,18 +117,19 @@ valid with `learning:`, or malformed. Retain the existing mapping, comments,
 indentation, and byte range for a later targeted edit. Report only
 learning-related findings.
 
-In a mecatl source checkout, validate the target without exposing its content. Pass
-the resolved path as one quoted argument; never concatenate it into shell syntax,
-a command string, or another argument:
+On the server host, validate the target without exposing its content. Pass the
+resolved path as one quoted argument; never concatenate it into shell syntax, a
+command string, or another argument:
 
 ```text
-go run ./.claude/skills/mecatl-learning-config/scripts/validate-settings.go existing --file "<resolved-path>"
+mecated config validate --file "<resolved-path>"
 ```
 
-`existing` reads at most 256 KiB and prints only `valid` or a sanitized error. It
-requires the file to exist. If the helper is unavailable outside a source
-checkout, do not edit automatically: give the exact block and server-side
-validation/installation guidance instead.
+The command reads at most 256 KiB and prints only `valid` or a sanitized error.
+It requires the file to exist unless a learning patch is supplied. If `mecated`
+is unavailable on a remote host, do not auto-edit: give the exact block and
+server-side installation guidance, including actual-file validation after the
+operator makes the change.
 
 ### 3. Elicit one answer at a time
 
@@ -191,32 +195,28 @@ Generate a complete `learning:` block containing mode, independently selected
 sensitivity, skill activation, and all six automatic controls. Do not emit a
 partial subtree whose behavior depends on hidden defaults.
 
-Before asking for confirmation, run the deterministic, write-free preflight
-against the effective target. Pass only closed typed values; never pass YAML,
-file content, credentials, or other shell content:
+Before asking for confirmation, write only that exact non-secret `learning:`
+block to a bounded, repo-local scratch name such as
+`.scratch/learning-preflight.yaml`, then run the read-only in-memory preflight
+with both paths quoted:
 
 ```text
-go run ./.claude/skills/mecatl-learning-config/scripts/validate-settings.go proposed \
-  --file "<resolved-path>" \
-  --mode <off|review|auto> \
-  --sensitivity <conservative|balanced|eager> \
-  --activation <validated|evaluated> \
-  --cooldown <nonnegative-duration> \
-  --window <1m..24h> \
-  --max-reflections <0..1000000000> \
-  --max-tokens <0..1000000000> \
-  --max-reflections-per-principal <0..1000000000> \
-  --max-tokens-per-principal <0..1000000000>
+mecated config validate --file "<resolved-path>" \
+  --learning-patch ".scratch/learning-preflight.yaml"
 ```
 
-For an established but not-yet-created target, add `--allow-missing`. The helper
-bounded-reads the target into memory, rejects malformed/multidocument YAML and a
-duplicate top-level `learning`, generates the proposed node from these flags,
-replaces or inserts only that node in memory, marshals and validates the complete
-in-memory document through mecatl's parser, and prints only `valid` or a sanitized
-error. It never writes or prints the document. Stop if preflight fails. Never
-create a duplicate settings file or full-document copy in `.scratch/` or
-elsewhere.
+The scratch file is not the settings write: it contains only the exact block
+already shown, never a full settings copy, credentials, or unrelated values. The
+command bounded-reads both files, requires the patch to be a single YAML document
+with exactly one top-level `learning:` mapping, replaces or inserts only that node
+in memory, and validates the resulting complete document through mecatl's parser.
+It prints `valid` or `valid (new file)` and never writes either input. Remove the
+scratch patch immediately after validation on success, failure, or cancellation.
+Stop if preflight fails.
+
+If the user requires no scratch write, provide the complete block for manual
+application and require actual-file validation after the write instead; do not
+claim a write-free proposed preflight was run.
 
 Then show:
 
@@ -226,16 +226,22 @@ Then show:
 4. `Apply this exact change to <resolved-path>? (yes/no)`.
 
 Only explicit yes authorizes an edit. Re-read the complete target immediately
-before editing. If it differs from the preflight input, stop, rerun the
-write-free proposed mode against the new bytes, and ask again. Use a targeted exact
-replacement preserving unrelated YAML and comments. If safe targeting is
-impossible, offer manual merge rather than rewriting the file.
+before editing. If it differs from the preflight input, stop, regenerate the
+learning-only scratch patch, rerun `mecated config validate --file
+"<resolved-path>" --learning-patch ".scratch/<bounded-name>.yaml"` against the new
+bytes, remove the scratch patch, and ask again. Use a targeted exact replacement
+preserving unrelated YAML and comments. If safe targeting is impossible, offer
+manual merge rather than rewriting the file.
 
-After writing, run `validate-settings.go existing --file "<resolved-path>"` against
-the actual file. A nonzero
-result is a failed application requiring immediate, minimal repair guidance; do
-not report success. Re-read and verify the selected learning values without
-showing unrelated content.
+After writing, validate the actual file:
+
+```text
+mecated config validate --file "<resolved-path>"
+```
+
+A nonzero result is a failed application requiring immediate, minimal repair
+guidance; do not report success. Re-read and verify the selected learning values
+without showing unrelated content.
 
 ### 6. Restart and observe
 
@@ -269,5 +275,5 @@ high-assurance `skills.activation: evaluated` tightening.
 | Project raises mode/sensitivity or loosens evaluated | Explain project policy is tighten-only and cannot raise operator autonomy. |
 | Project specifies automatic budgets | Explain budgets are operator-only and the project block is warning-ignored. |
 | Multiple replicas | Multiply the process-local envelope by replica count; never call it a cluster/provider quota. |
-| Remote server inaccessible | Supply exact manual block and server-side instructions only; never inspect local client settings. |
+| Remote server inaccessible or `mecated` unavailable there | Supply the exact manual block and server-side instructions only; never inspect local client settings or auto-edit. Require `mecated config validate --file "<resolved-path>"` after installation when the binary becomes available. |
 | Routing, credentials, evaluator implementation, `/reflect` execution, proposal/memory review, skill drafting, or another harness | Decline that portion and route to its workflow. |

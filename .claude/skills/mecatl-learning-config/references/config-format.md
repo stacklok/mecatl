@@ -284,6 +284,14 @@ Restart the server after any change because settings are build-time.
 
 ## Common errors
 
+Validate the complete file with `mecated config validate --file
+"<resolved-path>"`. To preflight a proposed learning change without modifying the
+settings file, place only the exact non-secret `learning:` block in a temporary
+repo-local `.scratch/` patch and run `mecated config validate --file
+"<resolved-path>" --learning-patch ".scratch/<bounded-name>.yaml"`; remove the
+patch immediately afterward. The patch must contain exactly one top-level
+`learning:` mapping.
+
 | Error | Result and correction |
 |---|---|
 | Editing a later explicit file or conventional user file when an earlier explicit file owns `learning:` | No learning effect. Edit only the first readable, valid explicit file with a non-null block. |

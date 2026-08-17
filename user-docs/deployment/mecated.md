@@ -569,6 +569,13 @@ mecated config init
 # Print the settings.yaml skeleton to stdout without writing (paste-ready reference)
 mecated config init --print
 
+# Validate settings offline without printing values or writing either input.
+# --learning-patch applies one learning: mapping in memory for preflight.
+mecated config validate
+mecated config validate --file /etc/mecatl/settings.yaml
+mecated config validate --file /etc/mecatl/settings.yaml \
+  --learning-patch .scratch/learning.yaml
+
 # Write the daemon.yaml listener-topology skeleton to
 # ~/.config/mecatl/daemon.yaml (loopback defaults + commented TLS/rate examples).
 # It is NOT auto-loaded; start with `mecated serve --config <path>` to use it.
@@ -591,6 +598,14 @@ mecated skills promote \
 # Print a paste-ready .mcp.json snippet for the loopback perf MCP server
 mecated perf-mcp print-config
 ```
+
+`mecated config validate` defaults to the same
+`$XDG_CONFIG_HOME/mecatl/settings.yaml` path as `config init`. It reads and
+validates only regular files, never prints settings values, and never writes. A
+`--learning-patch` file must contain exactly one top-level `learning:` mapping;
+the command replaces or inserts that mapping only in memory and validates the
+complete result. With an explicit patch, a missing base is treated as an empty
+new file and reports `valid (new file)` without creating it.
 
 `mecated skills promote` is the deprecated compatibility path from a legacy
 model-authored quarantine skill (`--skills-draft-dir`) into an operator-managed live catalog

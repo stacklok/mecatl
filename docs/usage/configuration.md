@@ -12,6 +12,24 @@ $ mecated config init --print    # print the skeleton to stdout, write nothing
 $ mecated config init --force    # overwrite an existing file
 ```
 
+Validate operator settings offline without starting the server or printing file
+contents or values:
+
+```console
+$ mecated config validate
+$ mecated config validate --file /etc/mecatl/settings.yaml
+$ mecated config validate --file /etc/mecatl/settings.yaml --learning-patch .scratch/learning.yaml
+```
+
+Without `--file`, validation uses the same conventional path as `config init` and
+fails if it is missing. `--learning-patch` must be a single YAML document with
+exactly one top-level `learning:` mapping. The command replaces or inserts that
+node only in memory, validates the resulting complete settings document, and
+never writes either file. A missing base is accepted only when a patch is supplied
+and reports `valid (new file)`, enabling first-creation preflight. Both reads are
+limited to 256 KiB; symlinks, directories, irregular files, aliases, duplicate
+keys, and multi-document YAML are rejected.
+
 For the exhaustive, auto-generated key/type/default/tier table, see the
 [configuration reference](../configuration-reference.md). The inline examples in
 this guide are illustrative; the reference page is the complete source of truth

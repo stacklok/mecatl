@@ -677,6 +677,21 @@ mecated config daemon validate
 mecated config daemon validate --file /etc/mecatl/daemon.yaml
 ```
 
+Operator `settings.yaml` has its own offline validator:
+
+```sh
+mecated config validate
+mecated config validate --file /etc/mecatl/settings.yaml
+mecated config validate --file /etc/mecatl/settings.yaml \
+  --learning-patch .scratch/learning.yaml
+```
+
+The default path is the same conventional path used by `config init`.
+`--learning-patch` accepts only one top-level `learning:` mapping, applies it in
+memory, and validates the complete result without writing either input. It may
+preflight a missing base as a new file; validation without a patch requires the
+base to exist. File contents and values are never printed.
+
 `config init` still owns the operator `settings.yaml` (POLICY); `config daemon`
 owns `daemon.yaml` (TOPOLOGY). The help distinguishes the two surfaces.
 

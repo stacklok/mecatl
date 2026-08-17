@@ -35,6 +35,9 @@ parse the file at startup — so it cannot drift from the code.
 For the narrative "how do I actually run it" guide and inline examples, see
 [the usage guide](usage.md). To scaffold a complete commented file, run
 ` + "`mecated config init`" + ` (or ` + "`mecated config init --print`" + ` to print it).
+Validate the conventional file with ` + "`mecated config validate`" + `, or select
+one with ` + "`mecated config validate --file PATH`" + `; validation is offline,
+read-only, and never prints settings values.
 
 The settings file lives at ` + "`<XDG_CONFIG_HOME>/mecatl/settings.yaml`" + `
 (default ` + "`~/.config/mecatl/settings.yaml`" + `). The **tier** column records
