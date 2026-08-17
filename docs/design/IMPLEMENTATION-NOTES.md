@@ -5814,8 +5814,13 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   directory. The v2 envelope carries a format tag, the complete `sessnap` JSON,
   and logical modification time; first lazy promotion preserves the v1 mtime,
   aggregate bytes after restore, and sidecars, while later saves replace only
-  the v2 current file. Detailed crash/disk-failure capability reporting and
-  cross-process orphan-temporary coordination remain separate work.
+  the v2 current file. `Store.SnapshotDurability` reports the verified atomic-
+  replace, file-sync, and directory-sync primitives; unsupported sync primitives
+  are an explicit weaker capability rather than a host-crash-safety claim. A
+  write, file-sync, or rename failure leaves the prior snapshot authoritative and
+  fails loudly; a directory-sync failure after rename reports an error with the
+  new snapshot already authoritative. Cross-process orphan-temporary coordination
+  remains separate work.
   The owner-only version directory makes canonical names physically disjoint
   from root-level legacy and schedule names.
   `internal/adapter/store/jsonlstore/resolve.go` (`sessionResolver`) is the single

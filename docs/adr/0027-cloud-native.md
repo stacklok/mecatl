@@ -748,7 +748,7 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 | 4 | Project memory store (flock pair: `memory.json` + `memory.lock`) | `app.Build` | process handle, per-directory data | flock held per-operation only; one `*Store` per dir per process. Current entries, revision history, and tombstones share ONE locked atomic document — no split-file transaction | persisted (data/history on disk; legacy entries lazily materialize on first mutation; handle rebuilt at next Build) | `internal/app/build.go`; `internal/adapter/memory/store.go` (`Store`, `withExclusiveLock`, `materializeLegacy`) |
 | 5 | User-model store (same adapter, XDG dir) | `buildUserModelStore` | process handle, per-user data | as above | persisted, including operator-profile source state and lifecycle history | `internal/app/build.go` (`buildUserModelStore`) |
 | 6 | permstore learned allow-always rules | `app.Build` | session (data), process (store) | `Forget(sessionID)` via `OnCloseSession` (`service.go:748`); capped at 256/session | **replayed (Phase 3b)**: in-memory still, but a post-restart load re-Learns the allow-always rules from the durable log's verdict events (`internal/app/approvalreplay.go` (`replayApprovals`)), so a previously-allow-always'd tool is not re-asked | `engine/adapter/permstore/permstore.go:42,48` |
-| 8 | jsonlstore session files + `.tools.jsonl` audit + `.events.jsonl` event log (Phase 3a) | jsonlstore | per-session files | none needed: files opened per call (`O_APPEND`), closed immediately, never held; `Delete` removes all three (sidecars first, session file last) for the canonical family, and again for a pre-rewrite family whose snapshot proves the same id (ADR 0104) | persisted (`Load` reads the latest snapshot line; `EventLog.Read` scans all event lines cumulatively) | `internal/adapter/store/jsonlstore/jsonlstore.go` (`appendLine`) |
+| 8 | jsonlstore v2 current snapshot + readable v1 history + `.tools.jsonl` audit + `.events.jsonl` event log (Phase 3a) | jsonlstore | per-session files | files open per call and close immediately; v2 Save uses one same-directory temporary, file sync, atomic rename, and directory sync where supported; ordinary failures remove that attempt's temp, while cross-process orphan-temp reaping is deferred; `Delete` removes sidecars before snapshots | persisted (v2 `Load` reads one authoritative current snapshot and never falls back to coexisting v1; event/tool sidecars remain cumulative); `SnapshotDurability` reports weaker filesystems explicitly | `internal/adapter/store/jsonlstore/jsonlstore.go` (`replaceCurrentSnapshot`, `SnapshotDurability`) |
 | 9 | Live-run registry (`Service.runs`) | `server.Service` | run | `deregister` after the wire adapter drains `run.Events()` | lost (the run dies with the process; the session snapshot persists) | `internal/adapter/server/service.go:368` |
 | 10 | Team registry (`Service.teams`) | `server.Service` | team | removed at team terminal | **lost** (see ledger row 10: the whole coordination state) | `internal/adapter/server/service.go:369` |
 | 11 | Per-session engine registry (`Service.sessionEngines`) | `server.Service` | session | evicted + closed at `CloseSession` and shutdown | lost; rehydrated via `Service.rehydrateSession` for the no-fs profile, a persisted selector, OR an empty workspace (`needsRehydration`); decision = derive (nothing new persisted). **Registration sources (ADR 0030 Layer 3 added the last two):** create (selector / client-MCP / no-fs), restart rehydration, a CASE-1 mode→model REBUILD (a registered per-session engine whose `builtForMode` no longer matches `session.Mode`), and a CASE-2 mode-PROMOTION (a default-FS session whose mode resolves a different model via the `ModeNeedsEngine` predicate). The mode-rebuild + promotion go through the SAME `Service.buildAndRegisterSessionEngine` helper as rehydration, under the per-session `runEntryMu` (the use-after-close guard: a rebuild's prior-engine `Close` and the `s.runs[id]` liveness check sit in one critical section, so a displaced engine is never closed while a run holds it). **At-cap failure semantics:** a CASE-2 promotion is a NEW per-session registration, so a plan-mode `StartRun` can now fail with `ErrTooManySessionEngines` where the original (shared-engine) create succeeded — graceful (no panic, no silent shared-engine fallback that would run plan mode on the wrong model). A CASE-1 rebuild reuses the existing slot (no cap pressure). The compaction context-window is NOT a rehydration trigger — every engine (shared + per-session) carries a resolve-at-use `Deps.ContextWindow` closure (`reg.windowResolver`) read live on each `maybeCompact`/`Engine.ContextWindow`, so a live-only default model self-corrects to its live window on the next turn with no rebuild. **Reasoning-effort (ADR 0055):** a session whose resolved effort differs from the operator default gets a RE-MINTED provider adapter (`providerEntry.remintEffort`) carrying its OWN resilience breaker/retry-wrapper instance — benign (session-scoped, the same posture as rows 21/22; decision = derive — the effort is the List-2 row-19 persisted label and the breaker re-arms on the next Build/rehydration). The three utility engines (guardrail checker, ask-reviewer, model-router) deliberately pin the OPERATOR-DEFAULT provider, not the re-minted one, so a session's effort never raises their spend | `internal/adapter/server/service.go` (`sessionEngines`) |
@@ -1100,22 +1100,18 @@ lease backend the original constraint is the byte-identical DEFAULT and remains 
 deployer responsibility; the code below still assumes it everywhere a writer exists
 in the no-lease default:
 
-- **jsonlstore is append-only with an in-process mutex only.** `Save` serializes
-  through `st.mu` and appends a snapshot line via `O_APPEND` open-write-close
-  (`internal/adapter/store/jsonlstore/jsonlstore.go:264-265`); there is no atomic
-  rename, no file lock, no cross-process guard, and `Load` takes the last line.
-  Two processes appending to one session file interleave at the mercy of OS append
-  atomicity, last-write-wins at best.
-- **Latent durability gap (Phase 2-adjacent, revisit if "disposable" widens to host
-  crashes).** Because jsonlstore neither fsyncs nor uses an atomic rename, the
-  awaiting-snapshot durability the Phase 2 resume relies on rests on OS page-cache
-  survival, not on-disk durability: it is correct across a PROCESS restart (the
-  Phase 2 thesis, and what the kit and gate exercise) but NOT host-crash-safe (a torn
-  trailing append, or a snapshot still only in the page cache when the kernel dies, is
-  lost). This is acceptable for v1 disposability (process restart). If "disposable"
-  ever has to mean host crashes, jsonlstore needs fsync + atomic-rename (or a durable
-  driver backend); this rides the same store-hardening track as the leasing concern
-  in decision (c) / Phase 4.
+- **jsonlstore v2 snapshots are atomically replaced and explicitly report crash
+  durability.** Later storage-continuity work (ADR 0225) replaced the append-only
+  snapshot writer while leaving v1 readable and tool/event sidecars append-only.
+  `Save` writes one complete same-directory temporary, syncs it, renames it over
+  the authoritative v2 snapshot, then syncs the directory where supported. The
+  adapter reports atomic-replace, file-sync, and directory-sync capability
+  separately; it claims host-crash safety only when all three hold. Failures before
+  rename leave the prior snapshot authoritative; failures after rename are loud and
+  leave the new snapshot authoritative. A present v2 snapshot remains authoritative
+  over coexisting v1, so failure recovery never resurrects older history. This does
+  not add cross-process generation or orphan-temporary reaping; those remain on the
+  storage-maintenance track.
 - **The driver protocol is last-write-wins by contract.** `SaveRequest` carries
   `{session_id, snapshot}` and nothing else, no version, no CAS token, no lease
   (`contracts/proto/mecatl/driver/v1/session_store.proto:96-107`; "Save overwrites:

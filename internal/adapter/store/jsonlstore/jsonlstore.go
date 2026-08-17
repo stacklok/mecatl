@@ -29,12 +29,15 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
@@ -47,13 +50,56 @@ import (
 // distinguish not-found from an infra failure via errors.Is.
 var ErrNotFound = fmt.Errorf("jsonlstore: session not found: %w", port.ErrSessionNotFound)
 
+// SnapshotDurabilityCapability reports which crash-durability primitives the
+// current jsonlstore filesystem supports. Atomic replacement without all sync
+// steps prevents torn snapshots but does not claim survival across a host crash.
+type SnapshotDurabilityCapability struct {
+	AtomicReplace bool
+	FileSync      bool
+	DirectorySync bool
+}
+
+// HostCrashSafe reports whether Save can make both snapshot contents and the
+// replacement directory entry durable before returning nil.
+func (c SnapshotDurabilityCapability) HostCrashSafe() bool {
+	return c.AtomicReplace && c.FileSync && c.DirectorySync
+}
+
+type snapshotOps struct {
+	createTemp   func(string, string) (*os.File, error)
+	write        func(*os.File, []byte) (int, error)
+	syncFile     func(*os.File) error
+	rename       func(string, string) error
+	openDir      func(string) (*os.File, error)
+	syncDir      func(*os.File) error
+	atomicRename bool
+	fileSync     bool
+}
+
+func defaultSnapshotOps() snapshotOps {
+	return snapshotOps{
+		createTemp: os.CreateTemp,
+		write:      (*os.File).Write,
+		syncFile:   (*os.File).Sync,
+		rename:     os.Rename,
+		openDir:    os.Open,
+		syncDir:    (*os.File).Sync,
+		// Go's os.Rename is an atomic replacement when source and destination
+		// are on the same supported filesystem; CreateTemp below guarantees that.
+		atomicRename: true,
+		fileSync:     true,
+	}
+}
+
 // Store is a current-snapshot SessionStore with append-only tool/event sidecars.
 type Store struct {
 	// resolver is the single authority for canonical and legacy family paths
 	// (including the plain root dir, resolver.dir — Store has no separate
 	// copy of it).
-	resolver sessionResolver
-	mu       sync.Mutex // serializes appends across files
+	resolver   sessionResolver
+	mu         sync.Mutex // serializes appends across files
+	snapshot   snapshotOps
+	durability SnapshotDurabilityCapability
 }
 
 // compile-time assertions that Store satisfies both ports plus the optional
@@ -70,6 +116,10 @@ var (
 // snapshots, tool-call args/results, and the relayed event stream) in plaintext,
 // so it is owner-only by construction.
 func New(dir string) (*Store, error) {
+	return newStoreWithSnapshotOps(dir, defaultSnapshotOps())
+}
+
+func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create dir: %w", err)
 	}
@@ -77,7 +127,71 @@ func New(dir string) (*Store, error) {
 	if err := os.MkdirAll(resolver.canonicalDir(), 0o700); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
 	}
-	return &Store{resolver: resolver}, nil
+	durability := SnapshotDurabilityCapability{
+		AtomicReplace: atomicReplaceSupported(resolver.canonicalDir(), ops),
+		FileSync:      fileSyncSupported(resolver.canonicalDir(), ops),
+		DirectorySync: directorySyncSupported(resolver.canonicalDir(), ops),
+	}
+	return &Store{resolver: resolver, snapshot: ops, durability: durability}, nil
+}
+
+func atomicReplaceSupported(path string, ops snapshotOps) bool {
+	if !ops.atomicRename {
+		return false
+	}
+	source, err := ops.createTemp(path, ".snapshot-rename-probe-*")
+	if err != nil {
+		return !syncUnsupported(err)
+	}
+	sourcePath := source.Name()
+	_ = source.Close()
+	defer func() { _ = os.Remove(sourcePath) }()
+
+	target, err := ops.createTemp(path, ".snapshot-rename-target-*")
+	if err != nil {
+		return !syncUnsupported(err)
+	}
+	targetPath := target.Name()
+	_ = target.Close()
+	defer func() { _ = os.Remove(targetPath) }()
+
+	return !syncUnsupported(ops.rename(sourcePath, targetPath))
+}
+
+func fileSyncSupported(path string, ops snapshotOps) bool {
+	if !ops.fileSync {
+		return false
+	}
+	probe, err := ops.createTemp(path, ".snapshot-sync-probe-*")
+	if err != nil {
+		return !syncUnsupported(err)
+	}
+	probePath := probe.Name()
+	defer func() {
+		_ = probe.Close()
+		_ = os.Remove(probePath)
+	}()
+	return !syncUnsupported(ops.syncFile(probe))
+}
+
+func directorySyncSupported(path string, ops snapshotOps) bool {
+	dir, err := ops.openDir(path)
+	if err != nil {
+		return !syncUnsupported(err)
+	}
+	defer func() { _ = dir.Close() }()
+	return !syncUnsupported(ops.syncDir(dir))
+}
+
+func syncUnsupported(err error) bool {
+	return errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.ENOSYS) ||
+		errors.Is(err, syscall.EINVAL)
+}
+
+// SnapshotDurability reports the filesystem primitives this Store verified at
+// construction. A false field is an explicit weaker guarantee, not a Save error.
+func (st *Store) SnapshotDurability() SnapshotDurabilityCapability {
+	return st.durability
 }
 
 // Save atomically replaces the adapter-private v2 current snapshot. Existing
@@ -109,11 +223,17 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if err != nil {
 		return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
 	}
-	return replaceCurrentSnapshot(st.resolver.currentSnapshotPath(s.ID), data, modifiedAt)
+	return replaceCurrentSnapshot(st.resolver.currentSnapshotPath(s.ID), data, modifiedAt, st.snapshot, st.durability)
 }
 
-func replaceCurrentSnapshot(path string, data []byte, modifiedAt time.Time) (retErr error) {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*") //nolint:gosec // owner-only store dir
+func replaceCurrentSnapshot(
+	path string,
+	data []byte,
+	modifiedAt time.Time,
+	ops snapshotOps,
+	durability SnapshotDurabilityCapability,
+) (retErr error) {
+	tmp, err := ops.createTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*") //nolint:gosec // owner-only store dir
 	if err != nil {
 		return fmt.Errorf("jsonlstore: create snapshot temp: %w", err)
 	}
@@ -124,27 +244,36 @@ func replaceCurrentSnapshot(path string, data []byte, modifiedAt time.Time) (ret
 			_ = os.Remove(tmpPath)
 		}
 	}()
-	if _, err := tmp.Write(data); err != nil {
+	written, err := ops.write(tmp, data)
+	if err != nil {
 		return fmt.Errorf("jsonlstore: write snapshot temp: %w", err)
+	}
+	if written != len(data) {
+		return fmt.Errorf("jsonlstore: write snapshot temp: wrote %d of %d bytes: %w", written, len(data), io.ErrShortWrite)
 	}
 	if err := os.Chtimes(tmpPath, modifiedAt, modifiedAt); err != nil {
 		return fmt.Errorf("jsonlstore: stamp snapshot temp: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("jsonlstore: sync snapshot temp: %w", err)
+	if durability.FileSync {
+		if err := ops.syncFile(tmp); err != nil {
+			return fmt.Errorf("jsonlstore: sync snapshot temp: %w", err)
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("jsonlstore: close snapshot temp: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := ops.rename(tmpPath, path); err != nil {
 		return fmt.Errorf("jsonlstore: replace current snapshot: %w", err)
 	}
-	dir, err := os.Open(filepath.Dir(path)) //nolint:gosec // owner-only store dir
+	if !durability.DirectorySync {
+		return nil
+	}
+	dir, err := ops.openDir(filepath.Dir(path)) //nolint:gosec // owner-only store dir
 	if err != nil {
 		return fmt.Errorf("jsonlstore: open snapshot directory: %w", err)
 	}
 	defer func() { _ = dir.Close() }()
-	if err := dir.Sync(); err != nil {
+	if err := ops.syncDir(dir); err != nil {
 		return fmt.Errorf("jsonlstore: sync snapshot directory: %w", err)
 	}
 	return nil

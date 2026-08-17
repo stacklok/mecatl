@@ -102,7 +102,13 @@
   and logical modification time. A successful save lazily promotes only that
   session; the verified v2 snapshot is authoritative while a v1 file coexists,
   and first promotion preserves the v1 file's logical modification time and all
-  sidecar bytes. The logical session id is an opaque valid-UTF-8 string
+  sidecar bytes. Snapshot replacement writes the complete same-directory temporary,
+  syncs the file, renames atomically, then syncs the directory where supported.
+  `Store.SnapshotDurability` exposes those three verified primitives: an unsupported
+  sync primitive is reported as weaker durability rather than overclaiming host-crash
+  safety. Failures before rename preserve the prior snapshot; a failure after rename
+  is loud while the new snapshot remains authoritative.
+  The logical session id is an opaque valid-UTF-8 string
   stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename token is not
   an operator API. The owner-only `sid-v1/` directory keeps canonical names
   disjoint from legacy root-level names. Reads prefer verified v2, then canonical
