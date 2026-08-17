@@ -111,6 +111,7 @@ type Store struct {
 	durability            SnapshotDurabilityCapability
 	tempOwner             string
 	tempGeneration        atomic.Uint64
+	toolCallLockTimeout   time.Duration
 	inventoryWorkObserver func(inventoryWorkKind)
 }
 
@@ -146,14 +147,26 @@ func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	if _, err := rand.Read(ownerBytes); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create snapshot temp owner: %w", err)
 	}
+	atomicReplace, err := atomicReplaceSupported(resolver.canonicalDir(), ops)
+	if err != nil {
+		return nil, fmt.Errorf("jsonlstore: probe atomic replacement: %w", err)
+	}
+	fileSync, err := fileSyncSupported(resolver.canonicalDir(), ops)
+	if err != nil {
+		return nil, fmt.Errorf("jsonlstore: probe file sync: %w", err)
+	}
+	directorySync, err := directorySyncSupported(resolver.canonicalDir(), ops)
+	if err != nil {
+		return nil, fmt.Errorf("jsonlstore: probe directory sync: %w", err)
+	}
 	durability := SnapshotDurabilityCapability{
-		AtomicReplace: atomicReplaceSupported(resolver.canonicalDir(), ops),
-		FileSync:      fileSyncSupported(resolver.canonicalDir(), ops),
-		DirectorySync: directorySyncSupported(resolver.canonicalDir(), ops),
+		AtomicReplace: atomicReplace,
+		FileSync:      fileSync,
+		DirectorySync: directorySync,
 	}
 	st := &Store{
 		resolver: resolver, snapshot: ops, durability: durability,
-		tempOwner: hex.EncodeToString(ownerBytes),
+		tempOwner: hex.EncodeToString(ownerBytes), toolCallLockTimeout: toolCallFamilyLockTimeout,
 	}
 	if err := st.reapSnapshotTempsAtStartup(); err != nil {
 		return nil, err
@@ -161,13 +174,13 @@ func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	return st, nil
 }
 
-func atomicReplaceSupported(path string, ops snapshotOps) bool {
+func atomicReplaceSupported(path string, ops snapshotOps) (bool, error) {
 	if !ops.atomicRename {
-		return false
+		return false, nil
 	}
 	source, err := ops.createTemp(path, ".snapshot-rename-probe-*")
 	if err != nil {
-		return !syncUnsupported(err)
+		return probeResult(err)
 	}
 	sourcePath := source.Name()
 	_ = source.Close()
@@ -175,38 +188,48 @@ func atomicReplaceSupported(path string, ops snapshotOps) bool {
 
 	target, err := ops.createTemp(path, ".snapshot-rename-target-*")
 	if err != nil {
-		return !syncUnsupported(err)
+		return probeResult(err)
 	}
 	targetPath := target.Name()
 	_ = target.Close()
 	defer func() { _ = os.Remove(targetPath) }()
 
-	return !syncUnsupported(ops.rename(sourcePath, targetPath))
+	return probeResult(ops.rename(sourcePath, targetPath))
 }
 
-func fileSyncSupported(path string, ops snapshotOps) bool {
+func fileSyncSupported(path string, ops snapshotOps) (bool, error) {
 	if !ops.fileSync {
-		return false
+		return false, nil
 	}
 	probe, err := ops.createTemp(path, ".snapshot-sync-probe-*")
 	if err != nil {
-		return !syncUnsupported(err)
+		return probeResult(err)
 	}
 	probePath := probe.Name()
 	defer func() {
 		_ = probe.Close()
 		_ = os.Remove(probePath)
 	}()
-	return !syncUnsupported(ops.syncFile(probe))
+	return probeResult(ops.syncFile(probe))
 }
 
-func directorySyncSupported(path string, ops snapshotOps) bool {
+func directorySyncSupported(path string, ops snapshotOps) (bool, error) {
 	dir, err := ops.openDir(path)
 	if err != nil {
-		return !syncUnsupported(err)
+		return probeResult(err)
 	}
 	defer func() { _ = dir.Close() }()
-	return !syncUnsupported(ops.syncDir(dir))
+	return probeResult(ops.syncDir(dir))
+}
+
+func probeResult(err error) (bool, error) {
+	if err == nil {
+		return true, nil
+	}
+	if syncUnsupported(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func syncUnsupported(err error) bool {
@@ -252,9 +275,14 @@ func snapshotPathFromTempName(dir, name string) (string, bool) {
 	return filepath.Join(dir, base), true
 }
 
+const toolCallFamilyLockTimeout = 5 * time.Second
+
 func withSnapshotFamilyLock(ctx context.Context, snapshotPath string, fn func() error) error {
 	fl := flock.New(snapshotFamilyLockPath(snapshotPath), flock.SetPermissions(0o600))
-	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
+	locked, err := fl.TryLock()
+	if err == nil && !locked {
+		locked, err = fl.TryLockContext(ctx, 10*time.Millisecond)
+	}
 	if err != nil {
 		return fmt.Errorf("jsonlstore: acquire snapshot family lock %q: %w", fl.Path(), err)
 	}
@@ -316,7 +344,7 @@ func (st *Store) reapSnapshotTempsAtStartup() error {
 // Save atomically replaces the adapter-private v2 current snapshot. Existing
 // v1 JSONL snapshots remain readable and are promoted lazily on the next save;
 // their file modification time becomes the v2 logical modification time.
-func (st *Store) Save(_ context.Context, s *session.Session) error {
+func (st *Store) Save(ctx context.Context, s *session.Session) error {
 	if s == nil {
 		return sessnap.ErrNilSession
 	}
@@ -328,7 +356,7 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 		return err
 	}
 	path := st.resolver.currentSnapshotPath(s.ID)
-	return withSnapshotFamilyLock(context.Background(), path, func() error {
+	return withSnapshotFamilyLock(ctx, path, func() error {
 		if err := reapSnapshotTemps(path); err != nil {
 			return err
 		}
@@ -408,12 +436,12 @@ func replaceCurrentSnapshot(
 // Load reads the authoritative snapshot without modifying storage. Canonical
 // presence prevents fallback; legacy is accepted only when its latest embedded
 // id exactly matches the requested id.
-func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session, error) {
+func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	if err := validateSessionID(id); err != nil {
 		return nil, err
 	}
 	var line []byte
-	err := withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+	err := withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		var err error
 		line, err = st.resolver.loadSnapshot(id)
 		return err
@@ -514,11 +542,11 @@ func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 // undecodable files, never surfaced it. port.PrunableStore requires that a
 // Delete either remove or be idempotent success, so an unreadable snapshot
 // must not be a third outcome.
-func (st *Store) Delete(_ context.Context, id session.SessionID) error {
+func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
-	return withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+	return withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		canonicalOwned, err := st.resolver.canonicalOwnership(id)
 		if err != nil {
 			return err
@@ -580,6 +608,8 @@ type toolCallRecord struct {
 // including both the dispatch queue time (queued) and the execution wall time
 // (took) in microseconds. It satisfies port.ToolCallRecorder. Errors are intentionally
 // swallowed (the port has no error return) but the record is best-effort durable.
+// Because the port carries no caller context, lock acquisition is capped at five
+// seconds; on timeout the best-effort record is dropped rather than blocking a run.
 func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued, took time.Duration) {
 	rec := toolCallRecord{
 		Type:         "tool_call",
@@ -597,7 +627,9 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	if err != nil {
 		return
 	}
-	_ = withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+	ctx, cancel := context.WithTimeout(context.Background(), st.toolCallLockTimeout)
+	defer cancel()
+	_ = withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		if err := st.resolver.prepareWrite(id); err != nil {
 			return err
 		}
@@ -612,7 +644,7 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 // It uses the same stable per-family cross-process mutation identity as
 // Save/Delete/ToolCall, and is best-effort durable: the relay logs a WARN on a
 // returned error and never aborts the run.
-func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Event) error {
+func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
@@ -624,7 +656,7 @@ func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Even
 	if err != nil {
 		return fmt.Errorf("jsonlstore: marshal event record: %w", err)
 	}
-	return withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+	return withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		if err := st.resolver.prepareWrite(id); err != nil {
 			return err
 		}
@@ -639,13 +671,13 @@ func (st *Store) Append(_ context.Context, id session.SessionID, ev session.Even
 // — is yielded as the error on a zero-value event and the consumer stops (the
 // iterator returns after the consumer's range body returns false on the error
 // item, the standard iter.Seq2 error idiom).
-func (st *Store) Read(_ context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
+func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
 		var (
 			path    string
 			present bool
 		)
-		err := withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+		err := withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 			var err error
 			path, present, err = st.resolver.readablePath(id, kindEvents)
 			return err

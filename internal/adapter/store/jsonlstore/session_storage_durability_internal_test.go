@@ -62,26 +62,54 @@ func TestSessionStorageContinuity_Scenario1_AtomicCrashRecovery(t *testing.T) {
 		{
 			name: "file sync failure",
 			inject: func(ops *snapshotOps) {
-				ops.syncFile = func(*os.File) error { return syscall.EIO }
+				syncFile := ops.syncFile
+				ops.syncFile = func(f *os.File) error {
+					if strings.Contains(filepath.Base(f.Name()), ".snapshot-sync-probe-") {
+						return syncFile(f)
+					}
+					return syscall.EIO
+				}
 			},
 		},
 		{
 			name: "rename failure",
 			inject: func(ops *snapshotOps) {
-				ops.rename = func(string, string) error { return syscall.EIO }
+				rename := ops.rename
+				ops.rename = func(source, target string) error {
+					if strings.Contains(filepath.Base(source), ".snapshot-rename-probe-") {
+						return rename(source, target)
+					}
+					return syscall.EIO
+				}
 			},
 		},
 		{
 			name: "directory open failure after rename",
 			inject: func(ops *snapshotOps) {
-				ops.openDir = func(string) (*os.File, error) { return nil, syscall.EIO }
+				openDir := ops.openDir
+				probed := false
+				ops.openDir = func(path string) (*os.File, error) {
+					if !probed {
+						probed = true
+						return openDir(path)
+					}
+					return nil, syscall.EIO
+				}
 			},
 			wantNew: true,
 		},
 		{
 			name: "directory sync failure after rename",
 			inject: func(ops *snapshotOps) {
-				ops.syncDir = func(*os.File) error { return syscall.EIO }
+				syncDir := ops.syncDir
+				probed := false
+				ops.syncDir = func(dir *os.File) error {
+					if !probed {
+						probed = true
+						return syncDir(dir)
+					}
+					return syscall.EIO
+				}
 			},
 			wantNew: true,
 		},
@@ -187,6 +215,34 @@ func TestSessionStorageContinuity_Scenario1_DurabilityCapabilityTruth(t *testing
 	}
 }
 
+func TestSessionStorageContinuity_Scenario1_DurabilityProbeFaultsFailConstruction(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		inject func(*snapshotOps)
+	}{
+		{name: "rename", inject: func(ops *snapshotOps) {
+			ops.rename = func(string, string) error { return syscall.EIO }
+		}},
+		{name: "file sync", inject: func(ops *snapshotOps) {
+			ops.syncFile = func(*os.File) error { return syscall.EIO }
+		}},
+		{name: "directory sync", inject: func(ops *snapshotOps) {
+			ops.syncDir = func(*os.File) error { return syscall.EIO }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := defaultSnapshotOps()
+			tc.inject(&ops)
+			st, err := newStoreWithSnapshotOps(t.TempDir(), ops)
+			if err == nil || !errors.Is(err, syscall.EIO) {
+				t.Fatalf("newStoreWithSnapshotOps = (%v, %v), want nil Store and EIO", st, err)
+			}
+		})
+	}
+}
+
 func TestSessionStorageContinuity_Scenario1_DiskFullPreservesCommittedSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -203,13 +259,25 @@ func TestSessionStorageContinuity_Scenario1_DiskFullPreservesCommittedSnapshot(t
 		{
 			name: "file sync",
 			inject: func(ops *snapshotOps) {
-				ops.syncFile = func(*os.File) error { return syscall.ENOSPC }
+				syncFile := ops.syncFile
+				ops.syncFile = func(f *os.File) error {
+					if strings.Contains(filepath.Base(f.Name()), ".snapshot-sync-probe-") {
+						return syncFile(f)
+					}
+					return syscall.ENOSPC
+				}
 			},
 		},
 		{
 			name: "rename",
 			inject: func(ops *snapshotOps) {
-				ops.rename = func(string, string) error { return syscall.ENOSPC }
+				rename := ops.rename
+				ops.rename = func(source, target string) error {
+					if strings.Contains(filepath.Base(source), ".snapshot-rename-probe-") {
+						return rename(source, target)
+					}
+					return syscall.ENOSPC
+				}
 			},
 		},
 	} {

@@ -2,6 +2,7 @@ package jsonlstore
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -182,6 +183,93 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 				tc.verify(t, second, id)
 			}
 		})
+	}
+}
+
+func TestSessionFamilyOperationsHonorContextWhileLockIsHeld(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New Store: %v", err)
+	}
+	id := session.SessionID("context-lock-target")
+	seed := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+	seed.SetTitle("before")
+	if err := st.Save(context.Background(), seed); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+	if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 1}); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	snapshotPath := st.resolver.currentSnapshotPath(id)
+	eventPath := st.resolver.canonicalPath(id, kindEvents)
+	beforeSnapshot, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("read seed snapshot: %v", err)
+	}
+	beforeEvents, err := os.ReadFile(eventPath)
+	if err != nil {
+		t.Fatalf("read seed events: %v", err)
+	}
+
+	familyLock := flock.New(snapshotFamilyLockPath(snapshotPath), flock.SetPermissions(0o600))
+	if err := familyLock.Lock(); err != nil {
+		t.Fatalf("hold family lock: %v", err)
+	}
+	defer func() { _ = familyLock.Close() }()
+
+	changed := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+	changed.SetTitle("after")
+	operations := []struct {
+		name string
+		run  func(context.Context) error
+	}{
+		{name: "Save", run: func(ctx context.Context) error { return st.Save(ctx, changed) }},
+		{name: "Load", run: func(ctx context.Context) error { _, err := st.Load(ctx, id); return err }},
+		{name: "Delete", run: func(ctx context.Context) error { return st.Delete(ctx, id) }},
+		{name: "Append", run: func(ctx context.Context) error {
+			return st.Append(ctx, id, session.Event{Type: session.EvResult, Seq: 2})
+		}},
+		{name: "Read", run: func(ctx context.Context) error {
+			for _, err := range st.Read(ctx, id) {
+				return err
+			}
+			return nil
+		}},
+	}
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- operation.run(ctx) }()
+			var opErr error
+			select {
+			case opErr = <-done:
+			case <-time.After(500 * time.Millisecond):
+				t.Fatal("operation did not return after its context deadline")
+			}
+			if !errors.Is(opErr, context.DeadlineExceeded) {
+				t.Fatalf("error = %v, want context.DeadlineExceeded", opErr)
+			}
+			gotSnapshot, readErr := os.ReadFile(snapshotPath)
+			if readErr != nil || string(gotSnapshot) != string(beforeSnapshot) {
+				t.Fatalf("snapshot mutated while lock held: data changed=%v, err=%v", string(gotSnapshot) != string(beforeSnapshot), readErr)
+			}
+			gotEvents, readErr := os.ReadFile(eventPath)
+			if readErr != nil || string(gotEvents) != string(beforeEvents) {
+				t.Fatalf("events mutated while lock held: data changed=%v, err=%v", string(gotEvents) != string(beforeEvents), readErr)
+			}
+		})
+	}
+
+	st.toolCallLockTimeout = 30 * time.Millisecond
+	started := time.Now()
+	st.ToolCall(id, session.ToolCall{ID: "bounded-call", Name: "Read"}, session.NewToolResult("bounded-call", "ok"), 0, 0)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("ToolCall lock wait = %s, want bounded return", elapsed)
+	}
+	if _, err := os.Stat(st.resolver.canonicalPath(id, kindTools)); !os.IsNotExist(err) {
+		t.Fatalf("ToolCall mutated tool log while family lock held: %v", err)
 	}
 }
 
