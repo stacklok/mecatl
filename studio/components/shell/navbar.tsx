@@ -3,19 +3,20 @@
 import { Menu, Shuffle } from "lucide-react";
 import { useState } from "react";
 
+import { ChatPanel, type TaskSummary } from "@/components/shell/chat-panel";
+import { IconRail } from "@/components/shell/icon-rail";
 import type { ViewKey } from "@/components/shell/nav-items";
-import { TaskSidebar, type TaskSummary } from "@/components/shell/task-sidebar";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { UserMenu } from "@/components/user-menu";
 import { cn } from "@/lib/utils";
 
 /**
- * The top bar. Matches the console's navbar exactly — `h-16`, `bg-sidebar`, one
- * bottom border, so its seam lines up with the sidebar's wordmark block.
+ * The top bar over the content column: `h-16 bg-sidebar` with one bottom
+ * border, so its seam lines up with the icon rail's brand block and the chat
+ * panel's header.
  *
- * It carries the task heading and the profile menu, and NOT a row of
- * configuration buttons: those moved into the profile menu, which is where the
- * console keeps everything of that kind.
+ * Below `md` both navigation levels collapse into the Sheet this opens, since
+ * 64px + 288px of chrome leaves nothing for a conversation on a phone.
  */
 export function Navbar({
   title,
@@ -27,7 +28,6 @@ export function Navbar({
   tasks,
   activeId,
   connection,
-  relativeTime,
   onSelectTask,
   onNewTask,
   workspaceName,
@@ -43,7 +43,6 @@ export function Navbar({
   tasks: readonly TaskSummary[];
   activeId: string;
   connection: "checking" | "online" | "offline";
-  relativeTime: (timestamp: number) => string;
   onSelectTask: (id: string) => void;
   onNewTask: () => void;
   workspaceName: string;
@@ -62,20 +61,26 @@ export function Navbar({
           >
             <Menu className="size-5" />
           </SheetTrigger>
-          <SheetContent side="left" className="w-64 max-w-[80vw] gap-0 p-0 md:hidden">
-            <SheetTitle className="sr-only">Tasks</SheetTitle>
-            <TaskSidebar
+          <SheetContent side="left" className="flex w-auto max-w-[92vw] flex-row gap-0 p-0 md:hidden">
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <IconRail
               view={view}
-              onNavigate={onNavigate}
-              tasks={tasks}
-              activeId={activeId}
               connection={connection}
-              relativeTime={relativeTime}
-              onSelectTask={onSelectTask}
-              onNewTask={onNewTask}
-              onAfterNavigate={() => setDrawerOpen(false)}
-              className="h-full w-full border-r-0"
+              onNavigate={(next) => {
+                onNavigate(next);
+                if (next !== "chat") setDrawerOpen(false);
+              }}
             />
+            {view === "chat" && (
+              <ChatPanel
+                tasks={tasks}
+                activeId={activeId}
+                onSelectTask={onSelectTask}
+                onNewTask={onNewTask}
+                onAfterSelect={() => setDrawerOpen(false)}
+                className="w-[min(18rem,60vw)] border-r-0"
+              />
+            )}
           </SheetContent>
         </Sheet>
 

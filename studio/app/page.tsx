@@ -5,7 +5,8 @@ import { decodeScheduleRows, parseMecatlEvent, type MecatlEvent, type ScheduleRo
 import { Composer } from "@/components/chat/composer";
 import type { ViewKey } from "@/components/shell/nav-items";
 import { Navbar } from "@/components/shell/navbar";
-import { TaskSidebar } from "@/components/shell/task-sidebar";
+import { ChatPanel } from "@/components/shell/chat-panel";
+import { IconRail } from "@/components/shell/icon-rail";
 import { SettingsView } from "@/components/settings/settings-view";
 
 type ToolActivity = {
@@ -83,7 +84,6 @@ const API = "/api/mecatl";
 const STREAM_IDLE_TIMEOUT_MS = 120_000;
 const HEALTH_POLL_MS = 5_000;
 const CSV_MAX_BYTES = 256 * 1024;
-const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "narrow" });
 const NON_VISUAL_EVENT_TYPES = new Set([
   "session.init",
   "turn.start",
@@ -128,8 +128,7 @@ const VIEW_TITLES: Record<ViewKey, string> = {
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const permissionModeLabel = (mode: number) => mode === 3 ? "accept edits" : mode === 2 ? "plan" : mode === 1 ? "default" : "unset";
-// Distinct from relativeTime() below, which is past-only ("3m ago") for task rows.
-// A schedule's next fire is in the FUTURE, so this one is signed and null-safe.
+// A schedule's next fire is in the FUTURE, so this is signed and null-safe.
 const fireTime = (millis: number | null) => {
   if (millis === null) return "never";
   const delta = millis - Date.now();
@@ -1049,17 +1048,16 @@ export default function Home() {
 
   return (
     <main className="studio-shell">
-      <TaskSidebar
-        view={view}
-        onNavigate={navigate}
-        tasks={tasks}
-        activeId={activeId}
-        connection={connected}
-        relativeTime={relativeTime}
-        onSelectTask={setActiveId}
-        onNewTask={newTask}
-        className="hidden md:flex"
-      />
+      <IconRail view={view} onNavigate={navigate} connection={connected} className="hidden md:flex" />
+      {view === "chat" && (
+        <ChatPanel
+          tasks={tasks}
+          activeId={activeId}
+          onSelectTask={setActiveId}
+          onNewTask={newTask}
+          className="hidden md:flex"
+        />
+      )}
 
       <section className="workspace-panel">
         <Navbar
@@ -1072,7 +1070,6 @@ export default function Home() {
           tasks={tasks}
           activeId={activeId}
           connection={connected}
-          relativeTime={relativeTime}
           onSelectTask={setActiveId}
           onNewTask={newTask}
           workspaceName="stacklok/mecatl"
@@ -1390,11 +1387,3 @@ async function readError(response: Response) {
   catch { return `${response.status} ${response.statusText}`; }
 }
 
-function relativeTime(timestamp: number) {
-  if (timestamp === 0) return "Just now";
-  const seconds = Math.floor((Date.now() - timestamp) / 1000);
-  if (seconds < 60) return "Just now";
-  if (seconds < 3600) return relativeFormatter.format(-Math.floor(seconds / 60), "minute");
-  if (seconds < 86400) return relativeFormatter.format(-Math.floor(seconds / 3600), "hour");
-  return relativeFormatter.format(-Math.floor(seconds / 86400), "day");
-}

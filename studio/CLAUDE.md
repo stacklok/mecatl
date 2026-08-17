@@ -26,7 +26,8 @@ task studio:typecheck # tsc --noEmit
 - `app/` — the client. `page.tsx` owns ALL state (the SSE stream, session id,
   task transcripts, every panel's form state); `globals.css` holds the design
   tokens plus the conversation/panel CSS.
-- `components/` — presentation only, no fetching. `shell/` is the rail + navbar
+- `components/` — presentation only, no fetching. `shell/` is the two nav levels
+  (`icon-rail.tsx` + `chat-panel.tsx`) and the navbar
   (+ `nav-items.ts`, the destination list), `chat/composer.tsx` the composer,
   `settings/` the Settings page, `user-menu/` the profile menu, `ui/` the
   shadcn primitives copied from the enterprise console.
