@@ -3,13 +3,17 @@
 import { ArrowUp, Diamond, Paperclip, Plus, Square } from "lucide-react";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, RefObject } from "react";
 
+import {
+  ModelEffortSelector,
+  type EffortId,
+  type ModelOption,
+  type ModelSelection,
+} from "@/components/chat/model-effort-selector";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -50,7 +54,13 @@ export function Composer({
   onCancel,
   mode,
   onModeChange,
-  modelLabel,
+  models,
+  modelSelection,
+  onSelectModel,
+  effort,
+  onSelectEffort,
+  sessionModelLabel,
+  defaultModelLabel,
   csvAttachment,
   onRemoveCsv,
   onCsvInput,
@@ -69,7 +79,13 @@ export function Composer({
   onCancel: () => void;
   mode: "default" | "plan";
   onModeChange: (mode: "default" | "plan") => void;
-  modelLabel: string;
+  models: readonly ModelOption[];
+  modelSelection: ModelSelection;
+  onSelectModel: (selection: ModelSelection) => void;
+  effort: EffortId;
+  onSelectEffort: (effort: EffortId) => void;
+  sessionModelLabel?: string;
+  defaultModelLabel?: string;
   csvAttachment: CsvAttachmentSummary | null;
   onRemoveCsv: () => void;
   onCsvInput: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -245,26 +261,15 @@ export function Composer({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" size="sm" className={GHOST_TRIGGER}>
-              {modelLabel}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-80">
-            <DropdownMenuLabel className="text-xs text-muted-foreground">
-              Model
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <div className="px-2 py-1.5">
-              <p className="text-sm font-medium">{modelLabel}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                The provider is fixed for the life of a session. Change it in
-                Provider settings, or run <code>/models</code> in mecatui.
-              </p>
-            </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ModelEffortSelector
+          models={models}
+          selection={modelSelection}
+          onSelectModel={onSelectModel}
+          effort={effort}
+          onSelectEffort={onSelectEffort}
+          sessionModelLabel={sessionModelLabel}
+          defaultModelLabel={defaultModelLabel}
+        />
       </div>
     </form>
   );

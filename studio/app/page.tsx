@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { decodeScheduleRows, parseMecatlEvent, type MecatlEvent, type ScheduleRow } from "../lib/protocol";
 import { Composer } from "@/components/chat/composer";
+import type { EffortId, ModelSelection } from "@/components/chat/model-effort-selector";
 import type { ViewKey } from "@/components/shell/nav-items";
 import { Navbar } from "@/components/shell/navbar";
 import { ChatPanel } from "@/components/shell/chat-panel";
@@ -265,6 +266,15 @@ export default function Home() {
   const [scheduleNotice, setScheduleNotice] = useState("");
   const [scheduleConfirmDelete, setScheduleConfirmDelete] = useState("");
   const [mode, setMode] = useState<"default" | "plan">("default");
+  // The composer's model/effort choice. It applies to the NEXT session, because
+  // mecated fixes provider and model for a session's lifetime.
+  const [modelSelection, setModelSelection] = useState<ModelSelection>(null);
+  const [effort, setEffort] = useState<EffortId>("");
+  const [modelInventory, setModelInventory] = useState<ModelOption[]>([]);
+  // What an unpinned session actually resolves to. Learned from the last
+  // CreateSession echo (the only place mecated reports it) and persisted, so the
+  // composer can name the model instead of the word "default" on a cold start.
+  const [defaultModelLabel, setDefaultModelLabel] = useState("");
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const abortMessageRef = useRef("");
@@ -320,6 +330,43 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("mecatl-studio-tasks", JSON.stringify(tasks));
   }, [tasks]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("mecatl-studio-model-prefs");
+    if (!stored) return;
+    try {
+      const prefs = JSON.parse(stored) as {
+        defaultModelLabel?: string;
+        selection?: ModelSelection;
+        effort?: EffortId;
+      };
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (prefs.defaultModelLabel) setDefaultModelLabel(prefs.defaultModelLabel);
+       
+      if (prefs.selection) setModelSelection(prefs.selection);
+       
+      if (prefs.effort) setEffort(prefs.effort);
+    } catch { /* ignore a stale local cache */ }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "mecatl-studio-model-prefs",
+      JSON.stringify({ defaultModelLabel, selection: modelSelection, effort }),
+    );
+  }, [defaultModelLabel, modelSelection, effort]);
+
+  // The composer's model list. Fetched when the daemon first reports healthy
+  // rather than on mount, because a cold start races the controller's spawn.
+  useEffect(() => {
+    if (connected !== "online") return;
+    const controller = new AbortController();
+    void fetch(`${API}/v1/models`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => (response.ok ? response.json() : { models: [] }))
+      .then((body) => setModelInventory((body.models || []) as ModelOption[]))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [connected]);
 
   useEffect(() => {
     const receiveGatewaySignIn = (event: MessageEvent) => {
@@ -665,12 +712,24 @@ export default function Home() {
     const response = await fetch(`${API}/v1/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace, mode }),
+      body: JSON.stringify({
+        workspace,
+        mode,
+        // Both ids travel together or neither does: a bare model_id on an
+        // env-derived default provider is a loud InvalidArgument.
+        ...(modelSelection
+          ? { provider_id: modelSelection.providerId, model_id: modelSelection.modelId }
+          : {}),
+        ...(effort ? { reasoning_effort: effort } : {}),
+      }),
     });
     if (!response.ok) throw new Error(await readError(response));
     const body = await response.json();
-    const model = body.resolved_model?.model_id || "server default";
-    return { sessionId: body.session_id as string, model };
+    const resolved = body.resolved_model?.model_id || "";
+    // Only an UNPINNED session teaches us the default; a pinned one just echoes
+    // back the id we asked for.
+    if (resolved && !modelSelection) setDefaultModelLabel(resolved);
+    return { sessionId: body.session_id as string, model: resolved || "server default" };
   };
 
   const selectCsv = async (file?: File) => {
@@ -1362,7 +1421,13 @@ export default function Home() {
             onCancel={cancelRun}
             mode={mode}
             onModeChange={setMode}
-            modelLabel={active?.model || "Server default"}
+            models={modelInventory}
+            modelSelection={modelSelection}
+            onSelectModel={setModelSelection}
+            effort={effort}
+            onSelectEffort={setEffort}
+            sessionModelLabel={active?.sessionId ? active.model : undefined}
+            defaultModelLabel={defaultModelLabel}
             csvAttachment={csvAttachment}
             onRemoveCsv={() => setCsvAttachment(null)}
             onCsvInput={onCsvInput}
