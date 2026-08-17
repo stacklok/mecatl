@@ -3,7 +3,7 @@
 import { Menu, Shuffle } from "lucide-react";
 import { useState } from "react";
 
-import { ChatPanel, type TaskSummary } from "@/components/shell/chat-panel";
+import { ChatPanel, type ProjectSummary, type TaskSummary } from "@/components/shell/chat-panel";
 import { IconRail } from "@/components/shell/icon-rail";
 import type { ViewKey } from "@/components/shell/nav-items";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -27,9 +27,11 @@ export function Navbar({
   onNavigate,
   tasks,
   activeId,
+  projects,
   connection,
   onSelectTask,
   onNewTask,
+  onNewProject,
   onRenameTask,
   onDeleteTask,
   workspaceName,
@@ -44,9 +46,11 @@ export function Navbar({
   onNavigate: (view: ViewKey) => void;
   tasks: readonly TaskSummary[];
   activeId: string;
+  projects: readonly ProjectSummary[];
   connection: "checking" | "online" | "offline";
   onSelectTask: (id: string) => void;
-  onNewTask: () => void;
+  onNewTask: (projectId?: string) => void;
+  onNewProject: () => void;
   onRenameTask: (id: string, title: string) => void;
   onDeleteTask: (id: string) => void;
   workspaceName: string;
@@ -79,8 +83,10 @@ export function Navbar({
               <ChatPanel
                 tasks={tasks}
                 activeId={activeId}
+                projects={projects}
                 onSelectTask={onSelectTask}
                 onNewTask={onNewTask}
+                onNewProject={onNewProject}
                 onRenameTask={onRenameTask}
                 onDeleteTask={onDeleteTask}
                 onAfterSelect={() => setDrawerOpen(false)}

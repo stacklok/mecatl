@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { requestIsAllowed, validateGatewayURL } from "../lib/controller-security.mjs";
 
@@ -675,6 +675,53 @@ const server = http.createServer(async (request, response) => {
       skills: { dir: skillsDir, scope: "project" },
       memory: { dir: memoryDir, scope: "project" },
     }));
+    return;
+  }
+  // Directory browsing for the project picker. A browser cannot hand back an
+  // absolute path — a directory <input> yields relative names and no root — so
+  // the folder chooser has to be served from here.
+  //
+  // DIRECTORIES AND NAMES ONLY: never file contents, never file names. This does
+  // not widen what the harness can reach (its Bash tool already sees the machine,
+  // posture-gated); what it widens is what the BROWSER can enumerate, which is
+  // why it is NOT in controller-security's readOnly allowlist and therefore
+  // requires the x-mecatl-studio-request header on top of the loopback+Origin
+  // gate.
+  if (request.method === "GET" && requestURL.pathname === "/fs/browse") {
+    const requested = requestURL.searchParams.get("path") || homedir();
+    let target;
+    try {
+      target = resolve(requested);
+    } catch {
+      jsonError(response, 400, "Not a usable path");
+      return;
+    }
+    try {
+      const stats = await stat(target);
+      if (!stats.isDirectory()) {
+        jsonError(response, 400, `${target} is not a folder`);
+        return;
+      }
+      const dirents = await readdir(target, { withFileTypes: true });
+      const entries = dirents
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .map((entry) => ({ name: entry.name, path: resolve(target, entry.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        // Bounded so a directory with tens of thousands of children cannot make
+        // the picker unusable or the response unbounded.
+        .slice(0, 500);
+      const parent = dirname(target);
+      response.end(JSON.stringify({
+        path: target,
+        parent: parent === target ? null : parent,
+        home: homedir(),
+        // A git checkout is the common case, so say which children are one and
+        // let the picker mark them.
+        entries,
+      }));
+    } catch (caught) {
+      jsonError(response, caught?.code === "ENOENT" ? 404 : 403, `Could not read ${target}`);
+    }
     return;
   }
   if (request.method === "GET" && requestURL.pathname === "/model-router") {

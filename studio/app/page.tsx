@@ -4,6 +4,7 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useId, useMemo, useRef, u
 import { decodeScheduleRows, parseMecatlEvent, type MecatlEvent, type ScheduleRow } from "../lib/protocol";
 import { Composer } from "@/components/chat/composer";
 import type { EffortId, ModelSelection } from "@/components/chat/model-effort-selector";
+import { CreateProjectDialog, type NewProject } from "@/components/projects/create-project-dialog";
 import type { ViewKey } from "@/components/shell/nav-items";
 import { Navbar } from "@/components/shell/navbar";
 import { ChatPanel } from "@/components/shell/chat-panel";
@@ -64,8 +65,19 @@ type AttachmentSummary = {
   columns?: number;
 };
 
+/**
+ * A project is a NAME plus the folder Mecatl works in. mecated takes the
+ * workspace per session (ADR 0032: a CreateSession whose workspace differs from
+ * the launch root routes through the per-session engine factory and re-resolves
+ * that root's project rules), so one daemon serves every project — no respawn,
+ * no second controller.
+ */
+type Project = { id: string; name: string; workspace: string };
+
 type Task = {
   id: string;
+  /** Undefined for tasks created before projects existed: they use the launch root. */
+  projectId?: string;
   sessionId?: string;
   title: string;
   updatedAt: number;
@@ -328,6 +340,8 @@ export default function Home() {
   // CreateSession echo (the only place mecated reports it) and persisted, so the
   // composer can name the model instead of the word "default" on a cold start.
   const [defaultModelLabel, setDefaultModelLabel] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const abortMessageRef = useRef("");
@@ -339,6 +353,13 @@ export default function Home() {
   const mcpPendingRef = useRef<{ name: string; url: string } | null>(null);
 
   const active = useMemo(() => tasks.find((task) => task.id === activeId) ?? tasks[0], [tasks, activeId]);
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === active?.projectId) ?? null,
+    [projects, active],
+  );
+  // A task pinned to a project runs in that folder; anything else uses the root
+  // the controller resolved for itself.
+  const activeWorkspace = activeProject?.workspace || workspace;
   const routingSummary = useMemo(() => {
     const decisions = (active?.messages ?? []).flatMap((message) => (message.tools ?? []).flatMap((tool) => tool.routes ?? []));
     const routed = decisions.filter((decision) => decision.state === "routed");
@@ -383,6 +404,20 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("mecatl-studio-tasks", JSON.stringify(tasks));
   }, [tasks]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("mecatl-studio-projects");
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as Project[];
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (Array.isArray(parsed)) setProjects(parsed);
+    } catch { /* ignore a stale local cache */ }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("mecatl-studio-projects", JSON.stringify(projects));
+  }, [projects]);
 
   useEffect(() => {
     const stored = localStorage.getItem("mecatl-studio-model-prefs");
@@ -551,8 +586,35 @@ export default function Home() {
     setTasks((current) => current.map((task) => (task.id === activeId ? updater(task) : task)));
   };
 
-  const newTask = () => {
-    const task: Task = { id: uid(), title: "New task", updatedAt: Date.now(), messages: [] };
+
+  const createProject = (draft: NewProject) => {
+    const project: Project = { id: uid(), ...draft };
+    setProjects((current) => [...current, project]);
+    const task: Task = {
+      id: uid(),
+      projectId: project.id,
+      title: `New task in ${project.name}`,
+      updatedAt: Date.now(),
+      messages: [],
+    };
+    setTasks((current) => [task, ...current]);
+    setActiveId(task.id);
+    setView("chat");
+    setError("");
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  // A new task inherits the project you are currently in: that is almost always
+  // the intent, and the alternative is asking every single time.
+  const newTaskInProject = (projectId?: string) => {
+    const project = projects.find((candidate) => candidate.id === projectId);
+    const task: Task = {
+      id: uid(),
+      projectId,
+      title: project ? `New task in ${project.name}` : "New task",
+      updatedAt: Date.now(),
+      messages: [],
+    };
     setTasks((current) => [task, ...current]);
     setActiveId(task.id);
     setAttachment(null);
@@ -757,14 +819,14 @@ export default function Home() {
   };
 
   const createSession = async () => {
-    if (!workspace) throw new Error(controllerMode === "external"
+    if (!activeWorkspace) throw new Error(controllerMode === "external"
       ? "External mode needs MECATL_WORKSPACE set on the Studio server before it can create a session."
       : "Studio has not reached the local controller yet, so it does not know which workspace to open. Check that `npm run dev` started the controller on 127.0.0.1:8788.");
     const response = await fetch(`${API}/v1/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        workspace,
+        workspace: activeWorkspace,
         mode,
         // Both ids travel together or neither does: a bare model_id on an
         // env-derived default provider is a loud InvalidArgument.
@@ -1318,8 +1380,10 @@ export default function Home() {
         <ChatPanel
           tasks={tasks}
           activeId={activeId}
+          projects={projects}
           onSelectTask={setActiveId}
-          onNewTask={newTask}
+          onNewTask={newTaskInProject}
+          onNewProject={() => setProjectDialogOpen(true)}
           onRenameTask={renameTask}
           onDeleteTask={deleteTask}
           className="hidden md:flex"
@@ -1336,13 +1400,15 @@ export default function Home() {
           onNavigate={navigate}
           tasks={tasks}
           activeId={activeId}
+          projects={projects}
           connection={connected}
           onSelectTask={setActiveId}
-          onNewTask={newTask}
+          onNewTask={newTaskInProject}
+          onNewProject={() => setProjectDialogOpen(true)}
           onRenameTask={renameTask}
           onDeleteTask={deleteTask}
-          workspaceName="stacklok/mecatl"
-          workspaceSubLabel="main · local workspace"
+          workspaceName={activeProject?.name || "stacklok/mecatl"}
+          workspaceSubLabel={activeProject ? activeProject.workspace : "main · local workspace"}
           providerName={providerName}
         />
 
@@ -1556,6 +1622,13 @@ export default function Home() {
 
 
 
+      <CreateProjectDialog
+        open={projectDialogOpen}
+        onOpenChange={setProjectDialogOpen}
+        onCreate={createProject}
+        disabled={controllerMode === "external"}
+        disabledReason="An external mecated deployment owns its own workspace, so projects are managed there."
+      />
     </main>
   );
 }
