@@ -2,9 +2,9 @@
 id: 01-v2-snapshots
 title: Versioned current snapshot core
 blocked_by: []
-status: in-progress
+status: done
 branch: "plan-session-storage-continuity/01-v2-snapshots"
-worktree: ".scratch/plan-session-storage-continuity-01-v2-snapshots"
+worktree: ""
 issue: "586"
 retries: 0
 last_error: ""
