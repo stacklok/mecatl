@@ -1,7 +1,11 @@
 "use client";
 
-import { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { decodeScheduleRows, parseMecatlEvent, type MecatlEvent, type ScheduleRow } from "../lib/protocol";
+import { Composer } from "@/components/chat/composer";
+import { Navbar } from "@/components/shell/navbar";
+import { TaskSidebar } from "@/components/shell/task-sidebar";
+import type { SettingsPanel } from "@/components/user-menu";
 
 type ToolActivity = {
   id: string;
@@ -209,8 +213,8 @@ export default function Home() {
   const [draggingCsv, setDraggingCsv] = useState(false);
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState<"checking" | "online" | "offline">("checking");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [modelMenu, setModelMenu] = useState(false);
+  // The mobile nav drawer and the model popover are owned by Navbar and Composer
+  // respectively — local to the component that renders the trigger.
   const [credentialsOpen, setCredentialsOpen] = useState(false);
   const [controllerMode, setControllerMode] = useState<"managed" | "external">("managed");
   const [providerName, setProviderName] = useState("offline mock");
@@ -444,7 +448,6 @@ export default function Home() {
     setTasks((current) => [task, ...current]);
     setActiveId(task.id);
     setCsvAttachment(null);
-    setSidebarOpen(false);
     setError("");
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
@@ -660,7 +663,7 @@ export default function Home() {
     void selectCsv(event.target.files?.[0]);
   };
 
-  const onCsvDrop = (event: DragEvent<HTMLFormElement>) => {
+  const onCsvDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     setDraggingCsv(false);
     void selectCsv(event.dataTransfer.files?.[0]);
@@ -1042,61 +1045,63 @@ export default function Home() {
     setMcpOpen(false);
   };
 
-  const onPromptKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void sendPrompt();
+  // One entry point for the six configuration dialogs, so the profile menu does
+  // not need to know which of them have a loader to prime first.
+  const openSettingsPanel = (panel: SettingsPanel) => {
+    switch (panel) {
+      case "provider":
+        setCredentialsOpen(true);
+        return;
+      case "router":
+        openRouterSettings();
+        return;
+      case "mcp":
+        setMcpState("idle");
+        setMcpError("");
+        setMcpOpen(true);
+        return;
+      case "skills":
+        openSkills();
+        return;
+      case "memory":
+        openMemory();
+        return;
+      case "schedules":
+        openSchedules();
+        return;
     }
   };
 
   return (
     <main className="studio-shell">
-      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="brand-row">
-          <div className="brand-mark">M</div>
-          <div className="brand-name">Mecatl <span>Studio</span></div>
-          <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar">×</button>
-        </div>
-        <button className="new-task" onClick={newTask}><span>＋</span> New task <kbd>⌘ K</kbd></button>
-        <div className="task-section-label">Tasks</div>
-        <nav className="task-list" aria-label="Tasks">
-          {[...tasks].sort((a, b) => b.updatedAt - a.updatedAt).map((task) => (
-            <button key={task.id} className={`task-row ${task.id === activeId ? "active" : ""}`} onClick={() => { setActiveId(task.id); setSidebarOpen(false); }}>
-              <span className="task-icon">◇</span>
-              <span className="task-copy"><strong>{task.title}</strong><small>{relativeTime(task.updatedAt)}</small></span>
-              {task.id === activeId && <span className="task-more">•••</span>}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <button className="repo-card">
-            <span className="repo-icon">⌘</span>
-            <span><strong>stacklok/mecatl</strong><small>main · local workspace</small></span>
-            <span className="chevron">›</span>
-          </button>
-          <div className="connection-row"><span className={`status-dot ${connected}`}></span>{connected === "online" ? "Mecatl connected" : connected === "checking" ? "Checking connection" : "Mecatl offline"}</div>
-        </div>
-      </aside>
-
-      {sidebarOpen && <button className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar" />}
+      <TaskSidebar
+        tasks={tasks}
+        activeId={activeId}
+        connection={connected}
+        relativeTime={relativeTime}
+        onSelect={setActiveId}
+        onNewTask={newTask}
+        className="hidden md:flex"
+      />
 
       <section className="workspace-panel">
-        <header className="topbar">
-          <div className="topbar-left">
-            <button className="icon-button menu-button" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">☰</button>
-            <div className="task-heading"><h1>{active?.title || "New task"}</h1><span className={`live-pill ${running ? "running" : ""}`}>{running ? "Working" : "Local"}</span>{routerStatus && <button className={`routing-live-pill ${routerStatus.enabled ? "enabled" : "disabled"}`} onClick={openRouterSettings} title="Open semantic model routing settings"><span>⇄</span>{routerStatus.enabled ? `Routing on · ${routerStatus.categories} tiers` : "Routing off"}</button>}</div>
-          </div>
-          <div className="topbar-actions">
-            <button className="topbar-button" onClick={newTask}><span>＋</span><span className="desktop-label">New task</span></button>
-            <button className="topbar-button" onClick={() => setCredentialsOpen(true)}><span>⌁</span><span className="desktop-label">Provider</span></button>
-            <button className="topbar-button" onClick={openRouterSettings} disabled={controllerMode === "external"} title={controllerMode === "external" ? "Managed by the external deployment" : undefined}><span>⇄</span><span className="desktop-label">Model Router</span></button>
-            <button className="topbar-button" onClick={() => { setMcpState("idle"); setMcpError(""); setMcpOpen(true); }} disabled={controllerMode === "external"} title={controllerMode === "external" ? "Managed by the external deployment" : undefined}><span>◎</span><span className="desktop-label">MCP Gateway</span></button>
-            <button className="topbar-button" onClick={openSkills}><span>✦</span><span className="desktop-label">Skills</span></button>
-            <button className="topbar-button" onClick={openMemory}><span>❖</span><span className="desktop-label">Memory</span></button>
-            <button className="topbar-button" onClick={openSchedules}><span>◷</span><span className="desktop-label">Schedules</span></button>
-            <button className="icon-button" aria-label="More options">•••</button>
-          </div>
-        </header>
+        <Navbar
+          title={active?.title || "New task"}
+          running={running}
+          routerStatus={routerStatus}
+          onOpenRouter={openRouterSettings}
+          tasks={tasks}
+          activeId={activeId}
+          connection={connected}
+          relativeTime={relativeTime}
+          onSelectTask={setActiveId}
+          onNewTask={newTask}
+          workspaceName="stacklok/mecatl"
+          workspaceSubLabel="main · local workspace"
+          providerName={providerName}
+          controllerMode={controllerMode}
+          onOpenPanel={openSettingsPanel}
+        />
 
         <div className="conversation">
           {routingSummary.total > 0 && <section className="routing-summary" aria-label="Session routing summary">
@@ -1141,35 +1146,26 @@ export default function Home() {
 
         <div className="composer-wrap">
           {error && <div className="error-banner"><span>!</span><p>{error}</p><button className="retry-button" onClick={retryLastPrompt} disabled={running}>Retry</button><button onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
-          <form
-            className={`composer ${draggingCsv ? "dragging-file" : ""}`}
+          <Composer
+            prompt={prompt}
+            onPromptChange={setPrompt}
             onSubmit={sendPrompt}
-            onDragEnter={(event) => { event.preventDefault(); setDraggingCsv(true); }}
-            onDragOver={(event) => event.preventDefault()}
-            onDragLeave={(event) => { if (event.currentTarget === event.target) setDraggingCsv(false); }}
-            onDrop={onCsvDrop}
-          >
-            <input ref={csvInputRef} className="csv-file-input" type="file" accept=".csv,text/csv,application/vnd.ms-excel" onChange={onCsvInput} aria-label="Choose CSV file" />
-            {csvAttachment && <div className="csv-attachment" role="status">
-              <span className="csv-badge">CSV</span>
-              <span className="csv-copy"><strong>{csvAttachment.name}</strong><small>{csvAttachment.rows} rows · {csvAttachment.columns} columns · {formatBytes(csvAttachment.size)}</small></span>
-              <button type="button" onClick={() => setCsvAttachment(null)} aria-label={`Remove ${csvAttachment.name}`}>×</button>
-            </div>}
-            {draggingCsv && <div className="csv-drop-hint" aria-hidden="true">Drop CSV to attach</div>}
-            <textarea ref={textareaRef} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={onPromptKey} placeholder="Ask Mecatl to build, inspect, or explain…" rows={1} aria-label="Task prompt" />
-            <div className="composer-controls">
-              <div className="composer-left">
-                <button type="button" className="composer-icon" aria-label="Attach CSV file" title="Attach CSV file" onClick={() => csvInputRef.current?.click()}>＋</button>
-                <button type="button" className={`mode-button ${mode === "plan" ? "selected" : ""}`} onClick={() => setMode((current) => current === "plan" ? "default" : "plan")}><span>◇</span>{mode === "plan" ? "Plan" : "Agent"}<b>⌄</b></button>
-                <div className="model-control">
-                  <button type="button" className="mode-button" onClick={() => setModelMenu((open) => !open)}>{active?.model || "Server default"}<b>⌄</b></button>
-                  {modelMenu && <div className="model-popover"><small>MODEL</small><strong>{active?.model || "Server default"}</strong><p>Use <code>/models</code> in mecatui or configure the mecatl server to change providers.</p></div>}
-                </div>
-              </div>
-              {running ? <button type="button" className="send-button stop" onClick={cancelRun} aria-label="Stop task">■</button> : <button type="submit" className="send-button" disabled={!prompt.trim() && !csvAttachment} aria-label="Send prompt">↑</button>}
-            </div>
-          </form>
-          <div className="composer-hint">Mecatl can make mistakes. Review commands and file changes before approving.</div>
+            running={running}
+            onCancel={cancelRun}
+            mode={mode}
+            onModeChange={setMode}
+            modelLabel={active?.model || "Server default"}
+            csvAttachment={csvAttachment}
+            onRemoveCsv={() => setCsvAttachment(null)}
+            onCsvInput={onCsvInput}
+            onCsvDrop={onCsvDrop}
+            dragging={draggingCsv}
+            onDraggingChange={setDraggingCsv}
+            textareaRef={textareaRef}
+            csvInputRef={csvInputRef}
+            formatBytes={formatBytes}
+            placeholder="Ask Mecatl to build, inspect, or explain…"
+          />
         </div>
       </section>
 

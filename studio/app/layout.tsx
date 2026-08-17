@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter, Merriweather } from "next/font/google";
+
+import { ThemeProvider } from "@/components/theme-provider";
+
 import "./globals.css";
 
 const inter = Inter({
@@ -33,11 +36,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning: next-themes stamps the resolved theme class onto
+    // <html> before paint, so the server markup deliberately differs here.
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={`${inter.variable} ${merriweather.variable} ${geistMono.variable} antialiased`}
+        className={`${inter.variable} ${merriweather.variable} ${geistMono.variable} text-sm antialiased`}
       >
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );
