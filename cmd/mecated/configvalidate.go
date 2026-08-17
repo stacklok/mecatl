@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	yaml "go.yaml.in/yaml/v3"
 
@@ -62,7 +63,7 @@ func runConfigValidate(argv []string, out io.Writer) error {
 }
 
 func readConfigFile(path string, allowMissing, learningPatch bool) ([]byte, bool, error) {
-	info, err := os.Lstat(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if allowMissing && errors.Is(err, os.ErrNotExist) {
 			return nil, true, nil
@@ -73,21 +74,11 @@ func readConfigFile(path string, allowMissing, learningPatch bool) ([]byte, bool
 			}
 			return nil, false, fmt.Errorf("%q does not exist; create it with 'mecated config init' or pass --learning-patch to preflight a new file", path)
 		}
-		return nil, false, fmt.Errorf("cannot inspect %q", path)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, false, fmt.Errorf("%q is a symbolic link; config validation requires a regular file", path)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("%q is not a regular file", path)
-	}
-	f, err := os.Open(path)
-	if err != nil {
 		return nil, false, fmt.Errorf("cannot read %q", path)
 	}
 	defer func() { _ = f.Close() }()
-	openedInfo, err := f.Stat()
-	if err != nil || !openedInfo.Mode().IsRegular() {
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
 		return nil, false, fmt.Errorf("%q is not a regular file", path)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxSettingsConfigBytes+1))

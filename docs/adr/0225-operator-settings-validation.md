@@ -23,8 +23,9 @@ values or create the target as a side effect.
 
 Provide `mecated config validate [--file PATH] [--learning-patch PATCH]` as an offline,
 read-only operator command. Without `--file`, use the same conventional XDG settings
-path as `config init`. Bounded-read regular files, reject a symlink final component,
-and validate the complete document with the repository's `permconfig` parser.
+path as `config init`. Bounded-read regular files through a final-component
+no-follow, nonblocking descriptor open, reject symlinks and irregular files before
+reading, and validate the complete document with the repository's `permconfig` parser.
 
 Make `--learning-patch` purpose-specific. Require one YAML document containing exactly
 one top-level `learning:` mapping, with no aliases or duplicate keys. Replace or insert

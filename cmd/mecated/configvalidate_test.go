@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const validLearningPatch = `learning:
@@ -187,6 +189,54 @@ func TestRunConfigValidateRejectsUnsafePathsAndArguments(t *testing.T) {
 	for _, args := range [][]string{{"--unknown"}, {"--file", target, "extra"}} {
 		if err := runConfigValidate(args, &bytes.Buffer{}); err == nil {
 			t.Fatalf("arguments unexpectedly accepted: %v", args)
+		}
+	}
+}
+
+func TestReadConfigFileUsesNoFollowNonblockingRegularDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	normal := filepath.Join(dir, "settings.yaml")
+	want := []byte("learning:\n  mode: off\n")
+	if err := os.WriteFile(normal, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, missing, err := readConfigFile(normal, false, false)
+	if err != nil || missing || !bytes.Equal(got, want) {
+		t.Fatalf("normal read = %q, missing=%v, err=%v", got, missing, err)
+	}
+
+	target := filepath.Join(dir, "target.yaml")
+	secret := "SUPER_SECRET_VALUE_123"
+	if err := os.WriteFile(target, []byte("learning: ["+secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, learningPatch := range []bool{false, true} {
+		if _, _, err := readConfigFile(link, false, learningPatch); err == nil || strings.Contains(err.Error(), secret) {
+			t.Fatalf("symlink read (learningPatch=%v) = %v", learningPatch, err)
+		}
+	}
+
+	fifo := filepath.Join(dir, "settings.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, learningPatch := range []bool{false, true} {
+		result := make(chan error, 1)
+		go func() {
+			_, _, err := readConfigFile(fifo, false, learningPatch)
+			result <- err
+		}()
+		select {
+		case err := <-result:
+			if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("FIFO read (learningPatch=%v) = %v", learningPatch, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("FIFO read blocked (learningPatch=%v)", learningPatch)
 		}
 	}
 }

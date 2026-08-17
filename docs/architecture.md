@@ -392,9 +392,10 @@ Two deliberate cycle-breaks worth noting, documented in code:
   `governance` without a cycle); the `Evaluator` works on primitive args, and
   the `permpolicy` adapter bridges `session` types into it.
 
-**Offline operator-config validation.** `mecated config validate` bounded-reads the
-operator `settings.yaml` and runs the same `permconfig.ValidateYAML` parser used by
-runtime loading, without starting composition or printing values. Its optional
+**Offline operator-config validation.** `mecated config validate` opens the final
+settings-file component with a no-follow, nonblocking descriptor, requires the opened
+descriptor to be a regular file, bounded-reads it, and runs the same `permconfig.ValidateYAML`
+parser used by runtime loading without starting composition or printing values. Its optional
 `--learning-patch` input is deliberately not a generic merge: it accepts exactly
 one top-level `learning:` mapping, replaces or inserts only that YAML node in
 memory, and validates the complete result without writing either file. A supplied
