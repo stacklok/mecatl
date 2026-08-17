@@ -1,7 +1,7 @@
 ---
 id: 05-cleanup-planner
 title: Retention planner and safe cleanup API
-blocked_by: [02-indexed-inventory]
+blocked_by: [02-indexed-inventory, 02b-bounded-pagination, 02c-inventory-locking]
 status: pending
 branch: ""
 worktree: ""

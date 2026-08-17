@@ -1,6 +1,6 @@
 ---
 id: 02-indexed-inventory
-title: Indexed metadata, bounded pagination, and lock decomposition
+title: Rebuildable session metadata catalog
 blocked_by: [01-v2-snapshots, 01b-v2-durability, 01c-v2-temp-locking]
 status: pending
 branch: ""
@@ -13,19 +13,11 @@ accumulator: acc/session-storage-continuity
 
 # Task brief
 
-Implement the rebuildable derivative metadata catalog, generation-bound keyset cursors, work-bounded pages, cross-process external-change detection, and per-family/narrow locking across in-tree stores and the remote driver.
+Implement the derivative, rebuildable jsonlstore metadata catalog foundation. It stores only inventory-safe metadata, rebuilds from v2 headers or bounded v1 tails, detects missing/corrupt/stale state and external/shared-directory changes, and never becomes transcript authority. Keep catalog persistence/format adapter-private and update ADR-0027 resource inventory. Leave cursor wire semantics, page-work bounds, and lock decomposition to 02b/02c.
 
-Follow ADR-0225, ADR-0217, ADR-0027, ADR-0104, AGENTS.md layering/security invariants, and existing repository conventions. Keep tests offline. Do not absorb later tasks or weaken fail-closed behavior. Update the living docs and user-docs affected by this task.
+Follow ADR-0225, ADR-0217, ADR-0027, ADR-0104 and AGENTS.md. Use stdlib/existing dependencies, offline tests, and no TUI/maintenance/adoption work.
 
 ## Acceptance criteria
 
-- AC2.1: Page latency, bytes read, and allocations are independent of transcript/history size and proportional to page size after catalog readiness; fetching page two does not rediscover every snapshot.
-  - verify: `TestSessionStorageContinuity_Scenario2_PageWorkBounded`
-- AC2.2: Ordering is `(modified_at DESC, session_id ASC)`; a cursor is filter- and generation-bound, and a stale cursor returns an explicit restart signal rather than mixing generations.
-  - verify: `TestSessionStorageContinuity_Scenario2_GenerationBoundCursor`
 - AC2.3: A missing/corrupt/stale catalog rebuilds from v2 headers or bounded v1 tails without becoming transcript authority, and shared-directory changes are detected rather than hidden by a process-local cache.
   - verify: `TestSessionStorageContinuity_Scenario2_CatalogRebuildAndExternalChange`
-- AC2.4: A blocked inventory or catalog rebuild does not delay Save, Load, EventLog.Append, or ToolCall for a different session; Save, Delete, migration promotion/removal, EventLog.Append, and ToolCall for the same family coordinate under one cross-process mutation identity so snapshot-last deletion or migration cannot race a sidecar append.
-  - verify: `TestSessionStorageContinuity_Scenario2_UnrelatedMutationNotBlocked`, `TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized`
-- AC2.5: In the 807-row/12-GiB-equivalent fixture, a 100-row page visits at most 101 ordered catalog rows, performs zero snapshot/transcript reads, and page two repeats neither catalog rebuild nor prior-page traversal; the benchmark records latency and allocations as a trend signal.
-  - verify: `BenchmarkSessionStorageContinuity_LargeInventory`, `TestSessionStorageContinuity_Scenario2_LargeInventoryWorkCounters`

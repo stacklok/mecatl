@@ -1,7 +1,7 @@
 ---
 id: 03-progressive-sessions-tui
 title: Progressive Sessions inventory
-blocked_by: [02-indexed-inventory]
+blocked_by: [02-indexed-inventory, 02b-bounded-pagination, 02c-inventory-locking]
 status: pending
 branch: ""
 worktree: ""

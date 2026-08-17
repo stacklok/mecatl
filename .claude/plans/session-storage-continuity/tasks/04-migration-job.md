@@ -1,7 +1,7 @@
 ---
 id: 04-migration-job
 title: Resumable storage migration and compaction
-blocked_by: [01-v2-snapshots, 02-indexed-inventory]
+blocked_by: [01-v2-snapshots, 01b-v2-durability, 01c-v2-temp-locking, 02-indexed-inventory, 02b-bounded-pagination, 02c-inventory-locking]
 status: pending
 branch: ""
 worktree: ""

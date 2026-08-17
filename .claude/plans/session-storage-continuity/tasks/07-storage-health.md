@@ -1,7 +1,7 @@
 ---
 id: 07-storage-health
 title: Storage health and maintenance status
-blocked_by: [02-indexed-inventory]
+blocked_by: [02-indexed-inventory, 02b-bounded-pagination, 02c-inventory-locking]
 status: pending
 branch: ""
 worktree: ""
