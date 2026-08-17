@@ -192,8 +192,9 @@ injected repository, validator, evaluator, and atomic publisher. Its `Activation
 `evaluated` for source-compatible PASS-only behavior. A host may select `validated` only when its
 repository implements the optional `learning.ValidatedSkillActivator`, whose atomic contract accepts
 non-legacy, evidence-backed, accepted/exact, staged ABSTAIN versions under owner/partition/CAS.
-Evaluator FAIL remains deny-dominant and evaluator errors durably stage a generic ABSTAIN before the
-original error is returned. `engine/adapter/skillfs.AtomicCatalog`
+Evaluator FAIL remains deny-dominant. Evaluator infrastructure errors durably reject with a generic
+ERROR verdict before the original error is returned; raw error detail is neither persisted nor logged.
+`engine/adapter/skillfs.AtomicCatalog`
 supplies a complete-generation live Skill tool while preserving existing snapshot sources. Standard
 mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
 replace every seam.

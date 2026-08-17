@@ -775,8 +775,9 @@ Its zero value remains `evaluated` for embedders; the standard app resolves an o
 to `validated` only when Auto is explicitly selected, while learning remains Off by default. A
 trusted project may tighten validated to evaluated and an untrusted project cannot alter it.
 Explicit/direct SkillDraft drafts stay inactive. Evidence-backed reflected procedures record an
-evaluation: FAIL rejects; evaluator errors record a generic durable ABSTAIN, stage, and return the
-original failure; Review always stages PASS/ABSTAIN. Auto PASS uses the ordinary `activate`
+evaluation: FAIL rejects; evaluator infrastructure errors record a generic durable ERROR verdict,
+reject, and return the original failure only to the caller without persisting or logging it; Review
+always stages PASS/deliberate ABSTAIN. Auto PASS uses the ordinary `activate`
 transition. Auto validated may atomically `activate_validated` only for non-legacy, accepted/exact,
 evidence-backed ABSTAIN versions; evaluated ABSTAIN, similar candidates, collisions,
 unpublishable partitions, missing publishers, and missing repository capability stay staged. The

@@ -18,13 +18,15 @@ import (
 )
 
 func TestConformance(t *testing.T) {
-	skillconformance.Run(t, func(t *testing.T) learning.SkillRepository {
+	factory := func(t *testing.T) learning.SkillRepository {
 		store, err := skillstore.New(filepath.Join(t.TempDir(), "skills"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return store
-	})
+	}
+	skillconformance.Run(t, factory)
+	skillconformance.RunValidatedActivation(t, factory)
 }
 
 func TestLazyStartupAndReopen(t *testing.T) {

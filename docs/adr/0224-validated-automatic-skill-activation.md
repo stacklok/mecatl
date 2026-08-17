@@ -29,9 +29,11 @@ itself remains Off by default. A trusted project may tighten `validated` to
 `evaluated`, but cannot loosen it.
 
 Both policies activate evaluator PASS through the existing high-assurance operation.
-Evaluator FAIL is deny-dominant and rejects the version. Evaluator errors durably
-record a generic ABSTAIN and stage the candidate, return the original infrastructure
-error, and never publish. Under `evaluated`, ABSTAIN stages. Under Auto `validated`, an
+Evaluator FAIL is deny-dominant and rejects the version. Evaluator infrastructure
+errors durably record the distinct, generic ERROR verdict, reject the candidate, return
+the original error only to the caller, and never publish. The raw error is never persisted
+or logged. A retry observes the rejected marker rather than reinterpreting it as ABSTAIN.
+Under `evaluated`, deliberate ABSTAIN stages. Under Auto `validated`, an
 ABSTAIN candidate may use the optional validated-activation repository capability only
 when it is non-legacy, evidence-backed, staged, and has an accepted or exact validation
 disposition. Similar candidates, collisions, unpublishable partitions, missing

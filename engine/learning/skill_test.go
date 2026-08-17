@@ -46,6 +46,9 @@ func TestSkillProvenanceAndEvaluationBounds(t *testing.T) {
 	if err := learning.ValidateSkillEvaluation(learning.SkillEvaluation{Verdict: learning.EvaluationAbstain, Reason: "no fixtures"}); err != nil {
 		t.Fatalf("fixture-free abstention=%v", err)
 	}
+	if err := learning.ValidateSkillEvaluation(learning.SkillEvaluation{Verdict: learning.EvaluationError, Reason: "generic unavailable"}); err != nil {
+		t.Fatalf("fixture-free infrastructure marker=%v", err)
+	}
 	if err := learning.ValidateSkillEvaluation(learning.SkillEvaluation{Verdict: learning.EvaluationPass}); !errors.Is(err, learning.ErrInvalidSkill) {
 		t.Fatalf("fixture-free pass=%v", err)
 	}

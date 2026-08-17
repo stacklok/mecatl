@@ -25,7 +25,8 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 	})},
 		mockllm.TextTurn("I completed and verified the workflow."),
 		mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"procedure","name":"verify-go-change","title":"Verify Go changes","body":"Run focused tests, then inspect the diff.","evidence":["m:0"]}]}`),
-		mockllm.TextTurn("The learned skill is available."),
+		mockllm.ToolCallTurn(session.NewToolCall("use-skill", "Skill", []byte(`{"name":"verify-go-change"}`))),
+		mockllm.TextTurn("Used the learned verification workflow."),
 	)
 	built, err := Build(context.Background(), Config{
 		Model: "test-model", Workspace: workspace, TrustProject: true,
@@ -48,7 +49,18 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = drainRun(run)
+	var firstRunErr string
+	for event := range run.Events() {
+		if event.Type == session.EvPermissionAsk && event.Ask != nil {
+			run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
+		}
+		if event.Type == session.EvResult && event.Result != nil && event.Result.Stop == session.StopError {
+			firstRunErr = event.Result.Error
+		}
+	}
+	if firstRunErr != "" {
+		t.Fatalf("first run failed: %s", firstRunErr)
+	}
 
 	deadline := time.Now().Add(3 * time.Second)
 	var listed *mecatlv1.ListLearnedSkillsResponse
@@ -77,7 +89,30 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = drainRun(secondRun)
+	var toolResult, finalResponse, secondRunErr string
+	for event := range secondRun.Events() {
+		if event.Type == session.EvPermissionAsk && event.Ask != nil {
+			secondRun.Approve(event.Ask.AskID, session.VerdictAllowOnce)
+		}
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == "use-skill" {
+			toolResult = event.ToolResult.Content
+		}
+		if event.Type == session.EvResult && event.Result != nil {
+			finalResponse = event.Result.Text
+			if event.Result.Stop == session.StopError {
+				secondRunErr = event.Result.Error
+			}
+		}
+	}
+	if secondRunErr != "" {
+		t.Fatalf("second run failed: %s", secondRunErr)
+	}
+	if toolResult != "Skill: verify-go-change\n\nRun focused tests, then inspect the diff." {
+		t.Fatalf("Skill tool result = %q", toolResult)
+	}
+	if finalResponse != "Used the learned verification workflow." {
+		t.Fatalf("final response = %q", finalResponse)
+	}
 	requestMu.Lock()
 	defer requestMu.Unlock()
 	if len(requests) < 3 {

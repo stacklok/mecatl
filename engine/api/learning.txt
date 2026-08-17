@@ -78,6 +78,7 @@ const DefaultProposalPageSize untyped int = 50
 const DefaultSkillPageSize untyped int = 50
 const Eager Sensitivity = 3
 const EvaluationAbstain EvaluationVerdict = "abstain"
+const EvaluationError EvaluationVerdict = "error"
 const EvaluationFail EvaluationVerdict = "fail"
 const EvaluationPass EvaluationVerdict = "pass"
 const EvidenceEvent EvidenceLocator = "event"

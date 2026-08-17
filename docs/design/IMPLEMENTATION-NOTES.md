@@ -3676,9 +3676,9 @@ PASS uses `SkillRepository.Activate`; Auto validated ABSTAIN uses the optional
 `learning.ValidatedSkillActivator` only with a publisher, non-legacy evidence, accepted/exact
 validation, and no durable similarity hint. Pipeline zero means evaluated, while composition makes
 an omitted activation validated only for explicitly selected Auto. Review, evaluated ABSTAIN,
-missing capability, unpublishable partitions, and collisions stage. A nil evaluator records
-ABSTAIN; evaluator failure records a generic ABSTAIN and stages before returning the original
-error. `Config.SkillEvaluator` is trusted admission control: an embedder must supply immutable host
+missing capability, unpublishable partitions, and collisions stage. A nil evaluator records a
+deliberate ABSTAIN; evaluator failure records a generic ERROR verdict and rejects before returning
+the original error to the caller. The raw error is neither persisted nor logged. `Config.SkillEvaluator` is trusted admission control: an embedder must supply immutable host
 fixture IDs, independent baseline/treatment execution, a fenced candidate, no tools/shell/network,
 and explicit limits; mecatl ships no production judge. Candidate inventory drains external
 metadata plus every learned version in the exact partition.

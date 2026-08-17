@@ -138,16 +138,23 @@ func TestPipelineValidatedActivationAndEvaluatorFailure(t *testing.T) {
 			t.Fatalf("receipt=%+v err=%v", receipt, err)
 		}
 	})
-	t.Run("evaluator error durably stages generic abstain", func(t *testing.T) {
+	t.Run("evaluator error is durably rejected and cannot activate on retry", func(t *testing.T) {
 		repo := memskill.New()
+		pub := &publisher{}
 		infrastructure := errors.New("secret evaluator detail")
-		receipt, err := (skilllifecycle.Pipeline{Repository: repo, Validator: skillvalidation.Validator{}, Evaluator: evaluator{err: infrastructure}, ActivationPolicy: learning.SkillActivationValidated, Publisher: &publisher{}}).Process(context.Background(), skilllifecycle.Candidate{Draft: evidenceDraft(), Mode: learning.Auto, Automatic: true})
-		if !errors.Is(err, infrastructure) || receipt.State != learning.SkillStaged || receipt.Verdict != learning.EvaluationAbstain {
-			t.Fatalf("receipt=%+v err=%v", receipt, err)
+		pipeline := skilllifecycle.Pipeline{Repository: repo, Validator: skillvalidation.Validator{}, Evaluator: evaluator{err: infrastructure}, ActivationPolicy: learning.SkillActivationValidated, Publisher: pub}
+		candidate := skilllifecycle.Candidate{Draft: evidenceDraft(), Mode: learning.Auto, Automatic: true}
+		receipt, err := pipeline.Process(context.Background(), candidate)
+		if !errors.Is(err, infrastructure) || receipt.State != learning.SkillRejected || receipt.Verdict != learning.EvaluationError || pub.calls != 0 {
+			t.Fatalf("first receipt=%+v publishes=%d err=%v", receipt, pub.calls, err)
 		}
 		stored, found, getErr := repo.Get(context.Background(), evidenceDraft().Partition, evidenceDraft().OwnerAgent, receipt.SkillID, receipt.Version)
-		if getErr != nil || !found || stored.Evaluations[len(stored.Evaluations)-1].Reason != "trusted skill evaluator unavailable" {
+		if getErr != nil || !found || stored.Evaluations[len(stored.Evaluations)-1].Verdict != learning.EvaluationError || stored.Evaluations[len(stored.Evaluations)-1].Reason != "trusted skill evaluator unavailable" {
 			t.Fatalf("stored=%+v found=%v err=%v", stored, found, getErr)
+		}
+		retried, retryErr := pipeline.Process(context.Background(), candidate)
+		if retryErr != nil || retried.State != learning.SkillRejected || retried.Verdict != learning.EvaluationError || pub.calls != 0 {
+			t.Fatalf("retry receipt=%+v publishes=%d err=%v", retried, pub.calls, retryErr)
 		}
 	})
 }

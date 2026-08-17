@@ -246,7 +246,8 @@ It surfaces three ways:
   or ABSTAIN may publish only a non-legacy, accepted/exact, evidence-backed version. Evaluated
   ABSTAIN, similar candidates, external collisions, alternate/untrusted projects, missing publisher,
   and a repository without validated activation stay staged. FAIL rejects; evaluator infrastructure
-  failure records a generic durable ABSTAIN/staged record, warns, and does not publish.
+  failure records a generic durable ERROR/rejected record, warns without raw detail, and does not
+  publish. A retry cannot reinterpret that marker as an activatable ABSTAIN.
   Activation, archive, and rollback
   return committed state plus publication status; temporary publication failure revokes the live learned entry
   and startup or the next `/skills` refresh reconciles it. Rollback targets must be versions durably

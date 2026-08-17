@@ -113,7 +113,8 @@ materialized and evaluated: review stages PASS/ABSTAIN and rejects FAIL. Auto PA
 Auto `validated` may also activate structurally accepted/exact, non-legacy, evidence-backed ABSTAIN,
 while Auto `evaluated` retains PASS-only behavior. Omitted activation resolves to validated only when
 the standard app explicitly selects Auto; the engine pipeline zero remains evaluated. Evaluator
-failure stages a generic durable ABSTAIN and never publishes. Similar candidates, external collisions,
+infrastructure failure records a generic durable ERROR verdict, rejects, and never publishes; the
+raw error is neither persisted nor logged. Similar candidates, external collisions,
 unpublishable partitions, and missing validated repository support stay staged. `off` performs no automatic procedure materialization; explicit drafts/imports
 remain inactive. `off` installs no automatic observer/started coordinator worker or eager proposal repository and makes no automatic reflection provider
 call. Authenticated explicit reflection remains bounded and synchronous, lazily initializes persistence, bypasses automatic admission/cooldown/budgets/recent-completed state, and uses the completed session's persisted provider/model; without genuine current-prompt promotion provenance its output remains stage-only. A project `.mecatl/settings.yaml` may only tighten the operator mode, sensitivity, and skill activation assurance (`validated` → `evaluated`); its `automatic` subtree is warning-ignored/operator-only. Explicit memory/user-model tools remain available in every mode.

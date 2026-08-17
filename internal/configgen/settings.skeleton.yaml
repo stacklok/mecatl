@@ -133,6 +133,8 @@
 #   sensitivity: balanced
 #   # Skills controls learned-skill lifecycle policy.
 #   skills:
+#     # Activation is validated (default for Auto) or evaluated. Project settings may only
+#     # tighten validated to evaluated.
 #     activation: validated
 #   # Automatic is operator-only process-local rate policy.
 #   automatic:

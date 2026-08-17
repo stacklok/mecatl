@@ -517,8 +517,9 @@ type Config struct {
 	LearningAutomatic   LearningAutomaticConfig
 	// LearningMetricsEmitter receives content-free closed learning activities.
 	LearningMetricsEmitter func(learning.Activity)
-	// SkillEvaluator evaluates evidence-backed procedure drafts. nil installs the
-	// conservative abstaining evaluator; only PASS can activate in auto mode.
+	// SkillEvaluator is trusted host admission control. Nil deliberately ABSTAINS;
+	// evaluator errors persist as a non-activatable marker, and only generic error
+	// categories reach diagnostics.
 	SkillEvaluator learning.SkillEvaluator
 	// operatorLearningMode retains the pre-project ceiling so per-session engines
 	// can apply their own workspace's tighten-only project setting.

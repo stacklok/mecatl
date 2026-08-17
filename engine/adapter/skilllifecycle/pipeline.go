@@ -49,8 +49,9 @@ type Pipeline struct {
 	// Evaluator is trusted admission-control code supplied by the host. It must
 	// evaluate host-issued immutable fixture IDs, keep baseline and treatment
 	// independent, expose no tools/shell/network, fence candidate content, and
-	// enforce deterministic time/token/output limits. Nil records ABSTAIN; the
-	// engine deliberately provides no production keyword or model judge.
+	// enforce deterministic time/token/output limits. Nil deliberately records
+	// ABSTAIN. A returned error is durably marked ERROR and can never activate;
+	// the engine deliberately provides no production keyword or model judge.
 	Evaluator learning.SkillEvaluator
 	// ActivationPolicy is the assurance required for Auto activation. The zero
 	// value resolves to evaluated for source compatibility with existing embedders.
@@ -89,9 +90,9 @@ func (p Pipeline) Process(ctx context.Context, candidate Candidate) (Receipt, er
 		if p.Evaluator != nil {
 			evaluation, evaluatorErr = p.Evaluator.Evaluate(ctx, learning.SkillEvaluationRequest{Partition: in.Partition, OwnerAgent: in.OwnerAgent, Version: version})
 			if evaluatorErr != nil {
-				// Persist a bounded, non-sensitive disposition while returning the
+				// Persist only a closed, non-activatable marker while returning the
 				// original infrastructure error to the caller.
-				evaluation = learning.SkillEvaluation{Verdict: learning.EvaluationAbstain, Reason: "trusted skill evaluator unavailable", At: p.now()}
+				evaluation = learning.SkillEvaluation{Verdict: learning.EvaluationError, Reason: "trusted skill evaluator unavailable", At: p.now()}
 			} else if evaluation.At.IsZero() {
 				evaluation.At = p.now()
 			}

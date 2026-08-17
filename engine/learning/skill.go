@@ -62,10 +62,13 @@ const (
 	EvaluationPass    EvaluationVerdict = "pass"
 	EvaluationFail    EvaluationVerdict = "fail"
 	EvaluationAbstain EvaluationVerdict = "abstain"
+	// EvaluationError is the durable, non-activatable marker for an evaluator
+	// infrastructure failure. It carries no provider error detail.
+	EvaluationError EvaluationVerdict = "error"
 )
 
 func (v EvaluationVerdict) Valid() bool {
-	return v == EvaluationPass || v == EvaluationFail || v == EvaluationAbstain
+	return v == EvaluationPass || v == EvaluationFail || v == EvaluationAbstain || v == EvaluationError
 }
 
 type SkillPartition struct {
@@ -187,6 +190,9 @@ type SkillValidator interface {
 	Validate(context.Context, SkillValidationRequest) (SkillValidation, error)
 }
 
+// SkillEvaluator is trusted host admission control. ABSTAIN is a deliberate,
+// validated-eligible decision; infrastructure failures must return an error and
+// are persisted by the lifecycle as the distinct, non-activatable ERROR verdict.
 type SkillEvaluator interface {
 	Evaluate(context.Context, SkillEvaluationRequest) (SkillEvaluation, error)
 }
@@ -325,7 +331,7 @@ func validSkillEvidence(ref EvidenceRef) bool {
 }
 
 func ValidateSkillEvaluation(e SkillEvaluation) error {
-	if !e.Verdict.Valid() || (e.Verdict != EvaluationAbstain && len(e.FixtureIDs) == 0) || len(e.FixtureIDs) > MaxSkillFixtures ||
+	if !e.Verdict.Valid() || ((e.Verdict == EvaluationPass || e.Verdict == EvaluationFail) && len(e.FixtureIDs) == 0) || len(e.FixtureIDs) > MaxSkillFixtures ||
 		len(e.Baseline) > MaxSkillEvaluationTextBytes || len(e.Treatment) > MaxSkillEvaluationTextBytes || len(e.Reason) > MaxSkillEvaluationTextBytes ||
 		!utf8.ValidString(e.Baseline) || !utf8.ValidString(e.Treatment) || !utf8.ValidString(e.Reason) {
 		return fmt.Errorf("%w: evaluation", ErrInvalidSkill)

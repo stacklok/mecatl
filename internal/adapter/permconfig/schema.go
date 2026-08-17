@@ -656,6 +656,8 @@ type LearningSection struct {
 
 // LearningSkillsSection is the strict learned-skill policy subtree.
 type LearningSkillsSection struct {
+	// Activation is validated (default for Auto) or evaluated. Project settings
+	// may only tighten validated to evaluated.
 	Activation string `yaml:"activation"`
 }
 

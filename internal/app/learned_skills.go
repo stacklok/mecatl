@@ -158,7 +158,7 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 			emit(learning.Activity{Kind: kind, Reason: reason, Sensitivity: cfg.LearningSensitivity, Count: 1})
 		}
 		if processErr != nil {
-			cfg.diag().Log(ctx, port.LevelWarn, "learned-skill evaluation failed; candidate remains inspectable", "error", processErr)
+			cfg.diag().Log(ctx, port.LevelWarn, "learned-skill processing failed; candidate remains inspectable", "category", "evaluation", "count", 1)
 		}
 		return processErr
 	}

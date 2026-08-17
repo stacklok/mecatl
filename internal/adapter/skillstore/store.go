@@ -921,7 +921,7 @@ func (s *Store) RecordEvaluation(ctx context.Context, p learning.SkillPartition,
 		}
 		from := value.State
 		value.Evaluations = append(value.Evaluations, evaluation)
-		if evaluation.Verdict == learning.EvaluationFail {
+		if evaluation.Verdict == learning.EvaluationFail || evaluation.Verdict == learning.EvaluationError {
 			value.State = learning.SkillRejected
 		} else {
 			value.State = learning.SkillEvaluated
