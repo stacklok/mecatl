@@ -625,8 +625,9 @@ under `~/.local/share/mecatui/memory/<path-slug>/` (or `$XDG_DATA_HOME/...` when
 set), where `<path-slug>` is the absolute workspace path with `/` replaced by `-`
 (e.g. `-home-me-dev-mecatl`) — deterministic, human-legible, and collision-free
 across same-named checkouts. Pass `--no-memory` to disable it or `--memory-dir` to
-relocate the store. Background memory consolidation (the "dream" distiller, which
-spends tokens) stays **off** on the embedded server.
+relocate the store. Background memory consolidation (which spends tokens) stays **off** on the embedded
+server. When enabled, it only retires exact duplicate lifecycle entries; it never
+rewrites a survivor. Manual, inspectable consolidation review is future work.
 
 **The durable session store is ON by default** (issue #79): the embedded server
 persists every session as append-only JSONL — the snapshot, the tool-call audit

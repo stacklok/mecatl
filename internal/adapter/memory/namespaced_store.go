@@ -26,9 +26,18 @@ type namespacedLifecycleStore struct {
 	lifecycle tool.MemoryLifecycleStore
 }
 
+type duplicateRetirementStore interface {
+	RetireDuplicate(context.Context, string, tool.MemoryVersion, string, tool.MemoryVersion) (tool.MemoryRecord, error)
+}
+
 type namespacedConvergenceStore struct {
 	*namespacedLifecycleStore
 	convergence tool.MemoryConvergenceStore
+}
+
+type namespacedDuplicateStore struct {
+	*namespacedConvergenceStore
+	retirement duplicateRetirementStore
 }
 
 var (
@@ -49,7 +58,11 @@ func NewNamespacedStore(store tool.MemoryStore, namespace string) tool.MemorySto
 	base := &NamespacedStore{store: store, namespace: strings.TrimSuffix(namespace, "/") + "/"}
 	if convergence, ok := store.(tool.MemoryConvergenceStore); ok {
 		lifecycle := &namespacedLifecycleStore{NamespacedStore: base, lifecycle: convergence}
-		return &namespacedConvergenceStore{namespacedLifecycleStore: lifecycle, convergence: convergence}
+		wrapped := &namespacedConvergenceStore{namespacedLifecycleStore: lifecycle, convergence: convergence}
+		if retirement, ok := store.(duplicateRetirementStore); ok {
+			return &namespacedDuplicateStore{namespacedConvergenceStore: wrapped, retirement: retirement}
+		}
+		return wrapped
 	}
 	if lifecycle, ok := store.(tool.MemoryLifecycleStore); ok {
 		return &namespacedLifecycleStore{NamespacedStore: base, lifecycle: lifecycle}
@@ -170,6 +183,11 @@ func (s *namespacedConvergenceStore) RememberIfCurrent(ctx context.Context, entr
 	return s.trimRecord(record), s.logicalError(err)
 }
 
+func (s *namespacedDuplicateStore) RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error) {
+	record, err := s.retirement.RetireDuplicate(ctx, s.key(survivorKey), survivorVersion, s.key(sourceKey), sourceVersion)
+	return s.trimRecord(record), s.logicalError(err)
+}
+
 type memoryWorkspaceKey struct{}
 
 // WithWorkspace annotates a run context for the caller-scoped project memory
@@ -196,6 +214,10 @@ type callerConvergenceStore struct {
 	*callerLifecycleStore
 }
 
+type callerDuplicateStore struct {
+	*callerConvergenceStore
+}
+
 var (
 	_ tool.MemoryLifecycleStore   = (*callerLifecycleStore)(nil)
 	_ tool.MemoryConvergenceStore = (*callerConvergenceStore)(nil)
@@ -210,7 +232,11 @@ func NewCallerStore(store tool.MemoryStore, project bool) tool.MemoryStore {
 	}
 	base := &CallerStore{store: store, project: project}
 	if _, ok := store.(tool.MemoryConvergenceStore); ok {
-		return &callerConvergenceStore{callerLifecycleStore: &callerLifecycleStore{CallerStore: base}}
+		wrapped := &callerConvergenceStore{callerLifecycleStore: &callerLifecycleStore{CallerStore: base}}
+		if _, ok := store.(duplicateRetirementStore); ok {
+			return &callerDuplicateStore{callerConvergenceStore: wrapped}
+		}
+		return wrapped
 	}
 	if _, ok := store.(tool.MemoryLifecycleStore); ok {
 		return &callerLifecycleStore{CallerStore: base}
@@ -335,4 +361,12 @@ func (s *callerConvergenceStore) RememberIfCurrent(ctx context.Context, entry to
 		return tool.MemoryRecord{}, err
 	}
 	return store.(tool.MemoryConvergenceStore).RememberIfCurrent(ctx, entry, expected)
+}
+
+func (s *callerDuplicateStore) RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error) {
+	store, err := s.scoped(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	return store.(duplicateRetirementStore).RetireDuplicate(ctx, survivorKey, survivorVersion, sourceKey, sourceVersion)
 }

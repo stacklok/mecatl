@@ -104,7 +104,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | 5 progressive compaction | ✅ | `Compactor` seam + `HeuristicCompactor` (default) and `CascadeCompactor` (tiered) |
 | 8 fork-join parallelism | ✅ | `tool.EnvironmentForker` + `internal/adapter/forker` (git-worktree/copy isolation) + `agent.NewParallelTool` (parallel isolated branches, join); wired in `mecated` (`--enable-parallel`) |
 | **3 tiered memory** | ✅ | unchanged `tool.MemoryStore` base + optional versioned `MemoryLifecycleStore`; portable project/user Remember/Recall/Search and conditional Inspect/Forget/Undo; flocked single-document lazy migration/history/tombstones; live per-request operator profile; additive remote lifecycle RPCs and read-only TUI detail (ADR 0107) |
-| 4 dream/sleep consolidation | ✅ | `internal/adapter/dream` — conservative MemoryStore+LLM consolidator (merge dupes / drop stale, never invents keys, fail-safe), `RunPeriodically`; opt-in via `--memory-consolidate-interval` |
+| 4 dream/sleep consolidation | ✅ | `internal/adapter/dream` — separate planning and application: a strict model plan can name only existing-key survivor/superseded relationships; automatic application requires the local adapter's internal atomic duplicate-retirement operation, exact active value+description duplicates, and matching bound survivor/source versions in one backend transaction. Sources retain lifecycle history; survivors are never rewritten. Base stores, convergence-only remote stores without that operation, and non-identical proposals are skipped; source operations are independently atomic, and periodic reports are counts-only. Opt-in via consolidation intervals (off by default); inspectable manual review is deferred. |
 
 ## Deployment
 

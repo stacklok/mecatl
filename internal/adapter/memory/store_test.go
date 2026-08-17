@@ -137,6 +137,48 @@ func TestLifecycleRenameFailurePreservesPriorState(t *testing.T) {
 	}
 }
 
+func TestRetireDuplicateAtomicallyChecksBothVersionsAndRecordsProvenance(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := st.RememberEntry(ctx, tool.MemoryEntry{Key: "a", Value: "v", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RememberEntry(ctx, tool.MemoryEntry{Key: "b", Value: "v", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	survivor, _, _ := st.Inspect(ctx, "a")
+	source, _, _ := st.Inspect(ctx, "b")
+	if err := st.RememberEntry(ctx, tool.MemoryEntry{Key: "a", Value: "changed", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RetireDuplicate(ctx, "a", survivor.Current.Version, "b", source.Current.Version); err == nil {
+		t.Fatal("stale survivor version accepted")
+	}
+	active, found, err := st.Inspect(ctx, "b")
+	if err != nil || !found || active.Current.Status != tool.MemoryStatusActive || len(active.Revisions) != 1 {
+		t.Fatalf("source changed on conflict: found=%v record=%+v err=%v", found, active, err)
+	}
+
+	survivor, _, _ = st.Inspect(ctx, "a")
+	attributed := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginConsolidation})
+	retired, err := st.RetireDuplicate(attributed, "a", survivor.Current.Version, "b", source.Current.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired.Current.Status != tool.MemoryStatusDeleted || len(retired.Revisions) != 2 {
+		t.Fatalf("retired history = %+v", retired)
+	}
+	if retired.Revisions[0].Value != "v" || retired.Revisions[0].Description != "d" {
+		t.Fatalf("source history lost content: %+v", retired.Revisions)
+	}
+	if retired.Current.Writer != tool.MemoryWriterSystem || retired.Current.Origin != tool.MemoryOriginConsolidation {
+		t.Fatalf("retirement provenance = (%q, %q)", retired.Current.Writer, retired.Current.Origin)
+	}
+}
+
 func TestStorePersistenceAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()

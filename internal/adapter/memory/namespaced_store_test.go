@@ -180,6 +180,10 @@ func TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked(t *tes
 }
 
 type baseOnlyMemoryStore struct{ tool.MemoryStore }
+type convergenceOnlyMemoryStore struct {
+	tool.MemoryStore
+	tool.MemoryConvergenceStore
+}
 
 func TestCallerStoresPreserveOptionalLifecycleCapability(t *testing.T) {
 	base, err := New(t.TempDir())
@@ -195,6 +199,19 @@ func TestCallerStoresPreserveOptionalLifecycleCapability(t *testing.T) {
 		}
 		if _, ok := store.(tool.MemoryConvergenceStore); !ok {
 			t.Errorf("%s wrapper dropped MemoryConvergenceStore", name)
+		}
+		if _, ok := store.(duplicateRetirementStore); !ok {
+			t.Errorf("%s wrapper dropped atomic duplicate retirement", name)
+		}
+	}
+
+	convergenceOnly := convergenceOnlyMemoryStore{MemoryStore: base, MemoryConvergenceStore: base}
+	for name, store := range map[string]tool.MemoryStore{
+		"namespace": NewNamespacedStore(convergenceOnly, "test"),
+		"caller":    NewCallerStore(convergenceOnly, false),
+	} {
+		if _, ok := store.(duplicateRetirementStore); ok {
+			t.Errorf("%s wrapper advertised unsupported atomic duplicate retirement", name)
 		}
 	}
 

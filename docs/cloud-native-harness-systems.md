@@ -242,15 +242,13 @@ core logic, not wiring. Both confirmed still open against current `main`:
 - **`governance.IsolationApprovable` is worktree-only** (§2 above) — it needs to
   become isolation-kind-aware before a non-git forker can carry the same
   auto-approve posture safely.
-- **`tool.MemoryStore` has no transactional `Update(ctx, fn)` affordance.** The
-  current `internal/adapter/memory` store uses a single-host BSD `flock` guarding a
-  whole-document read-modify-write, which is a dead end for any distributed backend
-  regardless of lock granularity — but the concrete latent bug is TOCTOU: the
-  background "dream" consolidation's `List → decide → Forget/Remember` sequence has
-  a time-of-check-to-time-of-use window today, and only a transactional interface
-  affordance (not just a new backend) fixes it. The port has deliberately grown no
-  method without a consumer so far, which is why this is still unbuilt rather than
-  an oversight.
+- **Dream duplicate retirement is atomic only on the local memory adapter.** The
+  local `internal/adapter/memory` store uses a single-host BSD `flock` and now compares
+  both bound survivor/source versions and tombstones the source in one whole-document
+  transaction. That intentionally remains an internal structural capability: no public
+  engine API or remote driver operation was added. Distributed/convergence-only stores
+  therefore skip automatic dream application until an equivalent backend transaction
+  can be designed without widening the port prematurely.
 
 ## Everything else is a narrow port already
 

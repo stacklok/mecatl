@@ -3627,9 +3627,16 @@ that linkage without a second write. Undo requires that linked resulting revisio
 otherwise the proposal conflicts and newer memory is untouched. Procedures remain
 `deferred_unsupported`; exact duplicates do not write; user-explicit, newer, and ambiguous facts are
 never automatically overwritten. Heterogeneous batches can partially promote explicitly because no
-cross-store transaction is claimed. Dream consolidation uses lifecycle CAS when available and retains
-the legacy path only for base-only stores. This chunk deliberately does not wire reflection output into
-the repository automatically and adds no server/TUI surface.
+cross-store transaction is claimed. Dream consolidation has a separate, two-phase safety boundary:
+`internal/adapter/dream/dream.go` (`GeneratePlan`, `ApplyPlan`) plans existing-key
+survivor/superseded relationships without replacement content, then applies only exact byte-identical
+active duplicates through the local adapter's internal atomic duplicate-retirement operation. That
+operation compares both bound versions and tombstones the source in one exclusive load/mutate/save
+transaction. A source retirement appends lifecycle history; the survivor is never rewritten. Base stores,
+convergence-only remote stores without that operation, and non-identical proposals are skipped
+pending future inspectable manual review; there is no manual `/dream` surface or recall-usage telemetry.
+Each source is independently atomic, reports continue after conflict/failure, and a consolidator's
+process-local cursor/gate do not coordinate replicas or survive restart.
 
 **Standard coordinator and staged wiring (#509 Chunk C):** `internal/app/reflection_coordinator.go`
 owns one dormant Build-lifetime coordinator in every mode, never one goroutine per completion. Workers start only after first admission, so Off starts none until explicit reflection. Its global and per-principal

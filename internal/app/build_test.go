@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -372,6 +375,25 @@ func (d *kvDiag) Log(_ context.Context, _ port.Level, msg string, args ...any) {
 }
 
 func (d *kvDiag) With(...any) port.Diagnostics { return d }
+
+func TestConsolidationDiagnosticsContainCountsOnly(t *testing.T) {
+	const privateMemory = "never-log-this-memory-content"
+	diag := &kvDiag{}
+	logConsolidationReport(context.Background(), diag, "memory consolidation", dream.Report{
+		Planned: 5, Applied: 1, Conflicted: 1, Skipped: 1, Failed: 2,
+	}, errors.New(privateMemory))
+
+	if len(diag.msgs) != 1 || diag.msgs[0] != "memory consolidation completed with failures" {
+		t.Fatalf("messages = %v", diag.msgs)
+	}
+	want := []any{"planned", 5, "applied", 1, "conflicted", 1, "skipped", 1, "failed", 2}
+	if !reflect.DeepEqual(diag.args[0], want) {
+		t.Fatalf("diagnostic args = %v, want %v", diag.args[0], want)
+	}
+	if strings.Contains(fmt.Sprint(diag.msgs, diag.args), privateMemory) {
+		t.Fatal("diagnostics leaked memory/provider content")
+	}
+}
 
 // TestValidateDefaultModelFactArms pins the two HONEST arms of the build-once
 // fact: (a) provider-only config logs the ACTIVE fact with the EFFECTIVE

@@ -141,9 +141,12 @@ user-model store; in off mode that directory/flock is not created until the firs
 
 Consolidation is a separate maintenance authorization, not a learning mode:
 `--user-model-consolidate-interval > 0` starts the process-wide, cross-project user-model
-dream consolidator when its store and provider are available. An effective project
-`learning.mode: off` cannot suppress that explicit operator schedule. Conversely, dream
-intervals and SkillDraft do not raise `learning.mode` or enable completed-trajectory review.
+consolidator when its store and provider are available. Its planner can only propose existing-key
+survivor/superseded relationships; automatic application retires only byte-identical active duplicates
+through lifecycle CAS, and skips base-only or non-identical proposals. An effective project
+`learning.mode: off` cannot suppress that explicit operator schedule. Conversely, consolidation
+intervals and SkillDraft do not raise `learning.mode` or enable completed-trajectory review. Manual,
+inspectable consolidation review remains future work.
 
 The legacy `--user-model-review` flag maps to `auto` for one compatibility window and
 conflicts with an explicit non-auto `learning.mode`. Changes are build-time settings and

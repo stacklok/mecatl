@@ -5037,13 +5037,28 @@ func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.Memory
 	cons := dream.New(store, provider, dream.Config{Model: cfg.Model})
 	cfg.diag().Log(ctx, port.LevelInfo, "memory consolidation ENABLED (dream)", "interval", cfg.MemoryConsolidateInterval, "model", cfg.Model)
 	go func() {
-		err := cons.RunPeriodically(ctx, cfg.MemoryConsolidateInterval, func(err error) {
-			cfg.diag().Log(ctx, port.LevelWarn, "memory consolidation", "err", err)
+		err := cons.RunPeriodicallyWithReport(ctx, cfg.MemoryConsolidateInterval, func(report dream.Report, err error) {
+			logConsolidationReport(ctx, cfg.diag(), "memory consolidation", report, err)
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
 			cfg.diag().Log(ctx, port.LevelWarn, "memory consolidation loop stopped", "err", err)
 		}
 	}()
+}
+
+func logConsolidationReport(ctx context.Context, diag port.Diagnostics, name string, report dream.Report, err error) {
+	level := port.LevelInfo
+	message := name + " completed"
+	if err != nil {
+		level = port.LevelWarn
+		message = name + " completed with failures"
+	}
+	diag.Log(ctx, level, message,
+		"planned", report.Planned,
+		"applied", report.Applied,
+		"conflicted", report.Conflicted,
+		"skipped", report.Skipped,
+		"failed", report.Failed)
 }
 
 // startUserModelConsolidation launches a SEPARATE process-wide dream consolidator
@@ -5067,8 +5082,8 @@ func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.Mem
 	cfg.diag().Log(ctx, port.LevelInfo, "user-model consolidation ENABLED (dream; user/ namespace)",
 		"interval", cfg.UserModelConsolidateInterval, "model", cfg.Model)
 	go func() {
-		err := cons.RunPeriodically(ctx, cfg.UserModelConsolidateInterval, func(err error) {
-			cfg.diag().Log(ctx, port.LevelWarn, "user-model consolidation", "err", err)
+		err := cons.RunPeriodicallyWithReport(ctx, cfg.UserModelConsolidateInterval, func(report dream.Report, err error) {
+			logConsolidationReport(ctx, cfg.diag(), "user-model consolidation", report, err)
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
 			cfg.diag().Log(ctx, port.LevelWarn, "user-model consolidation loop stopped", "err", err)

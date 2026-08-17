@@ -11,14 +11,36 @@
 `tool.MemoryStore` (`RememberEntry`/`Recall`/`List`/`Forget`/`Index`/`Search`) is
 the seam for conservative, **per-project** memory (every implementation must pass
 the shared `engine/adapter/memconformance` conformance suite). The file-backed
-`internal/adapter/memory` implementation persists entries scoped to a project
-directory and exposes them to the model as the **Remember**, **Recall**, and
-**SearchMemory** tools
-(opt-in via `memory.Register`, `--memory-dir`). On top of it, `internal/adapter/dream` is an opt-in background
-**consolidation** ("sleep") service: `dream.Consolidator` distills the stored
-memory with an LLM call — merging duplicates and dropping stale entries — but is
-deliberately conservative (it never invents keys and is fail-safe on error), run
-once or on a ticker via `RunPeriodically` (`--memory-consolidate-interval`).
+`internal/adapter/memory` persists entries scoped to a project directory and exposes them to
+the model as the **Remember**, **Recall**, and **SearchMemory** tools (opt-in via
+`memory.Register`, `--memory-dir`). `internal/adapter/dream` is an opt-in background
+consolidator. It separates `GeneratePlan` (inspection and a model proposal) from
+`ApplyPlan` (the mutation boundary); `Consolidate` remains the compatible one-call
+orchestrator. The planner may return only existing-key survivor/superseded
+relationships in one bare JSON object. It cannot supply replacement text or a
+standalone deletion.
+
+Candidate selection sorts keys and rotates a process-local cursor, bounded by entry
+count and aggregate input bytes; selected values are sent whole, never truncated.
+For a stable finite set in one continuously running consolidator, this gives every
+fitting entry a turn. Insertions, removals, oversized entries, and restart can change
+that order; the cursor resets on restart. Planning binds inspected lifecycle versions
+where the store supports them.
+
+Application requires the internal atomic duplicate-retirement capability implemented
+by the local file-backed store. For each source it compares both the survivor and
+source versions and tombstones the source in one locked load/mutate/save transaction.
+The source is eligible only when its active value and description are byte-identical
+to the survivor; retirement remains in lifecycle history and the survivor is never
+rewritten. Base stores, convergence-only remote stores without this atomic operation,
+and non-identical proposals are skipped pending inspectable manual review, which is
+future work. Each source retirement is atomic, but a plan is not a
+batch transaction: independent sources continue after conflicts or failures, and the
+report counts planned, applied, conflicted, skipped, and failed operations. One
+consolidator serializes its own plan/apply calls only; it is not a multi-replica claim
+mechanism. Run it once or on a ticker via `RunPeriodically` (`--memory-consolidate-interval`).
+Periodic diagnostics contain counts only. Intervals remain off by default, and
+ownership enforcement still disables dreaming.
 
 **User model and live operator profile.** A SECOND `memory.Store` — user-scoped and
 **cross-project** (`<xdg>/mecatl/usermodel`, distinct from the per-project store) —
@@ -63,8 +85,13 @@ through the same repository before conservatively promoting eligible non-conflic
 facts with source-session attribution. Explicit reflection remains available in Off via
 a lazy path. Project candidates are staged only for the exact admitted configured root.
 Proposal detail re-checks source ownership and evidence digests and exposes only a bounded,
-redacted canonical preview before approval. Consolidation is independently operator-scheduled and deliberately uses only the six base-store operations,
-so local and old remote stores execute the same coherent plan.
+redacted canonical preview before approval. Consolidation is independently operator-scheduled:
+its planner may propose only existing-key survivor/superseded relationships, while automatic
+application requires the local adapter's internal atomic duplicate-retirement operation, exact
+duplicate active content, and matching bound survivor/source versions in one transaction. It retires
+sources into lifecycle history without rewriting survivors; base stores, convergence-only remote stores
+without that operation, and
+non-identical proposals are skipped pending future inspectable manual review.
 
 Every final model/wire/TUI projection first uses the shared
 `tool.CanonicalMemoryText` representation: it repairs invalid UTF-8 and strips the exact

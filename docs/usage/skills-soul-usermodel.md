@@ -266,8 +266,9 @@ It surfaces three ways:
   (`0`/`1` inert; hard triggers bypass). Reflection never reopens
   or re-runs the user's session.
 - **Scheduled consolidation:** `--user-model-consolidate-interval > 0` independently
-  authorizes a process-wide `dream` consolidator over the cross-project `user/` namespace.
-  It runs when the user-model store and provider are available regardless of effective
+  authorizes a process-wide consolidator over the cross-project `user/` namespace. It only retires
+  byte-identical active duplicates through lifecycle CAS; base-only and non-identical proposals are
+  skipped. It runs when the user-model store and provider are available regardless of effective
   workspace `learning.mode`; a project `off` ceiling cannot suppress this operator schedule.
 
 **Rules vs facts — the operator boundary.** The user model holds **FACTS about the

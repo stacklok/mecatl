@@ -523,6 +523,38 @@ func (s *Store) ForgetVersioned(ctx context.Context, key string, expected tool.M
 	return out, err
 }
 
+// RetireDuplicate atomically verifies the active survivor and source revisions and
+// appends a source tombstone in one exclusive load/mutate/save transaction.
+func (s *Store) RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error) {
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var out tool.MemoryRecord
+	err := s.withExclusiveLock(lctx, func(data *persisted) error {
+		if survivorKey == sourceKey {
+			return fmt.Errorf("memory: duplicate survivor and source key %q", survivorKey)
+		}
+		if err := data.compare(survivorKey, survivorVersion); err != nil {
+			return err
+		}
+		if _, ok := data.Entries[survivorKey]; !ok {
+			return fmt.Errorf("memory: %q: %w", survivorKey, tool.ErrMemoryNotFound)
+		}
+		if err := data.compare(sourceKey, sourceVersion); err != nil {
+			return err
+		}
+		if _, ok := data.Entries[sourceKey]; !ok {
+			return fmt.Errorf("memory: %q: %w", sourceKey, tool.ErrMemoryNotFound)
+		}
+		data.materializeLegacy(sourceKey)
+		if err := data.appendDeleted(ctx, sourceKey, tool.MemoryOriginConsolidation, ""); err != nil {
+			return err
+		}
+		out = data.snapshot(sourceKey)
+		return nil
+	})
+	return out, err
+}
+
 // UndoLatest appends a compensating revision for the newest mutation not already
 // compensated. Recording the target version makes repeated undo walk backward
 // and prevents concurrent callers from reversing one mutation twice.

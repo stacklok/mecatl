@@ -70,6 +70,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0106 — Optional completion-learning seam](./0106-optional-learning-seam.md)
 - [0107 — Operator-profile memory lifecycle](./0107-operator-profile-memory-lifecycle.md)
 - [0109 — Evidence-backed reflection and durable staged learning](./0109-staged-learning-proposals.md)
+- [0226 — Dream consolidation safety boundary](./0226-dream-consolidation-safety-boundary.md)
 - [0110 — Evaluated, versioned agent-owned skills](./0110-evaluated-agent-owned-skills.md) *(superseded by 0111)*
 - [0111 — Hardened publication and recovery for agent-owned skills](./0111-hardened-agent-owned-skill-publication.md)
 

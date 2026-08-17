@@ -37,9 +37,22 @@ Each entry has a key, a value, and an optional one-line description. The descrip
 
 ### Dream consolidation
 
-Consolidation is an optional background pass that distills stored memory — merging near-duplicates, dropping stale entries, and tightening descriptions. It runs as a background LLM call on a configurable interval via `--memory-consolidate-interval`. It is **off by default** on both `mecated` and the embedded TUI server to avoid silent token spend.
+Consolidation is an optional background maintenance pass. A model can only propose that
+one existing key survives another existing key; it cannot write replacement text or
+request a standalone deletion. Automatic application is narrower still: it requires the local file-backed store's
+atomic duplicate-retirement operation, which compares the bound survivor and source
+versions and tombstones the source in one transaction. It retires only a source whose
+active value and description exactly match the survivor. The survivor is never rewritten,
+and retirement remains in history. Base stores, convergence-only remote stores without
+that operation, and non-identical proposals are skipped.
 
-Memory works correctly without consolidation. Consolidation is an optimization for stores that have accumulated many entries over many sessions.
+It runs on a configurable interval via `--memory-consolidate-interval` and is **off by
+default** on both `mecated` and the embedded TUI server to avoid silent token spend.
+Operations are independently atomic rather than a batch transaction; periodic logs
+report counts only. A manual, inspectable review workflow is future work.
+
+Memory works correctly without consolidation. It is an optional cleanup mechanism for
+stores that have accumulated exact duplicate entries over many sessions.
 
 ### Memory and lifecycle tools
 
@@ -156,9 +169,11 @@ The explicit memory and SkillDraft tools are independent and remain available wh
 completed-trajectory learning is off. Dream intervals also do not enable that learning.
 
 A separate `--user-model-consolidate-interval > 0` independently authorizes a process-wide
-dream consolidator scoped to the cross-project `user/` namespace. It runs when the
-user-model store and provider are available regardless of effective workspace
-`learning.mode`; a project `off` setting cannot suppress this operator schedule.
+consolidator scoped to the cross-project `user/` namespace. It follows the same
+exact-duplicate lifecycle-retirement rule; base-only and non-identical proposals are
+skipped. It runs when the user-model store and provider are available regardless of
+effective workspace `learning.mode`; a project `off` setting cannot suppress this
+operator schedule. Manual, inspectable consolidation review is future work.
 
 **Disable the user model entirely** with `--no-user-model`.
 
