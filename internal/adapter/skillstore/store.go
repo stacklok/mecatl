@@ -64,14 +64,53 @@ func New(dir string) (*Store, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("skillstore: directory required")
 	}
-	abs, err := filepath.Abs(dir)
+	abs, err := canonicalStoreDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	if err := rejectPathSymlinks(abs); err != nil {
-		return nil, err
-	}
 	return &Store{dir: abs, path: filepath.Join(abs, manifestName), lock: flock.New(filepath.Join(abs, lockName)), now: time.Now}, nil
+}
+
+// canonicalStoreDir rejects a symlink used as the configured repository root,
+// but canonicalizes symlinked ancestors such as macOS's /var -> /private/var.
+// The stored physical path lets the later layout checks protect the repository
+// itself without rejecting an otherwise ordinary directory beneath /var.
+func canonicalStoreDir(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(abs)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("skillstore: symlink repository root rejected: %s", abs)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+
+	var missing []string
+	ancestor := abs
+	for {
+		if _, err := os.Lstat(ancestor); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", fmt.Errorf("skillstore: no existing ancestor for %s", abs)
+		}
+		missing = append(missing, filepath.Base(ancestor))
+		ancestor = parent
+	}
+	physical, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", err
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		physical = filepath.Join(physical, missing[i])
+	}
+	return physical, nil
 }
 
 func rejectPathSymlinks(path string) error {

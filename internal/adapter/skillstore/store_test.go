@@ -236,6 +236,17 @@ func TestRejectsSymlinksAndPathInputs(t *testing.T) {
 	if _, err := skillstore.New(rootLink); err == nil {
 		t.Fatal("accepted symlink repository root")
 	}
+	ancestorLink := filepath.Join(base, "ancestor-link")
+	if err := os.Symlink(target, ancestorLink); err != nil {
+		t.Fatal(err)
+	}
+	storeUnderLinkedAncestor, err := skillstore.New(filepath.Join(ancestorLink, "skills"))
+	if err != nil {
+		t.Fatalf("rejected symlinked ancestor: %v", err)
+	}
+	if _, err := storeUnderLinkedAncestor.CreateDraft(context.Background(), partition(), "agent-a", bundle("under-ancestor", "Safe body."), provenance("ancestor")); err != nil {
+		t.Fatalf("create under symlinked ancestor: %v", err)
+	}
 
 	root := filepath.Join(base, "skills")
 	store, _ := skillstore.New(root)
