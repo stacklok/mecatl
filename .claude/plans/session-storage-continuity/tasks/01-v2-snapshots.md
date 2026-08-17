@@ -2,9 +2,9 @@
 id: 01-v2-snapshots
 title: Versioned atomic current snapshots
 blocked_by: []
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/01-v2-snapshots"
+worktree: ".scratch/plan-session-storage-continuity-01-v2-snapshots"
 issue: "586"
 retries: 0
 last_error: ""

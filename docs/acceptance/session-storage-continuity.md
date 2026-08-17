@@ -1,7 +1,7 @@
 # Session storage continuity — acceptance plan
 
 **Phase:** Large historical stores, migration, cleanup, and writable legacy continuity.
-**Status:** draft, 2026-08-17. Synthesized from live 12 GiB/807-session and 3 GiB/157-session failures plus the storage/performance/UX/operations review panel.
+**Status:** in-progress, 2026-08-17. Wave 1 dispatched after architecture and security adversarial review.
 **Issue:** [stacklok/mecatl#583](https://github.com/stacklok/mecatl/issues/583), with sub-issues [#586](https://github.com/stacklok/mecatl/issues/586)–[#596](https://github.com/stacklok/mecatl/issues/596).
 **ADR:** [ADR-0225](../adr/0225-session-storage-maintenance.md) — bounded current snapshots, indexed metadata, distinct maintenance jobs, and explicit legacy adoption.
 **Accumulator branch:** `acc/session-storage-continuity` (off `main`).
