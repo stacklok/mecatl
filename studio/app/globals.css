@@ -489,3 +489,21 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @media (max-width: 620px) {
   .panel-page { padding: 24px 16px 48px; }
 }
+
+/* Panel-page overrides. These rules were tuned for a ~440px dialog; on the
+   page column the same values read as under-scaled and oddly centred. */
+.panel-page .skills-empty,
+.settings-section-body .skills-empty { padding: 22px 18px; text-align: left; }
+.panel-page .skills-empty strong,
+.settings-section-body .skills-empty strong { font-size: 0.8125rem; }
+.panel-page .skills-empty p,
+.settings-section-body .skills-empty p { font-size: 0.75rem; }
+.panel-page .key-safety p,
+.settings-section-body .key-safety p { font-size: 0.6875rem; }
+.panel-page .transport-note,
+.settings-section-body .transport-note { font-size: 0.6875rem; }
+.panel-page .input-hint,
+.settings-section-body .input-hint { font-size: 0.6875rem; }
+.panel-page .skills-list small,
+.panel-page .schedule-prompt { font-size: 0.6875rem; }
+.panel-page .skills-list strong { font-size: 0.8125rem; }
