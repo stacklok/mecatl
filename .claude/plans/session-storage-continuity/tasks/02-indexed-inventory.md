@@ -2,9 +2,9 @@
 id: 02-indexed-inventory
 title: Rebuildable session metadata catalog
 blocked_by: [01-v2-snapshots, 01b-v2-durability, 01c-v2-temp-locking]
-status: in-progress
+status: done
 branch: "plan-session-storage-continuity/02-indexed-inventory"
-worktree: ".scratch/plan-session-storage-continuity-02-indexed-inventory"
+worktree: ""
 issue: "587"
 retries: 0
 last_error: ""
