@@ -159,17 +159,12 @@ func snapshotIDFromLine(line []byte) (session.SessionID, error) {
 // readSnapshotLine returns nil, nil only when path does not exist. A present
 // empty or unreadable file is an infrastructure error and never triggers fallback.
 func readSnapshotLine(path string) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // resolver-derived path
+	last, err := readLastLine(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("jsonlstore: open session file: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-	last, err := scanLastNonBlankLine(f)
-	if err != nil {
-		return nil, fmt.Errorf("jsonlstore: scan session file: %w", err)
+		return nil, fmt.Errorf("jsonlstore: read session file tail: %w", err)
 	}
 	if last == nil {
 		return nil, fmt.Errorf("jsonlstore: empty session file: %s", path)
@@ -199,8 +194,8 @@ func readSnapshotLine(path string) ([]byte, error) {
 //     injective. Ownership is disproven, so fail closed everywhere including
 //     Delete, which must not destroy another session's data.
 //
-// The read is a TAIL read (readLastLine's window), never a full scan: this runs
-// on every Save, Append and ToolCall, and a snapshot file grows as
+// The read is a reverse TAIL read bounded by the latest record, never a full
+// scan: this runs on every Save, Append and ToolCall, and a snapshot file grows as
 // turns x conversation size, so a full scan per appended event was quadratic in
 // run length while holding Store.mu.
 func (r sessionResolver) canonicalOwnership(id session.SessionID) (bool, error) {

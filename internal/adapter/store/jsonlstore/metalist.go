@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -158,12 +159,10 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 	return port.PaginateSessionMetadata(rows, request), nil
 }
 
-// readLastLine returns the last complete line of the file at path. It seeks
-// near the end (last lastLineSeekWindow bytes) and scans backward for the final
-// newline, so a multi-megabyte append-only session file is NOT read in full —
-// only its tail. A file smaller than the window is read whole. A line longer
-// than the window (a single snapshot larger than 64 KiB) falls back to a full
-// forward scan so it is never silently truncated.
+// readLastLine returns the last non-blank record without reading older history.
+// It grows an EOF window geometrically until it finds the delimiter immediately
+// before that record, so bytes read and allocated are bounded by a small constant
+// factor of the latest record rather than by the append-only file's total size.
 func readLastLine(path string) ([]byte, error) {
 	f, err := os.Open(path) //nolint:gosec // path is derived from the store dir listing
 	if err != nil {
@@ -175,48 +174,67 @@ func readLastLine(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	size := st.Size()
-	if size <= int64(lastLineSeekWindow) {
-		// Small file: read whole, then find the last non-blank line.
-		return readLastLineFull(f)
-	}
-
-	// Seek to (size - window) and read the tail. We back up one extra byte when
-	// possible so a newline exactly at the seek boundary doesn't hide the line
-	// before it (the line is the one AFTER a newline).
-	seek := size - int64(lastLineSeekWindow)
-	if seek > 0 {
-		seek-- // include a possible boundary newline
-	}
-	if _, err := f.Seek(seek, 0); err != nil {
-		return nil, err
-	}
-	tail, err := io.ReadAll(f)
-	if err != nil {
-		return nil, err
-	}
-	// Find the last complete line: drop a trailing newline, then cut at the last
-	// newline. The bytes before the last newline are earlier (complete) lines;
-	// the bytes after it (to the trimmed end) are the final line.
-	tail = bytes.TrimRight(tail, "\r\n")
-	if i := bytes.LastIndexByte(tail, '\n'); i >= 0 {
-		return tail[i+1:], nil
-	}
-	// The window contains a single (very long) line — longer than the seek
-	// window. Fall back to a full forward scan so it is read in full, never
-	// truncated. The cursor is at EOF after the tail ReadAll, so re-seek to 0
-	// (readLastLineFull does the same — scanLastNonBlankLine reads from the
-	// current position).
-	return readLastLineFull(f)
+	return readLastLineAt(f, st.Size())
 }
 
-// readLastLineFull scans the whole file forward, keeping the last non-blank
-// line. It is the fallback for a small file or a single line longer than the
-// seek window. Delegates to the shared scanLastNonBlankLine so the scan
-// discipline stays in ONE place (Load/decodeSessionID/MetaList all share it).
-func readLastLineFull(f *os.File) ([]byte, error) {
-	if _, err := f.Seek(0, 0); err != nil {
-		return nil, err
+func readLastLineAt(r io.ReaderAt, size int64) ([]byte, error) {
+	if size == 0 {
+		return nil, nil
 	}
-	return scanLastNonBlankLine(f)
+	window := int64(lastLineSeekWindow)
+	// Leave room for the delimiter before a maximum-sized record plus ordinary
+	// trailing blank lines. The record itself remains capped below.
+	maxWindow := int64(maxScannerTokenSize + lastLineSeekWindow)
+	if window > size {
+		window = size
+	}
+	for {
+		start := size - window
+		tail := make([]byte, window)
+		if _, err := r.ReadAt(tail, start); err != nil {
+			return nil, err
+		}
+		if line, complete, err := lastNonBlankRecord(tail, start == 0); complete || err != nil {
+			return line, err
+		}
+		if window >= maxWindow || window >= size {
+			return nil, fmt.Errorf("jsonlstore: latest record exceeds %d bytes", maxScannerTokenSize)
+		}
+		window *= 2
+		if window > maxWindow {
+			window = maxWindow
+		}
+		if window > size {
+			window = size
+		}
+	}
+}
+
+// lastNonBlankRecord searches one EOF window from newest to oldest. The first
+// segment is usable only when its leading boundary is known (a newline in this
+// window, or the beginning of the file); otherwise the caller must grow the
+// window because that segment may be a truncated suffix of a larger record.
+func lastNonBlankRecord(tail []byte, startsAtFileBeginning bool) ([]byte, bool, error) {
+	end := len(tail)
+	for {
+		newline := bytes.LastIndexByte(tail[:end], '\n')
+		start := newline + 1
+		candidate := bytes.TrimSuffix(tail[start:end], []byte{'\r'})
+		if len(bytes.TrimSpace(candidate)) > 0 {
+			if newline < 0 && !startsAtFileBeginning {
+				return nil, false, nil
+			}
+			if len(candidate) > maxScannerTokenSize {
+				return nil, true, fmt.Errorf("jsonlstore: latest record exceeds %d bytes", maxScannerTokenSize)
+			}
+			return append([]byte(nil), candidate...), true, nil
+		}
+		if newline < 0 {
+			if startsAtFileBeginning {
+				return nil, true, nil
+			}
+			return nil, false, nil
+		}
+		end = newline
+	}
 }

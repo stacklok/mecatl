@@ -122,30 +122,14 @@ func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session
 	return sessnap.Unmarshal(line)
 }
 
-// scanLastNonBlankLine returns the last non-blank line of f. Load and the
-// listing fallback share this latest-snapshot discipline. The caller owns the
-// returned slice (a fresh copy; the scanner's buffer is reused internally).
-func scanLastNonBlankLine(f *os.File) ([]byte, error) {
-	var last []byte
-	sc := newScanner(f)
-	for sc.Scan() {
-		b := sc.Bytes()
-		if len(strings.TrimSpace(string(b))) == 0 {
-			continue
-		}
-		last = append(last[:0], b...) // copy: scanner reuses its buffer
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	return last, nil
-}
+// maxScannerTokenSize is also the reverse reader's latest-record ceiling.
+const maxScannerTokenSize = 16 * 1024 * 1024
 
 // newScanner builds a bufio.Scanner over f with the generous buffer a snapshot
-// line can need (a snapshot carrying a large conversation can be multi-MB).
+// or event-log line can need.
 func newScanner(f *os.File) *bufio.Scanner {
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), maxScannerTokenSize)
 	return sc
 }
 
@@ -187,12 +171,10 @@ type eventLogRecord struct {
 // COST: ids are decoded from each session file's latest snapshot line rather
 // than from filenames (a filename is not invertible back to the id, and now
 // there are two directories — canonical and legacy — to reconcile), so List
-// costs one directory read per dir plus one TAIL read per snapshot file
-// (readLastLine's lastLineSeekWindow, NOT a full scan; the ownership check
-// compares the already-read line and issues no extra syscall). A single
-// snapshot line larger than that window degrades to a full scan of that one
-// file. Fine for a retention sweep on a startup/hourly cadence, NOT a hot
-// path.
+// costs one directory read per dir plus one reverse TAIL read per snapshot
+// file. The reader grows its EOF window only to the latest record, never scanning
+// older snapshot history. Fine for a retention sweep on a startup/hourly cadence;
+// indexed inventory is a separate concern.
 //
 // List enumerates ONLY *.session.jsonl files, which is what makes the
 // sidecars-before-snapshot removal order load-bearing (see familyOrder in
