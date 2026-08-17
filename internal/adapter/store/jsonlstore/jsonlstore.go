@@ -334,7 +334,7 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 			return fmt.Errorf("jsonlstore: resolve snapshot modification time: %w", err)
 		}
 		data, err := json.Marshal(currentSnapshot{
-			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Snapshot: payload,
+			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Metadata: metaSnapshotFromSession(s), Snapshot: payload,
 		})
 		if err != nil {
 			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)

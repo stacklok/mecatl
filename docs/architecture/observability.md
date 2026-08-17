@@ -98,8 +98,16 @@
   `<dir>/sid-v1/<versioned-token>.session.json`, with readable historical v1
   `.session.jsonl` snapshots plus unchanged append-only `.tools.jsonl` and
   `.events.jsonl` sidecars), and `grpcdriver.SessionStore` (a **remote store
-  driver** — see below). The v2 envelope contains the complete `sessnap` payload
-  and logical modification time. A successful save lazily promotes only that
+  driver** — see below). The v2 envelope contains bounded inventory metadata ahead
+  of the complete `sessnap` payload plus logical modification time. Jsonlstore also
+  maintains an adapter-private, atomically replaced metadata catalog containing only
+  the session-discovery projection—never messages, tool arguments, or event content.
+  Ready-state inventory validates snapshot-directory entry metadata and reads that
+  catalog without opening snapshots. Missing, corrupt, or stale catalogs rebuild from
+  v2 metadata headers or bounded v1 tail projections; a fresh directory fingerprint
+  before and after rebuild detects concurrent and other-`Store` family changes instead
+  of trusting process-local state. The catalog is derivative: snapshots remain the
+  sole transcript authority, and `port.SessionStore` is unchanged. A successful save lazily promotes only that
   session; the verified v2 snapshot is authoritative while a v1 file coexists,
   and first promotion preserves the v1 file's logical modification time and all
   sidecar bytes. Snapshot replacement holds a stable per-family owner-only flock

@@ -112,9 +112,54 @@ func (st *Store) MetaList(ctx context.Context) ([]port.SessionMeta, error) {
 	return out, nil
 }
 
-func (st *Store) discoveryMetaList(_ context.Context) ([]port.SessionDiscoveryMeta, error) {
+func metaSnapshotFromSession(s *session.Session) metaSnapshot {
+	return metaSnapshot{
+		ID: s.ID, State: s.State, Counters: s.Counters, ModelID: s.ModelID,
+		Title: s.Title, TitleProvenance: s.TitleProvenance, Kind: s.Kind,
+		Relationship: s.Relationship, Workspace: s.Workspace, CreatedAt: s.CreatedAt,
+		Owner: s.Owner,
+	}
+}
+
+func (st *Store) discoveryMetaList(ctx context.Context) ([]port.SessionDiscoveryMeta, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+
+	// A durable catalog is derivative only. Every read first fingerprints the
+	// authoritative snapshot directory entries, so another Store's atomic save,
+	// create, remove, or promotion invalidates it without relying on process memory.
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		fingerprint, err := st.inventoryFingerprint()
+		if err != nil {
+			return nil, err
+		}
+		if rows, ok := st.readInventoryCatalog(fingerprint); ok {
+			return rows, nil
+		}
+
+		rows, err := st.rebuildInventoryRows()
+		if err != nil {
+			return nil, err
+		}
+		after, err := st.inventoryFingerprint()
+		if err != nil {
+			return nil, err
+		}
+		if after != fingerprint {
+			continue // a shared-directory writer changed the source during rebuild
+		}
+		if err := st.writeInventoryCatalog(after, rows); err != nil {
+			return nil, err
+		}
+		return rows, nil
+	}
+	return nil, fmt.Errorf("jsonlstore: inventory changed repeatedly during catalog rebuild")
+}
+
+func (st *Store) rebuildInventoryRows() ([]port.SessionDiscoveryMeta, error) {
 	files, err := st.resolver.snapshotFiles()
 	if err != nil {
 		return nil, err
@@ -123,25 +168,29 @@ func (st *Store) discoveryMetaList(_ context.Context) ([]port.SessionDiscoveryMe
 	for _, file := range files {
 		meta := port.SessionDiscoveryMeta{ID: file.id, ModifiedAt: file.modified}
 		var m metaSnapshot
-		if err := json.Unmarshal(file.last, &m); err == nil && knownStates[m.State] {
+		if file.metadata != nil {
+			m = *file.metadata
+		} else if err := json.Unmarshal(file.last, &m); err != nil {
+			out = append(out, meta)
+			continue
+		}
+		if knownStates[m.State] {
 			kind := m.Kind
 			if kind == "" {
 				kind = session.SessionKindUnknown
 			}
-			if session.ValidateSessionMetadata(kind, m.Relationship) != nil {
-				out = append(out, meta)
-				continue
+			if session.ValidateSessionMetadata(kind, m.Relationship) == nil {
+				meta.State = m.State
+				meta.Turns = m.Counters.Turns
+				meta.ModelID = m.ModelID
+				meta.Title = m.Title
+				meta.TitleProvenance = m.TitleProvenance
+				meta.Workspace = m.Workspace
+				meta.Kind = kind
+				meta.Relationship = m.Relationship
+				meta.Owner = m.Owner
+				meta.CreatedAt = m.CreatedAt
 			}
-			meta.State = m.State
-			meta.Turns = m.Counters.Turns
-			meta.ModelID = m.ModelID
-			meta.Title = m.Title
-			meta.TitleProvenance = m.TitleProvenance
-			meta.Workspace = m.Workspace
-			meta.Kind = kind
-			meta.Relationship = m.Relationship
-			meta.Owner = m.Owner
-			meta.CreatedAt = m.CreatedAt
 		}
 		out = append(out, meta)
 	}

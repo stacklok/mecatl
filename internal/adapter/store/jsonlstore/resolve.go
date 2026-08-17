@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -149,6 +150,7 @@ func (r sessionResolver) currentSnapshotPath(id session.SessionID) string {
 type currentSnapshot struct {
 	Format     string          `json:"v"`
 	ModifiedAt time.Time       `json:"modified_at"`
+	Metadata   metaSnapshot    `json:"metadata,omitzero"`
 	Snapshot   json.RawMessage `json:"snapshot"`
 }
 
@@ -167,6 +169,61 @@ func decodeCurrentSnapshot(data []byte) (currentSnapshot, error) {
 		return currentSnapshot{}, fmt.Errorf("jsonlstore: current snapshot carries no payload")
 	}
 	return current, nil
+}
+
+// readCurrentSnapshotHeader reads the bounded metadata prefix written before the
+// snapshot payload. The boolean pair is (file present, header present). Older v2
+// envelopes have no metadata field and deliberately fall back to the compatibility
+// reader; current envelopes return before the decoder reaches conversation bytes.
+func readCurrentSnapshotHeader(path string) (currentSnapshot, bool, bool, error) {
+	f, err := os.Open(path) //nolint:gosec // adapter-confined path
+	if err != nil {
+		if os.IsNotExist(err) {
+			return currentSnapshot{}, false, false, nil
+		}
+		return currentSnapshot{}, false, false, err
+	}
+	defer func() { _ = f.Close() }()
+
+	decoder := json.NewDecoder(io.LimitReader(f, maxScannerTokenSize))
+	token, err := decoder.Token()
+	if err != nil {
+		return currentSnapshot{}, true, false, err
+	}
+	if token != json.Delim('{') {
+		return currentSnapshot{}, true, false, fmt.Errorf("jsonlstore: invalid current snapshot header")
+	}
+	var header currentSnapshot
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return currentSnapshot{}, true, false, err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return currentSnapshot{}, true, false, fmt.Errorf("jsonlstore: invalid current snapshot header")
+		}
+		switch key {
+		case "v":
+			err = decoder.Decode(&header.Format)
+		case "modified_at":
+			err = decoder.Decode(&header.ModifiedAt)
+		case "metadata":
+			err = decoder.Decode(&header.Metadata)
+			if err == nil && header.Format == currentSnapshotFormat && !header.ModifiedAt.IsZero() && header.Metadata.ID != "" {
+				return header, true, true, nil
+			}
+		case "snapshot":
+			return currentSnapshot{}, true, false, nil
+		default:
+			var ignored json.RawMessage
+			err = decoder.Decode(&ignored)
+		}
+		if err != nil {
+			return currentSnapshot{}, true, false, err
+		}
+	}
+	return currentSnapshot{}, true, false, nil
 }
 
 func readCurrentSnapshot(path string) (currentSnapshot, bool, error) {
@@ -463,6 +520,7 @@ func (r sessionResolver) legacyOwned(id session.SessionID) (bool, error) {
 type snapshotFile struct {
 	id       session.SessionID
 	last     []byte
+	metadata *metaSnapshot
 	modified time.Time
 	priority int // legacy v1 < canonical v1 < current v2
 }
@@ -539,15 +597,38 @@ func scanCurrentSnapshotDir(dir string, byID map[session.SessionID]snapshotFile)
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), currentSnapshotSuffix) {
 			continue
 		}
-		current, present, err := readCurrentSnapshot(filepath.Join(dir, entry.Name()))
+		path := filepath.Join(dir, entry.Name())
+		header, present, hasHeader, err := readCurrentSnapshotHeader(path)
 		if err != nil || !present {
 			continue
 		}
-		id, err := snapshotIDFromLine(current.Snapshot)
+		if hasHeader {
+			id := header.Metadata.ID
+			if strings.TrimSuffix(entry.Name(), currentSnapshotSuffix) != encodeSessionToken(id) {
+				continue
+			}
+			m := header.Metadata
+			byID[id] = snapshotFile{id: id, metadata: &m, modified: header.ModifiedAt, priority: 2}
+			continue
+		}
+
+		current, present, err := readCurrentSnapshot(path)
+		if err != nil || !present {
+			continue
+		}
+		id := current.Metadata.ID
+		if id == "" { // compatibility with v2 snapshots written before inventory headers
+			id, err = snapshotIDFromLine(current.Snapshot)
+		}
 		if err != nil || strings.TrimSuffix(entry.Name(), currentSnapshotSuffix) != encodeSessionToken(id) {
 			continue
 		}
-		byID[id] = snapshotFile{id: id, last: current.Snapshot, modified: current.ModifiedAt, priority: 2}
+		var metadata *metaSnapshot
+		if current.Metadata.ID != "" {
+			m := current.Metadata
+			metadata = &m
+		}
+		byID[id] = snapshotFile{id: id, last: current.Snapshot, metadata: metadata, modified: current.ModifiedAt, priority: 2}
 	}
 	return nil
 }

@@ -5845,6 +5845,22 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   generations, and additionally removes only an ownership-verified legacy family,
   preventing resurrection without deleting a colliding session.
 
+  `internal/adapter/store/jsonlstore/inventory_catalog.go` owns the derivative
+  inventory catalog's physical format and persistence. The catalog contains only
+  `port.SessionDiscoveryMeta` projections and a snapshot-entry fingerprint; it is
+  never transcript authority. A ready `MetaList`/`PageSessionMetadata` call scans
+  only directory-entry metadata before accepting the catalog, so it neither opens
+  snapshots nor decodes conversations. Missing, malformed, semantically invalid, or
+  fingerprint-stale catalogs rebuild from the v2 envelope's top-level `metadata`
+  projection or the existing bounded v1 tail reader. Fingerprinting before and after
+  rebuild rejects a view changed concurrently by another `Store`; every later read
+  revalidates the shared directory rather than trusting an unchecked process-local
+  cache. Older v2 envelopes without the additive header remain readable and are
+  projected once through their bounded current payload during rebuild. Catalog files
+  are owner-only atomic replacements and can always be discarded and reconstructed;
+  public generation-bound cursor behavior and narrower lock decomposition are separate
+  follow-on work.
+
   `Append` writes a per-record format-tagged line
   `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via the shared `mu`/`appendLine`;
   `Read` scans ALL lines cumulatively (NOT latest-line-wins like the snapshot read),
