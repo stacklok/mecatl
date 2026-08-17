@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -270,7 +272,7 @@ func (st *Store) pageSessionMetadataLocked(ctx context.Context, request port.Ses
 		last := rows[len(rows)-1]
 		page.NextCursor = &port.SessionMetadataCursor{
 			ModifiedAt: last.ModifiedAt, ID: last.ID, Generation: catalog.Generation,
-			Scope: scopeKey, Position: nextPosition,
+			Scope: scopeKey, Continuation: encodeInventoryContinuation(nextPosition),
 		}
 	}
 	return page, nil
@@ -301,14 +303,43 @@ func (st *Store) readyInventoryCatalog(ctx context.Context, cursor *port.Session
 	return catalog, nil
 }
 
+const inventoryContinuationPrefix = "jsonl-v1."
+
+func encodeInventoryContinuation(position int64) string {
+	return inventoryContinuationPrefix + base64.RawURLEncoding.EncodeToString(strconv.AppendInt(nil, position, 10))
+}
+
+func decodeInventoryContinuation(token string) (int64, bool) {
+	if len(token) <= len(inventoryContinuationPrefix) || token[:len(inventoryContinuationPrefix)] != inventoryContinuationPrefix {
+		return 0, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token[len(inventoryContinuationPrefix):])
+	if err != nil {
+		return 0, false
+	}
+	position, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil || position < 0 || encodeInventoryContinuation(position) != token {
+		return 0, false
+	}
+	return position, true
+}
+
 func inventoryCursorMatches(cursor *port.SessionMetadataCursor, generation, scope string) bool {
-	return cursor == nil || (cursor.Generation == generation && cursor.Scope == scope && cursor.Position >= 0)
+	if cursor == nil {
+		return true
+	}
+	_, valid := decodeInventoryContinuation(cursor.Continuation)
+	return cursor.Generation == generation && cursor.Scope == scope && valid
 }
 
 func (st *Store) readInventoryScopePage(ctx context.Context, request port.SessionMetadataPageRequest, scope inventoryCatalogScope) ([]port.SessionDiscoveryMeta, int64, bool, error) {
 	position := int64(0)
 	if request.Cursor != nil {
-		position = request.Cursor.Position
+		var valid bool
+		position, valid = decodeInventoryContinuation(request.Cursor.Continuation)
+		if !valid {
+			return nil, 0, false, port.ErrSessionMetadataCursorRestart
+		}
 	}
 	f, err := os.Open(filepath.Join(st.inventoryCatalogDir(), scope.File)) //nolint:gosec // manifest-validated adapter-private path
 	if err != nil {

@@ -5203,7 +5203,7 @@ type inventoryCursor struct {
 	SessionID          string `json:"i"`
 	Generation         string `json:"g"`
 	Scope              string `json:"s"`
-	Position           int64  `json:"p"`
+	Continuation       string `json:"c"`
 }
 
 func encodeInventoryCursor(cursor *port.SessionMetadataCursor) (string, error) {
@@ -5212,7 +5212,7 @@ func encodeInventoryCursor(cursor *port.SessionMetadataCursor) (string, error) {
 	}
 	data, err := json.Marshal(inventoryCursor{
 		ModifiedAtUnixNano: cursor.ModifiedAt.UnixNano(), SessionID: string(cursor.ID),
-		Generation: cursor.Generation, Scope: cursor.Scope, Position: cursor.Position,
+		Generation: cursor.Generation, Scope: cursor.Scope, Continuation: cursor.Continuation,
 	})
 	if err != nil {
 		return "", err
@@ -5229,12 +5229,12 @@ func decodeInventoryCursor(token string) (*port.SessionMetadataCursor, error) {
 		return nil, fmt.Errorf("%w: invalid session inventory cursor", ErrInvalidArgument)
 	}
 	var cursor inventoryCursor
-	if err := json.Unmarshal(data, &cursor); err != nil || cursor.SessionID == "" || cursor.Generation == "" || cursor.Scope == "" || cursor.Position < 0 {
+	if err := json.Unmarshal(data, &cursor); err != nil || cursor.SessionID == "" || cursor.Generation == "" || cursor.Scope == "" || cursor.Continuation == "" {
 		return nil, fmt.Errorf("%w: invalid session inventory cursor", ErrInvalidArgument)
 	}
 	return &port.SessionMetadataCursor{
 		ModifiedAt: time.Unix(0, cursor.ModifiedAtUnixNano), ID: session.SessionID(cursor.SessionID),
-		Generation: cursor.Generation, Scope: cursor.Scope, Position: cursor.Position,
+		Generation: cursor.Generation, Scope: cursor.Scope, Continuation: cursor.Continuation,
 	}, nil
 }
 
@@ -5294,7 +5294,7 @@ func metadataKeyAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadat
 
 func validMetadataCursor(cursor *port.SessionMetadataCursor) bool {
 	return cursor != nil && cursor.ID != "" && utf8.ValidString(string(cursor.ID)) &&
-		cursor.Generation != "" && cursor.Scope != "" && cursor.Position >= 0
+		cursor.Generation != "" && cursor.Scope != "" && cursor.Continuation != ""
 }
 
 func validateSessionMetadataPage(page port.SessionMetadataPage, request port.SessionMetadataPageRequest) error {

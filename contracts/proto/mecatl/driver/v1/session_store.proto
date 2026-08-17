@@ -161,8 +161,9 @@ message SessionMetadataCursor {
   string generation = 3;
   // scope binds continuation to the ownership/filter set used for page one.
   string scope = 4;
-  // position is an adapter-private direct continuation offset.
-  int64 position = 5;
+  // continuation is opaque and interpreted only by the issuing backend.
+  reserved 5;
+  string continuation = 6;
 }
 
 message PageSessionMetadataRequest {

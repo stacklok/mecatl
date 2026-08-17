@@ -586,6 +586,13 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 	}); !errors.Is(err, port.ErrSessionMetadataCursorRestart) {
 		t.Fatalf("owner-mismatched cursor error = %v, want restart", err)
 	}
+	foreignCursor := *first.NextCursor
+	foreignCursor.Continuation = "foreign-pager-continuation"
+	if _, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 1, OwnershipEnforced: true, Owner: alice, Cursor: &foreignCursor,
+	}); !errors.Is(err, port.ErrSessionMetadataCursorRestart) {
+		t.Fatalf("foreign continuation error = %v, want restart", err)
+	}
 	changed := newSession("generation-change")
 	if err := changed.RestoreLabels(alice, session.Authority("")); err != nil {
 		t.Fatalf("RestoreLabels(generation-change): %v", err)

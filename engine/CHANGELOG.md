@@ -749,11 +749,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
-- **Session metadata cursors bind generation, scope, and direct position** (issue #587,
-  [ADR 0225](../docs/adr/0225-session-storage-maintenance.md)) —
-  `port.SessionMetadataCursor` adds `Generation`, `Scope`, and `Position`. The
-  additive fields are breaking for external unkeyed literals and are classified
-  Changed for a pre-v1 minor bump; `port.SessionStore` remains unchanged.
+- **Opaque session metadata continuation** (issue #587, [ADR 0225](../docs/adr/0225-session-storage-maintenance.md)) —
+  `port.SessionMetadataCursor` retains neutral ordering, generation, and ownership-scope
+  bindings while replacing the storage-specific numeric position with an opaque
+  pager-owned `Continuation`. Jsonlstore privately encodes and validates its direct
+  byte continuation; other adapters neither expose nor interpret that representation.
+  The field change is breaking for external literals and is classified Changed for a
+  pre-v1 minor bump; `port.SessionStore` remains unchanged.
 
 - **Learning trajectory current-run metadata ([ADR 0114](../docs/adr/0114-configurable-learning-trigger-policy.md))** —
   `learning.Trajectory` adds `Kind`, `Counters`, and `Current`. The fields are

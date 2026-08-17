@@ -5850,12 +5850,12 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   `port.SessionDiscoveryMeta` projections, a durable current-writer generation
   marker, and source metadata; it is never transcript authority. Rows are pre-sorted by `(modified_at DESC,
   session_id ASC)` into a global scope and owner-specific scope files. A ready
-  `PageSessionMetadata` opens only the selected scope, seeks to the cursor's
-  adapter-private byte position, and decodes at most `Limit+1` rows; page two
-  neither traverses page one nor opens/decodes snapshots or transcripts. The
-  opaque transport cursor carries an adapter-issued position bound to the source
-  fingerprint generation and exact ownership/filter scope. A changed generation
-  or scope returns `port.ErrSessionMetadataCursorRestart`; generations are never
+  `PageSessionMetadata` opens only the selected scope, privately decodes the
+  cursor's opaque continuation to its catalog byte position, and decodes at most
+  `Limit+1` rows; page two neither traverses page one nor opens/decodes snapshots
+  or transcripts. The transport cursor carries only an opaque pager-issued token
+  plus neutral ordering, source-fingerprint generation, and exact ownership/filter
+  scope bindings. A changed generation, scope, or foreign/malformed pager token returns `port.ErrSessionMetadataCursorRestart`; generations are never
   mixed and foreign-owner rows never enter page formation or `TotalCount`.
   `MetaList` may consume the complete global derivative projection for its legacy
   all-rows contract. Ready calls validate an O(1) source stamp from the two

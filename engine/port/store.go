@@ -175,15 +175,15 @@ var ErrSessionMetadataCursorRestart = errors.New("port: session metadata cursor 
 
 // SessionMetadataCursor is an adapter-issued keyset position. Public transports
 // encode the whole value as an opaque token. Generation and Scope bind a page
-// sequence to one backend view and filter set; Position lets indexed adapters
-// resume without traversing prior rows. ModifiedAt and ID retain the ordering
-// boundary used by scan-based adapters and response validation.
+// sequence to one backend view and filter set; Continuation is an opaque value
+// owned and validated only by the issuing pager. ModifiedAt and ID retain the
+// neutral ordering boundary used for response validation.
 type SessionMetadataCursor struct {
-	ModifiedAt time.Time
-	ID         session.SessionID
-	Generation string
-	Scope      string
-	Position   int64
+	ModifiedAt   time.Time
+	ID           session.SessionID
+	Generation   string
+	Scope        string
+	Continuation string
 }
 
 // SessionMetadataPageRequest asks an optional pager for one bounded metadata
@@ -225,10 +225,12 @@ func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadat
 // for scan-based adapters. It returns ErrSessionMetadataCursorRestart rather
 // than mixing rows when the current inventory or owner scope differs from the
 // cursor. Indexed adapters may implement the same contract with adapter-private
-// positions instead of scanning.
+// opaque continuations instead of scanning.
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) (SessionMetadataPage, error) {
 	return paginateSessionMetadata(rows, request, true)
 }
+
+const scanMetadataContinuation = "mecatl-scan-keyset-v1"
 
 func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, bind bool) (SessionMetadataPage, error) {
 	filtered := prepareSessionMetadataRows(rows, request)
@@ -241,7 +243,8 @@ func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadat
 		}
 		sum := sha256.Sum256(encoded)
 		generation = hex.EncodeToString(sum[:])
-		if request.Cursor != nil && (request.Cursor.Generation != generation || request.Cursor.Scope != scope) {
+		if request.Cursor != nil && (request.Cursor.Generation != generation || request.Cursor.Scope != scope ||
+			request.Cursor.Continuation != scanMetadataContinuation) {
 			return SessionMetadataPage{}, ErrSessionMetadataCursorRestart
 		}
 	}
@@ -270,6 +273,9 @@ func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadat
 		last := filtered[end-1]
 		page.NextCursor = &SessionMetadataCursor{
 			ModifiedAt: last.ModifiedAt, ID: last.ID, Generation: generation, Scope: scope,
+		}
+		if bind {
+			page.NextCursor.Continuation = scanMetadataContinuation
 		}
 	}
 	return page, nil

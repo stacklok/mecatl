@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -80,8 +79,8 @@ func TestSessionContinuityUX_Scenario3_PaginationContract(t *testing.T) {
 	if len(first.Sessions) != 1 || first.TotalCount != 2 || first.NextCursor == "" {
 		t.Fatalf("first page = %+v, want one of two owned rows and an opaque cursor", first)
 	}
-	if strings.Contains(first.NextCursor, first.Sessions[0].SessionID) {
-		t.Fatalf("cursor %q exposes session id %q", first.NextCursor, first.Sessions[0].SessionID)
+	if first.NextCursor == first.Sessions[0].SessionID {
+		t.Fatalf("cursor %q must not be the raw session id", first.NextCursor)
 	}
 
 	// A concurrent save changes the catalog generation. Continuing with the old

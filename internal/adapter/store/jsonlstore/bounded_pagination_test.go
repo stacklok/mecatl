@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -103,6 +104,64 @@ func TestSessionStorageContinuity_Scenario2_PageWorkBounded(t *testing.T) {
 	}
 	if len(second.Sessions) != 25 || work.catalogRows > 26 || work.snapshotRead != 0 || work.rebuilds != 0 {
 		t.Fatalf("second page work = %+v rows=%d, want direct <=26-row continuation", *work, len(second.Sessions))
+	}
+}
+
+func TestSessionStorageContinuity_Scenario2_AdapterOpaqueCursor(t *testing.T) {
+	owner := &session.Principal{Issuer: "issuer", Subject: "alice"}
+	st := installInventoryFixture(t, 4, owner)
+	ctx := context.Background()
+	request := port.SessionMetadataPageRequest{Limit: 2, OwnershipEnforced: true, Owner: owner}
+
+	jsonlPage, err := st.PageSessionMetadata(ctx, request)
+	if err != nil {
+		t.Fatalf("jsonl first page: %v", err)
+	}
+	if jsonlPage.NextCursor == nil || jsonlPage.NextCursor.Continuation == "" {
+		t.Fatalf("jsonl cursor = %+v, want opaque continuation", jsonlPage.NextCursor)
+	}
+	jsonlSecond, err := st.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 2, OwnershipEnforced: true, Owner: owner, Cursor: jsonlPage.NextCursor,
+	})
+	if err != nil || len(jsonlSecond.Sessions) != 2 {
+		t.Fatalf("jsonl continuation: rows=%d err=%v", len(jsonlSecond.Sessions), err)
+	}
+
+	mem := memstore.New(memstore.WithNow(func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }))
+	for i := 0; i < 4; i++ {
+		sess := session.New(session.SessionID(fmt.Sprintf("memory-%04d", i)), session.ModeAccept, "", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+		if err := sess.RestoreLabels(owner, ""); err != nil {
+			t.Fatalf("label memory session: %v", err)
+		}
+		if err := mem.Save(ctx, sess); err != nil {
+			t.Fatalf("save memory session: %v", err)
+		}
+	}
+	memoryPage, err := mem.PageSessionMetadata(ctx, request)
+	if err != nil || memoryPage.NextCursor == nil || memoryPage.NextCursor.Continuation == "" {
+		t.Fatalf("memory cursor = %+v err=%v, want opaque continuation", memoryPage.NextCursor, err)
+	}
+	memorySecond, err := mem.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 2, OwnershipEnforced: true, Owner: owner, Cursor: memoryPage.NextCursor,
+	})
+	if err != nil || len(memorySecond.Sessions) != 2 {
+		t.Fatalf("memory continuation: rows=%d err=%v", len(memorySecond.Sessions), err)
+	}
+
+	foreign := *jsonlPage.NextCursor
+	foreign.Continuation = memoryPage.NextCursor.Continuation
+	if _, err := st.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 2, OwnershipEnforced: true, Owner: owner, Cursor: &foreign,
+	}); !errors.Is(err, port.ErrSessionMetadataCursorRestart) {
+		t.Fatalf("jsonl with memory continuation error = %v, want restart", err)
+	}
+
+	foreign = *memoryPage.NextCursor
+	foreign.Continuation = jsonlPage.NextCursor.Continuation
+	if _, err := mem.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 2, OwnershipEnforced: true, Owner: owner, Cursor: &foreign,
+	}); !errors.Is(err, port.ErrSessionMetadataCursorRestart) {
+		t.Fatalf("memory with jsonl continuation error = %v, want restart", err)
 	}
 }
 

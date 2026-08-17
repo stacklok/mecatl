@@ -186,12 +186,12 @@ func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.Pag
 	}
 	if cursor := req.GetCursor(); cursor != nil {
 		if cursor.GetModifiedAt() == nil || cursor.GetSessionId() == "" || cursor.GetModifiedAt().CheckValid() != nil ||
-			cursor.GetGeneration() == "" || cursor.GetScope() == "" || cursor.GetPosition() < 0 {
-			return nil, status.Error(codes.InvalidArgument, "cursor requires a valid key, generation, scope, and position")
+			cursor.GetGeneration() == "" || cursor.GetScope() == "" || cursor.GetContinuation() == "" {
+			return nil, status.Error(codes.InvalidArgument, "cursor requires a valid key, generation, scope, and continuation")
 		}
 		request.Cursor = &port.SessionMetadataCursor{
 			ModifiedAt: cursor.GetModifiedAt().AsTime(), ID: session.SessionID(cursor.GetSessionId()),
-			Generation: cursor.GetGeneration(), Scope: cursor.GetScope(), Position: cursor.GetPosition(),
+			Generation: cursor.GetGeneration(), Scope: cursor.GetScope(), Continuation: cursor.GetContinuation(),
 		}
 	}
 	if req.GetOwnerIssuer() != "" || req.GetOwnerSubject() != "" {
@@ -222,7 +222,7 @@ func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.Pag
 	if page.NextCursor != nil {
 		resp.NextCursor = &driverv1.SessionMetadataCursor{
 			ModifiedAt: timestamppb.New(page.NextCursor.ModifiedAt), SessionId: string(page.NextCursor.ID),
-			Generation: page.NextCursor.Generation, Scope: page.NextCursor.Scope, Position: page.NextCursor.Position,
+			Generation: page.NextCursor.Generation, Scope: page.NextCursor.Scope, Continuation: page.NextCursor.Continuation,
 		}
 	}
 	return resp, nil

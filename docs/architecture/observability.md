@@ -103,11 +103,13 @@
   maintains an adapter-private, atomically replaced metadata catalog containing only
   the session-discovery projection—never messages, tool arguments, or event content.
   It pre-sorts deterministic `(modified_at DESC, session_id ASC)` global and
-  owner-specific scopes. A ready metadata page seeks directly to an adapter-private
-  cursor position and decodes at most the requested rows plus one lookahead; it does
-  not traverse prior pages or open snapshot/transcript payloads. Cursors bind the
-  catalog fingerprint generation and ownership/filter scope. A stale or mismatched
-  cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart
+  owner-specific scopes. A ready metadata page privately decodes its opaque
+  backend continuation, seeks directly to the corresponding catalog position, and
+  decodes at most the requested rows plus one lookahead; it does not traverse prior
+  pages or open snapshot/transcript payloads. Cursors retain neutral ordering and
+  bind the catalog fingerprint generation and ownership/filter scope; the backend
+  token itself is issued and validated only by the pager. A stale, mismatched, or
+  foreign cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart
   rather than mixing generations or owner scopes. Ready-state inventory checks an
   O(1) source stamp from the authoritative snapshot directories before reading the
   catalog; the catalog's private child directory keeps its own replacements out of
