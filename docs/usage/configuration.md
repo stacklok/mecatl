@@ -72,6 +72,8 @@ same-name legacy CLI entry replaces the whole settings profile case-insensitivel
 learning:
   mode: off # off | review | auto
   sensitivity: balanced # conservative | balanced | eager
+  skills:
+    activation: validated # validated | evaluated
   automatic:
     cooldown: 10m
     window: 1h
@@ -107,10 +109,14 @@ coordinator and durably stages valid proposals without changing memory. `auto` u
 stage-first path, then promotes operator facts only from explicit principal-authored remember evidence and project facts only from principal-authored evidence at the exact trusted configured workspace. Project candidates from admitted alternate roots remain staged/reviewable but cannot approve, undo, or read/write launch-root project memory until a safe exact-root lifecycle store exists; untrusted project material is not ingested. Tool/assistant/repository-only, conflicting, ambiguous,
 sensitive, and unsupported material is not written. Procedures are first durably marked
 `deferred_unsupported` for crash recovery and then, when the lifecycle pipeline is installed,
-materialized and evaluated: review stages PASS/ABSTAIN and rejects FAIL; auto additionally
-activates only PASS. `off` performs no automatic procedure materialization; explicit drafts/imports
+materialized and evaluated: review stages PASS/ABSTAIN and rejects FAIL. Auto PASS activates;
+Auto `validated` may also activate structurally accepted/exact, non-legacy, evidence-backed ABSTAIN,
+while Auto `evaluated` retains PASS-only behavior. Omitted activation resolves to validated only when
+the standard app explicitly selects Auto; the engine pipeline zero remains evaluated. Evaluator
+failure stages a generic durable ABSTAIN and never publishes. Similar candidates, external collisions,
+unpublishable partitions, and missing validated repository support stay staged. `off` performs no automatic procedure materialization; explicit drafts/imports
 remain inactive. `off` installs no automatic observer/started coordinator worker or eager proposal repository and makes no automatic reflection provider
-call. Authenticated explicit reflection remains bounded and synchronous, lazily initializes persistence, bypasses automatic admission/cooldown/budgets/recent-completed state, and uses the completed session's persisted provider/model; without genuine current-prompt promotion provenance its output remains stage-only. A project `.mecatl/settings.yaml` may only tighten the operator mode and sensitivity; its `automatic` subtree is warning-ignored/operator-only. Explicit memory/user-model tools remain available in every mode.
+call. Authenticated explicit reflection remains bounded and synchronous, lazily initializes persistence, bypasses automatic admission/cooldown/budgets/recent-completed state, and uses the completed session's persisted provider/model; without genuine current-prompt promotion provenance its output remains stage-only. A project `.mecatl/settings.yaml` may only tighten the operator mode, sensitivity, and skill activation assurance (`validated` → `evaluated`); its `automatic` subtree is warning-ignored/operator-only. Explicit memory/user-model tools remain available in every mode.
 The proposal store defaults to a `reflections/` directory beside the conventional or configured
 user-model store; in off mode that directory/flock is not created until the first explicit reflection or proposal operation.
 

@@ -66,15 +66,20 @@ interrupted or forced the exit; normal stdout remains available to scripts. See 
 `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving unrelated YAML and comments. Off means
 no automatic completed-trajectory reflection. Review signal-gates eligible completions and
 stages evidence-backed proposals without changing memory; Auto uses the same stage-first path
-and may conservatively promote eligible non-conflicting facts. These modes do not control a separately configured `--user-model-consolidate-interval`,
+and may conservatively promote eligible non-conflicting facts. Their result labels also show the
+effective learned-skill assurance (`skills validated|evaluated`). There is deliberately no separate
+`/skill-activation` command: preserve or edit `learning.skills.activation` in settings. With Auto,
+omitted activation means validated in the standard app; evaluated opts back into PASS-only skill
+activation. These modes do not control a separately configured `--user-model-consolidate-interval`,
 which remains an independent process-wide maintenance schedule. The commands report both pending values and require a local restart; there is no live
-mutation API. In connect mode, mecatui never edits local settings; change `learning.mode` or
-`learning.sensitivity` on the remote server host and restart that remote server.
+mutation API. In connect mode, mecatui never edits local settings; change `learning.mode`,
+`learning.sensitivity`, or `learning.skills.activation` in the remote server host's
+`settings.yaml` and restart that remote server.
 
 ## Reviewing reflections (`/reflections`, `/reflect`)
 
 When the server advertises staged learning, `/reflections` opens a bounded proposal list and detail
-view with independent operator/project pagination. Before approval, the scrollable detail shows the complete bounded canonical key, value, scope, and optional description rather than only a benign summary, together with each evidence handle's ownership-checked, digest-reverified source session/sequence/tool-call/digest provenance and bounded redacted canonical preview. Approve or reject staged fact proposals with version-checked decisions; evidence-backed procedures can be materialized and evaluated into a linked learned skill. Active agent-owned skills are labelled with owner/version in `/skills`; learned rows open bounded body/evaluation/receipt detail and activate/reject/archive/rollback only through revision-CAS server calls. Updates never auto-open an overlay. Stale decisions offer an in-place refresh, and promoted facts offer a
+view with independent operator/project pagination. Before approval, the scrollable detail shows the complete bounded canonical key, value, scope, and optional description rather than only a benign summary, together with each evidence handle's ownership-checked, digest-reverified source session/sequence/tool-call/digest provenance and bounded redacted canonical preview. Approve or reject staged fact proposals with version-checked decisions; evidence-backed procedures can be materialized and evaluated into a linked learned skill. Active agent-owned skills are labelled with owner/version in `/skills`; detail distinguishes `active(validated)` (`activate_validated`, ABSTAIN) from `active(evaluated)` (PASS/ordinary activate), learned rows open bounded body/evaluation/receipt detail and activate/reject/archive/rollback only through revision-CAS server calls. Updates never auto-open an overlay. Stale decisions offer an in-place refresh, and promoted facts offer a
 compensating undo only while their linked memory revision is still current and the partition's convergence-capable memory target is available. When a project target is unavailable or is not the exact trusted configured root, approve and undo are disabled with the server-provided reason while the proposal remains inspectable and rejectable. Unavailable, changed, and cross-owner evidence is shown honestly without a preview and cannot be approved; raw tool/permission arguments, reasoning, binary data, controls, and secrets are omitted. `/reflect` explicitly submits
 the current completed session synchronously on that session's persisted provider/model and works even when automatic learning is Off through lazy initialization. Older or unconfigured
 servers hide these commands through capability discovery.

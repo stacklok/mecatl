@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -87,19 +86,6 @@ func (p learnedSkillPublisher) Publish(ctx context.Context) error {
 	return nil
 }
 
-type abstainingSkillEvaluator struct{}
-
-func (abstainingSkillEvaluator) Evaluate(_ context.Context, request learning.SkillEvaluationRequest) (learning.SkillEvaluation, error) {
-	fixtures := make([]string, 0, len(request.Version.Provenance.EvidenceRefs))
-	for i, ref := range request.Version.Provenance.EvidenceRefs {
-		fixtures = append(fixtures, fmt.Sprintf("evidence-%d-%s", i+1, ref.Digest[:min(len(ref.Digest), 16)]))
-	}
-	if len(fixtures) == 0 {
-		fixtures = []string{"no-evidence"}
-	}
-	return learning.SkillEvaluation{Verdict: learning.EvaluationAbstain, FixtureIDs: fixtures, Reason: "no skill evaluator configured", At: time.Now().UTC()}, nil
-}
-
 func learnedSkillInventory(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, external []tool.SkillMeta) ([]learning.SkillInventoryItem, error) {
 	inventory := make([]learning.SkillInventoryItem, 0, len(external))
 	for _, meta := range external {
@@ -121,6 +107,7 @@ func learnedSkillInventory(ctx context.Context, repository learning.SkillReposit
 	}
 }
 
+//nolint:gocyclo // materialization, publication, telemetry, and fail-safe branches stay in one transaction flow
 func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Context, learning.ProposalRecord, learning.Mode) error {
 	if cfg.LearningMode == learning.Off || assets.learnedSkills == nil || assets.reflectionRepository == nil {
 		return nil
@@ -136,14 +123,12 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 			return err
 		}
 		evaluator := cfg.SkillEvaluator
-		if evaluator == nil {
-			evaluator = abstainingSkillEvaluator{}
-		}
 		var publisher skilllifecycle.Publisher
-		publishable := partition.Principal == assets.skillPartition.Principal && (partition.Project == "" || partition.Project == cfg.Workspace && projectIngestionAdmitted(cfg))
+		publishable := partition.Project == "" || (partition.Project == cfg.Workspace && projectIngestionAdmitted(cfg))
 		if publishable && assets.liveSkills != nil {
-			partitions := []learning.SkillPartition{assets.skillPartition}
-			if partition != assets.skillPartition {
+			global := learning.SkillPartition{Principal: partition.Principal}
+			partitions := []learning.SkillPartition{global}
+			if partition != global {
 				partitions = append(partitions, partition)
 			}
 			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills}
@@ -156,7 +141,25 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 			// partition. Keep it staged until a partition-bound catalog is available.
 			mode = learning.Review
 		}
-		_, err = (skilllifecycle.Pipeline{Repository: assets.learnedSkills, Validator: skillvalidation.Validator{}, Evaluator: evaluator, Publisher: publisher}).Process(ctx, skilllifecycle.Candidate{Draft: materialized.Input, Inventory: inventory, Mode: mode, Automatic: true})
-		return err
+		receipt, processErr := (skilllifecycle.Pipeline{Repository: assets.learnedSkills, Validator: skillvalidation.Validator{}, Evaluator: evaluator, ActivationPolicy: cfg.SkillActivationPolicy, Publisher: publisher}).Process(ctx, skilllifecycle.Candidate{Draft: materialized.Input, Inventory: inventory, Mode: mode, Automatic: true})
+		if emit := cfg.LearningMetricsEmitter; emit != nil {
+			kind := learning.ActivitySkillStaged
+			reason := learning.ReasonStaged
+			switch {
+			case processErr != nil:
+				kind, reason = learning.ActivityFailed, learning.ReasonReflectionFailed
+			case receipt.State == learning.SkillActive && receipt.Verdict == learning.EvaluationPass:
+				kind, reason = learning.ActivitySkillActivatedEvaluated, learning.ReasonPromoted
+			case receipt.State == learning.SkillActive:
+				kind, reason = learning.ActivitySkillActivatedValidated, learning.ReasonPromoted
+			case receipt.State == learning.SkillRejected:
+				kind, reason = learning.ActivitySkillRejected, learning.ReasonConflicted
+			}
+			emit(learning.Activity{Kind: kind, Reason: reason, Sensitivity: cfg.LearningSensitivity, Count: 1})
+		}
+		if processErr != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "learned-skill evaluation failed; candidate remains inspectable", "error", processErr)
+		}
+		return processErr
 	}
 }

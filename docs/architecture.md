@@ -769,12 +769,21 @@ and can be linked from `deferred_unsupported` only by explicit materialization.
 Draft creation converges by proposal provenance and SkillID without a duplicate. The legacy
 `mecated skills promote` filesystem workflow remains operator/manual-only and deprecated;
 `ImportLegacyDraft` imports `origin:model` quarantine content as an unevidenced Draft, never
-Active. The synchronous `skilllifecycle.Pipeline` now applies off/review/auto policy: explicit drafts
-stay inactive, evidence-backed procedures are evaluated, FAIL rejects, PASS/ABSTAIN stage, and only
-an auto-mode PASS with a bound publication target activates; similarity always forces review. The state-aware
-pipeline resumes after each durable boundary and republishes an already-active version during reconciliation.
-The existing reflection coordinator owns automatic work; there is no second queue or historical sweep.
-`skillfs.AtomicCatalog` retains the immutable path-free external `SkillSource` and independent immutable learned generations per principal/project partition. A caller-bound per-session `LiveTool` selects only that principal's global and admitted exact-project generations; its `Spec`, inventory, and `Execute` use the same selected snapshot, so metadata cannot leak before execution and Alice/Bob/project refreshes neither evict nor expose one another. External logical assets preserve the ordinary `{name, asset}` behavior and precedence; body-only learned skills reject assets and add no paths or roots. Archive is Active-only and rollback requires durable prior-active PASS proof. Caller/project-partitioned gRPC and HTTP methods provide bounded list/get/diff and stable receipt-index pages plus CAS activate/reject/archive/rollback. The receipt index retains bounded historical-version changes and rejects invalid or expired cursors. One publication gate serializes the external-collision check, durable transition, authoritative active-state reread, generation swap, and failure quarantine while the repository keeps cross-process flock/CAS. Uncertain state clears only the affected partition; a stale failure cannot revoke a newer success. Caller-scoped lazy hydration reconciles global and trusted project partitions on list/run after restart, so authenticated active skills need no new mutation. Reflections links procedure proposals to learned skills, while `/skills` marks live agent-owned versions. The legacy direct filesystem promotion command remains deprecated.
+Active. The synchronous `skilllifecycle.Pipeline` applies off/review/auto policy with the
+closed `validated | evaluated` activation assurance ([ADR 0224](adr/0224-validated-automatic-skill-activation.md)).
+Its zero value remains `evaluated` for embedders; the standard app resolves an omitted activation
+to `validated` only when Auto is explicitly selected, while learning remains Off by default. A
+trusted project may tighten validated to evaluated and an untrusted project cannot alter it.
+Explicit/direct SkillDraft drafts stay inactive. Evidence-backed reflected procedures record an
+evaluation: FAIL rejects; evaluator errors record a generic durable ABSTAIN, stage, and return the
+original failure; Review always stages PASS/ABSTAIN. Auto PASS uses the ordinary `activate`
+transition. Auto validated may atomically `activate_validated` only for non-legacy, accepted/exact,
+evidence-backed ABSTAIN versions; evaluated ABSTAIN, similar candidates, collisions,
+unpublishable partitions, missing publishers, and missing repository capability stay staged. The
+state-aware pipeline resumes after each durable boundary and republishes an already-active version
+during reconciliation. The existing reflection coordinator owns automatic work; there is no
+second queue or historical sweep.
+`skillfs.AtomicCatalog` retains the immutable path-free external `SkillSource` and independent immutable learned generations per principal/project partition. A caller-bound per-session `LiveTool` selects only that principal's global and admitted exact-project generations; its `Spec`, inventory, and `Execute` use the same selected snapshot, so metadata cannot leak before execution and Alice/Bob/project refreshes neither evict nor expose one another. External logical assets preserve the ordinary `{name, asset}` behavior and precedence; body-only learned skills reject assets and add no paths or roots. Archive is Active-only and rollback requires durable prior-active transition proof (`activate`, `activate_validated`, or rollback), never an arbitrary ABSTAIN/draft. Caller/project-partitioned gRPC and HTTP methods provide bounded list/get/diff and stable receipt-index pages plus CAS activate/reject/archive/rollback. The receipt index retains bounded historical-version changes and rejects invalid or expired cursors. One publication gate serializes the external-collision check, durable transition, authoritative active-state reread, generation swap, and failure quarantine while the repository keeps cross-process flock/CAS. Uncertain state clears only the affected partition; a stale failure cannot revoke a newer success. Caller-scoped lazy hydration reconciles global and trusted project partitions on list/run after restart, so authenticated active skills need no new mutation. Reflections links procedure proposals to learned skills, while `/skills` marks live agent-owned versions. The legacy direct filesystem promotion command remains deprecated.
 
 ## Caller identity
 

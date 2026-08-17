@@ -228,12 +228,29 @@ It surfaces three ways:
   `review` reflects admitted main-session completions and stages bounded, evidence-backed proposals
   without writing memory. `auto` uses the same stage-first path and then promotes only
   conservative standard-policy-eligible, non-conflicting facts. Evidence-backed procedures use
-  the versioned learned-skill lifecycle: `review` evaluates and stages PASS/ABSTAIN (FAIL rejects),
-  while `auto` activates only PASS when that caller/project has a bound publication target; a similar
-  candidate remains staged for review. A missing evaluator records ABSTAIN. Activation, archive, and rollback
+  the versioned learned-skill lifecycle: `review` evaluates and stages PASS/ABSTAIN (FAIL rejects).
+  Auto additionally uses `learning.skills.activation`, for example:
+
+  ```yaml
+  learning:
+    mode: auto
+    skills:
+      activation: validated # validated | evaluated
+  ```
+
+  Learning remains globally Off by default. In the standard app, explicitly selecting Auto with
+  `activation` omitted resolves to `validated`; set `evaluated` to retain the former PASS-only
+  assurance. The importable engine pipeline's zero value remains `evaluated`. A trusted project may
+  tighten validated to evaluated, never loosen it; an untrusted project setting is ignored. PASS
+  uses the ordinary evaluated activation under either policy. Under validated, a missing evaluator
+  or ABSTAIN may publish only a non-legacy, accepted/exact, evidence-backed version. Evaluated
+  ABSTAIN, similar candidates, external collisions, alternate/untrusted projects, missing publisher,
+  and a repository without validated activation stay staged. FAIL rejects; evaluator infrastructure
+  failure records a generic durable ABSTAIN/staged record, warns, and does not publish.
+  Activation, archive, and rollback
   return committed state plus publication status; temporary publication failure revokes the live learned entry
-  and startup or the next `/skills` refresh reconciles it. Rollback targets must be PASS versions durably proven
-  previously active. `SkillDraft` derives the verified caller, exact workspace, and main-agent owner and refuses
+  and startup or the next `/skills` refresh reconciles it. Rollback targets must be versions durably
+  proven previously active by evaluated, validated, or rollback transition. `SkillDraft` derives the verified caller, exact workspace, and main-agent owner and refuses
   identity-free calls. It creates body-only inactive content: learned assets/scripts are unsupported.
   `off` never materializes procedures automatically; explicit `SkillDraft` or legacy import creates
   only an inactive validated draft. Project proposals are eligible only when the session root is the

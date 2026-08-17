@@ -51,7 +51,7 @@ func newOperatorLearningSettings(remote bool) *operatorLearningSettings {
 // stable cross-process flock.
 func (s *operatorLearningSettings) Advance() (fromLabel, toLabel, restart string, err error) {
 	if s.remote {
-		return "", "", "", errors.New("completed-trajectory learning cannot be changed while connected to a remote server; edit learning.mode on the server host and restart that server")
+		return "", "", "", errors.New("completed-trajectory learning cannot be changed while connected to a remote server; edit learning.mode in the server host's settings.yaml and restart that server")
 	}
 	if s.path == "" {
 		return "", "", "", errors.New("operator settings path is unavailable")
@@ -95,20 +95,28 @@ func (s *operatorLearningSettings) Advance() (fromLabel, toLabel, restart string
 	if err != nil {
 		return "", "", "", err
 	}
+	currentActivation, err := learningActivation(doc, current)
+	if err != nil {
+		return "", "", "", err
+	}
 	if s.afterRead != nil {
 		s.afterRead()
 	}
 	next := current.Next()
+	nextActivation, err := learningActivation(doc, next)
+	if err != nil {
+		return "", "", "", err
+	}
 	setLearningMode(doc, next)
 	if err := s.writeDocument(doc); err != nil {
 		return "", "", "", err
 	}
-	return learningModeLabel(current) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ")", learningModeLabel(next) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ")", "saved; restart mecatui for it to take effect", nil
+	return learningModeLabel(current) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ", skills " + currentActivation.String() + ")", learningModeLabel(next) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ", skills " + nextActivation.String() + ")", "saved; restart mecatui for it to take effect", nil
 }
 
 func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, restart string, err error) {
 	if s.remote {
-		return "", "", "", errors.New("learning sensitivity cannot be changed while connected to a remote server; edit learning.sensitivity on the server host and restart that server")
+		return "", "", "", errors.New("learning sensitivity cannot be changed while connected to a remote server; edit learning.sensitivity in the server host's settings.yaml and restart that server")
 	}
 	if s.path == "" {
 		return "", "", "", errors.New("operator settings path is unavailable")
@@ -151,6 +159,10 @@ func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, res
 	if err != nil {
 		return "", "", "", err
 	}
+	activation, err := learningActivation(doc, currentMode)
+	if err != nil {
+		return "", "", "", err
+	}
 	if s.afterRead != nil {
 		s.afterRead()
 	}
@@ -160,7 +172,7 @@ func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, res
 	if err := s.writeDocument(doc); err != nil {
 		return "", "", "", err
 	}
-	return learningSensitivityLabel(current) + " (mode " + learningModeLabel(currentMode) + ")", learningSensitivityLabel(next) + " (mode " + learningModeLabel(currentMode) + ")", "saved; restart mecatui for it to take effect", nil
+	return learningSensitivityLabel(current) + " (mode " + learningModeLabel(currentMode) + ", skills " + activation.String() + ")", learningSensitivityLabel(next) + " (mode " + learningModeLabel(currentMode) + ", skills " + activation.String() + ")", "saved; restart mecatui for it to take effect", nil
 }
 
 func learningSensitivityLabel(value learning.Sensitivity) string {
@@ -235,7 +247,7 @@ func validateSettingsDocument(doc *yaml.Node) error {
 	}
 	for i := 0; i < len(learningNode.Content); i += 2 {
 		key := learningNode.Content[i].Value
-		if key != "mode" && key != "sensitivity" && key != "automatic" {
+		if key != "mode" && key != "sensitivity" && key != "skills" && key != "automatic" {
 			return fmt.Errorf("parse operator settings: unknown learning key %q", key)
 		}
 	}
@@ -261,6 +273,27 @@ func validateSettingsDocument(doc *yaml.Node) error {
 		}
 		if _, err := learning.ParseSensitivity(sensitivityNode.Value); err != nil {
 			return fmt.Errorf("parse operator settings: %w", err)
+		}
+	}
+	skillsNode, err := uniqueMappingValue(learningNode, "skills", false)
+	if err != nil {
+		return err
+	}
+	if skillsNode != nil {
+		if skillsNode.Kind != yaml.MappingNode || skillsNode.Tag != yamlMappingTag {
+			return errors.New("parse operator settings: learning.skills must be a mapping")
+		}
+		activationNode, activationErr := uniqueMappingValue(skillsNode, "activation", true)
+		if activationErr != nil {
+			return activationErr
+		}
+		if activationNode != nil {
+			if activationNode.Kind != yaml.ScalarNode || activationNode.Tag != yamlStringTag {
+				return errors.New("parse operator settings: learning.skills.activation must be a string scalar")
+			}
+			if _, parseErr := learning.ParseSkillActivationPolicy(activationNode.Value); parseErr != nil {
+				return fmt.Errorf("parse operator settings: %w", parseErr)
+			}
 		}
 	}
 	automaticNode, err := uniqueMappingValue(learningNode, "automatic", false)
@@ -375,6 +408,32 @@ func learningSensitivity(doc *yaml.Node) (learning.Sensitivity, error) {
 	return learning.ParseSensitivity(node.Value)
 }
 
+func learningActivation(doc *yaml.Node, mode learning.Mode) (learning.SkillActivationPolicy, error) {
+	root := doc.Content[0]
+	learningNode, err := uniqueMappingValue(root, "learning", false)
+	if err != nil || learningNode == nil {
+		if mode == learning.Auto {
+			return learning.SkillActivationValidated, err
+		}
+		return learning.SkillActivationEvaluated, err
+	}
+	skillsNode, err := uniqueMappingValue(learningNode, "skills", false)
+	if err != nil || skillsNode == nil {
+		if mode == learning.Auto {
+			return learning.SkillActivationValidated, err
+		}
+		return learning.SkillActivationEvaluated, err
+	}
+	node, err := uniqueMappingValue(skillsNode, "activation", true)
+	if err != nil || node == nil {
+		if mode == learning.Auto {
+			return learning.SkillActivationValidated, err
+		}
+		return learning.SkillActivationEvaluated, err
+	}
+	return learning.ParseSkillActivationPolicy(node.Value)
+}
+
 func setLearningSensitivity(doc *yaml.Node, value learning.Sensitivity) {
 	root := doc.Content[0]
 	learningNode, _ := uniqueMappingValue(root, "learning", false)
@@ -397,7 +456,7 @@ func setLearningMode(doc *yaml.Node, mode learning.Mode) {
 		learningNode = &yaml.Node{Kind: yaml.MappingNode, Tag: yamlMappingTag}
 		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: "learning"}, learningNode)
 	}
-	modeNode, _ := uniqueMappingValue(learningNode, "mode", true)
+	modeNode, _ := uniqueMappingValue(learningNode, "mode", false)
 	if modeNode == nil {
 		learningNode.Content = append(learningNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: "mode"}, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: mode.String()})
 		return

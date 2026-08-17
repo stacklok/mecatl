@@ -69,6 +69,48 @@ func Run(t *testing.T, factory Factory) {
 			t.Fatalf("archive=%#v %v", archived, err)
 		}
 	})
+	t.Run("validated-activation-capability", func(t *testing.T) {
+		repo := factory(t)
+		activator, ok := repo.(learning.ValidatedSkillActivator)
+		if !ok {
+			t.Fatal("repository lacks ValidatedSkillActivator")
+		}
+		ctx, p := context.Background(), partition()
+		prov := provenance("validated")
+		prov.ValidationDisposition = learning.ValidationAccept
+		draft, err := repo.CreateDraft(ctx, p, "agent-a", skill("validated", "Validated workflow."), prov)
+		if err != nil {
+			t.Fatal(err)
+		}
+		evaluated, err := repo.RecordEvaluation(ctx, p, "agent-a", draft.ID, draft.Version, draft.Revision, evaluation(learning.EvaluationAbstain))
+		if err != nil {
+			t.Fatal(err)
+		}
+		staged, err := repo.Stage(ctx, p, "agent-a", evaluated.ID, evaluated.Version, evaluated.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = activator.ActivateValidated(ctx, p, "agent-a", staged.ID, staged.Version, draft.Revision); !errors.Is(err, learning.ErrSkillConflict) {
+			t.Fatalf("stale validated CAS = %v", err)
+		}
+		active, err := activator.ActivateValidated(ctx, p, "agent-a", staged.ID, staged.Version, staged.Revision)
+		if err != nil || active.State != learning.SkillActive || active.Receipts[len(active.Receipts)-1].Operation != "activate_validated" {
+			t.Fatalf("active=%+v err=%v", active, err)
+		}
+		archived, err := repo.Archive(ctx, p, "agent-a", active.ID, active.Version, active.Revision)
+		if err != nil || archived.State != learning.SkillArchived {
+			t.Fatalf("archive=%+v err=%v", archived, err)
+		}
+		newerDraft, err := repo.CreateDraft(ctx, p, "agent-a", skill("validated", "New evaluated workflow."), provenance("validated-newer"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		newer := activateVersion(t, repo, p, newerDraft)
+		rolled, err := repo.Rollback(ctx, p, "agent-a", newer.ID, newer.Revision, archived.Version)
+		if err != nil || rolled.Version != archived.Version || rolled.State != learning.SkillActive {
+			t.Fatalf("rollback validated target=%+v err=%v", rolled, err)
+		}
+	})
 	t.Run("archive-rejects-never-active-versions", func(t *testing.T) {
 		repo := factory(t)
 		ctx := context.Background()

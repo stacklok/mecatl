@@ -351,9 +351,23 @@ func (s *Store) Stage(ctx context.Context, p learning.SkillPartition, owner stri
 	})
 }
 func (s *Store) Activate(ctx context.Context, p learning.SkillPartition, owner string, id learning.SkillID, version learning.VersionID, expected learning.Revision) (learning.SkillVersion, error) {
+	return s.activate(ctx, p, owner, id, version, expected, false)
+}
+
+// ActivateValidated activates only an evidence-backed, accepted/exact, staged
+// ABSTAIN version and archives the prior active version in the same update.
+func (s *Store) ActivateValidated(ctx context.Context, p learning.SkillPartition, owner string, id learning.SkillID, version learning.VersionID, expected learning.Revision) (learning.SkillVersion, error) {
+	return s.activate(ctx, p, owner, id, version, expected, true)
+}
+
+func (s *Store) activate(ctx context.Context, p learning.SkillPartition, owner string, id learning.SkillID, version learning.VersionID, expected learning.Revision, validated bool) (learning.SkillVersion, error) {
 	return s.update(ctx, p, owner, id, version, expected, func(r *skillRecord, i int, now time.Time) error {
 		v := &r.versions[i]
-		if v.State != learning.SkillStaged || len(v.Evaluations) == 0 || v.Evaluations[len(v.Evaluations)-1].Verdict != learning.EvaluationPass {
+		if v.State != learning.SkillStaged || len(v.Evaluations) == 0 {
+			return learning.ErrSkillTransition
+		}
+		verdict := v.Evaluations[len(v.Evaluations)-1].Verdict
+		if (!validated && verdict != learning.EvaluationPass) || (validated && (verdict != learning.EvaluationAbstain || len(v.Provenance.EvidenceRefs) == 0 || (v.Disposition != learning.ValidationAccept && v.Disposition != learning.ValidationExactDuplicate) || v.Provenance.Origin == learning.SkillProvenanceLegacyModel)) {
 			return learning.ErrSkillTransition
 		}
 		for j := range r.versions {
@@ -366,7 +380,11 @@ func (s *Store) Activate(ctx context.Context, p learning.SkillPartition, owner s
 			}
 		}
 		v.State = learning.SkillActive
-		appendReceipt(v, "activate", learning.SkillStaged, v.State, now)
+		operation := "activate"
+		if validated {
+			operation = "activate_validated"
+		}
+		appendReceipt(v, operation, learning.SkillStaged, v.State, now)
 		return nil
 	})
 }
@@ -443,11 +461,11 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 }
 
 func rollbackEligible(v learning.SkillVersion) bool {
-	if v.State != learning.SkillArchived || len(v.Evaluations) == 0 || v.Evaluations[len(v.Evaluations)-1].Verdict != learning.EvaluationPass {
+	if v.State != learning.SkillArchived {
 		return false
 	}
 	for _, receipt := range v.Receipts {
-		if receipt.To == learning.SkillActive && (receipt.Operation == "activate" || receipt.Operation == "rollback_to") {
+		if receipt.To == learning.SkillActive && (receipt.Operation == "activate" || receipt.Operation == "activate_validated" || receipt.Operation == "rollback_to") {
 			return true
 		}
 	}

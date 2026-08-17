@@ -188,7 +188,12 @@ ships `internal/adapter/skillstore` as a durable single-host flock/manifest impl
 immutable content-addressed `SKILL.md` files. Procedure materialization uses recoverable
 create-then-CAS-link semantics, so retry after a crash does not duplicate a draft.
 `engine/adapter/skilllifecycle.Pipeline` supplies the synchronous off/review/auto policy over an
-injected repository, validator, evaluator, and atomic publisher; `engine/adapter/skillfs.AtomicCatalog`
+injected repository, validator, evaluator, and atomic publisher. Its `ActivationPolicy` zero value is
+`evaluated` for source-compatible PASS-only behavior. A host may select `validated` only when its
+repository implements the optional `learning.ValidatedSkillActivator`, whose atomic contract accepts
+non-legacy, evidence-backed, accepted/exact, staged ABSTAIN versions under owner/partition/CAS.
+Evaluator FAIL remains deny-dominant and evaluator errors durably stage a generic ABSTAIN before the
+original error is returned. `engine/adapter/skillfs.AtomicCatalog`
 supplies a complete-generation live Skill tool while preserving existing snapshot sources. Standard
 mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
 replace every seam.

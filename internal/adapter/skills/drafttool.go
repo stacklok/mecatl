@@ -35,11 +35,11 @@ When NOT to use (the over-eager anti-pattern — these are REJECTED):
 IMPORTANT — a drafted skill is a versioned agent-owned DRAFT, not active:
 - It is validated and stored in the learned-skill lifecycle; it cannot edit prompts,
   code, AGENTS.md, lifecycle metadata, or generated assets.
-- Evidence and evaluation are required before activation. In learning mode off it
-  stays draft; review stages evidence-backed PASS/ABSTAIN proposals; auto activates
-  only an evidence-backed PASS. FAIL is rejected.
-- Legacy deployments may still use the deprecated quarantine/promote path; direct
-  model draft promotion is not an activation policy.
+- Evidence-backed completed-trajectory reflection is the only automatic path. In
+  learning mode off a direct draft stays draft; review stages reflected PASS/ABSTAIN
+  candidates; auto may activate reflected candidates according to the configured
+  validated/evaluated policy. FAIL is rejected. This direct SkillDraft always stays
+  inactive/legacy and is never an activation shortcut.
 
 How to write the SKILL.md fields:
 - description: ONE line — what it does and WHEN to use it (the applicability
@@ -133,7 +133,7 @@ func (t DraftTool) Execute(ctx context.Context, in session.ToolCall, env tool.En
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Drafted skill %q to the review queue at %s.\n", strings.TrimSpace(args.Name), res.Path)
-	b.WriteString("It is NOT active this session — evidence and evaluation are required; only an evidence-backed PASS may be activated by policy or an operator.")
+	b.WriteString("It is NOT active this session — direct SkillDraft output remains an inactive legacy draft; only completed-trajectory evidence reflection can enter automatic activation policy.")
 	for _, w := range res.Warnings {
 		fmt.Fprintf(&b, "\nNote: %s", w)
 	}

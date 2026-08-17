@@ -68,12 +68,45 @@ func learningResolverConfig(t *testing.T, operator, workspace string) Config {
 
 func TestFoldLearningModeDefaultAndOperator(t *testing.T) {
 	got, err := foldLearningMode(learningResolverConfig(t, "", ""))
-	if err != nil || got.LearningMode != learning.Off {
-		t.Fatalf("default = %s, %v", got.LearningMode, err)
+	if err != nil || got.LearningMode != learning.Off || got.SkillActivationPolicy != learning.SkillActivationEvaluated {
+		t.Fatalf("default = %s/%s, %v", got.LearningMode, got.SkillActivationPolicy, err)
 	}
 	got, err = foldLearningMode(learningResolverConfig(t, "auto", ""))
-	if err != nil || got.LearningMode != learning.Auto {
-		t.Fatalf("operator = %s, %v", got.LearningMode, err)
+	if err != nil || got.LearningMode != learning.Auto || got.SkillActivationPolicy != learning.SkillActivationValidated {
+		t.Fatalf("operator = %s/%s, %v", got.LearningMode, got.SkillActivationPolicy, err)
+	}
+}
+
+func TestFoldLearningSkillActivationExplicitAndProjectTightening(t *testing.T) {
+	operatorPath := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(operatorPath, []byte("learning:\n  mode: auto\n  skills:\n    activation: evaluated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{PermissionConfigs: []string{operatorPath}, Diagnostics: port.NopDiagnostics{}}
+	cfg.permResolver = buildPermResolver(cfg)
+	got, err := foldLearningMode(cfg)
+	if err != nil || got.SkillActivationPolicy != learning.SkillActivationEvaluated {
+		t.Fatalf("explicit evaluated = %s, %v", got.SkillActivationPolicy, err)
+	}
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".mecatl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".mecatl", "settings.yaml"), []byte("learning:\n  skills:\n    activation: evaluated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg = learningResolverConfig(t, "auto", root)
+	cfg.TrustProject = true
+	cfg.permResolver = buildPermResolver(cfg)
+	got, err = foldLearningMode(cfg)
+	if err != nil || got.SkillActivationPolicy != learning.SkillActivationEvaluated {
+		t.Fatalf("project tightened = %s, %v", got.SkillActivationPolicy, err)
+	}
+	cfg.TrustProject = false
+	got, err = foldLearningMode(cfg)
+	if err != nil || got.SkillActivationPolicy != learning.SkillActivationValidated {
+		t.Fatalf("untrusted project = %s, %v", got.SkillActivationPolicy, err)
 	}
 }
 

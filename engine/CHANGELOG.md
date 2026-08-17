@@ -13,6 +13,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Validated automatic learned-skill activation ([ADR 0224](../docs/adr/0224-validated-automatic-skill-activation.md))** —
+  `learning.SkillActivationPolicy` adds the closed validated/evaluated assurance vocabulary and
+  `learning.ValidatedSkillActivator` adds an optional atomic repository capability for
+  evidence-backed accepted/exact ABSTAIN versions. New identifiers are Added (minor); the standard
+  app's Auto default changes independently while the engine pipeline zero remains evaluated.
+
 - **Configurable learning-trigger policy ([ADR 0114](../docs/adr/0114-configurable-learning-trigger-policy.md))** —
   `learning` adds strict sensitivity, scoped signal detection, closed admission
   request/decision/class/reason contracts, pure threshold/always/never policies,

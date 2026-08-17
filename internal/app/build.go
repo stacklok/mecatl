@@ -507,6 +507,9 @@ type Config struct {
 	// the zero/default. The legacy UserModelReview flag projects to Auto for one
 	// compatibility window; it now follows the same staged/convergent path.
 	LearningMode learning.Mode
+	// SkillActivationPolicy controls automatic learned-skill assurance. Standard
+	// app Auto defaults an omitted value to validated; engine Pipeline zero remains evaluated.
+	SkillActivationPolicy learning.SkillActivationPolicy
 	// LearningSensitivity controls weighted automatic reflection; zero defaults to
 	// Conservative at the type level, so LearningSensitivitySet distinguishes an
 	// explicit conservative choice from the product default Balanced.
@@ -519,8 +522,9 @@ type Config struct {
 	SkillEvaluator learning.SkillEvaluator
 	// operatorLearningMode retains the pre-project ceiling so per-session engines
 	// can apply their own workspace's tighten-only project setting.
-	operatorLearningMode        learning.Mode
-	operatorLearningSensitivity learning.Sensitivity
+	operatorLearningMode          learning.Mode
+	operatorLearningSensitivity   learning.Sensitivity
+	operatorSkillActivationPolicy learning.SkillActivationPolicy
 
 	// operatorProfileSource is composition-only wiring inherited by user-facing
 	// delegation engines. Internal-purpose classifier/reviewer/judge engines clear it.
@@ -1790,7 +1794,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			reflectionCfg := cfg
 			reflectionProvider := provider
 			reflectionCfg.Workspace = sess.Workspace
-			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity = learningPolicyForWorkspace(cfg, sess.Workspace)
+			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity, reflectionCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, sess.Workspace)
 			reflectionCfg.Model = sess.ModelID
 			if sess.ProviderID != "" {
 				entry, ok := reg.Lookup(sess.ProviderID)
@@ -2388,7 +2392,7 @@ func sessionEngineFactory(
 		// provider never contaminates compaction/counting.
 		learningCfg := cfg
 		learningCfg.Workspace = workspace
-		learningCfg.LearningMode, learningCfg.LearningSensitivity = learningPolicyForWorkspace(cfg, workspace)
+		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, assets.userModelStore)
@@ -2415,6 +2419,7 @@ func sessionEngineFactory(
 		// has no tool, so the note is withheld (the model is never told about a
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
 		// front there is no filesystem — and stop the prompt <env> claiming the
 		// SERVER's cwd/shell/git state, none of which this session can touch. The
@@ -3210,6 +3215,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// a per-session engine; a store that backs no ScheduleStore withholds the
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
 	// prompt here: it is truthed per-request against the LIVE tool.Environment in
 	// engine/agent.buildRequest (issue #462 review). The shared engine's
@@ -7128,6 +7134,23 @@ func applySchedulePosture(pc prompt.Config, hasSchedule bool) prompt.Config {
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + schedulePostureNote
+	return pc
+}
+
+const learningAutoPostureNote = "AUTOMATIC LEARNED-SKILL POLICY: When the user explicitly asks you to learn a reusable procedure, perform and verify the requested workflow normally; completed-trajectory learning materializes the evidence-backed skill afterward. Do not call SkillDraft as an activation shortcut: direct SkillDraft output remains inactive. Automatic activation never grants new tools or capabilities; it only publishes a validated body into the existing Skill catalog."
+
+func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learning.SkillActivationPolicy) prompt.Config {
+	if mode != learning.Auto {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	assurance := " Under activation=validated, structural validation plus completed-trajectory evidence may publish an ABSTAIN candidate; evaluator FAIL rejects it."
+	if activation.Effective() == learning.SkillActivationEvaluated {
+		assurance = " Under activation=evaluated, publication requires a trusted evaluator PASS; ABSTAIN remains staged and FAIL is rejected."
+	}
+	pc.Role += "\n\n" + learningAutoPostureNote + assurance
 	return pc
 }
 

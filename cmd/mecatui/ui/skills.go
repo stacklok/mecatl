@@ -373,7 +373,24 @@ func renderSkillsOverlay(th theme.Theme, st skillsState, caps client.Capabilitie
 func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff string) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Learned skill") + "\n\n")
-	for _, line := range []string{"name: " + skill.Name, "owner: " + skill.OwnerAgent, "state: " + skill.State, "version: " + skill.Version, "revision: " + skill.Revision, "evidence: " + strconv.Itoa(skill.EvidenceCount), "description: " + skill.Description, "body: " + skill.Body} {
+	state := skill.State
+	if state == "active" && len(skill.Evaluations) > 0 && skill.Evaluations[len(skill.Evaluations)-1].Verdict == "abstain" {
+		state = "active(validated)"
+	}
+	if state == "active" {
+		for i := len(skill.Receipts) - 1; i >= 0; i-- {
+			switch skill.Receipts[i].Operation {
+			case "activate_validated":
+				state = "active(validated)"
+			case "activate":
+				state = "active(evaluated)"
+			}
+			if state != "active" {
+				break
+			}
+		}
+	}
+	for _, line := range []string{"name: " + skill.Name, "owner: " + skill.OwnerAgent, "state: " + state, "version: " + skill.Version, "revision: " + skill.Revision, "evidence: " + strconv.Itoa(skill.EvidenceCount), "description: " + skill.Description, "body: " + skill.Body} {
 		b.WriteString(sanitizeTerminal(line) + "\n")
 	}
 	if len(skill.Evaluations) > 0 {

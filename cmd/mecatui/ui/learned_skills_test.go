@@ -96,6 +96,17 @@ func TestLearnedSkillDetailSanitizesAndShowsLifecycleActions(t *testing.T) {
 	}
 }
 
+func TestLearnedSkillDetailLabelsActivationAssurance(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	for operation, want := range map[string]string{"activate_validated": "state: active(validated)", "activate": "state: active(evaluated)"} {
+		skill := client.LearnedSkill{Name: "learned", State: "active", Receipts: []client.SkillChange{{Operation: operation, ToState: "active"}}}
+		out := stripANSIstr(renderLearnedSkillDetail(th, skill, ""))
+		if !strings.Contains(out, want) {
+			t.Fatalf("operation %s missing %q:\n%s", operation, want, out)
+		}
+	}
+}
+
 func TestLearnedSkillChangeReceiptSetsNonModalStatus(t *testing.T) {
 	m := Model{deps: Deps{Theme: theme.New("aztec", theme.AztecPalette())}}
 	updated, handled := m.updateSkillsMsg(client.SkillChangesMsg{Changes: []client.SkillChange{{ID: "receipt-1"}}})

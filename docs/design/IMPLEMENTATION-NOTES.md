@@ -3668,25 +3668,32 @@ an identical in-flight digest. Off constructs no automatic controller/coordinato
 runs synchronously against lazy proposal persistence. `Close` cancels and joins; no startup/shutdown
 sweep exists. Every process gets an independent budget and restart resets all controller state.
 
-**Evaluated agent-owned skills (#510; ADR 0111):** `engine/adapter/skilllifecycle.Pipeline` is a
-state-aware, idempotent resume over content-addressed versions: it skips already-committed evaluation/stage/
-activation boundaries and reconciles publication for an already-active version. PASS/ABSTAIN stage and FAIL
-rejects; auto+PASS activates only with a real bound publisher, while `SimilarStageHint` always forces review.
-A nil evaluator records ABSTAIN. `Config.SkillEvaluator` is trusted admission control: an embedder must supply
-immutable host fixture IDs, independent baseline/treatment execution, a fenced candidate, no tools/shell/network,
-and explicit limits; mecatl ships no production judge. Candidate inventory drains external metadata plus every
-learned version in the exact partition.
+**Evaluated and validated agent-owned skills (#510; ADR 0111, superseded in part by ADR 0224):**
+`engine/adapter/skilllifecycle.Pipeline` is a state-aware, idempotent resume over
+content-addressed versions: it skips already-committed evaluation/stage/activation boundaries and
+reconciles publication for an already-active version. PASS/ABSTAIN stage and FAIL rejects. Auto
+PASS uses `SkillRepository.Activate`; Auto validated ABSTAIN uses the optional
+`learning.ValidatedSkillActivator` only with a publisher, non-legacy evidence, accepted/exact
+validation, and no durable similarity hint. Pipeline zero means evaluated, while composition makes
+an omitted activation validated only for explicitly selected Auto. Review, evaluated ABSTAIN,
+missing capability, unpublishable partitions, and collisions stage. A nil evaluator records
+ABSTAIN; evaluator failure records a generic ABSTAIN and stages before returning the original
+error. `Config.SkillEvaluator` is trusted admission control: an embedder must supply immutable host
+fixture IDs, independent baseline/treatment execution, a fenced candidate, no tools/shell/network,
+and explicit limits; mecatl ships no production judge. Candidate inventory drains external
+metadata plus every learned version in the exact partition.
 
 `skillfs.AtomicCatalog` composes the existing path-free `tool.SkillSource` with body-only learned versions behind
 one immutable generation pointer. External filesystem/driver assets retain the ordinary `{name, asset}` schema,
 validation, and bounds; learned asset requests fail explicitly, and no path/read-root/materialization seam exists.
-External names win. Shared, selector, and no-fs catalogs register `LiveTool` over the same pointer. Only the
-ownerless deployment partition and exact trusted launch-root project can bind that shared publication target;
-unrelated caller/project state remains staged. Service mutation authorization is skill-specific and independent
+External names win. Shared, selector, and no-fs catalogs register `LiveTool` over the same pointer. A
+verified caller's global partition and exact trusted launch-root project can bind publication; the
+caller-bound LiveTool selects only that principal/project generation, while Service mutation authorization is skill-specific and independent
 of memory convergence.
 
-Archive accepts only Active. Rollback additionally requires durable proof that the PASS target was previously
-active. Post-commit publication uses a bounded cancel-detached context and reports `published` versus
+Archive accepts only Active. Rollback additionally requires durable proof that the target was previously
+active through `activate`, `activate_validated`, or `rollback_to`; arbitrary ABSTAIN and draft versions remain
+ineligible. Post-commit publication uses a bounded cancel-detached context and reports `published` versus
 `pending_reconciliation` alongside committed state; failure revokes the learned entry fail-safe, while startup and
 live-list refresh reconstruct from durable active state. Lifecycle `SkillDraft` derives verified caller identity,
 exact live workspace root, and main-agent ownership at execution, refusing identity-free calls. API/TUI requests

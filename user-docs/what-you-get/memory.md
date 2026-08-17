@@ -123,6 +123,8 @@ Set the operator file `$XDG_CONFIG_HOME/mecatl/settings.yaml` to:
 learning:
   mode: auto
   sensitivity: balanced
+  skills:
+    activation: validated # validated | evaluated
   automatic:
     cooldown: 10m
     window: 1h
@@ -144,9 +146,9 @@ There is no startup or shutdown catch-up.
 
 `review` durably stages valid evidence-backed proposals without changing memory. `auto` stages
 first, then promotes operator facts only when the candidate cites the genuine user message carrying an explicit remember request. Tool/WebFetch/WebSearch/MCP, repository, event-only, and assistant-only evidence stays staged. Project facts use a separate narrow rule: candidates from any non-empty session workspace remain staged and inspectable in that project's partition, but auto-promotion, approval, and undo require the exact trusted configured workspace and an available convergence-capable project memory store. Operator facts continue to follow operator policy. Proposal detail re-checks source ownership and evidence digests and shows a bounded, redacted canonical preview before approval; unavailable, changed, or cross-owner evidence has no preview and cannot be promoted. Ambiguous, conflicting, sensitive, and unsupported
-material remains staged or rejected. Procedures first persist a `deferred_unsupported` crash checkpoint, then the learned-skill pipeline evaluates them: review stages PASS/ABSTAIN and rejects FAIL; auto also activates PASS into the live catalog. `off`
+material remains staged or rejected. Procedures first persist a `deferred_unsupported` crash checkpoint, then the learned-skill pipeline evaluates them: review stages PASS/ABSTAIN and rejects FAIL; auto PASS activates, while the stock omitted/`validated` policy may also activate a structurally accepted, evidence-backed ABSTAIN. Set `activation: evaluated` for PASS-only assurance. Similar/colliding/unpublishable candidates stay staged, and direct SkillDraft output stays inactive. `off`
 means no automatic observer, controller/coordinator worker, eager proposal repository, or reflection provider call. Authenticated explicit reflection remains synchronous: it lazily initializes persistence, bypasses automatic admission/budgets/cache, and uses the completed session's persisted provider/model; without genuine current-prompt promotion provenance it remains stage-only. A project may lower the operator
-mode and sensitivity, never raise them; project automatic limits are ignored. The legacy `--user-model-review` flag is a deprecated `auto` alias
+mode and sensitivity, and may tighten skill activation from validated to evaluated; it can never raise autonomy or lower assurance. Project automatic limits are ignored. The legacy `--user-model-review` flag is a deprecated `auto` alias
 for one compatibility window. Proposal data defaults beside the user-model store under
 `reflections/`.
 

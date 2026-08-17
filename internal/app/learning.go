@@ -35,6 +35,8 @@ func defaultLearningAutomaticConfig() LearningAutomaticConfig {
 // admitted project tighten-only ceiling. Project config can lower autonomy, never raise it.
 func foldLearningMode(cfg Config) (Config, error) {
 	mode := cfg.LearningMode
+	activation := cfg.SkillActivationPolicy.Effective()
+	activationExplicit := cfg.SkillActivationPolicy.Valid()
 	sensitivity := cfg.LearningSensitivity
 	if sensitivity == learning.SensitivityUnset {
 		sensitivity = learning.Balanced
@@ -51,6 +53,13 @@ func foldLearningMode(cfg Config) (Config, error) {
 				return cfg, err
 			}
 			sensitivity = parsed
+		}
+		if operator.Skills != nil && operator.Skills.Activation != "" {
+			parsed, err := learning.ParseSkillActivationPolicy(operator.Skills.Activation)
+			if err != nil {
+				return cfg, err
+			}
+			activation, activationExplicit = parsed, true
 		}
 		if a := operator.Automatic; a != nil {
 			automatic = LearningAutomaticConfig{Cooldown: a.Cooldown, Window: a.Window,
@@ -74,14 +83,19 @@ func foldLearningMode(cfg Config) (Config, error) {
 		cfg.diag().Log(context.Background(), port.LevelWarn,
 			"--user-model-review is deprecated; use learning.mode: auto in operator settings.yaml")
 	}
+	if !activationExplicit && mode == learning.Auto {
+		activation = learning.SkillActivationValidated
+	}
 	cfg.operatorLearningMode = mode
 	cfg.operatorLearningSensitivity = sensitivity
+	cfg.operatorSkillActivationPolicy = activation
 	cfg.LearningAutomatic = automatic
-	resolved, resolvedSensitivity := learningPolicyForWorkspace(cfg, cfg.Workspace)
+	resolved, resolvedSensitivity, resolvedActivation := learningPolicyForWorkspace(cfg, cfg.Workspace)
 	cfg.LearningMode = resolved
 	cfg.LearningSensitivity = resolvedSensitivity
+	cfg.SkillActivationPolicy = resolvedActivation
 	cfg.diag().Log(context.Background(), port.LevelInfo, "automatic learning policy resolved",
-		"mode", resolved.String(), "sensitivity", resolvedSensitivity.String(),
+		"mode", resolved.String(), "sensitivity", resolvedSensitivity.String(), "skill_activation", resolvedActivation.String(), "skill_evaluator", cfg.SkillEvaluator != nil,
 		"cooldown", automatic.Cooldown, "window", automatic.Window,
 		"max_reflections", automatic.MaxReflections, "max_tokens", automatic.MaxTokens,
 		"max_reflections_per_principal", automatic.MaxReflectionsPerPrincipal,
@@ -92,17 +106,19 @@ func foldLearningMode(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
-func learningPolicyForWorkspace(cfg Config, root string) (learning.Mode, learning.Sensitivity) {
+//nolint:gocyclo // folds independent mode, sensitivity, and activation tighten-only axes
+func learningPolicyForWorkspace(cfg Config, root string) (learning.Mode, learning.Sensitivity, learning.SkillActivationPolicy) {
 	mode := cfg.operatorLearningMode
 	sensitivity := cfg.operatorLearningSensitivity
+	activation := cfg.operatorSkillActivationPolicy.Effective()
 	resolver, _ := cfg.permResolver.(*permconfig.Resolver)
 	if resolver == nil || !projectIngestionAdmittedForRoot(cfg, root) {
-		return mode, sensitivity
+		return mode, sensitivity, activation
 	}
 	ws, err := osfs.NewWorkspace(root)
 	if err != nil {
 		cfg.diag().Log(context.Background(), port.LevelWarn, "learning: cannot read project policy; keeping operator policy", "workspace", root, "error", err)
-		return mode, sensitivity
+		return mode, sensitivity, activation
 	}
 	for _, setting := range resolver.ProjectLearningSettings(ws) {
 		if setting.Automatic != nil {
@@ -120,6 +136,16 @@ func learningPolicyForWorkspace(cfg Config, root string) (learning.Mode, learnin
 					"operator_mode", mode.String(), "project_mode", project.String(), "workspace", root)
 			}
 		}
+		if setting.Skills != nil && setting.Skills.Activation != "" {
+			project, err := learning.ParseSkillActivationPolicy(setting.Skills.Activation)
+			if err != nil {
+				cfg.diag().Log(context.Background(), port.LevelWarn, "learning: invalid project skill activation ignored", "workspace", root, "error", err)
+			} else if activation == learning.SkillActivationValidated && project == learning.SkillActivationEvaluated {
+				activation = project
+			} else if project == learning.SkillActivationValidated && activation == learning.SkillActivationEvaluated {
+				cfg.diag().Log(context.Background(), port.LevelWarn, "learning: ignoring project skill activation that would lower assurance", "workspace", root)
+			}
+		}
 		if token := setting.Sensitivity; token != "" {
 			project, err := learning.ParseSensitivity(token)
 			if err != nil {
@@ -131,5 +157,5 @@ func learningPolicyForWorkspace(cfg Config, root string) (learning.Mode, learnin
 			}
 		}
 	}
-	return mode, sensitivity
+	return mode, sensitivity, activation
 }

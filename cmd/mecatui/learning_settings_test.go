@@ -49,7 +49,7 @@ func TestOperatorLearningSettingsCyclesSensitivityAndPreservesMode(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if from != "Conservative (mode Review)" || to != "Balanced (mode Review)" || !strings.Contains(restart, "restart") {
+	if from != "Conservative (mode Review, skills evaluated)" || to != "Balanced (mode Review, skills evaluated)" || !strings.Contains(restart, "restart") {
 		t.Fatalf("labels = %q %q %q", from, to, restart)
 	}
 	body, err := os.ReadFile(path)
@@ -74,7 +74,7 @@ func TestOperatorLearningSettingsPreservesUnrelatedYAMLAndComments(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if from != "Off (sensitivity Balanced)" || to != "Review (sensitivity Balanced)" || !strings.Contains(restart, "restart mecatui") {
+	if from != "Off (sensitivity Balanced, skills evaluated)" || to != "Review (sensitivity Balanced, skills evaluated)" || !strings.Contains(restart, "restart mecatui") {
 		t.Fatalf("Advance = %q, %q, %q", from, to, restart)
 	}
 	b, err := os.ReadFile(path)
@@ -86,6 +86,28 @@ func TestOperatorLearningSettingsPreservesUnrelatedYAMLAndComments(t *testing.T)
 		if !strings.Contains(text, want) {
 			t.Errorf("saved YAML missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestOperatorLearningSettingsPreservesExplicitEvaluatedActivation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	body := "learning:\n  mode: review\n  skills:\n    # keep assurance\n    activation: evaluated\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	from, to, _, err := (&operatorLearningSettings{path: path}).Advance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(from, "skills evaluated") || !strings.Contains(to, "skills evaluated") {
+		t.Fatalf("labels = %q -> %q", from, to)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(saved), "# keep assurance") || !strings.Contains(string(saved), "activation: evaluated") {
+		t.Fatalf("activation/comment not preserved:\n%s", saved)
 	}
 }
 
@@ -127,6 +149,9 @@ func TestOperatorLearningSettingsRejectsInvalidYAMLWithoutModification(t *testin
 		"duplicate mode":       "learning:\n  mode: off\n  mode: auto\n",
 		"alias":                "base: &mode off\nlearning:\n  mode: *mode\n",
 		"unknown learning key": "learning:\n  mode: off\n  queue: later\n",
+		"invalid activation":   "learning:\n  mode: auto\n  skills:\n    activation: pass\n",
+		"scalar skills":        "learning:\n  mode: auto\n  skills: validated\n",
+		"duplicate activation": "learning:\n  mode: auto\n  skills:\n    activation: validated\n    activation: evaluated\n",
 		"multiple documents":   "learning:\n  mode: off\n---\nlearning:\n  mode: auto\n",
 	}
 	for name, body := range cases {

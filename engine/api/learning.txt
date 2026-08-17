@@ -20,6 +20,7 @@
     ifacemethod func (SkillRepository).Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error)
     ifacemethod func (SkillRepository).Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     ifacemethod func (SkillValidator).Validate(context.Context, SkillValidationRequest) (SkillValidation, error)
+    ifacemethod func (ValidatedSkillActivator).ActivateValidated(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     method func (ActivityKind).Valid() bool
     method func (AdmissionClass).Valid() bool
     method func (AdmissionReason).Valid() bool
@@ -37,6 +38,9 @@
     method func (Sensitivity).String() string
     method func (Sensitivity).Threshold() int
     method func (SignalKind).Valid() bool
+    method func (SkillActivationPolicy).Effective() SkillActivationPolicy
+    method func (SkillActivationPolicy).String() string
+    method func (SkillActivationPolicy).Valid() bool
     method func (SkillState).Valid() bool
     method func (ThresholdPolicy).Decide(req AdmissionRequest) AdmissionDecision
     method func (ValidationDisposition).Valid() bool
@@ -50,6 +54,10 @@ const ActivityPromoted ActivityKind = "promoted"
 const ActivityQueueFull ActivityKind = "queue_full"
 const ActivityRateLimited ActivityKind = "rate_limited"
 const ActivityReservedTokens ActivityKind = "reserved_tokens"
+const ActivitySkillActivatedEvaluated ActivityKind = "skill_activated_evaluated"
+const ActivitySkillActivatedValidated ActivityKind = "skill_activated_validated"
+const ActivitySkillRejected ActivityKind = "skill_rejected"
+const ActivitySkillStaged ActivityKind = "skill_staged"
 const ActivitySkipped ActivityKind = "skipped"
 const ActivityStaged ActivityKind = "staged"
 const ActivityTimedOut ActivityKind = "timed_out"
@@ -155,6 +163,8 @@ const SignalHostRequested SignalKind = "host_requested"
 const SignalRepeatedCorrection SignalKind = "repeated_correction"
 const SignalRepeatedToolSequence SignalKind = "repeated_tool_sequence"
 const SignalSubstantialSuccess SignalKind = "substantial_success"
+const SkillActivationEvaluated SkillActivationPolicy = "evaluated"
+const SkillActivationValidated SkillActivationPolicy = "validated"
 const SkillActive SkillState = "active"
 const SkillArchived SkillState = "archived"
 const SkillDraft SkillState = "draft"
@@ -177,6 +187,7 @@ func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, e
 func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory
 func ParseMode(s string) (Mode, error)
 func ParseSensitivity(value string) (Sensitivity, error)
+func ParseSkillActivationPolicy(value string) (SkillActivationPolicy, error)
 func ProjectInput(in Input) (Projection, error)
 func ResolveEvidence(in Input, ref EvidenceRef) error
 func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
@@ -238,6 +249,7 @@ type Sensitivity uint8
 type Signal struct{Kind SignalKind "json:\"kind\""; Evidence []EvidenceRef "json:\"evidence,omitempty\""}
 type SignalKind string
 type SignalProjection struct{Kind SignalKind "json:\"kind\""; Evidence []string "json:\"evidence,omitempty\""}
+type SkillActivationPolicy string
 type SkillBundle struct{Name string "json:\"name\""; Description string "json:\"description\""; Body string "json:\"body\""}
 type SkillDraftInput struct{Partition SkillPartition; OwnerAgent string; Bundle SkillBundle; Provenance SkillProvenance}
 type SkillEvaluation struct{Verdict EvaluationVerdict "json:\"verdict\""; FixtureIDs []string "json:\"fixture_ids,omitempty\""; Baseline string "json:\"baseline,omitempty\""; Treatment string "json:\"treatment,omitempty\""; Reason string "json:\"reason,omitempty\""; At time.Time "json:\"at\""}
@@ -264,6 +276,7 @@ type SkillVersion struct{ID SkillID "json:\"id\""; Version VersionID "json:\"ver
 type ThresholdPolicy struct{Sensitivity Sensitivity}
 type ToolProjection struct{ID session.ToolCallID "json:\"id\""; Name string "json:\"name\""}
 type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Kind session.SessionKind; Counters session.Counters; Current MessageSpan; Principal *session.Principal}
+type ValidatedSkillActivator interface{ActivateValidated(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
 type ValidationDisposition string
 type VersionID string
 var ErrInvalidCandidate error

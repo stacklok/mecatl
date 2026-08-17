@@ -648,8 +648,27 @@ type LearningSection struct {
 	Mode string `yaml:"mode"`
 	// Sensitivity controls weighted automatic admission. Empty means balanced.
 	Sensitivity string `yaml:"sensitivity"`
+	// Skills controls learned-skill lifecycle policy.
+	Skills *LearningSkillsSection `yaml:"skills"`
 	// Automatic is operator-only process-local rate policy.
 	Automatic *LearningAutomaticSection `yaml:"automatic"`
+}
+
+// LearningSkillsSection is the strict learned-skill policy subtree.
+type LearningSkillsSection struct {
+	Activation string `yaml:"activation"`
+}
+
+// UnmarshalYAML strictly decodes learning.skills.activation.
+func (s *LearningSkillsSection) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "learning.skills", map[string]any{"activation": &s.Activation}); err != nil {
+		return err
+	}
+	if s.Activation != "" {
+		_, err := learning.ParseSkillActivationPolicy(s.Activation)
+		return err
+	}
+	return nil
 }
 
 // LearningAutomaticSection is the strict process-local automatic-admission budget.
@@ -720,7 +739,7 @@ func (s *LearningAutomaticSection) UnmarshalYAML(node *yaml.Node) error {
 
 // UnmarshalYAML strictly decodes learning.mode and validates its closed vocabulary.
 func (s *LearningSection) UnmarshalYAML(node *yaml.Node) error {
-	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "sensitivity": &s.Sensitivity, "automatic": &s.Automatic}); err != nil {
+	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "sensitivity": &s.Sensitivity, "skills": &s.Skills, "automatic": &s.Automatic}); err != nil {
 		return err
 	}
 	if s.Mode != "" {

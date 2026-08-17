@@ -131,6 +131,9 @@
 #   mode: off
 #   # Sensitivity controls weighted automatic admission. Empty means balanced.
 #   sensitivity: balanced
+#   # Skills controls learned-skill lifecycle policy.
+#   skills:
+#     activation: validated
 #   # Automatic is operator-only process-local rate policy.
 #   automatic:
 #     # Cooldown is the per-principal weighted-admission cooldown; zero disables it.

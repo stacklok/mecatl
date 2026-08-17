@@ -119,7 +119,9 @@ func TestMetricsLearningActivitiesRejectValuesOutsideClosedVocabularies(t *testi
 		learning.ActivityDuplicate, learning.ActivityQueueFull, learning.ActivityClosed,
 		learning.ActivityAbstained, learning.ActivityStaged, learning.ActivityPromoted,
 		learning.ActivityConflicted, learning.ActivityFailed, learning.ActivityTimedOut,
-		learning.ActivityReservedTokens,
+		learning.ActivityReservedTokens, learning.ActivitySkillActivatedValidated,
+		learning.ActivitySkillActivatedEvaluated, learning.ActivitySkillStaged,
+		learning.ActivitySkillRejected,
 	}
 	reasons := []learning.AdmissionReason{
 		learning.ReasonBelowThreshold, learning.ReasonInvalidCurrentSpan, learning.ReasonNonMainSession,

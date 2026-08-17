@@ -811,6 +811,12 @@ proposal linkage, and crash-window recovery are List 2 row 31; the pointer is re
 that state and the immutable external snapshot. The skill pipeline is synchronous inside row 47's
 existing job and therefore adds no queue, worker, breaker, or receipt cache.
 
+**Validated learned-skill activation re-audit (List 1 / List 2 — ADR 0224).** The policy is a
+closed value threaded through the existing synchronous pipeline and repository transaction. It adds
+no goroutine, cache, handle, queue, or restart-losable state; `activate_validated` is durable in the
+existing row-48 manifest/receipt history and reconstructs through the existing row-31 lifecycle path.
+No inventory row changes.
+
 **Hermetic MCP OAuth acceptance re-audit (List 1 / List 2 — issue #524).** The
 cross-boundary test adds no production resource. It proves rows 50–54 compose across explicit
 login, two serving processes, durable refresh rotation, reconnect, and manager-before-source

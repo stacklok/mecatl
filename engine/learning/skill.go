@@ -191,6 +191,13 @@ type SkillEvaluator interface {
 	Evaluate(context.Context, SkillEvaluationRequest) (SkillEvaluation, error)
 }
 
+// ValidatedSkillActivator is an optional repository capability for the lower-
+// assurance automatic path. Implementations must atomically enforce evidence,
+// exact/accepted validation, ABSTAIN, staged state, ownership, partition, and CAS.
+type ValidatedSkillActivator interface {
+	ActivateValidated(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
+}
+
 type SkillRepository interface {
 	CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error)
 	Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error)
