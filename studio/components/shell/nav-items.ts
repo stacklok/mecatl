@@ -1,5 +1,5 @@
 import {
-  Clock3,
+  Clock,
   MessageCircle,
   Settings,
   Sparkles,
@@ -27,8 +27,8 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  { key: "chat", label: "Chat", icon: MessageCircle },
+  { key: "chat", label: "Chats", icon: MessageCircle, group: "Workspace" },
+  { key: "schedules", label: "Scheduled", icon: Clock, group: "Workspace" },
   { key: "skills", label: "Skills", icon: Sparkles, group: "Workspace" },
-  { key: "schedules", label: "Scheduled", icon: Clock3, group: "Workspace" },
   { key: "settings", label: "Settings", icon: Settings },
 ];

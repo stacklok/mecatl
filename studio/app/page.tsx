@@ -167,7 +167,7 @@ const starterTask: Task = {
 // The navbar shows the active task's title on the chat view and the
 // destination's name everywhere else.
 const VIEW_TITLES: Record<ViewKey, string> = {
-  chat: "Chat",
+  chat: "Chats",
   skills: "Skills",
   schedules: "Scheduled",
   settings: "Settings",

@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenCheck, Plug, Shuffle, Zap } from "lucide-react";
+import { Brain, Plug, Shuffle, Zap } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -535,7 +535,7 @@ export function SettingsView({
         <TabsContent value="memory">
           <Section
             id="memory"
-            icon={<BookOpenCheck className="size-[18px]" />}
+            icon={<Brain className="size-[18px]" />}
             title="Memory"
             description="What Mecatl remembers about you across projects, and the notes scoped to this workspace. Read-only — the agent curates both."
           >
