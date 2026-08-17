@@ -20,11 +20,12 @@ import (
 )
 
 const (
-	inventoryCatalogFormat   = "session-inventory-json/2"
-	inventoryCatalogDirName  = ".session-inventory"
-	inventoryCatalogFileName = "manifest.json"
-	inventoryCatalogLockName = "catalog.lock"
-	inventoryGlobalScope     = "all"
+	inventoryCatalogFormat        = "session-inventory-json/3"
+	inventoryCatalogDirName       = ".session-inventory"
+	inventoryCatalogFileName      = "manifest.json"
+	inventoryCatalogLockName      = "catalog.lock"
+	inventoryGenerationMarkerName = "generation"
+	inventoryGlobalScope          = "all"
 )
 
 type inventoryWorkKind uint8
@@ -40,11 +41,18 @@ type inventoryCatalogScope struct {
 	Count int    `json:"count"`
 }
 
+type inventoryCatalogSource struct {
+	Size       int64  `json:"size"`
+	ModifiedAt int64  `json:"modified_at"`
+	Mode       uint32 `json:"mode"`
+}
+
 type inventoryCatalog struct {
-	Format      string                           `json:"v"`
-	Fingerprint string                           `json:"fingerprint"`
-	Generation  string                           `json:"generation"`
-	Scopes      map[string]inventoryCatalogScope `json:"scopes"`
+	Format      string                            `json:"v"`
+	Fingerprint string                            `json:"fingerprint"`
+	Generation  string                            `json:"generation"`
+	Sources     map[string]inventoryCatalogSource `json:"v1_sources"`
+	Scopes      map[string]inventoryCatalogScope  `json:"scopes"`
 }
 
 func (st *Store) observeInventoryWork(kind inventoryWorkKind) {
@@ -61,6 +69,15 @@ func (st *Store) inventoryCatalogPath() string {
 	return filepath.Join(st.inventoryCatalogDir(), inventoryCatalogFileName)
 }
 
+func (st *Store) inventoryGenerationMarkerPath() string {
+	return filepath.Join(st.inventoryCatalogDir(), inventoryGenerationMarkerName)
+}
+
+func (st *Store) advanceInventoryGeneration() error {
+	generation := fmt.Sprintf("%s-%016x\n", st.tempOwner, st.tempGeneration.Add(1))
+	return st.writeInventoryFileWithPattern(st.inventoryGenerationMarkerPath(), []byte(generation), ".inventory-generation-*")
+}
+
 func (st *Store) withInventoryCatalogLock(ctx context.Context, fn func() error) error {
 	fl := flock.New(filepath.Join(st.inventoryCatalogDir(), inventoryCatalogLockName), flock.SetPermissions(0o600))
 	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
@@ -74,11 +91,11 @@ func (st *Store) withInventoryCatalogLock(ctx context.Context, fn func() error) 
 	return fn()
 }
 
-// inventoryFingerprint observes only O(1) directory metadata for the two
-// authoritative snapshot namespaces. Catalog files live in their own child
-// directory, so atomically replacing them does not perturb this source stamp.
-// Snapshot create/remove/atomic-replace and legacy promotion update the parent
-// directory timestamp without requiring a traversal or payload read.
+// inventoryFingerprint observes O(1) directory metadata for the two
+// authoritative snapshot namespaces plus the durable generation marker advanced
+// by current writers. Historical v1 sources need the bounded per-file metadata
+// reconciliation recorded in the manifest because an append does not change its
+// parent directory.
 func (st *Store) inventoryFingerprint() (string, error) {
 	h := sha256.New()
 	for _, dir := range []string{st.resolver.dir, st.resolver.canonicalDir()} {
@@ -88,7 +105,91 @@ func (st *Store) inventoryFingerprint() (string, error) {
 		}
 		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\n", dir, info.ModTime().UnixNano(), info.Size(), info.Mode())
 	}
+	marker, err := os.ReadFile(st.inventoryGenerationMarkerPath()) //nolint:gosec // adapter-private owner-only path
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("jsonlstore: read inventory generation marker: %w", err)
+	}
+	_, _ = h.Write(marker)
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func inventorySourceKey(canonical bool, name string) string {
+	if canonical {
+		return "canonical/" + name
+	}
+	return "legacy/" + name
+}
+
+func (st *Store) inventorySourcePath(key string) (string, bool) {
+	prefix, name, ok := strings.Cut(key, "/")
+	if !ok || name == "" || filepath.Base(name) != name || !strings.HasSuffix(name, sessionFileSuffix) {
+		return "", false
+	}
+	switch prefix {
+	case "canonical":
+		return filepath.Join(st.resolver.canonicalDir(), name), true
+	case "legacy":
+		return filepath.Join(st.resolver.dir, name), true
+	default:
+		return "", false
+	}
+}
+
+func inventorySourceMetadata(info os.FileInfo) inventoryCatalogSource {
+	return inventoryCatalogSource{Size: info.Size(), ModifiedAt: info.ModTime().UnixNano(), Mode: uint32(info.Mode())}
+}
+
+func (st *Store) inventoryV1Sources() (map[string]inventoryCatalogSource, error) {
+	sources := make(map[string]inventoryCatalogSource)
+	for _, sourceDir := range []struct {
+		path      string
+		canonical bool
+	}{{st.resolver.dir, false}, {st.resolver.canonicalDir(), true}} {
+		entries, err := os.ReadDir(sourceDir.path)
+		if err != nil {
+			return nil, fmt.Errorf("jsonlstore: scan inventory v1 sources: %w", err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), sessionFileSuffix) {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return nil, fmt.Errorf("jsonlstore: stat inventory v1 source: %w", err)
+			}
+			sources[inventorySourceKey(sourceDir.canonical, entry.Name())] = inventorySourceMetadata(info)
+		}
+	}
+	return sources, nil
+}
+
+func (st *Store) inventorySourcesCurrent(sources map[string]inventoryCatalogSource) bool {
+	for key, expected := range sources {
+		path, ok := st.inventorySourcePath(key)
+		if !ok {
+			return false
+		}
+		info, err := os.Stat(path)
+		if err != nil || inventorySourceMetadata(info) != expected {
+			return false
+		}
+	}
+	return true
+}
+
+func inventoryGeneration(fingerprint string, sources map[string]inventoryCatalogSource) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(fingerprint))
+	keys := make([]string, 0, len(sources))
+	for key := range sources {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		source := sources[key]
+		_, _ = fmt.Fprintf(h, "\n%s\x00%d\x00%d\x00%d", key, source.Size, source.ModifiedAt, source.Mode)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func inventoryOwnerScope(owner *session.Principal) string {
@@ -114,8 +215,9 @@ func (st *Store) readInventoryManifest(fingerprint string) (inventoryCatalog, bo
 	}
 	var catalog inventoryCatalog
 	if json.Unmarshal(data, &catalog) != nil || catalog.Format != inventoryCatalogFormat ||
-		catalog.Fingerprint != fingerprint || catalog.Generation == "" || catalog.Generation != fingerprint ||
-		catalog.Scopes == nil {
+		catalog.Fingerprint != fingerprint || catalog.Sources == nil || catalog.Scopes == nil ||
+		catalog.Generation != inventoryGeneration(fingerprint, catalog.Sources) ||
+		!st.inventorySourcesCurrent(catalog.Sources) {
 		return inventoryCatalog{}, false
 	}
 	for scope, entry := range catalog.Scopes {
@@ -201,7 +303,8 @@ func sortInventoryRows(rows []port.SessionDiscoveryMeta) {
 	})
 }
 
-func (st *Store) writeInventoryCatalog(fingerprint string, rows []port.SessionDiscoveryMeta) error {
+func (st *Store) writeInventoryCatalog(fingerprint string, sources map[string]inventoryCatalogSource, rows []port.SessionDiscoveryMeta) error {
+	generation := inventoryGeneration(fingerprint, sources)
 	global := append([]port.SessionDiscoveryMeta(nil), rows...)
 	sortInventoryRows(global)
 	grouped := map[string][]port.SessionDiscoveryMeta{inventoryGlobalScope: global}
@@ -212,11 +315,11 @@ func (st *Store) writeInventoryCatalog(fingerprint string, rows []port.SessionDi
 		}
 	}
 	manifest := inventoryCatalog{
-		Format: inventoryCatalogFormat, Fingerprint: fingerprint, Generation: fingerprint,
+		Format: inventoryCatalogFormat, Fingerprint: fingerprint, Generation: generation, Sources: sources,
 		Scopes: make(map[string]inventoryCatalogScope, len(grouped)),
 	}
 	for scope, scopeRows := range grouped {
-		file := inventoryScopeFile(scope, fingerprint)
+		file := inventoryScopeFile(scope, generation)
 		var data []byte
 		for _, row := range scopeRows {
 			encoded, err := json.Marshal(row)
@@ -258,7 +361,11 @@ func (st *Store) reconcileInventoryArtifacts(generation string) error {
 }
 
 func (st *Store) writeInventoryFile(path string, data []byte) error {
-	tmp, err := os.CreateTemp(st.inventoryCatalogDir(), ".session-inventory-*") //nolint:gosec // owner-only store dir
+	return st.writeInventoryFileWithPattern(path, data, ".session-inventory-*")
+}
+
+func (st *Store) writeInventoryFileWithPattern(path string, data []byte, pattern string) error {
+	tmp, err := os.CreateTemp(st.inventoryCatalogDir(), pattern) //nolint:gosec // owner-only store dir
 	if err != nil {
 		return fmt.Errorf("jsonlstore: create inventory catalog temporary: %w", err)
 	}

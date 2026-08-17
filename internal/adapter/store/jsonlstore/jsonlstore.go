@@ -357,6 +357,9 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 	}
 	path := st.resolver.currentSnapshotPath(s.ID)
 	return withSnapshotFamilyLock(ctx, path, func() error {
+		if err := st.advanceInventoryGeneration(); err != nil {
+			return err
+		}
 		if err := reapSnapshotTemps(path); err != nil {
 			return err
 		}
@@ -547,6 +550,9 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 		return err
 	}
 	return withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
+		if err := st.advanceInventoryGeneration(); err != nil {
+			return err
+		}
 		canonicalOwned, err := st.resolver.canonicalOwnership(id)
 		if err != nil {
 			return err

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -151,6 +152,10 @@ func (st *Store) discoveryMetaListLocked(ctx context.Context) ([]port.SessionDis
 		if rows, ok := st.readInventoryCatalog(fingerprint); ok {
 			return rows, nil
 		}
+		sources, err := st.inventoryV1Sources()
+		if err != nil {
+			return nil, err
+		}
 
 		st.observeInventoryWork(inventoryWorkRebuild)
 		rows, err := st.rebuildInventoryRows()
@@ -161,13 +166,18 @@ func (st *Store) discoveryMetaListLocked(ctx context.Context) ([]port.SessionDis
 		if err != nil {
 			return nil, err
 		}
-		if after != fingerprint {
-			continue // a shared-directory writer changed the source during rebuild
-		}
-		if err := st.writeInventoryCatalog(after, rows); err != nil {
+		afterSources, err := st.inventoryV1Sources()
+		if err != nil {
 			return nil, err
 		}
-		if err := st.reconcileInventoryArtifacts(after); err != nil {
+		if after != fingerprint || !maps.Equal(afterSources, sources) {
+			continue // a shared-directory writer changed the source during rebuild
+		}
+		generation := inventoryGeneration(after, afterSources)
+		if err := st.writeInventoryCatalog(after, afterSources, rows); err != nil {
+			return nil, err
+		}
+		if err := st.reconcileInventoryArtifacts(generation); err != nil {
 			return nil, err
 		}
 		return rows, nil

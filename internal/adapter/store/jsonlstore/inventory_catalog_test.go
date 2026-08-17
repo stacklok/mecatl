@@ -146,4 +146,50 @@ func TestSessionStorageContinuity_Scenario2_CatalogRebuildAndExternalChange(t *t
 	if got[current.ID] != "changed externally" || got[legacy.ID] != "bounded v1 tail" {
 		t.Fatalf("external changes hidden by catalog: %+v", got)
 	}
+
+	// An historical v1 writer appends in place: the directory entry is unchanged,
+	// so catalog validation must reconcile the recorded v1 file metadata.
+	if err := legacy.RenameTitle("newer appended v1 title"); err != nil {
+		t.Fatalf("RenameTitle newer legacy: %v", err)
+	}
+	newerLegacyLine, err := sessnap.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("Marshal newer legacy: %v", err)
+	}
+	legacyDirBefore, err := os.Stat(first.resolver.canonicalDir())
+	if err != nil {
+		t.Fatalf("Stat legacy directory before append: %v", err)
+	}
+	legacyFile, err := os.OpenFile(legacyPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open legacy snapshot for append: %v", err)
+	}
+	if _, err := legacyFile.Write(append(newerLegacyLine, '\n')); err != nil {
+		_ = legacyFile.Close()
+		t.Fatalf("append newer legacy snapshot: %v", err)
+	}
+	if err := legacyFile.Close(); err != nil {
+		t.Fatalf("close appended legacy snapshot: %v", err)
+	}
+	legacyDirAfter, err := os.Stat(first.resolver.canonicalDir())
+	if err != nil {
+		t.Fatalf("Stat legacy directory after append: %v", err)
+	}
+	if !legacyDirAfter.ModTime().Equal(legacyDirBefore.ModTime()) || legacyDirAfter.Size() != legacyDirBefore.Size() {
+		t.Fatalf("in-place append unexpectedly changed directory metadata: before=%+v after=%+v", legacyDirBefore, legacyDirAfter)
+	}
+
+	rows, err = first.discoveryMetaList(ctx)
+	if err != nil {
+		t.Fatalf("discoveryMetaList after in-place v1 append: %v", err)
+	}
+	for _, row := range rows {
+		if row.ID == legacy.ID {
+			if row.Title != "newer appended v1 title" {
+				t.Fatalf("in-place v1 append served stale catalog row: %+v", row)
+			}
+			return
+		}
+	}
+	t.Fatalf("appended v1 session missing from inventory: %+v", rows)
 }

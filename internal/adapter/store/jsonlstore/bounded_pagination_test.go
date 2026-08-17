@@ -70,7 +70,7 @@ func installInventoryFixture(tb testing.TB, count int, owner *session.Principal)
 	if err != nil {
 		tb.Fatalf("inventoryFingerprint: %v", err)
 	}
-	if err := st.writeInventoryCatalog(fingerprint, rows); err != nil {
+	if err := st.writeInventoryCatalog(fingerprint, map[string]inventoryCatalogSource{}, rows); err != nil {
 		tb.Fatalf("writeInventoryCatalog: %v", err)
 	}
 	return st
