@@ -251,7 +251,7 @@ func TestStartupProjectOffKeepsAlternateRootAutomaticAssets(t *testing.T) {
 			provider := mockllm.New(mockllm.TextTurn("completed"), mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
 			built, err := Build(context.Background(), Config{
 				Model: "model", DefaultProvider: providerOpenAI, Workspace: startupRoot, TrustProject: true, NoSoul: true,
-				PermissionConfigs: []string{operator}, PermissionsConventional: true,
+				PermissionConfigs: []string{operator}, PermissionsConventional: true, permConfigEnv: isolatedPermConfigEnv(t),
 				UserModelDir: t.TempDir(), envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
 				providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
 					if id == providerOpenAI {
