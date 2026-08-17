@@ -157,7 +157,6 @@ const starterTask: Task = {
 const VIEW_TITLES: Record<ViewKey, string> = {
   chat: "Chat",
   skills: "Skills",
-  memory: "Memory",
   schedules: "Scheduled",
   settings: "Settings",
 };
@@ -627,7 +626,7 @@ export default function Home() {
   // A disabled user model (--no-user-model) is a legitimate state, not an error:
   // mecated answers with a service error, which we render as "not wired".
   useEffect(() => {
-    if (view !== "memory") return;
+    if (view !== "settings") return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 5_000);
     void Promise.all([
@@ -740,10 +739,6 @@ export default function Home() {
       setSkillsState("loading");
       setSkillsError("");
     }
-    if (next === "memory") {
-      setMemoryState("loading");
-      setMemoryError("");
-    }
     if (next === "schedules") {
       setSchedulesState("loading");
       setSchedulesError("");
@@ -753,6 +748,8 @@ export default function Home() {
     if (next === "settings") {
       setRouterState("loading");
       setRouterError("");
+      setMemoryState("loading");
+      setMemoryError("");
       setMcpState("idle");
       setMcpError("");
     }
@@ -1254,6 +1251,66 @@ export default function Home() {
     }
   };
 
+  const memoryPanel = (
+    <>
+        <p>Mecatl keeps two separate stores. The <strong>user model</strong> holds durable facts about you and follows you across every project; <strong>project memory</strong> holds notes scoped to this workspace. Both are curated by the agent — this panel only reads them.</p>
+
+        {memoryState === "loading" ? <div className="router-loading">Reading the memory stores…</div> : memoryState === "error" ? (
+          <div className="credential-error" role="alert">{memoryError}</div>
+        ) : (
+          <>
+            <h3 className="memory-heading">User model <small>cross-project</small></h3>
+            {!userModelWired ? (
+              <div className="skills-empty">
+                <strong>The user model is switched off</strong>
+                <p>This daemon was started with <code>--no-user-model</code>, so no facts are stored and the <code>&lt;user-model&gt;</code> block never enters context.</p>
+              </div>
+            ) : (userModel?.entries.length ?? 0) === 0 ? (
+              <div className="skills-empty">
+                <strong>No facts saved yet</strong>
+                <p>Mecatl writes here with <code>RememberUser</code> when it learns something durable about you. Ask it to remember something, or run the daemon with <code>--user-model-review</code> to have it extract facts after a session ends.</p>
+              </div>
+            ) : (
+              <ul className="skills-list">
+                {userModel?.entries.map((entry) => (
+                  <li key={entry.key}>
+                    <strong>{entry.key}</strong>
+                    <small>{entry.description || "No description recorded for this fact."}</small>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {userModelWired && userModel && (
+              <div className="input-hint">
+                {userModel.entries.length} fact{userModel.entries.length === 1 ? "" : "s"}
+                {userModel.sizeBytes > 0 ? ` · ${formatBytes(userModel.sizeBytes)}` : ""}
+                {userModel.sha256 ? ` · index ${userModel.sha256.slice(0, 7)}` : ""}
+              </div>
+            )}
+
+            <h3 className="memory-heading">Project memory <small>this workspace</small></h3>
+            <div className="skills-empty">
+              {memoryDir ? (
+                <>
+                  <strong>Enabled, not yet inspectable</strong>
+                  <p>Mecatl’s <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> tools are wired against the directory below, so the agent can use them today. The daemon exposes no read endpoint for this store yet — there is <code>GET /v1/usermodel</code> but no <code>/v1/memory</code> — so Studio cannot list the entries. This section fills in once that endpoint lands upstream.</p>
+                  <code className="skills-path">{memoryDir}</code>
+                </>
+              ) : (
+                <>
+                  <strong>Not enabled in the running daemon</strong>
+                  <p>Per-project memory stays off in mecated until <code>--memory-dir</code> is passed, and this daemon was started without it — so <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> are not registered at all. Restart the local controller to pick it up.</p>
+                </>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="key-safety"><span>✓</span><p>Read-only by design. Mecatl curates its own memory through injection-scanned tool calls; a value typed here would land in the model’s turn-0 context without passing that check. Ask the agent to remember or forget something instead.</p></div>
+        <div className="transport-note"><span>i</span> The user model is read live on open, so a fact saved moments ago appears without restarting the daemon.</div>
+    </>
+  );
+
   return (
     <main className="studio-shell">
       <IconRail view={view} onNavigate={navigate} connection={connected} className="hidden md:flex" />
@@ -1323,6 +1380,7 @@ export default function Home() {
                 mcpConnected={mcpConnected}
                 connectMcp={connectMcp}
                 signInToMcp={signInToMcp}
+                memoryPanel={memoryPanel}
               />
             )}
             {view === "skills" && (
@@ -1351,68 +1409,6 @@ export default function Home() {
                   {skills.length > 0 && <div className="input-hint">{skills.length} skill{skills.length === 1 ? "" : "s"} available to the model.</div>}
                   <div className="key-safety"><span>✓</span><p>Discovery is scoped to this workspace only. A <code>SKILL.md</code> steers the model like <code>AGENTS.md</code>, so your personal and user-global skill directories are deliberately not loaded.</p></div>
                   <div className="transport-note"><span>i</span> mecated resolves skills at startup. A newly added skill appears after the daemon restarts.</div>
-                </section>
-              </div>
-            )}
-            {view === "memory" && (
-              <div className="panel-page">
-                <section className="panel-card" aria-labelledby="memory-title">
-                  <h2 id="memory-title">Memory</h2>
-                  <p>Mecatl keeps two separate stores. The <strong>user model</strong> holds durable facts about you and follows you across every project; <strong>project memory</strong> holds notes scoped to this workspace. Both are curated by the agent — this panel only reads them.</p>
-
-                  {memoryState === "loading" ? <div className="router-loading">Reading the memory stores…</div> : memoryState === "error" ? (
-                    <div className="credential-error" role="alert">{memoryError}</div>
-                  ) : (
-                    <>
-                      <h3 className="memory-heading">User model <small>cross-project</small></h3>
-                      {!userModelWired ? (
-                        <div className="skills-empty">
-                          <strong>The user model is switched off</strong>
-                          <p>This daemon was started with <code>--no-user-model</code>, so no facts are stored and the <code>&lt;user-model&gt;</code> block never enters context.</p>
-                        </div>
-                      ) : (userModel?.entries.length ?? 0) === 0 ? (
-                        <div className="skills-empty">
-                          <strong>No facts saved yet</strong>
-                          <p>Mecatl writes here with <code>RememberUser</code> when it learns something durable about you. Ask it to remember something, or run the daemon with <code>--user-model-review</code> to have it extract facts after a session ends.</p>
-                        </div>
-                      ) : (
-                        <ul className="skills-list">
-                          {userModel?.entries.map((entry) => (
-                            <li key={entry.key}>
-                              <strong>{entry.key}</strong>
-                              <small>{entry.description || "No description recorded for this fact."}</small>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      {userModelWired && userModel && (
-                        <div className="input-hint">
-                          {userModel.entries.length} fact{userModel.entries.length === 1 ? "" : "s"}
-                          {userModel.sizeBytes > 0 ? ` · ${formatBytes(userModel.sizeBytes)}` : ""}
-                          {userModel.sha256 ? ` · index ${userModel.sha256.slice(0, 7)}` : ""}
-                        </div>
-                      )}
-
-                      <h3 className="memory-heading">Project memory <small>this workspace</small></h3>
-                      <div className="skills-empty">
-                        {memoryDir ? (
-                          <>
-                            <strong>Enabled, not yet inspectable</strong>
-                            <p>Mecatl’s <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> tools are wired against the directory below, so the agent can use them today. The daemon exposes no read endpoint for this store yet — there is <code>GET /v1/usermodel</code> but no <code>/v1/memory</code> — so Studio cannot list the entries. This section fills in once that endpoint lands upstream.</p>
-                            <code className="skills-path">{memoryDir}</code>
-                          </>
-                        ) : (
-                          <>
-                            <strong>Not enabled in the running daemon</strong>
-                            <p>Per-project memory stays off in mecated until <code>--memory-dir</code> is passed, and this daemon was started without it — so <code>Remember</code> / <code>Recall</code> / <code>SearchMemory</code> are not registered at all. Restart the local controller to pick it up.</p>
-                          </>
-                        )}
-                      </div>
-                    </>
-                  )}
-
-                  <div className="key-safety"><span>✓</span><p>Read-only by design. Mecatl curates its own memory through injection-scanned tool calls; a value typed here would land in the model’s turn-0 context without passing that check. Ask the agent to remember or forget something instead.</p></div>
-                  <div className="transport-note"><span>i</span> The user model is read live on open, so a fact saved moments ago appears without restarting the daemon.</div>
                 </section>
               </div>
             )}

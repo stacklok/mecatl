@@ -1,6 +1,6 @@
 "use client";
 
-import { Plug, Shuffle, Zap } from "lucide-react";
+import { BookOpenCheck, Plug, Shuffle, Zap } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -83,6 +83,7 @@ export function SettingsView({
   mcpConnected,
   connectMcp,
   signInToMcp,
+  memoryPanel,
 }: {
   controllerMode: "managed" | "external";
   providerName: string;
@@ -114,6 +115,8 @@ export function SettingsView({
   mcpConnected: { name: string; url: string } | null;
   connectMcp: (event: FormEvent) => void;
   signInToMcp: () => void | Promise<void>;
+  /** Rendered into the Memory tab; its state lives with the fetch that fills it. */
+  memoryPanel: ReactNode;
 }) {
   const external = controllerMode === "external";
 
@@ -132,6 +135,7 @@ export function SettingsView({
           <TabsTrigger value="provider">Provider</TabsTrigger>
           <TabsTrigger value="router">Model router</TabsTrigger>
           <TabsTrigger value="mcp">MCP gateway</TabsTrigger>
+          <TabsTrigger value="memory">Memory</TabsTrigger>
         </TabsList>
 
         <TabsContent value="provider">
@@ -525,6 +529,17 @@ export function SettingsView({
                 </div>
               </>
             )}
+          </Section>
+        </TabsContent>
+
+        <TabsContent value="memory">
+          <Section
+            id="memory"
+            icon={<BookOpenCheck className="size-[18px]" />}
+            title="Memory"
+            description="What Mecatl remembers about you across projects, and the notes scoped to this workspace. Read-only — the agent curates both."
+          >
+            {memoryPanel}
           </Section>
         </TabsContent>
       </Tabs>

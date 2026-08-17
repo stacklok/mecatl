@@ -1,5 +1,4 @@
 import {
-  BookOpenCheck,
   Clock3,
   MessageCircle,
   Settings,
@@ -18,7 +17,7 @@ import {
  * Icon references are component values, which is also why this file is imported
  * by client components only — they cannot cross a server/client prop boundary.
  */
-export type ViewKey = "chat" | "skills" | "memory" | "schedules" | "settings";
+export type ViewKey = "chat" | "skills" | "schedules" | "settings";
 
 export type NavItem = {
   readonly key: ViewKey;
@@ -30,7 +29,6 @@ export type NavItem = {
 export const NAV_ITEMS: readonly NavItem[] = [
   { key: "chat", label: "Chat", icon: MessageCircle },
   { key: "skills", label: "Skills", icon: Sparkles, group: "Workspace" },
-  { key: "memory", label: "Memory", icon: BookOpenCheck, group: "Workspace" },
   { key: "schedules", label: "Scheduled", icon: Clock3, group: "Workspace" },
   { key: "settings", label: "Settings", icon: Settings },
 ];
