@@ -70,7 +70,7 @@ func setSessionMtime(t *testing.T, dir string, id session.SessionID, mtime time.
 			t.Fatalf("ReadDir: %v", err)
 		}
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".session.jsonl") {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".session.json") && !strings.HasSuffix(entry.Name(), ".session.jsonl") {
 				continue
 			}
 			path := filepath.Join(scanDir, entry.Name())
@@ -78,15 +78,37 @@ func setSessionMtime(t *testing.T, dir string, id session.SessionID, mtime time.
 			if err != nil {
 				continue
 			}
-			lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
-			if len(lines) == 0 {
-				continue
+			var payload []byte
+			var envelope map[string]json.RawMessage
+			if strings.HasSuffix(entry.Name(), ".session.json") {
+				if json.Unmarshal(data, &envelope) != nil || len(envelope["snapshot"]) == 0 {
+					continue
+				}
+				payload = envelope["snapshot"]
+			} else {
+				lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+				if len(lines) == 0 {
+					continue
+				}
+				payload = lines[len(lines)-1]
 			}
 			var head struct {
 				ID session.SessionID `json:"id"`
 			}
-			if json.Unmarshal(lines[len(lines)-1], &head) != nil || head.ID != id {
+			if json.Unmarshal(payload, &head) != nil || head.ID != id {
 				continue
+			}
+			if envelope != nil {
+				envelope["modified_at"], err = json.Marshal(mtime)
+				if err == nil {
+					data, err = json.Marshal(envelope)
+				}
+				if err != nil {
+					t.Fatalf("marshal logical modified time for %s: %v", path, err)
+				}
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					t.Fatalf("rewrite logical modified time for %s: %v", path, err)
+				}
 			}
 			if err := os.Chtimes(path, mtime, mtime); err != nil {
 				t.Fatalf("Chtimes %s: %v", path, err)

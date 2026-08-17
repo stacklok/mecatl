@@ -5807,22 +5807,31 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
 - **The jsonlstore adapter (the local reference).**
   `internal/adapter/store/jsonlstore/jsonlstore.go` (`Store`) — the ONE instance that
   serves `SessionStore` + `ToolCallRecorder` + `EventLog` — stores one family as
-  `<store>/sid-v1/<sid-v1-token>.session.jsonl` plus parallel `.tools.jsonl` and
-  `.events.jsonl` sidecars. The owner-only version directory makes canonical names
-  physically disjoint from root-level legacy and schedule names.
+  `<store>/sid-v1/<sid-v1-token>.session.json` (one v2 current snapshot), an
+  optional readable `.session.jsonl` v1 history, and parallel `.tools.jsonl` /
+  `.events.jsonl` sidecars. Save writes a same-directory owner-only temporary,
+  syncs it, atomically renames it over the v2 current snapshot, and syncs the
+  directory. The v2 envelope carries a format tag, the complete `sessnap` JSON,
+  and logical modification time; first lazy promotion preserves the v1 mtime,
+  aggregate bytes after restore, and sidecars, while later saves replace only
+  the v2 current file. Detailed crash/disk-failure capability reporting and
+  cross-process orphan-temporary coordination remain separate work.
+  The owner-only version directory makes canonical names physically disjoint
+  from root-level legacy and schedule names.
   `internal/adapter/store/jsonlstore/resolve.go` (`sessionResolver`) is the single
-  physical-name authority: `sid-v1-` + strict raw URL-base64 reversibly encodes the
-  complete opaque valid-UTF-8 id (the JSON/protobuf string boundary), while the logical
-  id is always read from stored snapshot data, never inferred from a filename. Reads are canonical-first and read-only. A
-  lossy legacy-name family is eligible for snapshot/event fallback, migration, or
-  deletion only when its latest snapshot embeds the exact requested id; mismatches
-  leave every legacy byte untouched. The first write migrates a verified legacy family
-  by renaming tools/events first and snapshot last, preserving bytes and append order.
-  Canonical+legacy coexistence never concatenates histories: canonical is authoritative;
-  List/MetaList deduplicate by embedded logical id and use canonical metadata/mtime;
-  Delete removes canonical sidecars/snapshot and additionally removes only an
-  ownership-verified legacy family, preventing resurrection without deleting a
-  colliding session.
+  physical-name authority: its bounded hash-suffixed token maps the complete
+  opaque valid-UTF-8 id, while the logical id is always read from stored snapshot
+  data, never inferred from a filename. Reads are v2-first and read-only; a
+  present invalid v2 fails loudly rather than falling back to stale v1. A lossy
+  legacy-name family is eligible for snapshot/event fallback, migration, or
+  deletion only when its latest snapshot embeds the exact requested id;
+  mismatches leave every legacy byte untouched. The first write migrates a
+  verified root-level legacy family by renaming tools/events first and its v1
+  snapshot last, then commits v2. V2+v1 coexistence never concatenates histories:
+  v2 is authoritative; List/MetaList deduplicate by embedded logical id and use
+  v2 metadata/logical time; Delete removes canonical sidecars and both snapshot
+  generations, and additionally removes only an ownership-verified legacy family,
+  preventing resurrection without deleting a colliding session.
 
   `Append` writes a per-record format-tagged line
   `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via the shared `mu`/`appendLine`;

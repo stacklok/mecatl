@@ -308,8 +308,8 @@ func TestLoadLegacyMismatchIsNotFoundAndUntouched(t *testing.T) {
 	assertBytes(t, legacySnapshot, snapshotBytes)
 	assertBytes(t, legacyTools, toolBytes)
 	assertBytes(t, legacyEvents, eventBytes)
-	if _, err := os.Stat(st.resolver.canonicalPath(requested, kindSnapshot)); err != nil {
-		t.Fatalf("canonical snapshot was not created: %v", err)
+	if _, err := os.Stat(st.resolver.currentSnapshotPath(requested)); err != nil {
+		t.Fatalf("current snapshot was not created: %v", err)
 	}
 }
 
@@ -342,15 +342,11 @@ func TestSaveMigratesMatchingLegacyFamilyPreservingBytes(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	for kind, want := range family {
-		if kind == kindSnapshot {
-			line, err := sessnap.Marshal(got)
-			if err != nil {
-				t.Fatalf("Marshal migrated snapshot: %v", err)
-			}
-			want = append(append([]byte(nil), want...), append(line, '\n')...)
-		}
 		assertMissing(t, st.resolver.legacyPath(id, kind))
 		assertBytes(t, st.resolver.canonicalPath(id, kind), want)
+	}
+	if _, err := os.Stat(st.resolver.currentSnapshotPath(id)); err != nil {
+		t.Fatalf("current snapshot was not created: %v", err)
 	}
 }
 

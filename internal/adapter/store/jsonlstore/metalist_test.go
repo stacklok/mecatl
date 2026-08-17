@@ -1,13 +1,16 @@
 package jsonlstore_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -234,19 +237,25 @@ func TestReadLastLineLargeFileTailRead(t *testing.T) {
 
 	s := session.New("large", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
 	s.SetTitle("tail-read")
-	// Append MANY snapshots so the file grows well beyond the seek window. Each
-	// Save appends one line; the last line is the latest snapshot. The metadata
-	// must reflect the LATEST (turns == count of BeginTurn calls).
+	// Seed a historical v1 file with MANY snapshots so the bounded tail reader
+	// is exercised independently of the v2 current-snapshot writer.
+	var history bytes.Buffer
 	for i := 0; i < 50; i++ {
 		_ = s.BeginTurn()
 		_ = s.RecordAssistant(session.NewAssistantMessage(strings.Repeat("y", 5000), "", nil))
-		if err := st.Save(ctx, s); err != nil {
-			t.Fatalf("Save %d: %v", i, err)
+		line, err := sessnap.Marshal(s)
+		if err != nil {
+			t.Fatalf("Marshal %d: %v", i, err)
 		}
+		history.Write(line)
+		history.WriteByte('\n')
+	}
+	path := canonicalFamilyPath(dir, s.ID, ".session.jsonl")
+	if err := os.WriteFile(path, history.Bytes(), 0o600); err != nil {
+		t.Fatalf("write v1 history: %v", err)
 	}
 	// Verify the file is larger than the seek window (so the tail-read path is
 	// exercised, not the small-file full-read path).
-	path := canonicalSnapshotPath(dir, s.ID)
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
@@ -282,6 +291,25 @@ func TestReadLastLineLargeFileTailRead(t *testing.T) {
 func touchSessionFile(t *testing.T, dir string, id session.SessionID, mtime time.Time) {
 	t.Helper()
 	path := canonicalSnapshotPath(dir, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile %s: %v", path, err)
+	}
+	var current map[string]json.RawMessage
+	if err := json.Unmarshal(data, &current); err != nil {
+		t.Fatalf("Unmarshal %s: %v", path, err)
+	}
+	current["modified_at"], err = json.Marshal(mtime)
+	if err != nil {
+		t.Fatalf("Marshal modified_at: %v", err)
+	}
+	data, err = json.Marshal(current)
+	if err != nil {
+		t.Fatalf("Marshal current snapshot: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile %s: %v", path, err)
+	}
 	if err := os.Chtimes(path, mtime, mtime); err != nil {
 		t.Fatalf("Chtimes %s: %v", path, err)
 	}

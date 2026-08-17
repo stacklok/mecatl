@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	canonicalDirName   = "sid-v1"
-	sessionTokenPrefix = "sid-v1-"
+	canonicalDirName      = "sid-v1"
+	sessionTokenPrefix    = "sid-v1-"
+	currentSnapshotSuffix = ".session.json"
+	currentSnapshotFormat = "sessnap-current-json/2"
 )
 
 // maxTokenPrefix bounds the readable half of a session token. The hash half is
@@ -140,6 +142,52 @@ func (r sessionResolver) legacyPath(id session.SessionID, kind sessionKind) stri
 	return filepath.Join(r.dir, legacySafeName(id)+kind.suffix())
 }
 
+func (r sessionResolver) currentSnapshotPath(id session.SessionID) string {
+	return filepath.Join(r.canonicalDir(), encodeSessionToken(id)+currentSnapshotSuffix)
+}
+
+type currentSnapshot struct {
+	Format     string          `json:"v"`
+	ModifiedAt time.Time       `json:"modified_at"`
+	Snapshot   json.RawMessage `json:"snapshot"`
+}
+
+func decodeCurrentSnapshot(data []byte) (currentSnapshot, error) {
+	var current currentSnapshot
+	if err := json.Unmarshal(data, &current); err != nil {
+		return currentSnapshot{}, fmt.Errorf("jsonlstore: decode current snapshot: %w", err)
+	}
+	if current.Format != currentSnapshotFormat {
+		return currentSnapshot{}, fmt.Errorf("jsonlstore: unsupported current snapshot format %q", current.Format)
+	}
+	if current.ModifiedAt.IsZero() {
+		return currentSnapshot{}, fmt.Errorf("jsonlstore: current snapshot carries no modified_at")
+	}
+	if len(current.Snapshot) == 0 {
+		return currentSnapshot{}, fmt.Errorf("jsonlstore: current snapshot carries no payload")
+	}
+	return current, nil
+}
+
+func readCurrentSnapshot(path string) (currentSnapshot, bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return currentSnapshot{}, false, nil
+		}
+		return currentSnapshot{}, false, err
+	}
+	if info.Size() > maxScannerTokenSize+lastLineSeekWindow {
+		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: current snapshot exceeds %d bytes", maxScannerTokenSize)
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // adapter-confined path
+	if err != nil {
+		return currentSnapshot{}, true, err
+	}
+	current, err := decodeCurrentSnapshot(data)
+	return current, true, err
+}
+
 func snapshotIDFromLine(line []byte) (session.SessionID, error) {
 	var head struct {
 		ID *session.SessionID `json:"id"`
@@ -172,6 +220,26 @@ func readSnapshotLine(path string) ([]byte, error) {
 	return last, nil
 }
 
+// currentSnapshotFor reads and verifies the v2 snapshot. Presence is
+// authoritative: an invalid v2 file fails loudly and never falls back to v1.
+func (r sessionResolver) currentSnapshotFor(id session.SessionID) (currentSnapshot, bool, error) {
+	current, present, err := readCurrentSnapshot(r.currentSnapshotPath(id))
+	if err != nil || !present {
+		return current, present, err
+	}
+	embedded, err := snapshotIDFromLine(current.Snapshot)
+	if err != nil {
+		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: inspect current snapshot: %w", err)
+	}
+	if embedded != id {
+		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: current session id mismatch: stored %q, requested %q", embedded, id)
+	}
+	if _, err := sessnap.Unmarshal(current.Snapshot); err != nil {
+		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: verify current snapshot: %w", err)
+	}
+	return current, true, nil
+}
+
 // canonicalOwnership reports whether this session's canonical family exists,
 // and fails closed ONLY when the stored snapshot POSITIVELY proves the file
 // belongs to another id. It is the ownership question, deliberately separated
@@ -199,6 +267,10 @@ func readSnapshotLine(path string) ([]byte, error) {
 // turns x conversation size, so a full scan per appended event was quadratic in
 // run length while holding Store.mu.
 func (r sessionResolver) canonicalOwnership(id session.SessionID) (bool, error) {
+	currentPresent, err := pathExists(r.currentSnapshotPath(id))
+	if err != nil || currentPresent {
+		return currentPresent, err
+	}
 	path := r.canonicalPath(id, kindSnapshot)
 	present, err := pathExists(path)
 	if err != nil || !present {
@@ -241,6 +313,10 @@ func (r sessionResolver) canonicalSnapshot(id session.SessionID) ([]byte, bool, 
 // loadSnapshot is read-only. Canonical presence is authoritative; legacy is
 // readable only when its latest embedded id exactly matches the requested id.
 func (r sessionResolver) loadSnapshot(id session.SessionID) ([]byte, error) {
+	current, present, err := r.currentSnapshotFor(id)
+	if err != nil || present {
+		return current.Snapshot, err
+	}
 	line, present, err := r.canonicalSnapshot(id)
 	if err != nil || present {
 		return line, err
@@ -279,6 +355,26 @@ func (r sessionResolver) prepareWrite(id session.SessionID) error {
 		return err
 	}
 	return r.migrateLegacyFamily(id)
+}
+
+// snapshotModifiedAt preserves the v1 file's logical modification time on the
+// first lazy promotion. Later v2 saves advance the logical time.
+func (r sessionResolver) snapshotModifiedAt(id session.SessionID, now time.Time) (time.Time, error) {
+	_, present, err := r.currentSnapshotFor(id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if present {
+		return now.UTC(), nil
+	}
+	info, err := os.Stat(r.canonicalPath(id, kindSnapshot))
+	if err == nil {
+		return info.ModTime().UTC(), nil
+	}
+	if !os.IsNotExist(err) {
+		return time.Time{}, err
+	}
+	return now.UTC(), nil
 }
 
 // readablePath resolves a sidecar without modifying storage. A canonical
@@ -365,20 +461,23 @@ func (r sessionResolver) legacyOwned(id session.SessionID) (bool, error) {
 }
 
 type snapshotFile struct {
-	id        session.SessionID
-	last      []byte
-	modified  time.Time
-	canonical bool
+	id       session.SessionID
+	last     []byte
+	modified time.Time
+	priority int // legacy v1 < canonical v1 < current v2
 }
 
-// snapshotFiles reads logical ids from snapshots, deduplicates canonical and
-// legacy families, and returns bytewise-id order.
+// snapshotFiles reads logical ids from snapshots, deduplicates all readable
+// generations, and returns bytewise-id order.
 func (r sessionResolver) snapshotFiles() ([]snapshotFile, error) {
 	byID := make(map[session.SessionID]snapshotFile)
 	if err := scanSnapshotDir(r.dir, false, byID); err != nil {
 		return nil, err
 	}
 	if err := scanSnapshotDir(r.canonicalDir(), true, byID); err != nil {
+		return nil, err
+	}
+	if err := scanCurrentSnapshotDir(r.canonicalDir(), byID); err != nil {
 		return nil, err
 	}
 	out := slices.Collect(maps.Values(byID))
@@ -417,12 +516,38 @@ func scanSnapshotDir(dir string, canonical bool, byID map[session.SessionID]snap
 		if err != nil {
 			continue
 		}
-		candidate := snapshotFile{id: id, last: last, modified: info.ModTime(), canonical: canonical}
+		priority := 0
+		if canonical {
+			priority = 1
+		}
+		candidate := snapshotFile{id: id, last: last, modified: info.ModTime(), priority: priority}
 		current, exists := byID[id]
-		if !exists || candidate.canonical && !current.canonical ||
-			candidate.canonical == current.canonical && candidate.modified.After(current.modified) {
+		if !exists || candidate.priority > current.priority ||
+			candidate.priority == current.priority && candidate.modified.After(current.modified) {
 			byID[id] = candidate
 		}
+	}
+	return nil
+}
+
+func scanCurrentSnapshotDir(dir string, byID map[session.SessionID]snapshotFile) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("jsonlstore: list store dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), currentSnapshotSuffix) {
+			continue
+		}
+		current, present, err := readCurrentSnapshot(filepath.Join(dir, entry.Name()))
+		if err != nil || !present {
+			continue
+		}
+		id, err := snapshotIDFromLine(current.Snapshot)
+		if err != nil || strings.TrimSuffix(entry.Name(), currentSnapshotSuffix) != encodeSessionToken(id) {
+			continue
+		}
+		byID[id] = snapshotFile{id: id, last: current.Snapshot, modified: current.ModifiedAt, priority: 2}
 	}
 	return nil
 }

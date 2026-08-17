@@ -94,14 +94,20 @@
   > survey](../perf-measurement-survey.md) (the technique reference behind that
   > decision).
 - **SessionStore** — `memstore` (default, in-memory), `jsonlstore`
-  (append-only JSONL replay log:
-  `<dir>/sid-v1/<versioned-token>.session.jsonl` snapshots plus `.tools.jsonl`
-  and `.events.jsonl` sidecars), and `grpcdriver.SessionStore` (a **remote store
-  driver** — see below). The logical session id is an opaque valid-UTF-8 string
-  stored inside each snapshot; the reversible `sid-v1-` filename token is not
+  (one atomically replaced v2 current snapshot at
+  `<dir>/sid-v1/<versioned-token>.session.json`, with readable historical v1
+  `.session.jsonl` snapshots plus unchanged append-only `.tools.jsonl` and
+  `.events.jsonl` sidecars), and `grpcdriver.SessionStore` (a **remote store
+  driver** — see below). The v2 envelope contains the complete `sessnap` payload
+  and logical modification time. A successful save lazily promotes only that
+  session; the verified v2 snapshot is authoritative while a v1 file coexists,
+  and first promotion preserves the v1 file's logical modification time and all
+  sidecar bytes. The logical session id is an opaque valid-UTF-8 string
+  stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename token is not
   an operator API. The owner-only `sid-v1/` directory keeps canonical names
-  disjoint from legacy root-level names. Reads prefer the canonical family. A
-  legacy lossy-name family is used only when its latest snapshot embeds the
+  disjoint from legacy root-level names. Reads prefer verified v2, then canonical
+  v1, then an ownership-verified legacy family. A legacy lossy-name family is
+  used only when its latest snapshot embeds the
   exact requested id, and a subsequent write migrates that verified family
   sidecars-first/snapshot-last without rewriting its bytes. Mismatched legacy
   files are never read or deleted.

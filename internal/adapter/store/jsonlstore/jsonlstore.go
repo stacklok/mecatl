@@ -1,17 +1,15 @@
-// Package jsonlstore implements an append-only, JSONL-backed port.SessionStore,
-// port.ToolCallRecorder (the tool-call audit seam), and port.EventLog (the
-// durable run-event timeline). It is the observability/replay seam: every Save
-// appends a session snapshot as one JSON line to a per-session file, every
-// ToolCall appends a structured tool-call record to a per-session log, and every
-// Append records one relayed event to a per-session event log. Nothing is ever
-// overwritten, so the files form a replayable audit trail; Load reads the most
-// recent snapshot line, while EventLog.Read scans ALL event lines cumulatively.
+// Package jsonlstore implements a versioned current-snapshot port.SessionStore,
+// plus append-only port.ToolCallRecorder and port.EventLog sidecars. Save atomically
+// replaces one bounded v2 current snapshot; Load also accepts historical v1 JSONL
+// snapshots and a successful save lazily promotes that session. ToolCall and Append
+// retain their cumulative JSONL audit semantics.
 //
-// SESSION-FAMILY NAMING. Each session's three files share a family stem under
+// SESSION-FAMILY NAMING. Each session's files share a family stem under
 // the owner-only `sid-v1` subdirectory. The reversible token is `sid-v1-` plus
 // Raw URL-base64 of the complete opaque valid-UTF-8 session id:
 //
-//	<dir>/sid-v1/sid-v1-<token>.session.jsonl
+//	<dir>/sid-v1/sid-v1-<token>.session.json       (v2 current)
+//	<dir>/sid-v1/sid-v1-<token>.session.jsonl      (readable v1 history)
 //	<dir>/sid-v1/sid-v1-<token>.tools.jsonl
 //	<dir>/sid-v1/sid-v1-<token>.events.jsonl
 //
@@ -34,6 +32,7 @@ import (
 	"fmt"
 	"iter"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -48,7 +47,7 @@ import (
 // distinguish not-found from an infra failure via errors.Is.
 var ErrNotFound = fmt.Errorf("jsonlstore: session not found: %w", port.ErrSessionNotFound)
 
-// Store is an append-only JSONL SessionStore and ToolCallRecorder rooted at a directory.
+// Store is a current-snapshot SessionStore with append-only tool/event sidecars.
 type Store struct {
 	// resolver is the single authority for canonical and legacy family paths
 	// (including the plain root dir, resolver.dir — Store has no separate
@@ -81,15 +80,9 @@ func New(dir string) (*Store, error) {
 	return &Store{resolver: resolver}, nil
 }
 
-// Save appends a snapshot of s as a single JSON line to the session file.
-//
-// New writes target the canonical versioned-token path. Before writing, the
-// resolver lazily migrates a MATCHING legacy family (one whose legacy snapshot
-// carries an id exactly equal to s.ID) forward — sidecars first, snapshot
-// last — so the new snapshot line appends to the canonical file carrying the
-// migrated history in order and the legacy files are removed. A legacy family
-// whose embedded id does NOT match s.ID is left untouched (it belongs to a
-// different session that the lossy stem happened to collide with).
+// Save atomically replaces the adapter-private v2 current snapshot. Existing
+// v1 JSONL snapshots remain readable and are promoted lazily on the next save;
+// their file modification time becomes the v2 logical modification time.
 func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if s == nil {
 		return sessnap.ErrNilSession
@@ -97,7 +90,7 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if err := validateSessionID(s.ID); err != nil {
 		return err
 	}
-	line, err := sessnap.Marshal(s)
+	payload, err := sessnap.Marshal(s)
 	if err != nil {
 		return err
 	}
@@ -106,7 +99,55 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if err := st.resolver.prepareWrite(s.ID); err != nil {
 		return err
 	}
-	return appendLine(st.resolver.canonicalPath(s.ID, kindSnapshot), line)
+	modifiedAt, err := st.resolver.snapshotModifiedAt(s.ID, time.Now())
+	if err != nil {
+		return fmt.Errorf("jsonlstore: resolve snapshot modification time: %w", err)
+	}
+	data, err := json.Marshal(currentSnapshot{
+		Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Snapshot: payload,
+	})
+	if err != nil {
+		return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
+	}
+	return replaceCurrentSnapshot(st.resolver.currentSnapshotPath(s.ID), data, modifiedAt)
+}
+
+func replaceCurrentSnapshot(path string, data []byte, modifiedAt time.Time) (retErr error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*") //nolint:gosec // owner-only store dir
+	if err != nil {
+		return fmt.Errorf("jsonlstore: create snapshot temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		if retErr != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("jsonlstore: write snapshot temp: %w", err)
+	}
+	if err := os.Chtimes(tmpPath, modifiedAt, modifiedAt); err != nil {
+		return fmt.Errorf("jsonlstore: stamp snapshot temp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("jsonlstore: sync snapshot temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("jsonlstore: close snapshot temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("jsonlstore: replace current snapshot: %w", err)
+	}
+	dir, err := os.Open(filepath.Dir(path)) //nolint:gosec // owner-only store dir
+	if err != nil {
+		return fmt.Errorf("jsonlstore: open snapshot directory: %w", err)
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("jsonlstore: sync snapshot directory: %w", err)
+	}
+	return nil
 }
 
 // Load reads the authoritative snapshot without modifying storage. Canonical
@@ -176,12 +217,10 @@ type eventLogRecord struct {
 // older snapshot history. Fine for a retention sweep on a startup/hourly cadence;
 // indexed inventory is a separate concern.
 //
-// List enumerates ONLY *.session.jsonl files, which is what makes the
-// sidecars-before-snapshot removal order load-bearing (see familyOrder in
-// resolve.go): a .tools.jsonl or .events.jsonl sidecar without its session
-// file is invisible here and can never be swept. A pre-existing orphan is
-// accepted as unreachable; Delete's ordering prevents this store from
-// creating new ones.
+// List enumerates v2 current snapshots and historical *.session.jsonl files;
+// sidecars are never inventory authority. That keeps sidecars-before-snapshot
+// removal load-bearing (see familyOrder in resolve.go): a sidecar without any
+// session snapshot is invisible here and can never be swept.
 func (st *Store) List(_ context.Context) ([]port.StoredSession, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -239,7 +278,10 @@ func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	}
 	if canonicalOwned {
 		if err := removeSessionFile(st.resolver.canonicalPath(id, kindSnapshot)); err != nil {
-			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
+			return fmt.Errorf("jsonlstore: delete v1 %q: %w", id, err)
+		}
+		if err := removeSessionFile(st.resolver.currentSnapshotPath(id)); err != nil {
+			return fmt.Errorf("jsonlstore: delete current %q: %w", id, err)
 		}
 	}
 	if legacyOwned {

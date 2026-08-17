@@ -794,7 +794,7 @@ func jsonlSnapshotPath(t *testing.T, dir string, id session.SessionID) string {
 			t.Fatalf("ReadDir: %v", err)
 		}
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".session.jsonl") {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".session.json") && !strings.HasSuffix(entry.Name(), ".session.jsonl") {
 				continue
 			}
 			path := filepath.Join(scanDir, entry.Name())
@@ -802,17 +802,60 @@ func jsonlSnapshotPath(t *testing.T, dir string, id session.SessionID) string {
 			if err != nil {
 				continue
 			}
-			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			var payload []byte
+			if strings.HasSuffix(entry.Name(), ".session.json") {
+				var envelope struct {
+					Snapshot json.RawMessage `json:"snapshot"`
+				}
+				if json.Unmarshal(data, &envelope) != nil {
+					continue
+				}
+				payload = envelope.Snapshot
+			} else {
+				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+				if len(lines) == 0 {
+					continue
+				}
+				payload = []byte(lines[len(lines)-1])
+			}
 			var head struct {
 				ID session.SessionID `json:"id"`
 			}
-			if len(lines) > 0 && json.Unmarshal([]byte(lines[len(lines)-1]), &head) == nil && head.ID == id {
+			if json.Unmarshal(payload, &head) == nil && head.ID == id {
 				return path
 			}
 		}
 	}
 	t.Fatalf("snapshot for %q not found", id)
 	return ""
+}
+
+func setJSONLSnapshotMtime(t *testing.T, path string, mtime time.Time) {
+	t.Helper()
+	if strings.HasSuffix(path, ".session.json") {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var envelope map[string]json.RawMessage
+		if err := json.Unmarshal(data, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		envelope["modified_at"], err = json.Marshal(mtime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err = json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("Chtimes(%s): %v", path, err)
+	}
 }
 
 // TestBuildChildGCSweepsStaleJSONLChild is the build-level E2E: a REAL jsonl
@@ -843,12 +886,8 @@ func TestBuildChildGCSweepsStaleJSONLChild(t *testing.T) {
 	staleFile := jsonlSnapshotPath(t, storeDir, "subagent-stale")
 	mainFile := jsonlSnapshotPath(t, storeDir, "operator-main")
 	old := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(staleFile, old, old); err != nil {
-		t.Fatalf("Chtimes(stale child): %v", err)
-	}
-	if err := os.Chtimes(mainFile, old, old); err != nil { // main is ancient too — and must STILL survive
-		t.Fatalf("Chtimes(main): %v", err)
-	}
+	setJSONLSnapshotMtime(t, staleFile, old)
+	setJSONLSnapshotMtime(t, mainFile, old) // main is ancient too — and must STILL survive
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
