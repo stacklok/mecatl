@@ -199,7 +199,7 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 		}
 		rows = append(rows, meta)
 	}
-	return port.PaginateSessionMetadata(rows, request), nil
+	return port.PaginateSessionMetadataBound(rows, request)
 }
 
 // Delete removes the session snapshot AND its event-log and tool-call sidecars.

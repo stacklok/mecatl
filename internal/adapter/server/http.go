@@ -1840,6 +1840,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, ErrSessionDeleteUnsupported):
 		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, port.ErrSessionMetadataCursorRestart):
+		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
 		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, ErrSchedulerNotRunning):

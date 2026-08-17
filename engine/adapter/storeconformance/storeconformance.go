@@ -581,6 +581,23 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 	if first.Sessions[0].ModifiedAt.Equal(second.Sessions[0].ModifiedAt) && first.Sessions[0].ID > second.Sessions[0].ID {
 		t.Fatalf("equal-time IDs ordered %q then %q, want ascending", first.Sessions[0].ID, second.Sessions[0].ID)
 	}
+	if _, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 1, OwnershipEnforced: true, Owner: bob, Cursor: first.NextCursor,
+	}); !errors.Is(err, port.ErrSessionMetadataCursorRestart) {
+		t.Fatalf("owner-mismatched cursor error = %v, want restart", err)
+	}
+	changed := newSession("generation-change")
+	if err := changed.RestoreLabels(alice, session.Authority("")); err != nil {
+		t.Fatalf("RestoreLabels(generation-change): %v", err)
+	}
+	if err := st.Save(ctx, changed); err != nil {
+		t.Fatalf("Save(generation-change): %v", err)
+	}
+	if _, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+		Limit: 1, OwnershipEnforced: true, Owner: alice, Cursor: first.NextCursor,
+	}); !errors.Is(err, port.ErrSessionMetadataCursorRestart) {
+		t.Fatalf("generation-stale cursor error = %v, want restart", err)
+	}
 	for _, page := range []port.SessionMetadataPage{first, second} {
 		for _, row := range page.Sessions {
 			if row.ID == "foreign" || row.ID == "ownerless" {

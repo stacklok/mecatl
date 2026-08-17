@@ -5848,18 +5848,29 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   `internal/adapter/store/jsonlstore/inventory_catalog.go` owns the derivative
   inventory catalog's physical format and persistence. The catalog contains only
   `port.SessionDiscoveryMeta` projections and a snapshot-entry fingerprint; it is
-  never transcript authority. A ready `MetaList`/`PageSessionMetadata` call scans
-  only directory-entry metadata before accepting the catalog, so it neither opens
-  snapshots nor decodes conversations. Missing, malformed, semantically invalid, or
-  fingerprint-stale catalogs rebuild from the v2 envelope's top-level `metadata`
-  projection or the existing bounded v1 tail reader. Fingerprinting before and after
-  rebuild rejects a view changed concurrently by another `Store`; every later read
-  revalidates the shared directory rather than trusting an unchecked process-local
-  cache. Older v2 envelopes without the additive header remain readable and are
-  projected once through their bounded current payload during rebuild. Catalog files
-  are owner-only atomic replacements and can always be discarded and reconstructed;
-  public generation-bound cursor behavior and narrower lock decomposition are separate
-  follow-on work.
+  never transcript authority. Rows are pre-sorted by `(modified_at DESC,
+  session_id ASC)` into a global scope and owner-specific scope files. A ready
+  `PageSessionMetadata` opens only the selected scope, seeks to the cursor's
+  adapter-private byte position, and decodes at most `Limit+1` rows; page two
+  neither traverses page one nor opens/decodes snapshots or transcripts. The
+  opaque transport cursor carries an adapter-issued position bound to the source
+  fingerprint generation and exact ownership/filter scope. A changed generation
+  or scope returns `port.ErrSessionMetadataCursorRestart`; generations are never
+  mixed and foreign-owner rows never enter page formation or `TotalCount`.
+  `MetaList` may consume the complete global derivative projection for its legacy
+  all-rows contract. Ready calls validate an O(1) source stamp from the two
+  authoritative snapshot directories before accepting the catalog. Catalog files
+  live in a private child directory, so their atomic replacement does not perturb
+  that stamp; snapshot creation/removal/replacement and promotion do. Missing,
+  malformed, semantically invalid, or fingerprint-stale catalogs rebuild from the v2 envelope's top-level `metadata`
+  projection or the existing bounded v1 tail reader. Fingerprinting before and
+  after rebuild rejects a view changed concurrently by another `Store`; every
+  later read revalidates the shared directory rather than trusting an unchecked
+  process-local cache. Older v2 envelopes without the additive header remain
+  readable and are projected once through their bounded current payload during
+  rebuild. Catalog manifests and scope files are owner-only atomic replacements
+  and can always be discarded and reconstructed; narrower lock decomposition is
+  separate follow-on work.
 
   `Append` writes a per-record format-tagged line
   `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via the shared `mu`/`appendLine`;

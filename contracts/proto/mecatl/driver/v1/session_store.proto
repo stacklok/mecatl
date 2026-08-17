@@ -157,6 +157,12 @@ message ListSessionsResponse {
 message SessionMetadataCursor {
   google.protobuf.Timestamp modified_at = 1;
   string session_id = 2;
+  // generation binds continuation to one metadata catalog view.
+  string generation = 3;
+  // scope binds continuation to the ownership/filter set used for page one.
+  string scope = 4;
+  // position is an adapter-private direct continuation offset.
+  int64 position = 5;
 }
 
 message PageSessionMetadataRequest {

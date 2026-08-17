@@ -756,6 +756,8 @@ func toStatus(err error) error {
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrSessionDeleteUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, port.ErrSessionMetadataCursorRestart):
+		return status.Error(codes.Aborted, err.Error())
 	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrSchedulerNotRunning):

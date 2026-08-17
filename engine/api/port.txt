@@ -79,6 +79,7 @@ const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0
 const TriggerOneShot TriggerKind = 2
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage
+func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) (SessionMetadataPage, error)
 func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content
 func SessionIDFromContext(ctx context.Context) (session.SessionID, bool)
 func WithSessionID(ctx context.Context, id session.SessionID) context.Context
@@ -118,7 +119,7 @@ type SessionDeleteSupport interface{SupportsSessionDelete() bool}
 type SessionDiscoveryMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; TitleProvenance session.TitleProvenance; Owner *session.Principal; Workspace string; Kind session.SessionKind; Relationship session.SessionRelationship}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
 type SessionMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; Owner *session.Principal}
-type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID}
+type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID; Generation string; Scope string; Position int64}
 type SessionMetadataPage struct{Sessions []SessionDiscoveryMeta; NextCursor *SessionMetadataCursor; TotalCount int}
 type SessionMetadataPageRequest struct{Limit int; Cursor *SessionMetadataCursor; OwnershipEnforced bool; Owner *session.Principal}
 type SessionMetadataPager interface{PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)}
@@ -134,5 +135,6 @@ var ErrPruneUnsupported error
 var ErrScheduleAlreadyExists error
 var ErrScheduleNotFound error
 var ErrScheduleUnsupported error
+var ErrSessionMetadataCursorRestart error
 var ErrSessionMetadataPagingUnsupported error
 var ErrSessionNotFound error

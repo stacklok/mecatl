@@ -2,7 +2,11 @@ package port
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -163,12 +167,23 @@ type MetaLister interface {
 // capability posture, distinct from a transient storage failure.
 var ErrSessionMetadataPagingUnsupported = errors.New("port: store does not support session metadata paging")
 
-// SessionMetadataCursor is the structured store-side keyset position. Public
-// transports encode it as an opaque token; adapters compare ModifiedAt
-// descending and ID ascending.
+// ErrSessionMetadataCursorRestart reports that a metadata cursor no longer
+// identifies the same generation and owner/filter scope. Callers must discard
+// the cursor and restart at page one; adapters never continue across the
+// mismatch.
+var ErrSessionMetadataCursorRestart = errors.New("port: session metadata cursor requires restart")
+
+// SessionMetadataCursor is an adapter-issued keyset position. Public transports
+// encode the whole value as an opaque token. Generation and Scope bind a page
+// sequence to one backend view and filter set; Position lets indexed adapters
+// resume without traversing prior rows. ModifiedAt and ID retain the ordering
+// boundary used by scan-based adapters and response validation.
 type SessionMetadataCursor struct {
 	ModifiedAt time.Time
 	ID         session.SessionID
+	Generation string
+	Scope      string
+	Position   int64
 }
 
 // SessionMetadataPageRequest asks an optional pager for one bounded metadata
@@ -198,27 +213,38 @@ type SessionMetadataPager interface {
 }
 
 // PaginateSessionMetadata applies the shared owner-filter, ordering, and keyset
-// rules to an adapter's metadata scan. It intentionally bounds only the returned
-// page; an adapter may scan its backend in v1.
+// rules to an adapter's metadata scan. It is retained for callers that form a
+// single page without a generation-bound continuation. Pager implementations
+// should use PaginateSessionMetadataBound.
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage {
-	filtered := make([]SessionDiscoveryMeta, 0, len(rows))
-	for _, row := range rows {
-		if request.OwnershipEnforced && (request.Owner == nil || !request.Owner.SameIdentity(row.Owner)) {
-			continue
+	page, _ := paginateSessionMetadata(rows, request, false)
+	return page
+}
+
+// PaginateSessionMetadataBound applies generation- and filter-bound pagination
+// for scan-based adapters. It returns ErrSessionMetadataCursorRestart rather
+// than mixing rows when the current inventory or owner scope differs from the
+// cursor. Indexed adapters may implement the same contract with adapter-private
+// positions instead of scanning.
+func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) (SessionMetadataPage, error) {
+	return paginateSessionMetadata(rows, request, true)
+}
+
+func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, bind bool) (SessionMetadataPage, error) {
+	filtered := prepareSessionMetadataRows(rows, request)
+	scope := metadataPageScope(request)
+	generation := ""
+	if bind {
+		encoded, err := json.Marshal(filtered)
+		if err != nil {
+			return SessionMetadataPage{}, fmt.Errorf("port: encode session metadata generation: %w", err)
 		}
-		row.Owner = row.Owner.Clone()
-		if row.Relationship.BranchIndex != nil {
-			index := *row.Relationship.BranchIndex
-			row.Relationship.BranchIndex = &index
+		sum := sha256.Sum256(encoded)
+		generation = hex.EncodeToString(sum[:])
+		if request.Cursor != nil && (request.Cursor.Generation != generation || request.Cursor.Scope != scope) {
+			return SessionMetadataPage{}, ErrSessionMetadataCursorRestart
 		}
-		filtered = append(filtered, row)
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		if !filtered[i].ModifiedAt.Equal(filtered[j].ModifiedAt) {
-			return filtered[i].ModifiedAt.After(filtered[j].ModifiedAt)
-		}
-		return filtered[i].ID < filtered[j].ID
-	})
 
 	start := 0
 	if request.Cursor != nil {
@@ -242,9 +268,44 @@ func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadat
 	page := SessionMetadataPage{Sessions: filtered[start:end], TotalCount: len(filtered)}
 	if end < len(filtered) && end > start {
 		last := filtered[end-1]
-		page.NextCursor = &SessionMetadataCursor{ModifiedAt: last.ModifiedAt, ID: last.ID}
+		page.NextCursor = &SessionMetadataCursor{
+			ModifiedAt: last.ModifiedAt, ID: last.ID, Generation: generation, Scope: scope,
+		}
 	}
-	return page
+	return page, nil
+}
+
+func prepareSessionMetadataRows(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) []SessionDiscoveryMeta {
+	filtered := make([]SessionDiscoveryMeta, 0, len(rows))
+	for _, row := range rows {
+		if request.OwnershipEnforced && (request.Owner == nil || !request.Owner.SameIdentity(row.Owner)) {
+			continue
+		}
+		row.Owner = row.Owner.Clone()
+		if row.Relationship.BranchIndex != nil {
+			index := *row.Relationship.BranchIndex
+			row.Relationship.BranchIndex = &index
+		}
+		filtered = append(filtered, row)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if !filtered[i].ModifiedAt.Equal(filtered[j].ModifiedAt) {
+			return filtered[i].ModifiedAt.After(filtered[j].ModifiedAt)
+		}
+		return filtered[i].ID < filtered[j].ID
+	})
+	return filtered
+}
+
+func metadataPageScope(request SessionMetadataPageRequest) string {
+	if !request.OwnershipEnforced {
+		return "all"
+	}
+	if request.Owner == nil {
+		return "owner:none"
+	}
+	sum := sha256.Sum256([]byte(request.Owner.Issuer + "\x00" + request.Owner.Subject))
+	return "owner:" + hex.EncodeToString(sum[:])
 }
 
 // ErrPruneUnsupported is the port-level sentinel a PrunableStore's List or

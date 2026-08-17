@@ -5201,13 +5201,19 @@ type ListSessionsPage struct {
 type inventoryCursor struct {
 	ModifiedAtUnixNano int64  `json:"m"`
 	SessionID          string `json:"i"`
+	Generation         string `json:"g"`
+	Scope              string `json:"s"`
+	Position           int64  `json:"p"`
 }
 
 func encodeInventoryCursor(cursor *port.SessionMetadataCursor) (string, error) {
 	if cursor == nil {
 		return "", nil
 	}
-	data, err := json.Marshal(inventoryCursor{ModifiedAtUnixNano: cursor.ModifiedAt.UnixNano(), SessionID: string(cursor.ID)})
+	data, err := json.Marshal(inventoryCursor{
+		ModifiedAtUnixNano: cursor.ModifiedAt.UnixNano(), SessionID: string(cursor.ID),
+		Generation: cursor.Generation, Scope: cursor.Scope, Position: cursor.Position,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -5223,10 +5229,13 @@ func decodeInventoryCursor(token string) (*port.SessionMetadataCursor, error) {
 		return nil, fmt.Errorf("%w: invalid session inventory cursor", ErrInvalidArgument)
 	}
 	var cursor inventoryCursor
-	if err := json.Unmarshal(data, &cursor); err != nil || cursor.SessionID == "" {
+	if err := json.Unmarshal(data, &cursor); err != nil || cursor.SessionID == "" || cursor.Generation == "" || cursor.Scope == "" || cursor.Position < 0 {
 		return nil, fmt.Errorf("%w: invalid session inventory cursor", ErrInvalidArgument)
 	}
-	return &port.SessionMetadataCursor{ModifiedAt: time.Unix(0, cursor.ModifiedAtUnixNano), ID: session.SessionID(cursor.SessionID)}, nil
+	return &port.SessionMetadataCursor{
+		ModifiedAt: time.Unix(0, cursor.ModifiedAtUnixNano), ID: session.SessionID(cursor.SessionID),
+		Generation: cursor.Generation, Scope: cursor.Scope, Position: cursor.Position,
+	}, nil
 }
 
 func inventoryCapabilities(kind session.SessionKind, id session.SessionID, state session.State, live bool) (SessionInventoryCapabilities, SessionInventoryActionReasons) {
@@ -5283,6 +5292,11 @@ func metadataKeyAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadat
 		(row.ModifiedAt.Equal(cursor.ModifiedAt) && row.ID > cursor.ID)
 }
 
+func validMetadataCursor(cursor *port.SessionMetadataCursor) bool {
+	return cursor != nil && cursor.ID != "" && utf8.ValidString(string(cursor.ID)) &&
+		cursor.Generation != "" && cursor.Scope != "" && cursor.Position >= 0
+}
+
 func validateSessionMetadataPage(page port.SessionMetadataPage, request port.SessionMetadataPageRequest) error {
 	if len(page.Sessions) > request.Limit {
 		return fmt.Errorf("pager returned %d rows for limit %d", len(page.Sessions), request.Limit)
@@ -5308,7 +5322,7 @@ func validateSessionMetadataPage(page port.SessionMetadataPage, request port.Ses
 		}
 	}
 	if page.NextCursor != nil {
-		if len(page.Sessions) == 0 || page.NextCursor.ID == "" || !utf8.ValidString(string(page.NextCursor.ID)) {
+		if len(page.Sessions) == 0 || !validMetadataCursor(page.NextCursor) {
 			return fmt.Errorf("pager returned an invalid next cursor")
 		}
 		last := page.Sessions[len(page.Sessions)-1]
@@ -5348,7 +5362,7 @@ func (s *Service) ListSessionPage(ctx context.Context, request ListSessionsPageR
 	}
 	page, err := pager.PageSessionMetadata(ctx, pageRequest)
 	if err != nil {
-		if errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
+		if errors.Is(err, port.ErrSessionMetadataPagingUnsupported) || errors.Is(err, port.ErrSessionMetadataCursorRestart) {
 			return ListSessionsPage{}, err
 		}
 		return ListSessionsPage{}, fmt.Errorf("%w: list session page: %v", ErrInternal, err)

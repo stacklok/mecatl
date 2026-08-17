@@ -101,12 +101,13 @@ type Store struct {
 	// resolver is the single authority for canonical and legacy family paths
 	// (including the plain root dir, resolver.dir — Store has no separate
 	// copy of it).
-	resolver       sessionResolver
-	mu             sync.Mutex // serializes appends across files
-	snapshot       snapshotOps
-	durability     SnapshotDurabilityCapability
-	tempOwner      string
-	tempGeneration uint64
+	resolver              sessionResolver
+	mu                    sync.Mutex // serializes appends across files
+	snapshot              snapshotOps
+	durability            SnapshotDurabilityCapability
+	tempOwner             string
+	tempGeneration        uint64
+	inventoryWorkObserver func(inventoryWorkKind)
 }
 
 // compile-time assertions that Store satisfies both ports plus the optional
@@ -133,6 +134,9 @@ func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	resolver := sessionResolver{dir: dir}
 	if err := os.MkdirAll(resolver.canonicalDir(), 0o700); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(resolver.canonicalDir(), inventoryCatalogDirName), 0o700); err != nil {
+		return nil, fmt.Errorf("jsonlstore: create inventory catalog dir: %w", err)
 	}
 	ownerBytes := make([]byte, 16)
 	if _, err := rand.Read(ownerBytes); err != nil {

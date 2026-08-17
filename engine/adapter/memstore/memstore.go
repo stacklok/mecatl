@@ -130,7 +130,7 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 		})
 	}
 	st.mu.RUnlock()
-	return port.PaginateSessionMetadata(rows, request), nil
+	return port.PaginateSessionMetadataBound(rows, request)
 }
 
 // Delete removes the session stored under id. It is idempotent: an unknown id

@@ -1,6 +1,7 @@
 package jsonlstore
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,76 +16,137 @@ import (
 )
 
 const (
-	inventoryCatalogFormat   = "session-inventory-json/1"
-	inventoryCatalogFileName = ".session-inventory.json"
+	inventoryCatalogFormat   = "session-inventory-json/2"
+	inventoryCatalogDirName  = ".session-inventory"
+	inventoryCatalogFileName = "manifest.json"
+	inventoryGlobalScope     = "all"
 )
 
+type inventoryWorkKind uint8
+
+const (
+	inventoryWorkCatalogRow inventoryWorkKind = iota + 1
+	inventoryWorkSnapshotRead
+	inventoryWorkRebuild
+)
+
+type inventoryCatalogScope struct {
+	File  string `json:"file"`
+	Count int    `json:"count"`
+}
+
 type inventoryCatalog struct {
-	Format      string                      `json:"v"`
-	Fingerprint string                      `json:"fingerprint"`
-	Rows        []port.SessionDiscoveryMeta `json:"rows"`
+	Format      string                           `json:"v"`
+	Fingerprint string                           `json:"fingerprint"`
+	Generation  string                           `json:"generation"`
+	Scopes      map[string]inventoryCatalogScope `json:"scopes"`
+}
+
+func (st *Store) observeInventoryWork(kind inventoryWorkKind) {
+	if st.inventoryWorkObserver != nil {
+		st.inventoryWorkObserver(kind)
+	}
+}
+
+func (st *Store) inventoryCatalogDir() string {
+	return filepath.Join(st.resolver.canonicalDir(), inventoryCatalogDirName)
 }
 
 func (st *Store) inventoryCatalogPath() string {
-	return filepath.Join(st.resolver.canonicalDir(), inventoryCatalogFileName)
+	return filepath.Join(st.inventoryCatalogDir(), inventoryCatalogFileName)
 }
 
-// inventoryFingerprint observes only directory-entry metadata for authoritative
-// snapshot files. It deliberately excludes sidecars, locks, temporaries, and the
-// derivative catalog itself. A ready catalog read therefore never opens or
-// decodes a transcript while still noticing ordinary same-directory changes made
-// by another Store process (atomic replacement, creation, removal, or promotion).
+// inventoryFingerprint observes only O(1) directory metadata for the two
+// authoritative snapshot namespaces. Catalog files live in their own child
+// directory, so atomically replacing them does not perturb this source stamp.
+// Snapshot create/remove/atomic-replace and legacy promotion update the parent
+// directory timestamp without requiring a traversal or payload read.
 func (st *Store) inventoryFingerprint() (string, error) {
-	var records []string
-	for _, candidate := range []struct {
-		dir       string
-		prefix    string
-		canonical bool
-	}{
-		{dir: st.resolver.dir, prefix: "legacy/"},
-		{dir: st.resolver.canonicalDir(), prefix: "canonical/", canonical: true},
-	} {
-		entries, err := os.ReadDir(candidate.dir)
+	h := sha256.New()
+	for _, dir := range []string{st.resolver.dir, st.resolver.canonicalDir()} {
+		info, err := os.Stat(dir)
 		if err != nil {
 			return "", fmt.Errorf("jsonlstore: fingerprint inventory directory: %w", err)
 		}
-		for _, entry := range entries {
-			if entry.IsDir() || !inventorySnapshotName(entry.Name(), candidate.canonical) {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return "", fmt.Errorf("jsonlstore: fingerprint inventory entry: %w", err)
-			}
-			records = append(records, fmt.Sprintf("%s%s\x00%d\x00%d\x00%d", candidate.prefix, entry.Name(), info.Size(), info.ModTime().UnixNano(), info.Mode()))
-		}
-	}
-	sort.Strings(records)
-	h := sha256.New()
-	for _, record := range records {
-		_, _ = h.Write([]byte(record))
-		_, _ = h.Write([]byte{0})
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%d\n", dir, info.ModTime().UnixNano(), info.Size(), info.Mode())
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func inventorySnapshotName(name string, canonical bool) bool {
-	if strings.HasSuffix(name, sessionFileSuffix) {
-		return true
+func inventoryOwnerScope(owner *session.Principal) string {
+	if owner == nil {
+		return "owner:none"
 	}
-	return canonical && strings.HasSuffix(name, currentSnapshotSuffix)
+	sum := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	return "owner:" + hex.EncodeToString(sum[:])
+}
+
+func inventoryScopeFile(scope, generation string) string {
+	label := "all"
+	if scope != inventoryGlobalScope {
+		label = strings.TrimPrefix(scope, "owner:")
+	}
+	return ".session-inventory-" + generation + "-" + label + ".jsonl"
+}
+
+func (st *Store) readInventoryManifest(fingerprint string) (inventoryCatalog, bool) {
+	data, err := os.ReadFile(st.inventoryCatalogPath()) //nolint:gosec // adapter-private owner-only path
+	if err != nil {
+		return inventoryCatalog{}, false
+	}
+	var catalog inventoryCatalog
+	if json.Unmarshal(data, &catalog) != nil || catalog.Format != inventoryCatalogFormat ||
+		catalog.Fingerprint != fingerprint || catalog.Generation == "" || catalog.Generation != fingerprint ||
+		catalog.Scopes == nil {
+		return inventoryCatalog{}, false
+	}
+	for scope, entry := range catalog.Scopes {
+		if scope == "" || entry.File != inventoryScopeFile(scope, catalog.Generation) || entry.Count < 0 || filepath.Base(entry.File) != entry.File {
+			return inventoryCatalog{}, false
+		}
+	}
+	return catalog, true
 }
 
 func (st *Store) readInventoryCatalog(fingerprint string) ([]port.SessionDiscoveryMeta, bool) {
-	data, err := os.ReadFile(st.inventoryCatalogPath()) //nolint:gosec // adapter-private owner-only path
+	catalog, ok := st.readInventoryManifest(fingerprint)
+	if !ok {
+		return nil, false
+	}
+	scope, ok := catalog.Scopes[inventoryGlobalScope]
+	if !ok {
+		return nil, false
+	}
+	rows, err := st.readInventoryScope(scope)
+	if err != nil || !validInventoryRows(rows) {
+		return nil, false
+	}
+	return rows, true
+}
+
+func (st *Store) readInventoryScope(scope inventoryCatalogScope) ([]port.SessionDiscoveryMeta, error) {
+	f, err := os.Open(filepath.Join(st.inventoryCatalogDir(), scope.File)) //nolint:gosec // validated adapter-private basename
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
-	var catalog inventoryCatalog
-	if json.Unmarshal(data, &catalog) != nil || catalog.Format != inventoryCatalogFormat || catalog.Fingerprint != fingerprint || !validInventoryRows(catalog.Rows) {
-		return nil, false
+	defer func() { _ = f.Close() }()
+	rows := make([]port.SessionDiscoveryMeta, 0, scope.Count)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), maxScannerTokenSize)
+	for scanner.Scan() {
+		var row port.SessionDiscoveryMeta
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
 	}
-	return append([]port.SessionDiscoveryMeta(nil), catalog.Rows...), true
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(rows) != scope.Count {
+		return nil, fmt.Errorf("jsonlstore: inventory scope count %d, want %d", len(rows), scope.Count)
+	}
+	return rows, nil
 }
 
 func validInventoryRows(rows []port.SessionDiscoveryMeta) bool {
@@ -112,12 +174,54 @@ func validInventoryRows(rows []port.SessionDiscoveryMeta) bool {
 	return true
 }
 
+func sortInventoryRows(rows []port.SessionDiscoveryMeta) {
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].ModifiedAt.Equal(rows[j].ModifiedAt) {
+			return rows[i].ModifiedAt.After(rows[j].ModifiedAt)
+		}
+		return rows[i].ID < rows[j].ID
+	})
+}
+
 func (st *Store) writeInventoryCatalog(fingerprint string, rows []port.SessionDiscoveryMeta) error {
-	data, err := json.Marshal(inventoryCatalog{Format: inventoryCatalogFormat, Fingerprint: fingerprint, Rows: rows})
+	global := append([]port.SessionDiscoveryMeta(nil), rows...)
+	sortInventoryRows(global)
+	grouped := map[string][]port.SessionDiscoveryMeta{inventoryGlobalScope: global}
+	for _, row := range global {
+		if row.Owner != nil {
+			scope := inventoryOwnerScope(row.Owner)
+			grouped[scope] = append(grouped[scope], row)
+		}
+	}
+	manifest := inventoryCatalog{
+		Format: inventoryCatalogFormat, Fingerprint: fingerprint, Generation: fingerprint,
+		Scopes: make(map[string]inventoryCatalogScope, len(grouped)),
+	}
+	for scope, scopeRows := range grouped {
+		file := inventoryScopeFile(scope, fingerprint)
+		var data []byte
+		for _, row := range scopeRows {
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				return fmt.Errorf("jsonlstore: encode inventory row: %w", err)
+			}
+			data = append(data, encoded...)
+			data = append(data, '\n')
+		}
+		if err := st.writeInventoryFile(filepath.Join(st.inventoryCatalogDir(), file), data); err != nil {
+			return err
+		}
+		manifest.Scopes[scope] = inventoryCatalogScope{File: file, Count: len(scopeRows)}
+	}
+	data, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("jsonlstore: encode inventory catalog: %w", err)
 	}
-	tmp, err := os.CreateTemp(st.resolver.canonicalDir(), ".session-inventory-*") //nolint:gosec // owner-only store dir
+	return st.writeInventoryFile(st.inventoryCatalogPath(), data)
+}
+
+func (st *Store) writeInventoryFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(st.inventoryCatalogDir(), ".session-inventory-*") //nolint:gosec // owner-only store dir
 	if err != nil {
 		return fmt.Errorf("jsonlstore: create inventory catalog temporary: %w", err)
 	}
@@ -140,13 +244,13 @@ func (st *Store) writeInventoryCatalog(fingerprint string, rows []port.SessionDi
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("jsonlstore: close inventory catalog: %w", err)
 	}
-	if err := os.Rename(tmpPath, st.inventoryCatalogPath()); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("jsonlstore: replace inventory catalog: %w", err)
 	}
 	if !st.durability.DirectorySync {
 		return nil
 	}
-	dir, err := os.Open(st.resolver.canonicalDir()) //nolint:gosec // adapter-private owner-only path
+	dir, err := os.Open(st.inventoryCatalogDir()) //nolint:gosec // adapter-private owner-only path
 	if err != nil {
 		return fmt.Errorf("jsonlstore: open inventory catalog directory: %w", err)
 	}
