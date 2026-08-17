@@ -2,9 +2,9 @@
 id: 01b-v2-durability
 title: Atomic replacement durability and failure safety
 blocked_by: [01-v2-snapshots]
-status: in-progress
+status: done
 branch: "plan-session-storage-continuity/01b-v2-durability"
-worktree: ".scratch/plan-session-storage-continuity-01b-v2-durability"
+worktree: ""
 issue: "586"
 retries: 0
 last_error: ""
