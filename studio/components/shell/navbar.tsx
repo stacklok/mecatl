@@ -73,7 +73,6 @@ export function Navbar({
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <IconRail
               view={view}
-              connection={connection}
               onNavigate={(next) => {
                 onNavigate(next);
                 if (next !== "chat") setDrawerOpen(false);

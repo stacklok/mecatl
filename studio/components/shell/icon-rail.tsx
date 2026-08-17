@@ -25,21 +25,12 @@ import { cn } from "@/lib/utils";
 export function IconRail({
   view,
   onNavigate,
-  connection,
   className,
 }: {
   view: ViewKey;
   onNavigate: (view: ViewKey) => void;
-  connection: "checking" | "online" | "offline";
   className?: string;
 }) {
-  const connectionLabel =
-    connection === "online"
-      ? "Mecatl connected"
-      : connection === "checking"
-        ? "Checking connection"
-        : "Mecatl offline";
-
   const renderItem = (item: NavItem) => {
     const isActive = item.key === view;
     const Icon = item.icon;
@@ -100,30 +91,6 @@ export function IconRail({
           })}
         </div>
 
-        {/* Daemon reachability stays visible at all times. The old wide rail had
-            room to spell it out; demoting it to the profile menu would mean an
-            operator only discovers a dead daemon by sending a prompt into it. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="flex h-8 shrink-0 cursor-default items-center justify-center border-t border-border">
-              <span className="sr-only">{connectionLabel}</span>
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "size-2 rounded-full",
-                  connection === "online"
-                    ? "bg-success"
-                    : connection === "checking"
-                      ? "bg-warning"
-                      : "bg-destructive",
-                )}
-              />
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="right" sideOffset={6}>
-            {connectionLabel}
-          </TooltipContent>
-        </Tooltip>
       </nav>
     </TooltipProvider>
   );

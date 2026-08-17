@@ -1375,7 +1375,7 @@ export default function Home() {
 
   return (
     <main className="studio-shell">
-      <IconRail view={view} onNavigate={navigate} connection={connected} className="hidden md:flex" />
+      <IconRail view={view} onNavigate={navigate} className="hidden md:flex" />
       {view === "chat" && (
         <ChatPanel
           tasks={tasks}
