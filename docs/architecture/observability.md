@@ -122,7 +122,15 @@
   family's Save, Load, event append, or tool audit. Obsolete generations and
   interrupted catalog temporaries are reconciled only under that catalog lock.
   The catalog is derivative: snapshots remain the
-  sole transcript authority, and `port.SessionStore` is unchanged. A successful save lazily promotes only that
+  sole transcript authority, and `port.SessionStore` is unchanged. Redisstore follows
+  the same projection contract with atomically co-written snapshot and metadata rows
+  in global and owner-specific lexicographic indexes. Its pager performs one direct
+  exclusive-cursor range read of at most the limit plus one lookahead and never loads
+  snapshot blobs. Save and Delete atomically update the snapshot, index membership,
+  owner-scoped generations, and existing event/tool sidecar lifecycle. A Redis store
+  first opened with legacy snapshots but no derivative index reports metadata paging
+  unsupported instead of scanning transcript records per page.
+  For jsonlstore, a successful save lazily promotes only that
   session; the verified v2 snapshot is authoritative while a v1 file coexists,
   and first promotion preserves the v1 file's logical modification time and all
   sidecar bytes. Save, Delete, verified legacy-family promotion/removal,

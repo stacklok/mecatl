@@ -52,8 +52,10 @@ const (
 	toolsKeyPrefix   = "mecatl:tools:"
 
 	// hash fields on the session key.
-	fieldBlob  = "blob"
-	fieldMtime = "mtime"
+	fieldBlob          = "blob"
+	fieldMtime         = "mtime"
+	fieldMetadataEntry = "metadata_entry"
+	fieldMetadataOwner = "metadata_owner"
 )
 
 // ErrNotFound is returned by Load when no snapshot exists for the id. It wraps
@@ -90,6 +92,8 @@ var (
 // serializes commands, so no client-side mutex is required.
 type Store struct {
 	client *redis.Client
+
+	metadataWorkObserver func(metadataWorkKind)
 }
 
 // New connects to the Redis broker at addr and pings it to fail fast on an
@@ -103,7 +107,12 @@ func New(addr string) (*Store, error) {
 		_ = client.Close()
 		return nil, fmt.Errorf("redisstore: ping %q: %w", addr, err)
 	}
-	return &Store{client: client}, nil
+	st := &Store{client: client}
+	if err := st.initializeMetadataIndex(context.Background()); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return st, nil
 }
 
 // Save stores a sessnap-encoded snapshot of s under the session key, stamping
@@ -119,8 +128,8 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	mtime := time.Now().UnixNano()
-	if err := st.client.HSet(ctx, sessionKey(s.ID), fieldBlob, blob, fieldMtime, mtime).Err(); err != nil {
+	modifiedAt := time.Now().UTC()
+	if err := st.saveSnapshotAndMetadata(ctx, s, blob, modifiedAt); err != nil {
 		return fmt.Errorf("redisstore: save %q: %w", s.ID, err)
 	}
 	return nil
@@ -129,6 +138,7 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 // Load reads the snapshot blob for id and restores it. A missing key (redis.Nil
 // on HGET) wraps port.ErrSessionNotFound with the id in the message.
 func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	st.observeMetadataWork(metadataWorkLoad)
 	blob, err := st.client.HGet(ctx, sessionKey(id), fieldBlob).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -173,41 +183,17 @@ func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
 	return out, nil
 }
 
-// PageSessionMetadata forms a bounded keyset page from a Redis SCAN. V1 may
-// traverse all session keys; only the returned page and transport response are
-// bounded by contract.
+// PageSessionMetadata reads one owner-filtered keyset page from the derivative
+// Redis metadata index. It never reads a snapshot blob or traverses rows before
+// the cursor; legacy stores without a complete index report unsupported.
 func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
-	stored, err := st.List(ctx)
-	if err != nil {
-		return port.SessionMetadataPage{}, err
-	}
-	rows := make([]port.SessionDiscoveryMeta, 0, len(stored))
-	for _, entry := range stored {
-		meta := port.SessionDiscoveryMeta{ID: entry.ID, ModifiedAt: entry.ModifiedAt}
-		sess, loadErr := st.Load(ctx, entry.ID)
-		if loadErr == nil && sess != nil {
-			meta.State = sess.State
-			meta.Turns = sess.Counters.Turns
-			meta.ModelID = sess.ModelID
-			meta.CreatedAt = sess.CreatedAt
-			meta.Title = sess.Title
-			meta.TitleProvenance = sess.TitleProvenance
-			meta.Workspace = sess.Workspace
-			meta.Kind = sess.Kind
-			meta.Relationship = sess.Relationship
-			meta.Owner = sess.Owner
-		}
-		rows = append(rows, meta)
-	}
-	return port.PaginateSessionMetadataBound(rows, request)
+	return st.pageSessionMetadata(ctx, request)
 }
 
-// Delete removes the session snapshot AND its event-log and tool-call sidecars.
-// It is idempotent: DEL on a missing key succeeds (port.PrunableStore contract),
-// and the three keys are deleted in one round-trip.
+// Delete removes the session snapshot, derivative metadata, event log, and
+// tool-call sidecar. It is idempotent and completes in one atomic script.
 func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
-	keys := []string{toolsKey(id), eventsKey(id), sessionKey(id)}
-	if err := st.client.Del(ctx, keys...).Err(); err != nil {
+	if err := st.deleteSessionAndMetadata(ctx, id); err != nil {
 		return fmt.Errorf("redisstore: delete %q: %w", id, err)
 	}
 	return nil
