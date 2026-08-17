@@ -2,12 +2,12 @@
 id: 01-v2-snapshots
 title: Versioned current snapshot core
 blocked_by: []
-status: blocked
+status: in-progress
 branch: "plan-session-storage-continuity/01-v2-snapshots"
 worktree: ".scratch/plan-session-storage-continuity-01-v2-snapshots"
 issue: "586"
-retries: 2
-last_error: "subagent runtime exhausted before any test or implementation edit on repeated focused dispatches"
+retries: 0
+last_error: ""
 accumulator: acc/session-storage-continuity
 ---
 
