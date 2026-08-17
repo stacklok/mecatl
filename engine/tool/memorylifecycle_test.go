@@ -56,15 +56,19 @@ func TestMemoryVersionConflictErrorIsTyped(t *testing.T) {
 	}
 }
 
-func TestValidateMemoryWrite(t *testing.T) {
+func validateMemoryWrite(key, value string) error {
+	return tool.ValidateMemoryEntryWrite(tool.MemoryEntry{Key: key, Value: value}, tool.MemoryAttribution{})
+}
+
+func TestValidateMemoryEntryWrite(t *testing.T) {
 	for _, key := range []string{"profile/editor", "fact/work-hours_2", "a"} {
-		if err := tool.ValidateMemoryWrite(key, "ordinary Unicode prose: 密钥 rotation is important 🔐"); err != nil {
-			t.Errorf("ValidateMemoryWrite(%q, ordinary prose) = %v", key, err)
+		if err := validateMemoryWrite(key, "ordinary Unicode prose: 密钥 rotation is important 🔐"); err != nil {
+			t.Errorf("ValidateMemoryEntryWrite(%q, ordinary prose) = %v", key, err)
 		}
 	}
 	for _, key := range []string{"", "Profile/Editor", "/profile", "profile//editor", "profile/editor notes", "profile/é"} {
-		if err := tool.ValidateMemoryWrite(key, "value"); !errors.Is(err, tool.ErrInvalidMemoryKey) {
-			t.Errorf("ValidateMemoryWrite(%q) = %v, want ErrInvalidMemoryKey", key, err)
+		if err := validateMemoryWrite(key, "value"); !errors.Is(err, tool.ErrInvalidMemoryKey) {
+			t.Errorf("ValidateMemoryEntryWrite(%q) = %v, want ErrInvalidMemoryKey", key, err)
 		}
 	}
 	secrets := []struct{ key, value string }{
@@ -86,8 +90,8 @@ func TestValidateMemoryWrite(t *testing.T) {
 		{"profile/note", "OPENROUTER.API.KEY=0123456789abcdefghijklmnop"},
 	}
 	for _, tc := range secrets {
-		if err := tool.ValidateMemoryWrite(tc.key, tc.value); !errors.Is(err, tool.ErrSecretMemoryValue) {
-			t.Errorf("ValidateMemoryWrite(%q, secret) = %v, want ErrSecretMemoryValue", tc.key, err)
+		if err := validateMemoryWrite(tc.key, tc.value); !errors.Is(err, tool.ErrSecretMemoryValue) {
+			t.Errorf("ValidateMemoryEntryWrite(%q, secret) = %v, want ErrSecretMemoryValue", tc.key, err)
 		}
 		if !tool.SecretShapedMemoryValue(tc.key, tc.value) {
 			t.Errorf("SecretShapedMemoryValue(%q) = false", tc.key)
@@ -101,21 +105,21 @@ func TestValidateMemoryWrite(t *testing.T) {
 		{"profile/api-key-rotation", "0123456789abcdefghijklmnop"},
 		{"profile/secret-management-policy", "0123456789abcdefghijklmnop"},
 	} {
-		if err := tool.ValidateMemoryWrite(tc.key, tc.value); err != nil {
+		if err := validateMemoryWrite(tc.key, tc.value); err != nil {
 			t.Errorf("benign memory rejected: key=%q value=%q: %v", tc.key, tc.value, err)
 		}
 	}
 }
 
-func TestValidateMemoryWriteRejectsInvalidKeyBeforeSecretContent(t *testing.T) {
+func TestValidateMemoryEntryWriteRejectsInvalidKeyBeforeSecretContent(t *testing.T) {
 	// Dots are not valid segment characters: use client_secret for secret fixtures
 	// that are meant to exercise content validation.
-	err := tool.ValidateMemoryWrite("profile/client.secret", "0123456789abcdefghijklmnop")
+	err := validateMemoryWrite("profile/client.secret", "0123456789abcdefghijklmnop")
 	if !errors.Is(err, tool.ErrInvalidMemoryKey) {
-		t.Fatalf("ValidateMemoryWrite(invalid key, secret) = %v, want ErrInvalidMemoryKey", err)
+		t.Fatalf("ValidateMemoryEntryWrite(invalid key, secret) = %v, want ErrInvalidMemoryKey", err)
 	}
-	if err := tool.ValidateMemoryWrite("profile/client_secret", "0123456789abcdefghijklmnop"); !errors.Is(err, tool.ErrSecretMemoryValue) {
-		t.Fatalf("ValidateMemoryWrite(valid key, secret) = %v, want ErrSecretMemoryValue", err)
+	if err := validateMemoryWrite("profile/client_secret", "0123456789abcdefghijklmnop"); !errors.Is(err, tool.ErrSecretMemoryValue) {
+		t.Fatalf("ValidateMemoryEntryWrite(valid key, secret) = %v, want ErrSecretMemoryValue", err)
 	}
 }
 
@@ -142,7 +146,7 @@ func TestMemoryClassificationCanonicalizesBeforeMatching(t *testing.T) {
 			t.Errorf("canonical secret key=%q value=%q was not detected", tc.key, tc.value)
 		}
 	}
-	if err := tool.ValidateMemoryEntry(tool.MemoryEntry{Key: "user/note", Value: "safe", Description: "to\u200bken: 0123456789abcdefghijklmnop"}); !errors.Is(err, tool.ErrSecretMemoryValue) {
+	if err := tool.ValidateMemoryEntryWrite(tool.MemoryEntry{Key: "user/note", Value: "safe", Description: "to\u200bken: 0123456789abcdefghijklmnop"}, tool.MemoryAttribution{}); !errors.Is(err, tool.ErrSecretMemoryValue) {
 		t.Fatalf("canonical secret description = %v, want ErrSecretMemoryValue", err)
 	}
 	benign := "Prefers 日本語, français, and emoji 🦀."
@@ -177,8 +181,8 @@ func TestValidateModelAuthoredUserMemoryRejectsOnlyDirectiveOverrides(t *testing
 	}
 }
 
-func TestValidateMemoryEntryRejectsSecretDescription(t *testing.T) {
-	err := tool.ValidateMemoryEntry(tool.MemoryEntry{Key: "user/profile/note", Value: "safe", Description: "token: ghp_0123456789abcdefghijklmnop"})
+func TestValidateMemoryEntryWriteRejectsSecretDescription(t *testing.T) {
+	err := tool.ValidateMemoryEntryWrite(tool.MemoryEntry{Key: "user/profile/note", Value: "safe", Description: "token: ghp_0123456789abcdefghijklmnop"}, tool.MemoryAttribution{})
 	if !errors.Is(err, tool.ErrSecretMemoryValue) {
 		t.Fatalf("secret description = %v, want ErrSecretMemoryValue", err)
 	}

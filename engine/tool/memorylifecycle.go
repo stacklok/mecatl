@@ -69,6 +69,10 @@ type MemoryAttribution struct {
 	Writer MemoryWriter
 	Origin MemoryOrigin
 	Source MemorySource
+	// ForceInstructionScan treats the write as model-authored only when deciding
+	// whether instruction-shaped user memory must be rejected. It does not alter
+	// the Writer, Origin, or Source persisted as provenance.
+	ForceInstructionScan bool
 }
 
 type memoryAttributionContextKey struct{}
@@ -111,10 +115,12 @@ type MemoryRevision struct {
 
 // MemoryRecord is the current revision plus its revision history. Revisions are
 // ordered oldest to newest; Current is repeated explicitly for cheap remote
-// projections and profile reads.
+// projections and profile reads. Truncated reports whether retention discarded
+// older revisions for this key.
 type MemoryRecord struct {
 	Current   MemoryRevision
 	Revisions []MemoryRevision
+	Truncated bool
 }
 
 // MemoryLifecycleStore is the optional additive capability for stores that
@@ -122,7 +128,9 @@ type MemoryRecord struct {
 // atomic. RememberVersioned with an empty expected version is an unconditional
 // last-write-wins update, matching MemoryStore.RememberEntry; a non-empty expected
 // version enables compare-and-swap. ForgetVersioned and UndoLatest always require
-// a non-empty expected version.
+// a non-empty expected version. UndoLatest never redoes a mutation: repeated undo
+// walks strictly backward through revisions not yet undone, and its restore source
+// uses that same filter.
 type MemoryLifecycleStore interface {
 	RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error)
 	Inspect(ctx context.Context, key string) (MemoryRecord, bool, error)
@@ -169,23 +177,6 @@ var (
 	ErrMemoryNotFound = errors.New("memory record not found")
 )
 
-// ValidateMemoryWrite applies the strict key grammar and content validation used
-// by lifecycle writes. It validates the key before inspecting content so malformed
-// keys consistently report ErrInvalidMemoryKey rather than a content-classification
-// result.
-func ValidateMemoryWrite(key, value string) error {
-	if !ValidMemoryKey(key) {
-		return ErrInvalidMemoryKey
-	}
-	return ValidateMemoryContent(key, value, "")
-}
-
-// ValidateMemoryEntry applies lifecycle validation to an entire entry, including
-// its description.
-func ValidateMemoryEntry(entry MemoryEntry) error {
-	return ValidateMemoryEntryWrite(entry, MemoryAttribution{})
-}
-
 // ValidateMemoryEntryWrite validates all persisted text at the authoritative
 // write boundary. Instruction scanning is intentionally limited to model-authored
 // user-scope facts: ordinary facts, Unicode prose, and user-authored imports remain
@@ -202,20 +193,14 @@ func instructionShapedMemory(value string) bool {
 	return DirectiveShapedUserMemory(value)
 }
 
-// ValidateMemoryContent rejects high-confidence credentials in either value or
-// description without changing the legacy key grammar.
-func ValidateMemoryContent(key, value, description string) error {
-	return ValidateMemoryContentWrite(key, value, description, MemoryAttribution{})
-}
-
-// ValidateMemoryContentWrite is ValidateMemoryContent plus the narrow
+// ValidateMemoryContentWrite validates legacy-store content and the narrow
 // model-authored operator-instruction check, without imposing the lifecycle key
 // grammar on legacy stores.
 func ValidateMemoryContentWrite(key, value, description string, attribution MemoryAttribution) error {
 	if SecretShapedMemoryValue(key, value) || SecretShapedMemoryValue(key, description) {
 		return ErrSecretMemoryValue
 	}
-	modelAuthored := attribution.Writer == MemoryWriterModel || attribution.Origin == MemoryOriginLearning || attribution.Origin == MemoryOriginConsolidation
+	modelAuthored := attribution.ForceInstructionScan || attribution.Writer == MemoryWriterModel || attribution.Origin == MemoryOriginLearning || attribution.Origin == MemoryOriginConsolidation
 	if modelAuthored && strings.HasPrefix(key, "user/") &&
 		(instructionShapedMemory(value) || instructionShapedMemory(description)) {
 		return ErrInstructionMemory
@@ -310,6 +295,16 @@ func unwrapCredential(value string) (string, bool) {
 // DirectiveShapedUserMemory reports narrow, high-confidence attempts to turn a
 // model-authored user fact into a role or instruction override. It intentionally
 // ignores ordinary preferences and prose discussing security.
+//
+// Matching is LINE-ANCHORED by deliberate design, not by omission. This
+// predicate has two consumers with opposite cost profiles: the write-time
+// validation gate (a rejection is loud, immediate, and recoverable) and the
+// operator-profile render filter (engine/prompt/operatorprofile.go, which drops
+// a matching entry SILENTLY, on every turn, for already-stored data). Widening
+// to unanchored substring matching therefore does not merely tighten a check —
+// it evicts previously-rendered facts from the prompt with no error and no
+// entry in the profile's own omitted count. Any change here must be evaluated
+// against BOTH consumers; see ADR 0226's deferred detector-convergence note.
 func DirectiveShapedUserMemory(value string) bool {
 	value = CanonicalMemoryText(value)
 	for _, line := range strings.Split(strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u2028", "\n", "\u2029", "\n").Replace(value), "\n") {

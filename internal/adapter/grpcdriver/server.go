@@ -301,6 +301,7 @@ func (s *memoryStoreServer) RememberEntry(ctx context.Context, req *driverv1.Rem
 	if strings.TrimSpace(e.GetKey()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "entry key must not be blank")
 	}
+	ctx = withForcedMemoryWriteAttribution(ctx, req.GetAttribution())
 	if err := s.store.RememberEntry(ctx, fromProtoEntry(e)); err != nil {
 		return nil, storeStatus(err)
 	}
@@ -372,7 +373,7 @@ func (s *memoryStoreServer) RememberVersioned(ctx context.Context, req *driverv1
 	if req.GetEntry() == nil {
 		return nil, status.Error(codes.InvalidArgument, "entry is required")
 	}
-	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	ctx = withForcedMemoryWriteAttribution(ctx, req.GetAttribution())
 	record, callErr := lifecycle.RememberVersioned(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryVersion(req.GetExpectedVersion()))
 	if callErr != nil {
 		return nil, storeStatus(callErr)
@@ -388,6 +389,14 @@ func (s *memoryStoreServer) InspectMemory(ctx context.Context, req *driverv1.Ins
 	record, found, callErr := lifecycle.Inspect(ctx, req.GetKey())
 	if callErr != nil {
 		return nil, storeStatus(callErr)
+	}
+	// Capping the response is itself a truncation: the flag must report what the
+	// CALLER received, not only what the store's retention discarded. Otherwise a
+	// caller that asks for 10 of 40 revisions is told its history is complete —
+	// the exact confusion history_truncated exists to prevent.
+	if limit := int(req.GetMaxRevisions()); limit > 0 && len(record.Revisions) > limit {
+		record.Revisions = append([]tool.MemoryRevision(nil), record.Revisions[len(record.Revisions)-limit:]...)
+		record.Truncated = true
 	}
 	resp := &driverv1.InspectMemoryResponse{Found: found}
 	if found {
@@ -430,7 +439,7 @@ func (s *memoryStoreServer) RememberIfCurrent(ctx context.Context, req *driverv1
 	if req.GetEntry() == nil {
 		return nil, status.Error(codes.InvalidArgument, "entry is required")
 	}
-	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	ctx = withForcedMemoryWriteAttribution(ctx, req.GetAttribution())
 	record, err := store.RememberIfCurrent(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryCurrent{Exists: req.GetExpectedExists(), Version: tool.MemoryVersion(req.GetExpectedVersion())})
 	if err != nil {
 		return nil, storeStatus(err)
@@ -446,8 +455,28 @@ func withProtoAttribution(ctx context.Context, a *driverv1.MemoryAttribution) co
 	return tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriter(a.GetWriter()), Origin: tool.MemoryOrigin(a.GetOrigin()), Source: tool.MemorySource{SessionID: s.GetSessionId(), ProposalID: s.GetProposalId()}})
 }
 
+// withForcedMemoryWriteAttribution preserves wire-reported provenance while
+// forcing the instruction scan at the untrusted driver-server boundary. It is
+// the attribution entry point for EVERY content-bearing memory RPC — the three
+// handlers whose entry carries a value the stores will scan (RememberEntry,
+// RememberVersioned, RememberIfCurrent). ForgetVersioned/UndoLatest keep plain
+// withProtoAttribution because a tombstone and a restore carry no new text for
+// the scan to inspect.
+//
+// It DELEGATES to withProtoAttribution rather than rebuilding the attribution,
+// because the forced variant differs from the plain one in exactly one bit: any
+// hand-copied version of the remaining fields is a silent divergence waiting to
+// happen (drop MemorySource.ProposalID and memorypromotion's proposal-to-revision
+// audit link breaks, while a Writer/Origin-only test still passes). Delegating
+// means a future MemorySource field reaches both paths for free.
+func withForcedMemoryWriteAttribution(ctx context.Context, a *driverv1.MemoryAttribution) context.Context {
+	attribution, _ := tool.MemoryAttributionFromContext(withProtoAttribution(ctx, a))
+	attribution.ForceInstructionScan = true
+	return tool.WithMemoryAttribution(ctx, attribution)
+}
+
 func toProtoRecord(record tool.MemoryRecord) *driverv1.MemoryRecord {
-	out := &driverv1.MemoryRecord{Current: toProtoRevision(record.Current), Revisions: make([]*driverv1.MemoryRevision, len(record.Revisions))}
+	out := &driverv1.MemoryRecord{Current: toProtoRevision(record.Current), Revisions: make([]*driverv1.MemoryRevision, len(record.Revisions)), HistoryTruncated: record.Truncated}
 	for i, revision := range record.Revisions {
 		out.Revisions[i] = toProtoRevision(revision)
 	}
@@ -691,7 +720,7 @@ func storeStatus(err error) error {
 	switch {
 	case errors.Is(err, port.ErrSessionNotFound), errors.Is(err, tool.ErrMemoryNotFound):
 		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, tool.ErrInvalidMemoryKey), errors.Is(err, tool.ErrSecretMemoryValue):
+	case errors.Is(err, tool.ErrInvalidMemoryKey), errors.Is(err, tool.ErrSecretMemoryValue), errors.Is(err, tool.ErrInstructionMemory):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.As(err, &conflict):
 		return status.Error(codes.FailedPrecondition, err.Error())

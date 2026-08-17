@@ -19,6 +19,28 @@ func TestInvariant_owned_access_is_classified(t *testing.T) {
 	}
 }
 
+// TestADR_0226_LifecycleToolsClassified pins the caller-owned classification
+// audit for every model-facing memory lifecycle tool.
+func TestADR_0226_LifecycleToolsClassified(t *testing.T) {
+	for _, name := range []string{
+		"ForgetMemory", "ForgetUserMemory", "InspectMemory", "InspectUserMemory", "UndoMemory", "UndoUserMemory",
+	} {
+		if _, ok := modelToolAccessTable[name]; !ok {
+			t.Errorf("modelToolAccessTable missing %q", name)
+		}
+		found := false
+		for _, boundary := range ModelToolBoundaries {
+			if boundary == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ModelToolBoundaries missing %q", name)
+		}
+	}
+}
+
 // TestCallerSeparation_Scenario5_UnclassifiedAccessFailsGuard is the AC5.2
 // fixture: it drives the SAME classifyNames function the production guard
 // uses (not a copy) over a deliberately incomplete fixture table, and asserts

@@ -47,6 +47,10 @@ var ErrMemoryLifecycleUnsupported = errors.New("remote memory driver does not su
 
 const memoryCapabilityTimeout = 5 * time.Second
 
+func lifecycleUnsupported(operation string) error {
+	return fmt.Errorf("%w: %s", ErrMemoryLifecycleUnsupported, operation)
+}
+
 // NewMemoryStore wraps an established driver connection (see Dial) as a
 // tool.MemoryStore.
 func NewMemoryStore(conn grpc.ClientConnInterface) *MemoryStore {
@@ -82,7 +86,8 @@ func NegotiateMemoryStore(ctx context.Context, conn grpc.ClientConnInterface) (t
 // e.Key. The driver stamps UpdatedAt on write (the input value is advisory);
 // a blank/whitespace-only key surfaces the driver's INVALID_ARGUMENT.
 func (st *MemoryStore) RememberEntry(ctx context.Context, e tool.MemoryEntry) error {
-	if _, err := st.client.RememberEntry(ctx, &driverv1.RememberEntryRequest{Entry: toProtoEntry(e)}); err != nil {
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if _, err := st.client.RememberEntry(ctx, &driverv1.RememberEntryRequest{Entry: toProtoEntry(e), Attribution: toProtoAttribution(attribution)}); err != nil {
 		return rpcErr(ctx, "remember entry", err)
 	}
 	return nil
@@ -150,6 +155,9 @@ func (st *MemoryLifecycleStore) RememberVersioned(ctx context.Context, entry too
 		return tool.MemoryRecord{}, err
 	}
 	resp, err := st.client.RememberVersioned(ctx, &driverv1.RememberVersionedRequest{Entry: toProtoEntry(entry), ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
+	if status.Code(err) == codes.Unimplemented {
+		return tool.MemoryRecord{}, lifecycleUnsupported("remember")
+	}
 	if status.Code(err) == codes.FailedPrecondition {
 		return tool.MemoryRecord{}, st.versionConflict(ctx, entry.Key, expected)
 	}
@@ -179,6 +187,9 @@ func (st *MemoryConvergenceStore) RememberIfCurrent(ctx context.Context, entry t
 // missing or failing lifecycle RPC is not reinterpreted as a legacy Recall.
 func (st *MemoryLifecycleStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
 	resp, err := st.client.InspectMemory(ctx, &driverv1.InspectMemoryRequest{Key: key})
+	if status.Code(err) == codes.Unimplemented {
+		return tool.MemoryRecord{}, false, lifecycleUnsupported("inspect")
+	}
 	if err != nil {
 		return tool.MemoryRecord{}, false, rpcErr(ctx, "inspect memory", err)
 	}
@@ -191,7 +202,7 @@ func (st *MemoryLifecycleStore) ForgetVersioned(ctx context.Context, key string,
 	attr, _ := tool.MemoryAttributionFromContext(ctx)
 	resp, err := st.client.ForgetVersioned(ctx, &driverv1.ForgetVersionedRequest{Key: key, ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
 	if status.Code(err) == codes.Unimplemented {
-		return tool.MemoryRecord{}, fmt.Errorf("%w: forget", ErrMemoryLifecycleUnsupported)
+		return tool.MemoryRecord{}, lifecycleUnsupported("forget")
 	}
 	if status.Code(err) == codes.FailedPrecondition {
 		return tool.MemoryRecord{}, st.versionConflict(ctx, key, expected)
@@ -210,7 +221,7 @@ func (st *MemoryLifecycleStore) UndoLatest(ctx context.Context, key string, expe
 	attr, _ := tool.MemoryAttributionFromContext(ctx)
 	resp, err := st.client.UndoLatest(ctx, &driverv1.UndoLatestRequest{Key: key, ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
 	if status.Code(err) == codes.Unimplemented {
-		return tool.MemoryRecord{}, fmt.Errorf("%w: undo", ErrMemoryLifecycleUnsupported)
+		return tool.MemoryRecord{}, lifecycleUnsupported("undo")
 	}
 	if status.Code(err) == codes.FailedPrecondition {
 		return tool.MemoryRecord{}, st.versionConflict(ctx, key, expected)
@@ -245,7 +256,7 @@ func fromProtoRecord(record *driverv1.MemoryRecord) tool.MemoryRecord {
 	if record == nil {
 		return tool.MemoryRecord{}
 	}
-	out := tool.MemoryRecord{Current: fromProtoRevision(record.GetCurrent()), Revisions: make([]tool.MemoryRevision, len(record.GetRevisions()))}
+	out := tool.MemoryRecord{Current: fromProtoRevision(record.GetCurrent()), Revisions: make([]tool.MemoryRevision, len(record.GetRevisions())), Truncated: record.GetHistoryTruncated()}
 	for i, rev := range record.GetRevisions() {
 		out.Revisions[i] = fromProtoRevision(rev)
 	}

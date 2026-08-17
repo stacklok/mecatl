@@ -15,6 +15,7 @@
 package memory
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -23,7 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -313,7 +314,7 @@ func (s *Store) List(ctx context.Context, prefix string) ([]tool.MemoryEntry, er
 				out = append(out, tool.MemoryEntry{Key: k, Value: r.Value, Description: r.Description, UpdatedAt: r.UpdatedAt})
 			}
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+		slices.SortFunc(out, func(a, b tool.MemoryEntry) int { return cmp.Compare(a.Key, b.Key) })
 		return nil
 	})
 	if err != nil {
@@ -339,7 +340,7 @@ func (s *Store) Index(ctx context.Context) ([]tool.MemoryEntry, error) {
 				UpdatedAt:   r.UpdatedAt,
 			})
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+		slices.SortFunc(out, func(a, b tool.MemoryEntry) int { return cmp.Compare(a.Key, b.Key) })
 		return nil
 	})
 	if err != nil {
@@ -547,7 +548,7 @@ func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.Memory
 		}
 		target := -1
 		for i := len(history) - 1; i >= 0; i-- {
-			if history[i].UndoOf == "" && !undone[history[i].Version] {
+			if undoCandidate(history[i], undone) {
 				target = i
 				break
 			}
@@ -555,20 +556,24 @@ func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.Memory
 		if target < 0 {
 			return fmt.Errorf("memory: %q: no mutation remains to undo", key)
 		}
+		// Horizon guard tests target == 0, NOT the restore-source walk's result —
+		// see the matching comment in engine/adapter/memmemory/memmemory.go.
 		if target == 0 && data.HistoryTruncated[key] {
 			return fmt.Errorf("memory: %q: cannot undo beyond retained history", key)
 		}
-		var previous *persistedRevision
-		if target > 0 {
-			candidate := history[target-1]
-			previous = &candidate
+		previous := -1
+		for i := target - 1; i >= 0; i-- {
+			if undoCandidate(history[i], undone) {
+				previous = i
+				break
+			}
 		}
-		if previous == nil || previous.Status == tool.MemoryStatusDeleted {
+		if previous < 0 || history[previous].Status == tool.MemoryStatusDeleted {
 			if err := data.appendDeleted(ctx, key, tool.MemoryOriginUndo, history[target].Version); err != nil {
 				return err
 			}
 		} else {
-			r := record{Value: previous.Value, Description: previous.Description, UpdatedAt: time.Now().UTC()}
+			r := record{Value: history[previous].Value, Description: history[previous].Description, UpdatedAt: time.Now().UTC()}
 			data.Entries[key] = r
 			if err := data.appendActiveUndo(ctx, key, r, history[target].Version); err != nil {
 				return err
@@ -578,6 +583,10 @@ func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.Memory
 		return nil
 	})
 	return out, err
+}
+
+func undoCandidate(revision persistedRevision, undone map[tool.MemoryVersion]bool) bool {
+	return revision.UndoOf == "" && !undone[revision.Version]
 }
 
 func (data *persisted) compare(key string, expected tool.MemoryVersion) error {
@@ -688,7 +697,7 @@ func (data persisted) snapshot(key string) tool.MemoryRecord {
 			Version: revision.Version, Status: revision.Status, Writer: revision.Writer, Origin: revision.Origin,
 			Source: revision.Source, UpdatedAt: revision.UpdatedAt}
 	}
-	return tool.MemoryRecord{Current: revisions[len(revisions)-1], Revisions: revisions}
+	return tool.MemoryRecord{Current: revisions[len(revisions)-1], Revisions: revisions, Truncated: data.HistoryTruncated[key]}
 }
 
 func (data *persisted) enforceLimits() error {

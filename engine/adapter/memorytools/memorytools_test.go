@@ -94,6 +94,17 @@ func TestLifecycleToolsAbsentOnLegacyStore(t *testing.T) {
 	}
 }
 
+// TestADR_0226_ForgetToolDisclosesReversibility pins the model-visible tombstone
+// contract: a Forget can be undone and its value remains available to Inspect.
+func TestADR_0226_ForgetToolDisclosesReversibility(t *testing.T) {
+	description := named(t, memorytools.ProjectTools(memmemory.New()), "ForgetMemory").Spec().Description
+	for _, want := range []string{"reversible", "Inspect"} {
+		if !strings.Contains(description, want) {
+			t.Errorf("ForgetMemory description %q missing %q", description, want)
+		}
+	}
+}
+
 func TestLegacyRememberRetainsOpaqueKeyGrammar(t *testing.T) {
 	store := &legacyStore{}
 	result := execute(t, named(t, memorytools.ProjectTools(store), "Remember"), map[string]any{"key": "Legacy Key/É", "value": "imported"})
@@ -276,5 +287,23 @@ func TestUserScopeNamesAndPrefix(t *testing.T) {
 	}
 	if _, found, _ := store.Recall(context.Background(), "user/editor"); !found {
 		t.Fatal("user prefix not applied")
+	}
+}
+
+// TestADR_0226_InspectToolSurfacesTruncationNote pins the model-facing signal
+// that the listed revision history is only a retained tail.
+func TestADR_0226_InspectToolSurfacesTruncationNote(t *testing.T) {
+	store := memmemory.New()
+	for i := range 65 {
+		if _, err := store.RememberVersioned(context.Background(), tool.MemoryEntry{Key: "profile/history", Value: "value"}, ""); err != nil {
+			t.Fatalf("RememberVersioned(%d): %v", i, err)
+		}
+	}
+	result := execute(t, named(t, memorytools.ProjectTools(store), "InspectMemory"), map[string]any{"key": "profile/history"})
+	if result.IsError {
+		t.Fatal(result.Content)
+	}
+	if !strings.Contains(result.Content, `"history_truncated":true`) {
+		t.Fatalf("InspectMemory omitted history truncation note: %s", result.Content)
 	}
 }

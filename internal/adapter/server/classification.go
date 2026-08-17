@@ -402,6 +402,11 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 	},
 }
 
+const (
+	projectMemoryToolRationale = "backed by memory.CallerStore(project=true); scoped by verified caller + workspace"
+	userMemoryToolRationale    = "backed by memory.CallerStore(project=false); scoped by verified caller only"
+)
+
 // modelToolAccessTable classifies the model-facing tool families that reach a
 // caller-owned or shared-infrastructure boundary directly rather than only
 // through *Service — ADR 0212 decision 2's "model-tool access boundary" and
@@ -410,20 +415,22 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 // literals are the single source the guard and the tests share — see
 // ADR 0212 and docs/architecture.md's caller-ownership section).
 var modelToolAccessTable = map[string]ClassificationEntry{
-	// Project memory tools (Remember/Recall/SearchMemory): backed by
-	// memory.CallerStore(project=true), classified caller-owned above.
-	// Forget is a CallerStore capability (classified in callerStoreAccessTable)
-	// with no registered model-facing tool today — there is nothing to list
-	// here until one is added.
-	"Remember":     {KindCallerOwned, "backed by memory.CallerStore(project=true); scoped by verified caller + workspace"},
-	"Recall":       {KindCallerOwned, "backed by memory.CallerStore(project=true); scoped by verified caller + workspace"},
-	"SearchMemory": {KindCallerOwned, "backed by memory.CallerStore(project=true); scoped by verified caller + workspace"},
-	// User-model memory (RememberUser/RecallUser/SearchUserModel): backed by
-	// memory.CallerStore(project=false), a DISTINCT kind (decision 2) from
-	// project memory even where logical keys match.
-	"RememberUser":    {KindCallerOwned, "backed by memory.CallerStore(project=false); scoped by verified caller only, a distinct kind from project memory"},
-	"RecallUser":      {KindCallerOwned, "backed by memory.CallerStore(project=false); scoped by verified caller only"},
-	"SearchUserModel": {KindCallerOwned, "backed by memory.CallerStore(project=false); scoped by verified caller only"},
+	// Project memory tools: backed by memory.CallerStore(project=true), scoped by
+	// verified caller + workspace.
+	"Remember":      {KindCallerOwned, projectMemoryToolRationale},
+	"Recall":        {KindCallerOwned, projectMemoryToolRationale},
+	"SearchMemory":  {KindCallerOwned, projectMemoryToolRationale},
+	"InspectMemory": {KindCallerOwned, projectMemoryToolRationale},
+	"ForgetMemory":  {KindCallerOwned, projectMemoryToolRationale},
+	"UndoMemory":    {KindCallerOwned, projectMemoryToolRationale},
+	// User-model memory: backed by memory.CallerStore(project=false), a DISTINCT
+	// kind from project memory even where logical keys match.
+	"RememberUser":      {KindCallerOwned, "backed by memory.CallerStore(project=false); scoped by verified caller only, a distinct kind from project memory"},
+	"RecallUser":        {KindCallerOwned, userMemoryToolRationale},
+	"SearchUserModel":   {KindCallerOwned, userMemoryToolRationale},
+	"InspectUserMemory": {KindCallerOwned, userMemoryToolRationale},
+	"ForgetUserMemory":  {KindCallerOwned, userMemoryToolRationale},
+	"UndoUserMemory":    {KindCallerOwned, userMemoryToolRationale},
 	// Child/team observability and delegation: these act on a caller-supplied
 	// handle (agentId / teamID) inside the SAME run, so the decision is the
 	// resuming child/team session's own owner check (engine/agent/teaminspect.go,
@@ -448,8 +455,8 @@ var modelToolAccessTable = map[string]ClassificationEntry{
 // NOT enumerated — this is a narrow, reviewable boundary list, not the whole
 // catalog.
 var ModelToolBoundaries = []string{
-	"Remember", "Recall", "SearchMemory",
-	"RememberUser", "RecallUser", "SearchUserModel",
+	"Remember", "Recall", "SearchMemory", "InspectMemory", "ForgetMemory", "UndoMemory",
+	"RememberUser", "RecallUser", "SearchUserModel", "InspectUserMemory", "ForgetUserMemory", "UndoUserMemory",
 	"InspectSubagent", "InspectMember", "SubagentStatus", "Subagent", "Team",
 	"Schedule", "ScheduleQuery",
 }

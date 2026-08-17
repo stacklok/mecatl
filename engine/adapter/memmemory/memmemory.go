@@ -3,9 +3,10 @@
 package memmemory
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -92,7 +93,7 @@ func (s *Store) List(ctx context.Context, prefix string) ([]tool.MemoryEntry, er
 			out = append(out, entryOf(rev))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	slices.SortFunc(out, func(a, b tool.MemoryEntry) int { return cmp.Compare(a.Key, b.Key) })
 	return out, nil
 }
 
@@ -248,8 +249,7 @@ func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.Memory
 	}
 	target := -1
 	for i := len(r.revisions) - 1; i >= 0; i-- {
-		candidate := r.revisions[i]
-		if candidate.Origin != tool.MemoryOriginUndo && !r.undone[candidate.Version] {
+		if r.undoCandidate(r.revisions[i]) {
 			target = i
 			break
 		}
@@ -257,8 +257,21 @@ func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.Memory
 	if target < 0 {
 		return tool.MemoryRecord{}, fmt.Errorf("memmemory: %q: no mutation remains to undo", key)
 	}
+	// The horizon guard tests target == 0, NOT the restore-source walk's result.
+	// That is deliberate: when target > 0 the state immediately before it is
+	// r.revisions[target-1], which always exists and is knowable, so a previous
+	// of -1 there means "every older retained revision was already undone" — a
+	// KNOWN-empty baseline, not an unknown one. Repeated remember/undo cycles on
+	// one key reach that legitimately once retention trims the pair history.
 	if target == 0 && r.truncated {
 		return tool.MemoryRecord{}, fmt.Errorf("memmemory: %q: cannot undo beyond retained history", key)
+	}
+	previous := -1
+	for i := target - 1; i >= 0; i-- {
+		if r.undoCandidate(r.revisions[i]) {
+			previous = i
+			break
+		}
 	}
 	if r.undone == nil {
 		r.undone = make(map[tool.MemoryVersion]bool)
@@ -267,10 +280,10 @@ func (s *Store) UndoLatest(ctx context.Context, key string, expected tool.Memory
 	attribution, _ := tool.MemoryAttributionFromContext(ctx)
 	attribution.Origin = tool.MemoryOriginUndo
 	ctx = tool.WithMemoryAttribution(ctx, attribution)
-	if target == 0 || r.revisions[target-1].Status == tool.MemoryStatusDeleted {
+	if previous < 0 || r.revisions[previous].Status == tool.MemoryStatusDeleted {
 		s.appendDeleted(ctx, key, tool.MemoryOriginUndo)
 	} else {
-		s.appendActive(ctx, entryOf(r.revisions[target-1]), tool.MemoryOriginUndo)
+		s.appendActive(ctx, entryOf(r.revisions[previous]), tool.MemoryOriginUndo)
 	}
 	return s.snapshot(key), nil
 }
@@ -332,12 +345,25 @@ func (s *Store) appendDeleted(ctx context.Context, key string, origin tool.Memor
 	r.retainLatest()
 }
 
+func (r *record) undoCandidate(revision tool.MemoryRevision) bool {
+	return revision.Origin != tool.MemoryOriginUndo && !r.undone[revision.Version]
+}
+
 func (r *record) retainLatest() {
 	if len(r.revisions) <= maxRevisionsPerKey {
 		return
 	}
 	r.revisions = append([]tool.MemoryRevision(nil), r.revisions[len(r.revisions)-maxRevisionsPerKey:]...)
 	r.truncated = true
+	retained := make(map[tool.MemoryVersion]struct{}, len(r.revisions))
+	for _, revision := range r.revisions {
+		retained[revision.Version] = struct{}{}
+	}
+	for version := range r.undone {
+		if _, ok := retained[version]; !ok {
+			delete(r.undone, version)
+		}
+	}
 }
 
 func (s *Store) ensure(key string) *record {
@@ -366,7 +392,7 @@ func (s *Store) active(key string) (tool.MemoryRevision, bool) {
 func (s *Store) snapshot(key string) tool.MemoryRecord {
 	r := s.records[key]
 	revisions := append([]tool.MemoryRevision(nil), r.revisions...)
-	return tool.MemoryRecord{Current: revisions[len(revisions)-1], Revisions: revisions}
+	return tool.MemoryRecord{Current: revisions[len(revisions)-1], Revisions: revisions, Truncated: r.truncated}
 }
 
 func entryOf(revision tool.MemoryRevision) tool.MemoryEntry {

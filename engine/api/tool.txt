@@ -90,11 +90,8 @@ func NewToolSearch(cat *Catalog) *Search
 func SecretShapedMemoryValue(key string, value string) bool
 func ValidMemoryKey(key string) bool
 func ValidSkillAssetName(name string) bool
-func ValidateMemoryContent(key string, value string, description string) error
 func ValidateMemoryContentWrite(key string, value string, description string, attribution MemoryAttribution) error
-func ValidateMemoryEntry(entry MemoryEntry) error
 func ValidateMemoryEntryWrite(entry MemoryEntry, attribution MemoryAttribution) error
-func ValidateMemoryWrite(key string, value string) error
 func WithMemoryAttribution(ctx context.Context, attribution MemoryAttribution) context.Context
 func WithMemorySource(ctx context.Context, source MemorySource) context.Context
 type AgentDef struct{Name string; Description string; Tools []string; DisallowedTools []string; Model string; Provider string; PermissionMode string; MaxTurns int; MaxToolCalls int; Color string; Skills []string; MCPServers []AgentMCPServer; Hooks map[string]string; Memory string; Body string; Origin AgentOrigin}
@@ -113,13 +110,13 @@ type FileInfo struct{Name string; Size int64; Mode fs.FileMode; ModTime time.Tim
 type FileSystem interface{Glob(ctx context.Context, pattern string) ([]string, error); Read(ctx context.Context, path string) ([]byte, error); Stat(ctx context.Context, path string) (FileInfo, error)}
 type FileVersion struct{}
 type GrepMatch struct{Path string; Line int; Text string}
-type MemoryAttribution struct{Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource}
+type MemoryAttribution struct{Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource; ForceInstructionScan bool}
 type MemoryConvergenceStore interface{RememberIfCurrent(ctx context.Context, entry MemoryEntry, expected MemoryCurrent) (MemoryRecord, error); MemoryLifecycleStore}
 type MemoryCurrent struct{Exists bool; Version MemoryVersion}
 type MemoryEntry struct{Key string; Value string; Description string; UpdatedAt time.Time}
 type MemoryLifecycleStore interface{ForgetVersioned(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error); Inspect(ctx context.Context, key string) (MemoryRecord, bool, error); RememberVersioned(ctx context.Context, entry MemoryEntry, expected MemoryVersion) (MemoryRecord, error); UndoLatest(ctx context.Context, key string, expected MemoryVersion) (MemoryRecord, error)}
 type MemoryOrigin string
-type MemoryRecord struct{Current MemoryRevision; Revisions []MemoryRevision}
+type MemoryRecord struct{Current MemoryRevision; Revisions []MemoryRevision; Truncated bool}
 type MemoryRevision struct{Key string; Value string; Description string; Version MemoryVersion; Status MemoryStatus; Writer MemoryWriter; Origin MemoryOrigin; Source MemorySource; UpdatedAt time.Time}
 type MemorySource struct{SessionID string; ProposalID string}
 type MemoryStatus string

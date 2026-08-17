@@ -5453,11 +5453,11 @@ func childTelemetryFor(cfg Config, role string) (port.EventSink, port.ToolCallRe
 
 func childOperatorProfileSource(cfg Config, role string) prompt.OperatorProfileSource {
 	switch {
-	case role == "guardrail-checker", role == "ask-reviewer", role == "model-router",
-		role == "usermodel-review", strings.Contains(role, "judge"):
-		return nil
-	default:
+	case role == "", role == "task", strings.HasPrefix(role, "task:"),
+		strings.HasPrefix(role, "member:"), role == "parallel", strings.HasPrefix(role, "parallel:"):
 		return cfg.operatorProfileSource
+	default:
+		return nil
 	}
 }
 

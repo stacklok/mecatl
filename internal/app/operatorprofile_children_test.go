@@ -49,13 +49,49 @@ func TestUserFacingChildRolesInjectFreshVolatileOperatorProfile(t *testing.T) {
 	}
 }
 
-func TestInternalPurposeChildRolesExcludeOperatorProfile(t *testing.T) {
+func TestADR_0226_OperatorProfileAllowListIncludesFirstClassRoles(t *testing.T) {
 	store := memmemory.New()
 	cfg := Config{operatorProfileSource: store}
-	for _, role := range []string{"guardrail-checker", "model-router", "parallel-judge", "ask-reviewer", "usermodel-review"} {
-		if got := childOperatorProfileSource(cfg, role); got != nil {
-			t.Errorf("internal role %q inherited operator profile", role)
-		}
+	provider := mockllm.New()
+
+	if got := engineDepsForProvider(cfg, provider, "m", fixedDefaultWindow, nil, nil, nil, nil, nil).OperatorProfileSource; got == nil {
+		t.Error("main engine did not receive operator profile source")
+	}
+	for _, role := range []string{
+		"task",
+		"task:model=override",
+		"member:lead",
+		"parallel",
+		"parallel:model=override",
+	} {
+		t.Run(role, func(t *testing.T) {
+			deps := childEngineDepsForProvider(cfg, role, provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+			if deps.OperatorProfileSource == nil {
+				t.Errorf("first-class role %q did not receive operator profile source", role)
+			}
+		})
+	}
+}
+
+func TestADR_0226_OperatorProfileAllowListDefaultExcludes(t *testing.T) {
+	store := memmemory.New()
+	cfg := Config{operatorProfileSource: store}
+	provider := mockllm.New()
+	for _, role := range []string{
+		"guardrail-checker",
+		"ask-reviewer",
+		"model-router",
+		"usermodel-review",
+		"parallel-judge",
+		"fork-judge",
+		"invented-internal-role",
+	} {
+		t.Run(role, func(t *testing.T) {
+			deps := childEngineDepsForProvider(cfg, role, provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+			if deps.OperatorProfileSource != nil {
+				t.Errorf("excluded role %q inherited operator profile", role)
+			}
+		})
 	}
 }
 

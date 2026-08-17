@@ -285,8 +285,9 @@ func (t inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool.
 		Scope     Scope         `json:"scope"`
 		Current   memoryValue   `json:"current"`
 		Revisions []memoryValue `json:"revisions"`
+		Truncated bool          `json:"history_truncated"`
 	}
-	out := inspected{Scope: t.scope}
+	out := inspected{Scope: t.scope, Truncated: record.Truncated}
 	out.Current.from(record.Current)
 	out.Revisions = make([]memoryValue, len(record.Revisions))
 	for i := range record.Revisions {
@@ -307,7 +308,7 @@ type forgetTool struct {
 }
 
 func (t forgetTool) Spec() tool.ToolSpec {
-	return spec(t.names.forget, "Forget a memory only if expected_version is current. This mutation is intended to require approval.", `{"type":"object","properties":{"key":{"type":"string"},"expected_version":{"type":"string"}},"required":["key","expected_version"]}`)
+	return spec(t.names.forget, "Forget a memory only if expected_version is current. This creates a reversible tombstone; the underlying value remains readable through Inspect. This mutation is intended to require approval.", `{"type":"object","properties":{"key":{"type":"string"},"expected_version":{"type":"string"}},"required":["key","expected_version"]}`)
 }
 func (forgetTool) ReadOnly() bool { return false }
 func (t forgetTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {

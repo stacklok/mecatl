@@ -106,11 +106,13 @@ message MemoryEntry {
   google.protobuf.Timestamp updated_at = 4;
 }
 
-// RememberEntryRequest carries the entry to store.
+// RememberEntryRequest carries the entry to store and optional provenance.
 message RememberEntryRequest {
   // entry is the record to store; entry.key blank/whitespace-only is
   // INVALID_ARGUMENT.
   MemoryEntry entry = 1 [(buf.validate.field).required = true];
+  // attribution records informational provenance for the resulting revision.
+  MemoryAttribution attribution = 2;
 }
 
 // RememberEntryResponse is empty: a successful write has no payload.
@@ -195,7 +197,7 @@ message MemoryRevision {
   string key = 1;
   string value = 2;
   string description = 3;
-  string version = 4;
+  string version = 4 [(buf.validate.field).string.max_bytes = 4096];
   string status = 5;
   string writer = 6;
   string origin = 7;
@@ -207,6 +209,8 @@ message MemoryRevision {
 message MemoryRecord {
   MemoryRevision current = 1;
   repeated MemoryRevision revisions = 2;
+  // history_truncated reports that retention discarded older revisions for this key.
+  bool history_truncated = 3;
 }
 
 message MemoryStoreCapabilitiesRequest {}
@@ -219,7 +223,7 @@ message MemoryStoreCapabilitiesResponse {
 
 message RememberVersionedRequest {
   MemoryEntry entry = 1 [(buf.validate.field).required = true];
-  string expected_version = 2;
+  string expected_version = 2 [(buf.validate.field).string.max_bytes = 4096];
   MemoryAttribution attribution = 3;
 }
 
@@ -230,25 +234,29 @@ message MemoryAttribution {
   MemorySource source = 3;
 }
 
-message InspectMemoryRequest { string key = 1; }
+message InspectMemoryRequest {
+  string key = 1;
+  // max_revisions caps history to the newest N revisions; zero leaves it unbounded.
+  int32 max_revisions = 2;
+}
 message InspectMemoryResponse {
   MemoryRecord record = 1;
   bool found = 2;
 }
 message ForgetVersionedRequest {
   string key = 1;
-  string expected_version = 2;
+  string expected_version = 2 [(buf.validate.field).string.max_bytes = 4096];
   MemoryAttribution attribution = 3;
 }
 message UndoLatestRequest {
   string key = 1;
-  string expected_version = 2;
+  string expected_version = 2 [(buf.validate.field).string.max_bytes = 4096];
   MemoryAttribution attribution = 3;
 }
 message RememberIfCurrentRequest {
   MemoryEntry entry = 1 [(buf.validate.field).required = true];
   bool expected_exists = 2;
-  string expected_version = 3;
+  string expected_version = 3 [(buf.validate.field).string.max_bytes = 4096];
   MemoryAttribution attribution = 4;
 }
 message MemoryRecordResponse { MemoryRecord record = 1; }

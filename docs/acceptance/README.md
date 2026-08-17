@@ -48,6 +48,10 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
+- [Memory lifecycle hardening](memory-lifecycle-hardening.md) — post-merge
+  hardening of the operator-profile memory lifecycle (ADR 0107): close the
+  wire-boundary attribution bypass, fix `UndoLatest`'s predicate mismatch, expose
+  history truncation, and clear panel-review hygiene findings. Status: draft.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into
   mecatl. Status: draft.
