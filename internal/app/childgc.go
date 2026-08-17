@@ -130,8 +130,10 @@ func (p childGCPolicy) enabled() bool {
 // policy. Everything is injected (store, clock, liveness, diagnostics) so the
 // sweep is deterministic under test.
 type childGC struct {
-	store  port.PrunableStore
-	policy childGCPolicy
+	store         port.PrunableStore
+	pager         port.SessionMetadataPager
+	deleteSession func(context.Context, session.SessionID) error
+	policy        childGCPolicy
 	// isLive reports whether a session id has an in-flight run in this
 	// process (Service.IsLive). A live id is never deleted, by EITHER pass.
 	//
@@ -157,10 +159,97 @@ type childGC struct {
 	disabled bool
 }
 
+// Ask the store for one complete retention snapshot. Today's v1 pagers form a
+// bounded response by scanning their full backend, so a small page size would
+// repeat that scan once per page (the interactive picker is fixed separately by
+// the indexed-pagination work). The int32 ceiling is also accepted by the remote
+// driver protocol; a backend that imposes a smaller page still advances by cursor.
+const retentionMetadataPageSize = 1<<31 - 1
+
+// retentionMetadata reads the durable taxonomy used by automatic retention.
+// PrunableStore.List intentionally carries only id+mtime, which is insufficient
+// to distinguish an explicit main session from an unclassified legacy record.
+// A paging failure therefore aborts the sweep rather than falling back to ID
+// prefix inference.
+func (g *childGC) retentionMetadata(ctx context.Context) ([]port.SessionDiscoveryMeta, error) {
+	if g.pager == nil {
+		return nil, port.ErrSessionMetadataPagingUnsupported
+	}
+	var (
+		out    []port.SessionDiscoveryMeta
+		cursor *port.SessionMetadataCursor
+	)
+	for {
+		page, err := g.pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
+			Limit: retentionMetadataPageSize, Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page.Sessions...)
+		if page.NextCursor == nil {
+			return out, nil
+		}
+		if len(page.Sessions) == 0 || cursor != nil &&
+			page.NextCursor.ModifiedAt.Equal(cursor.ModifiedAt) && page.NextCursor.ID == cursor.ID {
+			return nil, errors.New("session GC: metadata pager made no progress")
+		}
+		next := *page.NextCursor
+		cursor = &next
+	}
+}
+
+type retentionClass uint8
+
+const (
+	retentionProtectedUnknown retentionClass = iota
+	retentionProtectedState
+	retentionMain
+	retentionScheduled
+	retentionSubagent
+	retentionParallel
+	retentionTeam
+)
+
+// classifyRetention requires positive, valid durable metadata. In particular,
+// an unprefixed id is not evidence that a legacy record is a main chat.
+func classifyRetention(meta port.SessionDiscoveryMeta) retentionClass {
+	if err := session.ValidateSessionMetadata(meta.Kind, meta.Relationship); err != nil {
+		return retentionProtectedUnknown
+	}
+	switch meta.State {
+	case session.StateRunning, session.StateAwaiting:
+		return retentionProtectedState
+	case session.StateIdle, session.StateCompleted, session.StateFailed, session.StateCancelled:
+		// These are terminal/idle candidates; family classification follows below.
+	default:
+		return retentionProtectedUnknown
+	}
+	switch meta.Kind {
+	case session.SessionKindMain:
+		// Reserved delegation/fire prefixes contradict a main classification. Fail
+		// closed instead of granting main-retention semantics to malformed metadata.
+		if !isMainSession(meta.ID) {
+			return retentionProtectedUnknown
+		}
+		return retentionMain
+	case session.SessionKindScheduled:
+		return retentionScheduled
+	case session.SessionKindSubagent:
+		return retentionSubagent
+	case session.SessionKindParallelBranch:
+		return retentionParallel
+	case session.SessionKindTeamMember:
+		return retentionTeam
+	default:
+		return retentionProtectedUnknown
+	}
+}
+
 // sweep runs one age pass then one per-family cap pass and returns the
-// (deleted, retained) child counts. It is BEST-EFFORT throughout: a List
-// failure aborts the sweep with one WARN; Delete failures are tallied into
-// one WARN per sweep (the entry stays retained and the next sweep retries);
+// (deleted, retained) child counts. It is BEST-EFFORT throughout: a metadata
+// listing failure aborts the sweep with one WARN; Delete failures are tallied
+// into one WARN per sweep (the entry stays retained and the next sweep retries);
 // nothing is ever fatal. It logs ONE INFO summary when anything was deleted
 // and stays silent otherwise (a found-nothing sweep is the steady state).
 // A store that signals port.ErrPruneUnsupported (the backend can NEVER
@@ -170,62 +259,59 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 	if g.disabled {
 		return 0, 0
 	}
-	entries, err := g.store.List(ctx)
+	entries, err := g.retentionMetadata(ctx)
 	if err != nil {
-		if errors.Is(err, port.ErrPruneUnsupported) {
+		if errors.Is(err, port.ErrPruneUnsupported) || errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
 			g.disabled = true
-			g.diag.Log(ctx, port.LevelInfo, "session GC: store does not support retention; disabling session GC", "err", err)
+			g.diag.Log(ctx, port.LevelInfo, "session GC: store does not support durable retention metadata; disabling session GC", "err", err)
 			return 0, 0
 		}
-		g.diag.Log(ctx, port.LevelWarn, "session GC: list failed; skipping sweep", "err", err)
+		g.diag.Log(ctx, port.LevelWarn, "session GC: metadata list failed; skipping sweep", "err", err)
 		return 0, 0
 	}
 
-	// Partition the inventory into the per-family child sets, the schedule-fire
-	// set, and the main set. Unprefixed ids (operator/service sessions) go to
-	// mains, swept ONLY by the main passes (issue #79); "sched--"-prefixed ids
-	// (schedule fires, ADR 0059 decision #7 Phase-2) go to fires, swept ONLY by
-	// the schedule-fire pass; when those passes are disabled they are invisible
-	// to the sweeper exactly as before.
-	byFamily := make(map[string][]port.StoredSession, len(childSessionPrefixes))
-	var mains []port.StoredSession
-	var fires []port.StoredSession
-	for _, e := range entries {
-		if isMainSession(e.ID) {
+	byFamily := map[string][]port.StoredSession{
+		agent.SubagentSessionPrefix: {},
+		agent.ParallelSessionPrefix: {},
+		agent.TeamSessionPrefix:     {},
+	}
+	var mains, fires []port.StoredSession
+	var protectedUnknown, protectedState int
+	for _, meta := range entries {
+		e := port.StoredSession{ID: meta.ID, ModifiedAt: meta.ModifiedAt}
+		switch classifyRetention(meta) {
+		case retentionMain:
 			mains = append(mains, e)
-			continue
-		}
-		if isScheduleFireSession(e.ID) {
+		case retentionScheduled:
 			fires = append(fires, e)
-			continue
+		case retentionSubagent:
+			byFamily[agent.SubagentSessionPrefix] = append(byFamily[agent.SubagentSessionPrefix], e)
+		case retentionParallel:
+			byFamily[agent.ParallelSessionPrefix] = append(byFamily[agent.ParallelSessionPrefix], e)
+		case retentionTeam:
+			byFamily[agent.TeamSessionPrefix] = append(byFamily[agent.TeamSessionPrefix], e)
+		case retentionProtectedState:
+			protectedState++
+		default:
+			protectedUnknown++
 		}
-		family, _ := isChildSession(e.ID)
-		byFamily[family] = append(byFamily[family], e)
 	}
 
 	var errs deleteErrors
 	for _, kids := range byFamily {
 		deleted += g.sweepPartition(ctx, kids, g.policy.retention, g.policy.maxPerFamily, &errs)
-	}
-
-	for _, kids := range byFamily {
 		retained += len(kids)
 	}
-	retained -= deleted
 
-	// Schedule-fire (top-level "sched--") sweep (ADR 0059 decision #7 Phase-2).
-	// A disabled schedule-fire policy (both knobs <=0) makes this a no-op, so a
-	// "sched--" session is never touched unless the operator turned it on.
 	fireDeleted := g.sweepPartition(ctx, fires, g.policy.scheduleFireRetention, g.policy.scheduleFireMaxTotal, &errs)
 	deleted += fireDeleted
-	retained += len(fires) - fireDeleted
+	retained += len(fires)
 
-	// Main (top-level) sweep AFTER the family loop (issue #79). A disabled main
-	// policy (both knobs <=0) makes this a no-op, so an UNPREFIXED session is
-	// never touched unless the operator turned the main passes on.
 	mainDeleted := g.sweepPartition(ctx, mains, g.policy.mainRetention, g.policy.mainMaxTotal, &errs)
 	deleted += mainDeleted
-	retained += len(mains) - mainDeleted
+	retained += len(mains)
+	retained += protectedUnknown + protectedState
+	retained -= deleted
 
 	if errs.count > 0 {
 		g.diag.Log(ctx, port.LevelWarn, "session GC: some deletes failed (retained; retried next sweep)",
@@ -233,7 +319,8 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 	}
 	if deleted > 0 {
 		g.diag.Log(ctx, port.LevelInfo, "session GC: swept",
-			"deleted", deleted, "retained", retained)
+			"deleted", deleted, "retained", retained,
+			"protected_unknown", protectedUnknown, "protected_state", protectedState)
 	}
 	return deleted, retained
 }
@@ -247,7 +334,11 @@ type deleteErrors struct {
 
 // remove best-effort-deletes one id, tallying a failure into errs.
 func (g *childGC) remove(ctx context.Context, id session.SessionID, errs *deleteErrors) bool {
-	if err := g.store.Delete(ctx, id); err != nil {
+	deleteSession := g.store.Delete
+	if g.deleteSession != nil {
+		deleteSession = g.deleteSession
+	}
+	if err := deleteSession(ctx, id); err != nil {
 		errs.count++
 		if errs.first == nil {
 			errs.first = err
@@ -323,7 +414,7 @@ func (g *childGC) sweepPartition(ctx context.Context, entries []port.StoredSessi
 // background goroutine sharing ctx (so the loop exits on shutdown). The
 // liveness predicate is the Service's in-flight run registry, threaded in by
 // Build AFTER the Service exists.
-func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool) {
+func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool, deleters ...func(context.Context, session.SessionID) error) {
 	// The sweeper has no caller: it runs as the explicit system principal
 	// (ADR 0204 decision 7), never an absent one.
 	ctx = syscaller.Context(ctx, syscaller.RootChildGC)
@@ -344,12 +435,23 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 		cfg.diag().Log(ctx, port.LevelInfo, "session GC unavailable (session store is not prunable); store is never swept")
 		return
 	}
+	pager, ok := store.(port.SessionMetadataPager)
+	if !ok {
+		cfg.diag().Log(ctx, port.LevelInfo, "session GC unavailable (session store has no durable metadata pager); store is never swept")
+		return
+	}
+	var deleteSession func(context.Context, session.SessionID) error
+	if len(deleters) > 0 {
+		deleteSession = deleters[0]
+	}
 	gc := &childGC{
-		store:  prunable,
-		policy: policy,
-		isLive: isLive,
-		now:    time.Now,
-		diag:   cfg.diag(),
+		store:         prunable,
+		pager:         pager,
+		deleteSession: deleteSession,
+		policy:        policy,
+		isLive:        isLive,
+		now:           time.Now,
+		diag:          cfg.diag(),
 	}
 	cfg.diag().Log(ctx, port.LevelInfo, "session GC ENABLED",
 		"child_retention", cfg.ChildRetention, "child_max_per_family", cfg.ChildRetentionMaxPerFamily,

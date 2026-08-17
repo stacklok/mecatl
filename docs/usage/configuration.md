@@ -181,14 +181,18 @@ remain untouched.
 > after the fact.
 
 Persisted sessions are garbage-collected by a background sweep so the durable
-store does not grow without bound. **Child** sessions (`subagent-*`/`parallel-*`/
-`team-*` ids, written by the delegation paths so `InspectSubagent`/`InspectMember`/
+store does not grow without bound. Retention requires **positive durable session
+taxonomy**: records whose kind is missing, unknown, invalid, conflicts with
+their relationship schema, or claims `main` under a reserved non-chat prefix are
+protected rather than guessed from the absence of a reserved prefix. **Child** sessions (`subagent-*`/`parallel-*`/`team-*`
+families, written by the delegation paths so `InspectSubagent`/`InspectMember`/
 `resume:` work) are bounded by `--child-retention` /
 `--child-retention-max-per-family` (defaults 168h / 500). **Main** (top-level)
 sessions are bounded by `--main-retention` / `--main-retention-max-total` — **both
 off by default for `mecated`** (main sessions are then never swept), and on for
 `mecatui` (30 days / 200 store-wide). The sweep re-runs every `--child-gc-interval`
-(default 1h) and always skips an in-flight run; deleting a session removes all of
+(default 1h) and always skips persisted running/awaiting sessions, an in-flight
+run, and a session leased by another process; deleting a session removes all of
 its files.
 
 ### Remote store drivers

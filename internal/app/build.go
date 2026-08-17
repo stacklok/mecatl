@@ -2031,7 +2031,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// registry. No-op (one INFO) when the policy is disabled or the store is
 	// not prunable; otherwise a startup sweep + ticker sharing ctx (the
 	// startMemoryConsolidation lifetime — the goroutine exits on shutdown).
-	startChildGC(ctx, cfg, store, svc.IsLive)
+	startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetention)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
 	// StateRunning session a process crash left behind, INCLUDING the

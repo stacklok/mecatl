@@ -2106,6 +2106,54 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	return nil
 }
 
+// DeleteSessionForRetention removes one session selected by the composition-owned
+// automatic-retention policy. Unlike DeleteSession it is not restricted to main
+// chats, but it still serializes against run entry, acquires the cross-process
+// mutation lease, and revalidates durable taxonomy and lifecycle after acquiring
+// that lease. It is an internal composition callback, never a wire operation.
+func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.SessionID) error {
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	prunable, ok := s.cfg.Store.(port.PrunableStore)
+	if !ok {
+		return ErrSessionDeleteUnsupported
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			return nil
+		}
+		return fmt.Errorf("%w: load retention candidate: %v", ErrInternal, err)
+	}
+	if sess == nil || sess.ID != id {
+		return fmt.Errorf("%w: retention candidate identity mismatch", ErrInternal)
+	}
+	if err := session.ValidateSessionMetadata(sess.Kind, sess.Relationship); err != nil ||
+		sess.Kind == session.SessionKindUnknown || sess.Kind == session.SessionKindMain && hasLegacyNonChatPrefix(id) {
+		return fmt.Errorf("%w: retention candidate has no valid durable taxonomy", ErrFailedPrecondition)
+	}
+	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || s.IsLive(id) {
+		return fmt.Errorf("%w: retention candidate is active or awaiting approval", ErrFailedPrecondition)
+	}
+	if err := prunable.Delete(ctx, id); err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			return nil
+		}
+		if errors.Is(err, port.ErrPruneUnsupported) {
+			return ErrSessionDeleteUnsupported
+		}
+		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
+	}
+	s.CloseSession(id)
+	return nil
+}
+
 // managementTarget performs the common management authorization and eligibility
 // gate. The caller must hold runEntryMu for id. concealAbsence makes missing and
 // foreign sessions indistinguishable idempotent success for DeleteSession.

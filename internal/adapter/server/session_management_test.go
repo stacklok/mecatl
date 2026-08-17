@@ -220,6 +220,45 @@ func TestSessionManagementRejectsLeaseHeldElsewhere(t *testing.T) {
 	if err := svc.DeleteSession(context.Background(), sess.ID); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 		t.Fatalf("DeleteSession lease = %v, want ErrSessionLeasedElsewhere", err)
 	}
+	if err := svc.DeleteSessionForRetention(context.Background(), sess.ID); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("DeleteSessionForRetention lease = %v, want ErrSessionLeasedElsewhere", err)
+	}
+}
+
+func TestRetentionDeleteRevalidatesCandidateAfterPlanning(t *testing.T) {
+	svc, store := newSessionManagementService(t, false, nil, nil)
+	ctx := context.Background()
+
+	running, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := running.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	if err := store.Save(ctx, running); err != nil {
+		t.Fatalf("Save running: %v", err)
+	}
+	if err := svc.DeleteSessionForRetention(ctx, running.ID); !errors.Is(err, server.ErrFailedPrecondition) {
+		t.Fatalf("DeleteSessionForRetention(running) = %v, want ErrFailedPrecondition", err)
+	}
+	if _, err := store.Load(ctx, running.ID); err != nil {
+		t.Fatalf("running candidate was deleted: %v", err)
+	}
+
+	unknown := session.New("legacy-unknown", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	if err := unknown.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
+		t.Fatalf("RestoreSessionMetadata: %v", err)
+	}
+	if err := store.Save(ctx, unknown); err != nil {
+		t.Fatalf("Save unknown: %v", err)
+	}
+	if err := svc.DeleteSessionForRetention(ctx, unknown.ID); !errors.Is(err, server.ErrFailedPrecondition) {
+		t.Fatalf("DeleteSessionForRetention(unknown) = %v, want ErrFailedPrecondition", err)
+	}
+	if _, err := store.Load(ctx, unknown.ID); err != nil {
+		t.Fatalf("unknown candidate was deleted: %v", err)
+	}
 }
 
 func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {

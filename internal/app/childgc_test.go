@@ -34,6 +34,7 @@ func newGCFixture(t *testing.T, policy childGCPolicy) *gcFixture {
 	f.store = memstore.New(memstore.WithNow(func() time.Time { return f.now }))
 	f.gc = &childGC{
 		store:  f.store,
+		pager:  f.store,
 		policy: policy,
 		isLive: func(session.SessionID) bool { return false },
 		now:    func() time.Time { return f.now },
@@ -42,10 +43,45 @@ func newGCFixture(t *testing.T, policy childGCPolicy) *gcFixture {
 	return f
 }
 
-// save stores an empty session under id at the fixture clock's current time.
+// save stores a session under id at the fixture clock's current time. Tests
+// pre-dating durable taxonomy used ID prefixes as the producer signal; preserve
+// their intended family while making the stored metadata explicit.
 func (f *gcFixture) save(t *testing.T, id session.SessionID) {
 	t.Helper()
 	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, f.now)
+	var (
+		kind = session.SessionKindMain
+		rel  session.SessionRelationship
+	)
+	switch {
+	case strings.HasPrefix(string(id), agent.SubagentSessionPrefix):
+		kind = session.SessionKindSubagent
+		rel = session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}
+	case strings.HasPrefix(string(id), agent.ParallelSessionPrefix):
+		kind = session.SessionKindParallelBranch
+		index := 0
+		rel = session.SessionRelationship{ParentSessionID: "parent", CallID: "call", BranchIndex: &index}
+	case strings.HasPrefix(string(id), agent.TeamSessionPrefix):
+		kind = session.SessionKindTeamMember
+		rel = session.SessionRelationship{ParentSessionID: "parent", TeamID: "team", MemberName: "member"}
+	case isScheduleFireSession(id):
+		kind = session.SessionKindScheduled
+		rel = session.SessionRelationship{ScheduleName: "schedule", OriginSessionID: "origin"}
+	}
+	if err := s.RestoreSessionMetadata(kind, rel); err != nil {
+		t.Fatalf("RestoreSessionMetadata(%q): %v", id, err)
+	}
+	if err := f.store.Save(context.Background(), s); err != nil {
+		t.Fatalf("Save(%q): %v", id, err)
+	}
+}
+
+func (f *gcFixture) saveUnknown(t *testing.T, id session.SessionID) {
+	t.Helper()
+	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, f.now)
+	if err := s.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
+		t.Fatalf("RestoreSessionMetadata(%q): %v", id, err)
+	}
 	if err := f.store.Save(context.Background(), s); err != nil {
 		t.Fatalf("Save(%q): %v", id, err)
 	}
@@ -268,6 +304,85 @@ func TestChildGCMainAgeThenCap(t *testing.T) {
 	}
 }
 
+func TestClassifyRetentionRequiresPositiveDurableMetadata(t *testing.T) {
+	validSubagent := session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}
+	validScheduled := session.SessionRelationship{ScheduleName: "schedule"}
+	tests := []struct {
+		name string
+		meta port.SessionDiscoveryMeta
+		want retentionClass
+	}{
+		{"empty kind", port.SessionDiscoveryMeta{ID: "legacy", State: session.StateCompleted}, retentionProtectedUnknown},
+		{"unknown kind", port.SessionDiscoveryMeta{ID: "legacy", Kind: session.SessionKindUnknown, State: session.StateCompleted}, retentionProtectedUnknown},
+		{"invalid kind", port.SessionDiscoveryMeta{ID: "legacy", Kind: "invented", State: session.StateCompleted}, retentionProtectedUnknown},
+		{"main with child prefix", port.SessionDiscoveryMeta{ID: "subagent-forged", Kind: session.SessionKindMain, State: session.StateCompleted}, retentionProtectedUnknown},
+		{"invalid relationship", port.SessionDiscoveryMeta{ID: "child", Kind: session.SessionKindSubagent, State: session.StateCompleted}, retentionProtectedUnknown},
+		{"running main", port.SessionDiscoveryMeta{ID: "main", Kind: session.SessionKindMain, State: session.StateRunning}, retentionProtectedState},
+		{"awaiting main", port.SessionDiscoveryMeta{ID: "main", Kind: session.SessionKindMain, State: session.StateAwaiting}, retentionProtectedState},
+		{"explicit main", port.SessionDiscoveryMeta{ID: "main", Kind: session.SessionKindMain, State: session.StateCompleted}, retentionMain},
+		{"explicit subagent", port.SessionDiscoveryMeta{ID: "opaque", Kind: session.SessionKindSubagent, Relationship: validSubagent, State: session.StateCompleted}, retentionSubagent},
+		{"explicit scheduled", port.SessionDiscoveryMeta{ID: "opaque", Kind: session.SessionKindScheduled, Relationship: validScheduled, State: session.StateCompleted}, retentionScheduled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyRetention(tc.meta); got != tc.want {
+				t.Fatalf("classifyRetention() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestChildGCUnknownAndActiveStatesAreProtected(t *testing.T) {
+	f := newGCFixture(t, childGCPolicy{mainRetention: 24 * time.Hour, mainMaxTotal: 2})
+	rec := &recordingDiag{}
+	f.gc.diag = rec
+
+	f.saveUnknown(t, "legacy-unprefixed")
+	f.now = f.now.Add(48 * time.Hour)
+	for i, id := range []session.SessionID{"main-a", "main-b", "main-c", "main-d"} {
+		f.save(t, id)
+		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
+	}
+
+	running := session.New("main-running", session.ModeDefault, "/ws", session.Limits{}, f.now)
+	if err := running.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn(running): %v", err)
+	}
+	if err := f.store.Save(context.Background(), running); err != nil {
+		t.Fatalf("Save(running): %v", err)
+	}
+	awaiting := session.New("main-awaiting", session.ModeDefault, "/ws", session.Limits{}, f.now)
+	if err := awaiting.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn(awaiting): %v", err)
+	}
+	if err := awaiting.PauseForApproval(session.PendingAsk{}); err != nil {
+		t.Fatalf("PauseForApproval: %v", err)
+	}
+	if err := f.store.Save(context.Background(), awaiting); err != nil {
+		t.Fatalf("Save(awaiting): %v", err)
+	}
+
+	deleted, retained := f.gc.sweep(context.Background())
+	if deleted != 2 || retained != 5 {
+		t.Fatalf("sweep = (deleted %d, retained %d), want (2, 5)", deleted, retained)
+	}
+	got := f.ids(t)
+	for _, protected := range []session.SessionID{"legacy-unprefixed", "main-running", "main-awaiting"} {
+		if !got[protected] {
+			t.Errorf("protected session %q was deleted", protected)
+		}
+	}
+	if got["main-a"] || got["main-b"] || !got["main-c"] || !got["main-d"] {
+		t.Errorf("eligible-main cap result = %#v, want a/b deleted and c/d retained", got)
+	}
+	if value, ok := rec.attr("protected_unknown"); !ok || value != 1 {
+		t.Errorf("protected_unknown diagnostic = (%v, %v), want (1, true)", value, ok)
+	}
+	if value, ok := rec.attr("protected_state"); !ok || value != 2 {
+		t.Errorf("protected_state diagnostic = (%v, %v), want (2, true)", value, ok)
+	}
+}
+
 // TestChildGCCapPassOldestFirst pins the per-family count cap: past the cap,
 // the OLDEST snapshots go first, and the cap is per FAMILY (a full subagent
 // family does not evict team members).
@@ -374,6 +489,7 @@ func TestChildGCListErrorIsNonFatal(t *testing.T) {
 	rec := &recordingDiag{}
 	gc := &childGC{
 		store:  failingPrunable{},
+		pager:  failingPrunable{},
 		policy: childGCPolicy{retention: time.Hour},
 		isLive: func(session.SessionID) bool { return false },
 		now:    time.Now,
@@ -454,13 +570,20 @@ func (failingPrunable) Load(context.Context, session.SessionID) (*session.Sessio
 func (failingPrunable) List(context.Context) ([]port.StoredSession, error) {
 	return nil, context.DeadlineExceeded
 }
+func (failingPrunable) PageSessionMetadata(context.Context, port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	return port.SessionMetadataPage{}, context.DeadlineExceeded
+}
 func (failingPrunable) Delete(context.Context, session.SessionID) error { return nil }
 
-// recordingDiag captures diagnostics lines for assertion.
-type recordingDiag struct{ msgs []string }
+// recordingDiag captures diagnostics lines and attributes for assertion.
+type recordingDiag struct {
+	msgs  []string
+	attrs [][]any
+}
 
-func (r *recordingDiag) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+func (r *recordingDiag) Log(_ context.Context, _ port.Level, msg string, attrs ...any) {
 	r.msgs = append(r.msgs, msg)
+	r.attrs = append(r.attrs, attrs)
 }
 func (r *recordingDiag) With(...any) port.Diagnostics { return r }
 func (r *recordingDiag) has(substr string) bool {
@@ -472,6 +595,16 @@ func (r *recordingDiag) has(substr string) bool {
 	return false
 }
 func (r *recordingDiag) messages() []string { return r.msgs }
+func (r *recordingDiag) attr(key string) (any, bool) {
+	for _, attrs := range r.attrs {
+		for i := 0; i+1 < len(attrs); i += 2 {
+			if attrs[i] == key {
+				return attrs[i+1], true
+			}
+		}
+	}
+	return nil, false
+}
 
 // TestChildGCCapPassTieBreakDeterministic pins the cap pass's eviction order
 // under EQUAL ModifiedAt (coarse file mtimes / batch saves are realistic): the
@@ -538,6 +671,10 @@ type countingPrunable struct {
 }
 
 func (c *countingPrunable) List(ctx context.Context) ([]port.StoredSession, error) {
+	return c.Store.List(ctx)
+}
+
+func (c *countingPrunable) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
 	c.lists.Add(1)
 	if c.listed != nil {
 		select {
@@ -546,9 +683,9 @@ func (c *countingPrunable) List(ctx context.Context) ([]port.StoredSession, erro
 		}
 	}
 	if c.listErr != nil {
-		return nil, c.listErr
+		return port.SessionMetadataPage{}, c.listErr
 	}
-	return c.Store.List(ctx)
+	return c.Store.PageSessionMetadata(ctx, request)
 }
 
 // pruneUnsupportedErr mimics the grpcdriver client's mapping of a driver
@@ -566,6 +703,7 @@ func TestChildGCPruneUnsupportedDisablesStickily(t *testing.T) {
 	cs := &countingPrunable{Store: memstore.New(), listErr: pruneUnsupportedErr()}
 	gc := &childGC{
 		store:  cs,
+		pager:  cs,
 		policy: childGCPolicy{retention: time.Hour},
 		isLive: func(session.SessionID) bool { return false },
 		now:    time.Now,
@@ -691,10 +829,16 @@ func TestBuildChildGCSweepsStaleJSONLChild(t *testing.T) {
 	}
 	bg := context.Background()
 	created := time.Now().Add(-48 * time.Hour)
-	for _, id := range []session.SessionID{"subagent-stale", "operator-main"} {
-		if err := seed.Save(bg, session.New(id, session.ModeDefault, "/ws", session.Limits{}, created)); err != nil {
-			t.Fatalf("seed Save(%q): %v", id, err)
-		}
+	child, err := session.NewSubagent("subagent-stale", session.ModeDefault, "/ws", session.Limits{}, created, "parent", "call")
+	if err != nil {
+		t.Fatalf("NewSubagent: %v", err)
+	}
+	if err := seed.Save(bg, child); err != nil {
+		t.Fatalf("seed Save(%q): %v", child.ID, err)
+	}
+	main := session.New("operator-main", session.ModeDefault, "/ws", session.Limits{}, created)
+	if err := seed.Save(bg, main); err != nil {
+		t.Fatalf("seed Save(%q): %v", main.ID, err)
 	}
 	staleFile := jsonlSnapshotPath(t, storeDir, "subagent-stale")
 	mainFile := jsonlSnapshotPath(t, storeDir, "operator-main")

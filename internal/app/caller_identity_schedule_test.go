@@ -116,6 +116,7 @@ func TestCallerIdentity_Scenario4_ScheduleOwnerCapturedAtCreate(t *testing.T) {
 	// Sweep the origin session away, exactly as the retention sweeper does.
 	gc := &childGC{
 		store:  sessions,
+		pager:  sessions,
 		policy: childGCPolicy{mainRetention: time.Nanosecond},
 		isLive: func(session.SessionID) bool { return false },
 		now:    func() time.Time { return time.Now().Add(time.Hour) },

@@ -261,6 +261,11 @@ func (p *probeSessionStore) List(ctx context.Context) ([]port.StoredSession, err
 	return p.Store.List(ctx)
 }
 
+func (p *probeSessionStore) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	p.seen(ctx, "store.List")
+	return p.Store.PageSessionMetadata(ctx, request)
+}
+
 type probeScheduleStore struct {
 	*memschedulestore.Store
 	seen observe
