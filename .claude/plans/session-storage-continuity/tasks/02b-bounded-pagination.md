@@ -2,9 +2,9 @@
 id: 02b-bounded-pagination
 title: Generation-bound work-bounded pagination
 blocked_by: [02-indexed-inventory]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/02b-bounded-pagination"
+worktree: ".scratch/plan-session-storage-continuity-02b-bounded-pagination"
 issue: "587"
 retries: 0
 last_error: ""
