@@ -30,6 +30,14 @@ func errConfigTooLarge(n int) error {
 	return fmt.Errorf("permission config too large: %d bytes exceeds the %d-byte cap", n, maxConfigBytes)
 }
 
+// ValidateYAML validates a complete settings document with the same bounded parser
+// used when loading operator and project configuration. It does not expose parsed
+// values or mutate configuration state.
+func ValidateYAML(data []byte) error {
+	_, err := parseYAML(data)
+	return err
+}
+
 // parseYAML unmarshals the `.mecatl/settings.yaml` bytes into a Config. A nil/
 // empty input yields a zero Config (no rules). A malformed document is a hard
 // error the caller surfaces (a config file that cannot be parsed must not be
