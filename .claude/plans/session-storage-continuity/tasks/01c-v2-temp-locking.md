@@ -2,9 +2,9 @@
 id: 01c-v2-temp-locking
 title: Cross-process family locking and orphan-temp recovery
 blocked_by: [01b-v2-durability]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/01c-v2-temp-locking"
+worktree: ".scratch/plan-session-storage-continuity-01c-v2-temp-locking"
 issue: "586"
 retries: 0
 last_error: ""
