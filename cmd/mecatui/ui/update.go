@@ -1423,6 +1423,7 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onSoulKey,
 		m.onUserModelKey,
 		m.onReflectionsKey,
+		m.onDreamKey,
 		m.onModelsKey,
 		m.onEffortKey,
 		m.onWorktreesKey,
@@ -1720,7 +1721,7 @@ func (m Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 // drift apart.
 func (m Model) pasteGateOpen() bool {
 	if m.showHelp || m.phase == phaseAwaitingApproval ||
-		m.mcp.view != mcpNone || m.team.view != teamNone || m.agentsInv.view != agentsInvNone {
+		m.mcp.view != mcpNone || m.team.view != teamNone || m.agentsInv.view != agentsInvNone || m.dream.view != dreamClosed {
 		return false
 	}
 	return m.phase == phaseIdle || m.phase == phaseRunning

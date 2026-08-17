@@ -30,6 +30,10 @@ type duplicateRetirementStore interface {
 	RetireDuplicate(context.Context, string, tool.MemoryVersion, string, tool.MemoryVersion) (tool.MemoryRecord, error)
 }
 
+type synthesisStore interface {
+	SynthesizeReplacement(context.Context, tool.MemoryEntry, tool.MemoryVersion, []string, []tool.MemoryVersion) (tool.MemoryRecord, error)
+}
+
 type namespacedConvergenceStore struct {
 	*namespacedLifecycleStore
 	convergence tool.MemoryConvergenceStore
@@ -38,6 +42,16 @@ type namespacedConvergenceStore struct {
 type namespacedDuplicateStore struct {
 	*namespacedConvergenceStore
 	retirement duplicateRetirementStore
+}
+
+type namespacedSynthesisStore struct {
+	*namespacedConvergenceStore
+	synthesis synthesisStore
+}
+
+type namespacedReviewedStore struct {
+	*namespacedDuplicateStore
+	synthesis synthesisStore
 }
 
 var (
@@ -59,8 +73,15 @@ func NewNamespacedStore(store tool.MemoryStore, namespace string) tool.MemorySto
 	if convergence, ok := store.(tool.MemoryConvergenceStore); ok {
 		lifecycle := &namespacedLifecycleStore{NamespacedStore: base, lifecycle: convergence}
 		wrapped := &namespacedConvergenceStore{namespacedLifecycleStore: lifecycle, convergence: convergence}
-		if retirement, ok := store.(duplicateRetirementStore); ok {
+		retirement, hasRetirement := store.(duplicateRetirementStore)
+		synthesis, hasSynthesis := store.(synthesisStore)
+		switch {
+		case hasRetirement && hasSynthesis:
+			return &namespacedReviewedStore{namespacedDuplicateStore: &namespacedDuplicateStore{namespacedConvergenceStore: wrapped, retirement: retirement}, synthesis: synthesis}
+		case hasRetirement:
 			return &namespacedDuplicateStore{namespacedConvergenceStore: wrapped, retirement: retirement}
+		case hasSynthesis:
+			return &namespacedSynthesisStore{namespacedConvergenceStore: wrapped, synthesis: synthesis}
 		}
 		return wrapped
 	}
@@ -188,6 +209,24 @@ func (s *namespacedDuplicateStore) RetireDuplicate(ctx context.Context, survivor
 	return s.trimRecord(record), s.logicalError(err)
 }
 
+func (s *namespacedSynthesisStore) SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return synthesizeNamespaced(ctx, s.namespacedConvergenceStore, s.synthesis, survivor, survivorVersion, sourceKeys, sourceVersions)
+}
+
+func (s *namespacedReviewedStore) SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return synthesizeNamespaced(ctx, s.namespacedConvergenceStore, s.synthesis, survivor, survivorVersion, sourceKeys, sourceVersions)
+}
+
+func synthesizeNamespaced(ctx context.Context, namespace *namespacedConvergenceStore, store synthesisStore, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	survivor.Key = namespace.key(survivor.Key)
+	physicalSources := make([]string, len(sourceKeys))
+	for i, key := range sourceKeys {
+		physicalSources[i] = namespace.key(key)
+	}
+	record, err := store.SynthesizeReplacement(ctx, survivor, survivorVersion, physicalSources, append([]tool.MemoryVersion(nil), sourceVersions...))
+	return namespace.trimRecord(record), namespace.logicalError(err)
+}
+
 type memoryWorkspaceKey struct{}
 
 // WithWorkspace annotates a run context for the caller-scoped project memory
@@ -218,6 +257,14 @@ type callerDuplicateStore struct {
 	*callerConvergenceStore
 }
 
+type callerSynthesisStore struct {
+	*callerConvergenceStore
+}
+
+type callerReviewedStore struct {
+	*callerDuplicateStore
+}
+
 var (
 	_ tool.MemoryLifecycleStore   = (*callerLifecycleStore)(nil)
 	_ tool.MemoryConvergenceStore = (*callerConvergenceStore)(nil)
@@ -233,8 +280,15 @@ func NewCallerStore(store tool.MemoryStore, project bool) tool.MemoryStore {
 	base := &CallerStore{store: store, project: project}
 	if _, ok := store.(tool.MemoryConvergenceStore); ok {
 		wrapped := &callerConvergenceStore{callerLifecycleStore: &callerLifecycleStore{CallerStore: base}}
-		if _, ok := store.(duplicateRetirementStore); ok {
+		_, hasRetirement := store.(duplicateRetirementStore)
+		_, hasSynthesis := store.(synthesisStore)
+		switch {
+		case hasRetirement && hasSynthesis:
+			return &callerReviewedStore{callerDuplicateStore: &callerDuplicateStore{callerConvergenceStore: wrapped}}
+		case hasRetirement:
 			return &callerDuplicateStore{callerConvergenceStore: wrapped}
+		case hasSynthesis:
+			return &callerSynthesisStore{callerConvergenceStore: wrapped}
 		}
 		return wrapped
 	}
@@ -369,4 +423,20 @@ func (s *callerDuplicateStore) RetireDuplicate(ctx context.Context, survivorKey 
 		return tool.MemoryRecord{}, err
 	}
 	return store.(duplicateRetirementStore).RetireDuplicate(ctx, survivorKey, survivorVersion, sourceKey, sourceVersion)
+}
+
+func (s *callerSynthesisStore) SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return callerSynthesize(ctx, s.CallerStore, survivor, survivorVersion, sourceKeys, sourceVersions)
+}
+
+func (s *callerReviewedStore) SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	return callerSynthesize(ctx, s.CallerStore, survivor, survivorVersion, sourceKeys, sourceVersions)
+}
+
+func callerSynthesize(ctx context.Context, caller *CallerStore, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	store, err := caller.scoped(ctx)
+	if err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	return store.(synthesisStore).SynthesizeReplacement(ctx, survivor, survivorVersion, sourceKeys, sourceVersions)
 }

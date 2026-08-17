@@ -117,6 +117,7 @@ type Deps struct {
 	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
 	UserModel   client.UserModelLister  // user-model inspection for the /usermodel panel; nil disables it
 	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
+	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
 	Models      client.ModelLister      // selectable-model discovery for the /models picker; nil disables it
 	Worktrees   client.WorktreeLister   // worktree discovery for the /worktrees overlay (issue #102); nil disables it
 	// Sched is the schedule discovery + management surface for the /schedule overlay
@@ -484,6 +485,9 @@ type Model struct {
 	userModelGen    uint64         // monotonic request generation; invalidates delayed detail/index responses
 	reflections     reflectionsState
 	reflectionsGen  uint64
+	dream           dreamState
+	dreamGen        uint64
+	dreamRequest    uint64
 	models          modelsState    // /models picker overlay state (view==modelsNone when closed)
 	effort          effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
 	worktrees       worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102

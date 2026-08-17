@@ -33,6 +33,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
+	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -73,6 +74,8 @@ type catalogAssets struct {
 	agentReg         *agents.Registry
 	memStore         tool.MemoryStore
 	userModelStore   tool.MemoryStore
+	memoryDream      *dream.Consolidator
+	userModelDream   *dream.Consolidator
 	skills           []tool.SkillMeta
 	skillSource      tool.SkillSource
 	skillIndex       skillIndex

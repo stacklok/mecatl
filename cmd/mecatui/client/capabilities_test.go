@@ -95,6 +95,19 @@ func TestCapabilitiesFrom(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesFromManualDreamPresenceAndTargets(t *testing.T) {
+	if got := capabilitiesFrom(&mecatlv1.ServerCapabilities{}); got.ManualDream != nil {
+		t.Fatalf("absent manual dream = %+v", got.ManualDream)
+	}
+	got := capabilitiesFrom(&mecatlv1.ServerCapabilities{ManualDream: &mecatlv1.ManualDreamCapabilities{
+		ProjectMemory: &mecatlv1.DreamTargetCapability{Generate: true, Decide: true},
+		UserModel:     &mecatlv1.DreamTargetCapability{UnavailableReason: "disabled\xff"},
+	}})
+	if got.ManualDream == nil || !got.ManualDream.ProjectMemory.Generate || !got.ManualDream.ProjectMemory.Decide || got.ManualDream.UserModel.UnavailableReason != "disabled�" {
+		t.Fatalf("manual dream mapping = %+v", got.ManualDream)
+	}
+}
+
 // TestResolvedModelFrom covers the proto→plain translation of the effective model,
 // including the nil (older-server) case that MUST degrade to the zero value rather
 // than panic — the backward-compat guarantee that drives the UI to show no model

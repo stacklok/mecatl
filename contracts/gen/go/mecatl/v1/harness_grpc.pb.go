@@ -67,6 +67,8 @@ const (
 	HarnessService_GetSoul_FullMethodName                  = "/mecatl.v1.HarnessService/GetSoul"
 	HarnessService_GetUserModel_FullMethodName             = "/mecatl.v1.HarnessService/GetUserModel"
 	HarnessService_ReflectSession_FullMethodName           = "/mecatl.v1.HarnessService/ReflectSession"
+	HarnessService_GenerateDreamPlan_FullMethodName        = "/mecatl.v1.HarnessService/GenerateDreamPlan"
+	HarnessService_DecideDreamPlan_FullMethodName          = "/mecatl.v1.HarnessService/DecideDreamPlan"
 	HarnessService_ListLearningProposals_FullMethodName    = "/mecatl.v1.HarnessService/ListLearningProposals"
 	HarnessService_GetLearningProposal_FullMethodName      = "/mecatl.v1.HarnessService/GetLearningProposal"
 	HarnessService_DecideLearningProposal_FullMethodName   = "/mecatl.v1.HarnessService/DecideLearningProposal"
@@ -262,6 +264,13 @@ type HarnessServiceClient interface {
 	// ReflectSession explicitly reflects one completed, caller-owned session. It
 	// remains available when automatic learning is off if reflection is configured.
 	ReflectSession(ctx context.Context, in *ReflectSessionRequest, opts ...grpc.CallOption) (*ReflectSessionResponse, error)
+	// GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
+	// one closed, deployment-owned target. The request carries no mutation material.
+	// Unavailable deployments return Unimplemented (HTTP parity: 501).
+	GenerateDreamPlan(ctx context.Context, in *GenerateDreamPlanRequest, opts ...grpc.CallOption) (*GenerateDreamPlanResponse, error)
+	// DecideDreamPlan applies or dismisses the exact retained plan identified by
+	// plan_id. The caller cannot replace any operation or memory content.
+	DecideDreamPlan(ctx context.Context, in *DecideDreamPlanRequest, opts ...grpc.CallOption) (*DecideDreamPlanResponse, error)
 	// ListLearningProposals returns a bounded, caller/project-partitioned page.
 	ListLearningProposals(ctx context.Context, in *ListLearningProposalsRequest, opts ...grpc.CallOption) (*ListLearningProposalsResponse, error)
 	// GetLearningProposal returns one proposal with digest-verified evidence status.
@@ -621,6 +630,26 @@ func (c *harnessServiceClient) ReflectSession(ctx context.Context, in *ReflectSe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReflectSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ReflectSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) GenerateDreamPlan(ctx context.Context, in *GenerateDreamPlanRequest, opts ...grpc.CallOption) (*GenerateDreamPlanResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerateDreamPlanResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GenerateDreamPlan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) DecideDreamPlan(ctx context.Context, in *DecideDreamPlanRequest, opts ...grpc.CallOption) (*DecideDreamPlanResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DecideDreamPlanResponse)
+	err := c.cc.Invoke(ctx, HarnessService_DecideDreamPlan_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1027,6 +1056,13 @@ type HarnessServiceServer interface {
 	// ReflectSession explicitly reflects one completed, caller-owned session. It
 	// remains available when automatic learning is off if reflection is configured.
 	ReflectSession(context.Context, *ReflectSessionRequest) (*ReflectSessionResponse, error)
+	// GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
+	// one closed, deployment-owned target. The request carries no mutation material.
+	// Unavailable deployments return Unimplemented (HTTP parity: 501).
+	GenerateDreamPlan(context.Context, *GenerateDreamPlanRequest) (*GenerateDreamPlanResponse, error)
+	// DecideDreamPlan applies or dismisses the exact retained plan identified by
+	// plan_id. The caller cannot replace any operation or memory content.
+	DecideDreamPlan(context.Context, *DecideDreamPlanRequest) (*DecideDreamPlanResponse, error)
 	// ListLearningProposals returns a bounded, caller/project-partitioned page.
 	ListLearningProposals(context.Context, *ListLearningProposalsRequest) (*ListLearningProposalsResponse, error)
 	// GetLearningProposal returns one proposal with digest-verified evidence status.
@@ -1195,6 +1231,12 @@ func (UnimplementedHarnessServiceServer) GetUserModel(context.Context, *GetUserM
 }
 func (UnimplementedHarnessServiceServer) ReflectSession(context.Context, *ReflectSessionRequest) (*ReflectSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReflectSession not implemented")
+}
+func (UnimplementedHarnessServiceServer) GenerateDreamPlan(context.Context, *GenerateDreamPlanRequest) (*GenerateDreamPlanResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GenerateDreamPlan not implemented")
+}
+func (UnimplementedHarnessServiceServer) DecideDreamPlan(context.Context, *DecideDreamPlanRequest) (*DecideDreamPlanResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DecideDreamPlan not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListLearningProposals(context.Context, *ListLearningProposalsRequest) (*ListLearningProposalsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListLearningProposals not implemented")
@@ -1705,6 +1747,42 @@ func _HarnessService_ReflectSession_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_GenerateDreamPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GenerateDreamPlanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GenerateDreamPlan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GenerateDreamPlan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GenerateDreamPlan(ctx, req.(*GenerateDreamPlanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_DecideDreamPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DecideDreamPlanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).DecideDreamPlan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_DecideDreamPlan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).DecideDreamPlan(ctx, req.(*DecideDreamPlanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_ListLearningProposals_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListLearningProposalsRequest)
 	if err := dec(in); err != nil {
@@ -2163,6 +2241,14 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReflectSession",
 			Handler:    _HarnessService_ReflectSession_Handler,
+		},
+		{
+			MethodName: "GenerateDreamPlan",
+			Handler:    _HarnessService_GenerateDreamPlan_Handler,
+		},
+		{
+			MethodName: "DecideDreamPlan",
+			Handler:    _HarnessService_DecideDreamPlan_Handler,
 		},
 		{
 			MethodName: "ListLearningProposals",

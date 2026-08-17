@@ -221,6 +221,15 @@ service HarnessService {
   // remains available when automatic learning is off if reflection is configured.
   rpc ReflectSession(ReflectSessionRequest) returns (ReflectSessionResponse);
 
+  // GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
+  // one closed, deployment-owned target. The request carries no mutation material.
+  // Unavailable deployments return Unimplemented (HTTP parity: 501).
+  rpc GenerateDreamPlan(GenerateDreamPlanRequest) returns (GenerateDreamPlanResponse);
+
+  // DecideDreamPlan applies or dismisses the exact retained plan identified by
+  // plan_id. The caller cannot replace any operation or memory content.
+  rpc DecideDreamPlan(DecideDreamPlanRequest) returns (DecideDreamPlanResponse);
+
   // ListLearningProposals returns a bounded, caller/project-partitioned page.
   rpc ListLearningProposals(ListLearningProposalsRequest) returns (ListLearningProposalsResponse);
 
@@ -513,6 +522,10 @@ message ServerCapabilities {
   bool learning_proposals = 17;
   // learned_skills is true when the caller-partitioned lifecycle API is available.
   bool learned_skills = 18;
+  // manual_dream is the composition-time availability snapshot for the two
+  // deployment-owned manual consolidation targets. An older server leaves it
+  // absent; unavailable reasons are bounded, content-free operator categories.
+  ManualDreamCapabilities manual_dream = 19;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -2681,4 +2694,76 @@ message ApprovePlanRequest {
   // note is an OPTIONAL operator remark appended to the proceed message
   // injected into the continuation run's first user message (allow paths only).
   string note = 3;
+}
+
+// ManualDreamCapabilities reports manual generation/decision availability for
+// each closed target independently.
+message ManualDreamCapabilities {
+  DreamTargetCapability project_memory = 1;
+  DreamTargetCapability user_model = 2;
+}
+
+message DreamTargetCapability {
+  bool generate = 1;
+  bool decide = 2;
+  string unavailable_reason = 3;
+}
+
+message GenerateDreamPlanRequest {
+  // target must be exactly "project_memory" or "user_model".
+  string target = 1;
+}
+
+message GenerateDreamPlanResponse {
+  DreamReviewPlan plan = 1;
+}
+
+message DecideDreamPlanRequest {
+  string plan_id = 1;
+  // decision must be exactly "apply" or "dismiss".
+  string decision = 2;
+}
+
+message DecideDreamPlanResponse {
+  DreamReceipt receipt = 1;
+}
+
+message DreamReviewPlan {
+  string id = 1;
+  string target = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  int32 planned_operation_count = 4;
+  int32 planned_source_count = 5;
+  repeated DreamOperation operations = 6;
+}
+
+message DreamOperation {
+  string kind = 1;
+  DreamParticipant survivor = 2;
+  repeated DreamParticipant sources = 3;
+  DreamReplacement replacement = 4;
+  string reason = 5;
+  bool exact_duplicate_eligible = 6;
+}
+
+message DreamParticipant {
+  string key = 1;
+  string value = 2;
+  string description = 3;
+}
+
+message DreamReplacement {
+  string value = 1;
+  string description = 2;
+}
+
+message DreamReceipt {
+  string id = 1;
+  string target = 2;
+  string disposition = 3;
+  int32 planned_source_count = 4;
+  int32 applied_source_count = 5;
+  int32 conflicted_source_count = 6;
+  int32 skipped_source_count = 7;
+  int32 failed_source_count = 8;
 }

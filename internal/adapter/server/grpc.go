@@ -421,6 +421,24 @@ func (h *HarnessServer) ReflectSession(ctx context.Context, req *mecatlv1.Reflec
 	return &mecatlv1.ReflectSessionResponse{Receipt: receipt}, nil
 }
 
+// GenerateDreamPlan creates a retained manual consolidation review.
+func (h *HarnessServer) GenerateDreamPlan(ctx context.Context, req *mecatlv1.GenerateDreamPlanRequest) (*mecatlv1.GenerateDreamPlanResponse, error) {
+	review, err := h.svc.GenerateDream(ctx, DreamTarget(req.GetTarget()))
+	if err != nil {
+		return nil, toStatus(normalizeDreamError(err))
+	}
+	return &mecatlv1.GenerateDreamPlanResponse{Plan: toProtoDreamReview(review)}, nil
+}
+
+// DecideDreamPlan applies or dismisses the exact retained review plan.
+func (h *HarnessServer) DecideDreamPlan(ctx context.Context, req *mecatlv1.DecideDreamPlanRequest) (*mecatlv1.DecideDreamPlanResponse, error) {
+	receipt, err := h.svc.DecideDream(ctx, req.GetPlanId(), DreamDecision(req.GetDecision()))
+	if err != nil && (!errors.Is(err, ErrDreamApplyFailed) || receipt.ID == "") {
+		return nil, toStatus(normalizeDreamError(err))
+	}
+	return &mecatlv1.DecideDreamPlanResponse{Receipt: toProtoDreamReceipt(receipt)}, nil
+}
+
 // ListLearningProposals returns one bounded proposal page for the caller partition.
 func (h *HarnessServer) ListLearningProposals(ctx context.Context, req *mecatlv1.ListLearningProposalsRequest) (*mecatlv1.ListLearningProposalsResponse, error) {
 	resp, err := h.svc.ListLearningProposals(ctx, req.GetStatus(), req.GetCursor(), int(req.GetLimit()), req.GetProject())
@@ -715,6 +733,26 @@ func toStatus(err error) error {
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrProposalConflict):
 		return status.Error(codes.Aborted, err.Error())
+	case errors.Is(err, ErrDreamUnavailable):
+		return status.Error(codes.Unimplemented, ErrDreamUnavailable.Error())
+	case errors.Is(err, ErrDreamNotFound):
+		return status.Error(codes.NotFound, ErrDreamNotFound.Error())
+	case errors.Is(err, ErrDreamInProgress):
+		return status.Error(codes.Aborted, ErrDreamInProgress.Error())
+	case errors.Is(err, ErrDreamConflict):
+		return status.Error(codes.FailedPrecondition, ErrDreamConflict.Error())
+	case errors.Is(err, ErrDreamTerminalConflict):
+		return status.Error(codes.AlreadyExists, ErrDreamTerminalConflict.Error())
+	case errors.Is(err, ErrDreamCapacity):
+		return status.Error(codes.ResourceExhausted, ErrDreamCapacity.Error())
+	case errors.Is(err, ErrDreamGenerateFailed):
+		return status.Error(codes.Internal, ErrDreamGenerateFailed.Error())
+	case errors.Is(err, ErrDreamApplyFailed):
+		return status.Error(codes.Internal, ErrDreamApplyFailed.Error())
+	case errors.Is(err, ErrDreamDeadline):
+		return status.Error(codes.DeadlineExceeded, ErrDreamDeadline.Error())
+	case errors.Is(err, ErrDreamRequestFailed):
+		return status.Error(codes.Internal, ErrDreamRequestFailed.Error())
 	case errors.Is(err, ErrFailedPrecondition):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrNoActiveRun):

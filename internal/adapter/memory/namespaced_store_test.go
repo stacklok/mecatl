@@ -288,3 +288,42 @@ func TestCallerLifecycleProfileDetailAndHistoryAreIsolated(t *testing.T) {
 		t.Fatalf("unexpected Alice current record: %+v", aliceSecond.Current)
 	}
 }
+
+type convergenceOnlyStore struct {
+	tool.MemoryStore
+	tool.MemoryConvergenceStore
+}
+
+func TestNamespacedReviewedSynthesisCapabilityAndKeyTranslation(t *testing.T) {
+	base, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := NewNamespacedStore(base, "review")
+	synthesis, ok := wrapped.(synthesisStore)
+	if !ok {
+		t.Fatal("synthesis capability was not preserved")
+	}
+	for _, entry := range []tool.MemoryEntry{{Key: "a", Value: "one"}, {Key: "b", Value: "two"}} {
+		if err := wrapped.RememberEntry(context.Background(), entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lifecycle := wrapped.(tool.MemoryLifecycleStore)
+	survivor, _, _ := lifecycle.Inspect(context.Background(), "a")
+	source, _, _ := lifecycle.Inspect(context.Background(), "b")
+	updated, err := synthesis.SynthesizeReplacement(context.Background(), tool.MemoryEntry{Key: "a", Value: "combined", Description: "reviewed"}, survivor.Current.Version, []string{"b"}, []tool.MemoryVersion{source.Current.Version})
+	if err != nil || updated.Current.Key != "a" || updated.Current.Value != "combined" {
+		t.Fatalf("logical synthesis = (%+v, %v)", updated, err)
+	}
+	physicalSurvivor, _, _ := base.Inspect(context.Background(), "review/a")
+	physicalSource, _, _ := base.Inspect(context.Background(), "review/b")
+	if physicalSurvivor.Current.Value != "combined" || physicalSource.Current.Status != tool.MemoryStatusDeleted {
+		t.Fatalf("physical records survivor=%+v source=%+v", physicalSurvivor, physicalSource)
+	}
+
+	withoutCapability := NewNamespacedStore(&convergenceOnlyStore{MemoryStore: base, MemoryConvergenceStore: base}, "plain")
+	if _, advertised := withoutCapability.(synthesisStore); advertised {
+		t.Fatal("wrapper advertised synthesis absent from backing store")
+	}
+}

@@ -38,6 +38,7 @@ type wiredCollaborators struct {
 	Soul        bool
 	UserModel   bool
 	Reflections bool
+	Dream       bool
 	Models      bool // mirrors client.Capabilities.ModelSelection
 	Worktrees   bool
 	Scheduling  bool
@@ -57,6 +58,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		MCP: m.deps.MCP != nil, Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Reflections: m.deps.Reflections != nil,
+		Dream:       m.deps.Dream != nil,
 		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		Sessions: m.deps.Sessions != nil && m.deps.Transcript != nil,
 		Learning: m.deps.Learning != nil,
@@ -151,6 +153,9 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.Reflection && w.Reflections {
 		out = append(out, builtin{name: "reflect", desc: "reflect the current completed session", run: Model.runReflect})
+	}
+	if caps.ManualDream != nil && w.Dream {
+		out = append(out, builtin{name: "dream", desc: "manually consolidate project memory or the user model", run: Model.runDream})
 	}
 	if caps.ModelSelection && w.Models {
 		out = append(out, builtin{
@@ -313,6 +318,10 @@ func (m Model) runUserModel() (tea.Model, tea.Cmd) {
 
 func (m Model) runReflections() (tea.Model, tea.Cmd) {
 	return m.openReflections()
+}
+
+func (m Model) runDream() (tea.Model, tea.Cmd) {
+	return m.openDream()
 }
 
 // runModels opens the /models picker. Only registered when caps.ModelSelection &&

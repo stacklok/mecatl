@@ -116,6 +116,40 @@ func TestStoreForget(t *testing.T) {
 	}
 }
 
+func TestSynthesizeReplacementRenameFailureIsAtomicAcrossReopen(t *testing.T) {
+	dir := t.TempDir()
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := tool.WithMemoryAttribution(context.Background(), tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginConsolidation})
+	for _, entry := range []tool.MemoryEntry{{Key: "a", Value: "old", Description: "old description"}, {Key: "b", Value: "source", Description: "source description"}} {
+		if err := st.RememberEntry(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	survivor, _, _ := st.Inspect(ctx, "a")
+	source, _, _ := st.Inspect(ctx, "b")
+	st.rename = func(string, string) error { return errors.New("injected rename failure") }
+	if _, err := st.SynthesizeReplacement(ctx, tool.MemoryEntry{Key: "a", Value: "new", Description: "new description"}, survivor.Current.Version, []string{"b"}, []tool.MemoryVersion{source.Current.Version}); err == nil {
+		t.Fatal("SynthesizeReplacement succeeded despite rename failure")
+	}
+	st.rename = os.Rename
+
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSurvivor, found, err := reopened.Inspect(ctx, "a")
+	if err != nil || !found || gotSurvivor.Current.Value != "old" || len(gotSurvivor.Revisions) != len(survivor.Revisions) {
+		t.Fatalf("survivor changed after failed commit: found=%v record=%+v err=%v", found, gotSurvivor, err)
+	}
+	gotSource, found, err := reopened.Inspect(ctx, "b")
+	if err != nil || !found || gotSource.Current.Status != tool.MemoryStatusActive || len(gotSource.Revisions) != len(source.Revisions) {
+		t.Fatalf("source changed after failed commit: found=%v record=%+v err=%v", found, gotSource, err)
+	}
+}
+
 func TestLifecycleRenameFailurePreservesPriorState(t *testing.T) {
 	st, err := New(t.TempDir())
 	if err != nil {

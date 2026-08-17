@@ -76,6 +76,33 @@ mutation API. In connect mode, mecatui never edits local settings; change `learn
 `learning.sensitivity`, or `learning.skills.activation` in the remote server host's
 `settings.yaml` and restart that remote server.
 
+## Manual memory maintenance (`/dream`)
+
+`/dream` is separate from `/reflections` and `/learning`: it reviews maintenance of the current
+project-memory or user-model store, not completed-session learning. Choose a target, then press
+`enter` only after acknowledging that generation sends the selected bounded memory values and
+descriptions to the configured model and spends tokens.
+
+The review shows exact duplicates and synthesized replacements, including the survivor, sources,
+current content, proposed replacement, and complete bounded reason. Every untrusted line is quoted and
+prefixed; hidden model-authored controls/format characters are rejected before retention, so reviewed
+replacement bytes are exactly the bytes apply can persist. Press `a` to confirm applying the **whole plan**
+or `x` to confirm dismissal with no mutation. An approved synthesis atomically rewrites its displayed
+survivor and tombstones its displayed sources, but operations are independent: the receipt may report
+a partial mix of applied, conflicted, skipped, and failed sources. There are no per-source toggles or
+grouped undo.
+
+Plans are short-lived and belong to the server process that generated them. Restart, expiry, or a
+wrong-replica decision cannot recover the process-local plan; mecatui disables retry and offers explicit
+fresh generation. A same decision still applying remains explicitly retryable for its idempotent receipt.
+An opposite applying decision makes the old plan non-actionable without enabling fresh generation; a
+known terminal opposite decision permits explicit fresh generation. Genuinely indeterminate transport
+errors preserve the exact plan ID and decision for same-decision retry because the first request may
+already have applied. No state offers the opposite decision. A conflicted or failed authoritative receipt still offers confirmation-gated regeneration, which makes
+another model call and spends again. `/dream` is hidden against older servers and unavailable under
+ownership enforcement or when the selected planner/store cannot support reviewed atomic consolidation. It does
+not enable the separate automatic schedule flags, which remain off by default.
+
 ## Reviewing reflections (`/reflections`, `/reflect`)
 
 When the server advertises staged learning, `/reflections` opens a bounded proposal list and detail

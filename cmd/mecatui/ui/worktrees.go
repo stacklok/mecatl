@@ -235,6 +235,9 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateReflectionsMsg(msg); handled {
 		return mm, nil, true
 	}
+	if mm, handled := m.updateDreamMsg(msg); handled {
+		return mm, nil, true
+	}
 	if mm, handled := m.updateWorktreesMsg(msg); handled {
 		return mm, nil, true
 	}

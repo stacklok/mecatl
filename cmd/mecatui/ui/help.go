@@ -83,18 +83,24 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	})
 
 	b.WriteString("\n" + muted.Render("Inspect & control") + "\n")
-	writeHelpRows(&b, th, []helpRow{
+	inspectRows := []helpRow{
 		{key: hk.mcpPanel, action: "MCP inventory", available: caps.MCP, gated: true},
 		{key: hk.resources, action: "MCP resources", available: caps.MCP, gated: true},
 		{key: hk.prompts, action: "MCP prompts", available: caps.MCP, gated: true},
 		{key: hk.agents, action: "agents overlay (subagents / parallel / teams · " + hk.nextTab + " to switch)"},
 		{key: hk.effort, action: "reasoning-effort picker", available: caps.ModelSelection, gated: true},
 		{key: "/schedule", action: "browse & manage scheduled tasks", available: caps.Scheduling, gated: true},
-		{key: "/session", action: "show active session details and copy its exact ID"},
-		{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
-		{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
-		{key: hk.expandTools, action: "expand/collapse details"},
-	})
+	}
+	if caps.ManualDream != nil {
+		inspectRows = append(inspectRows, helpRow{key: "/dream", action: "manually consolidate memory (generation spends tokens)"})
+	}
+	inspectRows = append(inspectRows,
+		helpRow{key: "/session", action: "show active session details and copy its exact ID"},
+		helpRow{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
+		helpRow{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
+		helpRow{key: hk.expandTools, action: "expand/collapse details"},
+	)
+	writeHelpRows(&b, th, inspectRows)
 
 	b.WriteString("\n" + muted.Render("General") + "\n")
 	writeHelpRows(&b, th, []helpRow{

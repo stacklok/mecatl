@@ -242,13 +242,19 @@ core logic, not wiring. Both confirmed still open against current `main`:
 - **`governance.IsolationApprovable` is worktree-only** (§2 above) — it needs to
   become isolation-kind-aware before a non-git forker can carry the same
   auto-approve posture safely.
-- **Dream duplicate retirement is atomic only on the local memory adapter.** The
-  local `internal/adapter/memory` store uses a single-host BSD `flock` and now compares
-  both bound survivor/source versions and tombstones the source in one whole-document
-  transaction. That intentionally remains an internal structural capability: no public
-  engine API or remote driver operation was added. Distributed/convergence-only stores
-  therefore skip automatic dream application until an equivalent backend transaction
-  can be designed without widening the port prematurely.
+- **Dream maintenance has two deliberately different surfaces.** Automatic schedules
+  remain off by default and retire only byte-identical duplicates through the local
+  single-host transaction described above. Manual `/dream` review may additionally apply a
+  displayed synthesized replacement, but only on a target exposing both reviewed atomic
+  operations: one operation compares the bound inspected versions for the displayed participants,
+  rewrites that
+  survivor, and tombstones all displayed sources atomically. Independent operations can
+  partially succeed; there is no grouped transaction or grouped undo.
+- **Manual dream plans are not portable coordination state.** The Build-owned registry is
+  bounded and TTL-limited, cleans up lazily, and retains opaque IDs only in the process that
+  generated them. Restart, expiry, or a decision routed to another replica requires explicit
+  regeneration and another provider call. Ownership enforcement disables the feature in v1;
+  there is no caller partitioning, durable plan, or cross-replica handoff.
 
 ## Everything else is a narrow port already
 

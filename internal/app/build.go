@@ -1585,6 +1585,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// expander build the engine consumes, so the palette offers exactly the
 	// commands a "/<cmd>" prompt would expand. nil when commands are disabled.
 	commandLister := buildCommandLister(cfg, mcpProvider)
+	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
 	svcCfg := server.Config{
 		Engine:            engine,
 		Store:             store,
@@ -1770,6 +1771,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// CURRENT entries. nil when user model is disabled (capabilities().UserModel
 		// then false).
 		UserModel:         userModelLister(assets.userModelStore),
+		DreamReviewer:     dreamReviewer,
+		DreamCapabilities: dreamCapabilities,
 		Proposals:         assets.reflectionRepository,
 		ProposalPrincipal: reflectionPrincipal,
 		ProjectPromotionAllowed: func(project string) bool {
@@ -4460,7 +4463,6 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		}
 		memDriverClose = closeFn
 		cfg.diag().Log(ctx, port.LevelInfo, "memory tools ENABLED (Remember/Recall/SearchMemory); permission: allow (built-in default, overridable to ask/deny via settings)", "target", cfg.MemoryStoreURL)
-		startMemoryConsolidation(ctx, cfg, memStore, provider)
 	} else if cfg.MemoryDir != "" {
 		st, err := memory.New(cfg.MemoryDir)
 		if err != nil {
@@ -4471,9 +4473,6 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 				memStore = memory.NewCallerStore(st, true)
 			}
 			cfg.diag().Log(ctx, port.LevelInfo, "memory tools ENABLED (Remember/Recall/SearchMemory); permission: allow (built-in default, overridable to ask/deny via settings)", "dir", cfg.MemoryDir)
-			if !cfg.OwnershipEnforced {
-				startMemoryConsolidation(ctx, cfg, st, provider)
-			}
 		}
 	} else {
 		cfg.diag().Log(ctx, port.LevelInfo, "memory tools DISABLED (memory dir empty)")
@@ -4492,8 +4491,20 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	userModelStore := buildUserModelStore(cfg)
 	if userModelStore != nil {
 		cfg.diag().Log(ctx, port.LevelInfo, "user-model tools ENABLED (RememberUser/RecallUser/SearchUserModel; cross-project); permission: allow (built-in default, overridable to ask/deny via settings)")
-		if !cfg.OwnershipEnforced {
-			startUserModelConsolidation(ctx, cfg, userModelStore, provider)
+	}
+
+	// Construct each process/root consolidator once over the exact Build-owned store.
+	// Manual review is interval-independent; periodic maintenance reuses the same
+	// instance so generation/application remain serialized through one gate.
+	var memoryDream, userModelDream *dream.Consolidator
+	if !cfg.OwnershipEnforced && provider != nil {
+		if memStore != nil {
+			memoryDream = dream.New(memStore, provider, dream.Config{Model: cfg.Model})
+			startMemoryConsolidator(ctx, cfg, memoryDream)
+		}
+		if userModelStore != nil {
+			userModelDream = dream.New(userModelStore, provider, dream.Config{Model: cfg.Model, Prefix: "user/"})
+			startUserModelConsolidator(ctx, cfg, userModelDream)
 		}
 	}
 
@@ -4606,6 +4617,8 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		agentReg:         agentReg,
 		memStore:         memStore,
 		userModelStore:   userModelStore,
+		memoryDream:      memoryDream,
+		userModelDream:   userModelDream,
 		skills:           seam.metas,
 		skillSource:      seam.source,
 		skillIndex:       seam.index,
@@ -5026,15 +5039,24 @@ func registerSkillDraft(ctx context.Context, cfg Config, cat *tool.Catalog, exis
 // startMemoryConsolidation launches the dream consolidator on a background
 // goroutine when MemoryConsolidateInterval is positive. It shares ctx (so the loop
 // exits on shutdown) and the same LLM provider as the agent.
+// startMemoryConsolidation preserves the direct helper used by focused tests.
+// Production Build uses startMemoryConsolidator to share the instance with manual review.
 func startMemoryConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) {
+	if store == nil {
+		startMemoryConsolidator(ctx, cfg, nil)
+		return
+	}
+	startMemoryConsolidator(ctx, cfg, dream.New(store, provider, dream.Config{Model: cfg.Model}))
+}
+
+func startMemoryConsolidator(ctx context.Context, cfg Config, cons *dream.Consolidator) {
 	// No caller: the consolidator runs as the explicit system principal
 	// (ADR 0204 decision 7).
 	ctx = syscaller.Context(ctx, syscaller.RootMemoryConsolidation)
-	if cfg.MemoryConsolidateInterval <= 0 {
+	if cfg.MemoryConsolidateInterval <= 0 || cons == nil {
 		cfg.diag().Log(ctx, port.LevelInfo, "memory consolidation DISABLED")
 		return
 	}
-	cons := dream.New(store, provider, dream.Config{Model: cfg.Model})
 	cfg.diag().Log(ctx, port.LevelInfo, "memory consolidation ENABLED (dream)", "interval", cfg.MemoryConsolidateInterval, "model", cfg.Model)
 	go func() {
 		err := cons.RunPeriodicallyWithReport(ctx, cfg.MemoryConsolidateInterval, func(report dream.Report, err error) {
@@ -5070,15 +5092,24 @@ func logConsolidationReport(ctx context.Context, diag port.Diagnostics, name str
 // dream.Config{Prefix: "user/"} so it only ever touches user-model entries, never
 // project memory. It shares ctx and the agent's provider. It returns true when all
 // interval/store/provider prerequisites are present and a consolidator was started.
+// startUserModelConsolidation preserves the direct helper used by focused
+// composition tests; production Build constructs once and calls
+// startUserModelConsolidator so manual and periodic review share the instance.
 func startUserModelConsolidation(ctx context.Context, cfg Config, store tool.MemoryStore, provider port.LLMProvider) bool {
+	if store == nil || provider == nil {
+		return startUserModelConsolidator(ctx, cfg, nil)
+	}
+	return startUserModelConsolidator(ctx, cfg, dream.New(store, provider, dream.Config{Model: cfg.Model, Prefix: "user/"}))
+}
+
+func startUserModelConsolidator(ctx context.Context, cfg Config, cons *dream.Consolidator) bool {
 	// No caller: the consolidator runs as the explicit system principal
 	// (ADR 0204 decision 7).
 	ctx = syscaller.Context(ctx, syscaller.RootUserModelConsolidation)
-	if cfg.UserModelConsolidateInterval <= 0 || store == nil || provider == nil {
+	if cfg.UserModelConsolidateInterval <= 0 || cons == nil {
 		cfg.diag().Log(ctx, port.LevelInfo, "user-model consolidation DISABLED")
 		return false
 	}
-	cons := dream.New(store, provider, dream.Config{Model: cfg.Model, Prefix: "user/"})
 	cfg.diag().Log(ctx, port.LevelInfo, "user-model consolidation ENABLED (dream; user/ namespace)",
 		"interval", cfg.UserModelConsolidateInterval, "model", cfg.Model)
 	go func() {

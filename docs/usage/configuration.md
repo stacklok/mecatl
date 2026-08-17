@@ -139,14 +139,25 @@ call. Authenticated explicit reflection remains bounded and synchronous, lazily 
 The proposal store defaults to a `reflections/` directory beside the conventional or configured
 user-model store; in off mode that directory/flock is not created until the first explicit reflection or proposal operation.
 
-Consolidation is a separate maintenance authorization, not a learning mode:
-`--user-model-consolidate-interval > 0` starts the process-wide, cross-project user-model
-consolidator when its store and provider are available. Its planner can only propose existing-key
-survivor/superseded relationships; automatic application retires only byte-identical active duplicates
-through lifecycle CAS, and skips base-only or non-identical proposals. An effective project
-`learning.mode: off` cannot suppress that explicit operator schedule. Conversely, consolidation
-intervals and SkillDraft do not raise `learning.mode` or enable completed-trajectory review. Manual,
-inspectable consolidation review remains future work.
+Consolidation is a separate maintenance authorization, not a learning mode. Positive
+`--memory-consolidate-interval` and `--user-model-consolidate-interval` values independently start
+automatic maintenance; both remain off by default and apply only byte-identical exact duplicates.
+They do not raise `learning.mode`, and an effective project `learning.mode: off` cannot suppress an
+explicit operator schedule.
+
+Manual review is a separate, immediate maintenance action rather than a setting. In mecatui,
+`/dream` chooses project memory or the user model, explicitly acknowledges that generation sends the
+selected bounded values and descriptions to the configured model and spends tokens, and displays
+exact-duplicate and synthesized-replacement operations. The operator applies or dismisses the whole
+plan and receives applied/conflicted/skipped/failed counts. Regeneration is explicit and makes
+another provider call. Manual dreaming requires the target store's reviewed atomic operations and a
+planner, and is unavailable while ownership enforcement is enabled. Its bounded plans are
+process-local and expire, so restart, expiry, or a wrong replica returns a non-retryable not-found state
+that offers explicit fresh generation. A same-decision request still applying and an indeterminate
+transport failure preserve the plan ID and exact decision for explicit same-decision receipt retrieval;
+an opposite decision is never offered, and an applying opposite decision enables no fresh generation.
+A terminal opposite decision is non-retryable and permits explicit fresh generation. Manual dreaming neither
+changes schedule flags nor collects recall-usage telemetry.
 
 The legacy `--user-model-review` flag maps to `auto` for one compatibility window and
 conflicts with an explicit non-auto `learning.mode`. Changes are build-time settings and

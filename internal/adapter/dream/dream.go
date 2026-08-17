@@ -22,8 +22,10 @@ import (
 
 const (
 	defaultMinEntriesToRun = 5
+	manualMinEntriesToRun  = 2
 	defaultMaxEntries      = 200
 	defaultMaxForgets      = 10
+	maxReasonBytes         = 512
 	// The former per-entry 2 KiB cap allowed roughly 400 KiB before JSON overhead.
 	// A 256 KiB aggregate cap is a conservative nearby bound without truncating a
 	// value and presenting the model with a fact different from the stored one.
@@ -76,6 +78,82 @@ type Plan struct {
 	eligible   int
 }
 
+// OperationKind identifies one reviewed consolidation operation family.
+type OperationKind string
+
+const (
+	// OperationExactDuplicate retires byte-identical sources without rewriting the survivor.
+	OperationExactDuplicate OperationKind = "exact_duplicate"
+	// OperationSynthesizedReplacement revises the survivor and atomically retires its sources.
+	OperationSynthesizedReplacement OperationKind = "synthesized_replacement"
+)
+
+// ReviewPlan is a detached, version-free projection for human review. Review
+// returns a fresh deep copy, so changing it cannot alter the retained Plan.
+type ReviewPlan struct {
+	Operations []ReviewOperation
+}
+
+// ReviewOperation is one ordered, detached operation shown for approval.
+type ReviewOperation struct {
+	Kind                   OperationKind
+	Survivor               ReviewParticipant
+	Sources                []ReviewParticipant
+	Replacement            ReviewReplacement
+	Reason                 string
+	ExactDuplicateEligible bool
+}
+
+// ReviewParticipant contains a participant's reviewable content without its version.
+type ReviewParticipant struct {
+	Key         string
+	Value       string
+	Description string
+}
+
+// ReviewReplacement contains the proposed reviewed survivor content.
+type ReviewReplacement struct {
+	Value       string
+	Description string
+}
+
+// Review returns a version-free copy of the exact retained plan bytes. Model-authored
+// text that canonicalization would alter is rejected before a Plan is retained.
+func (p Plan) Review() ReviewPlan {
+	operations := make([]ReviewOperation, 0, len(p.operations))
+	for _, operation := range p.operations {
+		survivor, ok := p.candidates[operation.Survivor]
+		if !ok {
+			continue
+		}
+		kind := operation.Kind
+		if kind == "" {
+			kind = OperationExactDuplicate
+		}
+		reviewed := ReviewOperation{
+			Kind: kind, Survivor: reviewParticipant(survivor.entry),
+			Replacement: ReviewReplacement{Value: operation.Value, Description: operation.Description},
+			Reason:      operation.Reason,
+		}
+		eligible := kind == OperationExactDuplicate
+		for _, key := range operation.Superseded {
+			source, found := p.candidates[key]
+			if !found {
+				continue
+			}
+			reviewed.Sources = append(reviewed.Sources, reviewParticipant(source.entry))
+			eligible = eligible && source.entry.Value == survivor.entry.Value && source.entry.Description == survivor.entry.Description
+		}
+		reviewed.ExactDuplicateEligible = eligible && len(reviewed.Sources) == len(operation.Superseded) && len(reviewed.Sources) > 0
+		operations = append(operations, reviewed)
+	}
+	return ReviewPlan{Operations: operations}
+}
+
+func reviewParticipant(entry tool.MemoryEntry) ReviewParticipant {
+	return ReviewParticipant{Key: entry.Key, Value: entry.Value, Description: entry.Description}
+}
+
 type candidate struct {
 	entry   tool.MemoryEntry
 	version tool.MemoryVersion
@@ -89,13 +167,50 @@ type duplicateRetirementStore interface {
 	RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error)
 }
 
+// synthesisStore is deliberately adapter-internal. A store either preserves the
+// whole-operation transaction capability through wrappers or does not advertise it.
+type synthesisStore interface {
+	SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error)
+}
+
+// SupportsReviewedPlan reports whether store preserves both atomic capabilities
+// required to apply every reviewed operation family. It does not inspect or
+// mutate the store.
+func SupportsReviewedPlan(store tool.MemoryStore) bool {
+	if store == nil {
+		return false
+	}
+	_, duplicateOK := store.(duplicateRetirementStore)
+	_, synthesisOK := store.(synthesisStore)
+	return duplicateOK && synthesisOK
+}
+
 type supersession struct {
+	Kind        OperationKind
+	Survivor    string
+	Superseded  []string
+	Value       string
+	Description string
+	Reason      string
+}
+
+type exactDuplicateWire struct {
 	Survivor   string   `json:"survivor"`
 	Superseded []string `json:"superseded"`
+	Reason     string   `json:"reason"`
+}
+
+type synthesizedReplacementWire struct {
+	Survivor    string   `json:"survivor"`
+	Superseded  []string `json:"superseded"`
+	Value       string   `json:"Value"`
+	Description string   `json:"Description"`
+	Reason      string   `json:"reason"`
 }
 
 type planWire struct {
-	Supersessions []supersession `json:"supersessions"`
+	ExactDuplicates         []exactDuplicateWire         `json:"exact_duplicates"`
+	SynthesizedReplacements []synthesizedReplacementWire `json:"synthesized_replacements"`
 }
 
 type planner interface {
@@ -116,7 +231,7 @@ type Consolidator struct {
 func New(store tool.MemoryStore, llm port.LLMProvider, cfg Config) *Consolidator {
 	cfg = withDefaults(cfg)
 	return &Consolidator{
-		store: store, planner: &llmPlanner{llm: llm, model: cfg.Model}, cfg: cfg,
+		store: store, planner: &llmPlanner{llm: llm, model: cfg.Model, maxForgets: planLimit(cfg.MaxForgets)}, cfg: cfg,
 		gate: make(chan struct{}, 1),
 	}
 }
@@ -157,17 +272,28 @@ func (c *Consolidator) enter(ctx context.Context) error {
 func (c *Consolidator) leave() { <-c.gate }
 
 // GeneratePlan selects a bounded rotating window, binds convergence-store
-// candidates to their exact inspected revisions, and consults the planner. It
-// never mutates the store.
+// candidates to their exact inspected revisions, and consults the planner when
+// the configured scheduled threshold is met. It never mutates the store.
 func (c *Consolidator) GeneratePlan(ctx context.Context) (Plan, error) {
+	return c.generatePlanWithThreshold(ctx, c.cfg.MinEntriesToRun)
+}
+
+// GenerateManualPlan generates an operator-requested review when at least two
+// entries are eligible. It shares GeneratePlan's gate, rotating selection, and
+// planner while leaving the scheduled MinEntriesToRun threshold unchanged.
+func (c *Consolidator) GenerateManualPlan(ctx context.Context) (Plan, error) {
+	return c.generatePlanWithThreshold(ctx, manualMinEntriesToRun)
+}
+
+func (c *Consolidator) generatePlanWithThreshold(ctx context.Context, minEntries int) (Plan, error) {
 	if err := c.enter(ctx); err != nil {
 		return Plan{}, err
 	}
 	defer c.leave()
-	return c.generatePlan(ctx)
+	return c.generatePlan(ctx, minEntries)
 }
 
-func (c *Consolidator) generatePlan(ctx context.Context) (Plan, error) {
+func (c *Consolidator) generatePlan(ctx context.Context, minEntries int) (Plan, error) {
 	if err := ctx.Err(); err != nil {
 		return Plan{}, fmt.Errorf("dream: %w", err)
 	}
@@ -177,7 +303,7 @@ func (c *Consolidator) generatePlan(ctx context.Context) (Plan, error) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
 	plan := Plan{owner: c, candidates: make(map[string]candidate), eligible: len(entries)}
-	if len(entries) < c.cfg.MinEntriesToRun {
+	if len(entries) < minEntries {
 		return plan, nil
 	}
 
@@ -197,8 +323,66 @@ func (c *Consolidator) generatePlan(ctx context.Context) (Plan, error) {
 	if err != nil {
 		return Plan{}, fmt.Errorf("dream: plan: %w", err)
 	}
+	if err := validateModelText(operations); err != nil {
+		return Plan{}, errors.New("dream: invalid plan output")
+	}
+	if err := validateOperations(operations, bindings); err != nil {
+		return Plan{}, errors.New("dream: invalid plan output")
+	}
 	plan.operations = operations
 	return plan, nil
+}
+
+func validateModelText(operations []supersession) error {
+	for _, operation := range operations {
+		for _, value := range []string{operation.Value, operation.Description, operation.Reason} {
+			if tool.CanonicalMemoryText(value) != value {
+				return errors.New("non-canonical model text")
+			}
+		}
+	}
+	return nil
+}
+
+func validateOperations(operations []supersession, candidates map[string]candidate) error {
+	roles := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Kind != OperationExactDuplicate && operation.Kind != OperationSynthesizedReplacement && operation.Kind != "" {
+			return errors.New("unknown operation kind")
+		}
+		if _, ok := candidates[operation.Survivor]; !ok {
+			return errors.New("unknown survivor")
+		}
+		if operation.Kind == OperationSynthesizedReplacement {
+			survivor := candidates[operation.Survivor]
+			if operation.Value == survivor.entry.Value && operation.Description == survivor.entry.Description {
+				return errors.New("synthesized replacement is unchanged")
+			}
+		}
+		if sourceRole, assigned := roles[operation.Survivor]; assigned && !sourceRole {
+			return errors.New("cross-role key")
+		}
+		if _, repeated := roles[operation.Survivor]; repeated {
+			return errors.New("repeated survivor")
+		}
+		roles[operation.Survivor] = true
+		if len(operation.Superseded) == 0 || len(operation.Reason) > maxReasonBytes {
+			return errors.New("invalid operation")
+		}
+		for _, key := range operation.Superseded {
+			if key == operation.Survivor {
+				return errors.New("same survivor and source")
+			}
+			if _, ok := candidates[key]; !ok {
+				return errors.New("unknown source")
+			}
+			if _, assigned := roles[key]; assigned {
+				return errors.New("repeated or cross-role source")
+			}
+			roles[key] = false
+		}
+	}
+	return nil
 }
 
 // selectEntries rotates over the sorted active set. For an unchanged set where
@@ -262,8 +446,11 @@ func (c *Consolidator) selectEntries(ctx context.Context, entries []tool.MemoryE
 }
 
 type normalizedSupersession struct {
-	survivor candidate
-	sources  []candidate
+	kind        OperationKind
+	survivor    candidate
+	sources     []candidate
+	replacement tool.MemoryEntry
+	reason      string
 }
 
 // ApplyPlan is the explicit mutation boundary. Only a store with atomic duplicate
@@ -285,7 +472,7 @@ func (c *Consolidator) applyPlan(ctx context.Context, plan Plan) (Report, error)
 		return Report{}, errors.New("dream: plan belongs to another consolidator")
 	}
 
-	operations := c.normalize(plan)
+	operations := c.normalize(plan, false)
 	report := Report{Kept: plan.eligible}
 	for _, operation := range operations {
 		report.Planned += len(operation.sources)
@@ -309,6 +496,76 @@ func (c *Consolidator) applyPlan(ctx context.Context, plan Plan) (Report, error)
 		report.Failed += result.Failed
 		if err != nil {
 			failures = append(failures, err)
+		}
+	}
+	report.Merged = report.Applied
+	report.Kept -= report.Applied
+	return report, errors.Join(failures...)
+}
+
+// ApplyReviewedPlan applies the retained, instance-bound plan after explicit human
+// approval. Synthesis operations are atomic per operation; independent operations
+// continue after a conflict or failure.
+func (c *Consolidator) ApplyReviewedPlan(ctx context.Context, plan Plan) (Report, error) {
+	if err := c.enter(ctx); err != nil {
+		return Report{}, err
+	}
+	defer c.leave()
+	if err := ctx.Err(); err != nil {
+		return Report{}, fmt.Errorf("dream: %w", err)
+	}
+	if plan.owner != c {
+		return Report{}, errors.New("dream: plan belongs to another consolidator")
+	}
+	operations := c.normalize(plan, true)
+	report := Report{Kept: plan.eligible}
+	for _, operation := range operations {
+		report.Planned += len(operation.sources)
+	}
+	if c.cfg.MaxForgets < 0 {
+		report.Skipped = report.Planned
+		return report, nil
+	}
+	ctx = tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginConsolidation})
+	retirement, duplicateOK := c.store.(duplicateRetirementStore)
+	synthesis, synthesisOK := c.store.(synthesisStore)
+	var failures []error
+	for _, operation := range operations {
+		if operation.kind != OperationSynthesizedReplacement {
+			if !duplicateOK {
+				report.Skipped += len(operation.sources)
+				continue
+			}
+			result, err := applySupersession(ctx, retirement, operation)
+			report.Applied += result.Applied
+			report.Conflicted += result.Conflicted
+			report.Skipped += result.Skipped
+			report.Failed += result.Failed
+			if err != nil {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		count := len(operation.sources)
+		if !synthesisOK {
+			report.Skipped += count
+			continue
+		}
+		keys := make([]string, count)
+		versions := make([]tool.MemoryVersion, count)
+		for i, source := range operation.sources {
+			keys[i], versions[i] = source.entry.Key, source.version
+		}
+		_, err := synthesis.SynthesizeReplacement(ctx, operation.replacement, operation.survivor.version, keys, versions)
+		if err == nil {
+			report.Applied += count
+			continue
+		}
+		if isVersionConflict(err) || errors.Is(err, tool.ErrMemoryNotFound) {
+			report.Conflicted += count
+		} else {
+			report.Failed += count
+			failures = append(failures, fmt.Errorf("dream: apply synthesized replacement: %w", err))
 		}
 	}
 	report.Merged = report.Applied
@@ -353,7 +610,7 @@ func isVersionConflict(err error) bool {
 // repeats are ignored rather than allowed to perturb later valid operations.
 // Role assignment occurs only when a source is admitted, preserving the first
 // valid occurrence while ensuring no accepted key is both survivor and source.
-func (c *Consolidator) normalize(plan Plan) []normalizedSupersession {
+func (c *Consolidator) normalize(plan Plan, includeSynthesis bool) []normalizedSupersession {
 	limit := c.cfg.MaxForgets
 	if limit < 0 {
 		limit = int(^uint(0) >> 1)
@@ -362,7 +619,14 @@ func (c *Consolidator) normalize(plan Plan) []normalizedSupersession {
 	admitted := 0
 	out := make([]normalizedSupersession, 0, len(plan.operations))
 	for _, proposed := range plan.operations {
-		survivorKey := strings.TrimSpace(proposed.Survivor)
+		kind := proposed.Kind
+		if kind == "" { // Preserve pre-family plans created by in-package callers.
+			kind = OperationExactDuplicate
+		}
+		if kind == OperationSynthesizedReplacement && !includeSynthesis || kind != OperationExactDuplicate && kind != OperationSynthesizedReplacement {
+			continue
+		}
+		survivorKey := proposed.Survivor
 		survivor, known := plan.candidates[survivorKey]
 		if !known {
 			continue
@@ -370,23 +634,17 @@ func (c *Consolidator) normalize(plan Plan) []normalizedSupersession {
 		if survivorRole, assigned := roles[survivorKey]; assigned && !survivorRole {
 			continue
 		}
-		normalized := normalizedSupersession{survivor: survivor}
-		for _, rawSource := range proposed.Superseded {
-			if admitted == limit {
+		normalized := normalizedSupersession{
+			kind: kind, survivor: survivor, reason: proposed.Reason,
+			replacement: tool.MemoryEntry{Key: survivorKey, Value: proposed.Value, Description: proposed.Description},
+		}
+		if kind == OperationSynthesizedReplacement && proposed.Value == survivor.entry.Value && proposed.Description == survivor.entry.Description {
+			continue
+		}
+		for _, sourceKey := range proposed.Superseded {
+			if admitSource(plan.candidates, roles, survivorKey, sourceKey, limit, &admitted, &normalized) {
 				break
 			}
-			sourceKey := strings.TrimSpace(rawSource)
-			source, known := plan.candidates[sourceKey]
-			if !known || sourceKey == survivorKey {
-				continue
-			}
-			if _, assigned := roles[sourceKey]; assigned {
-				continue
-			}
-			roles[survivorKey] = true
-			roles[sourceKey] = false
-			normalized.sources = append(normalized.sources, source)
-			admitted++
 		}
 		if len(normalized.sources) > 0 {
 			out = append(out, normalized)
@@ -398,6 +656,24 @@ func (c *Consolidator) normalize(plan Plan) []normalizedSupersession {
 	return out
 }
 
+func admitSource(candidates map[string]candidate, roles map[string]bool, survivorKey, sourceKey string, limit int, admitted *int, operation *normalizedSupersession) bool {
+	if *admitted == limit {
+		return true
+	}
+	source, known := candidates[sourceKey]
+	if !known || sourceKey == survivorKey {
+		return false
+	}
+	if _, assigned := roles[sourceKey]; assigned {
+		return false
+	}
+	roles[survivorKey] = true
+	roles[sourceKey] = false
+	operation.sources = append(operation.sources, source)
+	*admitted++
+	return *admitted == limit
+}
+
 // Consolidate preserves the original one-call API without recursively acquiring
 // the instance gate.
 func (c *Consolidator) Consolidate(ctx context.Context) (Report, error) {
@@ -405,7 +681,7 @@ func (c *Consolidator) Consolidate(ctx context.Context) (Report, error) {
 		return Report{}, err
 	}
 	defer c.leave()
-	plan, err := c.generatePlan(ctx)
+	plan, err := c.generatePlan(ctx, c.cfg.MinEntriesToRun)
 	if err != nil {
 		return Report{}, err
 	}
@@ -443,17 +719,19 @@ func (c *Consolidator) RunPeriodicallyWithReport(ctx context.Context, interval t
 }
 
 const systemPrompt = `You are a conservative memory consolidator for an AI coding agent.
-You receive complete active memory entries as JSON. Identify only source-preserving
-supersessions: choose one EXISTING key as the survivor and list EXISTING keys whose
-active value and description it supersedes. Never write replacement content and
-never propose a standalone deletion. Prefer no operation when uncertain.
+You receive complete active memory entries as JSON. Propose either exact duplicates or
+synthesized replacements. Both choose one EXISTING survivor key and EXISTING source
+keys. Exact duplicates contain no replacement content. Synthesized replacements contain
+the complete proposed Value and Description. Never propose a standalone deletion.
+Prefer no operation when uncertain.
 
 Respond with one bare JSON object and nothing else:
-{"supersessions":[{"survivor":"<existing key>","superseded":["<existing key>"]}]}`
+{"exact_duplicates":[{"survivor":"<existing key>","superseded":["<existing key>"],"reason":"<brief reason>"}],"synthesized_replacements":[{"survivor":"<existing key>","superseded":["<existing key>"],"Value":"<replacement>","Description":"<replacement description>","reason":"<brief reason>"}]}`
 
 type llmPlanner struct {
-	llm   port.LLMProvider
-	model string
+	llm        port.LLMProvider
+	model      string
+	maxForgets int
 }
 
 func (l *llmPlanner) Plan(ctx context.Context, entries []tool.MemoryEntry) ([]supersession, error) {
@@ -481,12 +759,19 @@ func (l *llmPlanner) Plan(ctx context.Context, entries []tool.MemoryEntry) ([]su
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context: %w", err)
 	}
-	wire, err := parsePlan(b.String())
+	wire, err := parsePlan(b.String(), l.maxForgets)
 	if err != nil {
 		// Never include model output (including unknown field names) in errors.
 		return nil, errors.New("invalid plan output")
 	}
-	return wire.Supersessions, nil
+	operations := make([]supersession, 0, len(wire.ExactDuplicates)+len(wire.SynthesizedReplacements))
+	for _, operation := range wire.ExactDuplicates {
+		operations = append(operations, supersession{Kind: OperationExactDuplicate, Survivor: operation.Survivor, Superseded: operation.Superseded, Reason: operation.Reason})
+	}
+	for _, operation := range wire.SynthesizedReplacements {
+		operations = append(operations, supersession{Kind: OperationSynthesizedReplacement, Survivor: operation.Survivor, Superseded: operation.Superseded, Value: operation.Value, Description: operation.Description, Reason: operation.Reason})
+	}
+	return operations, nil
 }
 
 type entryWire struct {
@@ -512,7 +797,14 @@ func renderEntries(entries []tool.MemoryEntry) string {
 	return entriesPrefix + string(raw)
 }
 
-func parsePlan(output string) (planWire, error) {
+func parsePlan(output string, configuredLimit ...int) (planWire, error) {
+	maxForgets := defaultMaxForgets
+	if len(configuredLimit) > 0 {
+		maxForgets = configuredLimit[0]
+	}
+	if len(output) > maxPlanOutputBytes {
+		return planWire{}, errors.New("oversized")
+	}
 	if strings.TrimSpace(output) == "" {
 		return planWire{}, errors.New("empty")
 	}
@@ -528,13 +820,8 @@ func parsePlan(output string) (planWire, error) {
 	if err := dec.Decode(&wire); err != nil {
 		return planWire{}, err
 	}
-	if wire.Supersessions == nil {
-		return planWire{}, errors.New("missing supersessions")
-	}
-	for _, operation := range wire.Supersessions {
-		if operation.Survivor == "" || operation.Superseded == nil {
-			return planWire{}, errors.New("incomplete supersession")
-		}
+	if err := validateDecodedPlan(wire, maxForgets); err != nil {
+		return planWire{}, err
 	}
 	if err := requireEOF(dec); err != nil {
 		return planWire{}, err
@@ -542,26 +829,93 @@ func parsePlan(output string) (planWire, error) {
 	return wire, nil
 }
 
+func validateDecodedPlan(wire planWire, maxForgets int) error {
+	if wire.ExactDuplicates == nil || wire.SynthesizedReplacements == nil {
+		return errors.New("missing operation family")
+	}
+	limit := planLimit(maxForgets)
+	if len(wire.ExactDuplicates)+len(wire.SynthesizedReplacements) > limit {
+		return errors.New("too many operations")
+	}
+	roles := make(map[string]bool)
+	retirements := 0
+	for _, operation := range wire.ExactDuplicates {
+		if operation.Survivor == "" || len(operation.Superseded) == 0 || operation.Reason == "" || len(operation.Reason) > maxReasonBytes {
+			return errors.New("incomplete exact duplicate")
+		}
+		if err := validateOperationRoles(roles, operation.Survivor, operation.Superseded); err != nil {
+			return err
+		}
+		retirements += len(operation.Superseded)
+	}
+	for _, operation := range wire.SynthesizedReplacements {
+		if operation.Survivor == "" || len(operation.Superseded) == 0 || operation.Reason == "" || len(operation.Reason) > maxReasonBytes {
+			return errors.New("incomplete synthesized replacement")
+		}
+		if err := validateOperationRoles(roles, operation.Survivor, operation.Superseded); err != nil {
+			return err
+		}
+		retirements += len(operation.Superseded)
+	}
+	if retirements > limit {
+		return errors.New("too many source retirements")
+	}
+	return nil
+}
+
+func validateOperationRoles(roles map[string]bool, survivor string, sources []string) error {
+	if _, assigned := roles[survivor]; assigned {
+		return errors.New("repeated or cross-role survivor")
+	}
+	roles[survivor] = true
+	for _, source := range sources {
+		if source == survivor {
+			return errors.New("same survivor and source")
+		}
+		if _, assigned := roles[source]; assigned {
+			return errors.New("repeated or cross-role source")
+		}
+		roles[source] = false
+	}
+	return nil
+}
+
+func planLimit(maxForgets int) int {
+	if maxForgets <= 0 {
+		return defaultMaxForgets
+	}
+	return maxForgets
+}
+
 func validateExactPlanMembers(output string) error {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(output), &top); err != nil {
 		return err
 	}
-	raw, ok := top["supersessions"]
-	if !ok || len(top) != 1 {
+	if len(top) != 2 || top["exact_duplicates"] == nil || top["synthesized_replacements"] == nil {
 		return errors.New("invalid top-level members")
 	}
-	var operations []json.RawMessage
-	if err := json.Unmarshal(raw, &operations); err != nil {
-		return err
-	}
-	for _, operation := range operations {
-		var members map[string]json.RawMessage
-		if err := json.Unmarshal(operation, &members); err != nil {
+	for family, expected := range map[string]map[string]struct{}{
+		"exact_duplicates":         {"survivor": {}, "superseded": {}, "reason": {}},
+		"synthesized_replacements": {"survivor": {}, "superseded": {}, "Value": {}, "Description": {}, "reason": {}},
+	} {
+		var operations []json.RawMessage
+		if err := json.Unmarshal(top[family], &operations); err != nil {
 			return err
 		}
-		if len(members) != 2 || members["survivor"] == nil || members["superseded"] == nil {
-			return errors.New("invalid supersession members")
+		for _, operation := range operations {
+			var members map[string]json.RawMessage
+			if err := json.Unmarshal(operation, &members); err != nil {
+				return err
+			}
+			if len(members) != len(expected) {
+				return errors.New("invalid operation members")
+			}
+			for member := range expected {
+				if members[member] == nil {
+					return errors.New("invalid operation members")
+				}
+			}
 		}
 	}
 	return nil

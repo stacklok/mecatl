@@ -33,6 +33,8 @@ share one event shape.
 | `GET /v1/soul` | the resolved soul snapshot (provenance, trust, drift) |
 | `GET /v1/usermodel` | the live bounded user-model index; `?key=<exact-key>` also returns read-only value/version/provenance/proposal linkage/timestamps/bounded history when available |
 | `POST /v1/sessions/{id}/reflect` | synchronously reflect a caller-owned completed session on its persisted provider (optional empty/`{}` body); returns bounded abstained/staged/promoted/conflicted counts |
+| `POST /v1/dream/plans` | body `{"target":"project_memory"}` or `{"target":"user_model"}`; spends one planner call and returns the bounded-lifetime exact/synthesized review plan plus opaque process-local id |
+| `POST /v1/dream/plans/{plan_id}/decision` | body `{"decision":"apply"}` or `{"decision":"dismiss"}`; decides the authoritative retained whole plan and returns planned/applied/conflicted/skipped/failed source counts |
 | `GET /v1/learning/proposals` | bounded caller-partitioned proposal page (`status`, `cursor`, `limit`, optional reviewable `project`; promotion remains launch-root/trust-gated) |
 | `GET /v1/learning/proposals/{id}` | bounded proposal detail with digest availability, never raw evidence text |
 | `POST /v1/learning/proposals/{id}/decision` | approve/reject with `expected_version`; stale versions return `409` |
@@ -43,6 +45,21 @@ share one event shape.
 | `POST /v1/mcp/prompts/get` | expand one MCP prompt (rendered messages) |
 | `GET /v1/mcp/sources` | the resolved MCP source inventory |
 | `GET /v1/mcp/toolhive/groups` | the ToolHive groups in the resolved inventory |
+
+Manual dream generation sends the selected bounded memory values/descriptions to the configured
+planner and spends tokens; regeneration is explicit and spends again. Apply/dismiss is whole-plan,
+with no client-supplied operations or per-source toggles. Exact duplicates keep the survivor;
+approved synthesis atomically rewrites the displayed survivor and tombstones the displayed sources
+per operation, while independent operations can yield a partial receipt. Plans expire after ten
+minutes and exist only on the generating process: expiry, restart, or a wrong replica returns `404`
+and makes the old decision non-retryable while allowing explicit fresh generation. A same-decision
+request while apply is running returns `409` and remains explicitly retryable; an opposite request
+returns `412` while apply is active and `410` after the opposite terminal decision. Only the terminal
+case offers fresh generation. Genuinely indeterminate transport failures preserve the exact plan ID and
+decision for same-decision retry because the first request may already have applied. No error path offers
+the opposite decision. Capacity pressure returns `429`, and an unavailable deployment/target `501`. Ownership enforcement
+disables manual dream review. This does not change the separate, off-by-default schedule flags or
+`learning.mode`, and no recall counters or provider/model identity are returned.
 
 **Agent teams** (with `--enable-teams`, the default):
 

@@ -29,6 +29,8 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `GetSoul` | unary | the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state |
 | `GetUserModel` | unary | the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions, including proposal linkage when present. No mutation rides this RPC — Forget remains a permission-gated tool |
 | `ReflectSession` | unary | synchronously reflect one caller-owned completed session through its persisted provider/model (the reflection slot may change only the model); remains available with automatic mode off through lazy Build-owned initialization |
+| `GenerateDreamPlan` | unary | spend one planner call to generate a bounded-lifetime review for exactly `project_memory` or `user_model`; returns displayed exact-duplicate and synthesized-replacement operations plus an opaque process-local plan id |
+| `DecideDreamPlan` | unary | apply or dismiss the authoritative retained whole plan by id; accepts no operation content and returns planned/applied/conflicted/skipped/failed source counts |
 | `ListLearningProposals` / `GetLearningProposal` | unary | bounded, cursor-paged proposal metadata in the verified caller partition; optional project partitions remain reviewable, while approve/undo is limited to the trusted launch root; evidence reports digest-verified availability without returning source text |
 | `DecideLearningProposal` | unary | CAS approve or reject of a staged proposal; stale versions/transitions return `ABORTED` |
 | `UndoLearningPromotion` | unary | CAS compensating revision only while the linked promoted memory revision remains current; stale/newer revisions return `ABORTED` |
@@ -36,6 +38,28 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `ListMcpPrompts` / `GetMcpPrompt` | unary | MCP prompt snapshots; expand one prompt to its rendered messages |
 | `ListMcpSources` | unary | the resolved MCP source inventory (static / ToolHive) + diagnostics |
 | `ListToolHiveGroups` | unary | the distinct ToolHive groups in the resolved inventory (no live ToolHive call) |
+
+**Manual dream review.** Read `CreateSessionResponse.capabilities.manual_dream` to discover
+generation and decision availability independently for project memory and the user model. Generation
+sends the selected bounded values/descriptions to the configured planner and spends tokens. The
+returned plan has a ten-minute process-local lifetime; apply/dismiss is a whole-plan decision and
+regeneration is an explicit second provider call. Exact duplicates leave the survivor unchanged;
+an approved synthesis atomically rewrites its displayed survivor and tombstones its displayed
+sources per operation. Independent operations can produce a partial receipt; there are no per-source
+decisions or grouped undo.
+
+Plan IDs are opaque and accepted only by the process that generated them. Expiry, restart, or a
+wrong-replica request returns `NOT_FOUND`; the old decision cannot be retried and the client may offer
+explicit fresh generation. Same decisions are idempotent. A same-decision request while apply is still
+running returns `ABORTED` and may be retried explicitly to retrieve the receipt. An opposite request
+against an applying record returns `FAILED_PRECONDITION` and is non-retryable; against a terminal
+record it returns `ALREADY_EXISTS`, after which explicit fresh generation is safe. Genuinely
+indeterminate transport errors preserve the exact ID and decision for same-decision retry because the
+first request may already have applied. No error state enables the opposite decision. Registry pressure
+returns `RESOURCE_EXHAUSTED`, and an unavailable target returns `UNIMPLEMENTED`. Manual review is disabled
+under ownership enforcement and when the planner or both reviewed atomic store capabilities are
+missing. It is separate from `learning.mode` and the off-by-default consolidation interval flags,
+and exposes neither recall counters nor provider/model identity.
 
 **Agent teams** (experimental; registered with `--enable-teams`, the default):
 
