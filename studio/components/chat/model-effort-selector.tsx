@@ -97,6 +97,21 @@ export function ModelEffortSelector({
     );
   }, [models, query]);
 
+  // Grouped by provider so the id appears once as a heading instead of on every
+  // row. With a single provider the heading carries no information — every row
+  // would share it — so the grouping collapses and the label disappears.
+  const groups = useMemo(() => {
+    const byProvider = new Map<string, ModelOption[]>();
+    for (const model of filtered) {
+      const key = model.provider_id ?? "";
+      const bucket = byProvider.get(key);
+      if (bucket) bucket.push(model);
+      else byProvider.set(key, [model]);
+    }
+    return [...byProvider.entries()];
+  }, [filtered]);
+  const showProviderHeadings = groups.length > 1;
+
   const selectedEffort = EFFORT_LEVELS.find((level) => level.id === effort) ?? EFFORT_LEVELS[0];
   const isDefault = selection === null && effort === "";
   // Name the model, never the word "default": an operator wants to see WHICH
@@ -123,9 +138,9 @@ export function ModelEffortSelector({
               {selection?.label || unpinnedLabel}
             </span>
           </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-80 p-0">
-            <div className="relative border-b border-border p-2">
-              <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-input-icon" />
+          <DropdownMenuSubContent className="flex max-h-[min(22rem,55vh)] w-80 flex-col p-0">
+            <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
+              <Search className="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -134,10 +149,10 @@ export function ModelEffortSelector({
                 // Radix menus implement typeahead on keydown; without this the
                 // first letter jumps focus to a matching row instead of typing.
                 onKeyDown={(event) => event.stopPropagation()}
-                className="w-full rounded-md border border-input bg-transparent py-1.5 pr-2 pl-7 text-sm outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring"
+                className="w-full min-w-0 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus-visible:outline-none"
               />
             </div>
-            <div className="max-h-72 overflow-y-auto p-2">
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
             <DropdownMenuItem
               className={cn(ROW, selection === null && "bg-accent")}
               onSelect={() => onSelectModel(null)}
@@ -165,40 +180,42 @@ export function ModelEffortSelector({
                 No model matches “{query.trim()}”
               </p>
             )}
-            {filtered.map((model) => {
-              const label = model.display_name || model.id;
-              const isSelected = selection?.modelId === model.id;
-              return (
-                <DropdownMenuItem
-                  key={`${model.provider_id}/${model.id}`}
-                  className={cn(ROW, isSelected && "bg-accent")}
-                  onSelect={() =>
-                    onSelectModel({
-                      // model_id without provider_id is a loud InvalidArgument
-                      // on the wire, so the pair always travels together.
-                      providerId: model.provider_id ?? "",
-                      modelId: model.id,
-                      label,
-                    })
-                  }
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{label}</span>
-                    {model.provider_id && (
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {model.provider_id}
-                      </span>
-                    )}
-                  </span>
-                  <Check
-                    className={cn(
-                      "size-4 shrink-0",
-                      isSelected ? "text-foreground" : "text-transparent",
-                    )}
-                  />
-                </DropdownMenuItem>
-              );
-            })}
+            {groups.map(([providerId, providerModels]) => (
+              <div key={providerId || "unknown"}>
+                {showProviderHeadings && providerId && (
+                  <div className="px-3 pt-3 pb-1 text-[0.7rem] font-medium tracking-wider text-muted-foreground uppercase">
+                    {providerId}
+                  </div>
+                )}
+                {providerModels.map((model) => {
+                  const label = model.display_name || model.id;
+                  const isSelected = selection?.modelId === model.id;
+                  return (
+                    <DropdownMenuItem
+                      key={`${model.provider_id}/${model.id}`}
+                      className={cn(ROW, isSelected && "bg-accent")}
+                      onSelect={() =>
+                        onSelectModel({
+                          // model_id without provider_id is a loud
+                          // InvalidArgument, so the pair always travels together.
+                          providerId: model.provider_id ?? "",
+                          modelId: model.id,
+                          label,
+                        })
+                      }
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+                      <Check
+                        className={cn(
+                          "size-4 shrink-0",
+                          isSelected ? "text-foreground" : "text-transparent",
+                        )}
+                      />
+                    </DropdownMenuItem>
+                  );
+                })}
+              </div>
+            ))}
             </div>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
@@ -242,14 +259,6 @@ export function ModelEffortSelector({
           Reset to default
         </DropdownMenuItem>
 
-        {sessionModelLabel && (
-          <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-            This task is running on{" "}
-            <span className="text-foreground">{sessionModelLabel}</span>. A
-            session&rsquo;s model is fixed, so a change here applies to your next
-            task.
-          </p>
-        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

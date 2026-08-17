@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Diamond, Paperclip, Plus, Square } from "lucide-react";
+import { ArrowUp, Diamond, Image as ImageIcon, Mic, Paperclip, Plus, Square } from "lucide-react";
 import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, RefObject } from "react";
 
 import {
@@ -16,6 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useVoiceInput } from "@/components/chat/use-voice-input";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,12 +27,14 @@ import { cn } from "@/lib/utils";
 const GHOST_TRIGGER =
   "h-7 gap-1 rounded-full border-0 bg-transparent px-2.5 text-sm font-normal text-foreground shadow-none hover:bg-accent hover:text-accent-foreground";
 
-export type CsvAttachmentSummary = {
+export type AttachmentSummary = {
   id: string;
   name: string;
   size: number;
-  rows: number;
-  columns: number;
+  kind: "text" | "image";
+  mimeType: string;
+  rows?: number;
+  columns?: number;
 };
 
 /**
@@ -61,8 +64,8 @@ export function Composer({
   onSelectEffort,
   sessionModelLabel,
   defaultModelLabel,
-  csvAttachment,
-  onRemoveCsv,
+  attachment,
+  onRemoveAttachment,
   onCsvInput,
   onCsvDrop,
   dragging,
@@ -71,6 +74,7 @@ export function Composer({
   csvInputRef,
   formatBytes,
   placeholder,
+  accept,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
@@ -86,8 +90,8 @@ export function Composer({
   onSelectEffort: (effort: EffortId) => void;
   sessionModelLabel?: string;
   defaultModelLabel?: string;
-  csvAttachment: CsvAttachmentSummary | null;
-  onRemoveCsv: () => void;
+  attachment: AttachmentSummary | null;
+  onRemoveAttachment: () => void;
   onCsvInput: (event: ChangeEvent<HTMLInputElement>) => void;
   onCsvDrop: (event: DragEvent<HTMLElement>) => void;
   dragging: boolean;
@@ -96,7 +100,10 @@ export function Composer({
   csvInputRef: RefObject<HTMLInputElement | null>;
   formatBytes: (bytes: number) => string;
   placeholder: string;
+  accept: string;
 }) {
+  const voice = useVoiceInput(onPromptChange);
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter") return;
     // An IME candidate window also fires Enter; committing there must not send.
@@ -126,10 +133,10 @@ export function Composer({
       <input
         ref={csvInputRef}
         type="file"
-        accept=".csv,text/csv,application/vnd.ms-excel"
+        accept={accept}
         onChange={onCsvInput}
         className="hidden"
-        aria-label="Choose CSV file"
+        aria-label="Choose a file to attach"
       />
 
       <div
@@ -144,25 +151,38 @@ export function Composer({
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-brand/10 dark:bg-brand/15">
             <div className="flex items-center gap-2 text-brand">
               <Paperclip className="size-5" />
-              <span className="text-sm font-medium">Drop a CSV to attach</span>
+              <span className="text-sm font-medium">Drop a file to attach</span>
             </div>
           </div>
         )}
 
-        {csvAttachment && (
+        {voice.isListening && (
+          <div className="flex items-center gap-2 px-4 pt-3 pb-1" role="status">
+            <span className="size-2 animate-pulse rounded-full bg-brand" />
+            <span className="text-xs font-medium text-brand">Listening…</span>
+          </div>
+        )}
+
+        {attachment && (
           <div className="flex flex-wrap gap-1.5 px-4 pt-3" role="status">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-brand/30 bg-brand/5 py-1 pr-1.5 pl-2.5 text-xs text-brand">
-              <Paperclip className="size-3" />
-              {csvAttachment.name}
-              <span className="text-brand/70">
-                {csvAttachment.rows} rows · {csvAttachment.columns} cols ·{" "}
-                {formatBytes(csvAttachment.size)}
+            <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand/30 bg-brand/5 py-1 pr-1.5 pl-2.5 text-xs text-brand">
+              {attachment.kind === "image" ? (
+                <ImageIcon className="size-3 shrink-0" />
+              ) : (
+                <Paperclip className="size-3 shrink-0" />
+              )}
+              <span className="truncate">{attachment.name}</span>
+              <span className="shrink-0 text-brand/70">
+                {attachment.rows !== undefined && attachment.columns !== undefined
+                  ? `${attachment.rows} rows · ${attachment.columns} cols · `
+                  : ""}
+                {formatBytes(attachment.size)}
               </span>
               <button
                 type="button"
-                onClick={onRemoveCsv}
-                aria-label={`Remove ${csvAttachment.name}`}
-                className="flex size-4 items-center justify-center rounded-full hover:bg-brand/10"
+                onClick={onRemoveAttachment}
+                aria-label={`Remove ${attachment.name}`}
+                className="flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-brand/10"
               >
                 ×
               </button>
@@ -181,7 +201,7 @@ export function Composer({
             aria-label="Task prompt"
             // field-sizing-content grows the textarea with its content in pure
             // CSS — no JS height measurement, no layout thrash while streaming.
-            className="min-h-6 max-h-48 w-full flex-1 resize-none self-center border-0 bg-transparent text-sm [field-sizing:content] placeholder:text-muted-foreground/60 focus:outline-none disabled:opacity-50"
+            className="min-h-6 max-h-48 w-full flex-1 resize-none self-center border-0 bg-transparent text-sm [field-sizing:content] placeholder:text-muted-foreground/60 focus:outline-none focus-visible:outline-none disabled:opacity-50"
           />
         </div>
 
@@ -190,27 +210,49 @@ export function Composer({
             type="button"
             size="icon"
             onClick={() => csvInputRef.current?.click()}
-            aria-label="Attach CSV file"
-            title="Attach CSV file"
+            aria-label="Attach a file"
+            title="Attach a text, code, or image file"
             className="size-8 rounded-full border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted/60"
           >
             <Plus className="size-4" />
           </Button>
+          {voice.isSupported && (
+            <Button
+              type="button"
+              size="icon"
+              onClick={voice.toggle}
+              aria-label={voice.isListening ? "Stop dictation" : "Dictate a prompt"}
+              title={voice.isListening ? "Stop dictation" : "Dictate a prompt"}
+              className={cn(
+                "size-8 rounded-full border-0 shadow-none",
+                voice.isListening
+                  ? "bg-brand/10 text-brand hover:bg-brand/20"
+                  : "bg-transparent text-muted-foreground hover:bg-muted/60",
+              )}
+            >
+              <Mic className="size-4" />
+            </Button>
+          )}
           {running ? (
             <Button
               type="button"
               size="icon"
               onClick={onCancel}
               aria-label="Stop task"
-              className="ml-auto size-8 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              title="Stop task"
+              // Same brand fill as send: this is the one button in the box, and
+              // recolouring it red read as an error rather than a control. The
+              // FILLED square is what distinguishes it — an outline square at
+              // 16px is hard to tell from the send arrow at a glance.
+              className="ml-auto size-8 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
             >
-              <Square className="size-4" />
+              <Square className="size-3.5 fill-current" />
             </Button>
           ) : (
             <Button
               type="submit"
               size="icon"
-              disabled={!prompt.trim() && !csvAttachment}
+              disabled={!prompt.trim() && !attachment}
               aria-label="Send prompt"
               className="ml-auto size-8 rounded-full bg-brand text-brand-foreground hover:bg-brand/90 disabled:opacity-50"
             >
