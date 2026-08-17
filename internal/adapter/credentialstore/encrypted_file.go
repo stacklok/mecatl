@@ -88,6 +88,11 @@ func NewEncryptedFile(root, namespace string, key []byte) (*EncryptedFileStore, 
 	}()
 
 	root = filepath.Clean(root)
+	canonicalRoot, err := canonicalPrivateRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open encrypted credential store: %w", err)
+	}
+	root = canonicalRoot
 	if err := ensurePrivateRoot(root, syncDirectory); err != nil {
 		return nil, fmt.Errorf("open encrypted credential store: %w", err)
 	}

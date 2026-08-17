@@ -11,7 +11,46 @@ import (
 	"syscall"
 )
 
+func canonicalPrivateRoot(root string) (string, error) {
+	info, err := os.Lstat(root)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", unavailable("validate credential root", errors.New("unsafe path component"))
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", unavailable("inspect credential root", err)
+	}
+
+	var missing []string
+	ancestor := root
+	for {
+		if _, err := os.Lstat(ancestor); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", unavailable("inspect credential root", err)
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", unavailable("validate credential root", errors.New("no existing ancestor"))
+		}
+		missing = append(missing, filepath.Base(ancestor))
+		ancestor = parent
+	}
+	physical, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", unavailable("resolve credential root ancestor", err)
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		physical = filepath.Join(physical, missing[i])
+	}
+	return physical, nil
+}
+
 func ensurePrivateRoot(root string, syncDir func(*os.File) error) error {
+	canonicalRoot, err := canonicalPrivateRoot(root)
+	if err != nil {
+		return err
+	}
+	root = canonicalRoot
 	volume := filepath.VolumeName(root)
 	current := volume + string(os.PathSeparator)
 	rel := root[len(current):]

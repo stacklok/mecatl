@@ -105,6 +105,21 @@ func TestEncryptedFileRejectsUnsafeRootAndNamespace(t *testing.T) {
 			t.Fatalf("symlink root = %v", err)
 		}
 	})
+	t.Run("symlinked ancestor", func(t *testing.T) {
+		parent := t.TempDir()
+		realPath := filepath.Join(parent, "real")
+		if err := os.Mkdir(realPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		ancestor := filepath.Join(parent, "ancestor")
+		if err := os.Symlink(realPath, ancestor); err != nil {
+			t.Fatal(err)
+		}
+		store := openFileStore(t, filepath.Join(ancestor, "root"), "namespace", key)
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("namespace mode", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "root")
 		store := openFileStore(t, root, "namespace", key)
