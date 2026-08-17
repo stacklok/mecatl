@@ -1,7 +1,7 @@
 ---
 id: 02-indexed-inventory
 title: Indexed metadata, bounded pagination, and lock decomposition
-blocked_by: [01-v2-snapshots]
+blocked_by: [01-v2-snapshots, 01b-v2-durability, 01c-v2-temp-locking]
 status: pending
 branch: ""
 worktree: ""
