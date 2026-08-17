@@ -2,9 +2,9 @@
 id: 02c-inventory-locking
 title: Inventory lock decomposition and reconciliation
 blocked_by: [02b-bounded-pagination]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/02c-inventory-locking"
+worktree: ".scratch/plan-session-storage-continuity-02c-inventory-locking"
 issue: "587"
 retries: 0
 last_error: ""
