@@ -2,9 +2,9 @@
 id: 07-storage-health
 title: Storage health and maintenance status
 blocked_by: [02-indexed-inventory, 02b-bounded-pagination, 02c-inventory-locking]
-status: in-progress
-branch: "plan-session-storage-continuity/07-storage-health"
-worktree: ".scratch/plan-session-storage-continuity-07-storage-health"
+status: done
+branch: "repair/07-storage-health-integration"
+worktree: ""
 issue: "592"
 retries: 0
 last_error: ""
