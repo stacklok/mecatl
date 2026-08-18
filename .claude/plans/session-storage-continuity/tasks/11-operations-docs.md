@@ -2,9 +2,9 @@
 id: 11-operations-docs
 title: systemd and macOS maintenance runbook
 blocked_by: [04-migration-job, 06-retention-config]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/11-operations-docs"
+worktree: ".scratch/plan-session-storage-continuity-11-operations-docs"
 issue: "596"
 retries: 0
 last_error: ""
