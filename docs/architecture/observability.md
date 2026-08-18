@@ -106,7 +106,13 @@
   owner-specific scopes. A ready metadata page privately decodes its opaque
   backend continuation, seeks directly to the corresponding catalog position, and
   decodes at most the requested rows plus one lookahead; it does not traverse prior
-  pages or open snapshot/transcript payloads. Cursors retain neutral ordering and
+  pages or open snapshot/transcript payloads. The optional
+  `port.SessionStorageHealthProvider` uses that already-ready catalog plus cheap
+  file metadata to report aggregate bytes and format/kind/corruption counts. A
+  stale or absent index is `unavailable`, never a measured zero, and unsupported
+  backends do not advertise the management capability. Reclaimable bytes remain
+  unavailable until a generation-bound maintenance plan exists; no cleanup or
+  migration action is implied by health inspection. Cursors retain neutral ordering and
   bind the catalog fingerprint generation and ownership/filter scope; the backend
   token itself is issued and validated only by the pager. A stale, mismatched, or
   foreign cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart

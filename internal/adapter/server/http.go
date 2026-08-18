@@ -85,6 +85,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/commands", h.listCommands)
 	h.mux.HandleFunc("GET /v1/worktrees", h.listWorktrees)
 	h.mux.HandleFunc("GET /v1/sessions", h.listSessions)
+	h.mux.HandleFunc("GET /v1/storage/health", h.getStorageHealth)
 	h.mux.HandleFunc("GET /v1/sessions/{id}/events", h.streamSessionEvents)
 	h.mux.HandleFunc("POST /v1/teams", h.createTeam)
 	h.mux.HandleFunc("POST /v1/teams/{id}/members", h.spawnTeammate)
@@ -1708,6 +1709,15 @@ func (h *HTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *HTTPHandler) getStorageHealth(w http.ResponseWriter, r *http.Request) {
+	health, err := h.svc.StorageHealth(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoStorageHealth(health))
+}
+
 // streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
 // durable event log as a Server-Sent Events stream (issue #245 Phase 1; cloud-
 // native Phase 3a read-back). This is the READ path: it never calls appendEvent
@@ -1795,6 +1805,8 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 //nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
 func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrManagementUnauthorized):
+		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrInvalidArgument):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrNotFound):

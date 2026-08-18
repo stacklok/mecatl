@@ -213,6 +213,7 @@ func run(argv []string) error {
 		Worktrees:           cl,
 		Sched:               cl,
 		Sessions:            cl,
+		StorageHealth:       cl,
 		SessionManagement:   cl,
 		Transcript:          cl,
 		Replayer:            cl,

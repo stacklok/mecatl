@@ -460,7 +460,12 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 		"schedule_fire_max_total", cfg.ScheduleFireRetentionMaxTotal,
 		"interval", cfg.ChildGCInterval)
 	go func() {
-		gc.sweep(ctx)
+		runSweep := func() {
+			cfg.storageMaintenance.beginSweep()
+			gc.sweep(ctx)
+			cfg.storageMaintenance.finishSweep(time.Now(), cfg.ChildGCInterval)
+		}
+		runSweep()
 		if cfg.ChildGCInterval <= 0 || gc.disabled {
 			return // startup-only, or the store can never be swept
 		}
@@ -471,7 +476,7 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				gc.sweep(ctx)
+				runSweep()
 				if gc.disabled {
 					return // sticky: the store signalled ErrPruneUnsupported
 				}

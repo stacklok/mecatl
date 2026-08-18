@@ -11,6 +11,9 @@ import (
 // their respective status codes (codes.InvalidArgument / NotFound, HTTP 400 /
 // 404).
 var (
+	// ErrManagementUnauthorized is deliberately resource-free: an unauthorized
+	// caller learns neither backend support nor aggregate storage scope.
+	ErrManagementUnauthorized = errors.New("server: management authorization required")
 	// ErrInvalidArgument signals a malformed or missing required field.
 	ErrInvalidArgument = errors.New("server: invalid argument")
 	// ErrNotFound signals an unknown session id.

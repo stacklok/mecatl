@@ -212,6 +212,34 @@ type SessionMetadataPager interface {
 	PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
 }
 
+// SessionStorageHealth is an aggregate, content-free measurement derived from
+// a backend's bounded metadata index. Availability bits distinguish an honest
+// zero measurement from a value the backend cannot provide.
+type SessionStorageHealth struct {
+	Available                 bool
+	UnavailableReason         string
+	CurrentBytes              int64
+	CurrentBytesAvailable     bool
+	ReclaimableBytes          int64
+	ReclaimableBytesAvailable bool
+	SessionCount              int64
+	FileCount                 int64
+	V1Count                   int64
+	V2Count                   int64
+	MainCount                 int64
+	ChildCount                int64
+	ScheduledCount            int64
+	UnknownCount              int64
+	CorruptCount              int64
+}
+
+// SessionStorageHealthProvider is the OPTIONAL bounded storage-health seam.
+// Implementations must use only an existing metadata index and cheap file/object
+// metadata. They must not load session snapshots or traverse transcripts.
+type SessionStorageHealthProvider interface {
+	SessionStorageHealth(ctx context.Context) (SessionStorageHealth, error)
+}
+
 // PaginateSessionMetadata applies the shared owner-filter, ordering, and keyset
 // rules to an adapter's metadata scan. It is retained for callers that form a
 // single page without a generation-bound continuation. Pager implementations

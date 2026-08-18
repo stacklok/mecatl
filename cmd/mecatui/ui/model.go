@@ -132,6 +132,9 @@ type Deps struct {
 	// is available whenever a lister + authoritative transcript loader are wired
 	// (a no-FS/cloud server with a durable SessionStore still has stored sessions).
 	Sessions client.SessionPager
+	// StorageHealth is the authenticated aggregate health surface. The capability
+	// bit controls whether the Sessions panel advertises its maintenance tab.
+	StorageHealth client.StorageHealthFetcher
 	// SessionManagement mutates stored main-chat metadata. nil leaves rename/delete
 	// undiscoverable even if a custom lister advertises those capabilities.
 	SessionManagement client.SessionManager

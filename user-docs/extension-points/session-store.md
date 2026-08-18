@@ -50,6 +50,16 @@ type PrunableStore interface {
 
 A store that does not implement `PrunableStore` is silently skipped by the composition-layer child-session GC — no error, no sweep. A store whose backend cannot enumerate or delete sessions should return an error wrapping `port.ErrPruneUnsupported`; the composition layer treats that sentinel as a permanent signal and disables further sweeps rather than retrying.
 
+### Bounded storage health
+
+A backend may also implement `port.SessionStorageHealthProvider`. The management
+endpoint advertises this capability only when an authorizer is wired, and returns
+aggregate bytes plus format/kind/corruption counts from an existing metadata index
+and cheap object/file metadata—never by loading transcripts. Availability flags
+separate a real zero from unsupported or not-yet-measured data. Jsonlstore supports
+this view; memstore and remote backends that do not implement the seam report the
+feature as unsupported. The view is status-only: it does not run cleanup or migration.
+
 ### Snapshot mechanics via sessnap
 
 The snapshot format is defined in `engine/adapter/sessnap`. The `sessnap.Snapshot` struct is a stable JSON DTO that the store adapters share:

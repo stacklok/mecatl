@@ -1201,8 +1201,13 @@ and modification timestamps, provider, and model. The header intentionally shows
 the compact digest. Press **`c`** to copy the exact full ID byte-for-byte; mecatui reports
 clipboard failure or a session change instead of claiming a stale copy. `esc` closes it.
 
-**`/sessions` (session continuity).** The session inventory has four tabs:
-**Chats**, **Scheduled runs**, **Child runs**, and **Other**. The same inventory is
+**`/sessions` (session continuity).** The session inventory has four session tabs:
+**Chats**, **Scheduled runs**, **Child runs**, and **Other**. When the server
+advertises authenticated bounded storage health, a fifth **Maintenance** tab shows
+current/reclaimable availability, aggregate bytes/files/formats/kinds/corruption,
+the effective retention policy, sweep timing, active-job state, and last failure.
+It carries no session IDs, owners, paths, or content and offers no cleanup or
+migration action; unsupported/older servers do not show the tab. The same inventory is
 the initial view for `mecatui sessions` and `mecatui connect ADDRESS sessions`;
 those launch forms establish no session until the operator continues a chat or
 presses `n` for a new one. At startup, `esc` quits; after opening an inspection,

@@ -698,11 +698,49 @@ func (h *HarnessServer) ListSessions(ctx context.Context, req *mecatlv1.ListSess
 	}, nil
 }
 
+// GetStorageHealth returns authenticated aggregate storage status.
+func (h *HarnessServer) GetStorageHealth(ctx context.Context, _ *mecatlv1.GetStorageHealthRequest) (*mecatlv1.GetStorageHealthResponse, error) {
+	health, err := h.svc.StorageHealth(ctx)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoStorageHealth(health), nil
+}
+
+func toProtoStorageHealth(h StorageHealth) *mecatlv1.GetStorageHealthResponse {
+	resp := &mecatlv1.GetStorageHealthResponse{
+		Available: h.Available, UnavailableReason: h.UnavailableReason,
+		CurrentBytes: h.CurrentBytes, CurrentBytesAvailable: h.CurrentBytesAvailable,
+		ReclaimableBytes: h.ReclaimableBytes, ReclaimableBytesAvailable: h.ReclaimableBytesAvailable,
+		SessionCount: h.SessionCount, FileCount: h.FileCount, V1Count: h.V1Count, V2Count: h.V2Count,
+		MainCount: h.MainCount, ChildCount: h.ChildCount, ScheduledCount: h.ScheduledCount,
+		UnknownCount: h.UnknownCount, CorruptCount: h.CorruptCount,
+		Policy: &mecatlv1.RetentionPolicy{
+			MainMaxAgeSeconds: int64(h.Policy.MainMaxAge.Seconds()), MainMaxCount: ClampInt32(h.Policy.MainMaxCount),
+			ChildMaxAgeSeconds: int64(h.Policy.ChildMaxAge.Seconds()), ChildMaxCount: ClampInt32(h.Policy.ChildMaxCount),
+			ScheduledMaxAgeSeconds: int64(h.Policy.ScheduledMaxAge.Seconds()), ScheduledMaxCount: ClampInt32(h.Policy.ScheduledMaxCount),
+			SweepCadenceSeconds: int64(h.Policy.SweepCadence.Seconds()),
+		},
+		LastSweepAvailable: h.LastSweepAvailable,
+		NextSweepAvailable: h.NextSweepAvailable,
+		ActiveJob:          h.ActiveJob, LastFailure: h.LastFailure,
+	}
+	if h.LastSweepAvailable {
+		resp.LastSweepUnix = h.LastSweep.Unix()
+	}
+	if h.NextSweepAvailable {
+		resp.NextSweepUnix = h.NextSweep.Unix()
+	}
+	return resp
+}
+
 // toStatus maps service sentinel errors to gRPC status codes.
 //
 //nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
 func toStatus(err error) error {
 	switch {
+	case errors.Is(err, ErrManagementUnauthorized):
+		return status.Error(codes.PermissionDenied, err.Error())
 	case errors.Is(err, ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, ErrNotFound):

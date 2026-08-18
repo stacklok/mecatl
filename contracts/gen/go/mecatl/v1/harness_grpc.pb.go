@@ -63,6 +63,7 @@ const (
 	HarnessService_StreamSessionEvents_FullMethodName      = "/mecatl.v1.HarnessService/StreamSessionEvents"
 	HarnessService_StreamSessionLive_FullMethodName        = "/mecatl.v1.HarnessService/StreamSessionLive"
 	HarnessService_ListSessions_FullMethodName             = "/mecatl.v1.HarnessService/ListSessions"
+	HarnessService_GetStorageHealth_FullMethodName         = "/mecatl.v1.HarnessService/GetStorageHealth"
 	HarnessService_ListSkills_FullMethodName               = "/mecatl.v1.HarnessService/ListSkills"
 	HarnessService_GetSoul_FullMethodName                  = "/mecatl.v1.HarnessService/GetSoul"
 	HarnessService_GetUserModel_FullMethodName             = "/mecatl.v1.HarnessService/GetUserModel"
@@ -240,6 +241,9 @@ type HarnessServiceClient interface {
 	// (modified_at descending). Read-only. There is intentionally NO
 	// ServerCapabilities bit — see StreamSessionEvents for the rationale.
 	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
+	// GetStorageHealth returns authenticated, content-free aggregate storage
+	// status. It never returns session ids, owners, paths, or transcript content.
+	GetStorageHealth(ctx context.Context, in *GetStorageHealthRequest, opts ...grpc.CallOption) (*GetStorageHealthResponse, error)
 	// ListSkills returns the resolved skills inventory snapshot: each discovered
 	// skill's name + one-line description. Derived from the snapshot taken at
 	// startup (skills are discovered once at build time and immutable for the
@@ -581,6 +585,16 @@ func (c *harnessServiceClient) ListSessions(ctx context.Context, in *ListSession
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSessionsResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ListSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) GetStorageHealth(ctx context.Context, in *GetStorageHealthRequest, opts ...grpc.CallOption) (*GetStorageHealthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetStorageHealthResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetStorageHealth_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,6 +1019,9 @@ type HarnessServiceServer interface {
 	// (modified_at descending). Read-only. There is intentionally NO
 	// ServerCapabilities bit — see StreamSessionEvents for the rationale.
 	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
+	// GetStorageHealth returns authenticated, content-free aggregate storage
+	// status. It never returns session ids, owners, paths, or transcript content.
+	GetStorageHealth(context.Context, *GetStorageHealthRequest) (*GetStorageHealthResponse, error)
 	// ListSkills returns the resolved skills inventory snapshot: each discovered
 	// skill's name + one-line description. Derived from the snapshot taken at
 	// startup (skills are discovered once at build time and immutable for the
@@ -1183,6 +1200,9 @@ func (UnimplementedHarnessServiceServer) StreamSessionLive(*StreamSessionLiveReq
 }
 func (UnimplementedHarnessServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSessions not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetStorageHealth(context.Context, *GetStorageHealthRequest) (*GetStorageHealthResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetStorageHealth not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListSkills(context.Context, *ListSkillsRequest) (*ListSkillsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSkills not implemented")
@@ -1629,6 +1649,24 @@ func _HarnessService_ListSessions_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).ListSessions(ctx, req.(*ListSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_GetStorageHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStorageHealthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetStorageHealth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetStorageHealth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetStorageHealth(ctx, req.(*GetStorageHealthRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2147,6 +2185,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSessions",
 			Handler:    _HarnessService_ListSessions_Handler,
+		},
+		{
+			MethodName: "GetStorageHealth",
+			Handler:    _HarnessService_GetStorageHealth_Handler,
 		},
 		{
 			MethodName: "ListSkills",

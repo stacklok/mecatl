@@ -195,6 +195,10 @@ service HarnessService {
   // ServerCapabilities bit — see StreamSessionEvents for the rationale.
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
 
+  // GetStorageHealth returns authenticated, content-free aggregate storage
+  // status. It never returns session ids, owners, paths, or transcript content.
+  rpc GetStorageHealth(GetStorageHealthRequest) returns (GetStorageHealthResponse);
+
   // ListSkills returns the resolved skills inventory snapshot: each discovered
   // skill's name + one-line description. Derived from the snapshot taken at
   // startup (skills are discovered once at build time and immutable for the
@@ -513,6 +517,9 @@ message ServerCapabilities {
   bool learning_proposals = 17;
   // learned_skills is true when the caller-partitioned lifecycle API is available.
   bool learned_skills = 18;
+  // storage_health is true only when the backend implements bounded indexed
+  // health and this deployment has a management authorizer.
+  bool storage_health = 19;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -774,6 +781,43 @@ message ListSessionsResponse {
   repeated SessionSummary sessions = 1;
   string next_cursor = 2;
   int32 total_count = 3;
+}
+
+message GetStorageHealthRequest {}
+
+message RetentionPolicy {
+  int64 main_max_age_seconds = 1;
+  int32 main_max_count = 2;
+  int64 child_max_age_seconds = 3;
+  int32 child_max_count = 4;
+  int64 scheduled_max_age_seconds = 5;
+  int32 scheduled_max_count = 6;
+  int64 sweep_cadence_seconds = 7;
+}
+
+message GetStorageHealthResponse {
+  bool available = 1;
+  string unavailable_reason = 2;
+  int64 current_bytes = 3;
+  bool current_bytes_available = 4;
+  int64 reclaimable_bytes = 5;
+  bool reclaimable_bytes_available = 6;
+  int64 session_count = 7;
+  int64 file_count = 8;
+  int64 v1_count = 9;
+  int64 v2_count = 10;
+  int64 main_count = 11;
+  int64 child_count = 12;
+  int64 scheduled_count = 13;
+  int64 unknown_count = 14;
+  int64 corrupt_count = 15;
+  RetentionPolicy policy = 16;
+  int64 last_sweep_unix = 17;
+  bool last_sweep_available = 18;
+  int64 next_sweep_unix = 19;
+  bool next_sweep_available = 20;
+  string active_job = 21;
+  string last_failure = 22;
 }
 
 // SetModeRequest changes a session's permission posture.

@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Bounded session-storage health** (issue #592, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+  `port.SessionStorageHealth`, `SessionStorageHealthProvider`, and explicit
+  availability fields let optional backends expose content-free indexed aggregate
+  status without widening `SessionStore` or fabricating zero values. Added (minor).
+
 - **Generation-bound session metadata continuation** (issue #587, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.ErrSessionMetadataCursorRestart` makes stale/filter-mismatched continuation
   explicit, and `PaginateSessionMetadataBound` gives scan-based adapters the same

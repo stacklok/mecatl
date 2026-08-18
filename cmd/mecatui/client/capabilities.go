@@ -51,6 +51,7 @@ type Capabilities struct {
 	Reflection        bool
 	LearningProposals bool
 	LearnedSkills     bool
+	StorageHealth     bool
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -78,6 +79,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Reflection:        c.GetReflection(),
 		LearningProposals: c.GetLearningProposals(),
 		LearnedSkills:     c.GetLearnedSkills(),
+		StorageHealth:     c.GetStorageHealth(),
 	}
 }
 

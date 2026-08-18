@@ -182,6 +182,14 @@ type Config struct {
 	Engine *agent.Engine
 	// Store persists and looks up sessions. Required.
 	Store port.SessionStore
+	// StorageManagementAuthorized gates process-wide storage health. A nil
+	// authorizer disables the management capability. It must be derived from the
+	// trusted request context, never request-supplied owner data.
+	StorageManagementAuthorized func(context.Context) bool
+	// RetentionPolicy is the effective operator policy projected into health.
+	RetentionPolicy RetentionPolicy
+	// StorageMaintenanceStatus reports the existing retention sweep lifecycle.
+	StorageMaintenanceStatus func() StorageMaintenanceStatus
 	// OwnershipEnforced is true only when the request edge has a verifier wired.
 	// Its zero value preserves the ownerless compatibility path. When enabled,
 	// create retries compare the verified issuer/subject pair before exposing an
@@ -1729,6 +1737,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		LearningProposals: s.cfg.Proposals != nil,
 		LearnedSkills:     s.cfg.LearnedSkills != nil,
 		Scheduling:        s.scheduleStore() != nil,
+		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && implementsStorageHealth(s.cfg.Store),
 	}
 }
 

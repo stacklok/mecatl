@@ -361,6 +361,7 @@ type Config struct {
 	// off). Default applied at the cmd layer alongside ScheduleFireRetention. A
 	// non-prunable store is never swept.
 	ScheduleFireRetentionMaxTotal int
+	storageMaintenance            *storageMaintenanceState
 
 	// Remote store drivers (Phase B): gRPC driver endpoints that replace the
 	// LOCAL session/memory stores with internal/adapter/grpcdriver clients.
@@ -1585,12 +1586,24 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// expander build the engine consumes, so the palette offers exactly the
 	// commands a "/<cmd>" prompt would expand. nil when commands are disabled.
 	commandLister := buildCommandLister(cfg, mcpProvider)
+	cfg.storageMaintenance = &storageMaintenanceState{}
 	svcCfg := server.Config{
 		Engine:            engine,
 		Store:             store,
 		OwnershipEnforced: cfg.OwnershipEnforced,
-		Workspaces:        osfsWorkspaceFactory(cfg.diag()),
-		DefaultWorkspace:  cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
+		StorageManagementAuthorized: func(requestCtx context.Context) bool {
+			principal := session.PrincipalFromContext(requestCtx)
+			return !cfg.OwnershipEnforced || principal != nil
+		},
+		RetentionPolicy: server.RetentionPolicy{
+			MainMaxAge: cfg.MainRetention, MainMaxCount: cfg.MainRetentionMaxTotal,
+			ChildMaxAge: cfg.ChildRetention, ChildMaxCount: cfg.ChildRetentionMaxPerFamily,
+			ScheduledMaxAge: cfg.ScheduleFireRetention, ScheduledMaxCount: cfg.ScheduleFireRetentionMaxTotal,
+			SweepCadence: cfg.ChildGCInterval,
+		},
+		StorageMaintenanceStatus: cfg.storageMaintenance.snapshot,
+		Workspaces:               osfsWorkspaceFactory(cfg.diag()),
+		DefaultWorkspace:         cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		// CommandRunner (issue #462): the MAIN session's bound runner — the
 		// Environment seam hands it to Tool.Execute so Bash observes the session
 		// namespace. nil when Bash is disabled (the catalog omits Bash and the

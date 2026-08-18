@@ -48,6 +48,7 @@
     ifacemethod func (SessionLease).Release(ctx context.Context, l Lease) error
     ifacemethod func (SessionLease).Renew(ctx context.Context, l Lease) (Lease, error)
     ifacemethod func (SessionMetadataPager).PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
+    ifacemethod func (SessionStorageHealthProvider).SessionStorageHealth(ctx context.Context) (SessionStorageHealth, error)
     ifacemethod func (SessionStore).Load(ctx context.Context, id session.SessionID) (*session.Session, error)
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
@@ -123,6 +124,8 @@ type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID; Ge
 type SessionMetadataPage struct{Sessions []SessionDiscoveryMeta; NextCursor *SessionMetadataCursor; TotalCount int}
 type SessionMetadataPageRequest struct{Limit int; Cursor *SessionMetadataCursor; OwnershipEnforced bool; Owner *session.Principal}
 type SessionMetadataPager interface{PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)}
+type SessionStorageHealth struct{Available bool; UnavailableReason string; CurrentBytes int64; CurrentBytesAvailable bool; ReclaimableBytes int64; ReclaimableBytesAvailable bool; SessionCount int64; FileCount int64; V1Count int64; V2Count int64; MainCount int64; ChildCount int64; ScheduledCount int64; UnknownCount int64; CorruptCount int64}
+type SessionStorageHealthProvider interface{SessionStorageHealth(ctx context.Context) (SessionStorageHealth, error)}
 type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*session.Session, error); Save(ctx context.Context, s *session.Session) error}
 type StoredSession struct{ID session.SessionID; ModifiedAt time.Time}
 type ToolCallRecorder interface{ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}

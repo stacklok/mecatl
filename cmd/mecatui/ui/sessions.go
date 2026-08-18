@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ const (
 	tabScheduledRuns
 	tabChildRuns
 	tabOtherRuns
+	tabStorageHealth
 )
 
 type sessionsView int
@@ -69,6 +71,18 @@ type inventorySessionIDCopiedMsg struct {
 	err error
 }
 
+type storageHealthLoadedMsg struct {
+	health client.StorageHealth
+	err    error
+}
+
+func loadStorageHealthCmd(ctx context.Context, fetcher client.StorageHealthFetcher) tea.Cmd {
+	return func() tea.Msg {
+		health, err := fetcher.GetStorageHealth(ctx)
+		return storageHealthLoadedMsg{health: health, err: err}
+	}
+}
+
 type sessionForkedMsg struct {
 	sourceID   string
 	newID      string
@@ -78,20 +92,22 @@ type sessionForkedMsg struct {
 }
 
 type sessionsState struct {
-	view     sessionsView
-	startup  bool // same /sessions renderer, with launch-only new/quit hints
-	tab      sessionsTab
-	loading  bool
-	err      error
-	sessions []client.SessionListItem
-	filtered []client.SessionListItem
-	handles  map[string]string
-	filter   textinput.Model
-	cursor   int
-	scroll   int
-	selected client.SessionListItem
-	inspect  bool
-	loadErr  error
+	view      sessionsView
+	startup   bool // same /sessions renderer, with launch-only new/quit hints
+	tab       sessionsTab
+	loading   bool
+	err       error
+	sessions  []client.SessionListItem
+	filtered  []client.SessionListItem
+	handles   map[string]string
+	filter    textinput.Model
+	cursor    int
+	scroll    int
+	selected  client.SessionListItem
+	inspect   bool
+	loadErr   error
+	health    *client.StorageHealth
+	healthErr error
 
 	loadState      sessionsLoadState
 	nextCursor     string
@@ -302,7 +318,11 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	m.ta.Blur()
 	m.sessions = newSessionsPanelState()
 	m = m.beginSessionPagination()
-	return m, tea.Batch(m.sessionPageCmd(), textinput.Blink)
+	cmds := []tea.Cmd{m.sessionPageCmd(), textinput.Blink}
+	if m.caps.StorageHealth && m.deps.StorageHealth != nil {
+		cmds = append(cmds, loadStorageHealthCmd(m.deps.Ctx, m.deps.StorageHealth))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) closeSessions() (tea.Model, tea.Cmd) {
@@ -848,6 +868,12 @@ func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch sm := msg.(type) {
 	case client.SessionInventoryPageMsg:
 		return m.applySessionPage(sm)
+	case storageHealthLoadedMsg:
+		m.sessions.healthErr = sm.err
+		if sm.err == nil {
+			m.sessions.health = &sm.health
+		}
+		return m, nil, true
 	case client.SessionsListedMsg:
 		m.sessions.loading = false
 		m.sessions.loadState = sessionsComplete
@@ -1050,7 +1076,11 @@ func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) switchSessionsTab() Model {
-	m.sessions.tab = (m.sessions.tab + 1) % 4
+	tabCount := sessionsTab(4)
+	if m.caps.StorageHealth && m.deps.StorageHealth != nil {
+		tabCount = 5
+	}
+	m.sessions.tab = (m.sessions.tab + 1) % tabCount
 	return m.syncSessionsFilter()
 }
 
@@ -1091,8 +1121,11 @@ func renderSessionsOverlay(th theme.Theme, st sessionsState, caps client.Capabil
 	return renderSessionsPanel(th, st, caps, hk, width, height, sessionID)
 }
 
-func sessionsTabBar(th theme.Theme, tab sessionsTab) string {
+func sessionsTabBar(th theme.Theme, tab sessionsTab, storageHealth bool) string {
 	labels := []string{"Chats", "Scheduled runs", "Child runs", "Other"}
+	if storageHealth {
+		labels = append(labels, "Maintenance")
+	}
 	var parts []string
 	for i, label := range labels {
 		prefix := "  "
@@ -1106,13 +1139,17 @@ func sessionsTabBar(th theme.Theme, tab sessionsTab) string {
 	return strings.Join(parts, th.Style("muted").Render("  "))
 }
 
-func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities, hk helpKeys, _, _ int, currentID ...string) string {
+func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys, _, _ int, currentID ...string) string {
 	current := ""
 	if len(currentID) > 0 {
 		current = currentID[0]
 	}
 	var b strings.Builder
-	b.WriteString(sessionsTabBar(th, st.tab) + "\n\n")
+	b.WriteString(sessionsTabBar(th, st.tab, caps.StorageHealth) + "\n\n")
+	if st.tab == tabStorageHealth {
+		b.WriteString(renderStorageHealth(th, st, hk))
+		return b.String()
+	}
 	if rendered, ok := renderSessionsPanelState(th, st, hk); ok {
 		b.WriteString(rendered)
 		return b.String()
@@ -1123,6 +1160,70 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 	}
 	b.WriteString("\n" + th.Style("muted").Render(sessionActionsHint(st, hk)))
 	return b.String()
+}
+
+const unavailableText = "unavailable"
+
+func renderStorageHealth(th theme.Theme, st sessionsState, hk helpKeys) string {
+	if st.healthErr != nil {
+		return th.Style("errorText").Render("storage health unavailable") + "\n" + th.Style("muted").Render(hk.nextTab+": switch  "+hk.closeOnly+": close")
+	}
+	if st.health == nil {
+		return th.Style("muted").Render("loading storage health…")
+	}
+	h := *st.health
+	if !h.Available {
+		reason := h.UnavailableReason
+		if reason == "" {
+			reason = "not measured"
+		}
+		return th.Style("muted").Render("storage health unavailable (" + sanitizeTerminal(reason) + ")")
+	}
+	bytesText := unavailableText
+	if h.CurrentBytesAvailable {
+		bytesText = formatBytes(h.CurrentBytes)
+	}
+	reclaimable := unavailableText
+	if h.ReclaimableBytesAvailable {
+		reclaimable = formatBytes(h.ReclaimableBytes)
+	}
+	last, next := unavailableText, unavailableText
+	if h.LastSweepAvailable {
+		last = h.LastSweep.UTC().Format(time.RFC3339)
+	}
+	if h.NextSweepAvailable {
+		next = h.NextSweep.UTC().Format(time.RFC3339)
+	}
+	job := "none"
+	if h.ActiveJob != "" {
+		job = sanitizeTerminal(h.ActiveJob)
+	}
+	failure := "none"
+	if h.LastFailure != "" {
+		failure = sanitizeTerminal(h.LastFailure)
+	}
+	return strings.Join([]string{
+		"Current: " + bytesText + "  Reclaimable: " + reclaimable,
+		fmt.Sprintf("Sessions: %d  Files: %d  v1: %d  v2: %d", h.SessionCount, h.FileCount, h.V1Count, h.V2Count),
+		fmt.Sprintf("Main: %d  Child: %d  Scheduled: %d  Unknown: %d  Corrupt: %d", h.MainCount, h.ChildCount, h.ScheduledCount, h.UnknownCount, h.CorruptCount),
+		fmt.Sprintf("Policy: main %s/%d  child %s/%d  scheduled %s/%d  cadence %s", h.Policy.MainMaxAge, h.Policy.MainMaxCount, h.Policy.ChildMaxAge, h.Policy.ChildMaxCount, h.Policy.ScheduledMaxAge, h.Policy.ScheduledMaxCount, h.Policy.SweepCadence),
+		"Last sweep: " + last + "  Next sweep: " + next,
+		"Active job: " + job + "  Last failure: " + failure,
+		th.Style("muted").Render("Status only — cleanup and migration actions are not available here."),
+	}, "\n")
+}
+
+func formatBytes(n int64) string {
+	const unit = int64(1024)
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := unit, 0
+	for value := n / unit; value >= unit && exp < 4; value /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (string, bool) {
