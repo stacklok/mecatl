@@ -135,6 +135,11 @@ type Deps struct {
 	// StorageHealth is the authenticated aggregate health surface. The capability
 	// bit controls whether the Sessions panel advertises its maintenance tab.
 	StorageHealth client.StorageHealthFetcher
+	// Migration and Cleanup are deliberately distinct management seams. Their
+	// server capability bits independently gate the semantics-preserving and
+	// destructive workflows.
+	Migration client.SessionMigrator
+	Cleanup   client.SessionCleaner
 	// SessionManagement mutates stored main-chat metadata. nil leaves rename/delete
 	// undiscoverable even if a custom lister advertises those capabilities.
 	SessionManagement client.SessionManager
@@ -349,6 +354,10 @@ type Model struct {
 	browsingStartupSessions bool
 	modelsReconciled        bool
 	sessionsPageSeq         uint64
+	// Maintenance job handles outlive the Sessions overlay. Reopening uses them
+	// only to refetch server-owned durable progress; the UI owns no job state.
+	maintenanceMigrationJobID string
+	maintenanceCleanupJobID   string
 	// sessionDetailsOpen is the read-only /session surface. The metadata fields
 	// below are refreshed from the current session snapshot; zero timestamps are
 	// rendered as unknown rather than guessed.

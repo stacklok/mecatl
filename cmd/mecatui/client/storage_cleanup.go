@@ -7,6 +7,14 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+// SessionCleaner is the injectable, capability-gated destructive cleanup seam.
+type SessionCleaner interface {
+	PlanSessionCleanup(context.Context, CleanupScope) (CleanupPlan, error)
+	ApplySessionCleanup(context.Context, string) (CleanupJob, error)
+	CancelSessionCleanup(context.Context, string) (CleanupJob, error)
+	GetSessionCleanupJob(context.Context, string) (CleanupJob, error)
+}
+
 // CleanupScope is the exact durable-kind subset requested by a management client.
 type CleanupScope struct{ Kinds []string }
 

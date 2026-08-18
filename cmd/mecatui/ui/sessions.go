@@ -84,6 +84,91 @@ func loadStorageHealthCmd(ctx context.Context, fetcher client.StorageHealthFetch
 	}
 }
 
+type maintenanceView int
+
+const (
+	maintenanceNone maintenanceView = iota
+	maintenanceOptimizePlan
+	maintenanceOptimizeJob
+	maintenanceCleanupPlan
+	maintenanceCleanupJob
+)
+
+const maintenanceBatchSize int32 = 25
+
+type migrationPlanMsg struct {
+	plan client.SessionMigrationPlan
+	err  error
+}
+type migrationJobMsg struct {
+	job client.SessionMigrationJob
+	err error
+}
+type cleanupPlanMsg struct {
+	plan client.CleanupPlan
+	err  error
+}
+type cleanupJobMsg struct {
+	job client.CleanupJob
+	err error
+}
+
+func migrationPlanCmd(ctx context.Context, svc client.SessionMigrator) tea.Cmd {
+	return func() tea.Msg {
+		plan, err := svc.PlanSessionMigration(ctx)
+		return migrationPlanMsg{plan: plan, err: err}
+	}
+}
+func migrationApplyCmd(ctx context.Context, svc client.SessionMigrator, planID string) tea.Cmd {
+	return func() tea.Msg {
+		job, err := svc.ApplySessionMigration(ctx, planID, maintenanceBatchSize)
+		return migrationJobMsg{job: job, err: err}
+	}
+}
+func migrationResumeCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
+	return func() tea.Msg {
+		job, err := svc.ResumeSessionMigration(ctx, jobID, maintenanceBatchSize)
+		return migrationJobMsg{job: job, err: err}
+	}
+}
+func migrationCancelCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
+	return func() tea.Msg {
+		job, err := svc.CancelSessionMigration(ctx, jobID)
+		return migrationJobMsg{job: job, err: err}
+	}
+}
+func migrationStatusCmd(ctx context.Context, svc client.SessionMigrator, jobID string) tea.Cmd {
+	return func() tea.Msg {
+		job, err := svc.GetSessionMigrationJob(ctx, jobID)
+		return migrationJobMsg{job: job, err: err}
+	}
+}
+func cleanupPlanCmd(ctx context.Context, svc client.SessionCleaner) tea.Cmd {
+	scope := client.CleanupScope{Kinds: []string{"main", "subagent", "parallel_branch", "team_member", "scheduled"}}
+	return func() tea.Msg {
+		plan, err := svc.PlanSessionCleanup(ctx, scope)
+		return cleanupPlanMsg{plan: plan, err: err}
+	}
+}
+func cleanupApplyCmd(ctx context.Context, svc client.SessionCleaner, token string) tea.Cmd {
+	return func() tea.Msg {
+		job, err := svc.ApplySessionCleanup(ctx, token)
+		return cleanupJobMsg{job: job, err: err}
+	}
+}
+func cleanupCancelCmd(ctx context.Context, svc client.SessionCleaner, jobID string) tea.Cmd {
+	return func() tea.Msg {
+		job, err := svc.CancelSessionCleanup(ctx, jobID)
+		return cleanupJobMsg{job: job, err: err}
+	}
+}
+func cleanupStatusCmd(ctx context.Context, svc client.SessionCleaner, jobID string) tea.Cmd {
+	return func() tea.Msg {
+		job, err := svc.GetSessionCleanupJob(ctx, jobID)
+		return cleanupJobMsg{job: job, err: err}
+	}
+}
+
 type sessionForkedMsg struct {
 	sourceID   string
 	newID      string
@@ -109,6 +194,14 @@ type sessionsState struct {
 	loadErr   error
 	health    *client.StorageHealth
 	healthErr error
+
+	maintenance    maintenanceView
+	maintenanceErr bool
+	migrationPlan  client.SessionMigrationPlan
+	migrationJob   client.SessionMigrationJob
+	cleanupPlan    client.CleanupPlan
+	cleanupJob     client.CleanupJob
+	cleanupConfirm textinput.Model
 
 	loadState      sessionsLoadState
 	nextCursor     string
@@ -331,6 +424,12 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	if m.caps.StorageHealth && m.deps.StorageHealth != nil {
 		cmds = append(cmds, loadStorageHealthCmd(m.deps.Ctx, m.deps.StorageHealth))
 	}
+	if m.maintenanceMigrationJobID != "" && m.caps.StorageMigration && m.deps.Migration != nil {
+		cmds = append(cmds, migrationStatusCmd(m.deps.Ctx, m.deps.Migration, m.maintenanceMigrationJobID))
+	}
+	if m.maintenanceCleanupJobID != "" && m.caps.StorageCleanup && m.deps.Cleanup != nil {
+		cmds = append(cmds, cleanupStatusCmd(m.deps.Ctx, m.deps.Cleanup, m.maintenanceCleanupJobID))
+	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -376,6 +475,9 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.sessions.confirmDelete {
 		return m.onSessionDeleteConfirmKey(msg)
 	}
+	if mm, cmd, handled := m.onMaintenanceKey(msg); handled {
+		return mm, cmd, true
+	}
 	if mm, cmd, handled := m.onSessionsLoadKey(msg); handled {
 		return mm, cmd, true
 	}
@@ -405,6 +507,104 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		cmd = tea.Batch(cmd, m.adoptionPreflightCmd())
 	}
 	return m, cmd, true
+}
+
+func (m Model) onMaintenanceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.sessions.tab != tabStorageHealth {
+		return m, nil, false
+	}
+	if key.Matches(msg, m.keys.Close) && m.sessions.maintenance != maintenanceNone {
+		m.sessions.maintenance = maintenanceNone
+		m.sessions.maintenanceErr = false
+		return m, nil, true
+	}
+	if m.sessions.actionLoading {
+		return m, nil, true
+	}
+	var cmd tea.Cmd
+	switch m.sessions.maintenance {
+	case maintenanceNone:
+		m, cmd = m.onMaintenanceMenuKey(msg)
+	case maintenanceOptimizePlan, maintenanceOptimizeJob:
+		m, cmd = m.onOptimizeStorageKey(msg)
+	case maintenanceCleanupPlan:
+		m, cmd = m.onCleanupPlanKey(msg)
+	case maintenanceCleanupJob:
+		m, cmd = m.onCleanupJobKey(msg)
+	}
+	return m, cmd, true
+}
+
+func (m Model) onMaintenanceMenuKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "o":
+		if m.caps.StorageMigration && m.deps.Migration != nil {
+			m.sessions.actionLoading = true
+			m.sessions.maintenanceErr = false
+			return m, migrationPlanCmd(m.deps.Ctx, m.deps.Migration)
+		}
+	case "x":
+		if m.caps.StorageCleanup && m.deps.Cleanup != nil {
+			m.sessions.actionLoading = true
+			m.sessions.maintenanceErr = false
+			return m, cleanupPlanCmd(m.deps.Ctx, m.deps.Cleanup)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) onOptimizeStorageKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.sessions.maintenance == maintenanceOptimizePlan {
+		if key.Matches(msg, m.keys.Choose) && m.sessions.migrationPlan.Available {
+			m.sessions.actionLoading = true
+			return m, migrationApplyCmd(m.deps.Ctx, m.deps.Migration, m.sessions.migrationPlan.ID)
+		}
+		return m, nil
+	}
+	m.sessions.actionLoading = true
+	switch msg.String() {
+	case "r":
+		return m, migrationResumeCmd(m.deps.Ctx, m.deps.Migration, m.sessions.migrationJob.ID)
+	case "c":
+		return m, migrationCancelCmd(m.deps.Ctx, m.deps.Migration, m.sessions.migrationJob.ID)
+	case "s":
+		return m, migrationStatusCmd(m.deps.Ctx, m.deps.Migration, m.sessions.migrationJob.ID)
+	default:
+		m.sessions.actionLoading = false
+		return m, nil
+	}
+}
+
+func (m Model) onCleanupPlanKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if msg.String() == "y" {
+		// Single-row delete consent is deliberately inert for bulk cleanup.
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Choose) {
+		if m.sessions.cleanupConfirm.Value() != "CLEAN UP" {
+			return m, nil
+		}
+		m.sessions.actionLoading = true
+		return m, cleanupApplyCmd(m.deps.Ctx, m.deps.Cleanup, m.sessions.cleanupPlan.ConfirmationToken)
+	}
+	var cmd tea.Cmd
+	m.sessions.cleanupConfirm, cmd = m.sessions.cleanupConfirm.Update(msg)
+	return m, cmd
+}
+
+func (m Model) onCleanupJobKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	m.sessions.actionLoading = true
+	switch msg.String() {
+	case "c":
+		return m, cleanupCancelCmd(m.deps.Ctx, m.deps.Cleanup, m.sessions.cleanupJob.ID)
+	case "s":
+		return m, cleanupStatusCmd(m.deps.Ctx, m.deps.Cleanup, m.sessions.cleanupJob.ID)
+	case "r":
+		return m, cleanupPlanCmd(m.deps.Ctx, m.deps.Cleanup)
+	default:
+		m.sessions.actionLoading = false
+		return m, nil
+	}
 }
 
 func (m Model) onStartupSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
@@ -998,6 +1198,56 @@ func (m Model) applySessionPage(msg client.SessionInventoryPageMsg) (tea.Model, 
 	return m, tea.Batch(m.sessionPageCmd(), m.adoptionPreflightCmd()), true
 }
 
+func (m Model) updateMaintenanceMsg(msg tea.Msg) (Model, bool) {
+	switch sm := msg.(type) {
+	case migrationPlanMsg:
+		m.sessions.actionLoading = false
+		m.sessions.maintenanceErr = sm.err != nil
+		if sm.err == nil {
+			m.sessions.migrationPlan = sm.plan
+			m.sessions.maintenance = maintenanceOptimizePlan
+		}
+		return m, true
+	case migrationJobMsg:
+		m.sessions.actionLoading = false
+		m.sessions.maintenanceErr = sm.err != nil
+		if sm.err == nil {
+			m.sessions.migrationJob = sm.job
+			m.sessions.maintenance = maintenanceOptimizeJob
+			if sm.job.ID != "" {
+				m.maintenanceMigrationJobID = sm.job.ID
+			}
+		}
+		return m, true
+	case cleanupPlanMsg:
+		m.sessions.actionLoading = false
+		m.sessions.maintenanceErr = sm.err != nil
+		if sm.err == nil {
+			m.sessions.cleanupPlan = sm.plan
+			m.sessions.maintenance = maintenanceCleanupPlan
+			confirm := textinput.New()
+			confirm.Placeholder = "type CLEAN UP"
+			confirm.SetWidth(24)
+			confirm.Focus()
+			m.sessions.cleanupConfirm = confirm
+		}
+		return m, true
+	case cleanupJobMsg:
+		m.sessions.actionLoading = false
+		m.sessions.maintenanceErr = sm.err != nil
+		if sm.err == nil {
+			m.sessions.cleanupJob = sm.job
+			m.sessions.maintenance = maintenanceCleanupJob
+			if sm.job.ID != "" {
+				m.maintenanceCleanupJobID = sm.job.ID
+			}
+		}
+		return m, true
+	default:
+		return m, false
+	}
+}
+
 func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, cmd, handled := m.updateSessionActionMsg(msg); handled {
 		return mm, cmd, true
@@ -1117,6 +1367,9 @@ func (m Model) onSessionAdopted(sm client.SessionAdoptedMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) updateSessionActionMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if mm, handled := m.updateMaintenanceMsg(msg); handled {
+		return mm, nil, true
+	}
 	if mm, cmd, handled := m.updateAdoptionMsg(msg); handled {
 		return mm, cmd, true
 	}
@@ -1270,7 +1523,7 @@ func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 
 func (m Model) switchSessionsTab() Model {
 	tabCount := sessionsTab(4)
-	if m.caps.StorageHealth && m.deps.StorageHealth != nil {
+	if (m.caps.StorageHealth && m.deps.StorageHealth != nil) || (m.caps.StorageMigration && m.deps.Migration != nil) || (m.caps.StorageCleanup && m.deps.Cleanup != nil) {
 		tabCount = 5
 	}
 	m.sessions.tab = (m.sessions.tab + 1) % tabCount
@@ -1338,9 +1591,10 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilit
 		current = currentID[0]
 	}
 	var b strings.Builder
-	b.WriteString(sessionsTabBar(th, st.tab, caps.StorageHealth) + "\n\n")
+	maintenance := caps.StorageHealth || caps.StorageMigration || caps.StorageCleanup
+	b.WriteString(sessionsTabBar(th, st.tab, maintenance) + "\n\n")
 	if st.tab == tabStorageHealth {
-		b.WriteString(renderStorageHealth(th, st, hk))
+		b.WriteString(renderStorageHealth(th, st, caps, hk))
 		return b.String()
 	}
 	if rendered, ok := renderSessionsPanelState(th, st, hk); ok {
@@ -1357,53 +1611,162 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilit
 
 const unavailableText = "unavailable"
 
-func renderStorageHealth(th theme.Theme, st sessionsState, hk helpKeys) string {
-	if st.healthErr != nil {
-		return th.Style("errorText").Render("storage health unavailable") + "\n" + th.Style("muted").Render(hk.nextTab+": switch  "+hk.closeOnly+": close")
+func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys) string {
+	if st.maintenanceErr {
+		return th.Style("errorText").Render("maintenance request failed; retry or inspect server diagnostics") + "\n" + th.Style("muted").Render(hk.closeOnly+": back")
 	}
-	if st.health == nil {
-		return th.Style("muted").Render("loading storage health…")
+	if st.actionLoading {
+		return th.Style("muted").Render("loading maintenance status…")
 	}
-	h := *st.health
-	if !h.Available {
-		reason := h.UnavailableReason
-		if reason == "" {
-			reason = "not measured"
+	switch st.maintenance {
+	case maintenanceOptimizePlan:
+		return renderMigrationPlan(th, st.migrationPlan, hk)
+	case maintenanceOptimizeJob:
+		return renderMigrationJob(th, st.migrationJob, hk)
+	case maintenanceCleanupPlan:
+		return renderCleanupPlan(th, st, hk)
+	case maintenanceCleanupJob:
+		return renderCleanupJob(th, st.cleanupJob, hk)
+	}
+
+	var lines []string
+	if caps.StorageHealth {
+		switch {
+		case st.healthErr != nil:
+			lines = append(lines, th.Style("errorText").Render("storage health unavailable"))
+		case st.health == nil:
+			lines = append(lines, th.Style("muted").Render("loading storage health…"))
+		case !st.health.Available:
+			lines = append(lines, th.Style("muted").Render("storage health unavailable"))
+		default:
+			h := *st.health
+			bytesText, reclaimable := unavailableText, unavailableText
+			if h.CurrentBytesAvailable {
+				bytesText = formatBytes(h.CurrentBytes)
+			}
+			if h.ReclaimableBytesAvailable {
+				reclaimable = formatBytes(h.ReclaimableBytes)
+			}
+			last, next := unavailableText, unavailableText
+			if h.LastSweepAvailable {
+				last = h.LastSweep.UTC().Format(time.RFC3339)
+			}
+			if h.NextSweepAvailable {
+				next = h.NextSweep.UTC().Format(time.RFC3339)
+			}
+			job := "none"
+			if h.ActiveJob != "" {
+				job = sanitizeTerminal(h.ActiveJob)
+			}
+			failure := "none"
+			if h.LastFailure != "" {
+				failure = sanitizeTerminal(h.LastFailure)
+			}
+			lines = append(lines,
+				"Current: "+bytesText+"  Reclaimable: "+reclaimable,
+				fmt.Sprintf("Sessions: %d  Files: %d  v1: %d  v2: %d", h.SessionCount, h.FileCount, h.V1Count, h.V2Count),
+				fmt.Sprintf("Main: %d  Child: %d  Scheduled: %d  Unknown: %d  Corrupt: %d", h.MainCount, h.ChildCount, h.ScheduledCount, h.UnknownCount, h.CorruptCount),
+				fmt.Sprintf("Policy: main %s/%d  child %s/%d  scheduled %s/%d  cadence %s", h.Policy.MainMaxAge, h.Policy.MainMaxCount, h.Policy.ChildMaxAge, h.Policy.ChildMaxCount, h.Policy.ScheduledMaxAge, h.Policy.ScheduledMaxCount, h.Policy.SweepCadence),
+				"Last sweep: "+last+"  Next sweep: "+next,
+				"Active job: "+job+"  Last failure: "+failure)
 		}
-		return th.Style("muted").Render("storage health unavailable (" + sanitizeTerminal(reason) + ")")
 	}
-	bytesText := unavailableText
-	if h.CurrentBytesAvailable {
-		bytesText = formatBytes(h.CurrentBytes)
+	var actions []string
+	if caps.StorageMigration {
+		actions = append(actions, "o: Optimize storage (sessions preserved)")
 	}
-	reclaimable := unavailableText
-	if h.ReclaimableBytesAvailable {
-		reclaimable = formatBytes(h.ReclaimableBytes)
+	if caps.StorageCleanup {
+		actions = append(actions, "x: Clean up sessions (destructive)")
 	}
-	last, next := unavailableText, unavailableText
-	if h.LastSweepAvailable {
-		last = h.LastSweep.UTC().Format(time.RFC3339)
+	if len(actions) == 0 {
+		actions = append(actions, "Status only — maintenance actions unavailable on this server")
 	}
-	if h.NextSweepAvailable {
-		next = h.NextSweep.UTC().Format(time.RFC3339)
-	}
-	job := "none"
-	if h.ActiveJob != "" {
-		job = sanitizeTerminal(h.ActiveJob)
-	}
-	failure := "none"
-	if h.LastFailure != "" {
-		failure = sanitizeTerminal(h.LastFailure)
+	lines = append(lines, "", th.Style("muted").Render(strings.Join(actions, "  ")+"  "+hk.nextTab+": switch  "+hk.closeOnly+": close"))
+	return strings.Join(lines, "\n")
+}
+
+func renderMigrationPlan(th theme.Theme, plan client.SessionMigrationPlan, hk helpKeys) string {
+	if !plan.Available {
+		return th.Style("askTitle").Render("Optimize storage") + "\n\n" + th.Style("muted").Render("Optimization is unavailable on this backend.  "+hk.closeOnly+": back")
 	}
 	return strings.Join([]string{
-		"Current: " + bytesText + "  Reclaimable: " + reclaimable,
-		fmt.Sprintf("Sessions: %d  Files: %d  v1: %d  v2: %d", h.SessionCount, h.FileCount, h.V1Count, h.V2Count),
-		fmt.Sprintf("Main: %d  Child: %d  Scheduled: %d  Unknown: %d  Corrupt: %d", h.MainCount, h.ChildCount, h.ScheduledCount, h.UnknownCount, h.CorruptCount),
-		fmt.Sprintf("Policy: main %s/%d  child %s/%d  scheduled %s/%d  cadence %s", h.Policy.MainMaxAge, h.Policy.MainMaxCount, h.Policy.ChildMaxAge, h.Policy.ChildMaxCount, h.Policy.ScheduledMaxAge, h.Policy.ScheduledMaxCount, h.Policy.SweepCadence),
-		"Last sweep: " + last + "  Next sweep: " + next,
-		"Active job: " + job + "  Last failure: " + failure,
-		th.Style("muted").Render("Status only — cleanup and migration actions are not available here."),
+		th.Style("askTitle").Render("Optimize storage — dry run"), "",
+		"Sessions are preserved; this changes only their physical storage format.",
+		fmt.Sprintf("v1: %d  v2: %d  Invalid: %d  Skipped: %d", plan.V1Families, plan.V2Families, plan.InvalidFamilies, plan.SkippedFamilies),
+		"Current: " + formatBytes(plan.CurrentBytes) + "  Reclaimable: " + formatBytes(plan.ReclaimableBytes),
+		"Temporary space required: " + formatBytes(plan.TemporaryBytes), "",
+		th.Style("muted").Render(hk.choose + ": start resumable optimization  " + hk.closeOnly + ": back"),
 	}, "\n")
+}
+
+func renderMigrationJob(th theme.Theme, job client.SessionMigrationJob, hk helpKeys) string {
+	lines := []string{th.Style("askTitle").Render("Optimize storage"), "", "Job: " + sanitizeTerminal(job.ID) + "  State: " + sanitizeTerminal(job.State),
+		fmt.Sprintf("Processed: %d/%d  Migrated: %d  Skipped: %d  Failed: %d", job.Processed, job.V1Families, job.Migrated, job.SkippedFamilies, job.Failed),
+		"Sessions are preserved; completed items stay committed."}
+	lines = append(lines, renderMigrationErrors(job.Errors)...)
+	if job.State == teamStopReasonCancelled {
+		lines = append(lines, "Cancellation stops future items; completed items stay committed.")
+	}
+	lines = append(lines, "", th.Style("muted").Render("r: resume  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
+	return strings.Join(lines, "\n")
+}
+
+func renderMigrationErrors(items []client.SessionMigrationItemError) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	lines := []string{"Item failures:"}
+	for i, item := range items {
+		if i == 5 {
+			lines = append(lines, fmt.Sprintf("… and %d more", len(items)-i))
+			break
+		}
+		lines = append(lines, "- "+sanitizeTerminal(item.ItemHandle)+" ["+sanitizeTerminal(item.ReasonCode)+"] "+sanitizeTerminal(item.Message))
+	}
+	return lines
+}
+
+func cleanupKindCount(counts client.CleanupCounts, keys ...string) int {
+	total := 0
+	for _, kind := range keys {
+		total += counts.ByKind[kind]
+	}
+	return total
+}
+
+func renderCleanupPlan(th theme.Theme, st sessionsState, hk helpKeys) string {
+	plan := st.cleanupPlan
+	if !plan.Available {
+		return th.Style("askTitle").Render("Clean up sessions") + "\n\n" + th.Style("muted").Render("Cleanup is unavailable on this backend.  "+hk.closeOnly+": back")
+	}
+	eligible, protected := plan.EligibleCounts, plan.Protected
+	return strings.Join([]string{
+		th.Style("errorText").Render("Clean up sessions — DESTRUCTIVE dry run"), "",
+		fmt.Sprintf("Eligible: %d  Main: %d  Child: %d  Scheduled: %d", eligible.Total, cleanupKindCount(eligible, "main"), cleanupKindCount(eligible, "subagent", "parallel_branch", "team_member"), cleanupKindCount(eligible, "scheduled")),
+		fmt.Sprintf("Protected: %d  Unknown: %d protected  Live: %d  Awaiting: %d", protected.Total, cleanupKindCount(protected, "unknown"), protected.ByReason["live"], protected.ByState["awaiting"]),
+		"Estimated deletion: " + formatBytes(plan.EstimatedBytes),
+		"Unknown sessions are protected by default. Active, live, and awaiting sessions are not selected.", "",
+		"To confirm this bulk operation, type CLEAN UP (single-row delete consent is not accepted):", st.cleanupConfirm.View(), "",
+		th.Style("muted").Render(hk.choose + ": apply exact dry-run  " + hk.closeOnly + ": back"),
+	}, "\n")
+}
+
+func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string {
+	lines := []string{th.Style("errorText").Render("Clean up sessions"), "", "Job: " + sanitizeTerminal(job.ID) + "  State: " + sanitizeTerminal(job.State),
+		fmt.Sprintf("Processed: %d  Deleted: %d  Skipped: %d  Stale: %d  Failed: %d", job.Processed, job.Deleted, job.Skipped, job.Stale, job.Failed),
+		"Apply-time changes are skipped; partial completion is safe to inspect and retry."}
+	for i, item := range job.Errors {
+		if i == 5 {
+			lines = append(lines, fmt.Sprintf("… and %d more", len(job.Errors)-i))
+			break
+		}
+		lines = append(lines, "- "+sanitizeTerminal(item.ItemHandle)+" ["+sanitizeTerminal(item.ReasonCode)+"] "+sanitizeTerminal(item.Message))
+	}
+	if job.State == teamStopReasonCancelled {
+		lines = append(lines, "Cancellation stops future items; completed deletions stay committed.")
+	}
+	lines = append(lines, "", th.Style("muted").Render("r: new dry run  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
+	return strings.Join(lines, "\n")
 }
 
 func formatBytes(n int64) string {

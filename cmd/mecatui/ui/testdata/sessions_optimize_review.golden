@@ -1,0 +1,20 @@
+ mecatui  ·  session connecting�  ·  mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Chats    Scheduled runs    Child runs    Other  ▸ Maintenance
+
+Optimize storage — dry run
+
+Sessions are preserved; this changes only their physical storage format.
+v1: 12  v2: 40  Invalid: 2  Skipped: 3
+Current: 12.0 MiB  Reclaimable: 8.0 MiB
+Temporary space required: 2.0 MiB
+
+enter: start resumable optimization  esc: back
+
+│
+│ Ask mecatl to do something…
+│ (enter to send · shift+enter for
+│ newline · ? for help)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ⣾  connecting…                                                              ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

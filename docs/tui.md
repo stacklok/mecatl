@@ -1213,11 +1213,25 @@ clipboard failure or a session change instead of claiming a stale copy. `esc` cl
 
 **`/sessions` (session continuity).** The session inventory has four session tabs:
 **Chats**, **Scheduled runs**, **Child runs**, and **Other**. When the server
-advertises authenticated bounded storage health, a fifth **Maintenance** tab shows
-current/reclaimable availability, aggregate bytes/files/formats/kinds/corruption,
-the effective retention policy, sweep timing, active-job state, and last failure.
-It carries no session IDs, owners, paths, or content and offers no cleanup or
-migration action; unsupported/older servers do not show the tab. The same inventory is
+advertises authenticated bounded storage health or either maintenance operation, a fifth
+**Maintenance** tab appears. Its status view shows current/reclaimable availability,
+aggregate bytes/files/formats/kinds/corruption, effective retention policy, sweep timing,
+active-job state, and last failure without session IDs, owners, paths, or content.
+
+The two actions are deliberately separate and independently capability-gated. **`o` Optimize
+storage** starts with a read-only v1/v2/invalid/skipped and byte estimate, including required
+temporary space, and states that every session is preserved. Applying starts a durable bounded
+job; its screen supports status, cancel, and resume and shows progress plus bounded sanitized
+per-item failures. **`x` Clean up sessions** is destructive: its read-only plan partitions
+eligible and protected main/child/scheduled/unknown/live/awaiting rows, keeps unknown protected
+by default, and requires typing `CLEAN UP`. The single-row `y`/`enter` delete consent is inert in
+this bulk form. Apply-time stale/skipped/failed counts remain visible; retry begins a fresh dry
+run against the current generation.
+
+Closing the panel never cancels a maintenance job. Reopening refetches the server-owned durable
+handle and progress. Explicit cancellation stops future items; completed migrations or deletions
+stay committed. Older or unsupported servers hide unavailable actions rather than showing zero
+impact. The same inventory is
 the initial view for `mecatui sessions` and `mecatui connect ADDRESS sessions`;
 those launch forms establish no session until the operator continues a chat or
 presses `n` for a new one. At startup, `esc` quits; after opening an inspection,

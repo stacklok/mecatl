@@ -214,6 +214,8 @@ func run(argv []string) error {
 		Sched:               cl,
 		Sessions:            cl,
 		StorageHealth:       cl,
+		Migration:           cl,
+		Cleanup:             cl,
 		SessionManagement:   cl,
 		Adoption:            cl,
 		Transcript:          cl,

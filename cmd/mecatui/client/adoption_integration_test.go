@@ -35,7 +35,8 @@ func adoptionSeamService(t *testing.T) (*server.Service, *memstore.Store) {
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, SessionEngine: factory,
 		DefaultResolvedModel: server.ResolvedModel{ProviderID: "provider-a", ModelID: "model-a"}, OwnershipEnforced: true,
-		Now: func() time.Time { return time.Unix(1700000000, 0) },
+		StorageManagementAuthorized: func(context.Context) bool { return true },
+		Now:                         func() time.Time { return time.Unix(1700000000, 0) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +97,27 @@ func saveAdoptionSeamLegacy(t *testing.T, store *memstore.Store, id string, stat
 		t.Fatal(err)
 	}
 	return sess
+}
+
+func TestMaintenanceClientRealServerSeam(t *testing.T) {
+	svc, _ := adoptionSeamService(t)
+	cl := adoptionSeamClient(t, svc, "alice")
+
+	plan, err := cl.PlanSessionMigration(context.Background())
+	if err != nil {
+		t.Fatalf("plan migration over real gRPC seam: %v", err)
+	}
+	if plan.Available || plan.UnavailableReason != "backend_unsupported" {
+		t.Fatalf("unsupported backend projection = %+v", plan)
+	}
+
+	cleanup, err := cl.PlanSessionCleanup(context.Background(), CleanupScope{Kinds: []string{"main"}})
+	if err != nil {
+		t.Fatalf("plan cleanup over real gRPC seam: %v", err)
+	}
+	if !cleanup.Available || cleanup.Protected.ByKind == nil {
+		t.Fatalf("cleanup projection lost capability/taxonomy: %+v", cleanup)
+	}
 }
 
 func TestAdoptionClientRealServerSeam(t *testing.T) {

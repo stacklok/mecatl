@@ -6,6 +6,15 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
+// SessionMigrator is the injectable, capability-gated physical optimization seam.
+type SessionMigrator interface {
+	PlanSessionMigration(context.Context) (SessionMigrationPlan, error)
+	ApplySessionMigration(context.Context, string, int32) (SessionMigrationJob, error)
+	ResumeSessionMigration(context.Context, string, int32) (SessionMigrationJob, error)
+	CancelSessionMigration(context.Context, string) (SessionMigrationJob, error)
+	GetSessionMigrationJob(context.Context, string) (SessionMigrationJob, error)
+}
+
 // SessionMigrationPlan is the proto-free read-only optimization estimate.
 type SessionMigrationPlan struct {
 	ID                string
