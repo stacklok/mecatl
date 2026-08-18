@@ -267,9 +267,14 @@ storage_management:
 
 Both issuer and subject must match the verified request context exactly. An empty
 or absent list advertises no remote management capability; grant type, display
-name, request owner fields, and system-principal status are not shortcuts. The
-private embedded mecatui server is the sole principal-less exception and grants
-only its local single-user Unix-socket operator.
+name, request owner fields, and system-principal status are not shortcuts. Remote
+and multi-writer deployments advertise destructive migration/cleanup only with a
+working cross-process session lease (`--session-lease-url`,
+`--session-lease-k8s-namespace`, or a single-host `--session-lease-dir` where
+appropriate). A missing, disabled, held, or backend-unsupported lease fails the
+mutation closed; unsupported leasing also clears the capability echo. The private
+embedded mecatui server is the sole principal-less and lease-less exception because
+composition explicitly proves its local single-process Unix-socket posture.
 
 ### Remote store drivers
 

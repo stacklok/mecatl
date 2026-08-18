@@ -95,7 +95,11 @@ catalog or policy returns a stale-plan result without deleting anything. Cleanup
 backends implement `port.ConditionalPrunableStore`: each candidate is revalidated under
 run-entry serialization and the maintenance lease, then the backend holds its family
 mutation exclusion across a final metadata comparison and sidecar-first/snapshot-last
-deletion. Partial failures use stable,
+deletion. Remotely reachable and multi-writer composition must provide a working
+`port.SessionLease`; missing or backend-unsupported leasing suppresses migration/cleanup capability
+advertisement and fails apply closed. Only private embedded mecatui explicitly proves the local
+single-process posture that may substitute process-local `IsLive` plus family locking. Partial
+failures use stable,
 sanitized reason codes and can be retried by planning again. Unsupported stores report
 `backend_unsupported`; they never claim zero impact.
 

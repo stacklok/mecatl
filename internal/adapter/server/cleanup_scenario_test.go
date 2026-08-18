@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -37,12 +39,108 @@ func newCleanupServiceWithUpdate(t *testing.T, store port.SessionStore, now func
 	svc, err := NewService(Config{
 		Engine: eng, Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now: now, OwnershipEnforced: true, StorageManagementAuthorized: authorize, RetentionPolicy: policy,
-		StorageMaintenanceUpdate: update,
+		LocalStorageMaintenanceSingleWriter: true,
+		StorageMaintenanceUpdate:            update,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	return svc
+}
+
+type maintenanceErrorLease struct{ err error }
+
+func (l maintenanceErrorLease) Acquire(context.Context, session.SessionID, string) (port.Lease, error) {
+	return port.Lease{}, l.err
+}
+func (l maintenanceErrorLease) Renew(context.Context, port.Lease) (port.Lease, error) {
+	return port.Lease{}, l.err
+}
+func (maintenanceErrorLease) Release(context.Context, port.Lease) error { return nil }
+
+func maintenanceSafetyService(t *testing.T, store port.SessionStore, local bool, lease port.SessionLease, now time.Time) *Service {
+	t.Helper()
+	svc, err := NewService(Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now: func() time.Time { return now }, OwnershipEnforced: true,
+		StorageManagementAuthorized:         func(context.Context) bool { return true },
+		LocalStorageMaintenanceSingleWriter: local,
+		SessionLease:                        lease, LeaseOwner: "maintenance-server", LeaseTTL: time.Minute, LeaseRenewInterval: 20 * time.Second,
+		RetentionPolicy: RetentionPolicy{MainMaxAge: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	t.Cleanup(svc.Close)
+	return svc
+}
+
+func TestMaintenanceMutationCapabilityRequiresProvenExclusion(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	ctx := cleanupContext(cleanupAlice)
+
+	t.Run("embedded single writer allowed", func(t *testing.T) {
+		store := memstore.New(memstore.WithNow(func() time.Time { return now.Add(-48 * time.Hour) }))
+		svc := maintenanceSafetyService(t, store, true, nil, now)
+		if !svc.capabilities().GetStorageCleanup() {
+			t.Fatal("embedded single-writer cleanup was not advertised")
+		}
+	})
+
+	t.Run("remote without lease denied and unadvertised", func(t *testing.T) {
+		store := memstore.New(memstore.WithNow(func() time.Time { return now.Add(-48 * time.Hour) }))
+		saveCleanupSession(t, store, "remote-no-lease", cleanupAlice, session.SessionKindMain)
+		svc := maintenanceSafetyService(t, store, false, nil, now)
+		if svc.capabilities().GetStorageCleanup() {
+			t.Fatal("remote cleanup without a lease was advertised")
+		}
+		plan, err := svc.PlanSessionCleanup(ctx, CleanupScope{})
+		if err != nil || plan.Available || plan.UnavailableReason != "maintenance_exclusion_unavailable" {
+			t.Fatalf("unsafe cleanup plan = %+v, %v", plan, err)
+		}
+		if _, err := store.Load(ctx, "remote-no-lease"); err != nil {
+			t.Fatalf("unsafe posture deleted the session: %v", err)
+		}
+	})
+
+	t.Run("remote with lease allowed", func(t *testing.T) {
+		store := memstore.New()
+		lease := memlease.New(wallclock.Clock{}, time.Minute)
+		svc := maintenanceSafetyService(t, store, false, lease, now)
+		if !svc.capabilities().GetStorageCleanup() {
+			t.Fatal("leased remote cleanup was not advertised")
+		}
+	})
+
+	for name, leaseErr := range map[string]error{
+		"unsupported lease": port.ErrLeaseUnsupported,
+		"held lease":        port.ErrLeaseHeld,
+	} {
+		t.Run(name+" fails closed", func(t *testing.T) {
+			store := memstore.New(memstore.WithNow(func() time.Time { return now.Add(-48 * time.Hour) }))
+			id := session.SessionID("protected-" + name)
+			saveCleanupSession(t, store, id, cleanupAlice, session.SessionKindMain)
+			svc := maintenanceSafetyService(t, store, false, maintenanceErrorLease{err: leaseErr}, now)
+			plan, err := svc.PlanSessionCleanup(ctx, CleanupScope{})
+			if err != nil || !plan.Available || len(plan.Eligible) != 1 {
+				t.Fatalf("PlanSessionCleanup = %+v, %v", plan, err)
+			}
+			job, err := svc.ApplySessionCleanup(ctx, plan.Token)
+			if err != nil {
+				t.Fatalf("ApplySessionCleanup: %v", err)
+			}
+			if job.Deleted != 0 || job.Failed+job.Skipped != 1 {
+				t.Fatalf("cleanup job mutated without exclusion: %+v", job)
+			}
+			if _, err := store.Load(ctx, id); err != nil {
+				t.Fatalf("cleanup deleted lease-protected session: %v", err)
+			}
+			if errors.Is(leaseErr, port.ErrLeaseUnsupported) && svc.capabilities().GetStorageCleanup() {
+				t.Fatal("unsupported lease remained advertised after detection")
+			}
+		})
+	}
 }
 
 func saveCleanupSession(t *testing.T, store port.SessionStore, id session.SessionID, owner *session.Principal, kind session.SessionKind) {

@@ -1614,10 +1614,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.storageMaintenance = &storageMaintenanceState{}
 	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
 	svcCfg := server.Config{
-		Engine:                      engine,
-		Store:                       store,
-		OwnershipEnforced:           cfg.OwnershipEnforced,
-		StorageManagementAuthorized: storageManagementAuthorizer(cfg),
+		Engine:                              engine,
+		Store:                               store,
+		OwnershipEnforced:                   cfg.OwnershipEnforced,
+		StorageManagementAuthorized:         storageManagementAuthorizer(cfg),
+		LocalStorageMaintenanceSingleWriter: cfg.LocalStorageManagement,
 		RetentionPolicy: server.RetentionPolicy{
 			Version:    "retention/v1",
 			MainMaxAge: cfg.MainRetention, MainMaxCount: cfg.MainRetentionMaxTotal,

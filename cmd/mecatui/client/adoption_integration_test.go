@@ -35,8 +35,9 @@ func adoptionSeamService(t *testing.T) (*server.Service, *memstore.Store) {
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, SessionEngine: factory,
 		DefaultResolvedModel: server.ResolvedModel{ProviderID: "provider-a", ModelID: "model-a"}, OwnershipEnforced: true,
-		StorageManagementAuthorized: func(context.Context) bool { return true },
-		Now:                         func() time.Time { return time.Unix(1700000000, 0) },
+		StorageManagementAuthorized:         func(context.Context) bool { return true },
+		LocalStorageMaintenanceSingleWriter: true,
+		Now:                                 func() time.Time { return time.Unix(1700000000, 0) },
 	})
 	if err != nil {
 		t.Fatal(err)

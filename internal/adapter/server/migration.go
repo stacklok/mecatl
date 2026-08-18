@@ -70,9 +70,12 @@ func migrationStore(store port.SessionStore) (port.SessionMigrationStore, bool) 
 }
 
 func (s *Service) authorizeMigration(ctx context.Context) (port.SessionMigrationStore, string, error) {
-	_, principalKey, err := s.storageManagementPrincipalKey(ctx)
+	principalKey, err := s.storageManagementPrincipalKey(ctx)
 	if err != nil {
 		return nil, "", err
+	}
+	if !s.maintenanceMutationAvailable() {
+		return nil, principalKey, ErrMaintenanceExclusionUnavailable
 	}
 	backend, ok := migrationStore(s.cfg.Store)
 	if !ok {
@@ -95,6 +98,9 @@ func newMigrationHandle() (string, error) {
 func (s *Service) PlanSessionMigration(ctx context.Context) (MigrationPlan, error) {
 	backend, principalKey, err := s.authorizeMigration(ctx)
 	if err != nil {
+		if errors.Is(err, ErrMaintenanceExclusionUnavailable) {
+			return MigrationPlan{UnavailableReason: "maintenance_exclusion_unavailable"}, nil
+		}
 		if errors.Is(err, ErrMigrationUnsupported) {
 			return MigrationPlan{UnavailableReason: "backend_unsupported"}, nil
 		}
@@ -284,7 +290,7 @@ func (s *Service) migrateOneFamily(ctx context.Context, backend port.SessionMigr
 	if s.IsLive(family.ID) {
 		return maintenanceReasonActive
 	}
-	release, err := s.acquireMutationLease(ctx, family.ID)
+	release, err := s.acquireMaintenanceMutationLease(ctx, family.ID)
 	if err != nil {
 		if errors.Is(err, ErrSessionLeasedElsewhere) {
 			return maintenanceReasonLeased

@@ -44,9 +44,10 @@ func migrationServiceWithUpdate(t *testing.T, store port.SessionStore, authorize
 	svc, err := server.NewService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		StorageManagementAuthorized: authorize,
-		StorageMaintenanceUpdate:    update,
-		SessionLease:                lease, LeaseOwner: "migration-server", LeaseTTL: time.Minute, LeaseRenewInterval: 20 * time.Second,
+		StorageManagementAuthorized:         authorize,
+		LocalStorageMaintenanceSingleWriter: lease == nil,
+		StorageMaintenanceUpdate:            update,
+		SessionLease:                        lease, LeaseOwner: "migration-server", LeaseTTL: time.Minute, LeaseRenewInterval: 20 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

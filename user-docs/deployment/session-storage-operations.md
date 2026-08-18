@@ -152,8 +152,13 @@ storage_management:
 
 An absent or empty list fails closed and does not advertise remote storage management. Project
 settings, request owner claims, display names, grant types, and system-principal status cannot grant
-this authority. Embedded mecatui remains available because its private Unix-socket server explicitly
-marks the local single-user operator; that exception is never used by a remotely reachable daemon.
+this authority. Destructive migration and cleanup additionally require a working cross-process
+session-lease backend in every remotely reachable or multi-writer deployment; a missing, disabled,
+or `UNIMPLEMENTED` lease makes both capability bits false and apply fails before a family rewrite or
+deletion. A lease held by another process skips the protected family without mutation. Embedded
+mecatui remains available because its private Unix-socket composition explicitly proves a local
+single-process writer and uses process-local `IsLive` plus family locking; absence of a lease alone
+never grants that exception.
 
 Before any change, open **Sessions → Maintenance** and inspect **Storage health**. Record the
 effective policy, current/reclaimable bytes, format and durable-kind counts, last/next sweep, active

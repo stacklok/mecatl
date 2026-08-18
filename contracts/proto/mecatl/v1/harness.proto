@@ -556,9 +556,12 @@ message ServerCapabilities {
   // explicit engine bindings is available.
   bool legacy_adoption = 20;
   // storage_migration is true only when the backend implements durable bounded
-  // v1-to-v2 maintenance and a management authorizer is configured.
+  // v1-to-v2 maintenance, a management authorizer is configured, and destructive
+  // mutation has cross-process lease exclusion (or explicitly proven private
+  // embedded single-writer composition).
   bool storage_migration = 21;
-  // storage_cleanup advertises the authenticated plan/apply/job maintenance API.
+  // storage_cleanup advertises the authenticated plan/apply/job maintenance API
+  // only under the same destructive-mutation exclusion as storage_migration.
   bool storage_cleanup = 22;
   // manual_dream is the composition-time availability snapshot for the two
   // deployment-owned manual consolidation targets. An older server leaves it

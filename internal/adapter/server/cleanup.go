@@ -135,15 +135,25 @@ func policyVersion(policy RetentionPolicy) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-func (s *Service) authorizeCleanup(ctx context.Context) (*session.Principal, string, error) {
-	return s.storageManagementPrincipalKey(ctx)
+func (s *Service) authorizeCleanup(ctx context.Context) (string, error) {
+	key, err := s.storageManagementPrincipalKey(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !s.maintenanceMutationAvailable() {
+		return key, ErrMaintenanceExclusionUnavailable
+	}
+	return key, nil
 }
 
 // PlanSessionCleanup performs no writes. The explicit management gate runs
 // before the store-wide pager, so tenants cannot form pages or aggregate counts.
 func (s *Service) PlanSessionCleanup(ctx context.Context, scope CleanupScope) (CleanupPlan, error) {
-	_, principalKey, err := s.authorizeCleanup(ctx)
+	principalKey, err := s.authorizeCleanup(ctx)
 	if err != nil {
+		if errors.Is(err, ErrMaintenanceExclusionUnavailable) {
+			return CleanupPlan{UnavailableReason: "maintenance_exclusion_unavailable"}, nil
+		}
 		return CleanupPlan{}, err
 	}
 	pager, pageOK := s.cfg.Store.(port.SessionMetadataPager)
@@ -325,7 +335,7 @@ func (s *Service) verifyCleanupToken(token string) (cleanupTokenPayload, bool) {
 // ApplySessionCleanup re-plans before mutation, then serializes each deletion by
 // run-entry lock -> maintenance lease -> backend family lock (inside Delete).
 func (s *Service) ApplySessionCleanup(ctx context.Context, token string) (CleanupJob, error) {
-	_, principalKey, err := s.authorizeCleanup(ctx)
+	principalKey, err := s.authorizeCleanup(ctx)
 	if err != nil {
 		return CleanupJob{}, err
 	}
@@ -427,7 +437,7 @@ func (s *Service) deleteCleanupCandidate(ctx context.Context, candidate CleanupC
 	if s.IsLive(candidate.ID) {
 		return maintenanceReasonActive
 	}
-	release, err := s.acquireMutationLease(ctx, candidate.ID)
+	release, err := s.acquireMaintenanceMutationLease(ctx, candidate.ID)
 	if err != nil {
 		if errors.Is(err, ErrSessionLeasedElsewhere) {
 			return maintenanceReasonLeased
@@ -517,7 +527,7 @@ func (s *Service) cleanupCancelled(id, principalKey string) bool {
 
 // CancelSessionCleanup stops future items; committed deletions are not rolled back.
 func (s *Service) CancelSessionCleanup(ctx context.Context, id string) (CleanupJob, error) {
-	_, principalKey, err := s.authorizeCleanup(ctx)
+	principalKey, err := s.authorizeCleanup(ctx)
 	if err != nil {
 		return CleanupJob{}, err
 	}
@@ -539,7 +549,7 @@ func (s *Service) CancelSessionCleanup(ctx context.Context, id string) (CleanupJ
 
 // SessionCleanupJob returns one caller-bound sanitized maintenance projection.
 func (s *Service) SessionCleanupJob(ctx context.Context, id string) (CleanupJob, error) {
-	_, principalKey, err := s.authorizeCleanup(ctx)
+	principalKey, err := s.authorizeCleanup(ctx)
 	if err != nil {
 		return CleanupJob{}, err
 	}

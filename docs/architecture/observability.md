@@ -112,7 +112,13 @@
   stale or absent index is `unavailable`, never a measured zero, and unsupported
   backends do not advertise the management capability. Process-wide health,
   migration, and cleanup are disabled unless composition has an explicit management
-  authority. The private embedded mecatui Unix-socket server explicitly grants its
+  authority. Destructive migration/cleanup capability additionally requires a working
+  cross-process `port.SessionLease` for remotely reachable or multi-writer composition;
+  missing or stickily unsupported leasing suppresses both bits and mutations fail closed.
+  The private embedded mecatui Unix-socket server is the sole explicit single-process
+  exception: composition marks that proven posture, allowing process-local liveness plus
+  family locks. Lease absence by itself never selects the exception. That embedded
+  server explicitly grants its
   local operator; an OIDC daemon grants only exact operator-tier
   `storage_management.principals` issuer/subject pairs. Ordinary authenticated tenants,
   unlisted system principals, anonymous remote callers, and project/request-supplied

@@ -14,6 +14,9 @@ var (
 	// ErrManagementUnauthorized is deliberately resource-free: an unauthorized
 	// caller learns neither backend support nor aggregate storage scope.
 	ErrManagementUnauthorized = errors.New("server: management authorization required")
+	// ErrMaintenanceExclusionUnavailable reports that destructive storage
+	// maintenance cannot prove active-session exclusion in this deployment.
+	ErrMaintenanceExclusionUnavailable = errors.New("server: storage maintenance exclusion unavailable")
 	// ErrStorageHealthBackend is the sanitized aggregate-health backend failure.
 	ErrStorageHealthBackend = errors.New("server: storage health unavailable")
 	// ErrMigrationUnsupported reports that the configured session store has no

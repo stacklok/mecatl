@@ -88,8 +88,12 @@ HTTP peers are `POST /v1/storage/cleanup:plan`,
 `GET /v1/storage/cleanup/jobs/{id}`. Plan is read-only; apply requires the opaque token
 from that exact caller/scope/catalog/policy plan. Stale plans fail without mutation,
 partial failures return stable sanitized item codes, and unsupported backends report the
-capability as unavailable. `GetStorageHealth` remains a read-only aggregate view. These
-surfaces are intended for management clients; they do not add a model tool.
+capability as unavailable. Destructive cleanup and migration are advertised only when a
+cross-process session lease is active, except for the explicitly composed private embedded mecatui
+single-writer server. Remote/OIDC and multi-replica servers without a working lease fail closed;
+family mutation holds the lease through the complete rewrite or deletion. `GetStorageHealth`
+remains a read-only aggregate view. These surfaces are intended for management clients; they do
+not add a model tool.
 
 ### Agent team RPCs
 

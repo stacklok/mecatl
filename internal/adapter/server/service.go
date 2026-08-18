@@ -186,6 +186,12 @@ type Config struct {
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.
 	StorageManagementAuthorized func(context.Context) bool
+	// LocalStorageMaintenanceSingleWriter is true only when composition has proved
+	// this Service is a private, embedded, single-process writer (the in-process
+	// IsLive registry plus backend family locks are then sufficient). Remotely
+	// reachable or multi-writer deployments must leave it false and wire a working
+	// SessionLease before destructive migration or cleanup is advertised or run.
+	LocalStorageMaintenanceSingleWriter bool
 	// RetentionPolicy is the effective operator policy projected into health.
 	RetentionPolicy RetentionPolicy
 	// StorageMaintenanceStatus reports the shared retention/migration/cleanup lifecycle.
@@ -1762,8 +1768,8 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		LearnedSkills:     s.cfg.LearnedSkills != nil,
 		Scheduling:        s.scheduleStore() != nil,
 		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && implementsStorageHealth(s.cfg.Store),
-		StorageMigration:  s.cfg.StorageManagementAuthorized != nil && func() bool { _, ok := migrationStore(s.cfg.Store); return ok }(),
-		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && supportsCleanupDelete(s.cfg.Store),
+		StorageMigration:  s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && func() bool { _, ok := migrationStore(s.cfg.Store); return ok }(),
+		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
 		LegacyAdoption:    s.cfg.OwnershipEnforced && s.cfg.SessionEngine != nil,
 		ManualDream:       toProtoDreamCapabilities(s.ManualDreamCapabilities()),
 	}

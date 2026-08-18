@@ -30,14 +30,13 @@
 package mecatlv1
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -794,9 +793,12 @@ type ServerCapabilities struct {
 	// explicit engine bindings is available.
 	LegacyAdoption bool `protobuf:"varint,20,opt,name=legacy_adoption,json=legacyAdoption,proto3" json:"legacy_adoption,omitempty"`
 	// storage_migration is true only when the backend implements durable bounded
-	// v1-to-v2 maintenance and a management authorizer is configured.
+	// v1-to-v2 maintenance, a management authorizer is configured, and destructive
+	// mutation has cross-process lease exclusion (or explicitly proven private
+	// embedded single-writer composition).
 	StorageMigration bool `protobuf:"varint,21,opt,name=storage_migration,json=storageMigration,proto3" json:"storage_migration,omitempty"`
-	// storage_cleanup advertises the authenticated plan/apply/job maintenance API.
+	// storage_cleanup advertises the authenticated plan/apply/job maintenance API
+	// only under the same destructive-mutation exclusion as storage_migration.
 	StorageCleanup bool `protobuf:"varint,22,opt,name=storage_cleanup,json=storageCleanup,proto3" json:"storage_cleanup,omitempty"`
 	// manual_dream is the composition-time availability snapshot for the two
 	// deployment-owned manual consolidation targets. An older server leaves it
