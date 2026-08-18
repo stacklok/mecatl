@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -778,7 +779,8 @@ func TestChildGCStartupOnlySweepsOnceAndExits(t *testing.T) {
 		ChildRetention: time.Hour, // ChildGCInterval deliberately zero
 		Diagnostics:    port.NopDiagnostics{},
 	}
-	startChildGC(context.Background(), cfg, cs, func(session.SessionID) bool { return false })
+	closeGC := startChildGC(context.Background(), cfg, cs, func(session.SessionID) bool { return false })
+	defer closeGC()
 	select {
 	case <-cs.listed:
 	case <-time.After(5 * time.Second):
@@ -787,6 +789,162 @@ func TestChildGCStartupOnlySweepsOnceAndExits(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if got := cs.lists.Load(); got != 1 {
 		t.Errorf("startup-only mode performed %d Lists, want exactly 1", got)
+	}
+}
+
+type blockingRetentionStore struct {
+	*memstore.Store
+	calls       atomic.Int32
+	blockCall   int32
+	blocked     chan struct{}
+	workerDone  chan struct{}
+	blockedOnce sync.Once
+	closed      atomic.Bool
+}
+
+func newBlockingRetentionStore(blockCall int32) *blockingRetentionStore {
+	return &blockingRetentionStore{
+		Store: memstore.New(), blockCall: blockCall,
+		blocked: make(chan struct{}), workerDone: make(chan struct{}),
+	}
+}
+
+func (s *blockingRetentionStore) PageSessionMetadata(ctx context.Context, req port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	call := s.calls.Add(1)
+	if call != s.blockCall {
+		return s.Store.PageSessionMetadata(ctx, req)
+	}
+	s.blockedOnce.Do(func() { close(s.blocked) })
+	defer close(s.workerDone)
+	<-ctx.Done()
+	return port.SessionMetadataPage{}, ctx.Err()
+}
+
+func (s *blockingRetentionStore) close(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.workerDone:
+	default:
+		t.Fatal("store closed before the retention worker joined")
+	}
+	if !s.closed.CompareAndSwap(false, true) {
+		t.Fatal("store closed more than once")
+	}
+}
+
+func waitChildGCClose(t *testing.T, closeGC func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		closeGC()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("retention cleanup did not cancel and join within one second")
+	}
+}
+
+func TestChildGCCleanupCancelsStartupSweepJoinsAndIsIdempotent(t *testing.T) {
+	store := newBlockingRetentionStore(1)
+	health := &storageMaintenanceState{}
+	cfg := Config{
+		ChildRetention: time.Hour, ChildGCInterval: time.Hour,
+		Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
+	}
+	closeGC := startChildGC(context.Background(), cfg, store, func(session.SessionID) bool { return false })
+	<-store.blocked
+	if got := health.snapshot().ActiveJob; got != "retention_sweep" {
+		t.Fatalf("active job while blocked = %q, want retention_sweep", got)
+	}
+	waitChildGCClose(t, closeGC)
+	waitChildGCClose(t, closeGC)
+	if got := health.snapshot(); got.ActiveJob != "" || got.LastSweepAvailable {
+		t.Fatalf("health after cancelled sweep = %+v, want inactive without a successful sweep", got)
+	}
+	store.close(t) // dependency teardown is safe only after the worker join.
+}
+
+func TestChildGCCleanupCancelsBlockedTickerSweep(t *testing.T) {
+	store := newBlockingRetentionStore(2)
+	cfg := Config{
+		ChildRetention: time.Hour, ChildGCInterval: time.Millisecond,
+		Diagnostics: port.NopDiagnostics{}, storageMaintenance: &storageMaintenanceState{},
+	}
+	closeGC := startChildGC(context.Background(), cfg, store, func(session.SessionID) bool { return false })
+	select {
+	case <-store.blocked:
+	case <-time.After(time.Second):
+		t.Fatal("ticker sweep did not start")
+	}
+	waitChildGCClose(t, closeGC)
+	calls := store.calls.Load()
+	time.Sleep(10 * time.Millisecond)
+	if got := store.calls.Load(); got != calls {
+		t.Fatalf("post-close ticker touched store: calls %d -> %d", calls, got)
+	}
+	store.close(t)
+}
+
+func TestChildGCFailedSweepSettlesHealth(t *testing.T) {
+	health := &storageMaintenanceState{}
+	listed := make(chan struct{}, 1)
+	store := &countingPrunable{Store: memstore.New(), listed: listed, listErr: context.DeadlineExceeded}
+	closeGC := startChildGC(context.Background(), Config{
+		ChildRetention: time.Hour, Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
+	}, store, func(session.SessionID) bool { return false })
+	select {
+	case <-listed:
+	case <-time.After(time.Second):
+		t.Fatal("failed sweep did not start")
+	}
+	deadline := time.Now().Add(time.Second)
+	for health.snapshot().LastFailure == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("failed sweep did not settle health")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	waitChildGCClose(t, closeGC)
+	got := health.snapshot()
+	if got.ActiveJob != "" || got.LastFailure != "retention sweep failed" || got.LastSweepAvailable {
+		t.Fatalf("health after failed sweep = %+v", got)
+	}
+}
+
+func TestChildGCCleanupCancelsBlockedDelete(t *testing.T) {
+	now := time.Now()
+	store := &countingPrunable{Store: memstore.New(memstore.WithNow(func() time.Time { return now.Add(-2 * time.Hour) }))}
+	s := session.New("subagent-old", session.ModeDefault, "/ws", session.Limits{}, now.Add(-2*time.Hour))
+	if err := s.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan struct{})
+	done := make(chan struct{})
+	var once sync.Once
+	deleter := func(ctx context.Context, _ port.SessionDiscoveryMeta) error {
+		once.Do(func() { close(blocked) })
+		defer close(done)
+		<-ctx.Done() // represents a blocked conditional delete or lease acquisition.
+		return ctx.Err()
+	}
+	closeGC := startChildGC(context.Background(), Config{
+		ChildRetention: time.Hour, Diagnostics: port.NopDiagnostics{},
+	}, store, func(session.SessionID) bool { return false }, deleter)
+	select {
+	case <-blocked:
+	case <-time.After(time.Second):
+		t.Fatal("delete did not start")
+	}
+	waitChildGCClose(t, closeGC)
+	select {
+	case <-done:
+	default:
+		t.Fatal("cleanup returned before blocked delete joined")
 	}
 }
 
@@ -952,13 +1110,12 @@ func TestBuildZeroConfigChildGCIsNoOp(t *testing.T) {
 }
 
 // TestBuildEnabledChildGCNarratesAndStops pins the enabled wiring end-to-end:
-// a Build with retention configured narrates ENABLED, and the ticker goroutine
-// exits on ctx cancel (goleak at TestMain is the assertion).
+// a Build with retention configured narrates ENABLED, and Built.Close owns the
+// ticker even while the Build context remains live (goleak at TestMain is the
+// assertion). A second Close is a no-op.
 func TestBuildEnabledChildGCNarratesAndStops(t *testing.T) {
 	diag := newCapturingDiagnostics()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	built, err := Build(ctx, Config{
+	built, err := Build(context.Background(), Config{
 		Workspace:                  t.TempDir(),
 		Model:                      "mock",
 		UseMock:                    true,
@@ -970,10 +1127,11 @@ func TestBuildEnabledChildGCNarratesAndStops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer built.Close()
 	if got := diag.countContaining("session GC ENABLED"); got != 1 {
 		t.Errorf("Build narrated 'session GC ENABLED' %d times, want exactly 1", got)
 	}
+	built.Close()
+	built.Close()
 }
 
 // --- Schedule-fire retention (ADR 0059 decision #7 Phase-2) -----------------

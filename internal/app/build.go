@@ -2075,9 +2075,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// Child-session retention GC (issue #38): wired AFTER the Service exists
 	// because the sweep's liveness predicate is the Service's in-flight run
 	// registry. No-op (one INFO) when the policy is disabled or the store is
-	// not prunable; otherwise a startup sweep + ticker sharing ctx (the
-	// startMemoryConsolidation lifetime — the goroutine exits on shutdown).
-	startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
+	// not prunable; otherwise a startup sweep + ticker owned by Built.Close.
+	childGCClose := startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
 	// StateRunning session a process crash left behind, INCLUDING the
@@ -2090,8 +2089,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the live-model refresh goroutine and closes the session-store driver
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
-	closeAll := func() {
+	closeAll := sync.OnceFunc(func() {
 		staleSessionReconcileClose()
+		childGCClose()
 		schedClose()
 		refreshClose()
 		svc.Close()
@@ -2100,7 +2100,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		agentClose()
 		storeClose()
 		commandConnClose()
-	}
+	})
 	profilesTransferred = true
 	return &Built{Service: svc, Close: closeAll}, nil
 }

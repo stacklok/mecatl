@@ -7,12 +7,11 @@ import (
 )
 
 // TestMain installs a goroutine-leak gate over the composition layer. The
-// composition-OWNED background goroutine this gate exists to protect is the
-// live-model refresh (startLiveModelRefresh): its returned closer (cancel +
-// wg.Wait) is folded into Build's closeAll, so a test that defers built.Close()
-// must leave nothing behind. The live-model tests (TestAsyncRefresh*, TestLive*,
-// TestBuildAsyncSwap) pass this gate with NO ignore entry — a leaked refresh
-// goroutine (a missing Close, a swap that ignores cancellation) would fail here.
+// composition-OWNED background goroutines this gate exists to protect include
+// the live-model refresh and child-session retention worker: their returned
+// cancel+join closers are folded into Build's closeAll, so a test that defers
+// built.Close() must leave nothing behind. The targeted lifecycle tests also use
+// a non-cancelled Build context, making Built.Close the only possible owner.
 //
 // The two IgnoreTopFunction entries below are NOT live-model code — they are
 // pre-existing, slow-to-drain goroutines from the composition's full-Build e2e

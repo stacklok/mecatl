@@ -24,13 +24,23 @@ func (s *storageMaintenanceState) beginSweep() {
 }
 
 func (s *storageMaintenanceState) finishSweep(now time.Time, cadence time.Duration) {
+	s.finishSweepAttempt(now, cadence, "", true)
+}
+
+func (s *storageMaintenanceState) failSweep(now time.Time, cadence time.Duration) {
+	s.finishSweepAttempt(now, cadence, "retention sweep failed", false)
+}
+
+func (s *storageMaintenanceState) finishSweepAttempt(now time.Time, cadence time.Duration, failure string, completed bool) {
 	if s == nil {
 		return
 	}
-	s.finish("retention_sweep", "retention_sweep", "")
+	s.finish("retention_sweep", "retention_sweep", failure)
 	s.mu.Lock()
-	s.status.LastSweep = now
-	s.status.LastSweepAvailable = true
+	if completed {
+		s.status.LastSweep = now
+		s.status.LastSweepAvailable = true
+	}
 	if cadence > 0 {
 		s.status.NextSweep = now.Add(cadence)
 		s.status.NextSweepAvailable = true

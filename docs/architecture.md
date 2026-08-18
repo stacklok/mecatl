@@ -360,7 +360,9 @@ shared assembly with **k8s-native defaults** — a **Redis** session store + dur
 `/readyz` (drain-gated + Redis-pinged), and a bounded `GracefulStop`. The agent pods are
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
 managed service the pod talks to over the network (Redis + the k8s API server). Redis
-metadata paging and retention are zero-load and work-bounded after index publication; an
+metadata paging and retention are zero-load and work-bounded after index publication; the
+retention worker is owned by `app.Build`, whose idempotent close cancels and joins any
+startup/ticker sweep before Service and store teardown. An
 upgraded legacy keyspace stays honestly unavailable until the authenticated, resumable
 storage-migration job CAS-adopts every snapshot row and atomically publishes a stable
 source generation. It defaults

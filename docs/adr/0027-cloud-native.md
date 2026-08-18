@@ -616,9 +616,8 @@ nobody ever touches the orphan again:
   survive unnoticed.
 - **The composition-level sweep** (`internal/app/session_reconcile.go`
   (`startStaleSessionReconcile`)): a startup-sweep-then-ticker goroutine
-  (mirroring the `startLiveModelRefresh` idiom, not `childGC`'s Build-ctx-tied
-  one — this sweep always keeps a persistent ticker running, so it needs its
-  own cancelable lifetime) that lists every stored session via
+  (mirroring the `startLiveModelRefresh` idiom; the child-GC worker now uses the
+  same Build-owned cancel-and-join lifecycle) that lists every stored session via
   `Service.ListSessions`, narrows to `state=="running"` rows excluding
   `sched--` fire ids (the scheduler owns its own stale-fire reconciler), and
   settles every candidate `SessionStale` judges stale via `SettleIfStale`.
@@ -666,11 +665,10 @@ returned closer now `cancel()`s AND `wg.Wait()`s (mirroring
 sweep pass is mid-`SettleIfStale`, folded into `Built.Close`'s `closeAll`;
 re-attach = a restarted process starts a FRESH sweep at the next `Build`'s
 startup pass — there is nothing to carry over, since the durable snapshot the
-sweep repairs already IS the state in question. It is deliberately NOT tied to
-`Build`'s own ctx, unlike `childGC` (a no-op-by-default goroutine most callers
-never notice outlives one `Build` call, since `ChildGCInterval` defaults to
-0/startup-only) — this sweep always runs a persistent ticker, so tying it to a
-ctx a test fixture never cancels would leak a goroutine per test. List 2 gains
+sweep repairs already IS the state in question. The child-GC worker now follows
+that same owned-lifetime rule: its idempotent closer cancels and joins startup,
+ticker, and context-aware blocked storage work before Service/store teardown,
+independent of whether the caller cancels the Build context. List 2 gains
 NO row: the sweep and the funnel repair both act on the ALREADY-persisted
 `session.Session` snapshot — there is no new restart-losable state here, only
 a repair of state that already existed. The re-audit verdict is CLEAN.
@@ -777,7 +775,7 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 | 13 | Background children (`childRunRegistry`) | `agent.Run` | run | `drainChildren` at both terminate paths (cancel + join + seal) | registry lost; the child SESSIONS persist via `WithSubagentStore`/`WithMemberStore` and are individually resumable | `engine/agent/childregistry.go:128-131`; `engine/agent/subagent.go:599,1267` |
 | 14 | askRegistry channel park + childAskRouter | `agent.Run` | run | unregistered on verdict/retract; dies with the run | lost, BUT no longer stranding (Phase 2): a post-death `Approve` on an awaiting session re-enters the loop AT the ask via `internal/adapter/server/service.go` (`resumeFromAwaiting`) rather than returning `ErrNoActiveRun`; the channel park itself is rebuilt by the resumed run | `engine/agent/permission.go:30-32,161` |
 | 15 | Hook subprocesses | hookexec, per invocation | call | spawn, wait (30s default timeout, process-group kill) | nothing to re-attach | `internal/adapter/hookexec/hookexec.go:116,130` |
-| 16 | Child-session retention GC goroutine + bounded storage-maintenance status (`storageMaintenanceState`) | `startChildGC` / `app.Build` | process | goroutine exits on ctx done or sticky `ErrPruneUnsupported`; the mutex-protected per-job active map and sanitized last failure die with Build | mixed: retention last/next sweep and last failure reset by design; active cleanup resets with its in-memory job registry (row 57); durable migration truth persists in row 56 and reattaches to this projection when its job is inspected/resumed. Concurrent retention/migration/cleanup keys are independent, so one terminal job cannot clear another | `internal/app/childgc.go` (`startChildGC`); `internal/app/storage_health.go` (`storageMaintenanceState`); `internal/adapter/server/migration.go` (`SessionMigrationJob`, `driveSessionMigration`) |
+| 16 | Child-session retention GC goroutine + bounded storage-maintenance status (`storageMaintenanceState`) | `startChildGC` / `app.Build` | process | `Built.Close` invokes the returned idempotent cancel-and-join cleanup before Service/store teardown; cancellation covers startup, ticker, and context-aware list/delete/lease work, clears active health without claiming success, and sticky `ErrPruneUnsupported` also exits the worker. Disabled/unsupported paths return a no-op cleanup | mixed: retention last/next sweep and last failure reset by design; active cleanup resets with its in-memory job registry (row 57); durable migration truth persists in row 56 and reattaches to this projection when its job is inspected/resumed. Concurrent retention/migration/cleanup keys are independent, so one terminal job cannot clear another | `internal/app/childgc.go` (`startChildGC`); `internal/app/storage_health.go` (`storageMaintenanceState`); `internal/adapter/server/migration.go` (`SessionMigrationJob`, `driveSessionMigration`) |
 | 17 | Memory/user-model consolidation goroutines (dream) plus each consolidator's process-local rotating cursor and serialization gate | `app.Build` creates the goroutines; `dream.Consolidator` owns its cursor/gate | process | goroutines exit on ctx done; the cursor/gate die with their consolidator | **reset-by-design**: restart recreates the ticker/consolidator but resets candidate rotation and any in-flight serialization state. The gate serializes only one consolidator instance; it is not a cross-replica claim mechanism. | `internal/app/build.go` (`startMemoryConsolidation`, `startUserModelConsolidation`); `internal/adapter/dream/dream.go` (`Consolidator`, `GeneratePlan`, `ApplyPlan`) |
 | 18 | Live model-catalog refresh goroutine | `app.Build` | process | one-shot; `refreshClose` in `closeAll` | reconstructible (embedded catalog is the floor) | `internal/app/modellister.go:35`; `internal/app/build.go:763` |
 | | _(traceability)_ `reg.meta` (the refreshed `liveMetaStore`) ALSO feeds the `resolved_model` echo for BOTH branches via the injected `server.Config.ResolveContextWindow` closure (issue #66, promoted by the resolve-at-use unification). The echo closure is the SIBLING `reg.echoWindowResolver` (NOT the engine's `reg.windowResolver`): both share the `resolveWindowCore` precedence so they agree on every override / catalogued / live window, differing ONLY in the terminal unknown branch — the echo returns a deliberate PROVISIONAL `0` while the refresh is in flight (the client refetches), then floors an uncatalogued model to 128k once SETTLED (no-network boundedness). That settle is tracked by a NEW `completed atomic.Bool` ON this same `liveMetaStore` (`reg.meta`), set by the SAME one-shot refresh goroutine this row owns (every settle path; never on a shutdown-cancel). **No new resource row** — the flag lives on the already-inventoried store and is set by the already-inventoried goroutine; `decision = derive` (a restart re-runs the refresh, which re-settles the flag). | | | | | `internal/app/livemeta.go` (`windowResolver`, `echoWindowResolver`, `markRefreshCompleted`); `internal/app/build.go` (`ResolveContextWindow`); `internal/adapter/server/service.go` (`ResolvedModel`) |

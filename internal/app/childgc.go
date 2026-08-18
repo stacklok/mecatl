@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/agent"
@@ -156,6 +157,9 @@ type childGC struct {
 	// which every subsequent sweep is a no-op and the ticker goroutine exits.
 	// Only the sweep goroutine (or a single-goroutine test) touches it.
 	disabled bool
+	// failed records whether the most recent sweep hit a transient list/delete
+	// failure, for Build-owned health projection. It is worker-confined.
+	failed bool
 }
 
 // Ask the store for one complete retention snapshot. Today's v1 pagers form a
@@ -171,6 +175,9 @@ const retentionMetadataPageSize = 1<<31 - 1
 // A paging failure therefore aborts the sweep rather than falling back to ID
 // prefix inference.
 func (g *childGC) retentionMetadata(ctx context.Context) ([]port.SessionDiscoveryMeta, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if g.pager == nil {
 		return nil, port.ErrSessionMetadataPagingUnsupported
 	}
@@ -179,6 +186,9 @@ func (g *childGC) retentionMetadata(ctx context.Context) ([]port.SessionDiscover
 		cursor *port.SessionMetadataCursor
 	)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		page, err := g.pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
 			Limit: retentionMetadataPageSize, Cursor: cursor,
 		})
@@ -255,16 +265,21 @@ func classifyRetention(meta port.SessionDiscoveryMeta) retentionClass {
 // enumerate — e.g. a remote driver answering UNIMPLEMENTED) gets ONE INFO and
 // stickily disables all further sweeping — never a recurring WARN.
 func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
+	g.failed = false
 	if g.disabled {
 		return 0, 0
 	}
 	entries, err := g.retentionMetadata(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0, 0
+		}
 		if errors.Is(err, port.ErrPruneUnsupported) || errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
 			g.disabled = true
 			g.diag.Log(ctx, port.LevelInfo, "session GC: store does not support durable retention metadata; disabling session GC", "err", err)
 			return 0, 0
 		}
+		g.failed = true
 		g.diag.Log(ctx, port.LevelWarn, "session GC: metadata list failed; skipping sweep", "err", err)
 		return 0, 0
 	}
@@ -283,6 +298,9 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 
 	var errs deleteErrors
 	for _, item := range plan.Eligible {
+		if ctx.Err() != nil {
+			break
+		}
 		if g.remove(ctx, item.Metadata, &errs) {
 			deleted++
 		}
@@ -290,6 +308,7 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 	retained = len(entries) - deleted
 
 	if errs.count > 0 {
+		g.failed = true
 		g.diag.Log(ctx, port.LevelWarn, "session GC: some deletes failed (retained; retried next sweep)",
 			"failed", errs.count, "first_err", errs.first)
 	}
@@ -327,17 +346,18 @@ func (g *childGC) remove(ctx context.Context, candidate port.SessionDiscoveryMet
 	return true
 }
 
-// startChildGC wires the child-session retention sweeper: a no-op (with one
-// build-once INFO, the startMemoryConsolidation idiom) when the policy is
-// fully disabled or the store is not prunable; otherwise one startup sweep
-// plus a ticker every cfg.ChildGCInterval (0 = startup-only), all on one
-// background goroutine sharing ctx (so the loop exits on shutdown). The
-// liveness predicate is the Service's in-flight run registry, threaded in by
-// Build AFTER the Service exists.
-func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool, deleters ...func(context.Context, port.SessionDiscoveryMeta) error) {
+// startChildGC wires the child-session retention sweeper: a no-op cleanup (with
+// one build-once INFO, the startMemoryConsolidation idiom) when the policy is
+// fully disabled or the store is not prunable; otherwise one startup sweep plus
+// a ticker every cfg.ChildGCInterval (0 = startup-only), all on one owned
+// background goroutine. The returned idempotent cleanup cancels the worker and
+// joins it; Build runs that cleanup before closing Service or the store, so no
+// sweep can outlive its dependencies.
+func startChildGC(parent context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool, deleters ...func(context.Context, port.SessionDiscoveryMeta) error) func() {
+	noop := func() {}
 	// The sweeper has no caller: it runs as the explicit system principal
 	// (ADR 0204 decision 7), never an absent one.
-	ctx = syscaller.Context(ctx, syscaller.RootChildGC)
+	parent = syscaller.Context(parent, syscaller.RootChildGC)
 	policy := childGCPolicy{
 		retention:             cfg.ChildRetention,
 		maxPerFamily:          cfg.ChildRetentionMaxPerFamily,
@@ -347,22 +367,22 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 		scheduleFireMaxTotal:  cfg.ScheduleFireRetentionMaxTotal,
 	}
 	if !policy.enabled() {
-		cfg.diag().Log(ctx, port.LevelInfo, "session GC DISABLED (no child retention/cap and no main retention/cap)")
-		return
+		cfg.diag().Log(parent, port.LevelInfo, "session GC DISABLED (no child retention/cap and no main retention/cap)")
+		return noop
 	}
 	prunable, ok := store.(port.PrunableStore)
 	if !ok {
-		cfg.diag().Log(ctx, port.LevelInfo, "session GC unavailable (session store is not prunable); store is never swept")
-		return
+		cfg.diag().Log(parent, port.LevelInfo, "session GC unavailable (session store is not prunable); store is never swept")
+		return noop
 	}
 	pager, ok := store.(port.SessionMetadataPager)
 	if !ok {
-		cfg.diag().Log(ctx, port.LevelInfo, "session GC unavailable (session store has no durable metadata pager); store is never swept")
-		return
+		cfg.diag().Log(parent, port.LevelInfo, "session GC unavailable (session store has no durable metadata pager); store is never swept")
+		return noop
 	}
 	if _, ok := store.(port.ConditionalPrunableStore); !ok && len(deleters) > 0 {
-		cfg.diag().Log(ctx, port.LevelInfo, "session GC unavailable (session store has no atomic conditional delete); store is never swept")
-		return
+		cfg.diag().Log(parent, port.LevelInfo, "session GC unavailable (session store has no atomic conditional delete); store is never swept")
+		return noop
 	}
 	var deleteCandidate func(context.Context, port.SessionDiscoveryMeta) error
 	if len(deleters) > 0 {
@@ -377,21 +397,35 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 		now:             time.Now,
 		diag:            cfg.diag(),
 	}
-	cfg.diag().Log(ctx, port.LevelInfo, "session GC ENABLED",
+	cfg.diag().Log(parent, port.LevelInfo, "session GC ENABLED",
 		"child_retention", cfg.ChildRetention, "child_max_per_family", cfg.ChildRetentionMaxPerFamily,
 		"main_retention", cfg.MainRetention, "main_max_total", cfg.MainRetentionMaxTotal,
 		"schedule_fire_retention", cfg.ScheduleFireRetention,
 		"schedule_fire_max_total", cfg.ScheduleFireRetentionMaxTotal,
 		"interval", cfg.ChildGCInterval)
+	ctx, cancel := context.WithCancel(parent)
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		runSweep := func() {
 			cfg.storageMaintenance.beginSweep()
+			defer func() {
+				if ctx.Err() != nil {
+					cfg.storageMaintenance.finish("retention_sweep", "retention_sweep", "")
+					return
+				}
+				if gc.failed {
+					cfg.storageMaintenance.failSweep(time.Now(), cfg.ChildGCInterval)
+					return
+				}
+				cfg.storageMaintenance.finishSweep(time.Now(), cfg.ChildGCInterval)
+			}()
 			gc.sweep(ctx)
-			cfg.storageMaintenance.finishSweep(time.Now(), cfg.ChildGCInterval)
 		}
 		runSweep()
-		if cfg.ChildGCInterval <= 0 || gc.disabled {
-			return // startup-only, or the store can never be swept
+		if cfg.ChildGCInterval <= 0 || gc.disabled || ctx.Err() != nil {
+			return // startup-only, unsupported store, or shutdown
 		}
 		ticker := time.NewTicker(cfg.ChildGCInterval)
 		defer ticker.Stop()
@@ -407,4 +441,8 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 			}
 		}
 	}()
+	return sync.OnceFunc(func() {
+		cancel()
+		wg.Wait()
+	})
 }

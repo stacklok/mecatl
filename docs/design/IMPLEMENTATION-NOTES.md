@@ -6764,8 +6764,14 @@ grew without bound. Split mechanism from policy:
   `port.ErrPruneUnsupported` = one INFO + sticky disable; Delete failures = one tallied
   WARN; one INFO summary only when something was deleted.
 - **Placement + defaults.** `startChildGC` runs after Service construction (it needs the
-  liveness predicate): startup sweep + ticker on one ctx-bound goroutine
-  (`--child-gc-interval`, default 1h, 0 = startup-only). `--child-retention` default
+  liveness predicate): startup sweep + ticker on one Build-owned goroutine
+  (`--child-gc-interval`, default 1h, 0 = startup-only). Its returned idempotent
+  cleanup cancels and joins startup, ticker, and blocked context-aware store/lease/delete
+  work; `Built.Close` invokes it before Service and store teardown, so a caller need not
+  cancel the Build context and no destructive pass can race closed dependencies. A
+  cancelled pass clears the health `ActiveJob` without claiming a successful sweep; a
+  transient failed pass clears it and records the bounded retention-failure status.
+  `--child-retention` default
   168h, `--child-retention-max-per-family` default 500; both zero = fully disabled (the
   zero-config/app.Config default, so embedded/test Builds are byte-identical unless
   opted in — mecatui's embeddedConfig passes the mecated defaults so a long-lived TUI's
