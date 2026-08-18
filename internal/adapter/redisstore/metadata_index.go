@@ -19,16 +19,17 @@ import (
 )
 
 const (
-	metadataIndexStateKey  = "mecatl:session-metadata:state"
-	metadataIndexReady     = "redis-metadata-index/1"
-	metadataIndexStale     = "redis-metadata-index/stale"
-	metadataGlobalIndexKey = "mecatl:session-metadata:index:all"
-	metadataOwnerIndexBase = "mecatl:session-metadata:index:owner:"
-	metadataGenerationKey  = "mecatl:session-metadata:generations"
-	metadataGlobalScope    = "redis-v1:all"
-	metadataOwnerScopeBase = "redis-v1:owner:"
-	metadataNilOwnerScope  = "redis-v1:owner:none"
-	metadataContinuationV1 = "redis-v1."
+	metadataIndexStateKey        = "mecatl:session-metadata:state"
+	metadataIndexReady           = "redis-metadata-index/1"
+	metadataIndexStale           = "redis-metadata-index/stale"
+	metadataGlobalIndexKey       = "mecatl:session-metadata:index:all"
+	metadataOwnerIndexBase       = "mecatl:session-metadata:index:owner:"
+	metadataGenerationKey        = "mecatl:session-metadata:generations"
+	metadataRebuildGenerationKey = "mecatl:session-metadata:rebuild-generation"
+	metadataGlobalScope          = "redis-v1:all"
+	metadataOwnerScopeBase       = "redis-v1:owner:"
+	metadataNilOwnerScope        = "redis-v1:owner:none"
+	metadataContinuationV1       = "redis-v1."
 )
 
 type metadataWorkKind uint8
@@ -107,16 +108,21 @@ end
 if ARGV[5] ~= '' then
   redis.call('HINCRBY', KEYS[3], ARGV[5], 1)
 end
+redis.call('INCR', KEYS[4])
 return 1
 `)
 
-func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session, blob []byte, modifiedAt time.Time) error {
-	row := port.SessionDiscoveryMeta{
+func sessionMetadata(s *session.Session, modifiedAt time.Time, size int64) port.SessionDiscoveryMeta {
+	return port.SessionDiscoveryMeta{
 		ID: s.ID, ModifiedAt: modifiedAt, State: s.State, Turns: s.Counters.Turns,
 		ModelID: s.ModelID, CreatedAt: s.CreatedAt, Title: s.Title,
 		TitleProvenance: s.TitleProvenance, Owner: s.Owner.Clone(), Workspace: s.Workspace,
-		Kind: s.Kind, Relationship: s.Relationship, EstimatedBytes: int64(len(blob)),
+		Kind: s.Kind, Relationship: s.Relationship, EstimatedBytes: size,
 	}
+}
+
+func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session, blob []byte, modifiedAt time.Time) error {
+	row := sessionMetadata(s, modifiedAt, int64(len(blob)))
 	member, err := encodeMetadataMember(row)
 	if err != nil {
 		return err
@@ -126,7 +132,7 @@ func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session
 		ownerScope = metadataOwnerScope(s.Owner)
 	}
 	return saveMetadataScript.Run(ctx, st.client,
-		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey},
+		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey},
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
 		metadataOwnerIndexBase,
 	).Err()
@@ -144,12 +150,13 @@ if member then
   end
 end
 redis.call('DEL', KEYS[1], KEYS[4], KEYS[5])
+redis.call('INCR', KEYS[6])
 return 1
 `)
 
 func (st *Store) deleteSessionAndMetadata(ctx context.Context, id session.SessionID) error {
 	return deleteMetadataScript.Run(ctx, st.client,
-		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id)},
+		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey},
 		metadataGlobalScope, metadataOwnerIndexBase,
 	).Err()
 }
@@ -167,6 +174,7 @@ if owner_scope ~= '' then
   redis.call('HINCRBY', KEYS[3], owner_scope, 1)
 end
 redis.call('DEL', KEYS[1], KEYS[4], KEYS[5])
+redis.call('INCR', KEYS[6])
 return 1
 `)
 
@@ -176,7 +184,7 @@ func (st *Store) deleteSessionIfMetadataUnchanged(ctx context.Context, expected 
 		return false, err
 	}
 	result, err := conditionalDeleteMetadataScript.Run(ctx, st.client,
-		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID)},
+		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey},
 		member, metadataGlobalScope, metadataOwnerIndexBase,
 	).Int()
 	return result == 1, err

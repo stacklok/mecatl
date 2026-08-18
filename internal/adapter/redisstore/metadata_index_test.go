@@ -13,6 +13,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	miniredisserver "github.com/alicebob/miniredis/v2/server"
 
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -317,6 +318,51 @@ func TestDeleteRemovesMetadataAndInvalidatesCursor(t *testing.T) {
 	}
 	if page.TotalCount != 1 || len(page.Sessions) != 1 {
 		t.Fatalf("page after delete = %+v, want one row", page)
+	}
+}
+
+func TestMetadataRebuildRejectsStaleGenerationBeforeAtomicPublication(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mr.Close)
+	legacy := session.New("legacy", session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+	blob, err := sessnap.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr.HSet(sessionKey(legacy.ID), fieldBlob, string(blob), fieldMtime, "1")
+	st, err := New(mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	inspection, err := st.InspectSessionMigration(ctx)
+	if err != nil || len(inspection.Families) != 1 {
+		t.Fatalf("inspection = %+v, %v", inspection, err)
+	}
+	if reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0]); err != nil || reason != "" {
+		t.Fatalf("adopt row = %q, %v", reason, err)
+	}
+	if err := st.Save(ctx, session.New("concurrent", session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())); err != nil {
+		t.Fatal(err)
+	}
+	published, err := st.FinalizeSessionMigration(ctx, inspection.Generation)
+	if err != nil || published {
+		t.Fatalf("stale generation publication = %v, %v", published, err)
+	}
+	if _, err := st.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
+		t.Fatalf("stale generation exposed index: %v", err)
+	}
+	current, err := st.InspectSessionMigration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err = st.FinalizeSessionMigration(ctx, current.Generation)
+	if err != nil || !published {
+		t.Fatalf("current generation publication = %v, %v", published, err)
 	}
 }
 

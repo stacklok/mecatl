@@ -359,7 +359,11 @@ shared assembly with **k8s-native defaults** — a **Redis** session store + dur
 (`internal/adapter/k8slease`, the in-cluster multi-replica single-writer path), a dynamic
 `/readyz` (drain-gated + Redis-pinged), and a bounded `GracefulStop`. The agent pods are
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
-managed service the pod talks to over the network (Redis + the k8s API server). It defaults
+managed service the pod talks to over the network (Redis + the k8s API server). Redis
+metadata paging and retention are zero-load and work-bounded after index publication; an
+upgraded legacy keyspace stays honestly unavailable until the authenticated, resumable
+storage-migration job CAS-adopts every snapshot row and atomically publishes a stable
+source generation. It defaults
 `--headless=true` and `--posture=auto` (an unattended daemon, inverted from `mecated`'s
 interactive defaults), drops `mecated`'s subcommands + Prometheus/OTel admin surface, and
 exposes `--redis-url` (mutually exclusive with `--store-dir`/`--session-store-url`). The

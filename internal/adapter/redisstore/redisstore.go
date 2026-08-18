@@ -34,6 +34,7 @@ import (
 	"iter"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -92,6 +93,8 @@ var (
 // serializes commands, so no client-side mutex is required.
 type Store struct {
 	client *redis.Client
+
+	migrationLocks sync.Map
 
 	metadataWorkObserver func(metadataWorkKind)
 }

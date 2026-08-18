@@ -64,6 +64,10 @@ type MigrationJob struct {
 	Errors           []MigrationItemError
 }
 
+type sessionMigrationFinalizer interface {
+	FinalizeSessionMigration(context.Context, string) (bool, error)
+}
+
 func migrationStore(store port.SessionStore) (port.SessionMigrationStore, bool) {
 	backend, ok := store.(port.SessionMigrationStore)
 	return backend, ok
@@ -252,7 +256,22 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		}
 	}
 	if !remaining && job.State != port.SessionMigrationCancelled {
-		job.State = port.SessionMigrationCompleted
+		if finalizer, ok := backend.(sessionMigrationFinalizer); ok {
+			published, finalizeErr := finalizer.FinalizeSessionMigration(ctx, inspection.Generation)
+			if finalizeErr != nil {
+				s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: storage backend unavailable", Resumable: true})
+				return MigrationJob{}, sanitizedMigrationBackendError()
+			}
+			remaining = !published
+			if remaining {
+				for _, family := range inspection.Families {
+					delete(job.TerminalItems, family.Handle)
+				}
+			}
+		}
+		if !remaining {
+			job.State = port.SessionMigrationCompleted
+		}
 	}
 	job.UpdatedAt = time.Now().UTC()
 	if err := backend.SaveSessionMigrationJob(context.WithoutCancel(ctx), job); err != nil {

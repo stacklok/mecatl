@@ -62,8 +62,8 @@ feature as unsupported. The view is status-only: it does not run cleanup or migr
 
 ### Resumable v1-to-v2 migration
 
-Jsonlstore additionally implements the optional `port.SessionMigrationStore` management
-capability. An authenticated plan is read-only and reports v1/v2/invalid/skipped
+Jsonlstore and Redis implement the optional `port.SessionMigrationStore` management
+capability. For jsonlstore, an authenticated plan reports v1/v2/invalid/skipped
 families, current and estimated reclaimable bytes, and the maximum temporary space for
 one family. Apply processes a bounded batch and returns a durable job handle; use resume
 to process later batches or continue after a server restart. Each job's complete
@@ -74,11 +74,15 @@ monotonic: later resume attempts conflict and cannot restore the running state.
 Already-migrated families remain committed.
 
 Migration preserves the complete snapshot, owner, durable kind (including `unknown`),
-logical modification time, and tool/event sidecars. It acquires the ordinary run-entry
-lease and the family's cross-process lock, rereads and verifies v2 before removing v1,
-and reports corrupt/torn records without discarding them. Job errors expose stable
-reason codes and sanitized text only. Memstore, Redis, and remote stores currently
-advertise migration as unsupported rather than returning fabricated zero counts.
+logical modification time, and tool/event sidecars. For jsonlstore it acquires the
+ordinary run-entry lease and the family's cross-process lock, rereads and verifies v2
+before removing v1, and reports corrupt/torn records without discarding them. Redis uses
+the same authenticated, durable, bounded job to adopt the derivative metadata index on
+upgrade: inventory and cleanup remain unavailable while stale; each family row is
+CAS-installed; concurrent Save/Delete advances the source generation; and `ready` is
+published atomically only after every extant snapshot is covered. Job errors expose
+stable reason codes and sanitized text only. Memstore and remote stores advertise
+migration as unsupported rather than returning fabricated zero counts.
 
 ### Authenticated cleanup planning
 
@@ -210,7 +214,7 @@ and moved into `sid-v1/` the next time that session is written.
 
 ### internal/adapter/redisstore — Redis-backed
 
-The backend for `mecak8s` (the storage-free, Kubernetes-native composition root). Implements `port.SessionStore`, `port.EventLog`, `port.PrunableStore`, and `port.ToolCallRecorder` over a Redis connection. Used for stateless pod deployments where no persistent volume is available. Select it via `--redis-url` (mecak8s only). Validated by the same conformance suites as jsonlstore, running over miniredis.
+The backend for `mecak8s` (the storage-free, Kubernetes-native composition root). Implements `port.SessionStore`, `port.EventLog`, `port.PrunableStore`, `port.SessionMigrationStore`, and `port.ToolCallRecorder` over a Redis connection. Existing snapshot databases without the derivative metadata index remain loadable but report paging and retention unsupported until an authenticated storage-migration job adopts every row and atomically publishes the index. Select it via `--redis-url` (mecak8s only). Validated by the same conformance suites as jsonlstore, running over miniredis.
 
 ---
 

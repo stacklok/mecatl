@@ -5940,7 +5940,13 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   overlapping resumes compare their pre-lock checkpoint with the locked durable record,
   so one advances and a stale peer receives a closed conflict instead of replaying a
   batch. Every apply/resume call processes at most 100 families (25 by default),
-  checkpointing after each committed family. Cancellation is monotonic: once persisted,
+  checkpointing after each committed family. Redis reuses this server-owned job
+  lifecycle to adopt metadata indexes on upgrade: only an explicit plan scans legacy
+  snapshot keys, each batch CAS-installs derivative rows, and a stable source-generation
+  check atomically publishes `ready` only after every extant snapshot is covered.
+  Concurrent Redis Save/Delete operations advance that generation and maintain their own
+  rows, so stale publication retries fail closed while paging and cleanup remain unsupported.
+  Cancellation is monotonic: once persisted,
   resume conflicts and no stale checkpoint can restore `running`. Completed jobs are idempotent.
 
   Per-family lock order is `Service.runEntryMu` → optional maintenance
