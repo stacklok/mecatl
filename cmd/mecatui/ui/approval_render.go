@@ -232,12 +232,7 @@ func (r *renderer) permissionModalBodyParts(ask pendingAsk, expand bool, queued,
 		// onto shorter lines never narrows the block and re-centres the card.
 		argsStyle := th.Style("askArgs")
 		argsRegion := askArgsMiniViewport(th, pretty, width, height)
-		if argsOffset > argsRegion.maxOffset {
-			argsOffset = argsRegion.maxOffset
-		}
-		if argsOffset < 0 {
-			argsOffset = 0
-		}
+		argsOffset = max(0, min(argsRegion.maxOffset, argsOffset))
 		lines := argsRegion.lines
 		// lipgloss Width() sets the CONTENT-region width, which the accent-bar
 		// border+padding are drawn INSIDE — so pin to blockWidth + the style's

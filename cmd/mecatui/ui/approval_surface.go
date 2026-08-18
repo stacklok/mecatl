@@ -172,12 +172,10 @@ func (m Model) onApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// when the modal opened). m.sp.Tick is NOT a stream reader — the
 	// no-extra-reader invariant is untouched (kept in sync with
 	// TestResolveLastAskRearmsSpinner / TestSpinnerVisibleMatchesFooterRender).
-	resume := adv.resume
-	if resume != phaseIdle {
-		resume = phaseRunning
-	}
-	m.phase = resume
-	if resume == phaseRunning {
+	// adv.resume is pre-clamped to idle|running by approvalState.advance() — the
+	// single source of truth for the resume rule; do NOT re-clamp here.
+	m.phase = adv.resume
+	if adv.resume == phaseRunning {
 		return m, tea.Batch(cmd, actCmd, m.sp.Tick)
 	}
 	return m, tea.Batch(cmd, actCmd)
@@ -207,15 +205,6 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 	// centred modal overlay is harmless — View() shows the modal for
 	// phaseAwaitingApproval regardless.
 	return m.afterEvent()
-}
-
-// markAskResolved is the Model shim over approvalState.markAskResolved: it records
-// an answered/retracted askID into the resolvedAsks dedupe set (lazily init'd — a
-// reference type mutable through the value-receiver Model, same pattern as
-// recordFileChange/filesSeen). The state lives in approvalState; the shim keeps
-// the m.markAskResolved(id) call sites byte-identical.
-func (m *Model) markAskResolved(id string) {
-	m.approval.markAskResolved(id)
 }
 
 // resolveAsk sends the approval/denial on the SAME stream (ask_id correlation),
@@ -250,12 +239,10 @@ func (m Model) resolveAsk(v client.Verdict) (tea.Model, tea.Cmd) {
 		// TestSpinnerVisibleMatchesFooterRender).
 		return m, sendCmd
 	}
-	resume := adv.resume
-	if resume != phaseIdle {
-		resume = phaseRunning
-	}
-	m.phase = resume
-	if resume == phaseRunning {
+	// adv.resume is pre-clamped to idle|running by approvalState.advance() — the
+	// single source of truth for the resume rule; do NOT re-clamp here.
+	m.phase = adv.resume
+	if adv.resume == phaseRunning {
 		return m, tea.Batch(sendCmd, m.sp.Tick)
 	}
 	return m, sendCmd

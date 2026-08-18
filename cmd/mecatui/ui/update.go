@@ -829,12 +829,10 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if adv.hasNext {
 			return m.afterEvent()
 		}
-		resume := adv.resume
-		if resume != phaseIdle {
-			resume = phaseRunning
-		}
-		m.phase = resume
-		if resume == phaseRunning {
+		// adv.resume is pre-clamped to idle|running by approvalState.advance() —
+		// the single source of truth for the resume rule; do NOT re-clamp here.
+		m.phase = adv.resume
+		if adv.resume == phaseRunning {
 			mm2, cmd := m.afterEvent()
 			return mm2, tea.Batch(cmd, mm2.sp.Tick)
 		}

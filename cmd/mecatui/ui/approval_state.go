@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"slices"
+
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -154,12 +156,7 @@ func (a *approvalState) enqueue(ask pendingAsk) {
 
 // askQueueIndex returns the index of askID in the queue, or -1.
 func askQueueIndex(q []pendingAsk, id string) int {
-	for i, x := range q {
-		if x.AskID == id {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(q, func(x pendingAsk) bool { return x.AskID == id })
 }
 
 // removeQueued removes the askID'd ask from the queue in place, reporting
@@ -279,12 +276,5 @@ func (a *approvalState) argsScroll(msg tea.KeyPressMsg, keys keyMap) (cmd tea.Cm
 // clamped to [0, maxOff]. Shared by the scroll-key handler and the
 // wheel-over-card handler so both clamp identically.
 func (a *approvalState) miniScroll(step, maxOff int) {
-	off := a.askVPOffset + step
-	if off < 0 {
-		off = 0
-	}
-	if off > maxOff {
-		off = maxOff
-	}
-	a.askVPOffset = off
+	a.askVPOffset = max(0, min(maxOff, a.askVPOffset+step))
 }

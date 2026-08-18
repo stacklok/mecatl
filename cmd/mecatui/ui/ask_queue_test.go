@@ -290,7 +290,7 @@ func TestEndRunClearsAskQueue(t *testing.T) {
 // answered-set dedupe — their askIDs correlate to runs on the OLD session.
 func TestResetSessionDropsAskQueue(t *testing.T) {
 	m, _ := queuedAskModel(t)
-	m.markAskResolved("subagent-old:1:k0")
+	m.approval.markAskResolved("subagent-old:1:k0")
 	if len(m.approval.queue) == 0 || m.approval.resolvedAsks == nil {
 		t.Fatalf("precondition: want a populated queue and answered-set, got %+v / %v", m.approval.queue, m.approval.resolvedAsks)
 	}
