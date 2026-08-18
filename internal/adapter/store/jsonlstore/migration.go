@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -313,6 +315,29 @@ func (st *Store) migrationJobPath(id string) (string, error) {
 	}
 	dir := filepath.Join(st.resolver.canonicalDir(), migrationJobsDir)
 	return filepath.Join(dir, id+".json"), nil
+}
+
+// LockSessionMigrationJob holds one stable cross-process job exclusion until
+// the returned release function is called.
+func (st *Store) LockSessionMigrationJob(ctx context.Context, id string) (func() error, error) {
+	path, err := st.migrationJobPath(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("jsonlstore: create migration registry: %w", err)
+	}
+	fl := flock.New(path+".lock", flock.SetPermissions(0o600))
+	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
+	if err != nil {
+		_ = fl.Close()
+		return nil, fmt.Errorf("jsonlstore: acquire migration job lock: %w", err)
+	}
+	if !locked {
+		_ = fl.Close()
+		return nil, errors.New("jsonlstore: migration job lock not acquired")
+	}
+	return fl.Close, nil
 }
 
 // SaveSessionMigrationJob atomically checkpoints one sanitized durable job record.

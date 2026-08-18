@@ -5935,9 +5935,13 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   plan with format/error counts and byte estimates. Apply mints a separate random
   durable job under the adapter-private `sid-v1/migration-jobs/` registry; records
   contain one-way principal/item handles, bounded counters, and stable sanitized
-  errors—never session ids, paths, backend errors, or content. Every apply/resume call
-  processes at most 100 families (25 by default), checkpointing after each committed
-  family. Cancellation is forward-only and completed jobs are idempotent.
+  errors—never session ids, paths, backend errors, or content. Every apply/resume/cancel
+  load-to-checkpoint sequence holds a stable job-ID-scoped cross-process exclusion;
+  overlapping resumes compare their pre-lock checkpoint with the locked durable record,
+  so one advances and a stale peer receives a closed conflict instead of replaying a
+  batch. Every apply/resume call processes at most 100 families (25 by default),
+  checkpointing after each committed family. Cancellation is monotonic: once persisted,
+  resume conflicts and no stale checkpoint can restore `running`. Completed jobs are idempotent.
 
   Per-family lock order is `Service.runEntryMu` → optional maintenance
   `SessionLease` → jsonlstore `.family.lock`. Under those exclusions the service and

@@ -108,8 +108,8 @@ or sidecars. It is the physical migration from [ADR-0226](../adr/0226-session-st
 **Acceptance:**
 - AC4.1: Dry-run reports v1/v2/invalid/skipped family counts, current bytes, estimated reclaimable bytes, and temporary-space requirements without writing.
   - verify: `TestSessionStorageContinuity_Scenario4_MigrationDryRunIsReadOnly`
-- AC4.2: Apply processes bounded batches with durable progress, cancellation, resumability, per-item errors, and idempotent convergence; cancellation stops future items and does not roll back committed items.
-  - verify: `TestSessionStorageContinuity_Scenario4_ResumableMigrationJob`
+- AC4.2: Apply processes bounded batches with durable progress, cancellation, resumability, per-item errors, and idempotent convergence; cancellation stops future items and does not roll back committed items. A stable job-scoped cross-process exclusion makes cancellation monotonic and rejects a stale overlapping resume without regressing counters.
+  - verify: `TestSessionStorageContinuity_Scenario4_ResumableMigrationJob`, `TestSessionStorageContinuity_MigrationConcurrentResumesRejectStaleCheckpoint`, `TestSessionStorageContinuity_MigrationCancelWinsAfterConcurrentResume`, `TestSessionStorageContinuity_MigrationRejectsStalePlanGeneration`
 - AC4.3: Each family is verified readable as v2 before v1 removal; a crash or insufficient space leaves v1 or verified v2 authoritative, with peak extra space bounded to one family.
   - verify: `TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety`
 - AC4.4: Migration preserves logical modification order, full snapshot semantics, tool/event sidecars, owner, and durable kind, including `unknown`; corrupt/torn records are reported or quarantined, never silently discarded.

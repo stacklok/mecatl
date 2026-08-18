@@ -81,10 +81,14 @@ type SessionMigrationJob struct {
 }
 
 // SessionMigrationStore is an optional physical-maintenance capability. The
-// engine loop never consumes it; authenticated server composition does.
+// engine loop never consumes it; authenticated server composition does. A
+// mutating load-to-checkpoint sequence must hold LockSessionMigrationJob for the
+// job's opaque ID. Implementations must provide stable cross-process exclusion;
+// the returned release function relinquishes it and must be called exactly once.
 type SessionMigrationStore interface {
 	InspectSessionMigration(context.Context) (SessionMigrationInspection, error)
 	MigrateSessionFamily(context.Context, SessionMigrationFamily) (string, error)
+	LockSessionMigrationJob(context.Context, string) (release func() error, err error)
 	SaveSessionMigrationJob(context.Context, SessionMigrationJob) error
 	LoadSessionMigrationJob(context.Context, string) (SessionMigrationJob, error)
 }

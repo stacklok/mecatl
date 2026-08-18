@@ -16,7 +16,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Resumable session-storage migration** (issue #589, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.SessionMigrationStore` and its plan/family/job value objects define an
   optional server-side v1-to-v2 physical-maintenance capability with durable bounded
-  progress and sanitized item errors, without widening `SessionStore`. Added (minor).
+  progress, sanitized item errors, and a stable job-scoped cross-process exclusion
+  around each mutating load-to-checkpoint sequence, without widening `SessionStore`.
+  Added (minor).
 - **Retention byte estimates and atomic cleanup** (issue #590, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.SessionDiscoveryMeta.EstimatedBytes` lets indexed adapters project a
   content-free deletion estimate to the shared cleanup planner. The optional
@@ -771,6 +773,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`session.SubagentPayload.RoutingReason` / `session.ParallelPayload.RoutingReason` / `session.TeamMemberSpec.RoutingReason`, the `session.RoutingReason*` gate constants, and `agent.WithPinnedAgents`** (issue #397) — the three delegation-start events now carry a bounded, bare-metadata reason WHY the OPT-IN semantic model router did not classify a delegation: EMPTY on a routed hit, otherwise one of the gate constants (`RoutingReasonPinnedModel` / `RoutingReasonAgentDefPinned` / `RoutingReasonResume` / `RoutingReasonFork` / `RoutingReasonRouterDisabled` / `RoutingReasonTargetUnavailable` / `RoutingReasonBreakerOpen` / `RoutingReasonAborted`) or a static classifier/composition miss code (`RouterMiss*`, `empty-model`, `category-selector-empty`, …). This lets a UI distinguish router-absent from pinned-model from agent-def-pinned from classifier-failure from breaker-open — previously every miss/gate collapsed to empty `routed_*`. `WithPinnedAgents` carries the composition-computed model-pin set separately from the routable set, so provider-switched and inline-MCP defs are not falsely attributed as model-pinned. If a routed engine factory declines its target, routed fields are cleared and `RoutingReasonTargetUnavailable` records the fallback while `Model` names the engine that actually ran. The Subagent gate attributes the explicit choice gates (resume / fork / per-call `model` / agent-def pin) ahead of the router-absent gate, so a pinned delegation is never mislabeled `router-disabled`. The reason is clamped at the emit site (`routingReasonPayload`, 200-rune cap) AND confined to an event-safe allowlist (`routingReasonEventSafe`): because the missReason channel is open to external engine compositions via the exported `Deps.SubagentModelRouter`, known detailed composition reasons are reduced to their static code and every other non-allowlisted reason (a provider error body, classifier output, a task excerpt) is substituted with the generic `routing-miss` label on the wire while the verbatim text stays in operator diagnostics — gauntlet #7. Classified Added per COMPATIBILITY.md (new struct fields, constants, and option constructor are a minor bump). See ADR 0083.
 
 ### Changed
+
+- **Session migration job exclusion** (issue #589, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+  `port.SessionMigrationStore` adds `LockSessionMigrationJob`, requiring optional
+  migration adapters to hold stable cross-process job exclusion around every mutating
+  load-to-checkpoint sequence. The interface addition is breaking for external
+  implementations and is classified Changed for a pre-v1 minor bump.
 
 - **Session discovery byte estimate** (issue #590, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.SessionDiscoveryMeta` adds `EstimatedBytes`. Keyed literals remain source

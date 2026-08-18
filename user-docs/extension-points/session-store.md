@@ -66,8 +66,12 @@ Jsonlstore additionally implements the optional `port.SessionMigrationStore` man
 capability. An authenticated plan is read-only and reports v1/v2/invalid/skipped
 families, current and estimated reclaimable bytes, and the maximum temporary space for
 one family. Apply processes a bounded batch and returns a durable job handle; use resume
-to process later batches or continue after a server restart. Cancel stops future items
-and keeps already-migrated families committed.
+to process later batches or continue after a server restart. Each job's complete
+load-to-checkpoint drive is protected by a stable cross-process job exclusion, so
+overlapping resumes cannot replay a batch or regress counters. A stale concurrent
+resume returns conflict. Cancel waits for any committed in-flight batch, then becomes
+monotonic: later resume attempts conflict and cannot restore the running state.
+Already-migrated families remain committed.
 
 Migration preserves the complete snapshot, owner, durable kind (including `unknown`),
 logical modification time, and tool/event sidecars. It acquires the ordinary run-entry

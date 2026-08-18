@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,6 +63,63 @@ func migrationStoreFixture(t *testing.T) (*jsonlstore.Store, string) {
 		t.Fatalf("jsonlstore.New: %v", err)
 	}
 	return store, dir
+}
+
+type blockingMigrationStore struct {
+	*jsonlstore.Store
+	entered chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (st *blockingMigrationStore) MigrateSessionFamily(ctx context.Context, family port.SessionMigrationFamily) (string, error) {
+	st.once.Do(func() {
+		close(st.entered)
+		select {
+		case <-st.release:
+		case <-ctx.Done():
+		}
+	})
+	return st.Store.MigrateSessionFamily(ctx, family)
+}
+
+type signalingMigrationStore struct {
+	*jsonlstore.Store
+	locking chan struct{}
+	once    sync.Once
+}
+
+func (st *signalingMigrationStore) LockSessionMigrationJob(ctx context.Context, id string) (func() error, error) {
+	st.once.Do(func() { close(st.locking) })
+	return st.Store.LockSessionMigrationJob(ctx, id)
+}
+
+func reopenMigrationStore(t *testing.T, dir string) *jsonlstore.Store {
+	t.Helper()
+	store, err := jsonlstore.New(dir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New(reopen): %v", err)
+	}
+	return store
+}
+
+func runningMigrationJob(t *testing.T) (string, server.MigrationJob) {
+	t.Helper()
+	store, dir := migrationStoreFixture(t)
+	owner := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	for _, id := range []string{"race-a", "race-b", "race-c"} {
+		writeV1Family(t, dir, newLegacySession(t, id, owner), nil, nil, time.Unix(1700000000, 0))
+	}
+	svc := migrationService(t, store, func(context.Context) bool { return true }, nil)
+	plan, err := svc.PlanSessionMigration(migrationContext("alice"))
+	if err != nil {
+		t.Fatalf("PlanSessionMigration: %v", err)
+	}
+	job, err := svc.ApplySessionMigration(migrationContext("alice"), plan.ID, 1)
+	if err != nil {
+		t.Fatalf("ApplySessionMigration: %v", err)
+	}
+	return dir, job
 }
 
 func writeV1Family(t *testing.T, dir string, sess *session.Session, tools, events []byte, modified time.Time) string {
@@ -224,17 +282,6 @@ func TestSessionStorageContinuity_Scenario4_ResumableMigrationJob(t *testing.T) 
 	if len(lifecycle1) == 0 || lifecycle1[len(lifecycle1)-1].State != server.StorageMaintenanceProgress || !lifecycle1[len(lifecycle1)-1].Resumable {
 		t.Fatalf("running migration lifecycle = %+v", lifecycle1)
 	}
-	job, err = svc1.CancelSessionMigration(ctx, job.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job.State != "cancelled" || job.Processed != 1 {
-		t.Fatalf("cancelled job = %+v", job)
-	}
-	if lifecycle1[len(lifecycle1)-1].State != server.StorageMaintenanceCancelled {
-		t.Fatalf("cancel lifecycle = %+v", lifecycle1)
-	}
-
 	// A fresh Service over the same store proves the job registry, progress, and
 	// caller binding survive process replacement.
 	var lifecycle2 []server.StorageMaintenanceEvent
@@ -263,6 +310,128 @@ func TestSessionStorageContinuity_Scenario4_ResumableMigrationJob(t *testing.T) 
 	}
 	if !reflect.DeepEqual(again, job) {
 		t.Fatalf("completed resume changed job: got %+v want %+v", again, job)
+	}
+}
+
+func TestSessionStorageContinuity_MigrationConcurrentResumesRejectStaleCheckpoint(t *testing.T) {
+	dir, initial := runningMigrationJob(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	firstStore := &blockingMigrationStore{Store: reopenMigrationStore(t, dir), entered: entered, release: release}
+	locking := make(chan struct{})
+	secondStore := &signalingMigrationStore{Store: reopenMigrationStore(t, dir), locking: locking}
+	first := migrationService(t, firstStore, func(context.Context) bool { return true }, nil)
+	second := migrationService(t, secondStore, func(context.Context) bool { return true }, nil)
+	ctx := migrationContext("alice")
+
+	type result struct {
+		job server.MigrationJob
+		err error
+	}
+	firstResult := make(chan result, 1)
+	secondResult := make(chan result, 1)
+	go func() {
+		job, err := first.ResumeSessionMigration(ctx, initial.ID, 1)
+		firstResult <- result{job: job, err: err}
+	}()
+	<-entered
+	go func() {
+		job, err := second.ResumeSessionMigration(ctx, initial.ID, 1)
+		secondResult <- result{job: job, err: err}
+	}()
+	<-locking
+	close(release)
+
+	winner := <-firstResult
+	loser := <-secondResult
+	if winner.err != nil || winner.job.Processed != initial.Processed+1 {
+		t.Fatalf("winning resume = %+v, err=%v", winner.job, winner.err)
+	}
+	if !errors.Is(loser.err, server.ErrMigrationConflict) {
+		t.Fatalf("stale concurrent resume error = %v, want ErrMigrationConflict", loser.err)
+	}
+	persisted, err := first.SessionMigrationJob(ctx, initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Processed != winner.job.Processed || persisted.Migrated != winner.job.Migrated || persisted.State != winner.job.State {
+		t.Fatalf("persisted progress regressed: got %+v winner %+v", persisted, winner.job)
+	}
+}
+
+func TestSessionStorageContinuity_MigrationCancelWinsAfterConcurrentResume(t *testing.T) {
+	dir, initial := runningMigrationJob(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	resumeStore := &blockingMigrationStore{Store: reopenMigrationStore(t, dir), entered: entered, release: release}
+	locking := make(chan struct{})
+	cancelStore := &signalingMigrationStore{Store: reopenMigrationStore(t, dir), locking: locking}
+	resumeService := migrationService(t, resumeStore, func(context.Context) bool { return true }, nil)
+	cancelService := migrationService(t, cancelStore, func(context.Context) bool { return true }, nil)
+	ctx := migrationContext("alice")
+
+	resumeResult := make(chan error, 1)
+	cancelResult := make(chan struct {
+		job server.MigrationJob
+		err error
+	}, 1)
+	go func() {
+		_, err := resumeService.ResumeSessionMigration(ctx, initial.ID, 1)
+		resumeResult <- err
+	}()
+	<-entered
+	go func() {
+		job, err := cancelService.CancelSessionMigration(ctx, initial.ID)
+		cancelResult <- struct {
+			job server.MigrationJob
+			err error
+		}{job: job, err: err}
+	}()
+	<-locking
+	close(release)
+
+	if err := <-resumeResult; err != nil {
+		t.Fatalf("concurrent resume: %v", err)
+	}
+	cancelled := <-cancelResult
+	if cancelled.err != nil {
+		t.Fatalf("concurrent cancel: %v", cancelled.err)
+	}
+	if cancelled.job.State != "cancelled" || cancelled.job.Processed != initial.Processed+1 {
+		t.Fatalf("cancelled checkpoint = %+v", cancelled.job)
+	}
+	if _, err := resumeService.ResumeSessionMigration(ctx, initial.ID, 1); !errors.Is(err, server.ErrMigrationConflict) {
+		t.Fatalf("resume after cancellation error = %v, want ErrMigrationConflict", err)
+	}
+	persisted, err := cancelService.SessionMigrationJob(ctx, initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(persisted, cancelled.job) {
+		t.Fatalf("cancel was overwritten: got %+v want %+v", persisted, cancelled.job)
+	}
+}
+
+func TestSessionStorageContinuity_MigrationRejectsStalePlanGeneration(t *testing.T) {
+	store, dir := migrationStoreFixture(t)
+	owner := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	writeV1Family(t, dir, newLegacySession(t, "stale-a", owner), nil, nil, time.Unix(1700000000, 0))
+	svc := migrationService(t, store, func(context.Context) bool { return true }, nil)
+	ctx := migrationContext("alice")
+	plan, err := svc.PlanSessionMigration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeV1Family(t, dir, newLegacySession(t, "stale-b", owner), nil, nil, time.Unix(1700000001, 0))
+	if _, err := svc.ApplySessionMigration(ctx, plan.ID, 1); !errors.Is(err, server.ErrManagementUnauthorized) {
+		t.Fatalf("stale generation apply error = %v, want concealed rejection", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "sid-v1", "migration-jobs"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stale generation minted job files: %v", entries)
 	}
 }
 

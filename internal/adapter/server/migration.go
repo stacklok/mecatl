@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"reflect"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -140,6 +141,7 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		return MigrationJob{}, err
 	}
 	var job port.SessionMigrationJob
+	var beforeLock port.SessionMigrationJob
 	if apply {
 		inspection, inspectErr := backend.InspectSessionMigration(ctx)
 		if inspectErr != nil {
@@ -162,15 +164,30 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 			TemporaryBytes: inspection.TemporaryBytes, TerminalItems: make(map[string]bool),
 		}
 	} else {
-		job, err = loadBoundMigrationJob(ctx, backend, id, principalKey)
+		beforeLock, err = loadBoundMigrationJob(ctx, backend, id, principalKey)
 		if err != nil {
 			return MigrationJob{}, err
+		}
+		job = beforeLock
+	}
+	release, err := backend.LockSessionMigrationJob(ctx, job.ID)
+	if err != nil {
+		return MigrationJob{}, sanitizedMigrationBackendError()
+	}
+	defer func() { _ = release() }()
+	if !apply {
+		job, err = loadBoundMigrationJob(ctx, backend, job.ID, principalKey)
+		if err != nil {
+			return MigrationJob{}, err
+		}
+		if !reflect.DeepEqual(job, beforeLock) {
+			return MigrationJob{}, ErrMigrationConflict
 		}
 	}
 	if apply && job.State != port.SessionMigrationPlanned && job.State != port.SessionMigrationRunning {
 		return MigrationJob{}, ErrMigrationConflict
 	}
-	if !apply && job.State == port.SessionMigrationPlanned {
+	if !apply && (job.State == port.SessionMigrationPlanned || job.State == port.SessionMigrationCancelled) {
 		return MigrationJob{}, ErrMigrationConflict
 	}
 	if job.State == port.SessionMigrationCompleted {
@@ -196,11 +213,6 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		}
 		if job.TerminalItems[family.Handle] {
 			continue
-		}
-		latest, loadErr := backend.LoadSessionMigrationJob(ctx, id)
-		if loadErr == nil && latest.State == port.SessionMigrationCancelled {
-			job.State = port.SessionMigrationCancelled
-			break
 		}
 		reason := s.migrateOneFamily(ctx, backend, family)
 		attempted++
@@ -312,6 +324,11 @@ func (s *Service) CancelSessionMigration(ctx context.Context, id string) (Migrat
 	if err != nil {
 		return MigrationJob{}, err
 	}
+	release, err := backend.LockSessionMigrationJob(ctx, id)
+	if err != nil {
+		return MigrationJob{}, sanitizedMigrationBackendError()
+	}
+	defer func() { _ = release() }()
 	job, err := loadBoundMigrationJob(ctx, backend, id, principalKey)
 	if err != nil {
 		return MigrationJob{}, err
