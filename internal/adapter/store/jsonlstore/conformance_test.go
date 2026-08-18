@@ -44,6 +44,16 @@ func TestSessionContinuityUX_Scenario3_PagerConformance(t *testing.T) {
 	})
 }
 
+func TestJSONLStoreConditionalPrunableConformance(t *testing.T) {
+	storeconformance.RunConditionalPrunable(t, func(t *testing.T) port.SessionStore {
+		st, err := jsonlstore.New(t.TempDir())
+		if err != nil {
+			t.Fatalf("jsonlstore.New: %v", err)
+		}
+		return st
+	})
+}
+
 // TestJSONLStoreEventLogConformance runs the shared EventLog conformance table
 // against the JSONL replay store (the same Store that doubles as SessionStore):
 // this is the LOCAL/reference half of the dual-path contract, run against the

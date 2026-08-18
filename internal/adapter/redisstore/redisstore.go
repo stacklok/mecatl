@@ -190,6 +190,16 @@ func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMe
 	return st.pageSessionMetadata(ctx, request)
 }
 
+// DeleteSessionIfUnchanged atomically compares the indexed durable row and
+// removes the snapshot plus sidecars in one Redis script.
+func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.SessionDiscoveryMeta) (bool, error) {
+	deleted, err := st.deleteSessionIfMetadataUnchanged(ctx, expected)
+	if err != nil {
+		return false, fmt.Errorf("redisstore: conditional delete: %w", err)
+	}
+	return deleted, nil
+}
+
 // Delete removes the session snapshot, derivative metadata, event log, and
 // tool-call sidecar. It is idempotent and completes in one atomic script.
 func (st *Store) Delete(ctx context.Context, id session.SessionID) error {

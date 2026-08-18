@@ -79,6 +79,18 @@ carry-over key.
 | `ListMcpSources` | Resolved MCP source inventory + diagnostics |
 | `ListToolHiveGroups` | Distinct ToolHive groups in the resolved inventory |
 
+### Storage maintenance RPCs
+
+The management-authorized `PlanSessionCleanup`, `ApplySessionCleanup`,
+`CancelSessionCleanup`, and `GetSessionCleanupJob` RPCs expose the cleanup workflow.
+HTTP peers are `POST /v1/storage/cleanup:plan`,
+`POST /v1/storage/cleanup:apply`, `POST /v1/storage/cleanup/jobs/{id}/cancel`, and
+`GET /v1/storage/cleanup/jobs/{id}`. Plan is read-only; apply requires the opaque token
+from that exact caller/scope/catalog/policy plan. Stale plans fail without mutation,
+partial failures return stable sanitized item codes, and unsupported backends report the
+capability as unavailable. `GetStorageHealth` remains a read-only aggregate view. These
+surfaces are intended for management clients; they do not add a model tool.
+
 ### Agent team RPCs
 
 Teams require `--enable-teams` (the default). See the full field-level reference in [`docs/usage/grpc-api.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md).

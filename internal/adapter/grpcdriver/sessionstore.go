@@ -314,6 +314,7 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 		TitleProvenance: session.TitleProvenance(entry.GetTitleProvenance()),
 		Workspace:       entry.GetWorkspace(),
 		Kind:            session.SessionKind(entry.GetKind()),
+		EstimatedBytes:  entry.GetEstimatedBytes(),
 		Relationship: session.SessionRelationship{
 			ParentSessionID: session.SessionID(entry.GetParentSessionId()),
 			CallID:          session.ToolCallID(entry.GetCallId()),

@@ -184,9 +184,8 @@ func TestChildGCMainSessionAgePass(t *testing.T) {
 }
 
 // TestChildGCMainSessionCountCap pins the GLOBAL main count cap (issue #79):
-// past mainMaxTotal, the OLDEST main snapshots go first, the cap is store-wide
-// (not per-prefix), and a live main keeps its slot (the next-oldest non-live is
-// deleted in its stead).
+// past mainMaxTotal, the OLDEST eligible main snapshots go first. Live mains
+// are protected and excluded from cap slots, so the cap applies only to b/c/d.
 func TestChildGCMainSessionCountCap(t *testing.T) {
 	f := newGCFixture(t, childGCPolicy{mainMaxTotal: 2})
 	live := map[session.SessionID]bool{"main-a": true}
@@ -196,18 +195,20 @@ func TestChildGCMainSessionCountCap(t *testing.T) {
 		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
 	}
 
-	// 4 mains > cap 2, oldest-first with the live main-a skipped => main-b and
-	// main-c deleted (main-a kept though oldest; main-d newest).
+	// main-a is protected and excluded from slots. Of b/c/d, cap 2 removes b.
 	deleted, retained := f.gc.sweep(context.Background())
-	if deleted != 2 || retained != 2 {
-		t.Errorf("sweep = (deleted %d, retained %d), want (2, 2)", deleted, retained)
+	if deleted != 1 || retained != 3 {
+		t.Errorf("sweep = (deleted %d, retained %d), want (1, 3)", deleted, retained)
 	}
 	got := f.ids(t)
 	if !got["main-a"] {
 		t.Error("LIVE main was deleted — the liveness exclusion is broken for the main cap")
 	}
-	if got["main-b"] || got["main-c"] {
-		t.Errorf("cap pass kept the oldest non-live mains (b=%v c=%v), want them deleted", got["main-b"], got["main-c"])
+	if got["main-b"] {
+		t.Error("cap pass kept the oldest eligible main-b")
+	}
+	if !got["main-c"] {
+		t.Error("cap counted the protected live main as a slot and over-deleted main-c")
 	}
 	if !got["main-d"] {
 		t.Error("newest main was deleted under the cap pass")
@@ -427,11 +428,11 @@ func TestChildGCSkipsLiveChildren(t *testing.T) {
 		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
 	}
 
-	// Age pass: dead-old deleted, live-old skipped. Survivors: live-old + y1..y3
-	// = 4 > cap 2, oldest-first with live-old skipped => y1 and y2 deleted.
+	// Age removes dead-old. live-old is protected and excluded from cap slots;
+	// y1..y3 exceed cap 2 by one, so only y1 is deleted.
 	deleted, retained := f.gc.sweep(context.Background())
-	if deleted != 3 || retained != 2 {
-		t.Errorf("sweep = (deleted %d, retained %d), want (3, 2)", deleted, retained)
+	if deleted != 2 || retained != 3 {
+		t.Errorf("sweep = (deleted %d, retained %d), want (2, 3)", deleted, retained)
 	}
 	got := f.ids(t)
 	if !got["subagent-live-old"] {
@@ -440,8 +441,11 @@ func TestChildGCSkipsLiveChildren(t *testing.T) {
 	if got["subagent-dead-old"] {
 		t.Error("dead aged-out child survived")
 	}
-	if got["subagent-y1"] || got["subagent-y2"] {
-		t.Errorf("cap pass kept the oldest non-live ids (y1=%v y2=%v), want them deleted in the live id's stead", got["subagent-y1"], got["subagent-y2"])
+	if got["subagent-y1"] {
+		t.Error("cap pass kept the oldest eligible child y1")
+	}
+	if !got["subagent-y2"] {
+		t.Error("cap counted the protected live child as a slot and over-deleted y2")
 	}
 	if !got["subagent-y3"] {
 		t.Error("newest child was deleted under the cap pass")
@@ -1032,8 +1036,7 @@ func TestScheduleFireGCSkipsLive(t *testing.T) {
 // TestScheduleFireGCCountCap pins the schedule-fire GLOBAL count cap (ADR 0059
 // Phase-2, the symmetric peer of the main cap): with more sched-- fire sessions than
 // scheduleFireMaxTotal, the OLDEST fire snapshots go first, the cap is store-wide,
-// and a LIVE fire keeps its slot (the next-oldest non-live is deleted in its
-// stead). Mirrors TestChildGCMainSessionCountCap.
+// and a LIVE fire is protected and excluded from the eligible cap slots.
 func TestScheduleFireGCCountCap(t *testing.T) {
 	f := newGCFixture(t, childGCPolicy{scheduleFireMaxTotal: 2})
 	live := map[session.SessionID]bool{"sched--a": true}
@@ -1043,18 +1046,20 @@ func TestScheduleFireGCCountCap(t *testing.T) {
 		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
 	}
 
-	// 4 fires > cap 2, oldest-first with the live sched--a skipped => sched--b and
-	// sched--c deleted (sched--a kept though oldest; sched--d newest).
+	// sched--a is protected and excluded from slots. Of b/c/d, cap 2 removes b.
 	deleted, retained := f.gc.sweep(context.Background())
-	if deleted != 2 || retained != 2 {
-		t.Errorf("sweep = (deleted %d, retained %d), want (2, 2)", deleted, retained)
+	if deleted != 1 || retained != 3 {
+		t.Errorf("sweep = (deleted %d, retained %d), want (1, 3)", deleted, retained)
 	}
 	got := f.ids(t)
 	if !got["sched--a"] {
 		t.Error("LIVE fire was deleted — the liveness exclusion is broken for the schedule-fire cap")
 	}
-	if got["sched--b"] || got["sched--c"] {
-		t.Errorf("cap pass kept the oldest non-live fires (b=%v c=%v), want them deleted", got["sched--b"], got["sched--c"])
+	if got["sched--b"] {
+		t.Error("cap pass kept the oldest eligible fire b")
+	}
+	if !got["sched--c"] {
+		t.Error("cap counted the protected live fire as a slot and over-deleted c")
 	}
 	if !got["sched--d"] {
 		t.Error("newest fire was deleted under the schedule-fire cap pass")

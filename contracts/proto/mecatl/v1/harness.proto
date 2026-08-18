@@ -215,6 +215,13 @@ service HarnessService {
   rpc CancelSessionMigration(CancelSessionMigrationRequest) returns (SessionMigrationJob);
   rpc GetSessionMigrationJob(GetSessionMigrationJobRequest) returns (SessionMigrationJob);
 
+  // Session cleanup is an authenticated plan/apply maintenance workflow. Plan is
+  // read-only; apply requires its caller-bound opaque confirmation token.
+  rpc PlanSessionCleanup(PlanSessionCleanupRequest) returns (PlanSessionCleanupResponse);
+  rpc ApplySessionCleanup(ApplySessionCleanupRequest) returns (CleanupJob);
+  rpc CancelSessionCleanup(CancelSessionCleanupRequest) returns (CleanupJob);
+  rpc GetSessionCleanupJob(GetSessionCleanupJobRequest) returns (CleanupJob);
+
   // ListSkills returns the resolved skills inventory snapshot: each discovered
   // skill's name + one-line description. Derived from the snapshot taken at
   // startup (skills are discovered once at build time and immutable for the
@@ -542,6 +549,8 @@ message ServerCapabilities {
   // storage_migration is true only when the backend implements durable bounded
   // v1-to-v2 maintenance and a management authorizer is configured.
   bool storage_migration = 21;
+  // storage_cleanup advertises the authenticated plan/apply/job maintenance API.
+  bool storage_cleanup = 22;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -881,6 +890,47 @@ message SessionMigrationItemError {
   string message = 3;
 }
 
+message CleanupCounts {
+  int32 total = 1;
+  map<string, int32> by_kind = 2;
+  map<string, int32> by_state = 3;
+  map<string, int32> by_reason = 4;
+}
+
+message CleanupCandidate {
+  string session_id = 1;
+  string kind = 2;
+  string state = 3;
+  string reason = 4;
+  int64 modified_at_unix = 5;
+  int64 estimated_bytes = 6;
+}
+
+message PlanSessionCleanupRequest { repeated string kinds = 1; }
+
+message PlanSessionCleanupResponse {
+  string confirmation_token = 1;
+  bool available = 2;
+  string unavailable_reason = 3;
+  string generation = 4;
+  string policy_version = 5;
+  repeated CleanupCandidate eligible = 6;
+  CleanupCounts protected = 7;
+  int64 estimated_bytes = 8;
+  string planned_job_id = 9;
+  CleanupCounts eligible_counts = 10;
+}
+
+message ApplySessionCleanupRequest { string confirmation_token = 1 [(buf.validate.field).string.min_len = 1]; }
+message CancelSessionCleanupRequest { string job_id = 1 [(buf.validate.field).string.min_len = 1]; }
+message GetSessionCleanupJobRequest { string job_id = 1 [(buf.validate.field).string.min_len = 1]; }
+
+message CleanupItemError {
+  string item_handle = 1;
+  string reason_code = 2;
+  string message = 3;
+}
+
 message SessionMigrationJob {
   string job_id = 1;
   string state = 2;
@@ -895,6 +945,17 @@ message SessionMigrationJob {
   int64 migrated = 11;
   int64 failed = 12;
   repeated SessionMigrationItemError errors = 13;
+}
+
+message CleanupJob {
+  string job_id = 1;
+  string state = 2;
+  int32 processed = 3;
+  int32 deleted = 4;
+  int32 skipped = 5;
+  int32 stale = 6;
+  int32 failed = 7;
+  repeated CleanupItemError errors = 8;
 }
 
 // SetModeRequest changes a session's permission posture.

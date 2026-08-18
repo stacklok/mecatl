@@ -584,42 +584,72 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 		return err
 	}
 	return st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-		if err := st.advanceInventoryGeneration(); err != nil {
-			return err
-		}
-		canonicalOwned, err := st.resolver.canonicalOwnership(id)
+		return st.deleteSessionFamilyLocked(id)
+	})
+}
+
+// DeleteSessionIfUnchanged holds the family lock across durable metadata
+// revalidation and sidecar-first/snapshot-last deletion.
+func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.SessionDiscoveryMeta) (bool, error) {
+	if err := validateSessionID(expected.ID); err != nil {
+		return false, err
+	}
+	deleted := false
+	err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(expected.ID), func() error {
+		rows, err := st.rebuildInventoryRows()
 		if err != nil {
 			return err
 		}
-		legacyOwned, err := st.resolver.legacyOwned(id)
-		if err != nil {
-			return err
-		}
-		for _, kind := range sidecarKinds {
-			if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
-				return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
-			}
-			if legacyOwned {
-				if err := removeSessionFile(st.resolver.legacyPath(id, kind)); err != nil {
-					return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+		for _, row := range rows {
+			if row.ID == expected.ID && port.SessionDiscoveryMetaEqual(row, expected) {
+				if err := st.deleteSessionFamilyLocked(expected.ID); err != nil {
+					return err
 				}
-			}
-		}
-		if canonicalOwned {
-			if err := removeSessionFile(st.resolver.canonicalPath(id, kindSnapshot)); err != nil {
-				return fmt.Errorf("jsonlstore: delete v1 %q: %w", id, err)
-			}
-			if err := removeSessionFile(st.resolver.currentSnapshotPath(id)); err != nil {
-				return fmt.Errorf("jsonlstore: delete current %q: %w", id, err)
-			}
-		}
-		if legacyOwned {
-			if err := removeSessionFile(st.resolver.legacyPath(id, kindSnapshot)); err != nil {
-				return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+				deleted = true
+				break
 			}
 		}
 		return nil
 	})
+	return deleted, err
+}
+
+func (st *Store) deleteSessionFamilyLocked(id session.SessionID) error {
+	if err := st.advanceInventoryGeneration(); err != nil {
+		return err
+	}
+	canonicalOwned, err := st.resolver.canonicalOwnership(id)
+	if err != nil {
+		return err
+	}
+	legacyOwned, err := st.resolver.legacyOwned(id)
+	if err != nil {
+		return err
+	}
+	for _, kind := range sidecarKinds {
+		if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
+			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
+		}
+		if legacyOwned {
+			if err := removeSessionFile(st.resolver.legacyPath(id, kind)); err != nil {
+				return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+			}
+		}
+	}
+	if canonicalOwned {
+		if err := removeSessionFile(st.resolver.canonicalPath(id, kindSnapshot)); err != nil {
+			return fmt.Errorf("jsonlstore: delete v1 %q: %w", id, err)
+		}
+		if err := removeSessionFile(st.resolver.currentSnapshotPath(id)); err != nil {
+			return fmt.Errorf("jsonlstore: delete current %q: %w", id, err)
+		}
+	}
+	if legacyOwned {
+		if err := removeSessionFile(st.resolver.legacyPath(id, kindSnapshot)); err != nil {
+			return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func removeSessionFile(path string) error {

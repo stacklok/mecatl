@@ -138,6 +138,10 @@ type SessionDiscoveryMeta struct {
 	Workspace       string
 	Kind            session.SessionKind
 	Relationship    session.SessionRelationship
+	// EstimatedBytes is a content-free backend estimate of bytes reclaimed by
+	// deleting this session family. Zero means unavailable, never a measured
+	// assertion that the family occupies no storage.
+	EstimatedBytes int64
 }
 
 // MetaLister is the OPTIONAL cheap-listing seam a SessionStore adapter may
@@ -373,6 +377,33 @@ type PrunableStore interface {
 	// Delete removes the session stored under id. An unknown id is success
 	// (idempotent); any returned error is an infrastructure failure.
 	Delete(ctx context.Context, id session.SessionID) error
+}
+
+// ConditionalPrunableStore is the OPTIONAL atomic cleanup seam. Implementations
+// acquire their session-family mutation exclusion, compare the complete expected
+// metadata row with the current durable row, and keep that exclusion held through
+// sidecar-first/snapshot-last deletion. A mismatch or missing row returns false
+// without mutation; backend failures return an error.
+type ConditionalPrunableStore interface {
+	DeleteSessionIfUnchanged(ctx context.Context, expected SessionDiscoveryMeta) (bool, error)
+}
+
+// SessionDiscoveryMetaEqual reports whether two inventory rows represent the
+// same durable cleanup precondition. Owner identity is compared semantically.
+func SessionDiscoveryMetaEqual(a, b SessionDiscoveryMeta) bool {
+	return a.ID == b.ID && a.ModifiedAt.Equal(b.ModifiedAt) && a.State == b.State &&
+		a.Kind == b.Kind && sessionRelationshipsEqual(a.Relationship, b.Relationship) &&
+		((a.Owner == nil && b.Owner == nil) || (a.Owner != nil && a.Owner.SameIdentity(b.Owner)))
+}
+
+func sessionRelationshipsEqual(a, b session.SessionRelationship) bool {
+	if a.ScheduleName != b.ScheduleName || a.OriginSessionID != b.OriginSessionID ||
+		a.ParentSessionID != b.ParentSessionID || a.CallID != b.CallID ||
+		a.TeamID != b.TeamID || a.MemberName != b.MemberName {
+		return false
+	}
+	return a.BranchIndex == nil && b.BranchIndex == nil ||
+		a.BranchIndex != nil && b.BranchIndex != nil && *a.BranchIndex == *b.BranchIndex
 }
 
 // SessionDeleteSupport is the optional authoritative capability signal for a

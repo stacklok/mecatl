@@ -115,7 +115,7 @@ func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session
 		ID: s.ID, ModifiedAt: modifiedAt, State: s.State, Turns: s.Counters.Turns,
 		ModelID: s.ModelID, CreatedAt: s.CreatedAt, Title: s.Title,
 		TitleProvenance: s.TitleProvenance, Owner: s.Owner.Clone(), Workspace: s.Workspace,
-		Kind: s.Kind, Relationship: s.Relationship,
+		Kind: s.Kind, Relationship: s.Relationship, EstimatedBytes: int64(len(blob)),
 	}
 	member, err := encodeMetadataMember(row)
 	if err != nil {
@@ -152,6 +152,34 @@ func (st *Store) deleteSessionAndMetadata(ctx context.Context, id session.Sessio
 		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id)},
 		metadataGlobalScope, metadataOwnerIndexBase,
 	).Err()
+}
+
+var conditionalDeleteMetadataScript = redis.NewScript(`
+local member = redis.call('HGET', KEYS[1], 'metadata_entry')
+if not member or member ~= ARGV[1] then
+  return 0
+end
+local owner_scope = redis.call('HGET', KEYS[1], 'metadata_owner') or ''
+redis.call('ZREM', KEYS[2], member)
+redis.call('HINCRBY', KEYS[3], ARGV[2], 1)
+if owner_scope ~= '' then
+  redis.call('ZREM', ARGV[3] .. owner_scope, member)
+  redis.call('HINCRBY', KEYS[3], owner_scope, 1)
+end
+redis.call('DEL', KEYS[1], KEYS[4], KEYS[5])
+return 1
+`)
+
+func (st *Store) deleteSessionIfMetadataUnchanged(ctx context.Context, expected port.SessionDiscoveryMeta) (bool, error) {
+	member, err := encodeMetadataMember(expected)
+	if err != nil {
+		return false, err
+	}
+	result, err := conditionalDeleteMetadataScript.Run(ctx, st.client,
+		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID)},
+		member, metadataGlobalScope, metadataOwnerIndexBase,
+	).Int()
+	return result == 1, err
 }
 
 var pageMetadataScript = redis.NewScript(`

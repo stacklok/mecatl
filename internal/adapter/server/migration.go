@@ -16,6 +16,10 @@ const (
 	defaultMigrationBatch = 25
 	maxMigrationBatch     = 100
 	maxMigrationErrors    = 256
+
+	maintenanceReasonChanged = "changed"
+	maintenanceReasonActive  = "active"
+	maintenanceReasonLeased  = "leased"
 )
 
 // MigrationPlan is the content-free, authenticated projection of a read-only
@@ -209,7 +213,7 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		switch reason {
 		case "":
 			job.Migrated++
-		case "changed", "active", "leased":
+		case maintenanceReasonChanged, maintenanceReasonActive, maintenanceReasonLeased:
 			job.SkippedFamilies++
 		default:
 			job.Failed++
@@ -255,26 +259,26 @@ func (s *Service) migrateOneFamily(ctx context.Context, backend port.SessionMigr
 	unlock := s.runEntryMu.lock(family.ID)
 	defer unlock()
 	if s.IsLive(family.ID) {
-		return "active"
+		return maintenanceReasonActive
 	}
 	release, err := s.acquireMutationLease(ctx, family.ID)
 	if err != nil {
 		if errors.Is(err, ErrSessionLeasedElsewhere) {
-			return "leased"
+			return maintenanceReasonLeased
 		}
 		return "backend_failure"
 	}
 	defer release()
 	if s.IsLive(family.ID) {
-		return "active"
+		return maintenanceReasonActive
 	}
 	sess, err := s.cfg.Store.Load(ctx, family.ID)
 	if err != nil {
-		return "changed"
+		return maintenanceReasonChanged
 	}
 	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || sess.Kind != family.Kind ||
 		sess.State != family.State || migrationSessionOwnerKey(sess.Owner) != family.OwnerKey {
-		return "changed"
+		return maintenanceReasonChanged
 	}
 	reason, err := backend.MigrateSessionFamily(ctx, family)
 	if err != nil {

@@ -93,6 +93,10 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/storage/migrations/{id}", h.getSessionMigrationJob)
 	h.mux.HandleFunc("POST /v1/storage/migrations/{id}/resume", h.resumeSessionMigration)
 	h.mux.HandleFunc("POST /v1/storage/migrations/{id}/cancel", h.cancelSessionMigration)
+	h.mux.HandleFunc("POST /v1/storage/cleanup:plan", h.planSessionCleanup)
+	h.mux.HandleFunc("POST /v1/storage/cleanup:apply", h.applySessionCleanup)
+	h.mux.HandleFunc("POST /v1/storage/cleanup/jobs/{id}/cancel", h.cancelSessionCleanup)
+	h.mux.HandleFunc("GET /v1/storage/cleanup/jobs/{id}", h.getSessionCleanupJob)
 	h.mux.HandleFunc("GET /v1/sessions/{id}/events", h.streamSessionEvents)
 	h.mux.HandleFunc("POST /v1/teams", h.createTeam)
 	h.mux.HandleFunc("POST /v1/teams/{id}/members", h.spawnTeammate)
@@ -1864,6 +1868,60 @@ func (h *HTTPHandler) getSessionMigrationJob(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
 }
 
+func (h *HTTPHandler) planSessionCleanup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Kinds []string `json:"kinds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeServiceError(w, fmt.Errorf("%w: invalid cleanup plan body", ErrInvalidArgument))
+		return
+	}
+	scope := CleanupScope{}
+	for _, kind := range body.Kinds {
+		scope.Kinds = append(scope.Kinds, session.SessionKind(kind))
+	}
+	plan, err := h.svc.PlanSessionCleanup(r.Context(), scope)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoCleanupPlan(plan))
+}
+
+func (h *HTTPHandler) applySessionCleanup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"confirmation_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeServiceError(w, fmt.Errorf("%w: invalid cleanup apply body", ErrInvalidArgument))
+		return
+	}
+	job, err := h.svc.ApplySessionCleanup(r.Context(), body.Token)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoCleanupJob(job))
+}
+
+func (h *HTTPHandler) cancelSessionCleanup(w http.ResponseWriter, r *http.Request) {
+	job, err := h.svc.CancelSessionCleanup(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoCleanupJob(job))
+}
+
+func (h *HTTPHandler) getSessionCleanupJob(w http.ResponseWriter, r *http.Request) {
+	job, err := h.svc.SessionCleanupJob(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoCleanupJob(job))
+}
+
 // streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
 // durable event log as a Server-Sent Events stream (issue #245 Phase 1; cloud-
 // native Phase 3a read-back). This is the READ path: it never calls appendEvent
@@ -1958,6 +2016,12 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrMigrationConflict):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrMigrationBackend):
+		writeError(w, http.StatusInternalServerError, err.Error())
+	case errors.Is(err, ErrCleanupPlanStale):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrCleanupUnsupported):
+		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrCleanupBackend):
 		writeError(w, http.StatusInternalServerError, err.Error())
 	case errors.Is(err, ErrInvalidArgument):
 		writeError(w, http.StatusBadRequest, err.Error())

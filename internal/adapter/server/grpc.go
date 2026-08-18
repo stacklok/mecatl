@@ -848,6 +848,73 @@ func (h *HarnessServer) GetSessionMigrationJob(ctx context.Context, req *mecatlv
 	return toProtoMigrationJob(job), nil
 }
 
+// PlanSessionCleanup returns a caller-bound read-only retention plan.
+func (h *HarnessServer) PlanSessionCleanup(ctx context.Context, req *mecatlv1.PlanSessionCleanupRequest) (*mecatlv1.PlanSessionCleanupResponse, error) {
+	scope := CleanupScope{}
+	for _, kind := range req.GetKinds() {
+		scope.Kinds = append(scope.Kinds, session.SessionKind(kind))
+	}
+	plan, err := h.svc.PlanSessionCleanup(ctx, scope)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoCleanupPlan(plan), nil
+}
+
+func (h *HarnessServer) ApplySessionCleanup(ctx context.Context, req *mecatlv1.ApplySessionCleanupRequest) (*mecatlv1.CleanupJob, error) {
+	job, err := h.svc.ApplySessionCleanup(ctx, req.GetConfirmationToken())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoCleanupJob(job), nil
+}
+
+func (h *HarnessServer) CancelSessionCleanup(ctx context.Context, req *mecatlv1.CancelSessionCleanupRequest) (*mecatlv1.CleanupJob, error) {
+	job, err := h.svc.CancelSessionCleanup(ctx, req.GetJobId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoCleanupJob(job), nil
+}
+
+func (h *HarnessServer) GetSessionCleanupJob(ctx context.Context, req *mecatlv1.GetSessionCleanupJobRequest) (*mecatlv1.CleanupJob, error) {
+	job, err := h.svc.SessionCleanupJob(ctx, req.GetJobId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoCleanupJob(job), nil
+}
+
+func toProtoCleanupPlan(plan CleanupPlan) *mecatlv1.PlanSessionCleanupResponse {
+	resp := &mecatlv1.PlanSessionCleanupResponse{
+		ConfirmationToken: plan.Token, Available: plan.Available, UnavailableReason: plan.UnavailableReason,
+		Generation: plan.Generation, PolicyVersion: plan.PolicyVersion, EstimatedBytes: plan.EstimatedBytes,
+		PlannedJobId:   plan.JobID,
+		EligibleCounts: &mecatlv1.CleanupCounts{Total: ClampInt32(plan.EligibleCounts.Total), ByKind: mapStringInt32(plan.EligibleCounts.ByKind), ByState: mapStringInt32(plan.EligibleCounts.ByState), ByReason: mapStringInt32(plan.EligibleCounts.ByReason)},
+		Protected:      &mecatlv1.CleanupCounts{Total: ClampInt32(plan.Protected.Total), ByKind: mapStringInt32(plan.Protected.ByKind), ByState: mapStringInt32(plan.Protected.ByState), ByReason: mapStringInt32(plan.Protected.ByReason)},
+	}
+	for _, item := range plan.Eligible {
+		resp.Eligible = append(resp.Eligible, &mecatlv1.CleanupCandidate{SessionId: string(item.ID), Kind: string(item.Kind), State: string(item.State), Reason: item.Reason, ModifiedAtUnix: item.ModifiedAt.Unix(), EstimatedBytes: item.EstimatedBytes})
+	}
+	return resp
+}
+
+func mapStringInt32(values map[string]int) map[string]int32 {
+	out := make(map[string]int32, len(values))
+	for key, value := range values {
+		out[key] = ClampInt32(value)
+	}
+	return out
+}
+
+func toProtoCleanupJob(job CleanupJob) *mecatlv1.CleanupJob {
+	out := &mecatlv1.CleanupJob{JobId: job.ID, State: job.State, Processed: ClampInt32(job.Processed), Deleted: ClampInt32(job.Deleted), Skipped: ClampInt32(job.Skipped), Stale: ClampInt32(job.Stale), Failed: ClampInt32(job.Failed)}
+	for _, item := range job.Errors {
+		out.Errors = append(out.Errors, &mecatlv1.CleanupItemError{ItemHandle: item.ItemHandle, ReasonCode: item.ReasonCode, Message: item.Message})
+	}
+	return out
+}
+
 // toStatus maps service sentinel errors to gRPC status codes.
 //
 //nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
@@ -860,6 +927,12 @@ func toStatus(err error) error {
 	case errors.Is(err, ErrMigrationConflict):
 		return status.Error(codes.Aborted, err.Error())
 	case errors.Is(err, ErrMigrationBackend):
+		return status.Error(codes.Internal, err.Error())
+	case errors.Is(err, ErrCleanupPlanStale):
+		return status.Error(codes.Aborted, err.Error())
+	case errors.Is(err, ErrCleanupUnsupported):
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrCleanupBackend):
 		return status.Error(codes.Internal, err.Error())
 	case errors.Is(err, ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())

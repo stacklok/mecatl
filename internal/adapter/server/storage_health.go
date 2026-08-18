@@ -10,6 +10,9 @@ import (
 // RetentionPolicy is the effective process-wide session retention policy. Zero
 // values disable their respective limit or cadence.
 type RetentionPolicy struct {
+	// Version changes whenever the effective policy semantics change. When empty,
+	// the server derives a stable version from the scalar limits.
+	Version           string
 	MainMaxAge        time.Duration
 	MainMaxCount      int
 	ChildMaxAge       time.Duration

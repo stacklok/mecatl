@@ -9,6 +9,7 @@ package memstore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -30,8 +31,10 @@ type Store struct {
 	// savedAt records each session's last Save time, read via now (injected
 	// for determinism; the real clock by default). It backs the optional
 	// port.PrunableStore List/Delete retention seam.
-	savedAt map[session.SessionID]time.Time
-	now     func() time.Time
+	savedAt        map[session.SessionID]time.Time
+	estimatedBytes map[session.SessionID]int64
+	deleteFailures map[session.SessionID]error
+	now            func() time.Time
 }
 
 // compile-time assertions that Store satisfies the port plus the optional
@@ -59,12 +62,24 @@ func WithNow(now func() time.Time) Option {
 	}
 }
 
+// WithDeleteFailure scripts a deterministic Delete failure for the reference
+// adapter. It exists for offline conformance of retryable maintenance paths.
+func WithDeleteFailure(id session.SessionID, err error) Option {
+	return func(st *Store) {
+		if err != nil {
+			st.deleteFailures[id] = err
+		}
+	}
+}
+
 // New constructs an empty in-memory Store.
 func New(opts ...Option) *Store {
 	st := &Store{
-		sessions: make(map[session.SessionID]sessnap.Snapshot),
-		savedAt:  make(map[session.SessionID]time.Time),
-		now:      time.Now,
+		sessions:       make(map[session.SessionID]sessnap.Snapshot),
+		savedAt:        make(map[session.SessionID]time.Time),
+		estimatedBytes: make(map[session.SessionID]int64),
+		deleteFailures: make(map[session.SessionID]error),
+		now:            time.Now,
 	}
 	for _, opt := range opts {
 		opt(st)
@@ -81,9 +96,14 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if err != nil {
 		return err
 	}
+	encoded, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("memstore: estimate snapshot bytes: %w", err)
+	}
 	st.mu.Lock()
 	st.sessions[s.ID] = snap
 	st.savedAt[s.ID] = st.now()
+	st.estimatedBytes[s.ID] = int64(len(encoded))
 	st.mu.Unlock()
 	return nil
 }
@@ -127,18 +147,52 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
 			Title: snap.Title, TitleProvenance: snap.TitleProvenance, Workspace: snap.Workspace,
 			Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+			EstimatedBytes: st.estimatedBytes[id],
 		})
 	}
 	st.mu.RUnlock()
 	return port.PaginateSessionMetadataBound(rows, request)
 }
 
+// DeleteSessionIfUnchanged atomically revalidates metadata and deletes the
+// in-memory family while holding the store mutex.
+func (st *Store) DeleteSessionIfUnchanged(_ context.Context, expected port.SessionDiscoveryMeta) (bool, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	snap, ok := st.sessions[expected.ID]
+	if !ok {
+		return false, nil
+	}
+	kind := snap.Kind
+	if kind == "" {
+		kind = session.SessionKindUnknown
+	}
+	current := port.SessionDiscoveryMeta{
+		ID: expected.ID, ModifiedAt: st.savedAt[expected.ID], State: snap.State,
+		Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+	}
+	if !port.SessionDiscoveryMetaEqual(current, expected) {
+		return false, nil
+	}
+	if err := st.deleteFailures[expected.ID]; err != nil {
+		return false, err
+	}
+	delete(st.sessions, expected.ID)
+	delete(st.savedAt, expected.ID)
+	delete(st.estimatedBytes, expected.ID)
+	return true, nil
+}
+
 // Delete removes the session stored under id. It is idempotent: an unknown id
 // is success (port.PrunableStore contract).
 func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	st.mu.Lock()
+	defer st.mu.Unlock()
+	if err := st.deleteFailures[id]; err != nil {
+		return err
+	}
 	delete(st.sessions, id)
 	delete(st.savedAt, id)
-	st.mu.Unlock()
+	delete(st.estimatedBytes, id)
 	return nil
 }

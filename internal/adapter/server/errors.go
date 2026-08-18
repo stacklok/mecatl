@@ -22,6 +22,13 @@ var (
 	// ErrMigrationBackend is the only caller-visible backend failure. Raw paths,
 	// records, and backend error strings stay behind the adapter boundary.
 	ErrMigrationBackend = errors.New("server: storage maintenance failed")
+	// ErrCleanupPlanStale reports that catalog candidates, scope, or policy changed
+	// after dry-run. No item is deleted from a stale plan.
+	ErrCleanupPlanStale = errors.New("server: cleanup plan is stale")
+	// ErrCleanupUnsupported honestly reports a backend without indexed pruning.
+	ErrCleanupUnsupported = errors.New("server: session cleanup is unsupported")
+	// ErrCleanupBackend is the sanitized stable maintenance failure.
+	ErrCleanupBackend = errors.New("server: storage maintenance failed")
 	// ErrInvalidArgument signals a malformed or missing required field.
 	ErrInvalidArgument = errors.New("server: invalid argument")
 	// ErrNotFound signals an unknown session id.

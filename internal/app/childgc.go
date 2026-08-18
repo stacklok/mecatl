@@ -10,16 +10,15 @@
 package app
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/sessionretention"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
@@ -130,10 +129,10 @@ func (p childGCPolicy) enabled() bool {
 // policy. Everything is injected (store, clock, liveness, diagnostics) so the
 // sweep is deterministic under test.
 type childGC struct {
-	store         port.PrunableStore
-	pager         port.SessionMetadataPager
-	deleteSession func(context.Context, session.SessionID) error
-	policy        childGCPolicy
+	store           port.PrunableStore
+	pager           port.SessionMetadataPager
+	deleteCandidate func(context.Context, port.SessionDiscoveryMeta) error
+	policy          childGCPolicy
 	// isLive reports whether a session id has an in-flight run in this
 	// process (Service.IsLive). A live id is never deleted, by EITHER pass.
 	//
@@ -270,48 +269,25 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 		return 0, 0
 	}
 
-	byFamily := map[string][]port.StoredSession{
-		agent.SubagentSessionPrefix: {},
-		agent.ParallelSessionPrefix: {},
-		agent.TeamSessionPrefix:     {},
-	}
-	var mains, fires []port.StoredSession
-	var protectedUnknown, protectedState int
+	live := make(map[session.SessionID]bool)
 	for _, meta := range entries {
-		e := port.StoredSession{ID: meta.ID, ModifiedAt: meta.ModifiedAt}
-		switch classifyRetention(meta) {
-		case retentionMain:
-			mains = append(mains, e)
-		case retentionScheduled:
-			fires = append(fires, e)
-		case retentionSubagent:
-			byFamily[agent.SubagentSessionPrefix] = append(byFamily[agent.SubagentSessionPrefix], e)
-		case retentionParallel:
-			byFamily[agent.ParallelSessionPrefix] = append(byFamily[agent.ParallelSessionPrefix], e)
-		case retentionTeam:
-			byFamily[agent.TeamSessionPrefix] = append(byFamily[agent.TeamSessionPrefix], e)
-		case retentionProtectedState:
-			protectedState++
-		default:
-			protectedUnknown++
+		if g.isLive(meta.ID) {
+			live[meta.ID] = true
 		}
 	}
+	plan := sessionretention.Plan(entries, sessionretention.Policy{
+		MainMaxAge: g.policy.mainRetention, MainMaxCount: g.policy.mainMaxTotal,
+		ChildMaxAge: g.policy.retention, ChildMaxCount: g.policy.maxPerFamily,
+		ScheduledMaxAge: g.policy.scheduleFireRetention, ScheduledMaxCount: g.policy.scheduleFireMaxTotal,
+	}, sessionretention.Scope{}, sessionretention.RuntimeProtection{Live: live}, g.now())
 
 	var errs deleteErrors
-	for _, kids := range byFamily {
-		deleted += g.sweepPartition(ctx, kids, g.policy.retention, g.policy.maxPerFamily, &errs)
-		retained += len(kids)
+	for _, item := range plan.Eligible {
+		if g.remove(ctx, item.Metadata, &errs) {
+			deleted++
+		}
 	}
-
-	fireDeleted := g.sweepPartition(ctx, fires, g.policy.scheduleFireRetention, g.policy.scheduleFireMaxTotal, &errs)
-	deleted += fireDeleted
-	retained += len(fires)
-
-	mainDeleted := g.sweepPartition(ctx, mains, g.policy.mainRetention, g.policy.mainMaxTotal, &errs)
-	deleted += mainDeleted
-	retained += len(mains)
-	retained += protectedUnknown + protectedState
-	retained -= deleted
+	retained = len(entries) - deleted
 
 	if errs.count > 0 {
 		g.diag.Log(ctx, port.LevelWarn, "session GC: some deletes failed (retained; retried next sweep)",
@@ -320,7 +296,8 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 	if deleted > 0 {
 		g.diag.Log(ctx, port.LevelInfo, "session GC: swept",
 			"deleted", deleted, "retained", retained,
-			"protected_unknown", protectedUnknown, "protected_state", protectedState)
+			"protected_unknown", plan.Protected.ByReason[sessionretention.ProtectedUnknown],
+			"protected_state", plan.Protected.ByReason[sessionretention.ProtectedState])
 	}
 	return deleted, retained
 }
@@ -333,12 +310,14 @@ type deleteErrors struct {
 }
 
 // remove best-effort-deletes one id, tallying a failure into errs.
-func (g *childGC) remove(ctx context.Context, id session.SessionID, errs *deleteErrors) bool {
-	deleteSession := g.store.Delete
-	if g.deleteSession != nil {
-		deleteSession = g.deleteSession
+func (g *childGC) remove(ctx context.Context, candidate port.SessionDiscoveryMeta, errs *deleteErrors) bool {
+	deleteSession := func(ctx context.Context, candidate port.SessionDiscoveryMeta) error {
+		return g.store.Delete(ctx, candidate.ID)
 	}
-	if err := deleteSession(ctx, id); err != nil {
+	if g.deleteCandidate != nil {
+		deleteSession = g.deleteCandidate
+	}
+	if err := deleteSession(ctx, candidate); err != nil {
 		errs.count++
 		if errs.first == nil {
 			errs.first = err
@@ -348,65 +327,6 @@ func (g *childGC) remove(ctx context.Context, id session.SessionID, errs *delete
 	return true
 }
 
-// sweepPartition runs the age pass then a count-cap pass over ONE partition of
-// the inventory (a child family, the mains, or the schedule fires) and returns
-// how many it deleted. It is the SINGLE retention algorithm the three partitions
-// share (issue #38 / #79 / ADR 0059 Phase-2): they differ ONLY in the two scalar
-// knobs, so the sweep logic lives here and each call site passes its own
-// retention + cap:
-//
-//   - sort oldest-first (ModifiedAt, then ID tiebreak) — store List order is
-//     unspecified (map iteration), and the tiebreak makes cap eviction and age
-//     ordering DETERMINISTIC (coarse file mtimes / batch saves collide);
-//   - age pass (retention>0): delete entries older than now-retention, skipping
-//     LIVE ids, best-effort (a failed delete stays retained, retried next sweep);
-//   - cap pass (maxTotal>0): evict the oldest NON-live survivors down to maxTotal
-//     (a live id keeps its slot; the next-oldest non-live is evicted in its stead).
-//
-// Both passes self-disable on a zero knob, so a fully-disabled partition (both
-// knobs <=0) returns 0 with no deletes — the historical "never touched" posture.
-// The cap is over the partition passed in: for the mains and the fires that is a
-// single store-wide set; for a child family it is per-prefix (the caller loops
-// per family).
-func (g *childGC) sweepPartition(ctx context.Context, entries []port.StoredSession, retention time.Duration, maxTotal int, errs *deleteErrors) (deleted int) {
-	slices.SortStableFunc(entries, func(a, b port.StoredSession) int {
-		return cmp.Or(a.ModifiedAt.Compare(b.ModifiedAt), cmp.Compare(a.ID, b.ID))
-	})
-
-	survivors := entries
-	if retention > 0 {
-		survivors = entries[:0]
-		cutoff := g.now().Add(-retention)
-		for _, e := range entries {
-			if e.ModifiedAt.Before(cutoff) && !g.isLive(e.ID) && g.remove(ctx, e.ID, errs) {
-				deleted++
-				continue
-			}
-			survivors = append(survivors, e)
-		}
-	}
-
-	if maxTotal <= 0 || len(survivors) <= maxTotal {
-		return deleted
-	}
-	over := len(survivors) - maxTotal
-	for _, e := range survivors {
-		if over == 0 {
-			break
-		}
-		if g.isLive(e.ID) {
-			// A live id keeps its slot; the next-oldest NON-live id is deleted
-			// in its stead (the loop keeps scanning).
-			continue
-		}
-		if g.remove(ctx, e.ID, errs) {
-			deleted++
-		}
-		over--
-	}
-	return deleted
-}
-
 // startChildGC wires the child-session retention sweeper: a no-op (with one
 // build-once INFO, the startMemoryConsolidation idiom) when the policy is
 // fully disabled or the store is not prunable; otherwise one startup sweep
@@ -414,7 +334,7 @@ func (g *childGC) sweepPartition(ctx context.Context, entries []port.StoredSessi
 // background goroutine sharing ctx (so the loop exits on shutdown). The
 // liveness predicate is the Service's in-flight run registry, threaded in by
 // Build AFTER the Service exists.
-func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool, deleters ...func(context.Context, session.SessionID) error) {
+func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLive func(session.SessionID) bool, deleters ...func(context.Context, port.SessionDiscoveryMeta) error) {
 	// The sweeper has no caller: it runs as the explicit system principal
 	// (ADR 0204 decision 7), never an absent one.
 	ctx = syscaller.Context(ctx, syscaller.RootChildGC)
@@ -440,18 +360,22 @@ func startChildGC(ctx context.Context, cfg Config, store port.SessionStore, isLi
 		cfg.diag().Log(ctx, port.LevelInfo, "session GC unavailable (session store has no durable metadata pager); store is never swept")
 		return
 	}
-	var deleteSession func(context.Context, session.SessionID) error
+	if _, ok := store.(port.ConditionalPrunableStore); !ok && len(deleters) > 0 {
+		cfg.diag().Log(ctx, port.LevelInfo, "session GC unavailable (session store has no atomic conditional delete); store is never swept")
+		return
+	}
+	var deleteCandidate func(context.Context, port.SessionDiscoveryMeta) error
 	if len(deleters) > 0 {
-		deleteSession = deleters[0]
+		deleteCandidate = deleters[0]
 	}
 	gc := &childGC{
-		store:         prunable,
-		pager:         pager,
-		deleteSession: deleteSession,
-		policy:        policy,
-		isLive:        isLive,
-		now:           time.Now,
-		diag:          cfg.diag(),
+		store:           prunable,
+		pager:           pager,
+		deleteCandidate: deleteCandidate,
+		policy:          policy,
+		isLive:          isLive,
+		now:             time.Now,
+		diag:            cfg.diag(),
 	}
 	cfg.diag().Log(ctx, port.LevelInfo, "session GC ENABLED",
 		"child_retention", cfg.ChildRetention, "child_max_per_family", cfg.ChildRetentionMaxPerFamily,

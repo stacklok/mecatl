@@ -441,7 +441,7 @@ func toProtoTeamMemberStopReason(r string) mecatlv1.TeamMemberStopReason {
 	switch r {
 	case "error":
 		return mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_ERROR
-	case "cancelled":
+	case cleanupStateCancelled:
 		return mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_CANCELLED
 	case "budget":
 		return mecatlv1.TeamMemberStopReason_TEAM_MEMBER_STOP_REASON_BUDGET

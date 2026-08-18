@@ -126,6 +126,19 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 			}
 		}},
 		{name: "Delete", run: func(ctx context.Context, st *Store, id session.SessionID) error { return st.Delete(ctx, id) }},
+		{name: "ConditionalDelete", run: func(ctx context.Context, st *Store, id session.SessionID) error {
+			rows, err := st.rebuildInventoryRows()
+			if err != nil {
+				return err
+			}
+			for _, row := range rows {
+				if row.ID == id {
+					_, err = st.DeleteSessionIfUnchanged(ctx, row)
+					return err
+				}
+			}
+			return errors.New("conditional delete fixture row not found")
+		}},
 		{name: "EventLog.Append", run: func(ctx context.Context, st *Store, id session.SessionID) error {
 			return st.Append(ctx, id, session.Event{Type: session.EvResult})
 		}},

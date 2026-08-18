@@ -195,7 +195,7 @@ func (st *Store) rebuildInventoryRows() ([]port.SessionDiscoveryMeta, error) {
 	out := make([]port.SessionDiscoveryMeta, 0, len(files))
 	for _, file := range files {
 		st.observeInventoryWork(inventoryWorkSnapshotRead)
-		meta := port.SessionDiscoveryMeta{ID: file.id, ModifiedAt: file.modified}
+		meta := port.SessionDiscoveryMeta{ID: file.id, ModifiedAt: file.modified, EstimatedBytes: file.estimatedBytes}
 		var m metaSnapshot
 		if file.metadata != nil {
 			m = *file.metadata

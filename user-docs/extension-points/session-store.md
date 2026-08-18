@@ -76,6 +76,25 @@ and reports corrupt/torn records without discarding them. Job errors expose stab
 reason codes and sanitized text only. Memstore, Redis, and remote stores currently
 advertise migration as unsupported rather than returning fabricated zero counts.
 
+### Authenticated cleanup planning
+
+The server exposes one retention planner to both automatic sweeps and authenticated
+manual cleanup. A manual dry-run is read-only and owner-scoped. It reports only durable
+kind/state counts, age or cap reasons, modification times, and byte estimates; transcript,
+tool arguments, paths, credentials, and foreign-owner rows are never projected. Unknown,
+invalid, corrupt, running, awaiting, live, and leased sessions are protected and do not
+consume count-cap slots.
+
+Apply requires the opaque confirmation token returned by the dry-run. The token binds the
+caller, exact kind scope, inventory generation, and effective policy version. A changed
+catalog or policy returns a stale-plan result without deleting anything. Cleanup-capable
+backends implement `port.ConditionalPrunableStore`: each candidate is revalidated under
+run-entry serialization and the maintenance lease, then the backend holds its family
+mutation exclusion across a final metadata comparison and sidecar-first/snapshot-last
+deletion. Partial failures use stable,
+sanitized reason codes and can be retried by planning again. Unsupported stores report
+`backend_unsupported`; they never claim zero impact.
+
 ### Snapshot mechanics via sessnap
 
 The snapshot format is defined in `engine/adapter/sessnap`. The `sessnap.Snapshot` struct is a stable JSON DTO that the store adapters share:

@@ -53,6 +53,7 @@ type Capabilities struct {
 	LearnedSkills     bool
 	StorageHealth     bool
 	StorageMigration  bool
+	StorageCleanup    bool
 	LegacyAdoption    bool
 }
 
@@ -83,6 +84,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		LearnedSkills:     c.GetLearnedSkills(),
 		StorageHealth:     c.GetStorageHealth(),
 		StorageMigration:  c.GetStorageMigration(),
+		StorageCleanup:    c.GetStorageCleanup(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
 	}
 }

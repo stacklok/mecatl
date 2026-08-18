@@ -712,11 +712,12 @@ func (r sessionResolver) legacyOwned(id session.SessionID) (bool, error) {
 }
 
 type snapshotFile struct {
-	id       session.SessionID
-	last     []byte
-	metadata *metaSnapshot
-	modified time.Time
-	priority int // legacy v1 < canonical v1 < current v2
+	id             session.SessionID
+	last           []byte
+	metadata       *metaSnapshot
+	modified       time.Time
+	estimatedBytes int64
+	priority       int // legacy v1 < canonical v1 < current v2
 }
 
 // snapshotFiles reads logical ids from snapshots, deduplicates all readable
@@ -782,7 +783,7 @@ func scanSnapshotDir(root *os.Root, canonical bool, byID map[session.SessionID]s
 		if canonical {
 			priority = 1
 		}
-		candidate := snapshotFile{id: id, last: last, modified: info.ModTime(), priority: priority}
+		candidate := snapshotFile{id: id, last: last, modified: info.ModTime(), estimatedBytes: info.Size(), priority: priority}
 		current, exists := byID[id]
 		if !exists || candidate.priority > current.priority ||
 			candidate.priority == current.priority && candidate.modified.After(current.modified) {
@@ -801,6 +802,10 @@ func scanCurrentSnapshotDir(root *os.Root, byID map[session.SessionID]snapshotFi
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), currentSnapshotSuffix) {
 			continue
 		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
 		header, present, hasHeader, err := readCurrentSnapshotHeader(root, entry.Name())
 		if err != nil || !present {
 			continue
@@ -811,7 +816,7 @@ func scanCurrentSnapshotDir(root *os.Root, byID map[session.SessionID]snapshotFi
 				continue
 			}
 			m := header.Metadata
-			byID[id] = snapshotFile{id: id, metadata: &m, modified: header.ModifiedAt, priority: 2}
+			byID[id] = snapshotFile{id: id, metadata: &m, modified: header.ModifiedAt, estimatedBytes: info.Size(), priority: 2}
 			continue
 		}
 
@@ -831,7 +836,7 @@ func scanCurrentSnapshotDir(root *os.Root, byID map[session.SessionID]snapshotFi
 			m := current.Metadata
 			metadata = &m
 		}
-		byID[id] = snapshotFile{id: id, last: current.Snapshot, metadata: metadata, modified: current.ModifiedAt, priority: 2}
+		byID[id] = snapshotFile{id: id, last: current.Snapshot, metadata: metadata, modified: current.ModifiedAt, estimatedBytes: info.Size(), priority: 2}
 	}
 	return nil
 }

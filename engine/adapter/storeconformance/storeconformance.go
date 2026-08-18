@@ -610,10 +610,63 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 			if row.ID == "foreign" || row.ID == "ownerless" {
 				t.Fatalf("ownership filtering happened after paging: leaked %q", row.ID)
 			}
+			if row.EstimatedBytes <= 0 {
+				t.Fatalf("discovery metadata for %q omitted a positive byte estimate", row.ID)
+			}
 			if row.Workspace != "/work/space" || row.Kind != session.SessionKindMain {
 				t.Fatalf("discovery metadata for %q = workspace %q kind %q", row.ID, row.Workspace, row.Kind)
 			}
 		}
+	}
+}
+
+// RunConditionalPrunable executes the atomic metadata-revalidation cleanup
+// contract against stores that advertise port.ConditionalPrunableStore.
+func RunConditionalPrunable(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
+	t.Helper()
+	ctx := context.Background()
+	st := newStore(t)
+	pager, ok := st.(port.SessionMetadataPager)
+	if !ok {
+		t.Fatalf("store %T does not implement port.SessionMetadataPager", st)
+	}
+	deleter, ok := st.(port.ConditionalPrunableStore)
+	if !ok {
+		t.Fatalf("store %T does not implement port.ConditionalPrunableStore", st)
+	}
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "cleanup-owner"}
+	s := newSession("conditional-delete")
+	if err := s.RestoreLabels(owner, session.Authority("")); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	if err := st.Save(ctx, s); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	page, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 1, OwnershipEnforced: true, Owner: owner})
+	if err != nil || len(page.Sessions) != 1 {
+		t.Fatalf("PageSessionMetadata = %+v, %v", page, err)
+	}
+	stale := page.Sessions[0]
+	if err := s.RecordUserPrompt("changed", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := st.Save(ctx, s); err != nil {
+		t.Fatalf("Save changed: %v", err)
+	}
+	deleted, err := deleter.DeleteSessionIfUnchanged(ctx, stale)
+	if err != nil || deleted {
+		t.Fatalf("stale conditional delete = %v, %v; want false, nil", deleted, err)
+	}
+	page, err = pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 1, OwnershipEnforced: true, Owner: owner})
+	if err != nil || len(page.Sessions) != 1 {
+		t.Fatalf("PageSessionMetadata changed = %+v, %v", page, err)
+	}
+	deleted, err = deleter.DeleteSessionIfUnchanged(ctx, page.Sessions[0])
+	if err != nil || !deleted {
+		t.Fatalf("current conditional delete = %v, %v; want true, nil", deleted, err)
+	}
+	if _, err := st.Load(ctx, s.ID); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("Load after conditional delete = %v, want not found", err)
 	}
 }
 

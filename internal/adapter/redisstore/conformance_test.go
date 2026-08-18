@@ -51,6 +51,10 @@ func TestSessionContinuityUX_Scenario3_PagerConformance(t *testing.T) {
 	storeconformance.RunMetadataPager(t, newTestStore)
 }
 
+func TestRedisStoreConditionalPrunableConformance(t *testing.T) {
+	storeconformance.RunConditionalPrunable(t, newTestStore)
+}
+
 // TestRedisStoreEventLogConformance runs the shared EventLog conformance table
 // against the Redis-backed store (the same Store that doubles as SessionStore):
 // this is the Redis-transport half of the dual-path contract, run against the

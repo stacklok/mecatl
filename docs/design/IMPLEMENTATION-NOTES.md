@@ -5915,6 +5915,27 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   failure therefore leaves canonical v1 or an already-readable v2 authoritative; a
   lost checkpoint converges on resume. Logical mtime and sidecar bytes are preserved.
 
+  **Retention planner invariant (`retention-requires-durable-taxonomy`).**
+  `internal/sessionretention/planner.go` is the one deterministic, side-effect-free
+  selector used by `internal/app/childgc.go` and the authenticated manual cleanup
+  surface in `internal/adapter/server/cleanup.go`. It accepts only bounded durable
+  metadata plus snapshotted live/lease facts. Missing/unknown/invalid taxonomy,
+  corrupt rows, running/awaiting state, and live/leased sessions are protected and
+  excluded from cap slots. Candidates are age-first and then cap-selected within
+  durable-kind partitions, globally emitted oldest-first by `(ModifiedAt, ID)`.
+  Manual dry-run pushes ownership into `SessionMetadataPager` before page formation;
+  its opaque HMAC token binds principal, canonical kind scope, exact generation,
+  effective policy version, candidate count, and estimated bytes. Dry-run reports
+  both eligible and protected durable-kind/state/reason counts. Apply re-plans
+  before mutation, then takes `runEntryMu` → mutation lease → adapter family lock;
+  `port.ConditionalPrunableStore` compares exact owner/kind/state/relationship/
+  modification metadata under that lock and holds every exclusion through the
+  adapter's sidecar-first/snapshot-last deletion. Failures expose bounded stable
+  codes/messages only and a new plan safely retries survivors. The management
+  authorizer gates plan/apply/cancel/job/health before support, token, or scope is
+  disclosed. `TestInvariant_retention_requires_durable_taxonomy` pins the fail-closed
+  taxonomy and cap-slot rule.
+
   `cmd/mecatui/client/sessions_list.go` (`ListSessionPage`) is the single
   proto-to-client paging boundary. It fetches exactly one 100-row page and maps
   the gRPC `ABORTED` stale-cursor signal to a client sentinel; only non-interactive

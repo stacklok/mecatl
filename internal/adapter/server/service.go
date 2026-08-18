@@ -887,6 +887,13 @@ type Service struct {
 	// durable EventLog, diagnostics, and the SHARED model-inventory pointer.
 	schedMgr *scheduleManager
 
+	// cleanupTokenKey signs opaque caller/scope/generation-bound confirmation
+	// handles; cleanupPlans and cleanupJobs retain bounded payloads/projections for
+	// apply and management inspection during this process lifetime. Guarded by s.mu.
+	cleanupTokenKey [32]byte
+	cleanupPlans    map[string]cleanupTokenPayload
+	cleanupJobs     map[string]cleanupJobRecord
+
 	// subscriptions is the per-session live event subscription registry (ADR 0075
 	// decision #5): a connected client (e.g. the embedded server's mecatui) holds
 	// open a per-session merged stream over the session's runs via Subscribe, and
@@ -1059,6 +1066,10 @@ func NewService(cfg Config) (*Service, error) {
 			cfg.LeaseRenewInterval = cfg.LeaseTTL // tiny-TTL guard: never a zero ticker.
 		}
 	}
+	var cleanupTokenKey [32]byte
+	if _, err := rand.Read(cleanupTokenKey[:]); err != nil {
+		return nil, fmt.Errorf("server: initialize cleanup token signer: %w", err)
+	}
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
 		cfg:                 cfg,
@@ -1070,6 +1081,9 @@ func NewService(cfg Config) (*Service, error) {
 		reservedIDs:         make(map[session.SessionID]struct{}),
 		replayedApprovals:   make(map[session.SessionID]struct{}),
 		heldLeases:          make(map[session.SessionID]*heldLease),
+		cleanupTokenKey:     cleanupTokenKey,
+		cleanupPlans:        make(map[string]cleanupTokenPayload),
+		cleanupJobs:         make(map[string]cleanupJobRecord),
 		subscriptions:       make(map[session.SessionID]map[int64]chan session.Event),
 	}
 	// Seed the model inventory from the static snapshot. ListModels and the
@@ -1739,6 +1753,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Scheduling:        s.scheduleStore() != nil,
 		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && implementsStorageHealth(s.cfg.Store),
 		StorageMigration:  s.cfg.StorageManagementAuthorized != nil && func() bool { _, ok := migrationStore(s.cfg.Store); return ok }(),
+		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && supportsCleanupDelete(s.cfg.Store),
 		LegacyAdoption:    s.cfg.OwnershipEnforced && s.cfg.SessionEngine != nil,
 	}
 }
@@ -2114,6 +2129,49 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 		return fmt.Errorf("%w: delete session: %v", ErrInternal, err)
 	}
 	s.CloseSession(id)
+	return nil
+}
+
+// DeleteSessionForRetentionCandidate removes one exact planner candidate while
+// keeping run-entry and lease exclusions held through the backend's atomic final
+// metadata comparison and family deletion.
+func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candidate port.SessionDiscoveryMeta) error {
+	unlock := s.runEntryMu.lock(candidate.ID)
+	defer unlock()
+	deleter, ok := s.cfg.Store.(port.ConditionalPrunableStore)
+	if !ok {
+		return ErrSessionDeleteUnsupported
+	}
+	release, err := s.acquireMutationLease(ctx, candidate.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if s.IsLive(candidate.ID) {
+		return fmt.Errorf("%w: retention candidate is active", ErrFailedPrecondition)
+	}
+	sess, err := s.cfg.Store.Load(ctx, candidate.ID)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			return nil
+		}
+		return fmt.Errorf("%w: load retention candidate: %v", ErrInternal, err)
+	}
+	if sess == nil || sess.ID != candidate.ID || !cleanupSessionMatches(sess, candidate.Owner, CleanupCandidate{Kind: candidate.Kind, State: candidate.State}) ||
+		session.ValidateSessionMetadata(sess.Kind, sess.Relationship) != nil || sess.Kind == session.SessionKindUnknown {
+		return fmt.Errorf("%w: retention candidate changed or has no valid durable taxonomy", ErrFailedPrecondition)
+	}
+	deleted, err := deleter.DeleteSessionIfUnchanged(ctx, candidate)
+	if err != nil {
+		if errors.Is(err, port.ErrPruneUnsupported) {
+			return ErrSessionDeleteUnsupported
+		}
+		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
+	}
+	if !deleted {
+		return fmt.Errorf("%w: retention candidate changed", ErrFailedPrecondition)
+	}
+	s.CloseSession(candidate.ID)
 	return nil
 }
 

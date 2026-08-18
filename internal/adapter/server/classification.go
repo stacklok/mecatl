@@ -246,6 +246,10 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ResumeSessionMigration":    {KindCallerOwned, "requires management authorization and the same caller binding before processing another bounded batch"},
 	"CancelSessionMigration":    {KindCallerOwned, "requires management authorization and the same caller binding before stopping future items"},
 	"SessionMigrationJob":       {KindCallerOwned, "requires management authorization and conceals missing and cross-caller job handles identically"},
+	"PlanSessionCleanup":        {KindCallerOwned, "requires management authority and scopes metadata paging to the verified context principal before planning"},
+	"ApplySessionCleanup":       {KindCallerOwned, "requires management authority plus a caller-bound signed plan before revalidated deletion"},
+	"CancelSessionCleanup":      {KindCallerOwned, "requires management authority and matches the verified principal against the bounded job registry"},
+	"SessionCleanupJob":         {KindCallerOwned, "requires management authority and returns only a caller-bound sanitized job projection"},
 	"StreamSessionEvents":       {KindCallerOwned, "event log/live stream resolves through the owning session's authorizeSession check"},
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
@@ -346,10 +350,11 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ScheduleManager":        {KindExempt, "composition-time accessor for the context-free manager handle; Schedule and ScheduleQuery are separately classified caller-owned consumers"},
 
 	// --- exempt: composition-owned session staleness sweep (issue #475), process-wide by design ---
-	"SessionStale":              {KindExempt, "decides staleness for a metadata-scan candidate inside internal/app's composition-owned sweep, never a per-request caller-facing verb (mirrors IsLive)"},
-	"LeaseSweepDisabled":        {KindExempt, "reads the process-wide sticky sweep-disabled flag SessionStale sets, consumed only by the composition-owned sweep"},
-	"SettleIfStale":             {KindExempt, "repairs a stale session found by the composition-owned sweep's own metadata scan across every session, not a caller-supplied id from a caller-owned boundary"},
-	"DeleteSessionForRetention": {KindExempt, "composition-owned retention callback over system-scoped metadata candidates; revalidates durable taxonomy/state and acquires the session mutation lease before deletion"},
+	"SessionStale":                       {KindExempt, "decides staleness for a metadata-scan candidate inside internal/app's composition-owned sweep, never a per-request caller-facing verb (mirrors IsLive)"},
+	"LeaseSweepDisabled":                 {KindExempt, "reads the process-wide sticky sweep-disabled flag SessionStale sets, consumed only by the composition-owned sweep"},
+	"SettleIfStale":                      {KindExempt, "repairs a stale session found by the composition-owned sweep's own metadata scan across every session, not a caller-supplied id from a caller-owned boundary"},
+	"DeleteSessionForRetention":          {KindExempt, "legacy composition retention callback; revalidates durable taxonomy/state and acquires the session mutation lease before deletion"},
+	"DeleteSessionForRetentionCandidate": {KindExempt, "composition-owned retention callback over planner metadata; holds run-entry, lease, and backend family exclusions through conditional deletion"},
 }
 
 // callerStoreAccessTable classifies memory.CallerStore's exported methods —

@@ -71,6 +71,10 @@ const (
 	HarnessService_ResumeSessionMigration_FullMethodName   = "/mecatl.v1.HarnessService/ResumeSessionMigration"
 	HarnessService_CancelSessionMigration_FullMethodName   = "/mecatl.v1.HarnessService/CancelSessionMigration"
 	HarnessService_GetSessionMigrationJob_FullMethodName   = "/mecatl.v1.HarnessService/GetSessionMigrationJob"
+	HarnessService_PlanSessionCleanup_FullMethodName       = "/mecatl.v1.HarnessService/PlanSessionCleanup"
+	HarnessService_ApplySessionCleanup_FullMethodName      = "/mecatl.v1.HarnessService/ApplySessionCleanup"
+	HarnessService_CancelSessionCleanup_FullMethodName     = "/mecatl.v1.HarnessService/CancelSessionCleanup"
+	HarnessService_GetSessionCleanupJob_FullMethodName     = "/mecatl.v1.HarnessService/GetSessionCleanupJob"
 	HarnessService_ListSkills_FullMethodName               = "/mecatl.v1.HarnessService/ListSkills"
 	HarnessService_GetSoul_FullMethodName                  = "/mecatl.v1.HarnessService/GetSoul"
 	HarnessService_GetUserModel_FullMethodName             = "/mecatl.v1.HarnessService/GetUserModel"
@@ -264,6 +268,12 @@ type HarnessServiceClient interface {
 	ResumeSessionMigration(ctx context.Context, in *ResumeSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error)
 	CancelSessionMigration(ctx context.Context, in *CancelSessionMigrationRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error)
 	GetSessionMigrationJob(ctx context.Context, in *GetSessionMigrationJobRequest, opts ...grpc.CallOption) (*SessionMigrationJob, error)
+	// Session cleanup is an authenticated plan/apply maintenance workflow. Plan is
+	// read-only; apply requires its caller-bound opaque confirmation token.
+	PlanSessionCleanup(ctx context.Context, in *PlanSessionCleanupRequest, opts ...grpc.CallOption) (*PlanSessionCleanupResponse, error)
+	ApplySessionCleanup(ctx context.Context, in *ApplySessionCleanupRequest, opts ...grpc.CallOption) (*CleanupJob, error)
+	CancelSessionCleanup(ctx context.Context, in *CancelSessionCleanupRequest, opts ...grpc.CallOption) (*CleanupJob, error)
+	GetSessionCleanupJob(ctx context.Context, in *GetSessionCleanupJobRequest, opts ...grpc.CallOption) (*CleanupJob, error)
 	// ListSkills returns the resolved skills inventory snapshot: each discovered
 	// skill's name + one-line description. Derived from the snapshot taken at
 	// startup (skills are discovered once at build time and immutable for the
@@ -685,6 +695,46 @@ func (c *harnessServiceClient) GetSessionMigrationJob(ctx context.Context, in *G
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionMigrationJob)
 	err := c.cc.Invoke(ctx, HarnessService_GetSessionMigrationJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) PlanSessionCleanup(ctx context.Context, in *PlanSessionCleanupRequest, opts ...grpc.CallOption) (*PlanSessionCleanupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PlanSessionCleanupResponse)
+	err := c.cc.Invoke(ctx, HarnessService_PlanSessionCleanup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ApplySessionCleanup(ctx context.Context, in *ApplySessionCleanupRequest, opts ...grpc.CallOption) (*CleanupJob, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CleanupJob)
+	err := c.cc.Invoke(ctx, HarnessService_ApplySessionCleanup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) CancelSessionCleanup(ctx context.Context, in *CancelSessionCleanupRequest, opts ...grpc.CallOption) (*CleanupJob, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CleanupJob)
+	err := c.cc.Invoke(ctx, HarnessService_CancelSessionCleanup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) GetSessionCleanupJob(ctx context.Context, in *GetSessionCleanupJobRequest, opts ...grpc.CallOption) (*CleanupJob, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CleanupJob)
+	err := c.cc.Invoke(ctx, HarnessService_GetSessionCleanupJob_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1125,6 +1175,12 @@ type HarnessServiceServer interface {
 	ResumeSessionMigration(context.Context, *ResumeSessionMigrationRequest) (*SessionMigrationJob, error)
 	CancelSessionMigration(context.Context, *CancelSessionMigrationRequest) (*SessionMigrationJob, error)
 	GetSessionMigrationJob(context.Context, *GetSessionMigrationJobRequest) (*SessionMigrationJob, error)
+	// Session cleanup is an authenticated plan/apply maintenance workflow. Plan is
+	// read-only; apply requires its caller-bound opaque confirmation token.
+	PlanSessionCleanup(context.Context, *PlanSessionCleanupRequest) (*PlanSessionCleanupResponse, error)
+	ApplySessionCleanup(context.Context, *ApplySessionCleanupRequest) (*CleanupJob, error)
+	CancelSessionCleanup(context.Context, *CancelSessionCleanupRequest) (*CleanupJob, error)
+	GetSessionCleanupJob(context.Context, *GetSessionCleanupJobRequest) (*CleanupJob, error)
 	// ListSkills returns the resolved skills inventory snapshot: each discovered
 	// skill's name + one-line description. Derived from the snapshot taken at
 	// startup (skills are discovered once at build time and immutable for the
@@ -1327,6 +1383,18 @@ func (UnimplementedHarnessServiceServer) CancelSessionMigration(context.Context,
 }
 func (UnimplementedHarnessServiceServer) GetSessionMigrationJob(context.Context, *GetSessionMigrationJobRequest) (*SessionMigrationJob, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSessionMigrationJob not implemented")
+}
+func (UnimplementedHarnessServiceServer) PlanSessionCleanup(context.Context, *PlanSessionCleanupRequest) (*PlanSessionCleanupResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PlanSessionCleanup not implemented")
+}
+func (UnimplementedHarnessServiceServer) ApplySessionCleanup(context.Context, *ApplySessionCleanupRequest) (*CleanupJob, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApplySessionCleanup not implemented")
+}
+func (UnimplementedHarnessServiceServer) CancelSessionCleanup(context.Context, *CancelSessionCleanupRequest) (*CleanupJob, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelSessionCleanup not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetSessionCleanupJob(context.Context, *GetSessionCleanupJobRequest) (*CleanupJob, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSessionCleanupJob not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListSkills(context.Context, *ListSkillsRequest) (*ListSkillsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSkills not implemented")
@@ -1921,6 +1989,78 @@ func _HarnessService_GetSessionMigrationJob_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_PlanSessionCleanup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PlanSessionCleanupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).PlanSessionCleanup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_PlanSessionCleanup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).PlanSessionCleanup(ctx, req.(*PlanSessionCleanupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_ApplySessionCleanup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApplySessionCleanupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ApplySessionCleanup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ApplySessionCleanup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ApplySessionCleanup(ctx, req.(*ApplySessionCleanupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_CancelSessionCleanup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelSessionCleanupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).CancelSessionCleanup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_CancelSessionCleanup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).CancelSessionCleanup(ctx, req.(*CancelSessionCleanupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_GetSessionCleanupJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSessionCleanupJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetSessionCleanupJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetSessionCleanupJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetSessionCleanupJob(ctx, req.(*GetSessionCleanupJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_ListSkills_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListSkillsRequest)
 	if err := dec(in); err != nil {
@@ -2467,6 +2607,22 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSessionMigrationJob",
 			Handler:    _HarnessService_GetSessionMigrationJob_Handler,
+		},
+		{
+			MethodName: "PlanSessionCleanup",
+			Handler:    _HarnessService_PlanSessionCleanup_Handler,
+		},
+		{
+			MethodName: "ApplySessionCleanup",
+			Handler:    _HarnessService_ApplySessionCleanup_Handler,
+		},
+		{
+			MethodName: "CancelSessionCleanup",
+			Handler:    _HarnessService_CancelSessionCleanup_Handler,
+		},
+		{
+			MethodName: "GetSessionCleanupJob",
+			Handler:    _HarnessService_GetSessionCleanupJob_Handler,
 		},
 		{
 			MethodName: "ListSkills",

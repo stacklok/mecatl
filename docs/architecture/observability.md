@@ -121,8 +121,20 @@
   liveness and source fingerprint, promotes one verified v2 snapshot, and removes v1
   only after rereading that v2. Sidecars, complete sessnap bytes, unknown kind, owner,
   and logical modification time are preserved. Public errors contain only stable
-  reason codes, bounded messages, and non-reversible item handles. Cursors retain
-  neutral ordering and bind the catalog fingerprint generation and ownership/filter scope; the backend
+  reason codes, bounded messages, and non-reversible item handles. The authenticated cleanup
+  API runs a side-effect-free dry-run over the same owner-filtered generation and
+  returns age/cap candidates oldest-first by `(modified_at ASC, session_id ASC)`,
+  protected and eligible kind/state/reason counts, mtimes, and byte estimates—never transcript,
+  tool arguments, paths, secrets, or foreign-owner rows. Automatic sweeps and manual
+  plans call the same planner. Unknown/invalid/corrupt/running/awaiting/live/leased
+  records are protected and excluded from cap slots. Apply accepts only a signed
+  caller/scope/generation/policy-bound token, rejects stale generations explicitly,
+  then revalidates owner/kind/state/liveness under run-entry serialization and a
+  maintenance lease before `port.ConditionalPrunableStore` takes its family lock,
+  compares the exact durable metadata again, and keeps all exclusions held while
+  deleting sidecars before the snapshot. Partial failures use stable sanitized codes and remain
+  retryable; unsupported backends report unsupported, not zero impact. Cursors retain neutral ordering and
+  bind the catalog fingerprint generation and ownership/filter scope; the backend
   token itself is issued and validated only by the pager. A stale, mismatched, or
   foreign cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart
   rather than mixing generations or owner scopes. Ready-state inventory checks an
