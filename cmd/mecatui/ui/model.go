@@ -364,54 +364,15 @@ type Model struct {
 	width  int
 	height int
 
-	conv   conversation
-	vp     viewport.Model
-	planVP viewport.Model
-	// planVPReady is true once the plan-review viewport has been populated for the
-	// current plan ask (openPlanReviewView). It gates both the render path (so a
-	// half-initialized planVP never renders) and the scroll-key routing (so a scroll
-	// key before population does not no-op into an empty viewport). Reset to false
-	// whenever the plan ask resolves/retracts/endRun/resetSession clears planVP.
-	planVPReady bool
-	// planVPWidth/planVPHeight record the geometry planVP was LAST populated at, so
-	// relayout can skip a no-op re-population (and the expensive glamour re-wrap +
-	// SetContent it triggers) when the body region did not actually change. A
-	// width/height change re-populates so the plan re-wraps at the new size; the
-	// scroll offset is preserved (clamped) across the re-wrap. Zero before the
-	// first population.
-	planVPWidth, planVPHeight int
-	// planVPFingerprint is the ask fingerprint (Tool + Args + queued + model)
-	// planVP was LAST populated for, so a no-op re-population (same ask, same
-	// geometry) short-circuits in openPlanReviewView — a plan-review keypress
-	// does not re-render the plan. Cleared alongside planVPReady.
-	planVPFingerprint string
+	conv conversation
+	vp   viewport.Model
 
-	// askVPOffset is the YOffset of the permission modal's in-card args
-	// mini-viewport (issue #488): the args region of a non-diff ask is a
-	// height-capped plain string slice scrolled by this offset (NOT a third
-	// viewport.Model — the body is rebuilt per frame/call from the same source,
-	// and the hit-test reuses the same builder, so render and hit-test can never
-	// desync). Reset to 0 on ask advance/retract/endRun/resetSession (via
-	// clearAskArgsView) and when the full-screen args view closes.
-	askVPOffset int
-
-	// The full-screen ask-args view (issue #488) mirrors the planVP cluster
-	// one-for-one: a dedicated viewport the ctrl+t full-args view populates
-	// (openAskArgsView) for a non-diff, non-plan ask, sized to the body region
-	// minus the pinned action bar. argsViewOpen is Model state alongside the
-	// phase (NOT a new phase): the phase stays phaseAwaitingApproval and the
-	// render/hit-test/key arms discriminate on this flag BEFORE the generic
-	// modal arms. argsViewRaw selects the raw-JSON tier (RawArgs toggle).
-	// argsVPWidth/argsVPHeight/argsVPFingerprint drive the same no-op
-	// re-population short-circuit + resize re-wrap (YOffset preserved) as the
-	// planVP trio. All cleared by clearAskArgsView on ask advance/retract/endRun.
-	argsVP            viewport.Model
-	argsVPReady       bool
-	argsVPWidth       int
-	argsVPHeight      int
-	argsVPFingerprint string
-	argsViewRaw       bool
-	argsViewOpen      bool
+	// approval is the approval modal's whole state cluster (issue #555 Phase 1):
+	// the visible ask, the FIFO queue behind it, the answered-set dedupe, and the
+	// scrollable surfaces (plan-review viewport, full-screen ask-args view,
+	// in-card args mini-viewport). Its field docs live on approvalState in
+	// approval_state.go.
+	approval approvalState
 
 	// debugAskCycle rotates the /debug-ask built-in (Deps.DebugAsk) through its
 	// canned long-args payloads so repeated invocations exercise the different
@@ -444,28 +405,8 @@ type Model struct {
 	// thus its known ~1/3 -race flake — no worse than before.
 	tickArmed bool
 
-	activeTool   string     // tool name in flight, shown beside the spinner
-	toolProgress string     // transient progress line for the in-flight tool (cleared on result/turn boundary)
-	ask          pendingAsk // current permission modal (when phaseAwaitingApproval)
-	// askQueue is the FIFO of surfaced permission asks waiting BEHIND the visible
-	// modal — the head is always m.ask (invariant: phase==phaseAwaitingApproval ⟺
-	// m.ask.AskID != ""). Concurrent subagents (team members, parallel Subagent
-	// calls) can surface asks while one is already open; each parks its child
-	// server-side until answered, so a second ask must queue, never clobber the
-	// first. Bounded in practice by the server's child-concurrency gate — no
-	// client-side cap needed. Head-advancement funnels through advanceAsk.
-	askQueue []pendingAsk
-	// askResumePhase is the phase the currently-visible ask interrupted, recorded
-	// by the PermissionAskMsg reducer (the ONLY ask-opening path). advanceAsk
-	// returns to it when the queue drains — a wire ask resumes phaseRunning, a
-	// /debug-ask resumes phaseIdle (never a spinner-running phase no run owns).
-	askResumePhase phase
-	// resolvedAsks is the set of askIDs answered/retracted THIS run — a defensive
-	// same-stream dedupe for re-delivered PermissionAskMsgs (the streamGen guard
-	// already kills stale-reader duplicates; this kills same-stream ones). Lazily
-	// initialised (markAskResolved); a reference type mutable through the
-	// value-receiver Model, same pattern as filesSeen below.
-	resolvedAsks    map[string]struct{}
+	activeTool      string         // tool name in flight, shown beside the spinner
+	toolProgress    string         // transient progress line for the in-flight tool (cleared on result/turn boundary)
 	mcp             mcpState       // MCP overlay state (view==mcpNone when closed)
 	skills          skillsState    // skills-inventory overlay state (view==skillsNone when closed)
 	skillsEpoch     uint64         // model-lifetime monotonic request epoch; never reset on close
@@ -995,11 +936,7 @@ func (m Model) resetSession() Model {
 	// "owns all session-derived state" invariant honest — and the restart-now
 	// handoff goes through here. The plan-review viewport is cleared alongside (a
 	// plan ask may have been open), as is the full-screen ask-args view.
-	(&m).clearPlanReview()
-	(&m).clearAskArgsView()
-	m.ask = pendingAsk{}
-	m.askQueue = nil
-	m.resolvedAsks = nil
+	m.approval.reset()
 	m.queued = nil
 	m.queuePaused = ""
 	// Drop staged-but-unsent media attachments: /clear wipes the session-derived

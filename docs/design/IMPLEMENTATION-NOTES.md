@@ -3371,8 +3371,8 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   the SAME posture as every other permission ask (Write/Bash asks carry their args for
   operator review); the operator is the intended audience. Gauntlet #7 holds: the
   `EvApproval` payload carries ONLY tool NAME + verdict + askID + call id — NO args.
-- **The scrollable plan-approval view (`cmd/mecatui/ui/permission.go`
-  (`openPlanReviewView`), `cmd/mecatui/ui/permission.go` (`planBodyFromArgs`;
+- **The scrollable plan-approval view (`cmd/mecatui/ui/approval_render.go`
+  (`openPlanReviewView`), `cmd/mecatui/ui/approval_render.go` (`planBodyFromArgs`;
   `renderPlanApprovalModal` no longer exists — the plan path is
   `renderPlanReviewView` over the dedicated planVP viewport).** The mecatui
   plan surface parses the `plan` (falling back to `note`) out of `ask.Args`
@@ -3383,14 +3383,14 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   compat: no `plan` arg → `note`; no note → the reason line; malformed args
   JSON → the reason line (an older model that put the plan only in message text
   never breaks the modal). **The non-diff ask-args surface (issue #488, ADR
-  0108 — `cmd/mecatui/ui/permission.go` (`openAskArgsView`))** mirrors this
+  0108 — `cmd/mecatui/ui/approval_render.go` (`openAskArgsView`))** mirrors this
   trio one-for-one: a non-diff, non-plan ask's args WRAP inside the centered
   card (a Bash `{"command": …}` decodes to the command text), cap at six rows
   plus a scroll/full-args hint, and `ctrl+t` opens the full-screen argsVP view
   (raw JSON via the bare-`r` RawArgs toggle; the verdict keys/buttons work from
   inside it) — ctrl+t routing by ask type is `isDiffCapableAskTool` (Edit/Write
   keep the in-modal diff expand; plan asks untouched). The modal body builder
-  `cmd/mecatui/ui/permission.go` (`permissionModalBodyParts`) remains the
+  `cmd/mecatui/ui/approval_render.go` (`permissionModalBodyParts`) remains the
   SINGLE source for render AND click hit-test (it measures the buttons row at
   the structural point it writes them), so the added args/hint rows cannot
   desync the click geometry.
@@ -3472,7 +3472,7 @@ tool call refined into an askable ask, a serialized provenance marker, a verdict
   opening a FRESH Converse stream (like `submitPrompt`) and sending `SendPrompt(sessionID,
   planApprovedProceedText, nil)` so `StartRunContent` reopens the `StopPlanApproved`-completed
   session and the CASE-1 mode→model rebuild picks up the flipped mode → the agent executes.
-  The proceed text is a STABLE WIRE CONTRACT duplicated as `cmd/mecatui/ui/permission.go`
+  The proceed text is a STABLE WIRE CONTRACT duplicated as `cmd/mecatui/ui/approval_render.go`
   (`planApprovedProceedText`) because `ui`/`client` CANNOT import `engine/agent` (the
   layering rule); it MUST stay byte-identical to `engine/agent.PlanApprovedProceedText`.
   ORDERING: it fires post-terminal (on `ResultMsg`), NEVER immediately after `SendApproval`

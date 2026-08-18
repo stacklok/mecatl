@@ -101,8 +101,8 @@ func TestPermissionRetractDismissesMatchingModal(t *testing.T) {
 	if m.phase != phaseRunning {
 		t.Fatalf("matching retract must dismiss the modal back to running, got phase %v", m.phase)
 	}
-	if m.ask.AskID != "" {
-		t.Fatalf("matching retract must clear the pending ask, got %+v", m.ask)
+	if m.approval.ask.AskID != "" {
+		t.Fatalf("matching retract must clear the pending ask, got %+v", m.approval.ask)
 	}
 	if notice := lastNotice(m); notice == "" {
 		t.Fatalf("dismissing the modal should leave a notice explaining why")
@@ -119,8 +119,8 @@ func TestPermissionRetractNonMatchingIgnored(t *testing.T) {
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("non-matching retract must not dismiss the modal, got phase %v", m.phase)
 	}
-	if m.ask.AskID != "subagent-p1:1:k1" {
-		t.Fatalf("non-matching retract must leave the pending ask, got %+v", m.ask)
+	if m.approval.ask.AskID != "subagent-p1:1:k1" {
+		t.Fatalf("non-matching retract must leave the pending ask, got %+v", m.approval.ask)
 	}
 }
 
@@ -130,7 +130,7 @@ func TestPermissionRetractWhileIdleIgnored(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m.phase = phaseRunning
 	m = applyAll(m, client.PermissionRetractMsg{AskID: "subagent-p1:1:k1"})
-	if m.phase != phaseRunning || m.ask.AskID != "" {
-		t.Fatalf("retract with no modal must be a no-op, got phase=%v ask=%+v", m.phase, m.ask)
+	if m.phase != phaseRunning || m.approval.ask.AskID != "" {
+		t.Fatalf("retract with no modal must be a no-op, got phase=%v ask=%+v", m.phase, m.approval.ask)
 	}
 }

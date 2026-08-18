@@ -127,20 +127,20 @@ func (m Model) renderBody() string {
 // modal arms (the phase stays phaseAwaitingApproval; argsViewOpen is Model state
 // alongside it).
 func (m Model) renderApprovalBody() string {
-	if m.argsViewOpen {
-		return m.renderAskArgsView(m.ask)
+	if m.approval.argsViewOpen {
+		return m.renderAskArgsView(m.approval.ask)
 	}
-	if isPlanAsk(m.ask.Tool) {
+	if isPlanAsk(m.approval.ask.Tool) {
 		// A plan ask fills the conversation region with a dedicated SCROLLABLE
 		// viewport (planVP) instead of the small centered card — the plan is
 		// read in full, no collapse, no ctrl+t gate. planVP is populated at the
 		// reducer seams (openPlanReviewView: the PermissionAskMsg reducer, the
-		// advanceAsk queued-successor path, relayout/onResize geometry changes)
-		// so the render path is a pure read of m.planVP.View(). See
+		// queued-successor advance path, relayout/onResize geometry changes)
+		// so the render path is a pure read of m.approval.planVP.View(). See
 		// renderPlanReviewView / openPlanReviewView.
-		return m.renderPlanReviewView(m.ask)
+		return m.renderPlanReviewView(m.approval.ask)
 	}
-	return m.rend.renderPermissionModal(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height(), m.askVPOffset)
+	return m.rend.renderPermissionModal(m.approval.ask, m.expandTools, len(m.approval.queue), m.width, m.vp.Height(), m.approval.askVPOffset)
 }
 
 // renderHeader is the top bar: session id · model · mode · server.
@@ -548,10 +548,10 @@ func (m Model) renderFooter() string {
 		// "(1 of N)" badge as the modal title; the single-ask frame stays
 		// byte-identical.
 		label := "⚠ awaiting approval"
-		if isPlanAsk(m.ask.Tool) {
+		if isPlanAsk(m.approval.ask.Tool) {
 			label = "⚙ plan review"
 		}
-		if n := len(m.askQueue); n > 0 {
+		if n := len(m.approval.queue); n > 0 {
 			label = fmt.Sprintf("%s (1 of %d)", label, 1+n)
 		}
 		left = m.deps.Theme.Style("askTitle").Render(label)
@@ -585,7 +585,7 @@ func (m Model) renderFooter() string {
 	if m.phase == phaseRunning {
 		help = hk.submit + " queue · " + hk.cancel + " cancel/clear · " + help
 	}
-	if m.phase == phaseAwaitingApproval && isPlanAsk(m.ask.Tool) {
+	if m.phase == phaseAwaitingApproval && isPlanAsk(m.approval.ask.Tool) {
 		// Gate the "W auto-accept" hint on offerAlways — the SAME condition the
 		// action bar (permission.go renderPlanReviewView) uses to show/hide the
 		// [W] button. Without this a surfaced child plan ask (offerAlways=false)
@@ -594,7 +594,7 @@ func (m Model) renderFooter() string {
 		// rune upper-cased (the footer idiom: "A", "W", "D" by default) so an
 		// override propagates (issue #457).
 		allow, always, deny := approvalMnemonic(hk.allow), approvalMnemonic(hk.allowAlways), approvalMnemonic(hk.deny)
-		if m.ask.offerAlways {
+		if m.approval.ask.offerAlways {
 			help = allow + " approve & run · " + always + " auto-accept · " + deny + " iterate · " + help
 		} else {
 			help = allow + " approve & run · " + deny + " iterate · " + help

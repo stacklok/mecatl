@@ -2,7 +2,7 @@ package ui
 
 // Tests for the client-side FIFO permission-ask queue: concurrent subagents (team
 // members, parallel Subagent calls) can surface asks concurrently, each parking its
-// child server-side until answered. m.ask is always the visible head; later asks
+// child server-side until answered. m.approval.ask is always the visible head; later asks
 // queue behind it (never clobber it), answering/denying/retracting the head
 // advances the queue, a queued ask can be retracted in place, duplicates are
 // dropped, and a run's end clears everything. The spinner re-arm (be8fa37) fires
@@ -55,11 +55,11 @@ func resumeApprovalAskIDs(send *fakeSender) []string {
 // the modal title advertise the queue with a "(1 of 2)" badge.
 func TestAskEnqueuedWhileModalOpen(t *testing.T) {
 	m, _ := queuedAskModel(t)
-	if m.ask.AskID != askA {
-		t.Fatalf("the visible ask must stay the first one, got %q", m.ask.AskID)
+	if m.approval.ask.AskID != askA {
+		t.Fatalf("the visible ask must stay the first one, got %q", m.approval.ask.AskID)
 	}
-	if len(m.askQueue) != 1 || m.askQueue[0].AskID != askB {
-		t.Fatalf("the second ask must queue FIFO behind the head, got %+v", m.askQueue)
+	if len(m.approval.queue) != 1 || m.approval.queue[0].AskID != askB {
+		t.Fatalf("the second ask must queue FIFO behind the head, got %+v", m.approval.queue)
 	}
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("phase = %v, want phaseAwaitingApproval", m.phase)
@@ -67,7 +67,7 @@ func TestAskEnqueuedWhileModalOpen(t *testing.T) {
 	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
 		t.Errorf("footer must carry the queue badge, got %q", footer)
 	}
-	modal := stripANSIstr(m.rend.renderPermissionModal(m.ask, false, len(m.askQueue), 100, 24, 0))
+	modal := stripANSIstr(m.rend.renderPermissionModal(m.approval.ask, false, len(m.approval.queue), 100, 24, 0))
 	if !strings.Contains(modal, "Permission required (1 of 2)") {
 		t.Errorf("modal title must carry the queue badge, got %q", modal)
 	}
@@ -89,11 +89,11 @@ func TestResolveAskAdvancesQueueNoSpinnerRearm(t *testing.T) {
 	if got := resumeApprovalAskIDs(send); len(got) != 1 || got[0] != askA {
 		t.Fatalf("answering the head must send exactly one ResumeApproval for it, got %v", got)
 	}
-	if m.ask.AskID != askB {
-		t.Fatalf("the queued successor must take the head, got %q", m.ask.AskID)
+	if m.approval.ask.AskID != askB {
+		t.Fatalf("the queued successor must take the head, got %q", m.approval.ask.AskID)
 	}
-	if len(m.askQueue) != 0 {
-		t.Fatalf("queue must be drained, got %+v", m.askQueue)
+	if len(m.approval.queue) != 0 {
+		t.Fatalf("queue must be drained, got %+v", m.approval.queue)
 	}
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("phase must STAY awaitingApproval with a successor, got %v", m.phase)
@@ -109,8 +109,8 @@ func TestResolveAskAdvancesQueueNoSpinnerRearm(t *testing.T) {
 func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 	m, send := queuedAskModel(t) // A visible, B queued
 	m = applyAll(m, client.PermissionAskMsg{AskID: askC, Tool: "Bash"})
-	if len(m.askQueue) != 2 {
-		t.Fatalf("precondition: want a 2-deep queue, got %+v", m.askQueue)
+	if len(m.approval.queue) != 2 {
+		t.Fatalf("precondition: want a 2-deep queue, got %+v", m.approval.queue)
 	}
 
 	// Answer A: B — enqueued FIRST — must take the head; C still queued → "(1 of 2)".
@@ -119,8 +119,8 @@ func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 	if containsSpinnerTick(cmd) {
 		t.Error("advancing to a queued successor must NOT re-arm the spinner")
 	}
-	if m.ask.AskID != askB {
-		t.Fatalf("FIFO violated: head = %q, want %q (B before C)", m.ask.AskID, askB)
+	if m.approval.ask.AskID != askB {
+		t.Fatalf("FIFO violated: head = %q, want %q (B before C)", m.approval.ask.AskID, askB)
 	}
 	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
 		t.Errorf("with one ask still queued the footer badge must read (1 of 2), got %q", footer)
@@ -131,13 +131,13 @@ func TestResolveAskFIFOOrderTwoDeep(t *testing.T) {
 	if containsSpinnerTick(cmd) {
 		t.Error("advancing to a queued successor must NOT re-arm the spinner")
 	}
-	if m.ask.AskID != askC || len(m.askQueue) != 0 {
-		t.Fatalf("want C visible with an empty queue, got head %q queue %+v", m.ask.AskID, m.askQueue)
+	if m.approval.ask.AskID != askC || len(m.approval.queue) != 0 {
+		t.Fatalf("want C visible with an empty queue, got head %q queue %+v", m.approval.ask.AskID, m.approval.queue)
 	}
 	if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "(1 of") {
 		t.Errorf("the badge must vanish at queue-empty, footer = %q", footer)
 	}
-	modal := stripANSIstr(m.rend.renderPermissionModal(m.ask, false, len(m.askQueue), 100, 24, 0))
+	modal := stripANSIstr(m.rend.renderPermissionModal(m.approval.ask, false, len(m.approval.queue), 100, 24, 0))
 	if strings.Contains(modal, "(1 of") {
 		t.Errorf("the modal title badge must vanish at queue-empty, got %q", modal)
 	}
@@ -164,8 +164,8 @@ func TestResolveLastAskRearmsSpinner(t *testing.T) {
 	if m.phase != phaseRunning {
 		t.Fatalf("answering the last ask must return to running, got %v", m.phase)
 	}
-	if m.ask.AskID != "" {
-		t.Fatalf("answering the last ask must clear the modal, got %+v", m.ask)
+	if m.approval.ask.AskID != "" {
+		t.Fatalf("answering the last ask must clear the modal, got %+v", m.approval.ask)
 	}
 	if !containsSpinnerTick(cmd) {
 		t.Error("the awaitingApproval→running transition must re-arm m.sp.Tick (be8fa37)")
@@ -179,8 +179,8 @@ func TestRetractVisibleAdvancesQueue(t *testing.T) {
 	m, _ := queuedAskModel(t)
 	mm, cmd := m.Update(client.PermissionRetractMsg{AskID: askA})
 	m = mm.(Model)
-	if m.ask.AskID != askB {
-		t.Fatalf("the queued successor must take the head, got %q", m.ask.AskID)
+	if m.approval.ask.AskID != askB {
+		t.Fatalf("the queued successor must take the head, got %q", m.approval.ask.AskID)
 	}
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("phase must STAY awaitingApproval with a successor, got %v", m.phase)
@@ -203,8 +203,8 @@ func TestRetractVisibleLastGoesRunning(t *testing.T) {
 	if m.phase != phaseRunning {
 		t.Fatalf("retracting the last ask must return to running, got %v", m.phase)
 	}
-	if m.ask.AskID != "" {
-		t.Fatalf("retracting the last ask must clear the modal, got %+v", m.ask)
+	if m.approval.ask.AskID != "" {
+		t.Fatalf("retracting the last ask must clear the modal, got %+v", m.approval.ask)
 	}
 	if !containsSpinnerTick(cmd) {
 		t.Error("the awaitingApproval→running transition must re-arm m.sp.Tick")
@@ -217,11 +217,11 @@ func TestRetractVisibleLastGoesRunning(t *testing.T) {
 func TestRetractQueuedRemovesSilently(t *testing.T) {
 	m, _ := queuedAskModel(t)
 	m = applyAll(m, client.PermissionRetractMsg{AskID: askB})
-	if m.ask.AskID != askA {
-		t.Fatalf("retracting a queued ask must leave the visible modal, got %q", m.ask.AskID)
+	if m.approval.ask.AskID != askA {
+		t.Fatalf("retracting a queued ask must leave the visible modal, got %q", m.approval.ask.AskID)
 	}
-	if len(m.askQueue) != 0 {
-		t.Fatalf("the queued ask must be removed, got %+v", m.askQueue)
+	if len(m.approval.queue) != 0 {
+		t.Fatalf("the queued ask must be removed, got %+v", m.approval.queue)
 	}
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("phase must be untouched, got %v", m.phase)
@@ -252,21 +252,21 @@ func TestEndRunClearsAskQueue(t *testing.T) {
 				client.PermissionRetractMsg{AskID: askB},
 				client.PermissionAskMsg{AskID: askC, Tool: "Bash"},
 			)
-			if m.resolvedAsks == nil || len(m.askQueue) != 1 {
-				t.Fatalf("precondition: want a non-nil answered-set and one queued ask, got %v / %+v", m.resolvedAsks, m.askQueue)
+			if m.approval.resolvedAsks == nil || len(m.approval.queue) != 1 {
+				t.Fatalf("precondition: want a non-nil answered-set and one queued ask, got %v / %+v", m.approval.resolvedAsks, m.approval.queue)
 			}
 			m = applyAll(m, tc.msg)
 			if m.phase != phaseIdle {
 				t.Fatalf("phase = %v, want phaseIdle", m.phase)
 			}
-			if m.ask.AskID != "" {
-				t.Errorf("a dead run's visible ask must not survive into idle, got %+v", m.ask)
+			if m.approval.ask.AskID != "" {
+				t.Errorf("a dead run's visible ask must not survive into idle, got %+v", m.approval.ask)
 			}
-			if m.askQueue != nil {
-				t.Errorf("a dead run's queued asks must not survive into idle, got %+v", m.askQueue)
+			if m.approval.queue != nil {
+				t.Errorf("a dead run's queued asks must not survive into idle, got %+v", m.approval.queue)
 			}
-			if m.resolvedAsks != nil {
-				t.Errorf("the answered-set must be dropped at run end, got %v", m.resolvedAsks)
+			if m.approval.resolvedAsks != nil {
+				t.Errorf("the answered-set must be dropped at run end, got %v", m.approval.resolvedAsks)
 			}
 
 			// Next-run cleanliness: re-deliver an askID the DEAD run resolved (askB,
@@ -274,8 +274,8 @@ func TestEndRunClearsAskQueue(t *testing.T) {
 			// production, but even a recycled-looking id must open cleanly — the
 			// answered-set died with the run.
 			m = applyAll(m, client.PermissionAskMsg{AskID: askB, Tool: "Bash"})
-			if m.phase != phaseAwaitingApproval || m.ask.AskID != askB {
-				t.Fatalf("a fresh ask after run end must open the modal (not be swallowed by a stale answered-set), got phase=%v ask=%+v", m.phase, m.ask)
+			if m.phase != phaseAwaitingApproval || m.approval.ask.AskID != askB {
+				t.Fatalf("a fresh ask after run end must open the modal (not be swallowed by a stale answered-set), got phase=%v ask=%+v", m.phase, m.approval.ask)
 			}
 			if footer := stripANSIstr(m.renderFooter()); strings.Contains(footer, "(1 of") {
 				t.Errorf("a fresh single ask must carry no phantom queue badge, footer = %q", footer)
@@ -291,18 +291,18 @@ func TestEndRunClearsAskQueue(t *testing.T) {
 func TestResetSessionDropsAskQueue(t *testing.T) {
 	m, _ := queuedAskModel(t)
 	m.markAskResolved("subagent-old:1:k0")
-	if len(m.askQueue) == 0 || m.resolvedAsks == nil {
-		t.Fatalf("precondition: want a populated queue and answered-set, got %+v / %v", m.askQueue, m.resolvedAsks)
+	if len(m.approval.queue) == 0 || m.approval.resolvedAsks == nil {
+		t.Fatalf("precondition: want a populated queue and answered-set, got %+v / %v", m.approval.queue, m.approval.resolvedAsks)
 	}
 	m = m.resetSession()
-	if m.ask.AskID != "" {
-		t.Errorf("resetSession must drop the visible ask, got %+v", m.ask)
+	if m.approval.ask.AskID != "" {
+		t.Errorf("resetSession must drop the visible ask, got %+v", m.approval.ask)
 	}
-	if m.askQueue != nil {
-		t.Errorf("resetSession must drop the ask queue, got %+v", m.askQueue)
+	if m.approval.queue != nil {
+		t.Errorf("resetSession must drop the ask queue, got %+v", m.approval.queue)
 	}
-	if m.resolvedAsks != nil {
-		t.Errorf("resetSession must drop the answered-set, got %v", m.resolvedAsks)
+	if m.approval.resolvedAsks != nil {
+		t.Errorf("resetSession must drop the answered-set, got %v", m.approval.resolvedAsks)
 	}
 }
 
@@ -311,7 +311,7 @@ func TestResetSessionDropsAskQueue(t *testing.T) {
 // view title — the wrap/cap work must not eat the badge.
 func TestAskQueueBadgeWithLongArgsHeadAsk(t *testing.T) {
 	m, _ := queuedAskModel(t) // A (Bash) visible, B (Write) queued
-	m.ask.Args = longBashArgs
+	m.approval.ask.Args = longBashArgs
 	if footer := stripANSIstr(m.renderFooter()); !strings.Contains(footer, "(1 of 2)") {
 		t.Errorf("footer must carry the queue badge, got %q", footer)
 	}
@@ -337,11 +337,11 @@ func TestAskIDDedupe(t *testing.T) {
 		client.PermissionAskMsg{AskID: askB, Tool: "Write"},
 		client.PermissionAskMsg{AskID: askB, Tool: "Write"},
 	)
-	if m.ask.AskID != askA {
-		t.Fatalf("visible ask = %q, want %q", m.ask.AskID, askA)
+	if m.approval.ask.AskID != askA {
+		t.Fatalf("visible ask = %q, want %q", m.approval.ask.AskID, askA)
 	}
-	if len(m.askQueue) != 1 || m.askQueue[0].AskID != askB {
-		t.Fatalf("duplicates must be dropped (one queued ask), got %+v", m.askQueue)
+	if len(m.approval.queue) != 1 || m.approval.queue[0].AskID != askB {
+		t.Fatalf("duplicates must be dropped (one queued ask), got %+v", m.approval.queue)
 	}
 }
 
@@ -357,8 +357,8 @@ func TestLateDuplicateOfAnsweredAskIgnored(t *testing.T) {
 	if m.phase != phaseRunning {
 		t.Fatalf("a late duplicate of an answered ask must not re-open the modal, got %v", m.phase)
 	}
-	if m.ask.AskID != "" {
-		t.Fatalf("a late duplicate must be dropped, got %+v", m.ask)
+	if m.approval.ask.AskID != "" {
+		t.Fatalf("a late duplicate must be dropped, got %+v", m.approval.ask)
 	}
 }
 
@@ -417,19 +417,19 @@ func TestConcurrentAsksWireRoundTrip(t *testing.T) {
 	for range 4 {
 		m = applyAll(m, next())
 	}
-	if m.phase != phaseAwaitingApproval || m.ask.AskID != askA {
-		t.Fatalf("the first wire ask must open the modal, got phase=%v ask=%+v", m.phase, m.ask)
+	if m.phase != phaseAwaitingApproval || m.approval.ask.AskID != askA {
+		t.Fatalf("the first wire ask must open the modal, got phase=%v ask=%+v", m.phase, m.approval.ask)
 	}
-	if len(m.askQueue) != 1 || m.askQueue[0].AskID != askB {
-		t.Fatalf("the second wire ask must queue (not clobber), got %+v", m.askQueue)
+	if len(m.approval.queue) != 1 || m.approval.queue[0].AskID != askB {
+		t.Fatalf("the second wire ask must queue (not clobber), got %+v", m.approval.queue)
 	}
 
 	// Answer A: B takes the head. Answer B: modal closes. flattenLeafMsgs resolves
 	// each cmd's leaves, executing the SendApproval so the frames record.
 	m, cmd := pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	_ = flattenLeafMsgs(cmd, scaleWait(time.Second))
-	if m.ask.AskID != askB || m.phase != phaseAwaitingApproval {
-		t.Fatalf("answering the first wire ask must advance to the second, got phase=%v ask=%+v", m.phase, m.ask)
+	if m.approval.ask.AskID != askB || m.phase != phaseAwaitingApproval {
+		t.Fatalf("answering the first wire ask must advance to the second, got phase=%v ask=%+v", m.phase, m.approval.ask)
 	}
 	m, cmd = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	_ = flattenLeafMsgs(cmd, scaleWait(time.Second))
@@ -456,7 +456,7 @@ func TestConcurrentAsksWireRoundTrip(t *testing.T) {
 	if got := resumeApprovalAskIDs(send); !slices.Equal(got, []string{askA, askB}) {
 		t.Fatalf("both wire asks must be answered, FIFO order, got %v", got)
 	}
-	if m.askQueue != nil || m.ask.AskID != "" {
-		t.Fatalf("no ask state may survive the run end, got ask=%+v queue=%+v", m.ask, m.askQueue)
+	if m.approval.queue != nil || m.approval.ask.AskID != "" {
+		t.Fatalf("no ask state may survive the run end, got ask=%+v queue=%+v", m.approval.ask, m.approval.queue)
 	}
 }

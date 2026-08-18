@@ -66,7 +66,7 @@ func TestResolveAskArmsNoExtraStreamReader(t *testing.T) {
 			m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 			m.streamCh = ch
 			m.phase = phaseAwaitingApproval
-			m.ask = pendingAsk{AskID: "ask-1", Tool: "Write", focus: 0}
+			m.approval.ask = pendingAsk{AskID: "ask-1", Tool: "Write", focus: 0}
 			ch <- client.StreamClosedMsg{} // the message the in-flight reader will eventually take
 
 			_, cmd := m.resolveAsk(tc.verdict)

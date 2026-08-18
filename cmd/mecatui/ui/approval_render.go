@@ -8,42 +8,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
-
-// pendingAsk holds the state of an open permission modal. AskID is the exact
-// correlation key sent back in ResumeApproval — it is never derived from the
-// tool name. focus tracks which button is highlighted (0=allow-once, 1=always,
-// 2=deny). offerAlways gates the middle "always" button: it is offered only for
-// the MAIN agent's asks, never for a surfaced subagent ask (a child engine's
-// permission policy has a nil learn store, so always-allow would be a silent
-// no-op there).
-type pendingAsk struct {
-	AskID       string
-	Tool        string
-	Args        string
-	Reason      string
-	focus       int
-	offerAlways bool
-}
-
-// isPlanAsk reports whether a permission ask is a plan-approval gate (the model
-// called PresentPlan in plan mode). The tool name is the sole discriminator —
-// no new proto field is needed.
-func isPlanAsk(tool string) bool {
-	return tool == "PresentPlan"
-}
-
-// isDiffCapableAskTool reports whether a permission ask's tool renders as a
-// colourised diff in the modal (matching renderToolDiff's switch). It is the
-// ctrl+t routing discriminator (issue #488): a diff-capable ask keeps the
-// in-modal ctrl+t diff expand, while every other non-plan ask's ctrl+t opens
-// the full-screen args view. A malformed-Edit-args ask still classifies as
-// diff-capable (it falls back to JSON args, but the ask's FLAVOUR is the diff
-// surface).
-func isDiffCapableAskTool(tool string) bool {
-	return tool == "Edit" || tool == "Write"
-}
 
 // bashAskArgs mirrors the Bash tool's args JSON shape for the ask-args pretty
 // tier (mirroring mutatedPath's editDiffArgs/writeDiffArgs precedent). The
@@ -174,7 +141,7 @@ const planApprovedProceedText = "Plan approved by operator. Proceed with executi
 // global details toggle (ctrl+t): when on, the diff renders in full instead of
 // line-capped, so the collapse marker's "ctrl+t expand" hint is truthful — the
 // operator can genuinely reveal every line being authorized before deciding.
-// queued is the number of asks waiting FIFO behind this one (len(m.askQueue)):
+// queued is the number of asks waiting FIFO behind this one (len(m.approval.queue)):
 // when non-zero the title carries a "(1 of N)" badge so the operator knows more
 // approvals follow; at zero the modal is byte-identical to the single-ask frame.
 //
@@ -416,7 +383,7 @@ func askArgsCardContentWidth(th theme.Theme, width int) int {
 // the SAME region geometry renderBody passes; the hit-test path re-applies the
 // askCard style + centering arithmetic itself.
 func (m Model) permissionModalBody() (body string, buttonsRow int) {
-	return m.rend.permissionModalBodyParts(m.ask, m.expandTools, len(m.askQueue), m.width, m.vp.Height(), m.askVPOffset)
+	return m.rend.permissionModalBodyParts(m.approval.ask, m.expandTools, len(m.approval.queue), m.width, m.vp.Height(), m.approval.askVPOffset)
 }
 
 // approvalButtonSep is the exact separator lipgloss.JoinHorizontal places between
@@ -514,8 +481,9 @@ func planScrollHint(hk helpKeys) string {
 // for the collapsed centered-card approach: the plan fills the conversation
 // region (minus the pinned action-bar rows at the bottom) and scrolls, so a long
 // plan is readable in full without a ctrl+t expand gate. It is called lazily
-// when a plan ask becomes the front ask (PermissionAskMsg reducer / advanceAsk
-// successor) and re-called when the region geometry changes (relayout/onResize)
+// when a plan ask becomes the front ask (PermissionAskMsg reducer / a queued
+// plan-ask successor advanced by the verdict/retract path) and re-called when
+// the region geometry changes (relayout/onResize)
 // so a resize re-wraps the plan at the new width. Idempotent: re-populating the
 // same plan at the same geometry is a no-op cost.
 //
@@ -550,17 +518,17 @@ func (m *Model) openPlanReviewView(ask pendingAsk, queued int, effectiveModel st
 	// on every message while a plan ask is open, so without this guard a plan
 	// review would re-render the plan on every keypress. The geometry tracking
 	// (planVPWidth/planVPHeight) plus the ask fingerprint catches the no-op.
-	if m.planVPReady &&
-		m.planVPWidth == width && m.planVPHeight == vpHeight &&
-		m.planVPFingerprint == planAskFingerprint(ask, queued, effectiveModel) {
+	if m.approval.planVPReady &&
+		m.approval.planVPWidth == width && m.approval.planVPHeight == vpHeight &&
+		m.approval.planVPFingerprint == planAskFingerprint(ask, queued, effectiveModel) {
 		return
 	}
 
 	// Preserve the operator's reading position across a re-population (a resize
 	// re-wraps the plan; the offset is re-clamped to the new valid range after
 	// SetContent). Only a FRESH open (not yet ready) starts at the top.
-	prevYOffset := m.planVP.YOffset()
-	freshOpen := !m.planVPReady
+	prevYOffset := m.approval.planVP.YOffset()
+	freshOpen := !m.approval.planVPReady
 
 	// Build the header (title + model line) that sits at the TOP of the
 	// scrollable content. It scrolls with the plan (the pinned action bar at the
@@ -598,24 +566,24 @@ func (m *Model) openPlanReviewView(ask pendingAsk, queued int, effectiveModel st
 
 	content := head.String() + "\n" + body
 
-	m.planVP.SetWidth(width)
-	m.planVP.SetHeight(vpHeight)
-	m.planVP.SetContent(content)
+	m.approval.planVP.SetWidth(width)
+	m.approval.planVP.SetHeight(vpHeight)
+	m.approval.planVP.SetContent(content)
 	if freshOpen {
 		// A fresh plan view opens at the TOP (the operator reads from the title
 		// down). SetYOffset(0) clamps to the valid range; GotoTop is equivalent
 		// but explicit about intent.
-		m.planVP.SetYOffset(0)
+		m.approval.planVP.SetYOffset(0)
 	} else {
 		// Re-population (a resize): preserve the operator's reading position,
 		// re-clamped to the new valid range (SetContent may have clamped it
 		// already, but be explicit).
-		m.planVP.SetYOffset(prevYOffset)
+		m.approval.planVP.SetYOffset(prevYOffset)
 	}
-	m.planVPReady = true
-	m.planVPWidth = width
-	m.planVPHeight = vpHeight
-	m.planVPFingerprint = planAskFingerprint(ask, queued, effectiveModel)
+	m.approval.planVPReady = true
+	m.approval.planVPWidth = width
+	m.approval.planVPHeight = vpHeight
+	m.approval.planVPFingerprint = planAskFingerprint(ask, queued, effectiveModel)
 }
 
 // planReviewContentWidth is the wrap budget for the plan body inside the
@@ -640,15 +608,15 @@ func planReviewContentWidth(width int) int {
 // clearPlanReview tears down the plan-review viewport: it drops the content and
 // marks it not-ready so neither the render path nor the scroll-key routing
 // touch it. Called whenever the plan ask resolves (any verdict), is retracted,
-// or the run/session ends — mirroring how m.ask/m.askQueue are cleared — so a
+// or the run/session ends — mirroring how the ask/queue are cleared — so a
 // stale planVP never leaks across asks or sessions.
-func (m *Model) clearPlanReview() {
-	m.planVP.SetContent("")
-	m.planVP.SetYOffset(0)
-	m.planVPReady = false
-	m.planVPWidth = 0
-	m.planVPHeight = 0
-	m.planVPFingerprint = ""
+func (a *approvalState) clearPlanReview() {
+	a.planVP.SetContent("")
+	a.planVP.SetYOffset(0)
+	a.planVPReady = false
+	a.planVPWidth = 0
+	a.planVPHeight = 0
+	a.planVPFingerprint = ""
 }
 
 // planAskFingerprint is the identity of a plan ask the planVP content depends
@@ -672,8 +640,8 @@ type planReviewLayout struct {
 func (m Model) planReviewLayout(ask pendingAsk) planReviewLayout {
 	th := m.deps.Theme
 	var vpView string
-	if m.planVPReady {
-		vpView = m.planVP.View()
+	if m.approval.planVPReady {
+		vpView = m.approval.planVP.View()
 	}
 
 	hk := m.helpKeyMarkings()
@@ -736,17 +704,17 @@ func (m *Model) openAskArgsView(ask pendingAsk, queued int) {
 		vpHeight = 1
 	}
 
-	if m.argsVPReady &&
-		m.argsVPWidth == width && m.argsVPHeight == vpHeight &&
-		m.argsVPFingerprint == argsAskFingerprint(ask, queued, m.argsViewRaw) {
+	if m.approval.argsVPReady &&
+		m.approval.argsVPWidth == width && m.approval.argsVPHeight == vpHeight &&
+		m.approval.argsVPFingerprint == argsAskFingerprint(ask, queued, m.approval.argsViewRaw) {
 		return
 	}
 
 	// Preserve the operator's reading position across a re-population (a resize
 	// re-wraps the args; the offset is re-clamped to the new valid range by the
 	// SetYOffset below). Only a FRESH open (not yet ready) starts at the top.
-	prevYOffset := m.argsVP.YOffset()
-	freshOpen := !m.argsVPReady
+	prevYOffset := m.approval.argsVP.YOffset()
+	freshOpen := !m.approval.argsVPReady
 
 	// Header: title (+ queue badge) carrying the tool name ON ONE LINE ("Ask args:
 	// Bash"). NO model line (the plan-review view's model line is plan-specific)
@@ -760,7 +728,7 @@ func (m *Model) openAskArgsView(ask pendingAsk, queued int) {
 
 	pretty, raw, ok := askArgsContent(th, ask)
 	tier := pretty
-	if m.argsViewRaw {
+	if m.approval.argsViewRaw {
 		tier = raw
 	}
 	// NOTE: wrap BEFORE styling — styling a wrapped string would let lipgloss
@@ -775,18 +743,18 @@ func (m *Model) openAskArgsView(ask pendingAsk, queued int) {
 
 	content := head.String() + "\n" + body
 
-	m.argsVP.SetWidth(width)
-	m.argsVP.SetHeight(vpHeight)
-	m.argsVP.SetContent(content)
+	m.approval.argsVP.SetWidth(width)
+	m.approval.argsVP.SetHeight(vpHeight)
+	m.approval.argsVP.SetContent(content)
 	if freshOpen {
-		m.argsVP.SetYOffset(0)
+		m.approval.argsVP.SetYOffset(0)
 	} else {
-		m.argsVP.SetYOffset(prevYOffset)
+		m.approval.argsVP.SetYOffset(prevYOffset)
 	}
-	m.argsVPReady = true
-	m.argsVPWidth = width
-	m.argsVPHeight = vpHeight
-	m.argsVPFingerprint = argsAskFingerprint(ask, queued, m.argsViewRaw)
+	m.approval.argsVPReady = true
+	m.approval.argsVPWidth = width
+	m.approval.argsVPHeight = vpHeight
+	m.approval.argsVPFingerprint = argsAskFingerprint(ask, queued, m.approval.argsViewRaw)
 }
 
 // clearAskArgsView tears down the full-screen ask-args view AND resets the
@@ -795,16 +763,16 @@ func (m *Model) openAskArgsView(ask pendingAsk, queued int) {
 // Called whenever the ask resolves (any verdict), is retracted, advances to a
 // queued successor, or the run/session ends — mirroring clearPlanReview — so a
 // stale argsVP never leaks across asks or sessions.
-func (m *Model) clearAskArgsView() {
-	m.argsVP.SetContent("")
-	m.argsVP.SetYOffset(0)
-	m.argsVPReady = false
-	m.argsVPWidth = 0
-	m.argsVPHeight = 0
-	m.argsVPFingerprint = ""
-	m.argsViewRaw = false
-	m.argsViewOpen = false
-	m.askVPOffset = 0
+func (a *approvalState) clearAskArgsView() {
+	a.argsVP.SetContent("")
+	a.argsVP.SetYOffset(0)
+	a.argsVPReady = false
+	a.argsVPWidth = 0
+	a.argsVPHeight = 0
+	a.argsVPFingerprint = ""
+	a.argsViewRaw = false
+	a.argsViewOpen = false
+	a.askVPOffset = 0
 }
 
 // argsAskFingerprint is the identity of an ask the argsVP content depends on
@@ -832,8 +800,8 @@ type argsReviewLayout struct {
 func (m Model) argsReviewLayout(ask pendingAsk) argsReviewLayout {
 	th := m.deps.Theme
 	var vpView string
-	if m.argsVPReady {
-		vpView = m.argsVP.View()
+	if m.approval.argsVPReady {
+		vpView = m.approval.argsVP.View()
 	}
 
 	hk := m.helpKeyMarkings()
@@ -904,4 +872,131 @@ func planBodyFromArgs(rawArgs string) string {
 		return ""
 	}
 	return sanitizeTerminal(strings.TrimRight(body, "\n"))
+}
+
+// approvalNotice renders the muted one-line verdict notice for a replayed
+// EvApproval (ApprovalMsg). The replay has no live ask modal, so this is the
+// transcript's audit record of the verdict. Metadata-only (gauntlet #7): tool
+// NAME + verdict, never the raw args.
+func approvalNotice(msg client.ApprovalMsg) string {
+	tool := msg.Tool
+	if tool == "" {
+		tool = "tool"
+	}
+	switch msg.Verdict {
+	case "allow_once":
+		return "✓ allowed once: " + tool
+	case "allow_always":
+		return "✓ allowed always: " + tool
+	case "deny":
+		return "✗ denied: " + tool
+	default:
+		if msg.Verdict == "" {
+			return "· permission: " + tool
+		}
+		return "· " + msg.Verdict + ": " + tool
+	}
+}
+
+// approvalButtonLabel renders a generic permission-modal button label that is
+// honest about the LIVE approval chord. With the DEFAULT word-embedded chord
+// ("a"/"w"/"d") the bracketed letter sits inside the word at its natural
+// position, so the case follows the word's spelling and the historical form
+// ("[A]llow" / "Al[w]ays" / "[D]eny") renders byte-for-byte. When the chord is
+// rebound AWAY from its default word letter the wordplay no longer holds, so
+// the button degrades to an honest standalone form: the bracketed live chord
+// (upper-cased via approvalMnemonic for a bare rune, verbatim for a modified
+// chord) followed by the action's standalone word ("[Y] allow" / "[Q] always
+// allow" / "[N] deny", or "[ctrl+y] allow" for a modified chord). word is the
+// default word-embedded form's word ("Allow"/"Always"/"Deny"); standalone is
+// the overridden form's action phrase ("allow"/"always allow"/"deny"). The
+// default chord for each action is its word's mnemonic letter (a/w/d), so an
+// override to a different letter (y/q/n) OR a modified chord trips the
+// standalone branch. Issue #457.
+func approvalButtonLabel(chord, word, standalone string) string {
+	if isDefaultApprovalChord(chord, word) {
+		switch word {
+		case "Allow":
+			return "[A]llow"
+		case "Always":
+			return "Al[w]ays"
+		case "Deny":
+			return "[D]eny"
+		}
+	}
+	return "[" + approvalMnemonic(chord) + "] " + standalone
+}
+
+// planApprovalButtonLabel renders a PLAN-review action-bar button label that is
+// honest about the LIVE approval chord. With the DEFAULT a/w/d chords the
+// historical word-embedded plan form ("[A]pprove & run" / "[W] auto-accept
+// edits" / "[D] iterate") renders byte-for-byte. Under an override the plan
+// wordplay ("[Y]pprove & run") would read as a typo — and for a MODIFIED chord
+// ("ctrl+y") the stem-glued form ("[ctrl+y]pprove & run") is outright broken —
+// so the button degrades to an honest standalone form: the bracketed live chord
+// followed by the plan action phrase ("[Y] approve & run" / "[ctrl+y] approve &
+// run"). This mirrors approvalButtonLabel's default-vs-override split for the
+// generic modal; the plan path needs its own helper because its default labels
+// differ from the generic modal's. Issue #457.
+func planApprovalButtonLabel(chord, word, standalone string) string {
+	if isDefaultApprovalChord(chord, word) {
+		switch word {
+		case "Allow":
+			return "[A]pprove & run"
+		case "Always":
+			return "[W] auto-accept edits"
+		case "Deny":
+			return "[D] iterate"
+		}
+	}
+	return "[" + approvalMnemonic(chord) + "] " + standalone
+}
+
+// approvalAlwaysFootnote renders the "always allows this exact command …"
+// footnote under the always-allow button. With the default chord ("w") it is
+// the historical byte-for-byte "al[w]ays allows …" word-embedded form; under
+// an override it states the live chord honestly ("always (q) allows …"). Issue #457.
+func approvalAlwaysFootnote(chord string) string {
+	if isDefaultApprovalChord(chord, "Always") {
+		return "al[w]ays allows this exact command for the rest of this session"
+	}
+	return "always (" + chord + ") allows this exact command for the rest of this session"
+}
+
+// isDefaultApprovalChord reports whether chord is the default first chord for
+// the given approval word — "a"/"w"/"d" for Allow/Always/Deny — so the
+// word-embedded form's wordplay holds. Any other chord (a different bare rune
+// like "y", or a modified chord like "ctrl+y") trips the honest standalone
+// form.
+func isDefaultApprovalChord(chord, word string) bool {
+	switch word {
+	case "Allow":
+		return chord == "a"
+	case "Always":
+		return chord == "w"
+	case "Deny":
+		return chord == "d"
+	}
+	return false
+}
+
+// approvalMnemonic renders the footer/plan-review approval affordance mnemonic for a
+// rebindable approval chord: the chord with its first rune upper-cased, so the
+// default Allow/AllowAlways/Deny chords ("a"/"w"/"d") render as the historical "A"/
+// "W"/"D" mnemonics byte-for-byte, while a remapped bare rune ("y") renders as its
+// upper-case ("Y"). A modified chord ("ctrl+y") is returned unchanged — upper-casing
+// only the first LETTER of a modified chord would mangle it, and a modified approval
+// chord is rare (the validator allows bare runes for approval keys), so the fallback
+// keeps the chord legible. Issue #457.
+func approvalMnemonic(chord string) string {
+	if chord == "" {
+		return chord
+	}
+	r := rune(chord[0])
+	// Only upper-case a leading ASCII lowercase letter (a bare-rune approval key).
+	// A modified chord ("ctrl+y", "f5") or a multi-rune chord stays verbatim.
+	if r >= 'a' && r <= 'z' && len(chord) == 1 {
+		return string(r - 'a' + 'A')
+	}
+	return chord
 }

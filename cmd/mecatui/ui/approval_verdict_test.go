@@ -20,7 +20,7 @@ func approvalModel(t *testing.T, ask pendingAsk) Model {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = ask
+	m.approval.ask = ask
 	return m
 }
 
@@ -69,11 +69,11 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 	m.sessionID = "sess-abc"
 
 	m1 := applyAll(m, client.PermissionAskMsg{AskID: "sess-abc:1:c1", Tool: "Bash"})
-	if !m1.ask.offerAlways {
+	if !m1.approval.ask.offerAlways {
 		t.Error("a main-agent ask should offer always-allow")
 	}
 	m2 := applyAll(m, client.PermissionAskMsg{AskID: "subagent-c1:1:k1", Tool: "Bash"})
-	if m2.ask.offerAlways {
+	if m2.approval.ask.offerAlways {
 		t.Error("a surfaced child ask must NOT offer always-allow")
 	}
 }
@@ -84,17 +84,17 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 // never inherits a stale scroll position or an open view.
 func TestResolveAskResetsArgsViewState(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, longBashArgs))
-	m.argsViewRaw = true
-	m.askVPOffset = 3
+	m.approval.argsViewRaw = true
+	m.approval.askVPOffset = 3
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
-	if m.argsViewOpen || m.argsVPReady {
+	if m.approval.argsViewOpen || m.approval.argsVPReady {
 		t.Error("resolve must close the full-screen args view")
 	}
-	if m.argsViewRaw {
+	if m.approval.argsViewRaw {
 		t.Error("resolve must reset the raw toggle")
 	}
-	if m.askVPOffset != 0 {
-		t.Errorf("resolve must reset the mini-viewport offset, got %d", m.askVPOffset)
+	if m.approval.askVPOffset != 0 {
+		t.Errorf("resolve must reset the mini-viewport offset, got %d", m.approval.askVPOffset)
 	}
 }
 
@@ -142,24 +142,24 @@ func TestApprovalAllowAndDenyNotices(t *testing.T) {
 // enter resolves the focused button.
 func TestApprovalCycleThreeButtons(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", offerAlways: true})
-	if m.ask.focus != 0 {
-		t.Fatalf("initial focus = %d, want 0", m.ask.focus)
+	if m.approval.ask.focus != 0 {
+		t.Fatalf("initial focus = %d, want 0", m.approval.ask.focus)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.ask.focus != 1 {
-		t.Fatalf("after tab focus = %d, want 1 (always)", m.ask.focus)
+	if m.approval.ask.focus != 1 {
+		t.Fatalf("after tab focus = %d, want 1 (always)", m.approval.ask.focus)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyRight})
-	if m.ask.focus != 2 {
-		t.Fatalf("after right focus = %d, want 2 (deny)", m.ask.focus)
+	if m.approval.ask.focus != 2 {
+		t.Fatalf("after right focus = %d, want 2 (deny)", m.approval.ask.focus)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyRight})
-	if m.ask.focus != 0 {
-		t.Fatalf("after wrap focus = %d, want 0 (allow)", m.ask.focus)
+	if m.approval.ask.focus != 0 {
+		t.Fatalf("after wrap focus = %d, want 0 (allow)", m.approval.ask.focus)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyLeft})
-	if m.ask.focus != 2 {
-		t.Fatalf("after left-wrap focus = %d, want 2 (deny)", m.ask.focus)
+	if m.approval.ask.focus != 2 {
+		t.Fatalf("after left-wrap focus = %d, want 2 (deny)", m.approval.ask.focus)
 	}
 	// enter on deny resolves as deny.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -173,12 +173,12 @@ func TestApprovalCycleThreeButtons(t *testing.T) {
 func TestApprovalCycleTwoButtons(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "subagent-c1:1:k1", Tool: "Bash", offerAlways: false})
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.ask.focus != 2 {
-		t.Fatalf("after tab focus = %d, want 2 (deny) — always is skipped", m.ask.focus)
+	if m.approval.ask.focus != 2 {
+		t.Fatalf("after tab focus = %d, want 2 (deny) — always is skipped", m.approval.ask.focus)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.ask.focus != 0 {
-		t.Fatalf("after wrap focus = %d, want 0 (allow)", m.ask.focus)
+	if m.approval.ask.focus != 0 {
+		t.Fatalf("after wrap focus = %d, want 0 (allow)", m.approval.ask.focus)
 	}
 	// enter on allow resolves allow-once.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})

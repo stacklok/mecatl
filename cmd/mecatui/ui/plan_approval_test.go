@@ -15,9 +15,9 @@ import (
 )
 
 // planAskModel builds a connected, awaiting-approval Model with a PresentPlan ask.
-// It mirrors the reducer's PermissionAskMsg path: setting m.ask + m.phase AND
+// It mirrors the reducer's PermissionAskMsg path: setting m.approval.ask + m.phase AND
 // populating the dedicated scrollable plan-review viewport (openPlanReviewView)
-// so the render path reads a populated planVP. Tests that set m.ask directly
+// so the render path reads a populated planVP. Tests that set m.approval.ask directly
 // without this helper must also call openPlanReviewView, or the plan-review view
 // renders only its pinned action bar.
 func planAskModel(t *testing.T, offerAlways bool) Model {
@@ -31,29 +31,29 @@ func planAskModel(t *testing.T, offerAlways bool) Model {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{
+	m.approval.ask = pendingAsk{
 		AskID:       "sess-test-0001:1:presentplan-1",
 		Tool:        "PresentPlan",
 		Reason:      "Plan mode requires approval to execute.",
 		offerAlways: offerAlways,
 	}
 	// Populate the plan-review viewport exactly as the PermissionAskMsg reducer
-	// does (the helper sets m.ask directly, bypassing the reducer). A test that
-	// later mutates m.ask.Args MUST re-call openPlanReviewView to re-populate.
-	(&m).openPlanReviewView(m.ask, 0, m.effectiveModel.ModelID)
+	// does (the helper sets m.approval.ask directly, bypassing the reducer). A test that
+	// later mutates m.approval.ask.Args MUST re-call openPlanReviewView to re-populate.
+	(&m).openPlanReviewView(m.approval.ask, 0, m.effectiveModel.ModelID)
 	return m
 }
 
 // setPlanArgs sets the plan ask's Args JSON and re-populates the plan-review
 // viewport so the next View() reflects the new plan content. Tests that drive a
 // plan ask through the reducer (PermissionAskMsg) don't need this — the reducer
-// calls openPlanReviewView; this is for tests that mutate m.ask.Args directly
+// calls openPlanReviewView; this is for tests that mutate m.approval.ask.Args directly
 // after planAskModel (which bypasses the reducer). It mirrors the reducer's
 // Args-carrying population path exactly.
 func setPlanArgs(t *testing.T, m *Model, args string) {
 	t.Helper()
-	m.ask.Args = args
-	m.openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
+	m.approval.ask.Args = args
+	m.openPlanReviewView(m.approval.ask, len(m.approval.queue), m.effectiveModel.ModelID)
 }
 
 func TestIsPlanAsk(t *testing.T) {
@@ -225,11 +225,11 @@ func TestStopPlanApprovedReachesFooter(t *testing.T) {
 func TestPlanAskQueueBadge(t *testing.T) {
 	m := planAskModel(t, true)
 	// Enqueue a second ask — the plan ask is the head, the queue has one entry.
-	m.askQueue = append(m.askQueue, pendingAsk{AskID: "sess-test-0001:2:c2", Tool: "Bash"})
+	m.approval.queue = append(m.approval.queue, pendingAsk{AskID: "sess-test-0001:2:c2", Tool: "Bash"})
 	// Re-populate the plan-review viewport so the title badge reflects the queue
 	// (planAskModel populated it with queued=0; the badge lives in planVP's
 	// header, which View renders from planVP.View()).
-	(&m).openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
+	(&m).openPlanReviewView(m.approval.ask, len(m.approval.queue), m.effectiveModel.ModelID)
 	got := stripANSIstr(m.View().Content)
 	if !strings.Contains(got, "Plan ready for review (1 of 2)") {
 		t.Errorf("plan ask with queue must show '(1 of 2)' badge, got %q", got)
@@ -247,7 +247,7 @@ func TestGenericAskFooterIsUnchanged(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", Reason: "Bash requires approval"}
+	m.approval.ask = pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", Reason: "Bash requires approval"}
 	got := stripANSIstr(m.renderFooter())
 	if !strings.Contains(got, "awaiting approval") {
 		t.Errorf("generic ask footer must show 'awaiting approval', got %q", got)
@@ -266,7 +266,7 @@ func TestPlanAskRendersModelNames(t *testing.T) {
 	m.effectiveModel = client.ResolvedModel{ModelID: "gpt-5", ProviderID: "openai"}
 	// Re-populate the plan-review viewport so the model line reflects the now-set
 	// effective model (planAskModel populated it with no model echo).
-	(&m).openPlanReviewView(m.ask, len(m.askQueue), m.effectiveModel.ModelID)
+	(&m).openPlanReviewView(m.approval.ask, len(m.approval.queue), m.effectiveModel.ModelID)
 	got := stripANSIstr(m.View().Content)
 	if !strings.Contains(got, "plan model: gpt-5") {
 		t.Errorf("plan modal should show the plan model, got %q", got)
@@ -383,7 +383,7 @@ func TestPlanAskLongPlanFullNotCollapsed(t *testing.T) {
 	}
 	// The full plan's last item is present in the planVP content (reachable by
 	// scrolling — the viewport's GetContent holds the entire plan).
-	content := m.planVP.GetContent()
+	content := m.approval.planVP.GetContent()
 	if !strings.Contains(content, "LAST-ITEM-MARKER") {
 		t.Errorf("planVP must hold the FULL plan incl. the last item; GetContent missing the LAST-ITEM-MARKER: %s", content)
 	}
@@ -415,32 +415,32 @@ func TestPlanAskScrollReachesFullPlan(t *testing.T) {
 	setPlanArgs(t, &m, string(args))
 
 	// Opens at the top.
-	if y := m.planVP.YOffset(); y != 0 {
+	if y := m.approval.planVP.YOffset(); y != 0 {
 		t.Fatalf("planVP must open at YOffset 0, got %d", y)
 	}
 
 	// pgdn advances the scroll offset.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if y := m.planVP.YOffset(); y <= 0 {
+	if y := m.approval.planVP.YOffset(); y <= 0 {
 		t.Errorf("pgdn must advance planVP YOffset past 0, got %d", y)
 	}
-	afterPgdn := m.planVP.YOffset()
+	afterPgdn := m.approval.planVP.YOffset()
 
 	// wheel-down advances further.
 	m, _ = pressKey(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if y := m.planVP.YOffset(); y < afterPgdn {
+	if y := m.approval.planVP.YOffset(); y < afterPgdn {
 		t.Errorf("wheel-down must not regress planVP YOffset (was %d, now %d)", afterPgdn, y)
 	}
 
 	// home returns to the top.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if y := m.planVP.YOffset(); y != 0 {
+	if y := m.approval.planVP.YOffset(); y != 0 {
 		t.Errorf("home must return planVP to YOffset 0, got %d", y)
 	}
 
 	// The full plan's last item is reachable by scrolling to the bottom (end).
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	content := m.planVP.View()
+	content := m.approval.planVP.View()
 	if !strings.Contains(stripANSIstr(content), "LAST-ITEM-MARKER") {
 		t.Errorf("after scrolling to the bottom the last plan item must be visible, got: %s", content)
 	}
@@ -503,7 +503,7 @@ func TestPlanAskLongSingleLineWraps(t *testing.T) {
 	setPlanArgs(t, &m, string(args))
 	// The plan-review viewport holds the FULL wrapped plan; assert wrapping
 	// against the full content (the visible window may only show the first rows).
-	got := stripANSIstr(m.planVP.GetContent())
+	got := stripANSIstr(m.approval.planVP.GetContent())
 
 	// The content is present and spans multiple display lines (wrapping happened).
 	if !strings.Contains(got, "analysis") {
@@ -558,7 +558,7 @@ func TestPlanAskMarkdownRendersWrapped(t *testing.T) {
 	setPlanArgs(t, &m, string(args))
 	// The plan-review viewport holds the FULL wrapped plan (scrollable); the
 	// visible window is only the top rows, so assert against the full content.
-	got := stripANSIstr(m.planVP.GetContent())
+	got := stripANSIstr(m.approval.planVP.GetContent())
 
 	// Key markdown elements survived glamour rendering.
 	for _, want := range []string{
@@ -588,7 +588,7 @@ func TestGenericAskStillUsesCenteredModal(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{
+	m.approval.ask = pendingAsk{
 		AskID:       "sess-test-0001:1:c1",
 		Tool:        "Bash",
 		Args:        `{"command":"echo hi"}`,
@@ -606,7 +606,7 @@ func TestGenericAskStillUsesCenteredModal(t *testing.T) {
 	}
 	// planVP is not populated for a generic ask (the plan-review viewport is
 	// plan-ask-only).
-	if m.planVPReady {
+	if m.approval.planVPReady {
 		t.Errorf("planVP must not be ready for a generic (non-plan) ask")
 	}
 }
@@ -624,7 +624,7 @@ func TestPlanAskActionButtonsResolve(t *testing.T) {
 	if got := lastNotice(m); got != "permission allowed" {
 		t.Errorf("approve notice = %q, want 'permission allowed'", got)
 	}
-	if m.planVPReady {
+	if m.approval.planVPReady {
 		t.Errorf("planVP must be cleared after resolve, still ready")
 	}
 
@@ -637,7 +637,7 @@ func TestPlanAskActionButtonsResolve(t *testing.T) {
 	if got := lastNotice(m); got != "permission allowed (always, this session)" {
 		t.Errorf("always notice = %q", got)
 	}
-	if m.planVPReady {
+	if m.approval.planVPReady {
 		t.Errorf("planVP must be cleared after resolve, still ready")
 	}
 
@@ -650,7 +650,7 @@ func TestPlanAskActionButtonsResolve(t *testing.T) {
 	if got := lastNotice(m); got != "permission denied" {
 		t.Errorf("deny notice = %q", got)
 	}
-	if m.planVPReady {
+	if m.approval.planVPReady {
 		t.Errorf("planVP must be cleared after resolve, still ready")
 	}
 }
@@ -688,7 +688,7 @@ func TestPlanAskWidthWrapsNoRunoff(t *testing.T) {
 		t.Fatalf("marshal args: %v", err)
 	}
 	setPlanArgs(t, &m, string(args))
-	content := m.planVP.GetContent()
+	content := m.approval.planVP.GetContent()
 	// No display line exceeds the view width (the plan wraps to the content
 	// width). Allow a small tolerance for trailing padding; assert strictly
 	// against the view width + a margin.
@@ -709,12 +709,12 @@ func TestPlanAskResolveClearsPlanView(t *testing.T) {
 	m := planAskModel(t, true)
 	args, _ := json.Marshal(map[string]string{"plan": "1. step one\n2. step two"})
 	setPlanArgs(t, &m, string(args))
-	if !m.planVPReady {
+	if !m.approval.planVPReady {
 		t.Fatal("precondition: planVP must be ready after a plan ask opens")
 	}
 	// Approve resolves the ask.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
-	if m.planVPReady {
+	if m.approval.planVPReady {
 		t.Errorf("planVP must be cleared (not ready) after resolve, still ready")
 	}
 	if m.phase != phaseRunning {
@@ -741,7 +741,7 @@ func TestPlanAskResolveClearsPlanView(t *testing.T) {
 // — records its Prompt frame on the returned sender. The continuation stream
 // (contRecv) is a clean end_turn so the execution run does not wedge the test.
 //
-// State is set directly (m.ask + m.phase + a live m.stream) rather than driven
+// State is set directly (m.approval.ask + m.phase + a live m.stream) rather than driven
 // through a live stream, so the test is deterministic and focuses on the
 // resolveAsk → ResultMsg → submitProceedPrompt transition (the issue #206 fix).
 // The approval (resolveAsk) sends SendApproval on m.stream; the proceed
@@ -776,13 +776,13 @@ func planProceedModel(t *testing.T, offerAlways bool) (Model, *fakeConv, *fakeSe
 	m.streamCh = make(chan tea.Msg, 64)
 	m.streamGen++
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{
+	m.approval.ask = pendingAsk{
 		AskID:       "sess-test-0001:1:presentplan-1",
 		Tool:        "PresentPlan",
 		Reason:      "Plan mode requires approval to execute.",
 		offerAlways: offerAlways,
 	}
-	(&m).openPlanReviewView(m.ask, 0, m.effectiveModel.ModelID)
+	(&m).openPlanReviewView(m.approval.ask, 0, m.effectiveModel.ModelID)
 	return m, conv, send
 }
 
@@ -941,7 +941,7 @@ func TestNonPlanAskResultDoesNotFireProceed(t *testing.T) {
 	// Replace the plan ask with a BASH ask (non-plan). A fresh continuation stream
 	// is still wired so submitProceedPrompt COULD fire if the gate were wrong —
 	// proving the gate (the stop reason), not the wiring, suppresses it.
-	m.ask = pendingAsk{
+	m.approval.ask = pendingAsk{
 		AskID: "sess-test-0001:1:bash-1", Tool: "Bash",
 		Args: `{"command":"ls"}`, Reason: "Bash requires approval", offerAlways: true,
 	}
@@ -1119,7 +1119,7 @@ func TestNonPlanResultDoesNotFireModeModelRefresh(t *testing.T) {
 	m, conv, _ := planProceedModel(t, true)
 
 	// Replace the plan ask with a non-plan Bash ask.
-	m.ask = pendingAsk{
+	m.approval.ask = pendingAsk{
 		AskID: "sess-test-0001:1:bash-1", Tool: "Bash",
 		Args: `{"command":"ls"}`, Reason: "Bash requires approval", offerAlways: true,
 	}

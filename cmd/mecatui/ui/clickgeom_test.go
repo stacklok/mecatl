@@ -269,7 +269,7 @@ func TestAskButtonAtTwoButtonModalHasNoMiddle(t *testing.T) {
 	// A surfaced child ask (offerAlways=false) renders Allow · Deny only — the
 	// hit-test must expose exactly foci {0, 2}, never a middle "always" rect.
 	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
-	m.ask.offerAlways = false
+	m.approval.ask.offerAlways = false
 	byFocus := xsByFocusRow(hitScan(m))
 	if _, ok := byFocus[1]; ok {
 		t.Error("two-button modal must not expose a focus=1 (always) hit")
@@ -400,7 +400,7 @@ func TestAskButtonAtArgsViewHitsEachButton(t *testing.T) {
 	}
 	// The buttons must sit on the ask-view layout's buttons row, not wherever the
 	// centered modal would put them.
-	layout := m.argsReviewLayout(m.ask)
+	layout := m.argsReviewLayout(m.approval.ask)
 	wantRow := convTopRow(m) + layout.buttonsRow
 	for focus, rows := range byFocus {
 		for row := range rows {

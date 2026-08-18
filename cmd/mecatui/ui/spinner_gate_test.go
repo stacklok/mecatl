@@ -187,7 +187,7 @@ func TestSpinnerRearmedOnEveryVisibleTransition(t *testing.T) {
 		m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 		m.streamCh = make(chan tea.Msg, 1)
 		m.phase = phaseAwaitingApproval
-		m.ask = pendingAsk{AskID: "ask-1", Tool: "Write", focus: 0}
+		m.approval.ask = pendingAsk{AskID: "ask-1", Tool: "Write", focus: 0}
 
 		mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		got := mm.(Model)
@@ -205,7 +205,7 @@ func TestSpinnerRearmedOnEveryVisibleTransition(t *testing.T) {
 		m.streamCh = make(chan tea.Msg, 1)
 		m.streamCh <- client.StreamClosedMsg{} // park a msg so afterEvent's reader leaf resolves
 		m.phase = phaseAwaitingApproval
-		m.ask = pendingAsk{AskID: "ask-1", Tool: "Bash"}
+		m.approval.ask = pendingAsk{AskID: "ask-1", Tool: "Bash"}
 
 		mm, cmd := m.Update(client.PermissionRetractMsg{AskID: "ask-1"})
 		got := mm.(Model)

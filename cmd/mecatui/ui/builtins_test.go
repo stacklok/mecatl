@@ -45,9 +45,9 @@ func sessionState(m Model) sessionStateProjection {
 		contextTokens: m.contextTokens,
 		activeTool:    m.activeTool,
 		toolProgress:  m.toolProgress,
-		argsViewOpen:  m.argsViewOpen,
-		argsVPReady:   m.argsVPReady,
-		askVPOffset:   m.askVPOffset,
+		argsViewOpen:  m.approval.argsViewOpen,
+		argsVPReady:   m.approval.argsVPReady,
+		askVPOffset:   m.approval.askVPOffset,
 	}
 }
 
@@ -226,10 +226,10 @@ func TestDebugAskInjectsFakeAsk(t *testing.T) {
 		if m.phase != phaseAwaitingApproval {
 			t.Fatalf("invocation %d: /debug-ask must open the modal (even at idle), got phase %v", i, m.phase)
 		}
-		if m.ask.Tool != "Bash" {
-			t.Errorf("invocation %d: the fake ask must be a Bash ask, got %q", i, m.ask.Tool)
+		if m.approval.ask.Tool != "Bash" {
+			t.Errorf("invocation %d: the fake ask must be a Bash ask, got %q", i, m.approval.ask.Tool)
 		}
-		seenArgs[m.ask.Args] = true
+		seenArgs[m.approval.ask.Args] = true
 		// Resolve it (allow once) so the next invocation's ask opens fresh.
 		m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 		if got := lastNotice(m); got != "permission allowed" {
@@ -361,9 +361,9 @@ func TestClearBuiltinResetsState(t *testing.T) {
 	m.toolProgress = "writing"
 	// args-view residue: resetSession (via /clear) must close the args view and
 	// zero the mini-viewport offset.
-	m.argsViewOpen = true
-	m.argsVPReady = true
-	m.askVPOffset = 2
+	m.approval.argsViewOpen = true
+	m.approval.argsVPReady = true
+	m.approval.askVPOffset = 2
 	// Scrolled up (auto-follow off): /clear must re-arm it, since an empty
 	// conversation is at-bottom and the next run must tail its streaming deltas.
 	m.stuck = false

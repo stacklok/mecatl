@@ -38,7 +38,7 @@ func bashAskModel(t *testing.T, args string) Model {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{
+	m.approval.ask = pendingAsk{
 		AskID:       "sess-test-0001:1:bash-1",
 		Tool:        "Bash",
 		Args:        args,
@@ -52,10 +52,10 @@ func bashAskModel(t *testing.T, args string) Model {
 func openArgsView(t *testing.T, m Model) Model {
 	t.Helper()
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if !m.argsViewOpen {
+	if !m.approval.argsViewOpen {
 		t.Fatal("ctrl+t on a non-diff ask must open the full-screen args view")
 	}
-	if !m.argsVPReady {
+	if !m.approval.argsVPReady {
 		t.Fatal("the args viewport must be populated after ctrl+t")
 	}
 	return m
@@ -88,7 +88,7 @@ func TestCtrlTPlanAskUnchanged(t *testing.T) {
 	m := planAskModel(t, true)
 	before := m.expandTools
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if m.argsViewOpen {
+	if m.approval.argsViewOpen {
 		t.Error("ctrl+t on a plan ask must NOT open the args view")
 	}
 	if m.expandTools == before {
@@ -106,7 +106,7 @@ func TestCtrlTEditAskKeepsModalExpand(t *testing.T) {
 	})
 	before := m.expandTools
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if m.argsViewOpen {
+	if m.approval.argsViewOpen {
 		t.Error("ctrl+t on an Edit ask must NOT open the args view")
 	}
 	if m.expandTools == before {
@@ -126,7 +126,7 @@ func TestArgsViewRawToggle(t *testing.T) {
 		t.Errorf("the pretty tier must not show the JSON envelope, got %q", pretty)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
-	if !m.argsViewRaw {
+	if !m.approval.argsViewRaw {
 		t.Fatal("r inside the args view must set argsViewRaw")
 	}
 	raw := stripANSIstr(m.View().Content)
@@ -137,7 +137,7 @@ func TestArgsViewRawToggle(t *testing.T) {
 		t.Errorf("the raw tier must never carry the pretty tier's annotation, got %q", raw)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
-	if m.argsViewRaw {
+	if m.approval.argsViewRaw {
 		t.Fatal("a second r must toggle back to pretty")
 	}
 
@@ -145,8 +145,8 @@ func TestArgsViewRawToggle(t *testing.T) {
 	// single-line raw vs prettyJSON pretty), so the raw clause advertises and r
 	// visibly toggles.
 	m2 := openArgsView(t, bashAskModel(t, `{"url":"https://example.com"}`))
-	m2.ask.Tool = "WebFetch"
-	(&m2).openAskArgsView(m2.ask, 0)
+	m2.approval.ask.Tool = "WebFetch"
+	(&m2).openAskArgsView(m2.approval.ask, 0)
 	before := stripANSIstr(m2.View().Content)
 	if !strings.Contains(before, "raw|pretty") {
 		t.Errorf("differing tiers must advertise the raw toggle, got %q", before)
@@ -185,7 +185,7 @@ func TestArgsViewRawTierIsVerbatim(t *testing.T) {
 func TestArgsViewEscReturnsToModal(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, longBashArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.argsViewOpen {
+	if m.approval.argsViewOpen {
 		t.Error("esc must close the args view")
 	}
 	if m.phase != phaseAwaitingApproval {
@@ -205,7 +205,7 @@ func TestArgsViewCtrlTClosesView(t *testing.T) {
 	before := m.expandTools
 	m = openArgsView(t, m)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if m.argsViewOpen || m.argsVPReady {
+	if m.approval.argsViewOpen || m.approval.argsVPReady {
 		t.Error("ctrl+t inside the args view must close it back to the modal")
 	}
 	if m.expandTools != before {
@@ -220,18 +220,18 @@ func TestArgsViewCtrlTClosesView(t *testing.T) {
 	}
 }
 
-// TestArgsViewHomeEndJump pins onAskArgsScrollKey's GotoTop/GotoBottom arms:
+// TestArgsViewHomeEndJump pins argsScroll's GotoTop/GotoBottom arms:
 // ScrollTop (home) jumps to the top and ScrollBottom (end) to the bottom of
 // tall args (the pinned action bar's hint advertises them).
 func TestArgsViewHomeEndJump(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, tallBashArgs))
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if bottom := m.argsVP.YOffset(); bottom == 0 {
+	if bottom := m.approval.argsVP.YOffset(); bottom == 0 {
 		t.Fatal("end inside the args view must jump to the bottom of tall args")
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if m.argsVP.YOffset() != 0 {
-		t.Errorf("home inside the args view must jump back to the top, got %d", m.argsVP.YOffset())
+	if m.approval.argsVP.YOffset() != 0 {
+		t.Errorf("home inside the args view must jump back to the top, got %d", m.approval.argsVP.YOffset())
 	}
 }
 
@@ -246,7 +246,7 @@ func TestArgsViewVerdictKeysResolveFromInside(t *testing.T) {
 	if got := lastNotice(m); got != "permission allowed" {
 		t.Errorf("allow notice = %q", got)
 	}
-	if m.argsViewOpen || m.argsVPReady {
+	if m.approval.argsViewOpen || m.approval.argsVPReady {
 		t.Error("resolving must tear down the args view")
 	}
 }
@@ -258,17 +258,17 @@ func TestArgsViewQueuedSuccessorClosesView(t *testing.T) {
 	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:write-2", Tool: "Write", Args: `{"path":"n.txt","content":"x"}`})
 	m = openArgsView(t, m)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
-	if m.argsViewOpen {
+	if m.approval.argsViewOpen {
 		t.Error("advancing to a queued successor must close the args view")
 	}
-	if m.ask.AskID != "sess-test-0001:1:write-2" {
-		t.Fatalf("the successor must take the head, got %q", m.ask.AskID)
+	if m.approval.ask.AskID != "sess-test-0001:1:write-2" {
+		t.Fatalf("the successor must take the head, got %q", m.approval.ask.AskID)
 	}
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("phase must stay awaitingApproval with a successor, got %v", m.phase)
 	}
-	if m.askVPOffset != 0 {
-		t.Errorf("the mini-viewport offset must reset on advance, got %d", m.askVPOffset)
+	if m.approval.askVPOffset != 0 {
+		t.Errorf("the mini-viewport offset must reset on advance, got %d", m.approval.askVPOffset)
 	}
 }
 
@@ -277,14 +277,14 @@ func TestArgsViewQueuedSuccessorClosesView(t *testing.T) {
 func TestArgsViewRetractWhileOpenBehavesLikeResolve(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, longBashArgs))
 	m = applyAll(m, client.PermissionRetractMsg{AskID: "sess-test-0001:1:bash-1"})
-	if m.argsViewOpen || m.argsVPReady {
+	if m.approval.argsViewOpen || m.approval.argsVPReady {
 		t.Error("a retract while the view is open must tear it down")
 	}
 	if m.phase != phaseRunning {
 		t.Errorf("retracting the last ask must return to running, got %v", m.phase)
 	}
-	if m.askVPOffset != 0 {
-		t.Errorf("the mini-viewport offset must reset on retract, got %d", m.askVPOffset)
+	if m.approval.askVPOffset != 0 {
+		t.Errorf("the mini-viewport offset must reset on retract, got %d", m.approval.askVPOffset)
 	}
 }
 
@@ -292,13 +292,13 @@ func TestArgsViewRetractWhileOpenBehavesLikeResolve(t *testing.T) {
 // args viewport (not the conversation viewport) while the view is open.
 func TestArgsViewMouseWheelScrollsArgsVP(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, tallBashArgs))
-	if m.argsVP.YOffset() != 0 {
+	if m.approval.argsVP.YOffset() != 0 {
 		t.Fatal("precondition: the args view opens at the top")
 	}
 	vpBefore := m.vp.YOffset()
 	mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 10, Y: 10})
 	m = mm.(Model)
-	if m.argsVP.YOffset() == 0 {
+	if m.approval.argsVP.YOffset() == 0 {
 		t.Error("a wheel-down over the open args view must scroll the args viewport")
 	}
 	if m.vp.YOffset() != vpBefore {
@@ -310,19 +310,19 @@ func TestArgsViewMouseWheelScrollsArgsVP(t *testing.T) {
 // args at the new width while preserving the operator's scroll offset.
 func TestArgsViewResizePreservesYOffset(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, tallBashArgs))
-	m.argsVP.SetYOffset(2)
-	if m.argsVP.YOffset() != 2 {
-		t.Fatalf("precondition: the tall content must admit YOffset 2, got %d", m.argsVP.YOffset())
+	m.approval.argsVP.SetYOffset(2)
+	if m.approval.argsVP.YOffset() != 2 {
+		t.Fatalf("precondition: the tall content must admit YOffset 2, got %d", m.approval.argsVP.YOffset())
 	}
 	m = applyAll(m, tea.WindowSizeMsg{Width: 60, Height: 30})
-	if !m.argsViewOpen || !m.argsVPReady {
+	if !m.approval.argsViewOpen || !m.approval.argsVPReady {
 		t.Fatal("the args view must survive a resize")
 	}
-	if m.argsVPWidth != 60 {
-		t.Errorf("the args viewport must re-populate at the new width, got %d", m.argsVPWidth)
+	if m.approval.argsVPWidth != 60 {
+		t.Errorf("the args viewport must re-populate at the new width, got %d", m.approval.argsVPWidth)
 	}
-	if m.argsVP.YOffset() != 2 {
-		t.Errorf("a resize must preserve the YOffset, got %d", m.argsVP.YOffset())
+	if m.approval.argsVP.YOffset() != 2 {
+		t.Errorf("a resize must preserve the YOffset, got %d", m.approval.argsVP.YOffset())
 	}
 }
 
@@ -337,13 +337,13 @@ func TestModalMiniViewportScrollRenders(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: tallBashArgs, Reason: "Bash requires approval", offerAlways: true}
+	m.approval.ask = pendingAsk{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: tallBashArgs, Reason: "Bash requires approval", offerAlways: true}
 	if m.askArgsMiniScrollRange() <= 0 {
 		t.Fatal("precondition: tall args must have hidden rows to scroll")
 	}
 	top := stripANSIstr(m.View().Content)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.askVPOffset == 0 {
+	if m.approval.askVPOffset == 0 {
 		t.Fatal("precondition: pgdn must move the mini-viewport offset")
 	}
 	scrolled := stripANSIstr(m.View().Content)
@@ -362,7 +362,7 @@ func TestArgsViewTinyTerminalKeepsCardOnScreen(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: longBashArgs, Reason: "Bash requires approval", offerAlways: true}
+	m.approval.ask = pendingAsk{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: longBashArgs, Reason: "Bash requires approval", offerAlways: true}
 	body := m.renderBody()
 	// The args region is budgeted to (region - reserve) rows, so the whole body
 	// (before the askCard frame) can never exceed reserve + that budget — the
@@ -393,14 +393,14 @@ func TestArgsViewHostilePayload(t *testing.T) {
 // touch the modal's button focus.
 func TestArgsViewFocusUnchanged(t *testing.T) {
 	m := bashAskModel(t, longBashArgs)
-	m.ask.focus = 2
+	m.approval.ask.focus = 2
 	m = openArgsView(t, m)
-	if m.ask.focus != 2 {
-		t.Errorf("opening the args view must not move the focus, got %d", m.ask.focus)
+	if m.approval.ask.focus != 2 {
+		t.Errorf("opening the args view must not move the focus, got %d", m.approval.ask.focus)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.ask.focus != 2 {
-		t.Errorf("closing the args view must not move the focus, got %d", m.ask.focus)
+	if m.approval.ask.focus != 2 {
+		t.Errorf("closing the args view must not move the focus, got %d", m.approval.ask.focus)
 	}
 }
 
@@ -416,20 +416,20 @@ func TestRawArgsReboundChordToggles(t *testing.T) {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseAwaitingApproval
-	m.ask = pendingAsk{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: longBashArgs, Reason: "Bash requires approval", offerAlways: true}
+	m.approval.ask = pendingAsk{AskID: "sess-test-0001:1:bash-1", Tool: "Bash", Args: longBashArgs, Reason: "Bash requires approval", offerAlways: true}
 	m = openArgsView(t, m)
 	// The default chord r is now inert inside the view.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
-	if m.argsViewRaw {
+	if m.approval.argsViewRaw {
 		t.Error("the default r must be inert once RawArgs is rebound")
 	}
 	// The rebound chord toggles raw on, then off.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyF20, Mod: tea.ModCtrl})
-	if !m.argsViewRaw {
+	if !m.approval.argsViewRaw {
 		t.Error("the rebound ctrl+f20 must toggle raw on")
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyF20, Mod: tea.ModCtrl})
-	if m.argsViewRaw {
+	if m.approval.argsViewRaw {
 		t.Error("a second ctrl+f20 must toggle raw off")
 	}
 }
@@ -441,7 +441,7 @@ func TestBareRInPlainModalDoesNothing(t *testing.T) {
 	m := bashAskModel(t, longBashArgs)
 	before := lastNotice(m)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
-	if m.argsViewOpen || m.argsViewRaw {
+	if m.approval.argsViewOpen || m.approval.argsViewRaw {
 		t.Error("a bare r in the plain modal must not open/toggle anything")
 	}
 	if m.phase != phaseAwaitingApproval {
@@ -464,16 +464,16 @@ func TestModalMiniViewportScrollKeys(t *testing.T) {
 		t.Fatal("precondition: the args must overflow the mini-viewport")
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.askVPOffset != 1 {
-		t.Errorf("down must move the mini-viewport by one row, got %d", m.askVPOffset)
+	if m.approval.askVPOffset != 1 {
+		t.Errorf("down must move the mini-viewport by one row, got %d", m.approval.askVPOffset)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.askVPOffset != 4 {
-		t.Errorf("pgdn must move the mini-viewport by three rows, got %d", m.askVPOffset)
+	if m.approval.askVPOffset != 4 {
+		t.Errorf("pgdn must move the mini-viewport by three rows, got %d", m.approval.askVPOffset)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.askVPOffset != 1 {
-		t.Errorf("pgup must retreat the mini-viewport by three rows, got %d", m.askVPOffset)
+	if m.approval.askVPOffset != 1 {
+		t.Errorf("pgup must retreat the mini-viewport by three rows, got %d", m.approval.askVPOffset)
 	}
 	// Scrolling PAST the bound pins at maxOff (no overshoot, no blank rows);
 	// scrolling past the bottom then hammering pgup pins back at 0.
@@ -481,14 +481,14 @@ func TestModalMiniViewportScrollKeys(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	}
-	if m.askVPOffset != maxOff {
-		t.Errorf("scrolling past the bound must pin at maxOff %d, got %d", maxOff, m.askVPOffset)
+	if m.approval.askVPOffset != maxOff {
+		t.Errorf("scrolling past the bound must pin at maxOff %d, got %d", maxOff, m.approval.askVPOffset)
 	}
 	for i := 0; i < 10; i++ {
 		m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
 	}
-	if m.askVPOffset != 0 {
-		t.Errorf("scrolling past the top must pin at 0, got %d", m.askVPOffset)
+	if m.approval.askVPOffset != 0 {
+		t.Errorf("scrolling past the top must pin at 0, got %d", m.approval.askVPOffset)
 	}
 	// A short-args ask: nothing hidden → the scroll keys no-op AND fall through
 	// (they must not be consumed).
@@ -497,8 +497,8 @@ func TestModalMiniViewportScrollKeys(t *testing.T) {
 		t.Fatalf("a short ask must have no hidden rows, got max %d", maxOff)
 	}
 	short, _ = pressKey(short, tea.KeyPressMsg{Code: tea.KeyDown})
-	if short.askVPOffset != 0 {
-		t.Errorf("a short ask's mini-viewport must not scroll, got %d", short.askVPOffset)
+	if short.approval.askVPOffset != 0 {
+		t.Errorf("a short ask's mini-viewport must not scroll, got %d", short.approval.askVPOffset)
 	}
 }
 
@@ -530,7 +530,7 @@ func TestModalWheelPrecedence(t *testing.T) {
 	vpBefore := m.vp.YOffset()
 	mm, _ := m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: cardX, Y: cardY})
 	m = mm.(Model)
-	if m.askVPOffset == 0 {
+	if m.approval.askVPOffset == 0 {
 		t.Error("a wheel-down over the card must scroll the args mini-viewport")
 	}
 	if m.vp.YOffset() != vpBefore {
@@ -538,12 +538,12 @@ func TestModalWheelPrecedence(t *testing.T) {
 	}
 
 	// Wheel outside the card → the conversation viewport moves, mini-viewport stays.
-	offBefore := m.askVPOffset
+	offBefore := m.approval.askVPOffset
 	// The conversation is at-bottom; scroll UP to see movement.
 	mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: m.width - 1, Y: m.height - 1})
 	m = mm.(Model)
-	if m.askVPOffset != offBefore {
-		t.Errorf("a wheel off the card must NOT move the mini-viewport (%d → %d)", offBefore, m.askVPOffset)
+	if m.approval.askVPOffset != offBefore {
+		t.Errorf("a wheel off the card must NOT move the mini-viewport (%d → %d)", offBefore, m.approval.askVPOffset)
 	}
 }
 
@@ -571,9 +571,9 @@ func TestAskArgsViewRawGolden(t *testing.T) {
 // scrolling). The first visible line must differ from the pretty golden's.
 func TestAskArgsViewScrolledGolden(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, tallBashArgs))
-	m.argsVP.SetYOffset(2)
-	if m.argsVP.YOffset() != 2 {
-		t.Fatalf("the tall fixture must admit YOffset 2, got %d — the golden would be vacuous", m.argsVP.YOffset())
+	m.approval.argsVP.SetYOffset(2)
+	if m.approval.argsVP.YOffset() != 2 {
+		t.Fatalf("the tall fixture must admit YOffset 2, got %d — the golden would be vacuous", m.approval.argsVP.YOffset())
 	}
 	got := string(stripANSI([]byte(m.View().Content)))
 	prettyGolden, err := os.ReadFile(filepath.Join("testdata", "askargs_view_pretty.golden")) //nolint:gosec // test golden
@@ -598,7 +598,7 @@ func TestAskArgsViewScrolledGolden(t *testing.T) {
 func TestAskArgsModalCappedHintGolden(t *testing.T) {
 	args := `{"command":"` + strings.Join(tallBashCommandLines(14), `\n`) + `"}`
 	m := bashAskModel(t, args) // the live help-key markings ride the renderer
-	plain := stripANSIstr(m.rend.renderPermissionModal(m.ask, false, 0, 100, 40, 0))
+	plain := stripANSIstr(m.rend.renderPermissionModal(m.approval.ask, false, 0, 100, 40, 0))
 	if n := strings.Count(plain, "echo step-"); n != permissionModalArgsMaxLines {
 		t.Fatalf("the modal must render exactly %d args rows, got %d", permissionModalArgsMaxLines, n)
 	}
