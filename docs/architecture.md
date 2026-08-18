@@ -301,7 +301,12 @@ inventory without first creating a session, then continue/inspect through the ex
 authoritative transcript path or create only when the operator requests a new chat. Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
-rename, and confirmed physical deletion. Fork/rename/delete are revalidated under the
+rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption
+preflight and apply RPCs: an owned, transcript-complete `unknown` source can be copied into a
+new explicit-main session only with explicit workspace/environment and provider/model bindings.
+Apply revalidates under run-entry serialization and the mutation lease, persists a
+caller+source-bound idempotency proof and source audit link, and never rewrites the legacy source.
+The TUI adoption affordance is a separate client workflow. Fork/rename/delete are revalidated under the
 server's run-entry serialization with ownership, kind, state, liveness, and optional lease
 checks; a stale UI row therefore cannot bypass the server gates, and a failed action does
 not rebind the prompt target. The

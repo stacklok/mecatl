@@ -50,6 +50,8 @@ const (
 	HarnessService_RenameSession_FullMethodName            = "/mecatl.v1.HarnessService/RenameSession"
 	HarnessService_DeleteSession_FullMethodName            = "/mecatl.v1.HarnessService/DeleteSession"
 	HarnessService_ForkSession_FullMethodName              = "/mecatl.v1.HarnessService/ForkSession"
+	HarnessService_PreflightSessionAdoption_FullMethodName = "/mecatl.v1.HarnessService/PreflightSessionAdoption"
+	HarnessService_AdoptSession_FullMethodName             = "/mecatl.v1.HarnessService/AdoptSession"
 	HarnessService_Converse_FullMethodName                 = "/mecatl.v1.HarnessService/Converse"
 	HarnessService_ListMcpResources_FullMethodName         = "/mecatl.v1.HarnessService/ListMcpResources"
 	HarnessService_ReadMcpResource_FullMethodName          = "/mecatl.v1.HarnessService/ReadMcpResource"
@@ -125,6 +127,12 @@ type HarnessServiceClient interface {
 	// (ADR 0068). The source must be at a turn boundary (idle/terminal); a
 	// running/awaiting source is rejected. No streaming.
 	ForkSession(ctx context.Context, in *ForkSessionRequest, opts ...grpc.CallOption) (*ForkSessionResponse, error)
+	// PreflightSessionAdoption evaluates one authenticated caller-owned legacy
+	// source against explicit workspace/environment/provider/model bindings.
+	PreflightSessionAdoption(ctx context.Context, in *PreflightSessionAdoptionRequest, opts ...grpc.CallOption) (*PreflightSessionAdoptionResponse, error)
+	// AdoptSession atomically publishes a new explicit-main copy of one eligible
+	// legacy source. Retries are caller+source-bound by idempotency_key.
+	AdoptSession(ctx context.Context, in *AdoptSessionRequest, opts ...grpc.CallOption) (*AdoptSessionResponse, error)
 	// Converse drives one run. The first frame MUST be `prompt`; subsequent
 	// frames are zero or more `resume_approval` / `cancel` control frames. The
 	// server streams `Event` envelopes until the terminal `result` event, then
@@ -434,6 +442,26 @@ func (c *harnessServiceClient) ForkSession(ctx context.Context, in *ForkSessionR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ForkSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ForkSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) PreflightSessionAdoption(ctx context.Context, in *PreflightSessionAdoptionRequest, opts ...grpc.CallOption) (*PreflightSessionAdoptionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreflightSessionAdoptionResponse)
+	err := c.cc.Invoke(ctx, HarnessService_PreflightSessionAdoption_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) AdoptSession(ctx context.Context, in *AdoptSessionRequest, opts ...grpc.CallOption) (*AdoptSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdoptSessionResponse)
+	err := c.cc.Invoke(ctx, HarnessService_AdoptSession_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -903,6 +931,12 @@ type HarnessServiceServer interface {
 	// (ADR 0068). The source must be at a turn boundary (idle/terminal); a
 	// running/awaiting source is rejected. No streaming.
 	ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error)
+	// PreflightSessionAdoption evaluates one authenticated caller-owned legacy
+	// source against explicit workspace/environment/provider/model bindings.
+	PreflightSessionAdoption(context.Context, *PreflightSessionAdoptionRequest) (*PreflightSessionAdoptionResponse, error)
+	// AdoptSession atomically publishes a new explicit-main copy of one eligible
+	// legacy source. Retries are caller+source-bound by idempotency_key.
+	AdoptSession(context.Context, *AdoptSessionRequest) (*AdoptSessionResponse, error)
 	// Converse drives one run. The first frame MUST be `prompt`; subsequent
 	// frames are zero or more `resume_approval` / `cancel` control frames. The
 	// server streams `Event` envelopes until the terminal `result` event, then
@@ -1161,6 +1195,12 @@ func (UnimplementedHarnessServiceServer) DeleteSession(context.Context, *DeleteS
 }
 func (UnimplementedHarnessServiceServer) ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ForkSession not implemented")
+}
+func (UnimplementedHarnessServiceServer) PreflightSessionAdoption(context.Context, *PreflightSessionAdoptionRequest) (*PreflightSessionAdoptionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreflightSessionAdoption not implemented")
+}
+func (UnimplementedHarnessServiceServer) AdoptSession(context.Context, *AdoptSessionRequest) (*AdoptSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AdoptSession not implemented")
 }
 func (UnimplementedHarnessServiceServer) Converse(grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Converse not implemented")
@@ -1440,6 +1480,42 @@ func _HarnessService_ForkSession_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).ForkSession(ctx, req.(*ForkSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_PreflightSessionAdoption_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreflightSessionAdoptionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).PreflightSessionAdoption(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_PreflightSessionAdoption_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).PreflightSessionAdoption(ctx, req.(*PreflightSessionAdoptionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_AdoptSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdoptSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).AdoptSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_AdoptSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).AdoptSession(ctx, req.(*AdoptSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2145,6 +2221,14 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ForkSession",
 			Handler:    _HarnessService_ForkSession_Handler,
+		},
+		{
+			MethodName: "PreflightSessionAdoption",
+			Handler:    _HarnessService_PreflightSessionAdoption_Handler,
+		},
+		{
+			MethodName: "AdoptSession",
+			Handler:    _HarnessService_AdoptSession_Handler,
 		},
 		{
 			MethodName: "ListMcpResources",

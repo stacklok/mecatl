@@ -42,7 +42,7 @@
 //
 // CREATION METADATA is supplied via SessionMeta: the id, mode, limits, workspace,
 // profile, provider/model selector, reasoning effort, authoritative title/provenance,
-// kind/relationship, and createdAt are facts that NO event carries, so the caller
+// kind/relationship, adoption source/request digest, and createdAt are facts that NO event carries, so the caller
 // (who created or discovered the session and thus knows them) provides them alongside
 // the stream. A legacy empty title falls back to the first genuine EvUserPrompt.
 // There is deliberately no EvSessionCreated event (ADR 0038 records that as a
@@ -105,6 +105,10 @@ type SessionMeta struct {
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
 	Relationship session.SessionRelationship
+	// AdoptionSourceID and AdoptionRequestDigest are inert adoption audit labels.
+	// They are not event-carried and must be supplied by an event-log store.
+	AdoptionSourceID      session.SessionID
+	AdoptionRequestDigest string
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -157,6 +161,8 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
+	s.AdoptionSourceID = meta.AdoptionSourceID
+	s.AdoptionRequestDigest = meta.AdoptionRequestDigest
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
 

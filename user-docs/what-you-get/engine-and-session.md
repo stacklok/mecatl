@@ -39,6 +39,13 @@ sess := session.New(
 
 The same engine can run different sessions. The same session can be reopened and run again (after it completes) by the same or a different engine.
 
+Legacy snapshots whose producer kind is unknown remain inspect-only. An authenticated
+server can explicitly adopt an eligible owned legacy snapshot as a **new** main chat:
+it preflights the complete authoritative transcript, requires explicit workspace/environment
+and provider/model bindings, and publishes an idempotent copy with a source audit link.
+It never relabels or rewrites the legacy source, never adopts in bulk, and never accepts a
+client-uploaded transcript.
+
 ### `*agent.Run`
 
 `engine.Run(...)` returns a `*Run` immediately. The loop starts in a background goroutine; the `Run` handle is your interface to it while it's live:

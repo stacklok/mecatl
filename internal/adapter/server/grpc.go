@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 
@@ -174,6 +175,56 @@ func (h *HarnessServer) ForkSession(ctx context.Context, req *mecatlv1.ForkSessi
 		return nil, toStatus(err)
 	}
 	return &mecatlv1.ForkSessionResponse{SessionId: string(id)}, nil
+}
+
+func adoptionBindingsFromProto(binding *mecatlv1.AdoptionBindings) (AdoptionBindings, error) {
+	if binding == nil {
+		return AdoptionBindings{}, fmt.Errorf("%w: bindings are required", ErrInvalidArgument)
+	}
+	profile, err := ParseSessionProfile(binding.GetProfile())
+	if err != nil {
+		return AdoptionBindings{}, err
+	}
+	return AdoptionBindings{
+		Workspace:      binding.GetWorkspace(),
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvironmentKind(binding.GetEnvironmentKind()), ID: binding.GetEnvironmentId()},
+		ProviderID:     binding.GetProviderId(), ModelID: binding.GetModelId(), Profile: profile,
+	}, nil
+}
+
+func adoptionBindingsToProto(binding AdoptionBindings) *mecatlv1.AdoptionBindings {
+	return &mecatlv1.AdoptionBindings{Workspace: binding.Workspace, EnvironmentKind: string(binding.EnvironmentRef.Kind), EnvironmentId: binding.EnvironmentRef.ID, ProviderId: binding.ProviderID, ModelId: binding.ModelID, Profile: string(binding.Profile)}
+}
+
+func (h *HarnessServer) PreflightSessionAdoption(ctx context.Context, req *mecatlv1.PreflightSessionAdoptionRequest) (*mecatlv1.PreflightSessionAdoptionResponse, error) {
+	if req.GetSourceSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
+	}
+	bindings, err := adoptionBindingsFromProto(req.GetBindings())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	result, err := h.svc.PreflightSessionAdoption(ctx, session.SessionID(req.GetSourceSessionId()), bindings)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.PreflightSessionAdoptionResponse{Eligible: result.Eligible, ReasonCode: string(result.Reason), Bindings: adoptionBindingsToProto(result.Bindings)}, nil
+}
+
+func (h *HarnessServer) AdoptSession(ctx context.Context, req *mecatlv1.AdoptSessionRequest) (*mecatlv1.AdoptSessionResponse, error) {
+	if req.GetSourceSessionId() == "" || req.GetIdempotencyKey() == "" {
+		return nil, status.Error(codes.InvalidArgument, "source_session_id and idempotency_key are required")
+	}
+	bindings, err := adoptionBindingsFromProto(req.GetBindings())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	sess, err := h.svc.AdoptSession(ctx, session.SessionID(req.GetSourceSessionId()), req.GetIdempotencyKey(), bindings)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	caps := h.svc.SessionCapabilities(sess.ID)
+	return &mecatlv1.AdoptSessionResponse{SessionId: string(sess.ID), SourceSessionId: string(sess.AdoptionSourceID), Capabilities: h.svc.capabilities(), SessionCapabilities: &mecatlv1.SessionCapabilities{Image: caps.Image, Audio: caps.Audio}, ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID))}, nil
 }
 
 // Converse drives one run over a bidi stream. The first frame MUST be a Prompt;

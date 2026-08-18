@@ -734,18 +734,19 @@ func toProtoUsage(u session.Usage) *mecatlv1.Usage {
 // toProtoSession maps a session.Session aggregate to its proto snapshot.
 func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities) *mecatlv1.Session {
 	return &mecatlv1.Session{
-		SessionId:       string(s.ID),
-		State:           string(s.State),
-		Mode:            modeToProto(s.Mode),
-		Workspace:       valid(s.Workspace),
-		Limits:          limitsToProto(s.Limits),
-		Turns:           ClampInt32(s.Counters.Turns),
-		ToolCalls:       ClampInt32(s.Counters.ToolCalls),
-		CreatedAtUnix:   s.CreatedAt.Unix(),
-		ResolvedModel:   resolvedModelToProto(rm),
-		Title:           valid(s.Title),
-		TitleProvenance: string(s.TitleProvenance),
-		Capabilities:    caps,
+		SessionId:               string(s.ID),
+		State:                   string(s.State),
+		Mode:                    modeToProto(s.Mode),
+		Workspace:               valid(s.Workspace),
+		Limits:                  limitsToProto(s.Limits),
+		Turns:                   ClampInt32(s.Counters.Turns),
+		ToolCalls:               ClampInt32(s.Counters.ToolCalls),
+		CreatedAtUnix:           s.CreatedAt.Unix(),
+		ResolvedModel:           resolvedModelToProto(rm),
+		Title:                   valid(s.Title),
+		TitleProvenance:         string(s.TitleProvenance),
+		Capabilities:            caps,
+		AdoptionSourceSessionId: valid(string(s.AdoptionSourceID)),
 	}
 }
 

@@ -235,6 +235,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"RenameSession":             {KindCallerOwned, "authorizes via GetSession, then revalidates ownership, kind, state, liveness, and lease under runEntryMu before persisting"},
 	"DeleteSession":             {KindCallerOwned, "authorizes via GetSession, then revalidates ownership, kind, state, liveness, and lease under runEntryMu before physical deletion"},
 	"ForkSession":               {KindCallerOwned, "authorizes the SOURCE session (authorizeSession) before copying its history to a new owned session"},
+	"PreflightSessionAdoption":  {KindCallerOwned, "loads and authorizes the legacy source from the verified caller context before reporting eligibility"},
+	"AdoptSession":              {KindCallerOwned, "revalidates the caller-owned legacy source under run-entry serialization and the mutation lease before publishing a new owned main session"},
 	"EndSession":                {KindCallerOwned, "authorizes via GetSession before CloseSession"},
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
 	"ListSessionPage":           {KindCallerOwned, "passes caller ownership into the store query before keyset page formation and counting"},

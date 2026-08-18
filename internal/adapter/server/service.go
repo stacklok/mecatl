@@ -1738,6 +1738,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		LearnedSkills:     s.cfg.LearnedSkills != nil,
 		Scheduling:        s.scheduleStore() != nil,
 		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && implementsStorageHealth(s.cfg.Store),
+		LegacyAdoption:    s.cfg.OwnershipEnforced && s.cfg.SessionEngine != nil,
 	}
 }
 

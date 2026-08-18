@@ -427,6 +427,13 @@ type Session struct {
 	// Relationship carries kind-specific durable lineage. It is empty for main
 	// and legacy unknown sessions.
 	Relationship SessionRelationship
+	// AdoptionSourceID records the immutable legacy source copied into this main
+	// session. AdoptionRequestDigest binds idempotent retries to the complete
+	// caller/source/request tuple without persisting the caller's idempotency key.
+	// Both are inert audit labels; only the authenticated server adoption path sets
+	// them, and ordinary main sessions leave them empty.
+	AdoptionSourceID      SessionID
+	AdoptionRequestDigest string
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 

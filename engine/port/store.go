@@ -41,8 +41,8 @@ var ErrSessionNotFound = errors.New("port: session not found")
 //     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
 //     — the budget brake reads it), and the metadata the events do not carry (id, mode,
 //     limits, workspace, profile, provider/model selector, reasoning effort,
-//     authoritative title/provenance, session kind/relationship, createdAt — supplied
-//     out-of-band, e.g. eventsource.SessionMeta). A legacy empty title/provenance may be
+//     authoritative title/provenance, session kind/relationship, adoption source/request
+//     digest, createdAt — supplied out-of-band, e.g. eventsource.SessionMeta). A legacy empty title/provenance may be
 //     derived from the first genuine EvUserPrompt.
 //   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.

@@ -119,6 +119,19 @@ non-main kinds. `engine/adapter/sessnap/sessnap.go`, every SessionStore adapter
 Restore rejects invalid combinations; a legacy absent kind becomes fail-closed
 `unknown` rather than gaining main-session continuation posture.
 
+Explicit legacy adoption (issue #593) remains a server/composition authority boundary,
+not an aggregate transition. `PreflightSessionAdoption` accepts only an authenticated,
+caller-owned `unknown` snapshot with a complete tool-paired transcript at an idle/terminal
+boundary and no reserved child/team/parallel/scheduled prefix or relationship. It reports
+stable reason codes and requires explicit workspace/`EnvironmentRef` plus provider/model
+bindings; resolution failures never fall through to defaults. `AdoptSession` repeats the
+checks while holding the source's `runEntryMu` and mutation lease, copies through the
+existing cross-provider state-stripping discipline, and saves one fresh main aggregate with
+`AdoptionSourceID` plus a caller/source/request-bound digest. The deterministic opaque target
+ID makes a lost-response retry return that complete snapshot. Foreign and absent sources are
+both `ErrNotFound`; the source is never reopened, relabelled, or saved. There is no bulk,
+automatic, or client-transcript-upload path.
+
 ---
 
 ## Domain — `engine/session/` (lifecycle recovery)

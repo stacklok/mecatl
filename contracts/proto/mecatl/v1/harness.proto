@@ -66,6 +66,14 @@ service HarnessService {
   // running/awaiting source is rejected. No streaming.
   rpc ForkSession(ForkSessionRequest) returns (ForkSessionResponse);
 
+  // PreflightSessionAdoption evaluates one authenticated caller-owned legacy
+  // source against explicit workspace/environment/provider/model bindings.
+  rpc PreflightSessionAdoption(PreflightSessionAdoptionRequest) returns (PreflightSessionAdoptionResponse);
+
+  // AdoptSession atomically publishes a new explicit-main copy of one eligible
+  // legacy source. Retries are caller+source-bound by idempotency_key.
+  rpc AdoptSession(AdoptSessionRequest) returns (AdoptSessionResponse);
+
   // Converse drives one run. The first frame MUST be `prompt`; subsequent
   // frames are zero or more `resume_approval` / `cancel` control frames. The
   // server streams `Event` envelopes until the terminal `result` event, then
@@ -520,6 +528,9 @@ message ServerCapabilities {
   // storage_health is true only when the backend implements bounded indexed
   // health and this deployment has a management authorizer.
   bool storage_health = 19;
+  // legacy_adoption is true only when authenticated, caller-owned adoption with
+  // explicit engine bindings is available.
+  bool legacy_adoption = 20;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -881,6 +892,41 @@ message ForkSessionResponse {
   string session_id = 1;
 }
 
+// AdoptionBindings are explicit; omitted fields never select a server default.
+message AdoptionBindings {
+  string workspace = 1;
+  string environment_kind = 2;
+  string environment_id = 3;
+  string provider_id = 4;
+  string model_id = 5;
+  string profile = 6;
+}
+
+message PreflightSessionAdoptionRequest {
+  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
+  AdoptionBindings bindings = 2;
+}
+
+message PreflightSessionAdoptionResponse {
+  bool eligible = 1;
+  string reason_code = 2;
+  AdoptionBindings bindings = 3;
+}
+
+message AdoptSessionRequest {
+  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string idempotency_key = 2 [(buf.validate.field).string.min_len = 1];
+  AdoptionBindings bindings = 3;
+}
+
+message AdoptSessionResponse {
+  string session_id = 1;
+  string source_session_id = 2;
+  ServerCapabilities capabilities = 3;
+  SessionCapabilities session_capabilities = 4;
+  ResolvedModel resolved_model = 5;
+}
+
 // Session is a snapshot of server-side session state.
 message Session {
   // session_id is the session's id.
@@ -921,6 +967,9 @@ message Session {
   // second CreateSession. An older server omits the field → client sees a zero value
   // and keeps its current caps untouched (fail-conservative).
   ServerCapabilities capabilities = 11;
+  // adoption_source_session_id is the immutable audit relationship on a main
+  // session created by explicit legacy adoption.
+  string adoption_source_session_id = 13;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The

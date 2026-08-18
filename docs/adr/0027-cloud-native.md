@@ -732,6 +732,14 @@ capability), fork merge-back, environment provisioning, the substrate/mount-tabl
 model, ProcessHost, a memfs-scratch profile (needs a snapshot story, naturally
 revisitable after Phase 1).
 
+**Legacy-adoption re-audit (issue #593, ADR 0226).** No new List 1 resource is
+introduced: preflight is request-scoped, apply borrows the existing keyed run-entry
+lock, mutation lease, and per-session engine registry (rows 11 and 27), and the
+idempotency proof is persisted on the target snapshot rather than held in a new map.
+List 2 row 34 records the durable source relationship and request digest. Cancellation
+or failure before the target `SessionStore.Save` publishes no snapshot; successful
+save is the existing store's atomic visibility boundary.
+
 ## List 1: resource inventory
 
 Every resource the harness allocates whose lifecycle outlives a single tool call,
@@ -1002,6 +1010,7 @@ what is persisted), **reset-by-design** (documented, acceptable),
 | 31 | Agent-owned skill lifecycle and proposal linkage (issue #510; List 1 row 48) | `skillstore` bounded manifest plus immutable content-addressed `SKILL.md` files; the proposal's terminal linkage remains in `reflectionstore` | restart reloads exact versions, revisions, lifecycle states, histories, and active selection. A crash after draft persistence but before proposal linkage leaves an inactive Draft and possibly an unreferenced immutable file; retry converges the exact body/provenance and CAS-links the same SkillID | **persist-in-store**: both stores are independently atomic. ProposalID provenance and deterministic SkillID/version provide idempotent reconciliation without claiming a distributed transaction; no startup sweep and no automatic activation | 0110 |
 | 32 | Automatic-learning process/principal windows, weighted cooldowns, and completed-digest cache (ADR 0114; List 1 row 55) | process-local `automaticAdmissionController` only; nothing is persisted | restart grants a fresh automatic window and forgets cooldown/completed-cache membership. Existing staged/promoted proposal state remains durable and deterministic proposal IDs make a retried reflection converge. There is no historical/startup/shutdown sweep | **reset-by-design**: spend-control and duplicate-suppression hints, not accepted learning state. N replicas have N independent budgets | 0114 |
 | 33 | Redis derivative session inventory rows, owner indexes, and cursor generations (List 1 row 7) | managed Redis keys updated atomically with each current snapshot | restart reloads the persisted index and generations; an older Redis database with snapshots but no complete index is marked stale at adapter startup | **derive-on-write / fail honest**: current Save and Delete maintain the projection; legacy databases report metadata paging unsupported rather than rebuilding by transcript scan on a page | ADR 0226 |
+| 34 | Legacy-adoption source relationship and idempotency proof (issue #593) | additive `session.Session.AdoptionSourceID` / `AdoptionRequestDigest` fields persisted by `sessnap.Snapshot`; only the authenticated server adoption path stamps them | restart reloads the target's immutable source link and caller/source/request digest, so a lost-response retry deterministically resolves to the same complete main session without an in-memory key map | **persist-in-snapshot**: the raw idempotency key is not persisted; its caller/source/request-bound SHA-256 digest and the opaque deterministic target ID are sufficient to converge retries. The legacy source remains unchanged | ADR 0226 |
 
 Two ledger observations worth stating in prose:
 
