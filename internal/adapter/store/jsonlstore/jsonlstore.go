@@ -105,14 +105,15 @@ type Store struct {
 	resolver sessionResolver
 	// mu is confined to the sibling schedule store. Session-family mutations
 	// coordinate by their stable cross-process flock identity instead.
-	mu                    sync.Mutex
-	inventoryMu           sync.Mutex
-	snapshot              snapshotOps
-	durability            SnapshotDurabilityCapability
-	tempOwner             string
-	tempGeneration        atomic.Uint64
-	toolCallLockTimeout   time.Duration
-	inventoryWorkObserver func(inventoryWorkKind)
+	mu                        sync.Mutex
+	inventoryMu               sync.Mutex
+	snapshot                  snapshotOps
+	durability                SnapshotDurabilityCapability
+	tempOwner                 string
+	tempGeneration            atomic.Uint64
+	toolCallLockTimeout       time.Duration
+	inventoryWorkObserver     func(inventoryWorkKind)
+	snapshotFamilyLockBlocked func()
 }
 
 // compile-time assertions that Store satisfies both ports plus the optional
@@ -277,10 +278,13 @@ func snapshotPathFromTempName(dir, name string) (string, bool) {
 
 const toolCallFamilyLockTimeout = 5 * time.Second
 
-func withSnapshotFamilyLock(ctx context.Context, snapshotPath string, fn func() error) error {
+func withSnapshotFamilyLock(ctx context.Context, snapshotPath string, blocked func(), fn func() error) error {
 	fl := flock.New(snapshotFamilyLockPath(snapshotPath), flock.SetPermissions(0o600))
 	locked, err := fl.TryLock()
 	if err == nil && !locked {
+		if blocked != nil {
+			blocked()
+		}
 		locked, err = fl.TryLockContext(ctx, 10*time.Millisecond)
 	}
 	if err != nil {
@@ -291,6 +295,10 @@ func withSnapshotFamilyLock(ctx context.Context, snapshotPath string, fn func() 
 	}
 	defer func() { _ = fl.Close() }()
 	return fn()
+}
+
+func (st *Store) withSnapshotFamilyLock(ctx context.Context, snapshotPath string, fn func() error) error {
+	return withSnapshotFamilyLock(ctx, snapshotPath, st.snapshotFamilyLockBlocked, fn)
 }
 
 func reapSnapshotTemps(snapshotPath string) error {
@@ -356,7 +364,7 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 		return err
 	}
 	path := st.resolver.currentSnapshotPath(s.ID)
-	return withSnapshotFamilyLock(ctx, path, func() error {
+	return st.withSnapshotFamilyLock(ctx, path, func() error {
 		if err := st.advanceInventoryGeneration(); err != nil {
 			return err
 		}
@@ -444,7 +452,7 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 		return nil, err
 	}
 	var line []byte
-	err := withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
+	err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		var err error
 		line, err = st.resolver.loadSnapshot(id)
 		return err
@@ -549,7 +557,7 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
-	return withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
+	return st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		if err := st.advanceInventoryGeneration(); err != nil {
 			return err
 		}
@@ -635,7 +643,7 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), st.toolCallLockTimeout)
 	defer cancel()
-	_ = withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
+	_ = st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		if err := st.resolver.prepareWrite(id); err != nil {
 			return err
 		}
@@ -662,7 +670,7 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 	if err != nil {
 		return fmt.Errorf("jsonlstore: marshal event record: %w", err)
 	}
-	return withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
+	return st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 		if err := st.resolver.prepareWrite(id); err != nil {
 			return err
 		}
@@ -683,7 +691,7 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			path    string
 			present bool
 		)
-		err := withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
+		err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
 			var err error
 			path, present, err = st.resolver.readablePath(id, kindEvents)
 			return err

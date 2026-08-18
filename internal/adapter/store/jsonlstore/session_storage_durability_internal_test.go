@@ -1,9 +1,12 @@
 package jsonlstore
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -433,6 +436,151 @@ func TestSessionStorageContinuity_Scenario1_ActiveTemporaryNotReaped(t *testing.
 		t.Fatalf("serialized committed snapshot = title %q, err %v", got.Title, err)
 	}
 	assertNoSnapshotTemps(t, first.resolver.currentSnapshotPath(id))
+}
+
+func TestSessionStorageContinuity_Scenario1_ActiveTemporaryCrossProcess(t *testing.T) {
+	dir := t.TempDir()
+	id := session.SessionID("cross-process-active-temp")
+	seed, err := New(dir)
+	if err != nil {
+		t.Fatalf("New seed Store: %v", err)
+	}
+	if err := seed.Save(context.Background(), newSnapshotSession(id, "committed-before-child")); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+	snapshotPath := seed.resolver.currentSnapshotPath(id)
+	before, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("read seed snapshot: %v", err)
+	}
+
+	readyR, readyW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create ready pipe: %v", err)
+	}
+	defer func() { _ = readyR.Close() }()
+	releaseR, releaseW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create release pipe: %v", err)
+	}
+	defer func() { _ = releaseW.Close() }()
+
+	var childOutput bytes.Buffer
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSessionStorageContinuity_HelperProcessActiveSave$")
+	cmd.Env = append(os.Environ(), "MECATL_JSONLSTORE_HELPER=1", "MECATL_JSONLSTORE_DIR="+dir)
+	cmd.ExtraFiles = []*os.File{readyW, releaseR}
+	cmd.Stdout = &childOutput
+	cmd.Stderr = &childOutput
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper process: %v", err)
+	}
+	_ = readyW.Close()
+	_ = releaseR.Close()
+	defer func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+
+	if err := readyR.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set helper readiness deadline: %v", err)
+	}
+	scanner := bufio.NewScanner(readyR)
+	if !scanner.Scan() {
+		t.Fatalf("helper did not report active temp: %v", scanner.Err())
+	}
+	activePath := scanner.Text()
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("helper active temp missing: %v", err)
+	}
+
+	peer, err := New(dir)
+	if err != nil {
+		t.Fatalf("New peer Store: %v", err)
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("peer startup reaped helper active temp: %v", err)
+	}
+	reachedLock := make(chan struct{}, 1)
+	peer.snapshotFamilyLockBlocked = func() {
+		select {
+		case reachedLock <- struct{}{}:
+		default:
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	peerDone := make(chan error, 1)
+	go func() {
+		peerDone <- peer.Save(ctx, newSnapshotSession(id, "peer-must-not-commit"))
+	}()
+	awaitSignal(t, reachedLock, "peer Save did not reach the helper-held family lock")
+	cancel()
+	if err := awaitError(t, peerDone, "cancelled peer Save did not return"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled peer Save error = %v, want context.Canceled", err)
+	}
+	gotBeforeRelease, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("read snapshot while helper is paused: %v", err)
+	}
+	if !bytes.Equal(gotBeforeRelease, before) {
+		t.Fatal("cancelled peer mutated the committed snapshot")
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("cancelled peer removed helper active temp: %v", err)
+	}
+
+	if _, err := releaseW.Write([]byte{1}); err != nil {
+		t.Fatalf("release helper Save: %v", err)
+	}
+	_ = releaseW.Close()
+	childDone := make(chan error, 1)
+	go func() { childDone <- cmd.Wait() }()
+	if err := awaitError(t, childDone, "helper Save did not finish"); err != nil {
+		t.Fatalf("helper process: %v; output: %s", err, childOutput.String())
+	}
+	got, err := peer.Load(context.Background(), id)
+	if err != nil {
+		t.Fatalf("load committed authority after helper completion: %v", err)
+	}
+	if got.Title != "child-committed" {
+		t.Fatalf("committed authority after helper completion = title %q", got.Title)
+	}
+	assertNoSnapshotTemps(t, snapshotPath)
+}
+
+func TestSessionStorageContinuity_HelperProcessActiveSave(t *testing.T) {
+	if os.Getenv("MECATL_JSONLSTORE_HELPER") != "1" {
+		return
+	}
+	dir := os.Getenv("MECATL_JSONLSTORE_DIR")
+	ready := os.NewFile(3, "jsonlstore-helper-ready")
+	release := os.NewFile(4, "jsonlstore-helper-release")
+	if ready == nil || release == nil {
+		t.Fatal("helper control pipes are unavailable")
+	}
+	defer func() { _ = ready.Close() }()
+	defer func() { _ = release.Close() }()
+
+	ops := defaultSnapshotOps()
+	write := ops.write
+	ops.write = func(f *os.File, data []byte) (int, error) {
+		if _, err := ready.Write([]byte(f.Name() + "\n")); err != nil {
+			return 0, err
+		}
+		var signal [1]byte
+		if _, err := release.Read(signal[:]); err != nil {
+			return 0, err
+		}
+		return write(f, data)
+	}
+	st, err := newStoreWithSnapshotOps(dir, ops)
+	if err != nil {
+		t.Fatalf("new helper Store: %v", err)
+	}
+	if err := st.Save(context.Background(), newSnapshotSession("cross-process-active-temp", "child-committed")); err != nil {
+		t.Fatalf("helper Save: %v", err)
+	}
 }
 
 func assertNoSnapshotTemps(t *testing.T, snapshotPath string) {

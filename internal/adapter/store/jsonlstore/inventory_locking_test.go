@@ -92,10 +92,10 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 	for _, tc := range []struct {
 		name   string
 		setup  func(*testing.T, *Store, session.SessionID)
-		run    func(*Store, session.SessionID) error
+		run    func(context.Context, *Store, session.SessionID) error
 		verify func(*testing.T, *Store, session.SessionID)
 	}{
-		{name: "Save", run: func(st *Store, id session.SessionID) error {
+		{name: "Save", run: func(ctx context.Context, st *Store, id session.SessionID) error {
 			return st.Save(ctx, session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
 		}},
 		{name: "Migration promotion", setup: func(t *testing.T, st *Store, id session.SessionID) {
@@ -114,7 +114,7 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 			if err := os.WriteFile(st.resolver.legacyPath(id, kindTools), []byte("legacy-tool\n"), 0o600); err != nil {
 				t.Fatalf("write legacy sidecar: %v", err)
 			}
-		}, run: func(st *Store, id session.SessionID) error {
+		}, run: func(ctx context.Context, st *Store, id session.SessionID) error {
 			return st.Save(ctx, session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
 		}, verify: func(t *testing.T, st *Store, id session.SessionID) {
 			t.Helper()
@@ -125,11 +125,11 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 				t.Fatalf("legacy snapshot remains after promotion: %v", err)
 			}
 		}},
-		{name: "Delete", run: func(st *Store, id session.SessionID) error { return st.Delete(ctx, id) }},
-		{name: "EventLog.Append", run: func(st *Store, id session.SessionID) error {
+		{name: "Delete", run: func(ctx context.Context, st *Store, id session.SessionID) error { return st.Delete(ctx, id) }},
+		{name: "EventLog.Append", run: func(ctx context.Context, st *Store, id session.SessionID) error {
 			return st.Append(ctx, id, session.Event{Type: session.EvResult})
 		}},
-		{name: "ToolCall", run: func(st *Store, id session.SessionID) error {
+		{name: "ToolCall", run: func(_ context.Context, st *Store, id session.SessionID) error {
 			st.ToolCall(id, session.ToolCall{ID: "call-1", Name: "Read"}, session.NewToolResult("call-1", "ok"), 0, 0)
 			return nil
 		}},
@@ -160,9 +160,16 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 			if err := familyLock.Lock(); err != nil {
 				t.Fatalf("hold family lock: %v", err)
 			}
+			reachedLock := make(chan struct{}, 1)
+			second.snapshotFamilyLockBlocked = func() {
+				select {
+				case reachedLock <- struct{}{}:
+				default:
+				}
+			}
 			done := make(chan error, 1)
-			go func() { done <- tc.run(second, id) }()
-			assertStillBlocked(t, done, tc.name+" escaped the same-family mutation lock")
+			go func() { done <- tc.run(ctx, second, id) }()
+			assertStillBlocked(t, reachedLock, done, tc.name+" escaped the same-family mutation lock")
 			unrelatedDone := make(chan error, 1)
 			go func() {
 				unrelatedDone <- second.Append(ctx, otherID, session.Event{Type: session.EvResult})
@@ -238,10 +245,13 @@ func TestSessionFamilyOperationsHonorContextWhileLockIsHeld(t *testing.T) {
 	}
 	for _, operation := range operations {
 		t.Run(operation.name, func(t *testing.T) {
+			reachedLock := make(chan struct{}, 1)
+			st.snapshotFamilyLockBlocked = func() { reachedLock <- struct{}{} }
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- operation.run(ctx) }()
+			awaitSignal(t, reachedLock, "operation did not reach the held family lock")
 			var opErr error
 			select {
 			case opErr = <-done:
@@ -293,11 +303,12 @@ func awaitError(t *testing.T, ch <-chan error, message string) error {
 	}
 }
 
-func assertStillBlocked(t *testing.T, ch <-chan error, message string) {
+func assertStillBlocked(t *testing.T, reached <-chan struct{}, ch <-chan error, message string) {
 	t.Helper()
+	awaitSignal(t, reached, message+": operation did not reach the held lock")
 	select {
 	case err := <-ch:
 		t.Fatalf("%s: operation returned %v", message, err)
-	case <-time.After(100 * time.Millisecond):
+	default:
 	}
 }
