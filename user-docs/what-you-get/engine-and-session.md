@@ -44,7 +44,11 @@ server can explicitly adopt an eligible owned legacy snapshot as a **new** main 
 it preflights the complete authoritative transcript, requires explicit workspace/environment
 and provider/model bindings, and publishes an idempotent copy with a source audit link.
 It never relabels or rewrites the legacy source, never adopts in bulk, and never accepts a
-client-uploaded transcript.
+client-uploaded transcript. In mecatui's **Sessions → Other** tab these rows are labelled
+**Legacy session — inspect only**. The **Adopt as chat** action appears only after an
+authenticated server preflight accepts the explicitly selected workspace/environment and
+provider/model. Review the new-chat target and tool-write warning before confirming; success
+opens the server-refetched new chat, while cancel or failure leaves the inventory/review stable.
 
 ### `*agent.Run`
 

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -120,6 +121,14 @@ type sessionsState struct {
 	confirmDelete bool
 	actionID      string
 	actionLoading bool
+
+	adoptionReview    bool
+	adoptionSource    client.SessionListItem
+	adoptionBindings  client.AdoptionBindings
+	adoptionPreflight client.AdoptionPreflight
+	adoptionReason    client.CapabilityReason
+	adoptionErr       error
+	adoptionKey       string
 
 	// Activity-replay fields are retained for the live-delivery catch-up and old
 	// schedule replay machinery. /sessions never uses them as conversation truth.
@@ -335,16 +344,7 @@ func (m Model) closeSessions() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.sessions.view == sessionsNone || m.sessions.view == sessionsTranscript {
-		return m, nil, false
-	}
-	if m.sessions.renaming {
-		return m.onSessionRenameKey(msg)
-	}
-	if m.sessions.confirmDelete {
-		return m.onSessionDeleteConfirmKey(msg)
-	}
+func (m Model) onSessionsLoadKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if msg.String() == "c" && (m.sessions.loadState == sessionsInitialLoading || m.sessions.loadState == sessionsLoadingMore || m.sessions.loadState == sessionsStaleRestart) {
 		if m.sessions.pageCancel != nil {
 			m.sessions.pageCancel()
@@ -360,6 +360,25 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m = m.beginSessionPaginationAt(m.sessions.nextCursor)
 		return m, m.sessionPageCmd(), true
 	}
+	return m, nil, false
+}
+
+func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.sessions.view == sessionsNone || m.sessions.view == sessionsTranscript {
+		return m, nil, false
+	}
+	if m.sessions.adoptionReview {
+		return m.onSessionAdoptionKey(msg)
+	}
+	if m.sessions.renaming {
+		return m.onSessionRenameKey(msg)
+	}
+	if m.sessions.confirmDelete {
+		return m.onSessionDeleteConfirmKey(msg)
+	}
+	if mm, cmd, handled := m.onSessionsLoadKey(msg); handled {
+		return mm, cmd, true
+	}
 	if m.sessions.actionLoading {
 		return m, nil, true
 	}
@@ -368,7 +387,8 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if key.Matches(msg, m.keys.NextTab) {
 		m = m.switchSessionsTab()
-		return m, nil, true
+		m = m.invalidateAdoptionPreflight()
+		return m, m.adoptionPreflightCmd(), true
 	}
 	if mm, cmd, handled := m.onSessionsNavigationKey(msg); handled {
 		return mm, cmd, true
@@ -376,9 +396,14 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if mm, cmd, handled := m.onSessionsActionKey(msg); handled {
 		return mm, cmd, true
 	}
+	selectedBefore := selectedSessionID(m.sessions)
 	var cmd tea.Cmd
 	m.sessions.filter, cmd = m.sessions.filter.Update(msg)
 	m = m.syncSessionsFilter()
+	if selectedSessionID(m.sessions) != selectedBefore {
+		m = m.invalidateAdoptionPreflight()
+		cmd = tea.Batch(cmd, m.adoptionPreflightCmd())
+	}
 	return m, cmd, true
 }
 
@@ -446,21 +471,25 @@ func (m Model) onSessionsNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd,
 			m.sessions.cursor--
 		}
 		m = m.keepSessionCursorVisible()
-		return m, nil, true
+		m = m.invalidateAdoptionPreflight()
+		return m, m.adoptionPreflightCmd(), true
 	case msg.String() == keyMenuDown:
 		if m.sessions.cursor < len(m.sessions.filtered)-1 {
 			m.sessions.cursor++
 		}
 		m = m.keepSessionCursorVisible()
-		return m, nil, true
+		m = m.invalidateAdoptionPreflight()
+		return m, m.adoptionPreflightCmd(), true
 	case key.Matches(msg, m.keys.ScrollTop):
 		m.sessions.cursor = 0
 		m.sessions.scroll = 0
-		return m, nil, true
+		m = m.invalidateAdoptionPreflight()
+		return m, m.adoptionPreflightCmd(), true
 	case key.Matches(msg, m.keys.ScrollBottom):
 		m.sessions.cursor = clampModelsCursor(len(m.sessions.filtered)-1, len(m.sessions.filtered))
 		m = m.keepSessionCursorVisible()
-		return m, nil, true
+		m = m.invalidateAdoptionPreflight()
+		return m, m.adoptionPreflightCmd(), true
 	case key.Matches(msg, m.keys.Choose):
 		return m.chooseSession()
 	default:
@@ -470,6 +499,8 @@ func (m Model) onSessionsNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd,
 
 func (m Model) onSessionsActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	switch msg.String() {
+	case "a":
+		return m.openSessionAdoption()
 	case "y":
 		return m.copyInventorySessionID()
 	case "v":
@@ -588,6 +619,112 @@ func (m Model) selectedInventorySession() (client.SessionListItem, bool) {
 		return client.SessionListItem{}, false
 	}
 	return m.sessions.filtered[m.sessions.cursor], true
+}
+
+func (m Model) adoptionBindings() client.AdoptionBindings {
+	provider, model := m.effectiveModel.ProviderID, m.effectiveModel.ModelID
+	if provider == "" && model == "" {
+		provider, model = m.deps.InitialModel.ProviderID, m.deps.InitialModel.ModelID
+	}
+	return client.AdoptionBindings{
+		Workspace: m.activeWorkspace, EnvironmentKind: "local", EnvironmentID: m.activeWorkspace,
+		ProviderID: provider, ModelID: model,
+	}
+}
+
+func completeAdoptionBindings(binding client.AdoptionBindings) bool {
+	return binding.Workspace != "" && binding.EnvironmentKind != "" && binding.EnvironmentID != "" &&
+		binding.ProviderID != "" && binding.ModelID != ""
+}
+
+func (m Model) invalidateAdoptionPreflight() Model {
+	m.sessions.adoptionPreflight = client.AdoptionPreflight{}
+	m.sessions.adoptionReason = ""
+	m.sessions.adoptionBindings = client.AdoptionBindings{}
+	return m
+}
+
+func (m Model) adoptionPreflightCmd() tea.Cmd {
+	row, ok := m.selectedInventorySession()
+	if !ok || row.Kind != client.SessionKindUnknown || m.deps.Adoption == nil {
+		return nil
+	}
+	bindings := m.adoptionBindings()
+	if !completeAdoptionBindings(bindings) {
+		return nil
+	}
+	return client.PreflightSessionAdoptionCmd(m.deps.Ctx, m.deps.Adoption, row.ID, bindings)
+}
+
+func (m Model) openSessionAdoption() (tea.Model, tea.Cmd, bool) {
+	row, ok := m.selectedInventorySession()
+	if !ok || !m.sessions.adoptionPreflight.Eligible || m.sessions.actionID != row.ID {
+		return m, nil, true
+	}
+	m.sessions.adoptionReview = true
+	m.sessions.adoptionSource = row
+	m.sessions.adoptionBindings = m.sessions.adoptionPreflight.Bindings
+	m.sessions.adoptionErr = nil
+	m.sessions.adoptionKey = ""
+	return m, nil, true
+}
+
+func newAdoptionKey() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("create adoption request: %w", err)
+	}
+	return hex.EncodeToString(value[:]), nil
+}
+
+func (m Model) onSessionAdoptionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if key.Matches(msg, m.keys.Close) {
+		m.sessions.adoptionReview = false
+		m.sessions.adoptionErr = nil
+		return m, nil, true
+	}
+	if !key.Matches(msg, m.keys.Choose) || m.sessions.actionLoading {
+		return m, nil, true
+	}
+	if !completeAdoptionBindings(m.sessions.adoptionBindings) {
+		m.sessions.adoptionErr = errors.New("select an explicit workspace, environment, provider, and model")
+		return m, nil, true
+	}
+	if m.sessions.adoptionKey == "" {
+		requestKey, err := newAdoptionKey()
+		if err != nil {
+			m.sessions.adoptionErr = err
+			return m, nil, true
+		}
+		m.sessions.adoptionKey = requestKey
+	}
+	m.sessions.actionLoading = true
+	source, binding, requestKey := m.sessions.adoptionSource, m.sessions.adoptionBindings, m.sessions.adoptionKey
+	adopter, getter, transcript, ctx := m.deps.Adoption, m.deps.Session, m.deps.Transcript, m.deps.Ctx
+	return m, func() tea.Msg {
+		result, err := adopter.AdoptSession(ctx, source.ID, requestKey, binding)
+		if err != nil {
+			return client.SessionAdoptedMsg{SourceID: source.ID, Err: err}
+		}
+		if result.SourceSessionID != source.ID || result.SessionID == "" {
+			return client.SessionAdoptedMsg{SourceID: source.ID, Err: errors.New("adoption returned an invalid target")}
+		}
+		if getter == nil || transcript == nil {
+			return client.SessionAdoptedMsg{SourceID: source.ID, Err: errors.New("authoritative target refetch is unavailable")}
+		}
+		snapshot, err := getter.GetSession(ctx, result.SessionID)
+		if err != nil {
+			return client.SessionAdoptedMsg{SourceID: source.ID, Result: result, Err: err}
+		}
+		loaded, err := transcript.GetSessionTranscript(ctx, result.SessionID)
+		if err != nil || !loaded.Complete || loaded.SessionID != result.SessionID {
+			if err == nil {
+				err = errIncompleteTranscript
+			}
+			return client.SessionAdoptedMsg{SourceID: source.ID, Result: result, Snapshot: snapshot, Err: err}
+		}
+		return client.SessionAdoptedMsg{SourceID: source.ID, Result: result, Snapshot: snapshot, Transcript: loaded}
+	}, true
 }
 
 func (m Model) copyInventorySessionID() (tea.Model, tea.Cmd, bool) {
@@ -855,10 +992,10 @@ func (m Model) applySessionPage(msg client.SessionInventoryPageMsg) (tea.Model, 
 			m.sessions.pageCancel()
 			m.sessions.pageCancel = nil
 		}
-		return m, nil, true
+		return m, m.adoptionPreflightCmd(), true
 	}
 	m.sessions.loadState = sessionsLoadingMore
-	return m, m.sessionPageCmd(), true
+	return m, tea.Batch(m.sessionPageCmd(), m.adoptionPreflightCmd()), true
 }
 
 func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
@@ -901,7 +1038,7 @@ func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			}
 		}
 		m.sessions.actionID = ""
-		return m, nil, true
+		return m, m.adoptionPreflightCmd(), true
 	case client.SessionTranscriptMsg:
 		if m.sessions.view != sessionsTranscript || sm.SessionID != m.sessions.selected.ID {
 			return m, nil, true
@@ -926,7 +1063,63 @@ func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	}
 }
 
+func (m Model) updateAdoptionMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	switch sm := msg.(type) {
+	case client.SessionAdoptionPreflightMsg:
+		row, ok := m.selectedInventorySession()
+		if !ok || row.ID != sm.SourceID || row.Kind != client.SessionKindUnknown {
+			return m, nil, true
+		}
+		m.sessions.actionID = sm.SourceID
+		m.sessions.adoptionErr = sm.Err
+		if sm.Err != nil {
+			m.sessions.adoptionPreflight = client.AdoptionPreflight{}
+			m.sessions.adoptionReason = client.CapabilityReasonUnknown
+			return m, nil, true
+		}
+		m.sessions.adoptionPreflight = sm.Preflight
+		m.sessions.adoptionReason = sm.Preflight.Reason
+		if sm.Preflight.Eligible && completeAdoptionBindings(sm.Preflight.Bindings) {
+			m.sessions.adoptionBindings = sm.Preflight.Bindings
+		}
+		return m, nil, true
+	case client.SessionAdoptedMsg:
+		return m.onSessionAdopted(sm)
+	default:
+		return m, nil, false
+	}
+}
+
+func (m Model) onSessionAdopted(sm client.SessionAdoptedMsg) (tea.Model, tea.Cmd, bool) {
+	if !m.sessions.adoptionReview || sm.SourceID != m.sessions.adoptionSource.ID {
+		return m, nil, true
+	}
+	m.sessions.actionLoading = false
+	if sm.Err != nil {
+		m.sessions.adoptionErr = sm.Err
+		return m, nil, true
+	}
+	if sm.Result.SourceSessionID != sm.SourceID || sm.Result.SessionID == "" || !sm.Transcript.Complete || sm.Transcript.SessionID != sm.Result.SessionID || sm.Transcript.Kind != client.SessionKindMain {
+		m.sessions.adoptionErr = errors.New("server returned an incomplete adopted chat")
+		return m, nil, true
+	}
+	m.caps = sm.Result.Capabilities
+	m.effectiveModel = sm.Snapshot.ResolvedModel
+	m.activeMode = sm.Snapshot.Mode
+	m.sessions.selected = client.SessionListItem{
+		ID: sm.Result.SessionID, Title: sm.Snapshot.Title, TitleProvenance: sm.Snapshot.TitleProvenance,
+		State: sm.Snapshot.State, Workspace: sm.Snapshot.Workspace, CreatedAt: sm.Snapshot.CreatedAt,
+		Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true},
+	}
+	m.sessions.transcript = conversationFromTranscript(sm.Transcript.Messages)
+	m.sessions.inspect = false
+	return m.adoptAuthoritativeTranscript()
+}
+
 func (m Model) updateSessionActionMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if mm, cmd, handled := m.updateAdoptionMsg(msg); handled {
+		return mm, cmd, true
+	}
 	switch sm := msg.(type) {
 	case inventorySessionIDCopiedMsg:
 		if sm.err != nil {
@@ -1226,8 +1419,37 @@ func formatBytes(n int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+func renderSessionAdoptionReview(th theme.Theme, st sessionsState, hk helpKeys) string {
+	source, binding := st.adoptionSource, st.adoptionBindings
+	title := source.Title
+	if title == "" {
+		title = "untitled"
+	}
+	lines := []string{
+		th.Style("askTitle").Render("Adopt as new chat"), "",
+		"Source ID: " + safeSessionID(source.ID),
+		"Source title: " + sanitizeTerminal(title),
+		"This creates a new main chat; the source remains inspect-only.",
+		"Target workspace: " + sanitizeTerminal(binding.Workspace),
+		"Target environment: " + sanitizeTerminal(binding.EnvironmentKind) + " / " + sanitizeTerminal(binding.EnvironmentID),
+		"Provider/model: " + sanitizeTerminal(binding.ProviderID) + " / " + sanitizeTerminal(binding.ModelID),
+		"Future tool writes affect the target workspace and do not modify the legacy source.",
+	}
+	if st.adoptionErr != nil {
+		lines = append(lines, "", th.Style("errorText").Render("Adoption failed: "+sanitizeTerminal(st.adoptionErr.Error())))
+	}
+	if st.actionLoading {
+		lines = append(lines, "", th.Style("muted").Render("adopting and refetching authoritative chat…"))
+	} else {
+		lines = append(lines, "", th.Style("muted").Render(hk.choose+": create new chat  "+hk.closeOnly+": cancel"))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (string, bool) {
 	switch {
+	case st.adoptionReview:
+		return renderSessionAdoptionReview(th, st, hk), true
 	case st.renaming:
 		return th.Style("askTitle").Render("Rename session") + "\n\n" +
 			st.renameInput.View() + "\n\n" +
@@ -1303,6 +1525,9 @@ func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, cur
 		if s.ModelID != "" {
 			line += "  (" + sanitizeTerminal(s.ModelID) + ")"
 		}
+		if s.Kind == client.SessionKindUnknown {
+			line += "  [Legacy session — inspect only]"
+		}
 		if s.ID == current {
 			line += "  [current]"
 		}
@@ -1313,6 +1538,27 @@ func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, cur
 			line = th.Style("accent").Render(line)
 		}
 		b.WriteString(line + "\n")
+	}
+}
+
+func adoptionReasonText(reason client.CapabilityReason) string {
+	switch reason {
+	case client.CapabilityReasonProtectedProvenance:
+		return "reserved legacy provenance cannot be adopted"
+	case client.CapabilityReasonInvalidTranscript:
+		return "the authoritative transcript cannot be adopted"
+	case client.CapabilityReasonAdoptionActive:
+		return "the source is active"
+	case client.CapabilityReasonAwaitingApproval:
+		return "the source is awaiting approval"
+	case client.CapabilityReasonAdoptionLeased:
+		return "the source is leased by another process"
+	case client.CapabilityReasonBindingUnresolved:
+		return "the selected target binding cannot be resolved"
+	case client.CapabilityReasonNotLegacy:
+		return "the source is not a legacy session"
+	default:
+		return "the server did not advertise adoption eligibility"
 	}
 }
 
@@ -1328,6 +1574,18 @@ func sessionActionsHint(st sessionsState, hk helpKeys) string {
 		action = "inspect"
 	}
 	actions := []string{hk.choose + ": " + action}
+	if selected.Kind == client.SessionKindUnknown {
+		switch {
+		case st.actionID == selected.ID && st.adoptionPreflight.Eligible:
+			actions = append(actions, "a: adopt as chat")
+		case st.actionID == selected.ID && st.adoptionReason != "":
+			actions = append(actions, "adoption disabled: "+adoptionReasonText(st.adoptionReason))
+		case st.adoptionErr != nil:
+			actions = append(actions, "adoption unavailable: "+sanitizeTerminal(st.adoptionErr.Error()))
+		default:
+			actions = append(actions, "adoption unavailable: select an explicit workspace, environment, provider, and model")
+		}
+	}
 	for _, action := range []struct {
 		enabled bool
 		label   string

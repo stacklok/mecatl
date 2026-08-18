@@ -138,6 +138,9 @@ type Deps struct {
 	// SessionManagement mutates stored main-chat metadata. nil leaves rename/delete
 	// undiscoverable even if a custom lister advertises those capabilities.
 	SessionManagement client.SessionManager
+	// Adoption is the authenticated legacy-copy surface. Eligibility is always
+	// taken from its source-correlated preflight, never inferred from row IDs.
+	Adoption client.SessionAdopter
 	// Transcript is the authoritative snapshot-derived conversation surface used
 	// by /sessions for both continuation and read-only inspection. Event replay is
 	// optional activity and never substitutes for this seam.

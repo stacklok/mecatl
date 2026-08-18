@@ -1,0 +1,15 @@
+ mecatui  ·  session #b9ba2286  ·  gpt-5  ·  mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Chats    Scheduled runs    Child runs  ▸ Other
+
+▶ · — 0t Old investigation  #0de14010  [Legacy session — inspect only]
+
+enter: inspect  a: adopt as chat  tab: switch  esc: close
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

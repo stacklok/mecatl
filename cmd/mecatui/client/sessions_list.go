@@ -38,6 +38,12 @@ const (
 	CapabilityReasonTranscriptUnavailable  CapabilityReason = "transcript_unavailable"
 	CapabilityReasonEnvironmentUnavailable CapabilityReason = "environment_unavailable"
 	CapabilityReasonStorageUnsupported     CapabilityReason = "storage_unsupported"
+	CapabilityReasonProtectedProvenance    CapabilityReason = "protected_provenance"
+	CapabilityReasonInvalidTranscript      CapabilityReason = "invalid_transcript"
+	CapabilityReasonAdoptionActive         CapabilityReason = "active"
+	CapabilityReasonAdoptionLeased         CapabilityReason = "leased"
+	CapabilityReasonBindingUnresolved      CapabilityReason = "binding_unresolved"
+	CapabilityReasonNotLegacy              CapabilityReason = "not_legacy"
 	CapabilityReasonUnknown                CapabilityReason = "unknown"
 )
 

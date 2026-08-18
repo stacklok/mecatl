@@ -215,6 +215,7 @@ func run(argv []string) error {
 		Sessions:            cl,
 		StorageHealth:       cl,
 		SessionManagement:   cl,
+		Adoption:            cl,
 		Transcript:          cl,
 		Replayer:            cl,
 		LiveStream:          cl,

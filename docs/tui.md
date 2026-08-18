@@ -1212,8 +1212,14 @@ the initial view for `mecatui sessions` and `mecatui connect ADDRESS sessions`;
 those launch forms establish no session until the operator continues a chat or
 presses `n` for a new one. At startup, `esc` quits; after opening an inspection,
 `esc` returns to this inventory.
-The Other tab keeps
-unknown legacy/custom rows inspect-only without mislabeling them as delegation children.
+The Other tab keeps unknown legacy/custom rows inspect-only and visibly labels each
+one **`Legacy session — inspect only`** without classifying it from the opaque ID.
+For a selected legacy row, mecatui asks the authenticated server to preflight the
+explicit current workspace/environment and provider/model target. Only an eligible,
+source-correlated preflight adds **`a: adopt as chat`**; otherwise the footer keeps
+the action disabled and renders the server's stable reason. Missing target values
+stay unresolved until the operator explicitly selects them—there is no server-default
+fallback.
 `tab` switches tabs; the
 search box filters the current tab. Search matches the title, full session ID,
 its terminal-safe digest handle, model, workspace, and the available
@@ -1259,6 +1265,16 @@ first. Rename/delete/fork are revalidated by the server, so a stale row can fail
 without rebinding the active chat. Scheduled, child, active, awaiting, and
 unknown rows show only the subset the server reports; hidden actions are also
 rejected if invoked.
+
+The adoption review names the source ID and title, states that adoption creates a
+new main chat while leaving the legacy source inspect-only, and shows the target
+workspace/environment and provider/model. It also warns that future tool writes
+operate in the target workspace. `esc` cancels without disturbing progressive
+paging, selection, or scroll state. Confirmation revalidates the preflight under
+the server's mutation authority; a stale, cancelled, or caller-safe error remains
+on the stable review. Success does not trust the mutation response as conversation
+content: mecatui refetches the authoritative new snapshot and transcript, then opens
+that new chat writable. Adoption never deletes or relabels the source.
 
 The snapshot transcript is the conversation source of truth. Durable event
 replay may support live delivery catch-up, but is not used to establish a

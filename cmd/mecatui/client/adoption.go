@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	tea "charm.land/bubbletea/v2"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -31,6 +33,37 @@ type AdoptionResult struct {
 	SourceSessionID string
 	Capabilities    Capabilities
 	ResolvedModel   ResolvedModel
+}
+
+// SessionAdopter is the proto-free legacy-adoption client seam used by the UI.
+type SessionAdopter interface {
+	PreflightSessionAdoption(ctx context.Context, sourceID string, bindings AdoptionBindings) (AdoptionPreflight, error)
+	AdoptSession(ctx context.Context, sourceID, idempotencyKey string, bindings AdoptionBindings) (AdoptionResult, error)
+}
+
+// SessionAdoptionPreflightMsg carries one source-correlated server preflight.
+type SessionAdoptionPreflightMsg struct {
+	SourceID  string
+	Bindings  AdoptionBindings
+	Preflight AdoptionPreflight
+	Err       error
+}
+
+// SessionAdoptedMsg carries adoption plus authoritative target refetches.
+type SessionAdoptedMsg struct {
+	SourceID   string
+	Result     AdoptionResult
+	Snapshot   SessionSnapshot
+	Transcript SessionTranscript
+	Err        error
+}
+
+// PreflightSessionAdoptionCmd performs preflight outside the reducer.
+func PreflightSessionAdoptionCmd(ctx context.Context, adopter SessionAdopter, sourceID string, bindings AdoptionBindings) tea.Cmd {
+	return func() tea.Msg {
+		preflight, err := adopter.PreflightSessionAdoption(ctx, sourceID, bindings)
+		return SessionAdoptionPreflightMsg{SourceID: sourceID, Bindings: bindings, Preflight: preflight, Err: err}
+	}
 }
 
 func adoptionBindingsToProto(binding AdoptionBindings) *mecatlv1.AdoptionBindings {
