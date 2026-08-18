@@ -28,11 +28,16 @@ func cleanupContext(p *session.Principal) context.Context {
 }
 
 func newCleanupService(t *testing.T, store port.SessionStore, now func() time.Time, policy RetentionPolicy, authorize func(context.Context) bool) *Service {
+	return newCleanupServiceWithUpdate(t, store, now, policy, authorize, nil)
+}
+
+func newCleanupServiceWithUpdate(t *testing.T, store port.SessionStore, now func() time.Time, policy RetentionPolicy, authorize func(context.Context) bool, update func(StorageMaintenanceEvent)) *Service {
 	t.Helper()
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
 	svc, err := NewService(Config{
 		Engine: eng, Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now: now, OwnershipEnforced: true, StorageManagementAuthorized: authorize, RetentionPolicy: policy,
+		StorageMaintenanceUpdate: update,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -134,15 +139,25 @@ func TestSessionStorageContinuity_Scenario5_PartialFailureAndUnsupported(t *test
 	store := memstore.New(memstore.WithNow(func() time.Time { return now.Add(-time.Hour) }), memstore.WithDeleteFailure("fail", errors.New("raw /private/path SECRET=oops")))
 	saveCleanupSession(t, store, "fail", cleanupAlice, session.SessionKindMain)
 	saveCleanupSession(t, store, "ok", cleanupAlice, session.SessionKindMain)
-	svc := newCleanupService(t, store, func() time.Time { return now }, RetentionPolicy{MainMaxAge: time.Minute}, func(context.Context) bool { return true })
+	var lifecycle []StorageMaintenanceEvent
+	svc := newCleanupServiceWithUpdate(t, store, func() time.Time { return now }, RetentionPolicy{MainMaxAge: time.Minute}, func(context.Context) bool { return true }, func(event StorageMaintenanceEvent) {
+		lifecycle = append(lifecycle, event)
+	})
 	ctx := cleanupContext(cleanupAlice)
-	p, _ := svc.PlanSessionCleanup(ctx, CleanupScope{})
+	p, err := svc.PlanSessionCleanup(ctx, CleanupScope{})
+	if err != nil {
+		t.Fatalf("PlanSessionCleanup: %v", err)
+	}
 	job, err := svc.ApplySessionCleanup(ctx, p.Token)
 	if err != nil {
 		t.Fatalf("ApplySessionCleanup: %v", err)
 	}
 	if job.Deleted != 1 || job.Failed != 1 || len(job.Errors) != 1 || job.Errors[0].ReasonCode != cleanupBackendFailure {
 		t.Fatalf("partial job = %+v", job)
+	}
+	if len(lifecycle) < 3 || lifecycle[0].State != StorageMaintenanceStarted || lifecycle[len(lifecycle)-1].State != StorageMaintenanceCompleted ||
+		lifecycle[len(lifecycle)-1].Failure != "cleanup: one or more items failed" || strings.Contains(lifecycle[len(lifecycle)-1].Failure, "private/path") {
+		t.Fatalf("cleanup lifecycle = %+v", lifecycle)
 	}
 	if _, err := store.Load(context.Background(), "fail"); err != nil {
 		t.Fatalf("failed item was not retained for retry: %v", err)

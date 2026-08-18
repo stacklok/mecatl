@@ -120,6 +120,9 @@ func TestStartServesOverSocket(t *testing.T) {
 	if sessID == "" {
 		t.Fatal("CreateSession returned an empty session id")
 	}
+	if _, err := cl.GetStorageHealth(ctx); err != nil {
+		t.Fatalf("local embedded storage operator was denied: %v", err)
+	}
 }
 
 // TestStartWithMemoryDirServes asserts the embedded server builds and serves when

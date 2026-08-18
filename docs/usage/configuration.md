@@ -253,6 +253,24 @@ mecatui configures only its local server with the same explicit flags; connect m
 rejects them and displays remote policy only when the remote management capability
 advertises it.
 
+Remote OIDC deployments do not grant storage management to every authenticated
+caller. Configure exact verified manager identities only in operator-tier
+`settings.yaml` (never a project file):
+
+```yaml
+storage_management:
+  version: 1
+  principals:
+    - issuer: https://idp.example/realms/operators
+      subject: storage-admin
+```
+
+Both issuer and subject must match the verified request context exactly. An empty
+or absent list advertises no remote management capability; grant type, display
+name, request owner fields, and system-principal status are not shortcuts. The
+private embedded mecatui server is the sole principal-less exception and grants
+only its local single-user Unix-socket operator.
+
 ### Remote store drivers
 
 A third option points the session store (and/or the memory store) at a

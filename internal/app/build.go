@@ -156,6 +156,14 @@ type Config struct {
 	// has configured the fail-closed OIDC verifier. Its zero value preserves
 	// existing ownerless deployments and hand-built test configurations.
 	OwnershipEnforced bool
+	// StorageManagementPrincipals are exact verified issuer/subject pairs granted
+	// process-wide storage health, migration, and cleanup authority. Empty grants
+	// nobody in an ownership-enforced deployment.
+	StorageManagementPrincipals []session.Principal
+	// LocalStorageManagement explicitly grants the private embedded single-user
+	// server management authority. It is invalid with OwnershipEnforced and is
+	// never set by remotely reachable composition roots.
+	LocalStorageManagement bool
 
 	// DefaultProvider/DefaultModel are the SERVER-CONFIGURED deployment-wide
 	// default (issue #21; --default-provider / --default-model — the wire's
@@ -1287,6 +1295,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if retentionErr != nil {
 		return nil, retentionErr
 	}
+	var storageManagementErr error
+	cfg, storageManagementErr = foldOperatorStorageManagement(cfg)
+	if storageManagementErr != nil {
+		return nil, storageManagementErr
+	}
 	if err := validateDestructiveMainRetention(ctx, cfg); err != nil {
 		return nil, err
 	}
@@ -1601,13 +1614,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.storageMaintenance = &storageMaintenanceState{}
 	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
 	svcCfg := server.Config{
-		Engine:            engine,
-		Store:             store,
-		OwnershipEnforced: cfg.OwnershipEnforced,
-		StorageManagementAuthorized: func(requestCtx context.Context) bool {
-			principal := session.PrincipalFromContext(requestCtx)
-			return !cfg.OwnershipEnforced || principal != nil
-		},
+		Engine:                      engine,
+		Store:                       store,
+		OwnershipEnforced:           cfg.OwnershipEnforced,
+		StorageManagementAuthorized: storageManagementAuthorizer(cfg),
 		RetentionPolicy: server.RetentionPolicy{
 			Version:    "retention/v1",
 			MainMaxAge: cfg.MainRetention, MainMaxCount: cfg.MainRetentionMaxTotal,
@@ -1616,6 +1626,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			SweepCadence: cfg.ChildGCInterval,
 		},
 		StorageMaintenanceStatus: cfg.storageMaintenance.snapshot,
+		StorageMaintenanceUpdate: cfg.storageMaintenance.update,
 		Workspaces:               osfsWorkspaceFactory(cfg.diag()),
 		DefaultWorkspace:         cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		// CommandRunner (issue #462): the MAIN session's bound runner — the

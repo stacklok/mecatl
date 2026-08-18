@@ -23,11 +23,12 @@ const (
 	maxCleanupErrors    = 256
 
 	cleanupStateCancelled = "cancelled"
+	cleanupStateRunning   = "running"
+	cleanupKind           = "cleanup"
 	cleanupBackendFailure = "backend_failure"
 )
 
-// CleanupScope is the exact kind subset a manual plan covers. Empty means all
-// durable kinds owned by the authenticated principal.
+// CleanupScope is the exact durable-kind subset a store-wide management plan covers.
 type CleanupScope struct {
 	Kinds []session.SessionKind
 }
@@ -135,28 +136,13 @@ func policyVersion(policy RetentionPolicy) string {
 }
 
 func (s *Service) authorizeCleanup(ctx context.Context) (*session.Principal, string, error) {
-	if s.cfg.StorageManagementAuthorized == nil || !s.cfg.StorageManagementAuthorized(ctx) {
-		return nil, "", ErrManagementUnauthorized
-	}
-	principal := session.PrincipalFromContext(ctx)
-	if principal == nil {
-		return nil, "", ErrManagementUnauthorized
-	}
-	return principal, cleanupPrincipalKey(principal), nil
+	return s.storageManagementPrincipalKey(ctx)
 }
 
-func cleanupPrincipalKey(principal *session.Principal) string {
-	if principal == nil {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(principal.Issuer + "\x00" + principal.Subject))
-	return hex.EncodeToString(sum[:16])
-}
-
-// PlanSessionCleanup performs no writes. Ownership is pushed into the pager so
-// foreign rows never enter page formation, aggregate counts, or token material.
+// PlanSessionCleanup performs no writes. The explicit management gate runs
+// before the store-wide pager, so tenants cannot form pages or aggregate counts.
 func (s *Service) PlanSessionCleanup(ctx context.Context, scope CleanupScope) (CleanupPlan, error) {
-	principal, principalKey, err := s.authorizeCleanup(ctx)
+	_, principalKey, err := s.authorizeCleanup(ctx)
 	if err != nil {
 		return CleanupPlan{}, err
 	}
@@ -165,16 +151,17 @@ func (s *Service) PlanSessionCleanup(ctx context.Context, scope CleanupScope) (C
 	if !pageOK || !pruneOK || !supportsCleanupDelete(s.cfg.Store) {
 		return CleanupPlan{UnavailableReason: "backend_unsupported"}, nil
 	}
-	rows, err := cleanupMetadata(ctx, pager, principal)
+	rows, err := cleanupMetadata(ctx, pager, nil)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionMetadataPagingUnsupported) || errors.Is(err, port.ErrPruneUnsupported) {
 			return CleanupPlan{UnavailableReason: "backend_unsupported"}, nil
 		}
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: "cleanup-plan", State: StorageMaintenanceFailed, Failure: "cleanup: storage metadata unavailable"})
 		return CleanupPlan{}, ErrCleanupBackend
 	}
 	rows = filterCleanupScope(rows, scope)
 	live, leased := s.cleanupRuntimeProtection(rows)
-	result := PlanManualRetention(rows, s.cfg.RetentionPolicy, principal, live, leased, s.cfg.Now())
+	result := PlanManualRetention(rows, s.cfg.RetentionPolicy, nil, live, leased, s.cfg.Now())
 	plan := cleanupPlanProjection(result)
 	plan.Available = true
 	plan.PolicyVersion = policyVersion(s.cfg.RetentionPolicy)
@@ -211,7 +198,7 @@ func cleanupMetadata(ctx context.Context, pager port.SessionMetadataPager, owner
 	var cursor *port.SessionMetadataCursor
 	for {
 		page, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{
-			Limit: 1<<31 - 1, Cursor: cursor, OwnershipEnforced: true, Owner: owner,
+			Limit: 1<<31 - 1, Cursor: cursor, OwnershipEnforced: owner != nil, Owner: owner,
 		})
 		if err != nil {
 			return nil, err
@@ -338,7 +325,7 @@ func (s *Service) verifyCleanupToken(token string) (cleanupTokenPayload, bool) {
 // ApplySessionCleanup re-plans before mutation, then serializes each deletion by
 // run-entry lock -> maintenance lease -> backend family lock (inside Delete).
 func (s *Service) ApplySessionCleanup(ctx context.Context, token string) (CleanupJob, error) {
-	principal, principalKey, err := s.authorizeCleanup(ctx)
+	_, principalKey, err := s.authorizeCleanup(ctx)
 	if err != nil {
 		return CleanupJob{}, err
 	}
@@ -357,7 +344,7 @@ func (s *Service) ApplySessionCleanup(ctx context.Context, token string) (Cleanu
 	if !plan.Available {
 		return CleanupJob{}, ErrCleanupUnsupported
 	}
-	job := cleanupJobRecord{CleanupJob: CleanupJob{ID: payload.JobID, State: "running"}, PrincipalKey: principalKey, CreatedAt: s.cfg.Now()}
+	job := cleanupJobRecord{CleanupJob: CleanupJob{ID: payload.JobID, State: cleanupStateRunning}, PrincipalKey: principalKey, CreatedAt: s.cfg.Now()}
 	if s.cleanupCancelled(job.ID, principalKey) {
 		job.State = cleanupStateCancelled
 		s.rememberCleanupJob(job)
@@ -370,23 +357,34 @@ func (s *Service) ApplySessionCleanup(ctx context.Context, token string) (Cleanu
 		return job.CleanupJob, ErrCleanupPlanStale
 	}
 	s.rememberCleanupJob(job)
+	s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: job.ID, State: StorageMaintenanceStarted})
 	for _, candidate := range plan.Eligible {
 		if ctx.Err() != nil || s.cleanupCancelled(job.ID, principalKey) {
 			job.State = cleanupStateCancelled
 			break
 		}
 		job.Processed++
-		reason := s.deleteCleanupCandidate(ctx, principal, candidate)
+		reason := s.deleteCleanupCandidate(ctx, candidate)
 		recordCleanupOutcome(&job, candidate, reason)
-		job.State = "running"
+		job.State = cleanupStateRunning
 		s.rememberCleanupJob(job)
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: job.ID, State: StorageMaintenanceProgress})
 	}
 	if s.cleanupCancelled(job.ID, principalKey) {
 		job.State = cleanupStateCancelled
-	} else if job.State == "running" {
+	} else if job.State == cleanupStateRunning {
 		job.State = "completed"
 	}
 	s.rememberCleanupJob(job)
+	failure := ""
+	if job.Failed > 0 {
+		failure = "cleanup: one or more items failed"
+	}
+	state := StorageMaintenanceCompleted
+	if job.State == cleanupStateCancelled {
+		state = StorageMaintenanceCancelled
+	}
+	s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: job.ID, State: state, Failure: failure})
 	return job.CleanupJob, nil
 }
 
@@ -423,7 +421,7 @@ func cleanupItemHandle(id session.SessionID) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func (s *Service) deleteCleanupCandidate(ctx context.Context, principal *session.Principal, candidate CleanupCandidate) string {
+func (s *Service) deleteCleanupCandidate(ctx context.Context, candidate CleanupCandidate) string {
 	unlock := s.runEntryMu.lock(candidate.ID)
 	defer unlock()
 	if s.IsLive(candidate.ID) {
@@ -444,15 +442,15 @@ func (s *Service) deleteCleanupCandidate(ctx context.Context, principal *session
 	if !ok {
 		return cleanupBackendFailure
 	}
-	rows, err := cleanupMetadata(ctx, pager, principal)
+	rows, err := cleanupMetadata(ctx, pager, nil)
 	if err != nil {
 		return cleanupBackendFailure
 	}
-	if !cleanupMetadataContains(rows, principal, candidate) {
+	if !cleanupMetadataContains(rows, candidate) {
 		return maintenanceReasonChanged
 	}
 	loaded, err := s.cfg.Store.Load(ctx, candidate.ID)
-	if err != nil || !cleanupSessionMatches(loaded, principal, candidate) {
+	if err != nil || !cleanupSessionMatches(loaded, candidate) {
 		return maintenanceReasonChanged
 	}
 	pruner, ok := s.cfg.Store.(port.ConditionalPrunableStore)
@@ -469,18 +467,18 @@ func (s *Service) deleteCleanupCandidate(ctx context.Context, principal *session
 	return ""
 }
 
-func cleanupMetadataContains(rows []port.SessionDiscoveryMeta, principal *session.Principal, candidate CleanupCandidate) bool {
+func cleanupMetadataContains(rows []port.SessionDiscoveryMeta, candidate CleanupCandidate) bool {
 	for _, row := range rows {
 		if row.ID == candidate.ID && row.Kind == candidate.Kind && row.State == candidate.State &&
-			row.ModifiedAt.Equal(candidate.ModifiedAt) && principal.SameIdentity(row.Owner) {
+			row.ModifiedAt.Equal(candidate.ModifiedAt) && sameCleanupOwner(candidate.metadata.Owner, row.Owner) {
 			return true
 		}
 	}
 	return false
 }
 
-func cleanupSessionMatches(loaded *session.Session, principal *session.Principal, candidate CleanupCandidate) bool {
-	if loaded == nil || !sameCleanupOwner(principal, loaded.Owner) || loaded.Kind != candidate.Kind || loaded.State != candidate.State {
+func cleanupSessionMatches(loaded *session.Session, candidate CleanupCandidate) bool {
+	if loaded == nil || !sameCleanupOwner(candidate.metadata.Owner, loaded.Owner) || loaded.Kind != candidate.Kind || loaded.State != candidate.State {
 		return false
 	}
 	return loaded.State != session.StateRunning && loaded.State != session.StateAwaiting
@@ -524,16 +522,18 @@ func (s *Service) CancelSessionCleanup(ctx context.Context, id string) (CleanupJ
 		return CleanupJob{}, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	job, ok := s.cleanupJobs[id]
 	if !ok || job.PrincipalKey != principalKey {
+		s.mu.Unlock()
 		return CleanupJob{}, ErrManagementUnauthorized
 	}
 	job.cancelled = true
-	if job.State == "running" || job.State == "planned" {
+	if job.State == cleanupStateRunning || job.State == "planned" {
 		job.State = cleanupStateCancelled
 	}
 	s.cleanupJobs[id] = job
+	s.mu.Unlock()
+	s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: job.ID, State: StorageMaintenanceCancelled})
 	return job.CleanupJob, nil
 }
 
@@ -544,12 +544,16 @@ func (s *Service) SessionCleanupJob(ctx context.Context, id string) (CleanupJob,
 		return CleanupJob{}, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	job, ok := s.cleanupJobs[id]
 	if !ok || job.PrincipalKey != principalKey {
+		s.mu.Unlock()
 		return CleanupJob{}, ErrManagementUnauthorized
 	}
 	out := job.CleanupJob
 	out.Errors = append([]CleanupItemError(nil), job.Errors...)
+	s.mu.Unlock()
+	if job.State == cleanupStateRunning {
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: job.ID, State: StorageMaintenanceStarted})
+	}
 	return out, nil
 }

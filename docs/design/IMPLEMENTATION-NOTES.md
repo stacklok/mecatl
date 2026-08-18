@@ -5956,7 +5956,8 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   corrupt rows, running/awaiting state, and live/leased sessions are protected and
   excluded from cap slots. Candidates are age-first and then cap-selected within
   durable-kind partitions, globally emitted oldest-first by `(ModifiedAt, ID)`.
-  Manual dry-run pushes ownership into `SessionMetadataPager` before page formation;
+  Manual dry-run enters the store-wide pager only after explicit management
+  authorization;
   its opaque HMAC token binds principal, canonical kind scope, exact generation,
   effective policy version, candidate count, and estimated bytes. Dry-run reports
   both eligible and protected durable-kind/state/reason counts. Apply re-plans
@@ -5968,6 +5969,25 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   authorizer gates plan/apply/cancel/job/health before support, token, or scope is
   disclosed. `TestInvariant_retention_requires_durable_taxonomy` pins the fail-closed
   taxonomy and cap-slot rule.
+
+  **Storage-management authority and health.** `storage_management.version: 1`
+  is a strict operator-tier-only list of exact verified OIDC issuer/subject pairs;
+  absence grants nobody in a remote ownership-enforced deployment. The authorizer
+  never consults request owner fields, display/grant claims, or system-principal
+  status. The private embedded mecatui Unix-socket server explicitly selects the
+  principal-less local-operator path; no remotely reachable root does. The one gate
+  applies before health, migration plan/apply/resume/cancel/status, and cleanup
+  plan/apply/cancel/status can inspect support or store scope. Cleanup is store-wide
+  only after that gate and revalidates each candidate's indexed owner against the
+  authoritative snapshot under the mutation exclusions.
+
+  `internal/app/storage_health.go` owns a mutex-protected active-key map shared by
+  retention, migration, and cleanup lifecycle callbacks. Health renders sorted
+  closed job kinds, adding counts for same-kind concurrency instead of silently
+  overwriting one string. Durable running migration jobs reattach on inspection or
+  resume; each terminal transition removes only its own key. Stable sanitized
+  migration/cleanup/health failures replace and retain `LastFailure`; backend errors,
+  paths, ids, and content never enter the state.
 
   **Versioned automatic retention configuration (issue #591).** The strict
   operator-only `retention:` subtree (`version: 1`) configures main, child, and

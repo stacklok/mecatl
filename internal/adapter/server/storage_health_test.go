@@ -20,20 +20,29 @@ import (
 type healthStore struct {
 	*memstore.Store
 	calls int
+	err   error
 }
 
 func (s *healthStore) SessionStorageHealth(context.Context) (port.SessionStorageHealth, error) {
 	s.calls++
+	if s.err != nil {
+		return port.SessionStorageHealth{}, s.err
+	}
 	return port.SessionStorageHealth{Available: true, CurrentBytesAvailable: true, CurrentBytes: 7, SessionCount: 2}, nil
 }
 
 func storageHealthService(t *testing.T, store port.SessionStore, authorize func(context.Context) bool) *server.Service {
+	return storageHealthServiceWithUpdate(t, store, authorize, nil)
+}
+
+func storageHealthServiceWithUpdate(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, update func(server.StorageMaintenanceEvent)) *server.Service {
 	t.Helper()
 	llm := mockllm.New()
 	svc, err := server.NewService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		StorageManagementAuthorized: authorize,
+		StorageMaintenanceUpdate:    update,
 		RetentionPolicy:             server.RetentionPolicy{MainMaxAge: 24 * time.Hour, MainMaxCount: 4, SweepCadence: time.Hour},
 	})
 	if err != nil {
@@ -56,6 +65,22 @@ func TestStorageHealthManagementAuthorizationAndNoLeak(t *testing.T) {
 		if strings.Contains(strings.ToLower(err.Error()), forbidden) {
 			t.Fatalf("authorization error leaked %q: %v", forbidden, err)
 		}
+	}
+}
+
+func TestStorageHealthBackendFailureIsSanitized(t *testing.T) {
+	raw := errors.New("read /private/store: OPENROUTER_API_KEY=secret")
+	store := &healthStore{Store: memstore.New(), err: raw}
+	var event server.StorageMaintenanceEvent
+	svc := storageHealthServiceWithUpdate(t, store, func(context.Context) bool { return true }, func(got server.StorageMaintenanceEvent) {
+		event = got
+	})
+	_, err := svc.StorageHealth(context.Background())
+	if !errors.Is(err, server.ErrStorageHealthBackend) || strings.Contains(err.Error(), "/private/store") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("StorageHealth error = %v", err)
+	}
+	if event.State != server.StorageMaintenanceFailed || event.Failure != "health: storage backend unavailable" || strings.Contains(event.Failure, "private") {
+		t.Fatalf("health failure lifecycle = %+v", event)
 	}
 }
 

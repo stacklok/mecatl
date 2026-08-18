@@ -188,8 +188,11 @@ type Config struct {
 	StorageManagementAuthorized func(context.Context) bool
 	// RetentionPolicy is the effective operator policy projected into health.
 	RetentionPolicy RetentionPolicy
-	// StorageMaintenanceStatus reports the existing retention sweep lifecycle.
+	// StorageMaintenanceStatus reports the shared retention/migration/cleanup lifecycle.
 	StorageMaintenanceStatus func() StorageMaintenanceStatus
+	// StorageMaintenanceUpdate receives sanitized lifecycle transitions. nil keeps
+	// maintenance APIs functional without process-wide health observability.
+	StorageMaintenanceUpdate func(StorageMaintenanceEvent)
 	// OwnershipEnforced is true only when the request edge has a verifier wired.
 	// Its zero value preserves the ownerless compatibility path. When enabled,
 	// create retries compare the verified issuer/subject pair before exposing an
@@ -2165,7 +2168,7 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 		}
 		return fmt.Errorf("%w: load retention candidate: %v", ErrInternal, err)
 	}
-	if sess == nil || sess.ID != candidate.ID || !cleanupSessionMatches(sess, candidate.Owner, CleanupCandidate{Kind: candidate.Kind, State: candidate.State}) ||
+	if sess == nil || sess.ID != candidate.ID || !cleanupSessionMatches(sess, CleanupCandidate{Kind: candidate.Kind, State: candidate.State, metadata: port.SessionDiscoveryMeta{Owner: candidate.Owner}}) ||
 		session.ValidateSessionMetadata(sess.Kind, sess.Relationship) != nil || sess.Kind == session.SessionKindUnknown {
 		return fmt.Errorf("%w: retention candidate changed or has no valid durable taxonomy", ErrFailedPrecondition)
 	}

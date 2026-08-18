@@ -22,13 +22,39 @@ type RetentionPolicy struct {
 	SweepCadence      time.Duration
 }
 
-// StorageMaintenanceStatus is the content-free lifecycle of implemented
-// automatic retention sweeps. Empty fields are honest placeholders for job
-// systems and failure persistence that are not implemented yet.
+// StorageMaintenanceStatus is the content-free lifecycle of retention,
+// migration, and cleanup. ActiveJob is a deterministic comma-separated set of
+// closed job kinds (with counts for concurrent same-kind jobs).
 type StorageMaintenanceStatus struct {
 	LastSweep, NextSweep                   time.Time
 	LastSweepAvailable, NextSweepAvailable bool
 	ActiveJob, LastFailure                 string
+}
+
+// StorageMaintenanceState is a closed lifecycle vocabulary shared with the
+// composition-owned health projection.
+type StorageMaintenanceState string
+
+const (
+	// StorageMaintenanceStarted marks an active execution or durable reattachment.
+	StorageMaintenanceStarted StorageMaintenanceState = "started"
+	// StorageMaintenanceProgress refreshes an active job after a checkpoint.
+	StorageMaintenanceProgress StorageMaintenanceState = "progress"
+	// StorageMaintenanceCompleted removes a successfully terminal job.
+	StorageMaintenanceCompleted StorageMaintenanceState = "completed"
+	// StorageMaintenanceCancelled removes a forward-cancelled job.
+	StorageMaintenanceCancelled StorageMaintenanceState = "cancelled"
+	// StorageMaintenanceFailed records a sanitized failure; Resumable controls activity.
+	StorageMaintenanceFailed StorageMaintenanceState = "failed"
+)
+
+// StorageMaintenanceEvent contains only closed kinds, opaque internal keys, and
+// stable sanitized failures. It must never carry backend errors or paths.
+type StorageMaintenanceEvent struct {
+	Kind, Key string
+	State     StorageMaintenanceState
+	Failure   string
+	Resumable bool
 }
 
 // StorageHealth is the authenticated, content-free management projection.
@@ -63,7 +89,8 @@ func (s *Service) StorageHealth(ctx context.Context) (StorageHealth, error) {
 	}
 	health, err := provider.SessionStorageHealth(ctx)
 	if err != nil {
-		return StorageHealth{}, err
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: "health", Key: "storage-health", State: StorageMaintenanceFailed, Failure: "health: storage backend unavailable"})
+		return StorageHealth{}, ErrStorageHealthBackend
 	}
 	status.SessionStorageHealth = health
 	if s.cfg.StorageMaintenanceStatus != nil {

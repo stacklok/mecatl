@@ -27,6 +27,7 @@ func BuildModel(docs Docs) *Model {
 		planModeAutoApproveSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
+		storageManagementSubtree(docs),
 		modelsSubtree(docs),
 		openRouterSubtree(docs),
 		mcpSubtree(docs),
@@ -162,6 +163,26 @@ func retentionSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{Key: "retention", Tier: TierOperator, CommentedOut: true,
 		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
+}
+
+func storageManagementSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("StorageManagementSection", permconfig.StorageManagementSection{}, docs)
+	principals := fieldsOf("StorageManagementPrincipal", permconfig.StorageManagementPrincipal{}, docs)
+	for _, field := range fields {
+		switch field.Key {
+		case "version":
+			field.Default, field.ExampleValue = "1", "1"
+		case "principals":
+			field.Nested = principals
+			principals[0].ExampleValue = "https://idp.example/realms/operators"
+			principals[1].ExampleValue = "storage-admin"
+		}
+	}
+	return &Subtree{
+		Key: "storage_management", Tier: TierOperator, CommentedOut: true,
+		Doc:    "Exact verified OIDC issuer/subject pairs authorized for process-wide storage health, migration, and cleanup. Empty grants nobody; project values are ignored.",
+		Fields: fields,
+	}
 }
 
 func learningSubtree(docs Docs) *Subtree {

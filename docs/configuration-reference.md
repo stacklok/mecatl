@@ -136,6 +136,19 @@ Versioned automatic session cleanup policy. Operator-tier only; project values a
 | `retention.sweep_cadence` | `duration` | `1h` | SweepCadence is the repeat interval; 0 disables repeats while retaining the compatibility startup sweep. |
 | `retention.acknowledge_main_deletion` | `bool` | `false` | AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup. |
 
+## `storage_management`
+
+Tier: **operator**
+
+Exact verified OIDC issuer/subject pairs authorized for process-wide storage health, migration, and cleanup. Empty grants nobody; project values are ignored.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `storage_management.version` | `int` | `1` | Version is the required schema version; the only supported value is 1. |
+| `storage_management.principals` | `[]storagemanagementprincipal` | `(absent)` | Principals lists exact verified OIDC issuer/subject pairs. Empty grants nobody. |
+| `storage_management.principals[].issuer` | `string` | `(empty)` | Issuer must equal the verified token issuer byte-for-byte. |
+| `storage_management.principals[].subject` | `string` | `(empty)` | Subject must equal the verified token subject byte-for-byte. |
+
 ## `models`
 
 Tier: **operator + project**

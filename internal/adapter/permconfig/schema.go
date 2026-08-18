@@ -141,6 +141,61 @@ type Config struct {
 	// Retention is the strict, versioned operator-only automatic session cleanup policy.
 	// Project-tier values are ignored; explicit CLI flags remain the highest precedence.
 	Retention *RetentionSection `yaml:"retention"`
+	// StorageManagement names the verified OIDC identities allowed to operate on
+	// process-wide storage. It is strict and operator-tier only.
+	StorageManagement *StorageManagementSection `yaml:"storage_management"`
+}
+
+// StorageManagementSection is the explicit operator authority for process-wide
+// storage health, migration, and cleanup.
+type StorageManagementSection struct {
+	// Version is the required schema version; the only supported value is 1.
+	Version int `yaml:"version"`
+	// Principals lists exact verified OIDC issuer/subject pairs. Empty grants nobody.
+	Principals []StorageManagementPrincipal `yaml:"principals"`
+}
+
+// StorageManagementPrincipal is one exact verified issuer/subject pair.
+type StorageManagementPrincipal struct {
+	// Issuer must equal the verified token issuer byte-for-byte.
+	Issuer string `yaml:"issuer"`
+	// Subject must equal the verified token subject byte-for-byte.
+	Subject string `yaml:"subject"`
+}
+
+// UnmarshalYAML strictly validates storage-management authority. An empty list
+// grants nobody; there is no wildcard or grant-type shortcut.
+func (s *StorageManagementSection) UnmarshalYAML(node *yaml.Node) error {
+	if err := decodeStrictMapping(node, "storage_management", map[string]any{
+		"version": &s.Version, "principals": &s.Principals,
+	}); err != nil {
+		return err
+	}
+	if s.Version != 1 {
+		return fmt.Errorf("storage_management.version: want 1, got %d", s.Version)
+	}
+	seen := make(map[string]bool, len(s.Principals))
+	for i := range s.Principals {
+		p := &s.Principals[i]
+		p.Issuer, p.Subject = strings.TrimSpace(p.Issuer), strings.TrimSpace(p.Subject)
+		if p.Issuer == "" || p.Subject == "" {
+			return fmt.Errorf("storage_management.principals[%d]: issuer and subject are required", i)
+		}
+		key := p.Issuer + "\x00" + p.Subject
+		if seen[key] {
+			return fmt.Errorf("storage_management.principals[%d]: duplicate issuer/subject", i)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+// UnmarshalYAML keeps each principal mapping closed to prevent a misspelled
+// identity field from silently removing the management boundary.
+func (p *StorageManagementPrincipal) UnmarshalYAML(node *yaml.Node) error {
+	return decodeStrictMapping(node, "storage_management principal", map[string]any{
+		"issuer": &p.Issuer, "subject": &p.Subject,
+	})
 }
 
 // RetentionSection is the versioned operator automatic-cleanup policy.

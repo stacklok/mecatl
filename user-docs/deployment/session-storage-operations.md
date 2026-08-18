@@ -139,6 +139,22 @@ The management surface depends on where mecatui runs:
   management capability and the authenticated caller has authority. Missing capability means
   unavailable, not zero usage or zero reclaimable bytes.
 
+For a remote OIDC daemon, authentication alone is not management authority. The operator must list
+exact verified issuer/subject pairs in the operator-tier settings file:
+
+```yaml
+storage_management:
+  version: 1
+  principals:
+    - issuer: https://idp.example/realms/operators
+      subject: storage-admin
+```
+
+An absent or empty list fails closed and does not advertise remote storage management. Project
+settings, request owner claims, display names, grant types, and system-principal status cannot grant
+this authority. Embedded mecatui remains available because its private Unix-socket server explicitly
+marks the local single-user operator; that exception is never used by a remotely reachable daemon.
+
 Before any change, open **Sessions → Maintenance** and inspect **Storage health**. Record the
 effective policy, current/reclaimable bytes, format and durable-kind counts, last/next sweep, active
 job, and last failure. Then run **Optimize storage** or **Clean up sessions** to obtain the read-only

@@ -35,11 +35,16 @@ func migrationContext(subject string) context.Context {
 }
 
 func migrationService(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, lease port.SessionLease) *server.Service {
+	return migrationServiceWithUpdate(t, store, authorize, lease, nil)
+}
+
+func migrationServiceWithUpdate(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, lease port.SessionLease, update func(server.StorageMaintenanceEvent)) *server.Service {
 	t.Helper()
 	svc, err := server.NewService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		StorageManagementAuthorized: authorize,
+		StorageMaintenanceUpdate:    update,
 		SessionLease:                lease, LeaseOwner: "migration-server", LeaseTTL: time.Minute, LeaseRenewInterval: 20 * time.Second,
 	})
 	if err != nil {
@@ -201,7 +206,10 @@ func TestSessionStorageContinuity_Scenario4_ResumableMigrationJob(t *testing.T) 
 		writeV1Family(t, dir, newLegacySession(t, id, owner), nil, nil, time.Unix(1700000000, 0))
 	}
 	ctx := migrationContext("alice")
-	svc1 := migrationService(t, store, func(context.Context) bool { return true }, nil)
+	var lifecycle1 []server.StorageMaintenanceEvent
+	svc1 := migrationServiceWithUpdate(t, store, func(context.Context) bool { return true }, nil, func(event server.StorageMaintenanceEvent) {
+		lifecycle1 = append(lifecycle1, event)
+	})
 	plan, err := svc1.PlanSessionMigration(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -213,6 +221,9 @@ func TestSessionStorageContinuity_Scenario4_ResumableMigrationJob(t *testing.T) 
 	if job.Processed != 1 || job.Migrated != 1 || job.State != "running" {
 		t.Fatalf("first batch = %+v", job)
 	}
+	if len(lifecycle1) == 0 || lifecycle1[len(lifecycle1)-1].State != server.StorageMaintenanceProgress || !lifecycle1[len(lifecycle1)-1].Resumable {
+		t.Fatalf("running migration lifecycle = %+v", lifecycle1)
+	}
 	job, err = svc1.CancelSessionMigration(ctx, job.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -220,10 +231,16 @@ func TestSessionStorageContinuity_Scenario4_ResumableMigrationJob(t *testing.T) 
 	if job.State != "cancelled" || job.Processed != 1 {
 		t.Fatalf("cancelled job = %+v", job)
 	}
+	if lifecycle1[len(lifecycle1)-1].State != server.StorageMaintenanceCancelled {
+		t.Fatalf("cancel lifecycle = %+v", lifecycle1)
+	}
 
 	// A fresh Service over the same store proves the job registry, progress, and
 	// caller binding survive process replacement.
-	svc2 := migrationService(t, store, func(context.Context) bool { return true }, nil)
+	var lifecycle2 []server.StorageMaintenanceEvent
+	svc2 := migrationServiceWithUpdate(t, store, func(context.Context) bool { return true }, nil, func(event server.StorageMaintenanceEvent) {
+		lifecycle2 = append(lifecycle2, event)
+	})
 	job, err = svc2.SessionMigrationJob(ctx, job.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -236,6 +253,9 @@ func TestSessionStorageContinuity_Scenario4_ResumableMigrationJob(t *testing.T) 
 	}
 	if job.Processed != 3 || job.Migrated != 3 || job.Failed != 0 {
 		t.Fatalf("completed job = %+v", job)
+	}
+	if len(lifecycle2) == 0 || lifecycle2[len(lifecycle2)-1].State != server.StorageMaintenanceCompleted {
+		t.Fatalf("reattached completion lifecycle = %+v", lifecycle2)
 	}
 	again, err := svc2.ResumeSessionMigration(ctx, job.ID, 1)
 	if err != nil {
@@ -425,11 +445,22 @@ func TestSessionStorageContinuity_Scenario4_MigrationAuthorizationAndNoOracle(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{job.ID, "00000000000000000000000000000000"} {
-		_, crossErr := svc.SessionMigrationJob(migrationContext("bob"), id)
-		if !errors.Is(crossErr, server.ErrManagementUnauthorized) || strings.Contains(crossErr.Error(), id) {
-			t.Fatalf("cross-caller status %q leaked oracle: %v", id, crossErr)
-		}
+	for name, call := range map[string]func() error{
+		"apply foreign plan":  func() error { _, err := svc.ApplySessionMigration(migrationContext("bob"), plan.ID, 1); return err },
+		"resume foreign job":  func() error { _, err := svc.ResumeSessionMigration(migrationContext("bob"), job.ID, 1); return err },
+		"cancel foreign job":  func() error { _, err := svc.CancelSessionMigration(migrationContext("bob"), job.ID); return err },
+		"inspect foreign job": func() error { _, err := svc.SessionMigrationJob(migrationContext("bob"), job.ID); return err },
+		"inspect missing job": func() error {
+			_, err := svc.SessionMigrationJob(migrationContext("bob"), "00000000000000000000000000000000")
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			crossErr := call()
+			if !errors.Is(crossErr, server.ErrManagementUnauthorized) || strings.Contains(crossErr.Error(), job.ID) {
+				t.Fatalf("cross-caller request leaked oracle: %v", crossErr)
+			}
+		})
 	}
 }
 

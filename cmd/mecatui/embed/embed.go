@@ -163,6 +163,9 @@ type Server struct {
 // everything it created before returning, so the caller never leaks a socket,
 // temp dir, or telemetry resource.
 func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error) {
+	// This private Unix-socket server is the one explicit compatibility authority
+	// for local single-user storage management. Remote roots never set this bit.
+	cfg.LocalStorageManagement = true
 	// Perf setup happens BEFORE app.Build so the domain-metrics EventSink can be
 	// injected into the engine via cfg.Sink/cfg.ToolCallRecorder. perfState gathers the
 	// teardown handles; on any later error we unwind it.

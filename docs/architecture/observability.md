@@ -110,7 +110,14 @@
   `port.SessionStorageHealthProvider` uses that already-ready catalog plus cheap
   file metadata to report aggregate bytes and format/kind/corruption counts. A
   stale or absent index is `unavailable`, never a measured zero, and unsupported
-  backends do not advertise the management capability. Authenticated migration
+  backends do not advertise the management capability. Process-wide health,
+  migration, and cleanup are disabled unless composition has an explicit management
+  authority. The private embedded mecatui Unix-socket server explicitly grants its
+  local operator; an OIDC daemon grants only exact operator-tier
+  `storage_management.principals` issuer/subject pairs. Ordinary authenticated tenants,
+  unlisted system principals, anonymous remote callers, and project/request-supplied
+  identity data never grant authority, and denial occurs before backend inspection.
+  Authenticated migration
   planning is a separate read-only scan that reports v1/v2/invalid/skipped family
   counts, current/reclaimable bytes, and the largest one-family temporary-space
   requirement. Its opaque plan binds the verified management caller and source
@@ -122,7 +129,8 @@
   only after rereading that v2. Sidecars, complete sessnap bytes, unknown kind, owner,
   and logical modification time are preserved. Public errors contain only stable
   reason codes, bounded messages, and non-reversible item handles. The authenticated cleanup
-  API runs a side-effect-free dry-run over the same owner-filtered generation and
+  API runs a side-effect-free dry-run over the store-wide generation after the explicit
+  management-authority gate and
   returns age/cap candidates oldest-first by `(modified_at ASC, session_id ASC)`,
   protected and eligible kind/state/reason counts, mtimes, and byte estimates—never transcript,
   tool arguments, paths, secrets, or foreign-owner rows. Automatic sweeps and manual
@@ -133,7 +141,11 @@
   maintenance lease before `port.ConditionalPrunableStore` takes its family lock,
   compares the exact durable metadata again, and keeps all exclusions held while
   deleting sidecars before the snapshot. Partial failures use stable sanitized codes and remain
-  retryable; unsupported backends report unsupported, not zero impact. Cursors retain neutral ordering and
+  retryable; unsupported backends report unsupported, not zero impact. Shared health
+  tracks retention, migration, and cleanup independently, renders concurrent active
+  kinds with counts instead of last-writer-wins, reattaches durable running migration
+  truth on job inspection/resume, clears each terminal job independently, and retains
+  only stable sanitized last-failure text. Cursors retain neutral ordering and
   bind the catalog fingerprint generation and ownership/filter scope; the backend
   token itself is issued and validated only by the pager. A stale, mismatched, or
   foreign cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart

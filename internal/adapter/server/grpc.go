@@ -940,6 +940,8 @@ func toStatus(err error) error {
 	switch {
 	case errors.Is(err, ErrManagementUnauthorized):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, ErrStorageHealthBackend):
+		return status.Error(codes.Internal, err.Error())
 	case errors.Is(err, ErrMigrationUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrMigrationConflict):

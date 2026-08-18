@@ -20,6 +20,7 @@ const (
 	maintenanceReasonChanged = "changed"
 	maintenanceReasonActive  = "active"
 	maintenanceReasonLeased  = "leased"
+	migrationKind            = "migration"
 )
 
 // MigrationPlan is the content-free, authenticated projection of a read-only
@@ -68,23 +69,15 @@ func migrationStore(store port.SessionStore) (port.SessionMigrationStore, bool) 
 }
 
 func (s *Service) authorizeMigration(ctx context.Context) (port.SessionMigrationStore, string, error) {
-	if s.cfg.StorageManagementAuthorized == nil || !s.cfg.StorageManagementAuthorized(ctx) {
-		return nil, "", ErrManagementUnauthorized
-	}
-	principal := session.PrincipalFromContext(ctx)
-	if principal == nil {
-		return nil, "", ErrManagementUnauthorized
+	_, principalKey, err := s.storageManagementPrincipalKey(ctx)
+	if err != nil {
+		return nil, "", err
 	}
 	backend, ok := migrationStore(s.cfg.Store)
 	if !ok {
-		return nil, migrationPrincipalKey(principal), ErrMigrationUnsupported
+		return nil, principalKey, ErrMigrationUnsupported
 	}
-	return backend, migrationPrincipalKey(principal), nil
-}
-
-func migrationPrincipalKey(principal *session.Principal) string {
-	sum := sha256.Sum256([]byte(principal.Issuer + "\x00" + principal.Subject))
-	return hex.EncodeToString(sum[:16])
+	return backend, principalKey, nil
 }
 
 func newMigrationHandle() (string, error) {
@@ -99,18 +92,18 @@ func newMigrationHandle() (string, error) {
 // authenticated principal to the inspected storage generation; apply turns it
 // into a separate durable job handle.
 func (s *Service) PlanSessionMigration(ctx context.Context) (MigrationPlan, error) {
-	if s.cfg.StorageManagementAuthorized == nil || !s.cfg.StorageManagementAuthorized(ctx) || session.PrincipalFromContext(ctx) == nil {
-		return MigrationPlan{}, ErrManagementUnauthorized
-	}
-	backend, ok := migrationStore(s.cfg.Store)
-	if !ok {
-		return MigrationPlan{UnavailableReason: "backend_unsupported"}, nil
+	backend, principalKey, err := s.authorizeMigration(ctx)
+	if err != nil {
+		if errors.Is(err, ErrMigrationUnsupported) {
+			return MigrationPlan{UnavailableReason: "backend_unsupported"}, nil
+		}
+		return MigrationPlan{}, err
 	}
 	inspection, err := backend.InspectSessionMigration(ctx)
 	if err != nil {
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: "migration-plan", State: StorageMaintenanceFailed, Failure: "migration: storage backend unavailable"})
 		return MigrationPlan{}, sanitizedMigrationBackendError()
 	}
-	principalKey := migrationPrincipalKey(session.PrincipalFromContext(ctx))
 	job := port.SessionMigrationJob{
 		ID:         principalKey + "." + inspection.Generation,
 		V1Families: inspection.V1Families, V2Families: inspection.V2Families,
@@ -153,7 +146,7 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 			return MigrationJob{}, sanitizedMigrationBackendError()
 		}
 		if id != principalKey+"."+inspection.Generation {
-			return MigrationJob{}, ErrMigrationConflict
+			return MigrationJob{}, ErrManagementUnauthorized
 		}
 		handle, handleErr := newMigrationHandle()
 		if handleErr != nil {
@@ -186,10 +179,13 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 	job.State = port.SessionMigrationRunning
 	job.UpdatedAt = time.Now().UTC()
 	if err := backend.SaveSessionMigrationJob(ctx, job); err != nil {
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: durable job update failed", Resumable: !apply})
 		return MigrationJob{}, sanitizedMigrationBackendError()
 	}
+	s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceStarted, Resumable: true})
 	inspection, err := backend.InspectSessionMigration(ctx)
 	if err != nil {
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: storage backend unavailable", Resumable: true})
 		return MigrationJob{}, sanitizedMigrationBackendError()
 	}
 	limit := migrationBatchSize(batchSize)
@@ -225,8 +221,10 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		}
 		job.UpdatedAt = time.Now().UTC()
 		if err := backend.SaveSessionMigrationJob(context.WithoutCancel(ctx), job); err != nil {
+			s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: durable job update failed", Resumable: true})
 			return MigrationJob{}, sanitizedMigrationBackendError()
 		}
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceProgress, Resumable: true})
 	}
 	remaining := false
 	for _, family := range inspection.Families {
@@ -240,7 +238,20 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 	}
 	job.UpdatedAt = time.Now().UTC()
 	if err := backend.SaveSessionMigrationJob(context.WithoutCancel(ctx), job); err != nil {
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: durable job update failed", Resumable: true})
 		return MigrationJob{}, sanitizedMigrationBackendError()
+	}
+	switch job.State {
+	case port.SessionMigrationCompleted:
+		failure := ""
+		if job.Failed > 0 {
+			failure = "migration: one or more items failed"
+		}
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceCompleted, Failure: failure})
+	case port.SessionMigrationCancelled:
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceCancelled})
+	default:
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceProgress, Resumable: true})
 	}
 	return migrationJobProjection(job), nil
 }
@@ -309,9 +320,11 @@ func (s *Service) CancelSessionMigration(ctx context.Context, id string) (Migrat
 		job.State = port.SessionMigrationCancelled
 		job.UpdatedAt = time.Now().UTC()
 		if err := backend.SaveSessionMigrationJob(ctx, job); err != nil {
+			s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: durable job update failed", Resumable: true})
 			return MigrationJob{}, sanitizedMigrationBackendError()
 		}
 	}
+	s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceCancelled})
 	return migrationJobProjection(job), nil
 }
 
@@ -324,6 +337,9 @@ func (s *Service) SessionMigrationJob(ctx context.Context, id string) (Migration
 	job, err := loadBoundMigrationJob(ctx, backend, id, principalKey)
 	if err != nil {
 		return MigrationJob{}, err
+	}
+	if job.State == port.SessionMigrationRunning {
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceStarted, Resumable: true})
 	}
 	return migrationJobProjection(job), nil
 }

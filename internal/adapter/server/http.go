@@ -2055,6 +2055,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrManagementUnauthorized):
 		writeError(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrStorageHealthBackend):
+		writeError(w, http.StatusInternalServerError, err.Error())
 	case errors.Is(err, ErrMigrationUnsupported):
 		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, ErrMigrationConflict):
