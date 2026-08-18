@@ -73,6 +73,22 @@ func (st *Store) inventoryGenerationMarkerPath() string {
 	return filepath.Join(st.inventoryCatalogDir(), inventoryGenerationMarkerName)
 }
 
+func (st *Store) inventoryCatalogRelativePath(path string) (string, error) {
+	name, err := filepath.Rel(st.inventoryCatalogDir(), path)
+	if err != nil || name == "." || filepath.Base(name) != name {
+		return "", fmt.Errorf("jsonlstore: inventory catalog path %q is not a direct descendant", path)
+	}
+	return name, nil
+}
+
+func (st *Store) inventoryCatalogRoot() (*os.Root, error) {
+	root, err := os.OpenRoot(st.inventoryCatalogDir())
+	if err != nil {
+		return nil, fmt.Errorf("jsonlstore: open inventory catalog root: %w", err)
+	}
+	return root, nil
+}
+
 func (st *Store) advanceInventoryGeneration() error {
 	generation := fmt.Sprintf("%s-%016x\n", st.tempOwner, st.tempGeneration.Add(1))
 	return st.writeInventoryFileWithPattern(st.inventoryGenerationMarkerPath(), []byte(generation), ".inventory-generation-*")
@@ -346,6 +362,11 @@ func (st *Store) reconcileInventoryArtifacts(generation string) error {
 	if err != nil {
 		return fmt.Errorf("jsonlstore: scan inventory catalog artifacts: %w", err)
 	}
+	root, err := st.inventoryCatalogRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
 	activePrefix := ".session-inventory-" + generation + "-"
 	for _, entry := range entries {
 		name := entry.Name()
@@ -353,7 +374,7 @@ func (st *Store) reconcileInventoryArtifacts(generation string) error {
 			!strings.HasPrefix(name, ".session-inventory-") {
 			continue
 		}
-		if err := os.Remove(filepath.Join(st.inventoryCatalogDir(), name)); err != nil && !os.IsNotExist(err) {
+		if err := root.Remove(name); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("jsonlstore: remove obsolete inventory artifact %q: %w", name, err)
 		}
 	}
@@ -365,14 +386,28 @@ func (st *Store) writeInventoryFile(path string, data []byte) error {
 }
 
 func (st *Store) writeInventoryFileWithPattern(path string, data []byte, pattern string) error {
-	tmp, err := os.CreateTemp(st.inventoryCatalogDir(), pattern) //nolint:gosec // owner-only store dir
+	name, err := st.inventoryCatalogRelativePath(path)
+	if err != nil {
+		return err
+	}
+	root, err := st.inventoryCatalogRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	tmp, err := os.CreateTemp(st.inventoryCatalogDir(), pattern) //nolint:gosec // CreateTemp creates an adapter-private temporary in the owner-only catalog directory.
 	if err != nil {
 		return fmt.Errorf("jsonlstore: create inventory catalog temporary: %w", err)
 	}
-	tmpPath := tmp.Name()
+	tmpName, err := st.inventoryCatalogRelativePath(tmp.Name())
+	if err != nil {
+		_ = tmp.Close()
+		_ = root.Remove(filepath.Base(tmp.Name()))
+		return fmt.Errorf("jsonlstore: validate inventory catalog temporary: %w", err)
+	}
 	defer func() {
 		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
+		_ = root.Remove(tmpName)
 	}()
 	if err := tmp.Chmod(0o600); err != nil {
 		return fmt.Errorf("jsonlstore: chmod inventory catalog temporary: %w", err)
@@ -388,7 +423,7 @@ func (st *Store) writeInventoryFileWithPattern(path string, data []byte, pattern
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("jsonlstore: close inventory catalog: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := root.Rename(tmpName, name); err != nil {
 		return fmt.Errorf("jsonlstore: replace inventory catalog: %w", err)
 	}
 	if !st.durability.DirectorySync {

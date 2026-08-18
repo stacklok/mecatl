@@ -133,11 +133,37 @@ func New(dir string) (*Store, error) {
 	return newStoreWithSnapshotOps(dir, defaultSnapshotOps())
 }
 
-func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("jsonlstore: create dir: %w", err)
+func normalizeStoreRoot(dir string) (string, error) {
+	if dir == "" {
+		return "", errors.New("jsonlstore: store dir is empty")
 	}
-	resolver := sessionResolver{dir: dir}
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("jsonlstore: normalize dir: %w", err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", fmt.Errorf("jsonlstore: create dir: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("jsonlstore: resolve dir: %w", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", fmt.Errorf("jsonlstore: stat dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("jsonlstore: store dir %q is not a directory", dir)
+	}
+	return root, nil
+}
+
+func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
+	root, err := normalizeStoreRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	resolver := sessionResolver{dir: root}
 	if err := os.MkdirAll(resolver.canonicalDir(), 0o700); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
 	}
