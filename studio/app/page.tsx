@@ -1,7 +1,20 @@
 "use client";
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
-import { decodeScheduleRows, parseMecatlEvent, type MecatlEvent, type ScheduleRow } from "../lib/protocol";
+import {
+  decodeScheduleFire,
+  decodeScheduleFires,
+  decodeScheduleRows,
+  encodeScheduleSpec,
+  parseMecatlEvent,
+  scheduleDraftFromRow,
+  type MecatlEvent,
+  type ScheduleCarriedSpec,
+  type ScheduleFireRow,
+  type ScheduleLimits,
+  type ScheduleRow,
+  type ScheduleSpecDraft,
+} from "../lib/protocol";
 import { Composer } from "@/components/chat/composer";
 import type { EffortId, ModelSelection } from "@/components/chat/model-effort-selector";
 import { CreateProjectDialog, type NewProject } from "@/components/projects/create-project-dialog";
@@ -189,6 +202,41 @@ const fireTime = (millis: number | null) => {
   return ahead ? `in ${days}d` : `${days}d ago`;
 };
 const triggerSummary = (row: ScheduleRow) => row.cron ? `cron ${row.cron}` : row.oneShotAt !== null ? `one-shot ${new Date(row.oneShotAt).toLocaleString()}` : "no trigger";
+// A fire history is a LOG, so it gets an absolute local clock rather than a
+// delta: an operator matching a fire against a CI run or a commit needs the time
+// of day, not "3h ago".
+const fireClock = (millis: number | null) => millis === null ? "unknown time" : new Date(millis).toLocaleString();
+// A fire is in flight until it reports a stop, and a claim that never started its
+// run is a third state — so an unfinished fire is never rendered as a success.
+const fireOutcome = (fire: ScheduleFireRow) => fire.inFlight
+  ? (fire.startedAt !== null ? "running" : "claimed, not started")
+  : (fire.stop || "finished");
+// datetime-local speaks LOCAL wall-clock with no zone, which is what an operator
+// picking "tomorrow at 09:00" means. encodeScheduleSpec converts it to RFC 3339.
+const localInputValue = (millis: number) =>
+  new Date(millis - new Date(millis).getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+// A one-shot trigger must be in the FUTURE, and both the default the picker
+// opens on and the pre-submit check read the clock — which belongs at module
+// scope in this file, alongside fireTime, not in a component body.
+const oneShotIsPast = (at: number) => at <= Date.now();
+const defaultOneShotAt = () => Date.now() + 3_600_000;
+const emptyScheduleLimits: ScheduleLimits = { maxTurns: 0, maxToolCalls: 0, maxConsecutiveFailures: 0 };
+// A new schedule starts read-only in plan mode because that pair is the one the
+// daemon accepts without an explicit write opt-in — and because an unattended
+// run that can edit files is a deliberate decision, not a default.
+const blankScheduleDraft = (workspace: string): ScheduleSpecDraft => ({
+  name: "",
+  prompt: "",
+  trigger: { kind: "cron", cron: "0 9 * * 1", timezone: "" },
+  profile: "",
+  workspace,
+  mode: 2,
+  mutating: false,
+  maxFires: 0,
+  limits: emptyScheduleLimits,
+  oneShotRetry: false,
+  oneShotMaxRetries: 3,
+});
 // A short badge for the transcript chip. The extension is more informative than
 // the kind ("TS" beats "TEXT"), with the kind as the fallback for a bare name.
 const attachmentBadge = (attachment: AttachmentSummary) => {
@@ -330,6 +378,26 @@ export default function Home() {
   const [scheduleBusy, setScheduleBusy] = useState("");
   const [scheduleNotice, setScheduleNotice] = useState("");
   const [scheduleConfirmDelete, setScheduleConfirmDelete] = useState("");
+  // The create/edit form. A null draft means closed; `scheduleEditing` names the
+  // schedule a save should PUT and is empty for a create, so one form serves both
+  // verbs. `scheduleCarried` is the half of the stored spec this form has no
+  // control for — see encodeScheduleSpec: an update REPLACES the spec, so those
+  // fields have to travel back or editing a prompt would delete them.
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleSpecDraft | null>(null);
+  const [scheduleEditing, setScheduleEditing] = useState("");
+  const [scheduleCarried, setScheduleCarried] = useState<ScheduleCarriedSpec | null>(null);
+  const [scheduleFormError, setScheduleFormError] = useState("");
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  // Fire history is per schedule and read on demand: an armed cron accumulates one
+  // record per fire and the list endpoint has no paging, so it is not something to
+  // fetch for every row on entering the panel.
+  const [historyOpen, setHistoryOpen] = useState("");
+  const [fires, setFires] = useState<Record<string, ScheduleFireRow[]>>({});
+  // The NAME whose log is in flight, not a bare boolean: a finished fetch must
+  // not clear another row's loading state, which would flash "no fires recorded
+  // yet" at a schedule whose log had not arrived.
+  const [firesLoading, setFiresLoading] = useState("");
+  const [firesError, setFiresError] = useState("");
   const [mode, setMode] = useState<"default" | "plan">("default");
   // The composer's model/effort choice. It applies to the NEXT session, because
   // mecated fixes provider and model for a session's lifetime.
@@ -343,6 +411,7 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [error, setError] = useState("");
+  const scheduleFormRef = useRef<HTMLFormElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const abortMessageRef = useRef("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -786,11 +855,159 @@ export default function Home() {
         setScheduleNotice(`${action === "delete" ? "Deleted" : action === "pause" ? "Paused" : "Resumed"} ${name}.`);
       }
       setScheduleConfirmDelete("");
+      // A deleted schedule cannot be PUT, so an edit form still open on it would
+      // only fail on save. Close it rather than leave a form addressing nothing.
+      if (action === "delete") {
+        if (scheduleEditing === name) closeScheduleForm();
+        if (historyOpen === name) setHistoryOpen("");
+      }
       await loadSchedules();
     } catch (caught) {
       setSchedulesError((caught as Error).message || `Could not ${action} ${name}.`);
     } finally {
       setScheduleBusy("");
+    }
+  };
+
+
+  // Create and edit are the SAME form: POST when there is no name to address, PUT
+  // when there is. A rename is deliberately not offered — the daemon keys an
+  // update by the URL name, so renaming is a create plus a delete, which would
+  // also reset the firing history.
+  const updateDraft = (patch: Partial<ScheduleSpecDraft>) =>
+    setScheduleDraft((current) => current ? { ...current, ...patch } : current);
+  const updateCronTrigger = (patch: { cron?: string; timezone?: string }) =>
+    setScheduleDraft((current) => current && current.trigger.kind === "cron"
+      ? { ...current, trigger: { ...current.trigger, ...patch } }
+      : current);
+  const updateOneShotTrigger = (at: number) =>
+    setScheduleDraft((current) => current && current.trigger.kind === "one-shot"
+      ? { ...current, trigger: { kind: "one-shot", at } }
+      : current);
+  const setTriggerKind = (kind: "cron" | "one-shot") =>
+    setScheduleDraft((current) => {
+      if (!current || current.trigger.kind === kind) return current;
+      return {
+        ...current,
+        trigger: kind === "cron"
+          ? { kind: "cron", cron: "0 9 * * 1", timezone: "" }
+          : { kind: "one-shot", at: defaultOneShotAt() },
+      };
+    });
+  // The daemon REJECTS a non-mutating schedule that asks for a write-capable
+  // posture, so the two move together: turning writing off forces plan mode, and
+  // turning it on lifts plan to the ask-before-writing default. An invalid pair is
+  // never constructible in the form rather than being caught by a 400.
+  const setScheduleMutating = (mutating: boolean) =>
+    setScheduleDraft((current) => current
+      ? { ...current, mutating, mode: mutating ? (current.mode === 2 ? 1 : current.mode) : 2 }
+      : current);
+  // A default-profile fire mints a filesystem session and REQUIRES a workspace; a
+  // no-fs fire has no tree to root and must not carry one.
+  const setScheduleProfile = (profile: "" | "no-fs") =>
+    setScheduleDraft((current) => current
+      ? { ...current, profile, workspace: profile === "no-fs" ? "" : current.workspace || activeWorkspace }
+      : current);
+
+  // The form renders above the registry, so opening it from a row further down
+  // the list would otherwise scroll nothing and look like the button did nothing.
+  const scheduleFormOpen = scheduleDraft !== null;
+  useEffect(() => {
+    if (scheduleFormOpen) scheduleFormRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [scheduleFormOpen, scheduleEditing]);
+
+  const closeScheduleForm = () => {
+    setScheduleDraft(null);
+    setScheduleEditing("");
+    setScheduleCarried(null);
+    setScheduleFormError("");
+  };
+
+  const openScheduleCreate = () => {
+    setScheduleEditing("");
+    setScheduleCarried(null);
+    setScheduleFormError("");
+    setScheduleDraft(blankScheduleDraft(activeWorkspace));
+  };
+
+  const openScheduleEdit = (row: ScheduleRow) => {
+    setScheduleEditing(row.name);
+    setScheduleCarried(row.carried);
+    setScheduleFormError("");
+    setScheduleDraft(scheduleDraftFromRow(row));
+    setScheduleConfirmDelete("");
+  };
+
+  const submitScheduleForm = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!scheduleDraft) return;
+    const draft = { ...scheduleDraft, name: scheduleDraft.name.trim() };
+    // Only the checks the operator can act on before a round trip live here. The
+    // daemon owns the rest — the cron grammar, the cadence floor, the selector
+    // inventory, name collisions — and its message is shown verbatim rather than
+    // being re-guessed on this side.
+    if (!draft.name) { setScheduleFormError("A schedule needs a name."); return; }
+    if (!draft.prompt.trim()) { setScheduleFormError("A schedule needs a prompt: it is what the unattended run is asked to do."); return; }
+    if (draft.trigger.kind === "cron" && !draft.trigger.cron.trim()) { setScheduleFormError("A cron schedule needs an expression, for example 0 9 * * 1."); return; }
+    if (draft.trigger.kind === "one-shot" && oneShotIsPast(draft.trigger.at)) { setScheduleFormError("A one-shot time has to be in the future."); return; }
+    setScheduleSaving(true);
+    setSchedulesError("");
+    try {
+      const editing = scheduleEditing;
+      const body = JSON.stringify(encodeScheduleSpec(draft, editing ? scheduleCarried ?? undefined : undefined));
+      const path = editing ? `${API}/v1/schedules/${encodeURIComponent(editing)}` : `${API}/v1/schedules`;
+      const response = await fetch(path, { method: editing ? "PUT" : "POST", headers: { "content-type": "application/json" }, body });
+      if (!response.ok) throw new Error(await readError(response));
+      setScheduleNotice(`${editing ? "Updated" : "Armed"} ${draft.name}.`);
+      closeScheduleForm();
+      await loadSchedules();
+    } catch (caught) {
+      setScheduleFormError((caught as Error).message || "The daemon rejected the schedule.");
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  // The fire log is what turns "it is armed" into "here is what it did": a stop
+  // reason per fire, the error when one failed, and the session id to open.
+  const loadFires = async (name: string) => {
+    setFiresLoading(name);
+    setFiresError("");
+    try {
+      const response = await fetch(`${API}/v1/schedules/${encodeURIComponent(name)}/fires`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await readError(response));
+      const rows = decodeScheduleFires(await response.json());
+      setFires((current) => ({ ...current, [name]: rows }));
+    } catch (caught) {
+      setFiresError((caught as Error).message || `Could not read the fire history for ${name}.`);
+    } finally {
+      // Only clear the flag if this fetch is still the one being waited on.
+      setFiresLoading((current) => current === name ? "" : current);
+    }
+  };
+
+  const toggleHistory = (name: string) => {
+    if (historyOpen === name) { setHistoryOpen(""); return; }
+    setHistoryOpen(name);
+    setFiresError("");
+    void loadFires(name);
+  };
+
+  // An in-flight fire is the ONE row that changes while the panel is open, so it
+  // re-reads that single record instead of refetching the whole history.
+  const refreshFire = async (name: string, id: string) => {
+    setFiresError("");
+    try {
+      const response = await fetch(`${API}/v1/schedules/${encodeURIComponent(name)}/fires/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await readError(response));
+      const fresh = decodeScheduleFire(await response.json());
+      if (!fresh) return;
+      setFires((current) => ({
+        ...current,
+        [name]: (current[name] ?? []).map((fire) => fire.id === id ? fresh : fire),
+      }));
+    } catch (caught) {
+      setFiresError((caught as Error).message || `Could not re-read fire ${id}.`);
     }
   };
 
@@ -806,6 +1023,9 @@ export default function Home() {
       setSchedulesError("");
       setScheduleNotice("");
       setScheduleConfirmDelete("");
+      setHistoryOpen("");
+      setFiresError("");
+      closeScheduleForm();
     }
     if (next === "settings") {
       setRouterState("loading");
@@ -1482,59 +1702,213 @@ export default function Home() {
               <div className="panel-page">
                 <section className="panel-card" aria-labelledby="schedules-title">
                   <h2 id="schedules-title">Scheduled tasks</h2>
-                  <p>A schedule fires an agent run on its own — on a cron cadence or once at a set time — with no one watching. This panel is the oversight surface: see what is armed, when it next runs, and stop it.</p>
+                  <p>A schedule fires an agent run on its own — on a cron cadence or once at a set time — with no one watching. This panel is the oversight surface: arm one, change it, read what past fires did, and stop it.</p>
 
                   {schedulesState === "loading" ? <div className="router-loading">Reading the schedule registry…</div> : !schedulerWired ? (
                     <div className="skills-empty">
                       <strong>Scheduling is not available on this daemon</strong>
                       <p>Scheduled tasks need a durable store that exposes a <code>ScheduleStore</code>. This daemon has none, so nothing can be armed.</p>
                     </div>
-                  ) : schedules.length === 0 ? (
-                    <div className="skills-empty">
-                      <strong>Nothing scheduled</strong>
-                      <p>Ask Mecatl to schedule work — it authors schedules with its in-chat <code>Schedule</code> tool, and they show up here for you to inspect, pause, or delete.</p>
-                    </div>
                   ) : (
-                    <ul className="schedule-list">
-                      {schedules.map((row) => (
-                        <li key={row.name} className={row.enabled ? "" : "paused"}>
-                          <div className="schedule-row-head">
-                            <strong>{row.name}</strong>
-                            <span className={`schedule-state ${row.fireStage !== "idle" ? "running" : row.enabled ? "armed" : "paused"}`}>{row.fireStage === "running" ? "running now" : row.fireStage === "claimed" ? "fire claimed" : row.enabled ? "armed" : "paused"}</span>
+                    <>
+                      <div className="router-section-heading">
+                        <span>{schedules.length === 0 ? "Registry" : `${schedules.filter((row) => row.enabled).length} of ${schedules.length} armed`}</span>
+                        <button type="button" onClick={openScheduleCreate} disabled={scheduleDraft !== null}>＋ New schedule</button>
+                      </div>
+
+                      {scheduleDraft && (
+                        <form className="schedule-form" ref={scheduleFormRef} onSubmit={submitScheduleForm}>
+                          <div className="router-grid">
+                            <div>
+                              <label htmlFor="schedule-name">Name</label>
+                              <input id="schedule-name" value={scheduleDraft.name} disabled={scheduleEditing !== ""} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="weekly-review" />
+                            </div>
+                            <div>
+                              <label htmlFor="schedule-trigger-kind">Trigger</label>
+                              <select id="schedule-trigger-kind" value={scheduleDraft.trigger.kind} onChange={(event) => setTriggerKind(event.target.value === "one-shot" ? "one-shot" : "cron")}>
+                                <option value="cron">On a cron cadence</option>
+                                <option value="one-shot">Once, at a set time</option>
+                              </select>
+                            </div>
                           </div>
-                          <small className="schedule-trigger">{triggerSummary(row)} · next {fireTime(row.nextFireAt)} · {row.fireCount} fire{row.fireCount === 1 ? "" : "s"}{row.lastFireAt !== null ? ` · last ${fireTime(row.lastFireAt)}` : ""}</small>
-                          <small className="schedule-prompt">{row.prompt || "No prompt recorded."}</small>
-                          <div className="schedule-badges">
-                            <span className={row.mutating ? "badge-write" : "badge-read"}>{row.mutating ? "can write" : "read-only"}</span>
-                            <span>{permissionModeLabel(row.mode)} mode</span>
-                          </div>
-                          {scheduleConfirmDelete === row.name ? (
-                            <div className="schedule-confirm">
-                              <span>Delete {row.name}? Its past fire transcripts stay in the session store.</span>
-                              <div>
-                                <button className="schedule-danger" disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "delete")}>Delete</button>
-                                <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete("")}>Keep</button>
+                          <div className="input-hint">{scheduleEditing
+                            ? "A schedule is addressed by its name, so the name is fixed here — renaming would mean creating a second schedule and deleting this one, losing its firing history."
+                            : "The name is the schedule’s key. Creating one that already exists is rejected rather than silently overwriting it."}</div>
+
+                          <label htmlFor="schedule-prompt">Prompt</label>
+                          <textarea id="schedule-prompt" value={scheduleDraft.prompt} onChange={(event) => updateDraft({ prompt: event.target.value })} placeholder="Summarise yesterday’s CI failures and open an issue for anything that failed twice." />
+
+                          {scheduleDraft.trigger.kind === "cron" ? (
+                            <>
+                              <label htmlFor="schedule-cron">Cron expression</label>
+                              <input id="schedule-cron" value={scheduleDraft.trigger.cron} onChange={(event) => updateCronTrigger({ cron: event.target.value })} placeholder="0 9 * * 1" />
+                              <div className="router-grid">
+                                <div>
+                                  <label htmlFor="schedule-timezone">Timezone <span className="optional">empty = UTC</span></label>
+                                  <input id="schedule-timezone" value={scheduleDraft.trigger.timezone} onChange={(event) => updateCronTrigger({ timezone: event.target.value })} placeholder="Europe/London" />
+                                </div>
+                                <div>
+                                  <label htmlFor="schedule-max-fires">Total fires <span className="optional">0 = forever</span></label>
+                                  <input id="schedule-max-fires" type="number" min={0} value={scheduleDraft.maxFires} onChange={(event) => updateDraft({ maxFires: Math.max(0, Number(event.target.value) || 0) })} />
+                                </div>
                               </div>
-                            </div>
+                              <div className="input-hint">Five fields or an <code>@</code> macro, in the timezone above. A cadence tighter than the daemon’s floor — one minute unless the operator changed it — is rejected rather than armed.</div>
+                            </>
                           ) : (
-                            <div className="schedule-actions">
-                              {row.enabled
-                                ? <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "pause")}>Pause</button>
-                                : <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "resume")}>Resume</button>}
-                              <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "fire")}>{scheduleBusy === `${row.name}:fire` ? "Running…" : "Run now"}</button>
-                              <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete(row.name)}>Delete…</button>
-                            </div>
+                            <>
+                              <label htmlFor="schedule-one-shot">Fires at</label>
+                              <input id="schedule-one-shot" type="datetime-local" value={localInputValue(scheduleDraft.trigger.at)} onChange={(event) => updateOneShotTrigger(new Date(event.target.value).getTime())} />
+                              <div className="input-hint">Your local time, and it has to be in the future. A one-shot fires once and is then done — the schedule stays in the registry with no next fire.</div>
+                              <label className="router-switch">
+                                <input type="checkbox" aria-label="Retry a one-shot fire that crashed" checked={scheduleDraft.oneShotRetry} onChange={(event) => updateDraft({ oneShotRetry: event.target.checked })} />
+                                <span>
+                                  <strong>Retry if the fire crashes</strong>
+                                  <small>Off is at-most-once: a fire lost to a restart is not retried. On re-arms the one-shot up to the budget below, which is at-least-once — the run may happen twice.</small>
+                                </span>
+                              </label>
+                              {scheduleDraft.oneShotRetry && (
+                                <>
+                                  <label htmlFor="schedule-retries">Retry budget</label>
+                                  <input id="schedule-retries" type="number" min={1} value={scheduleDraft.oneShotMaxRetries} onChange={(event) => updateDraft({ oneShotMaxRetries: Math.max(1, Number(event.target.value) || 1) })} />
+                                </>
+                              )}
+                            </>
                           )}
-                        </li>
-                      ))}
-                    </ul>
+
+                          <div className="router-grid">
+                            <div>
+                              <label htmlFor="schedule-profile">Tool surface</label>
+                              <select id="schedule-profile" value={scheduleDraft.profile} onChange={(event) => setScheduleProfile(event.target.value === "no-fs" ? "no-fs" : "")}>
+                                <option value="">Files and shell (default)</option>
+                                <option value="no-fs">No filesystem</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label htmlFor="schedule-workspace">Workspace</label>
+                              <input id="schedule-workspace" value={scheduleDraft.workspace} disabled={scheduleDraft.profile === "no-fs"} onChange={(event) => updateDraft({ workspace: event.target.value })} placeholder={workspace || "/path/to/repo"} />
+                            </div>
+                          </div>
+                          <div className="input-hint">{scheduleDraft.profile === "no-fs"
+                            ? "A no-filesystem fire has no tree to root, so it must not name a workspace."
+                            : "Each fire mints its own session in this folder, so a schedule with the default tool surface needs one."}</div>
+
+                          <label className="router-switch">
+                            <input type="checkbox" aria-label="Allow this schedule to write" checked={scheduleDraft.mutating} onChange={(event) => setScheduleMutating(event.target.checked)} />
+                            <span>
+                              <strong>Allow this schedule to write</strong>
+                              <small>Off keeps every fire on the read-only toolset. On lets an unattended run edit files and execute commands with nobody at the keyboard.</small>
+                            </span>
+                          </label>
+                          <label htmlFor="schedule-mode">Permission posture</label>
+                          <select id="schedule-mode" value={scheduleDraft.mode} disabled={!scheduleDraft.mutating} onChange={(event) => updateDraft({ mode: Number(event.target.value) })}>
+                            <option value={2}>plan — read-only</option>
+                            <option value={1}>default — ask before writing</option>
+                            <option value={3}>accept edits — write without asking</option>
+                          </select>
+                          <div className="input-hint">{scheduleDraft.mutating
+                            ? "Nobody is at the keyboard to answer an approval, so a fire in the ask-before-writing posture stops at the first prompt it cannot resolve from policy."
+                            : "A schedule that has not opted into writing must run in plan mode; the daemon rejects anything wider."}</div>
+
+                          <div className="router-grid">
+                            <div>
+                              <label htmlFor="schedule-max-turns">Turns per fire <span className="optional">0 = no cap</span></label>
+                              <input id="schedule-max-turns" type="number" min={0} value={scheduleDraft.limits.maxTurns} onChange={(event) => updateDraft({ limits: { ...scheduleDraft.limits, maxTurns: Math.max(0, Number(event.target.value) || 0) } })} />
+                            </div>
+                            <div>
+                              <label htmlFor="schedule-max-tools">Tool calls per fire <span className="optional">0 = no cap</span></label>
+                              <input id="schedule-max-tools" type="number" min={0} value={scheduleDraft.limits.maxToolCalls} onChange={(event) => updateDraft({ limits: { ...scheduleDraft.limits, maxToolCalls: Math.max(0, Number(event.target.value) || 0) } })} />
+                            </div>
+                          </div>
+
+                          {scheduleFormError && <div className="credential-error" role="alert">{scheduleFormError}</div>}
+                          <div className="schedule-actions">
+                            <button type="submit" className="schedule-primary" disabled={scheduleSaving}>{scheduleSaving ? "Saving…" : scheduleEditing ? "Save changes" : "Arm schedule"}</button>
+                            <button type="button" disabled={scheduleSaving} onClick={closeScheduleForm}>Cancel</button>
+                          </div>
+                          {scheduleEditing && <div className="input-hint">Saving replaces the definition and keeps the firing history: the fire count, the next fire, and past fires all survive. Settings this form has no control for — a provider selector, carried context, a per-fire deadline — are preserved as they are.</div>}
+                        </form>
+                      )}
+
+                      {schedules.length === 0 ? (
+                        <div className="skills-empty">
+                          <strong>Nothing scheduled</strong>
+                          <p>Use <strong>New schedule</strong> to arm one here, or ask Mecatl in chat — it authors schedules with its <code>Schedule</code> tool, and they appear in this list either way.</p>
+                        </div>
+                      ) : (
+                        <ul className="schedule-list">
+                          {schedules.map((row) => (
+                            <li key={row.name} className={row.enabled ? "" : "paused"}>
+                              <div className="schedule-row-head">
+                                <strong>{row.name}</strong>
+                                <span className={`schedule-state ${row.fireStage !== "idle" ? "running" : row.enabled ? "armed" : "paused"}`}>{row.fireStage === "running" ? "running now" : row.fireStage === "claimed" ? "fire claimed" : row.enabled ? "armed" : "paused"}</span>
+                              </div>
+                              <small className="schedule-trigger">{triggerSummary(row)} · next {fireTime(row.nextFireAt)} · {row.fireCount} fire{row.fireCount === 1 ? "" : "s"}{row.maxFires > 0 ? ` of ${row.maxFires}` : ""}{row.lastFireAt !== null ? ` · last ${fireTime(row.lastFireAt)}` : ""}</small>
+                              <small className="schedule-prompt">{row.prompt || "No prompt recorded."}</small>
+                              <div className="schedule-badges">
+                                <span className={row.mutating ? "badge-write" : "badge-read"}>{row.mutating ? "can write" : "read-only"}</span>
+                                <span>{permissionModeLabel(row.mode)} mode</span>
+                                {row.profile === "no-fs" && <span>no filesystem</span>}
+                                {row.carried.carryContext && <span>carries context</span>}
+                                {row.owner && <span>owner {row.owner}</span>}
+                              </div>
+                              {scheduleConfirmDelete === row.name ? (
+                                <div className="schedule-confirm">
+                                  <span>Delete {row.name}? Its past fire transcripts stay in the session store.</span>
+                                  <div>
+                                    <button className="schedule-danger" disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "delete")}>Delete</button>
+                                    <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete("")}>Keep</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="schedule-actions">
+                                  {row.enabled
+                                    ? <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "pause")}>Pause</button>
+                                    : <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "resume")}>Resume</button>}
+                                  <button disabled={rowBusy(row.name)} onClick={() => void scheduleAction(row.name, "fire")}>{scheduleBusy === `${row.name}:fire` ? "Running…" : "Run now"}</button>
+                                  <button disabled={rowBusy(row.name)} onClick={() => openScheduleEdit(row)}>Edit…</button>
+                                  <button aria-expanded={historyOpen === row.name} onClick={() => toggleHistory(row.name)}>{historyOpen === row.name ? "Hide history" : "History"}</button>
+                                  <button disabled={rowBusy(row.name)} onClick={() => setScheduleConfirmDelete(row.name)}>Delete…</button>
+                                </div>
+                              )}
+                              {historyOpen === row.name && (
+                                <div className="schedule-history">
+                                  {firesLoading === row.name ? (
+                                    <small>Reading the fire log…</small>
+                                  ) : (fires[row.name] ?? []).length === 0 ? (
+                                    <small>{firesError ? "The fire log could not be read." : "No fires recorded yet. A record appears here once this schedule has run."}</small>
+                                  ) : (
+                                    <ul>
+                                      {(fires[row.name] ?? []).map((fire) => (
+                                        <li key={fire.id} className={fire.err ? "failed" : fire.inFlight ? "running" : ""}>
+                                          <div className="schedule-fire-head">
+                                            <strong>{fireOutcome(fire)}</strong>
+                                            <small>{fireClock(fire.firedAt)}</small>
+                                          </div>
+                                          <small className="schedule-fire-session">{fire.sessionId || fire.id}</small>
+                                          {fire.err && <small className="schedule-fire-error">{fire.err}</small>}
+                                          {fire.inFlight && (
+                                            <div className="schedule-actions">
+                                              <button onClick={() => void refreshFire(row.name, fire.id)}>Re-read this fire</button>
+                                            </div>
+                                          )}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  {firesError && <div className="credential-error" role="alert">{firesError}</div>}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
                   )}
 
                   {schedulesError && <div className="credential-error" role="alert">{schedulesError}</div>}
                   {scheduleNotice && <div className="input-hint">{scheduleNotice}</div>}
-                  {schedulerWired && schedules.length > 0 && <div className="input-hint">{schedules.filter((row) => row.enabled).length} of {schedules.length} armed.</div>}
                   <div className="key-safety"><span>✓</span><p>A schedule that has not opted into writing runs in plan mode — the daemon rejects a non-mutating schedule that asks for anything wider. <strong>Run now</strong> fires immediately with the schedule&rsquo;s own permissions, so a mutating schedule can edit files with nobody at the keyboard.</p></div>
-                  <div className="transport-note"><span>i</span><p>Each fire runs as its own <code>sched--</code> session. Auto-firing needs a daemon with the scheduler tick loop enabled; this panel manages the registry either way.</p></div>
+                  <div className="transport-note"><span>i</span><p>Each fire runs as its own <code>sched--</code> session, and the fire log points at it by id. Auto-firing needs a daemon with the scheduler tick loop enabled; this panel manages the registry either way.</p></div>
                 </section>
               </div>
             )}
