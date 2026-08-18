@@ -2,9 +2,9 @@
 id: 06-retention-config
 title: Configurable automatic retention
 blocked_by: [05-cleanup-planner]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/06-retention-config"
+worktree: ".scratch/plan-session-storage-continuity-06-retention-config"
 issue: "591"
 retries: 0
 last_error: ""

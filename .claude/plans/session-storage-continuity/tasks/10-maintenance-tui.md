@@ -2,9 +2,9 @@
 id: 10-maintenance-tui
 title: Storage optimization and cleanup TUI workflows
 blocked_by: [03-progressive-sessions-tui, 04-migration-job, 05-cleanup-planner, 07-storage-health]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/10-maintenance-tui"
+worktree: ".scratch/plan-session-storage-continuity-10-maintenance-tui"
 issue: "595"
 retries: 0
 last_error: ""
