@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	miniredisserver "github.com/alicebob/miniredis/v2/server"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -16,6 +20,138 @@ import (
 type metadataWorkCounts struct {
 	loads int
 	rows  int
+}
+
+type redisCommand struct {
+	name string
+	args []string
+}
+
+type redisCommandSpy struct {
+	mu       sync.Mutex
+	commands []redisCommand
+}
+
+func (s *redisCommandSpy) hook(_ *miniredisserver.Peer, command string, args ...string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.commands = append(s.commands, redisCommand{name: strings.ToUpper(command), args: slices.Clone(args)})
+	return false
+}
+
+func (s *redisCommandSpy) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.commands = nil
+}
+
+func (s *redisCommandSpy) snapshot() []redisCommand {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.commands)
+}
+
+func TestPageSessionMetadataSeparatesOwnerScopesAndRejectsCursorReuse(t *testing.T) {
+	st, _ := newMetadataTestStore(t)
+	ctx := context.Background()
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
+	bob := &session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
+	for _, fixture := range []struct {
+		id    session.SessionID
+		owner *session.Principal
+	}{
+		{id: "alice-a", owner: alice},
+		{id: "bob-a", owner: bob},
+		{id: "alice-b", owner: alice},
+		{id: "bob-b", owner: bob},
+		{id: "alice-c", owner: alice},
+	} {
+		s := session.New(fixture.id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		if err := s.RestoreLabels(fixture.owner, ""); err != nil {
+			t.Fatalf("RestoreLabels(%q): %v", fixture.id, err)
+		}
+		if err := st.Save(ctx, s); err != nil {
+			t.Fatalf("Save(%q): %v", fixture.id, err)
+		}
+	}
+
+	aliceRequest := port.SessionMetadataPageRequest{Limit: 2, OwnershipEnforced: true, Owner: alice}
+	alicePage, err := st.PageSessionMetadata(ctx, aliceRequest)
+	if err != nil {
+		t.Fatalf("PageSessionMetadata(alice): %v", err)
+	}
+	assertOwnerPage(t, alicePage, alice, 3, 2)
+	if alicePage.NextCursor == nil {
+		t.Fatal("alice page cursor is nil, want continuation")
+	}
+	aliceRequest.Cursor = alicePage.NextCursor
+	aliceSecond, err := st.PageSessionMetadata(ctx, aliceRequest)
+	if err != nil {
+		t.Fatalf("PageSessionMetadata(alice second): %v", err)
+	}
+	assertOwnerPage(t, aliceSecond, alice, 3, 1)
+
+	bobRequest := port.SessionMetadataPageRequest{Limit: 10, OwnershipEnforced: true, Owner: bob}
+	bobPage, err := st.PageSessionMetadata(ctx, bobRequest)
+	if err != nil {
+		t.Fatalf("PageSessionMetadata(bob): %v", err)
+	}
+	assertOwnerPage(t, bobPage, bob, 2, 2)
+
+	assertCursorRestart(t, st, port.SessionMetadataPageRequest{
+		Limit: 2, OwnershipEnforced: true, Owner: bob, Cursor: alicePage.NextCursor,
+	})
+	assertCursorRestart(t, st, port.SessionMetadataPageRequest{
+		Limit: 2, Cursor: alicePage.NextCursor,
+	})
+}
+
+func TestPageSessionMetadataUsesOneBoundedMetadataRangePerPage(t *testing.T) {
+	st, mr := newMetadataTestStore(t)
+	ctx := context.Background()
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
+	for _, id := range []session.SessionID{"alice-a", "alice-b", "alice-c", "alice-d"} {
+		s := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		if err := s.RestoreLabels(alice, ""); err != nil {
+			t.Fatalf("RestoreLabels(%q): %v", id, err)
+		}
+		if err := st.Save(ctx, s); err != nil {
+			t.Fatalf("Save(%q): %v", id, err)
+		}
+	}
+
+	spy := &redisCommandSpy{}
+	mr.Server().SetPreHook(spy.hook)
+	if err := pageMetadataScript.Load(ctx, st.client).Err(); err != nil {
+		t.Fatalf("load page script: %v", err)
+	}
+	commands := spy.snapshot()
+	if len(commands) != 1 || commands[0].name != "SCRIPT" || len(commands[0].args) != 2 || strings.ToUpper(commands[0].args[0]) != "LOAD" {
+		t.Fatalf("script-load commands = %#v, want one SCRIPT LOAD", commands)
+	}
+	assertBoundedMetadataScript(t, commands[0].args[1])
+
+	request := port.SessionMetadataPageRequest{Limit: 2, OwnershipEnforced: true, Owner: alice}
+	spy.reset()
+	first, err := st.PageSessionMetadata(ctx, request)
+	if err != nil {
+		t.Fatalf("PageSessionMetadata(first): %v", err)
+	}
+	assertPageRedisWork(t, spy.snapshot(), request.Limit)
+	if first.NextCursor == nil {
+		t.Fatal("first page cursor is nil, want continuation")
+	}
+
+	request.Cursor = first.NextCursor
+	spy.reset()
+	second, err := st.PageSessionMetadata(ctx, request)
+	if err != nil {
+		t.Fatalf("PageSessionMetadata(second): %v", err)
+	}
+	assertPageRedisWork(t, spy.snapshot(), request.Limit)
+	if len(second.Sessions) != 2 {
+		t.Fatalf("second page rows = %d, want 2", len(second.Sessions))
+	}
 }
 
 func TestPageSessionMetadataWorkIsBoundedAndDoesNotLoadSnapshots(t *testing.T) {
@@ -94,6 +230,69 @@ func TestMetadataMemberOrderingUsesModifiedDescThenIDAsc(t *testing.T) {
 	}
 }
 
+func TestSaveAndDeleteAdvanceGenerationAndInvalidateCursors(t *testing.T) {
+	st, mr := newMetadataTestStore(t)
+	ctx := context.Background()
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
+	sessions := make(map[session.SessionID]*session.Session)
+	for _, id := range []session.SessionID{"alice-a", "alice-b"} {
+		s := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		if err := s.RestoreLabels(alice, ""); err != nil {
+			t.Fatalf("RestoreLabels(%q): %v", id, err)
+		}
+		if err := st.Save(ctx, s); err != nil {
+			t.Fatalf("Save(%q): %v", id, err)
+		}
+		sessions[id] = s
+	}
+	request := port.SessionMetadataPageRequest{Limit: 1, OwnershipEnforced: true, Owner: alice}
+	beforeSave, err := st.PageSessionMetadata(ctx, request)
+	if err != nil || beforeSave.NextCursor == nil {
+		t.Fatalf("owner page before save = %+v, %v; want cursor", beforeSave, err)
+	}
+	globalRequest := port.SessionMetadataPageRequest{Limit: 1}
+	globalBeforeSave, err := st.PageSessionMetadata(ctx, globalRequest)
+	if err != nil || globalBeforeSave.NextCursor == nil {
+		t.Fatalf("global page before save = %+v, %v; want cursor", globalBeforeSave, err)
+	}
+	globalGeneration := metadataGeneration(t, mr, metadataGlobalScope)
+	ownerScope := metadataOwnerScope(alice)
+	ownerGeneration := metadataGeneration(t, mr, ownerScope)
+
+	if err := st.Save(ctx, sessions["alice-a"]); err != nil {
+		t.Fatalf("Save(existing): %v", err)
+	}
+	assertGeneration(t, mr, metadataGlobalScope, globalGeneration+1)
+	assertGeneration(t, mr, ownerScope, ownerGeneration+1)
+	assertCursorRestart(t, st, port.SessionMetadataPageRequest{
+		Limit: 1, OwnershipEnforced: true, Owner: alice, Cursor: beforeSave.NextCursor,
+	})
+	globalRequest.Cursor = globalBeforeSave.NextCursor
+	assertCursorRestart(t, st, globalRequest)
+
+	afterSave, err := st.PageSessionMetadata(ctx, request)
+	if err != nil || afterSave.NextCursor == nil {
+		t.Fatalf("owner page before delete = %+v, %v; want cursor", afterSave, err)
+	}
+	globalRequest.Cursor = nil
+	globalAfterSave, err := st.PageSessionMetadata(ctx, globalRequest)
+	if err != nil || globalAfterSave.NextCursor == nil {
+		t.Fatalf("global page before delete = %+v, %v; want cursor", globalAfterSave, err)
+	}
+	globalGeneration++
+	ownerGeneration++
+	if err := st.Delete(ctx, "alice-b"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	assertGeneration(t, mr, metadataGlobalScope, globalGeneration+1)
+	assertGeneration(t, mr, ownerScope, ownerGeneration+1)
+	assertCursorRestart(t, st, port.SessionMetadataPageRequest{
+		Limit: 1, OwnershipEnforced: true, Owner: alice, Cursor: afterSave.NextCursor,
+	})
+	globalRequest.Cursor = globalAfterSave.NextCursor
+	assertCursorRestart(t, st, globalRequest)
+}
+
 func TestDeleteRemovesMetadataAndInvalidatesCursor(t *testing.T) {
 	st, _ := newMetadataTestStore(t)
 	ctx := context.Background()
@@ -135,6 +334,103 @@ func TestLegacyStoreReportsMetadataPagingUnsupported(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	if _, err := st.PageSessionMetadata(context.Background(), port.SessionMetadataPageRequest{Limit: 10}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
 		t.Fatalf("legacy PageSessionMetadata error = %v, want unsupported", err)
+	}
+}
+
+func assertOwnerPage(t *testing.T, page port.SessionMetadataPage, owner *session.Principal, wantTotal, wantRows int) {
+	t.Helper()
+	if page.TotalCount != wantTotal || len(page.Sessions) != wantRows {
+		t.Fatalf("page count = %d/%d, want %d/%d: %+v", len(page.Sessions), page.TotalCount, wantRows, wantTotal, page)
+	}
+	for _, row := range page.Sessions {
+		if !owner.SameIdentity(row.Owner) {
+			t.Fatalf("page contains foreign owner on session %q: got %+v, want %+v", row.ID, row.Owner, owner)
+		}
+	}
+}
+
+func assertCursorRestart(t *testing.T, st *Store, request port.SessionMetadataPageRequest) {
+	t.Helper()
+	page, err := st.PageSessionMetadata(context.Background(), request)
+	if err != port.ErrSessionMetadataCursorRestart {
+		t.Fatalf("cursor reuse error = %v, want exact restart sentinel", err)
+	}
+	if len(page.Sessions) != 0 || page.TotalCount != 0 || page.NextCursor != nil {
+		t.Fatalf("stale cursor leaked page data: %+v", page)
+	}
+}
+
+func assertBoundedMetadataScript(t *testing.T, script string) {
+	t.Helper()
+	upper := strings.ToUpper(script)
+	if strings.Count(upper, "ZRANGEBYLEX") != 1 {
+		t.Fatalf("metadata page script has %d ordered range operations, want 1", strings.Count(upper, "ZRANGEBYLEX"))
+	}
+	if !strings.Contains(upper, "'ZRANGEBYLEX', KEYS[1], ARGV[3], '+', 'LIMIT', 0, ARGV[4]") {
+		t.Fatal("metadata page range is not bounded by LIMIT 0, requested limit")
+	}
+	if strings.Contains(upper, "SCAN") || strings.Contains(script, "'blob'") || strings.Contains(script, `"blob"`) {
+		t.Fatal("metadata page script scans keys or reads snapshot blobs")
+	}
+}
+
+func assertPageRedisWork(t *testing.T, commands []redisCommand, limit int) {
+	t.Helper()
+	var scriptCalls, pageRanges int
+	for _, command := range commands {
+		switch command.name {
+		case "GET":
+			if len(command.args) != 1 || command.args[0] != metadataIndexStateKey {
+				t.Fatalf("unexpected metadata page GET: %#v", command)
+			}
+		case "EVALSHA":
+			if len(command.args) != 8 || command.args[0] != pageMetadataScript.Hash() {
+				t.Fatalf("unexpected metadata page EVALSHA: %#v", command)
+			}
+			if command.args[len(command.args)-1] != strconv.Itoa(limit+1) {
+				t.Fatalf("metadata range count = %q, want limit+1 = %d", command.args[len(command.args)-1], limit+1)
+			}
+			scriptCalls++
+		case "HGET":
+			if len(command.args) != 2 || command.args[0] != metadataGenerationKey {
+				t.Fatalf("metadata page performed snapshot hash read: %#v", command)
+			}
+		case "ZCARD":
+			if len(command.args) != 1 || !strings.HasPrefix(command.args[0], "mecatl:session-metadata:index:") {
+				t.Fatalf("unexpected metadata count operation: %#v", command)
+			}
+		case "ZRANGEBYLEX":
+			if len(command.args) != 6 || !strings.HasPrefix(command.args[0], "mecatl:session-metadata:index:") ||
+				command.args[2] != "+" || strings.ToUpper(command.args[3]) != "LIMIT" ||
+				command.args[4] != "0" || command.args[5] != strconv.Itoa(limit+1) {
+				t.Fatalf("unbounded or unexpected metadata range: %#v", command)
+			}
+			pageRanges++
+		case "HGETALL", "HMGET", "SCAN", "SSCAN", "HSCAN", "ZSCAN":
+			t.Fatalf("metadata page performed forbidden snapshot read/scan: %#v", command)
+		default:
+			t.Fatalf("unexpected Redis command during metadata page: %#v", command)
+		}
+	}
+	if scriptCalls != 1 || pageRanges != 1 {
+		t.Fatalf("metadata page operations = %#v, want one script call and one bounded ordered range", commands)
+	}
+}
+
+func metadataGeneration(t *testing.T, mr *miniredis.Miniredis, scope string) int {
+	t.Helper()
+	raw := mr.HGet(metadataGenerationKey, scope)
+	generation, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatalf("generation %q = %q: %v", scope, raw, err)
+	}
+	return generation
+}
+
+func assertGeneration(t *testing.T, mr *miniredis.Miniredis, scope string, want int) {
+	t.Helper()
+	if got := metadataGeneration(t, mr, scope); got != want {
+		t.Fatalf("generation %q = %d, want %d", scope, got, want)
 	}
 }
 
