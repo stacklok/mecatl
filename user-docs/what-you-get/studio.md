@@ -54,7 +54,7 @@ A reachable gateway is not the same as a usable one. Studio's readiness probe as
 | **MCP Gateway** | Connect a remote MCP gateway by browser OAuth or an existing token. Sign-in is bounded to 10 minutes, so a closed popup fails cleanly instead of hanging. |
 | **Skills** | Lists the skills discovered in the workspace's `.mecatl/skills`. Discovery is project-scoped by design and never widens to your user-global skills. |
 | **Memory** | Read-only view of the cross-project user-model index (keys and descriptions, never values), plus whether project memory is enabled. The daemon does not yet expose a project-memory listing endpoint. See [Memory](./memory.md). |
-| **Schedules** | The oversight surface for [scheduled tasks](./scheduled-tasks.md): what is armed, when it next fires, whether it can write, and pause / resume / run-now / delete. |
+| **Schedules** | The oversight surface for [scheduled tasks](./scheduled-tasks.md): arm a schedule, edit one, see what is armed and when it next fires, read each past fire's outcome, and pause / resume / run-now / delete. |
 
 The memory panel is deliberately read-only. Mecatl's memory tool calls are injection-scanned; a value typed into a text box would reach the model's turn-0 context without passing that check. Ask the agent to remember or forget something instead.
 
@@ -68,6 +68,16 @@ The memory panel is deliberately read-only. Mecatl's memory tool calls are injec
 
 A schedule that fires while you are watching shows up as its own `sched--` session, so unattended work is visible in the same place as your own.
 
+## Scheduling work
+
+The Schedules panel manages the registry directly, so a schedule does not have to be authored in chat:
+
+- **New schedule** takes a name, the prompt the unattended run is given, and either a cron cadence (with an IANA timezone and an optional total-fire cap) or a single future time. Mecatl's own `Schedule` tool writes to the same registry, so anything it arms appears in the list too.
+- **Edit** changes a stored schedule in place and keeps its firing history — the fire count, the next fire, and past fires all survive. Settings the form has no control for, such as a provider selector set from the CLI, are preserved rather than dropped. The name is fixed: a schedule is addressed by name, so renaming would mean arming a second one and deleting the first.
+- **Write access** is an explicit opt-in. A schedule that has not opted in runs in plan mode, and the daemon rejects a non-mutating schedule that asks for anything wider. Nobody is at the keyboard to answer an approval, so a fire in the ask-before-writing posture stops at the first prompt policy cannot resolve.
+- **History** lists each fire with its stop reason, its error when it failed, and the id of the `sched--` session it ran as. A fire that has not reported a stop is still in flight and can be re-read on its own.
+
+The daemon rejects a cadence tighter than its frequency floor (one minute by default), an invalid cron expression, a one-shot in the past, and a provider or model the deployment does not serve — the panel shows those refusals verbatim rather than guessing at them.
 ## Your chats live on the daemon
 
 The chat list is `mecated`'s session store, not your browser's. Studio reads it from the daemon, so the same chats appear on every browser and machine pointed at that daemon, and clearing your browser data does not lose them.

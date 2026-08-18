@@ -39,7 +39,8 @@ task studio:typecheck # tsc --noEmit
 - `scripts/dev-local.mjs` — starts the controller and Next server in managed
   mode; with `MECATL_BASE_URL`, starts Next only.
 - `lib/protocol.ts` — the typed runtime decoder for daemon wire JSON, including
-  the stored-chat inventory and transcript envelopes.
+  the stored-chat inventory and transcript envelopes, plus the schedule-spec
+  ENCODER (the create/edit request body) and the fire-log decoder.
 - `tests/rendered-html.test.mjs` — server rendering, authenticated external
   proxy, control-policy, egress-policy, and wire-decoder behavior tests.
 
@@ -93,6 +94,23 @@ task studio:typecheck # tsc --noEmit
 - **The memory panel is read-only.** Mecatl curates its own memory through
   injection-scanned tool calls; a value typed into the UI would land in turn-0
   context without passing that check.
+- **Editing a schedule must round-trip the whole spec.** `PUT /v1/schedules/{name}`
+  REPLACES the spec — the daemon preserves only the firing state, `created_at`, and
+  the captured owner — so any field the form omits is deleted from the schedule.
+  `ScheduleRow.carried` holds the settings the panel has no control for (provider
+  selector, misfire policy, singleton, carried context, per-fire deadline,
+  multimodal parts) and `encodeScheduleSpec` puts them back. Adding a spec field
+  means adding it to the form OR to `carried`; adding it to neither silently
+  deletes an operator's setting on their next prompt edit.
+- **A request body is not a response body.** Requests are decoded with protojson,
+  responses are encoded with stdlib `encoding/json`, and the two disagree on every
+  well-known type: a Timestamp reads back as `{seconds,nanos}` but must be sent as
+  RFC 3339, a Duration reads back as `{seconds}` but must be sent as `"900s"`. Never
+  echo a decoded body back to the daemon — convert it through the encoder.
+- **The mutating / mode pair is coupled, so the form couples it.** The daemon rejects
+  a non-mutating schedule that asks for a write-capable posture. The write toggle
+  moves the posture with it, so an invalid pair is not constructible rather than
+  being caught by a 400.
 - **A failed turn must render as failed.** A provider failure arrives as a
   well-formed `result` carrying `stop:"error"` and no text — the "Done." fallback
   must not swallow it.
