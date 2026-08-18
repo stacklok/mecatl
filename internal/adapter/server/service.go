@@ -2149,6 +2149,19 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	return nil
 }
 
+var (
+	errRetentionCandidateActive  = fmt.Errorf("%w: retention candidate is active", ErrFailedPrecondition)
+	errRetentionCandidateChanged = fmt.Errorf("%w: retention candidate changed", ErrFailedPrecondition)
+)
+
+type maintenanceRetentionDeleteKey struct{}
+
+// withMaintenanceRetentionDelete requires the management-only exclusion proof;
+// automatic local retention keeps the seam's existing optional-lease posture.
+func withMaintenanceRetentionDelete(ctx context.Context) context.Context {
+	return context.WithValue(ctx, maintenanceRetentionDeleteKey{}, true)
+}
+
 // DeleteSessionForRetentionCandidate removes one exact planner candidate while
 // keeping run-entry and lease exclusions held through the backend's atomic final
 // metadata comparison and family deletion.
@@ -2159,24 +2172,32 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	if !ok {
 		return ErrSessionDeleteUnsupported
 	}
-	release, err := s.acquireMutationLease(ctx, candidate.ID)
+	if s.IsLive(candidate.ID) {
+		return errRetentionCandidateActive
+	}
+	var release func()
+	var err error
+	if requireMaintenance, _ := ctx.Value(maintenanceRetentionDeleteKey{}).(bool); requireMaintenance {
+		release, err = s.acquireMaintenanceMutationLease(ctx, candidate.ID)
+	} else {
+		release, err = s.acquireMutationLease(ctx, candidate.ID)
+	}
 	if err != nil {
 		return err
 	}
 	defer release()
 	if s.IsLive(candidate.ID) {
-		return fmt.Errorf("%w: retention candidate is active", ErrFailedPrecondition)
+		return errRetentionCandidateActive
 	}
 	sess, err := s.cfg.Store.Load(ctx, candidate.ID)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
-			return nil
+			return errRetentionCandidateChanged
 		}
 		return fmt.Errorf("%w: load retention candidate: %v", ErrInternal, err)
 	}
-	if sess == nil || sess.ID != candidate.ID || !cleanupSessionMatches(sess, CleanupCandidate{Kind: candidate.Kind, State: candidate.State, metadata: port.SessionDiscoveryMeta{Owner: candidate.Owner}}) ||
-		session.ValidateSessionMetadata(sess.Kind, sess.Relationship) != nil || sess.Kind == session.SessionKindUnknown {
-		return fmt.Errorf("%w: retention candidate changed or has no valid durable taxonomy", ErrFailedPrecondition)
+	if !retentionCandidateMatches(sess, candidate) {
+		return errRetentionCandidateChanged
 	}
 	deleted, err := deleter.DeleteSessionIfUnchanged(ctx, candidate)
 	if err != nil {
@@ -2186,10 +2207,20 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
 	}
 	if !deleted {
-		return fmt.Errorf("%w: retention candidate changed", ErrFailedPrecondition)
+		return errRetentionCandidateChanged
 	}
 	s.CloseSession(candidate.ID)
 	return nil
+}
+
+func retentionCandidateMatches(sess *session.Session, candidate port.SessionDiscoveryMeta) bool {
+	if sess == nil {
+		return false
+	}
+	ownerMatches := candidate.Owner == nil && sess.Owner == nil || candidate.Owner != nil && candidate.Owner.SameIdentity(sess.Owner)
+	return sess.ID == candidate.ID && ownerMatches && sess.Kind == candidate.Kind && sess.State == candidate.State &&
+		sess.State != session.StateRunning && sess.State != session.StateAwaiting && sess.Kind != session.SessionKindUnknown &&
+		session.ValidateSessionMetadata(sess.Kind, sess.Relationship) == nil
 }
 
 // DeleteSessionForRetention removes one session selected by the composition-owned

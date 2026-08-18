@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -279,6 +280,72 @@ func TestSessionStorageContinuity_Scenario5_CleanupErrorsAreSanitized(t *testing
 	job, _ := svc.ApplySessionCleanup(ctx, plan.Token)
 	if strings.Contains(job.Errors[0].Message, raw) || strings.Contains(job.Errors[0].Message, "/private") || strings.Contains(job.Errors[0].Message, "SECRET") {
 		t.Fatalf("raw backend detail escaped: %+v", job.Errors[0])
+	}
+}
+
+type cleanupWorkStore struct {
+	*memstore.Store
+	pageCalls   atomic.Int64
+	loadCalls   atomic.Int64
+	deleteCalls atomic.Int64
+}
+
+func (s *cleanupWorkStore) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	s.pageCalls.Add(1)
+	return s.Store.PageSessionMetadata(ctx, request)
+}
+
+func (s *cleanupWorkStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	s.loadCalls.Add(1)
+	return s.Store.Load(ctx, id)
+}
+
+func (s *cleanupWorkStore) DeleteSessionIfUnchanged(ctx context.Context, candidate port.SessionDiscoveryMeta) (bool, error) {
+	s.deleteCalls.Add(1)
+	return s.Store.DeleteSessionIfUnchanged(ctx, candidate)
+}
+
+func TestCleanupApplyUsesOneExactDeleteOperationPerCandidate(t *testing.T) {
+	now := time.Now().UTC()
+	store := &cleanupWorkStore{Store: memstore.New(memstore.WithNow(func() time.Time { return now.Add(-time.Hour) }))}
+	for _, id := range []session.SessionID{"first", "second", "third"} {
+		saveCleanupSession(t, store, id, cleanupAlice, session.SessionKindMain)
+	}
+	svc := newCleanupService(t, store, func() time.Time { return now }, RetentionPolicy{MainMaxAge: time.Minute}, func(context.Context) bool { return true })
+	ctx := cleanupContext(cleanupAlice)
+	plan, err := svc.PlanSessionCleanup(ctx, CleanupScope{})
+	if err != nil || len(plan.Eligible) != 3 {
+		t.Fatalf("PlanSessionCleanup = %+v, %v", plan, err)
+	}
+	store.pageCalls.Store(0)
+	store.loadCalls.Store(0)
+	store.deleteCalls.Store(0)
+
+	job, err := svc.ApplySessionCleanup(ctx, plan.Token)
+	if err != nil || job.Deleted != 3 {
+		t.Fatalf("ApplySessionCleanup = %+v, %v", job, err)
+	}
+	if pages, loads, deletes := store.pageCalls.Load(), store.loadCalls.Load(), store.deleteCalls.Load(); pages != 1 || loads != 3 || deletes != 3 {
+		t.Fatalf("apply work = pages:%d loads:%d exact-deletes:%d, want 1:%d:%d", pages, loads, deletes, len(plan.Eligible), len(plan.Eligible))
+	}
+}
+
+func TestCleanupDeletionReasonsMatchRetentionCandidateOutcomes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"deleted": {want: ""},
+		"changed": {err: errRetentionCandidateChanged, want: maintenanceReasonChanged},
+		"active":  {err: errRetentionCandidateActive, want: maintenanceReasonActive},
+		"leased":  {err: ErrSessionLeasedElsewhere, want: maintenanceReasonLeased},
+		"backend": {err: ErrInternal, want: cleanupBackendFailure},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := cleanupDeletionReason(tc.err); got != tc.want {
+				t.Fatalf("cleanupDeletionReason(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

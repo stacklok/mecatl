@@ -368,13 +368,14 @@ func (s *Service) ApplySessionCleanup(ctx context.Context, token string) (Cleanu
 	}
 	s.rememberCleanupJob(job)
 	s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: job.ID, State: StorageMaintenanceStarted})
+	deleteCtx := withMaintenanceRetentionDelete(ctx)
 	for _, candidate := range plan.Eligible {
 		if ctx.Err() != nil || s.cleanupCancelled(job.ID, principalKey) {
 			job.State = cleanupStateCancelled
 			break
 		}
 		job.Processed++
-		reason := s.deleteCleanupCandidate(ctx, candidate)
+		reason := cleanupDeletionReason(s.DeleteSessionForRetentionCandidate(deleteCtx, candidate.metadata))
 		recordCleanupOutcome(&job, candidate, reason)
 		job.State = cleanupStateRunning
 		s.rememberCleanupJob(job)
@@ -431,71 +432,19 @@ func cleanupItemHandle(id session.SessionID) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func (s *Service) deleteCleanupCandidate(ctx context.Context, candidate CleanupCandidate) string {
-	unlock := s.runEntryMu.lock(candidate.ID)
-	defer unlock()
-	if s.IsLive(candidate.ID) {
+func cleanupDeletionReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errRetentionCandidateChanged):
+		return maintenanceReasonChanged
+	case errors.Is(err, errRetentionCandidateActive):
 		return maintenanceReasonActive
-	}
-	release, err := s.acquireMaintenanceMutationLease(ctx, candidate.ID)
-	if err != nil {
-		if errors.Is(err, ErrSessionLeasedElsewhere) {
-			return maintenanceReasonLeased
-		}
+	case errors.Is(err, ErrSessionLeasedElsewhere):
+		return maintenanceReasonLeased
+	default:
 		return cleanupBackendFailure
 	}
-	defer release()
-	if s.IsLive(candidate.ID) {
-		return maintenanceReasonActive
-	}
-	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
-	if !ok {
-		return cleanupBackendFailure
-	}
-	rows, err := cleanupMetadata(ctx, pager, nil)
-	if err != nil {
-		return cleanupBackendFailure
-	}
-	if !cleanupMetadataContains(rows, candidate) {
-		return maintenanceReasonChanged
-	}
-	loaded, err := s.cfg.Store.Load(ctx, candidate.ID)
-	if err != nil || !cleanupSessionMatches(loaded, candidate) {
-		return maintenanceReasonChanged
-	}
-	pruner, ok := s.cfg.Store.(port.ConditionalPrunableStore)
-	if !ok {
-		return cleanupBackendFailure
-	}
-	deleted, err := pruner.DeleteSessionIfUnchanged(ctx, candidate.metadata)
-	if err != nil {
-		return cleanupBackendFailure
-	}
-	if !deleted {
-		return maintenanceReasonChanged
-	}
-	return ""
-}
-
-func cleanupMetadataContains(rows []port.SessionDiscoveryMeta, candidate CleanupCandidate) bool {
-	for _, row := range rows {
-		if row.ID == candidate.ID && row.Kind == candidate.Kind && row.State == candidate.State &&
-			row.ModifiedAt.Equal(candidate.ModifiedAt) && sameCleanupOwner(candidate.metadata.Owner, row.Owner) {
-			return true
-		}
-	}
-	return false
-}
-
-func cleanupSessionMatches(loaded *session.Session, candidate CleanupCandidate) bool {
-	if loaded == nil || !sameCleanupOwner(candidate.metadata.Owner, loaded.Owner) || loaded.Kind != candidate.Kind || loaded.State != candidate.State {
-		return false
-	}
-	return loaded.State != session.StateRunning && loaded.State != session.StateAwaiting
-}
-
-func sameCleanupOwner(expected, actual *session.Principal) bool {
-	return expected == nil && actual == nil || expected != nil && expected.SameIdentity(actual)
 }
 
 func (s *Service) rememberCleanupJob(job cleanupJobRecord) {
