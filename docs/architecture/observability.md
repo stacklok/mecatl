@@ -199,12 +199,15 @@
   reconciliation consumes the catalog-backed `MetaList`; neither reloads full
   conversations for discovery. Candidate deletion/settlement still rechecks the
   existing durable state, process liveness, and lease protections after discovery.
-  The POLICY lives in composition (`internal/app/childgc.go`, issue #38):
-  persisted CHILD session snapshots (the `subagent-*`/`parallel-*`/`team-*` ids
-  behind `InspectSubagent`/`InspectMember`/`resume:`) are GC-swept by age
-  (`--child-retention`, default 7d) and per-family count
-  (`--child-retention-max-per-family`, default 500), skipping in-flight runs;
-  main sessions are never touched.
+  The POLICY lives in composition (`internal/app/childgc.go`) and all automatic
+  and manual selection uses `internal/sessionretention/planner.go`. The strict
+  operator-only `retention.version: 1` settings block exposes main/child/scheduled
+  age and count limits plus sweep cadence; explicit legacy CLI flags win. Zero
+  disables a limit, invalid/negative/unknown config fails, and project-tier
+  retention is ignored. Main deletion defaults off and requires an explicit
+  acknowledgement after the planner summary is logged. Durable unknown/invalid
+  taxonomy, running/awaiting, live, and leased rows remain protected. The effective
+  secret-free `retention/v1` policy is projected by authenticated storage health.
 - **EventLog** (`port.EventLog`, cloud-native Phase 3) — a DURABLE per-session
   event timeline, SEPARATE from `EventSink` (the sink mirrors live; the log is
   storage a later consumer reads back). **The loop never calls it** — persistence

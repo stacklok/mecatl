@@ -39,6 +39,10 @@ func authoritativeKeys() []string {
 	collect("learning", permconfig.LearningSection{})
 	collect("learning.skills", permconfig.LearningSkillsSection{})
 	collect("learning.automatic", permconfig.LearningAutomaticSection{})
+	collect("retention", permconfig.RetentionSection{})
+	collect("retention.main", permconfig.RetentionLimitSection{})
+	collect("retention.child", permconfig.RetentionLimitSection{})
+	collect("retention.scheduled", permconfig.RetentionLimitSection{})
 	collect("models", permconfig.ModelsSection{})
 	collect("models.router", permconfig.RouterSection{})
 	collect("models.router.categories", permconfig.RouterCategory{})
@@ -262,6 +266,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
+		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup
 		"models":                 configgen.TierProject,  // operator + project (project within the operator allowlist)
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)
 		"mcp":                    configgen.TierOperator, // operator-only: endpoints, auth, credentials, and egress policy

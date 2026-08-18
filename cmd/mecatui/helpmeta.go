@@ -115,10 +115,18 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"trust-project": {group: groupPermissions, common: true, local: true, connect: false},
 
 	// ── Storage (embedded-only) ───────────────────────────────────────────
-	"store-dir":  {group: groupStorage, common: true, local: true, connect: false},
-	"no-store":   {group: groupStorage, common: false, local: true, connect: false},
-	"memory-dir": {group: groupStorage, common: false, local: true, connect: false},
-	"no-memory":  {group: groupStorage, common: false, local: true, connect: false},
+	"store-dir":                         {group: groupStorage, common: true, local: true, connect: false},
+	"no-store":                          {group: groupStorage, common: false, local: true, connect: false},
+	"memory-dir":                        {group: groupStorage, common: false, local: true, connect: false},
+	"no-memory":                         {group: groupStorage, common: false, local: true, connect: false},
+	"child-retention":                   {group: groupStorage, common: false, local: true, connect: false},
+	"child-retention-max-per-family":    {group: groupStorage, common: false, local: true, connect: false},
+	"main-retention":                    {group: groupStorage, common: false, local: true, connect: false},
+	"main-retention-max-total":          {group: groupStorage, common: false, local: true, connect: false},
+	"schedule-fire-retention":           {group: groupStorage, common: false, local: true, connect: false},
+	"schedule-fire-retention-max-total": {group: groupStorage, common: false, local: true, connect: false},
+	"retention-sweep-cadence":           {group: groupStorage, common: false, local: true, connect: false},
+	"acknowledge-main-retention":        {group: groupStorage, common: false, local: true, connect: false},
 
 	// ── Memory & knowledge (embedded-only) ────────────────────────────────
 	"soul-file":                  {group: groupKnowledge, common: false, local: true, connect: false},

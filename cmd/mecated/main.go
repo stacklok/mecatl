@@ -359,6 +359,8 @@ type config struct {
 	scheduleFireRetention         time.Duration
 	scheduleFireRetentionSet      bool // true when --schedule-fire-retention was passed explicitly
 	scheduleFireRetentionMaxTotal int
+	retentionCLISet               app.RetentionCLISet
+	acknowledgeMainRetention      bool
 
 	// Slash commands: directory of <name>.md command templates, and an explicit
 	// enable switch. commandsDir set OR enableCommands true wires the
@@ -1039,6 +1041,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		MainRetentionMaxTotal:         cfg.mainRetentionMaxTotal,
 		ScheduleFireRetention:         cfg.scheduleFireRetention,
 		ScheduleFireRetentionMaxTotal: cfg.scheduleFireRetentionMaxTotal,
+		RetentionCLISet:               cfg.retentionCLISet,
+		AcknowledgeMainRetention:      cfg.acknowledgeMainRetention,
 		ChildGCInterval:               cfg.childGCInterval,
 		SessionStoreURL:               cfg.sessionStoreURL,
 		MemoryStoreURL:                cfg.memoryStoreURL,
@@ -1428,7 +1432,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "max persisted MAIN (top-level) session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight runs. Durable-store-only, like --main-retention. 0 (default) disables the cap, so main sessions are never touched")
 	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. Defaults to 7d (168h) when unset and scheduling can be active (the on-by-default posture) so a durable store does not grow without bound; an explicit 0 disables the pass — fire sessions are never swept. Only meaningful with a durable store (--store-dir or a prunable --session-store-url driver)")
 	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "max persisted \"sched--\"-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of --main-retention-max-total for the schedule-fire family: the age horizon (--schedule-fire-retention) bounds the tail, this cap bounds the head (a per-minute cron accumulates ~10k sessions/week the horizon never trims). Durable-store-only. 0 (default) disables the cap")
-	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 = sweep at startup only. Only meaningful when a child or main retention/cap knob is active")
+	fs.DurationVar(&cfg.childGCInterval, "child-gc-interval", time.Hour, "how often the session retention GC re-sweeps after the startup sweep; 0 disables periodic cadence (startup sweep remains for compatibility). Operator settings: retention.sweep_cadence")
+	fs.BoolVar(&cfg.acknowledgeMainRetention, "acknowledge-main-retention", false, "explicitly acknowledge destructive automatic cleanup of MAIN sessions after reviewing the logged planner summary; required when main age or count retention is enabled")
 	fs.StringVar(&cfg.memoryStoreURL, "memory-store-url", "", "host:port of a remote memory-store gRPC driver (mecatl.driver.v1.MemoryStoreService); replaces the local flock store, so it is mutually exclusive with --memory-dir. Enables the Remember/Recall tools like --memory-dir does. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.eventLogURL, "event-log-url", "", "host:port of a remote event-log gRPC driver (mecatl.driver.v1.EventLogService) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); INDEPENDENT of the session store. Empty keeps the local default (the --store-dir jsonl log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.scheduleStoreURL, "schedule-store-url", "", "host:port of a remote schedule-store gRPC driver (mecatl.driver.v1.ScheduleStoreService + ScheduleOneShotReArmerService) for the durable schedule registry (scheduled tasks); INDEPENDENT of the session store — when set, replaces the ScheduleStore() discovery from the configured store. Empty keeps the byte-identical default (the configured store's own ScheduleStore() accessor, or no scheduling). The driver's Claim/ClaimNow/ReArmOneShot run the atomic advance server-side. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
@@ -1670,6 +1675,20 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			cfg.subagentModelRouterSet = true
 		case "config":
 			cfg.configPathFlagSet = true
+		case "main-retention":
+			cfg.retentionCLISet.MainMaxAge = true
+		case "main-retention-max-total":
+			cfg.retentionCLISet.MainMaxCount = true
+		case "child-retention":
+			cfg.retentionCLISet.ChildMaxAge = true
+		case "child-retention-max-per-family":
+			cfg.retentionCLISet.ChildMaxCount = true
+		case "schedule-fire-retention":
+			cfg.retentionCLISet.ScheduledMaxAge = true
+		case "schedule-fire-retention-max-total":
+			cfg.retentionCLISet.ScheduledMaxCount = true
+		case "child-gc-interval":
+			cfg.retentionCLISet.SweepCadence = true
 		}
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true

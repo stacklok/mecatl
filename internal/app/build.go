@@ -361,7 +361,11 @@ type Config struct {
 	// off). Default applied at the cmd layer alongside ScheduleFireRetention. A
 	// non-prunable store is never swept.
 	ScheduleFireRetentionMaxTotal int
-	storageMaintenance            *storageMaintenanceState
+	// RetentionCLISet records explicit legacy retention flags so CLI outranks settings.yaml.
+	RetentionCLISet RetentionCLISet
+	// AcknowledgeMainRetention is explicit consent for destructive main-session cleanup.
+	AcknowledgeMainRetention bool
+	storageMaintenance       *storageMaintenanceState
 
 	// Remote store drivers (Phase B): gRPC driver endpoints that replace the
 	// LOCAL session/memory stores with internal/adapter/grpcdriver clients.
@@ -1278,6 +1282,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var retentionErr error
+	cfg, retentionErr = foldOperatorRetention(cfg)
+	if retentionErr != nil {
+		return nil, retentionErr
+	}
+	if err := validateDestructiveMainRetention(ctx, cfg); err != nil {
+		return nil, err
+	}
 	var learningErr error
 	cfg, learningErr = foldLearningMode(cfg)
 	if learningErr != nil {
@@ -1596,6 +1608,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return !cfg.OwnershipEnforced || principal != nil
 		},
 		RetentionPolicy: server.RetentionPolicy{
+			Version:    "retention/v1",
 			MainMaxAge: cfg.MainRetention, MainMaxCount: cfg.MainRetentionMaxTotal,
 			ChildMaxAge: cfg.ChildRetention, ChildMaxCount: cfg.ChildRetentionMaxPerFamily,
 			ScheduledMaxAge: cfg.ScheduleFireRetention, ScheduledMaxCount: cfg.ScheduleFireRetentionMaxTotal,

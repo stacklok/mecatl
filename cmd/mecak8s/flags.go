@@ -183,6 +183,8 @@ type config struct {
 	scheduleFireRetention         time.Duration
 	scheduleFireRetentionSet      bool
 	scheduleFireRetentionMaxTotal int
+	retentionCLISet               app.RetentionCLISet
+	acknowledgeMainRetention      bool
 
 	// Skills/agents/soul/user-model: the discovery knobs. mecak8s is a daemon
 	// over a workspace mount; these default OFF / conventional like mecated.
@@ -345,6 +347,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.mainRetentionMaxTotal, "main-retention-max-total", 0, "max persisted MAIN session snapshots kept store-wide; 0 (default) disables the cap")
 	fs.DurationVar(&cfg.scheduleFireRetention, "schedule-fire-retention", 0, "SCHEDULED TASKS: how long persisted \"sched--\"-prefixed fire-session snapshots are retained before the GC sweep deletes them (a distinct family from --main-retention/--child-retention); a LIVE fire (one mid-run) is never deleted. Defaults to 7d/168h when unset (the scheduler is ON by default); an explicit 0 disables the pass — fire sessions are never swept")
 	fs.IntVar(&cfg.scheduleFireRetentionMaxTotal, "schedule-fire-retention-max-total", 0, "max persisted \"sched--\"-prefixed fire-session snapshots kept store-wide; the oldest beyond the cap are deleted, skipping in-flight fires. The symmetric peer of --main-retention-max-total: the age horizon bounds the tail, this cap bounds the head. 0 (default) disables the cap")
+	fs.BoolVar(&cfg.acknowledgeMainRetention, "acknowledge-main-retention", false, "explicitly acknowledge destructive automatic cleanup of MAIN sessions after reviewing the logged planner summary")
 
 	// Skills / agents / soul / user-model (default OFF / conventional, like mecated).
 	fs.Var(&cfg.skillsDirs, "skills-dir", "directory to discover progressive-disclosure skills from (repeatable; highest precedence). TRUST BOUNDARY: a SKILL.md steers the model — point this only at directories you trust")
@@ -401,6 +404,7 @@ func parseFlags(argv []string) (config, error) {
 		case "subagent-model-router":
 			cfg.subagentModelRouterSet = true
 		}
+		markRetentionCLIFlag(&cfg.retentionCLISet, fl.Name)
 		if fl.Name == "schedule-fire-retention" {
 			cfg.scheduleFireRetentionSet = true
 		}
@@ -502,6 +506,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		MainRetentionMaxTotal:         cfg.mainRetentionMaxTotal,
 		ScheduleFireRetention:         cfg.scheduleFireRetention,
 		ScheduleFireRetentionMaxTotal: cfg.scheduleFireRetentionMaxTotal,
+		RetentionCLISet:               cfg.retentionCLISet,
+		AcknowledgeMainRetention:      cfg.acknowledgeMainRetention,
 		SkillsDirs:                    cfg.skillsDirs,
 		SkillsConventional:            cfg.skillsConventional,
 		AgentsDirs:                    cfg.agentsDirs,

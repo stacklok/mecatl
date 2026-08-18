@@ -5936,6 +5936,21 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   disclosed. `TestInvariant_retention_requires_durable_taxonomy` pins the fail-closed
   taxonomy and cap-slot rule.
 
+  **Versioned automatic retention configuration (issue #591).** The strict
+  operator-only `retention:` subtree (`version: 1`) configures main, child, and
+  scheduled age/count limits plus the shared sweep cadence. Built-in defaults are
+  below operator settings and each explicitly supplied compatibility flag remains
+  highest precedence. Zero disables its limit (zero cadence disables repeats while
+  retaining the historical startup sweep); negative values, unknown keys, and
+  unknown versions fail startup. Project-tier blocks are warning-ignored and cannot
+  weaken protection. Main deletion defaults off; enabling either main limit logs the
+  effective `retention/v1` planner summary (including `unknown=protected`) and
+  requires `acknowledge_main_deletion: true` or `--acknowledge-main-retention`.
+  `server.StorageHealth` remains the authenticated, secret-free effective-policy
+  projection. Embedded mecatui exposes the same local-only knobs and defaults main
+  deletion off; connect mode rejects them rather than pretending to configure a
+  remote server.
+
   `cmd/mecatui/client/sessions_list.go` (`ListSessionPage`) is the single
   proto-to-client paging boundary. It fetches exactly one 100-row page and maps
   the gRPC `ABORTED` stale-cursor signal to a client sentinel; only non-interactive

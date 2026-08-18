@@ -26,6 +26,7 @@ func BuildModel(docs Docs) *Model {
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
 		learningSubtree(docs),
+		retentionSubtree(docs),
 		modelsSubtree(docs),
 		openRouterSubtree(docs),
 		mcpSubtree(docs),
@@ -144,6 +145,23 @@ func guardrailsSubtree(docs Docs) *Subtree {
 		CommentedOut: true,
 		Fields:       fields,
 	}
+}
+
+func retentionSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("RetentionSection", permconfig.RetentionSection{}, docs)
+	limits := fieldsOf("RetentionLimitSection", permconfig.RetentionLimitSection{}, docs)
+	for _, f := range fields {
+		switch f.Key {
+		case "main", "child", "scheduled":
+			f.Nested = limits
+		case "version":
+			f.Default, f.ExampleValue = "1", "1"
+		case "sweep_cadence":
+			f.Type, f.Default, f.ExampleValue = "duration", "1h", "1h"
+		}
+	}
+	return &Subtree{Key: "retention", Tier: TierOperator, CommentedOut: true,
+		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
 }
 
 func learningSubtree(docs Docs) *Subtree {

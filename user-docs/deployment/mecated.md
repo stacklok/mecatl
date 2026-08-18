@@ -451,6 +451,20 @@ with no PVC requirement.
 
 :::
 
+The daemon owns automatic cleanup. Configure the strict operator-only
+`retention.version: 1` block in `~/.config/mecatl/settings.yaml` with separate
+`main`, `child`, and `scheduled` `max_age`/`max_count` limits plus
+`sweep_cadence`; every `0` disables that limit. Negative values, unknown keys,
+and unknown versions fail startup. Existing retention CLI flags remain compatible
+and explicitly supplied flags win over YAML. Project settings cannot set retention.
+
+Destructive main cleanup is off by default. Enabling its age or count limit also
+requires `acknowledge_main_deletion: true` or `--acknowledge-main-retention`; the
+server logs the effective planner summary first, and durable `unknown` sessions
+remain protected. The authenticated storage-health response reports the secret-free
+effective `retention/v1` policy. Embedded mecatui has local-only policy flags;
+`mecatui connect` rejects them and cannot configure a remote server without an
+advertised management capability.
 The `--session-store-url` flag replaces the JSONL store with a remote gRPC driver
 (`mecatl.driver.v1.SessionStoreService`). This is the path for a managed Redis backend
 (`mecak8s` uses it internally) or a custom store behind the driver protocol. It is

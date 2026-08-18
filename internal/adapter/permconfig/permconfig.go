@@ -57,6 +57,23 @@ func parseYAML(data []byte) (Config, error) {
 	return cfg, nil
 }
 
+func hasTopLevelKey(data []byte, key string) bool {
+	var node yaml.Node
+	if yaml.Unmarshal(data, &node) != nil || len(node.Content) == 0 {
+		return false
+	}
+	root := node.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
+}
+
 // rejectRemovedTopLevelKeys probes the document for a top-level mapping key
 // that was REMOVED from the schema, with an error naming the key precisely. The
 // probe is a one-field flat struct decode — lenient yaml.Unmarshal ignores

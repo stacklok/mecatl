@@ -154,6 +154,42 @@
 #     # automatic reflection.
 #     max_tokens_per_principal: 50000
 
+#| === retention === (tier: operator)
+#| Versioned automatic session cleanup policy. Operator-tier only; project values are
+#| ignored. Zero disables each limit. Explicit compatibility flags outrank these values.
+# retention:
+#   # Version is the required schema version; the only supported value is 1.
+#   version: 1
+#   # Main controls top-level operator/service sessions.
+#   main:
+#     # MaxAge deletes eligible rows older than this Go duration; 0 disables the age
+#     # limit.
+#     max_age: ""
+#     # MaxCount keeps the newest eligible rows up to this count; 0 disables the count
+#     # limit.
+#     max_count: 0
+#   # Child controls subagent, parallel-branch, and team-member sessions.
+#   child:
+#     # MaxAge deletes eligible rows older than this Go duration; 0 disables the age
+#     # limit.
+#     max_age: ""
+#     # MaxCount keeps the newest eligible rows up to this count; 0 disables the count
+#     # limit.
+#     max_count: 0
+#   # Scheduled controls scheduled-fire sessions.
+#   scheduled:
+#     # MaxAge deletes eligible rows older than this Go duration; 0 disables the age
+#     # limit.
+#     max_age: ""
+#     # MaxCount keeps the newest eligible rows up to this count; 0 disables the count
+#     # limit.
+#     max_count: 0
+#   # SweepCadence is the repeat interval; 0 disables repeats while retaining the
+#   # compatibility startup sweep.
+#   sweep_cadence: 1h
+#   # AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup.
+#   acknowledge_main_deletion: false
+
 #| === models === (tier: operator + project)
 #| Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and the
 #| semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all

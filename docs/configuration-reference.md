@@ -112,6 +112,27 @@ Optional completed-trajectory observation policy. Off means no automatic complet
 | `learning.automatic.max_reflections_per_principal` | `int` | `4` | MaxReflectionsPerPrincipal is the per-principal count cap; zero disables automatic reflection. |
 | `learning.automatic.max_tokens_per_principal` | `int` | `50000` | MaxTokensPerPrincipal is the per-principal reserved-token cap; zero disables automatic reflection. |
 
+## `retention`
+
+Tier: **operator**
+
+Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `retention.version` | `int` | `1` | Version is the required schema version; the only supported value is 1. |
+| `retention.main` | `retentionlimitsection` | `(absent)` | Main controls top-level operator/service sessions. |
+| `retention.main.max_age` | `string` | `(empty)` | MaxAge deletes eligible rows older than this Go duration; 0 disables the age limit. |
+| `retention.main.max_count` | `int` | `0` | MaxCount keeps the newest eligible rows up to this count; 0 disables the count limit. |
+| `retention.child` | `retentionlimitsection` | `(absent)` | Child controls subagent, parallel-branch, and team-member sessions. |
+| `retention.child.max_age` | `string` | `(empty)` | MaxAge deletes eligible rows older than this Go duration; 0 disables the age limit. |
+| `retention.child.max_count` | `int` | `0` | MaxCount keeps the newest eligible rows up to this count; 0 disables the count limit. |
+| `retention.scheduled` | `retentionlimitsection` | `(absent)` | Scheduled controls scheduled-fire sessions. |
+| `retention.scheduled.max_age` | `string` | `(empty)` | MaxAge deletes eligible rows older than this Go duration; 0 disables the age limit. |
+| `retention.scheduled.max_count` | `int` | `0` | MaxCount keeps the newest eligible rows up to this count; 0 disables the count limit. |
+| `retention.sweep_cadence` | `duration` | `1h` | SweepCadence is the repeat interval; 0 disables repeats while retaining the compatibility startup sweep. |
+| `retention.acknowledge_main_deletion` | `bool` | `false` | AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup. |
+
 ## `models`
 
 Tier: **operator + project**

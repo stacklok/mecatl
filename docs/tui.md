@@ -248,6 +248,11 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--no-memory` | off | **embedded** server: disable cross-session memory (Remember/Recall) |
 | `--store-dir` | – (auto) | **embedded** server: durable JSONL session/event store dir; empty = a per-workspace default under `$XDG_STATE_HOME/mecatui/sessions`, so sessions survive restart. **Privacy:** stores the raw conversation (prompts, model output, tool args/results) in **plaintext**; the dir is created mode `0700` (owner-only) |
 | `--no-store` | off | **embedded** server: disable the durable session store (use an in-memory store, persisting nothing to disk) |
+| `--child-retention` / `--child-retention-max-per-family` | `168h` / `500` | **embedded only:** local child age/count policy; `0` disables each limit |
+| `--main-retention` / `--main-retention-max-total` | `0` / `0` | **embedded only:** destructive local main policy, off by default; enabling either also requires explicit acknowledgement |
+| `--schedule-fire-retention` / `--schedule-fire-retention-max-total` | `168h` / `0` | **embedded only:** local scheduled-fire age/count policy; `0` disables each limit |
+| `--retention-sweep-cadence` | `1h` | **embedded only:** local repeat cadence; `0` disables repeats while preserving the compatibility startup sweep |
+| `--acknowledge-main-retention` | off | **embedded only:** explicit consent after reviewing the logged destructive main planner summary |
 | `--commands-dir` | – (auto) | **embedded** server: slash-command template dir; empty = the conventional `.mecatl/commands`, `.claude/commands` |
 | `--no-commands` | off | **embedded** server: disable slash-command expansion |
 | `--skills-dir` | – (auto) | **embedded** server: skill-unit dir (`<name>/SKILL.md`); empty = the conventional dirs (e.g. `.claude/skills`) |
@@ -646,9 +651,14 @@ $ ls ~/.local/state/mecatui/sessions/   # each subdir is one workspace
 model's output, and tool arguments/results — in **plaintext** on disk; the dir is
 created mode `0700` (owner-only). Pass `--no-store` to keep everything in memory
 (persisting nothing), or `--store-dir` to relocate it. To keep the durable store
-from growing without bound, a retention GC reaps stale sessions: child snapshots
-(subagent/parallel/team) after 7 days or 500-per-family, and top-level sessions
-after 30 days or 200 store-wide, always skipping an in-flight run. **Concurrency:**
+from growing without bound, embedded mode exposes an explicit local retention
+policy: child snapshots default to 7 days / 500 per family, scheduled fires to 7
+days, and destructive main cleanup defaults off. Set the retention flags above or
+the operator `retention.version: 1` settings block. Enabling a main limit requires
+explicit acknowledgement and logs the planner summary. The Sessions storage-health
+view shows the effective policy. Connected mode rejects local retention flags and
+can only display a remote policy advertised by the authenticated management
+capability; it never claims to configure that server. **Concurrency:**
 the per-workspace default assumes a single `mecatui` per workspace; a second
 instance hosting an embedded server on the same workspace shares the dir, and its
 retention GC may prune the other instance's idle sessions early — give a second

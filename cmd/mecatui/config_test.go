@@ -487,8 +487,8 @@ func TestResolveStoreDirPrecedence(t *testing.T) {
 }
 
 // TestEmbeddedConfigStore asserts the embedded server defaults the durable store
-// ON (a non-empty per-workspace StoreDir) with the main-retention defaults wired,
-// and that --no-store yields an empty StoreDir (in-memory fallback) (issue #79).
+// ON (a non-empty per-workspace StoreDir) with destructive main retention
+// explicitly disabled, and that --no-store yields an empty StoreDir.
 func TestEmbeddedConfigStore(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "/xdg/state")
 
@@ -497,11 +497,11 @@ func TestEmbeddedConfigStore(t *testing.T) {
 	if on.StoreDir != wantStore {
 		t.Errorf("default StoreDir = %q, want %q", on.StoreDir, wantStore)
 	}
-	if on.MainRetention != 720*time.Hour {
-		t.Errorf("MainRetention = %v, want 720h", on.MainRetention)
+	if on.MainRetention != 0 {
+		t.Errorf("MainRetention = %v, want disabled", on.MainRetention)
 	}
-	if on.MainRetentionMaxTotal != 200 {
-		t.Errorf("MainRetentionMaxTotal = %d, want 200", on.MainRetentionMaxTotal)
+	if on.MainRetentionMaxTotal != 0 {
+		t.Errorf("MainRetentionMaxTotal = %d, want disabled", on.MainRetentionMaxTotal)
 	}
 
 	off := embeddedConfig(config{workspace: "/var/home/ozz/dev/mecatl", model: "m", mock: true, noStore: true}, port.NopDiagnostics{})

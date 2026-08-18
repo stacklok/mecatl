@@ -227,6 +227,14 @@ type config struct {
 	storeDir string
 	noStore  bool
 
+	// Embedded-only automatic retention policy. Connected mode rejects these flags
+	// because only an advertised remote management API can configure the server.
+	childRetention, mainRetention, scheduledRetention                time.Duration
+	childRetentionCount, mainRetentionCount, scheduledRetentionCount int
+	retentionSweepCadence                                            time.Duration
+	retentionCLISet                                                  app.RetentionCLISet
+	acknowledgeMainRetention                                         bool
+
 	// Embedded-server soul config (issue #14, Phase 1; used only when hosting an
 	// in-process server). A user-scoped, agent-READ-ONLY persona fragment injected
 	// as turn-0 context. ON by default reading the conventional
@@ -391,6 +399,14 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.BoolVar(&cfg.noMemory, "no-memory", false, "embedded server only: disable cross-session memory (Remember/Recall) entirely")
 	fs.StringVar(&cfg.storeDir, "store-dir", "", "embedded server only: durable JSONL session/event store directory (empty = a per-workspace default under $XDG_STATE_HOME/mecatui/sessions, so sessions survive restart and can be inspected after the fact). PRIVACY: stores the RAW conversation (prompts, model output, tool args/results) in PLAINTEXT; the dir is created mode 0700 (owner-only). Tool args/results include file contents and command output the agent read, so secrets it touched (e.g. a .env it opened) are persisted too")
 	fs.BoolVar(&cfg.noStore, "no-store", false, "embedded server only: disable the durable session store (use an in-memory store instead, so nothing is persisted to disk)")
+	fs.DurationVar(&cfg.childRetention, "child-retention", 168*time.Hour, "embedded server only: child-session maximum age; 0 disables the age limit")
+	fs.IntVar(&cfg.childRetentionCount, "child-retention-max-per-family", 500, "embedded server only: child-session count cap per family; 0 disables the cap")
+	fs.DurationVar(&cfg.mainRetention, "main-retention", 0, "embedded server only: main-session maximum age; 0 disables destructive main age cleanup")
+	fs.IntVar(&cfg.mainRetentionCount, "main-retention-max-total", 0, "embedded server only: main-session store-wide count cap; 0 disables destructive main count cleanup")
+	fs.DurationVar(&cfg.scheduledRetention, "schedule-fire-retention", 7*24*time.Hour, "embedded server only: scheduled-fire session maximum age; 0 disables the age limit")
+	fs.IntVar(&cfg.scheduledRetentionCount, "schedule-fire-retention-max-total", 0, "embedded server only: scheduled-fire session count cap; 0 disables the cap")
+	fs.DurationVar(&cfg.retentionSweepCadence, "retention-sweep-cadence", time.Hour, "embedded server only: automatic retention sweep cadence; 0 disables repeat cadence (startup sweep remains for flag compatibility)")
+	fs.BoolVar(&cfg.acknowledgeMainRetention, "acknowledge-main-retention", false, "embedded server only: explicitly acknowledge destructive main-session cleanup after reviewing the policy summary")
 	fs.StringVar(&cfg.soulFile, "soul-file", "", "embedded server only: path to a user-scoped, agent-READ-ONLY persona/\"soul\" file injected as turn-0 context (empty = the conventional $XDG_CONFIG_HOME/mecatl/soul.md, fallback ~/.config/mecatl/soul.md; fail-soft if absent)")
 	fs.BoolVar(&cfg.noSoul, "no-soul", false, "embedded server only: disable the user-scoped persona/soul fragment entirely")
 	fs.BoolVar(&cfg.approveSoul, "approve-soul", false, "embedded server only: (re)write the soul DRIFT BASELINE to the current soul's content hash, accepting the file as-is. The baseline is a harness-owned sidecar next to the soul (<soul-path>.sha256); a later run whose hash differs logs a drift WARN")
@@ -498,6 +514,7 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 			// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
 			cfg.subagentModelRouterSet = true
 		}
+		markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true
 		}

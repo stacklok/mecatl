@@ -642,11 +642,17 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// TUI now defaults on — a 30-day age horizon plus a 200-session global cap, so
 		// recent history is recoverable but stale sessions are reaped. A live run is
 		// always skipped.
-		ChildRetention:             168 * time.Hour,
-		ChildRetentionMaxPerFamily: 500,
-		MainRetention:              720 * time.Hour,
-		MainRetentionMaxTotal:      200,
-		ChildGCInterval:            time.Hour,
+		// The effective local policy is explicit in flags/operator settings; main
+		// deletion defaults off and requires acknowledgement when enabled.
+		ChildRetention:                cfg.childRetention,
+		ChildRetentionMaxPerFamily:    cfg.childRetentionCount,
+		MainRetention:                 cfg.mainRetention,
+		MainRetentionMaxTotal:         cfg.mainRetentionCount,
+		ScheduleFireRetention:         cfg.scheduledRetention,
+		ScheduleFireRetentionMaxTotal: cfg.scheduledRetentionCount,
+		ChildGCInterval:               cfg.retentionSweepCadence,
+		RetentionCLISet:               cfg.retentionCLISet,
+		AcknowledgeMainRetention:      cfg.acknowledgeMainRetention,
 		// Soul ON by default (issue #14, Phase 1): a user-scoped, agent-READ-ONLY
 		// persona fragment read from the conventional ~/.config/mecatl/soul.md
 		// (fail-soft if absent), consistent with the "enable every free+local feature
