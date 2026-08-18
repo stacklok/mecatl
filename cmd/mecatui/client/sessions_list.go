@@ -2,9 +2,12 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -99,25 +102,61 @@ type SessionsListedMsg struct {
 	Err      error
 }
 
-// ListSessions fetches every bounded inventory page so the picker can search all
-// rows the server exposed. Each individual RPC remains capped at 100 rows.
+// ErrSessionInventoryRestart means the server rejected a continuation cursor
+// because its catalog generation changed. Callers must restart at page one
+// rather than mixing generations.
+var ErrSessionInventoryRestart = errors.New("session inventory changed; restart from page one")
+
+// SessionInventoryPage is one proto-free bounded inventory page.
+type SessionInventoryPage struct {
+	Sessions   []SessionListItem
+	NextCursor string
+	TotalCount int
+}
+
+// SessionInventoryPageMsg carries one progressive page result to Bubble Tea.
+type SessionInventoryPageMsg struct {
+	Page       SessionInventoryPage
+	Cursor     string
+	Generation uint64
+	Err        error
+}
+
+// ListSessionPage fetches one bounded page. An ABORTED response is the public
+// stale-cursor restart signal; the UI never needs to inspect gRPC status codes.
+func (c *Client) ListSessionPage(ctx context.Context, cursor string) (SessionInventoryPage, error) {
+	resp, err := c.svc.ListSessions(ctx, &mecatlv1.ListSessionsRequest{PageSize: sessionInventoryPageSize, Cursor: cursor})
+	if err != nil {
+		if status.Code(err) == codes.Aborted {
+			return SessionInventoryPage{}, fmt.Errorf("%w: %v", ErrSessionInventoryRestart, err)
+		}
+		return SessionInventoryPage{}, err
+	}
+	if resp.GetNextCursor() != "" && resp.GetNextCursor() == cursor {
+		return SessionInventoryPage{}, fmt.Errorf("list sessions: server repeated inventory cursor")
+	}
+	return SessionInventoryPage{
+		Sessions: listSessionsFromProto(resp.GetSessions()), NextCursor: resp.GetNextCursor(),
+		TotalCount: int(resp.GetTotalCount()),
+	}, nil
+}
+
+// ListSessions fetches every bounded inventory page for non-interactive callers
+// such as --resume-latest. Interactive pickers use ListSessionPage directly so
+// page one can render before continuation work begins.
 func (c *Client) ListSessions(ctx context.Context) ([]SessionListItem, error) {
 	var out []SessionListItem
 	cursor := ""
 	for {
-		resp, err := c.svc.ListSessions(ctx, &mecatlv1.ListSessionsRequest{PageSize: sessionInventoryPageSize, Cursor: cursor})
+		page, err := c.ListSessionPage(ctx, cursor)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, listSessionsFromProto(resp.GetSessions())...)
-		next := resp.GetNextCursor()
-		if next == "" {
+		out = append(out, page.Sessions...)
+		if page.NextCursor == "" {
 			return out, nil
 		}
-		if next == cursor {
-			return nil, fmt.Errorf("list sessions: server repeated inventory cursor")
-		}
-		cursor = next
+		cursor = page.NextCursor
 	}
 }
 
@@ -158,7 +197,12 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 	return out
 }
 
-// SessionLister lists stored sessions for the inventory.
+// SessionPager fetches one bounded stored-session inventory page.
+type SessionPager interface {
+	ListSessionPage(ctx context.Context, cursor string) (SessionInventoryPage, error)
+}
+
+// SessionLister lists all stored sessions for non-interactive selection.
 type SessionLister interface {
 	ListSessions(ctx context.Context) ([]SessionListItem, error)
 }
@@ -177,7 +221,15 @@ type LiveStreamer interface {
 var _ SessionReplayer = (*Client)(nil)
 var _ LiveStreamer = (*Client)(nil)
 
-// ListSessionsCmd returns a command that lists stored sessions.
+// ListSessionsPageCmd returns a command that fetches exactly one inventory page.
+func ListSessionsPageCmd(ctx context.Context, s SessionPager, cursor string, generation uint64) tea.Cmd {
+	return func() tea.Msg {
+		page, err := s.ListSessionPage(ctx, cursor)
+		return SessionInventoryPageMsg{Page: page, Cursor: cursor, Generation: generation, Err: err}
+	}
+}
+
+// ListSessionsCmd returns the legacy all-pages command used by non-progressive callers.
 func ListSessionsCmd(ctx context.Context, s SessionLister) tea.Cmd {
 	return func() tea.Msg {
 		sessions, err := s.ListSessions(ctx)

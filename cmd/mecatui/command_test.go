@@ -119,6 +119,10 @@ func (f *sessionsLaunchCreator) ListSessions(context.Context) ([]client.SessionL
 	return f.rows, nil
 }
 
+func (f *sessionsLaunchCreator) ListSessionPage(context.Context, string) (client.SessionInventoryPage, error) {
+	return client.SessionInventoryPage{Sessions: f.rows}, nil
+}
+
 func TestSessionsLaunchComposesIntoStartupPickerWithoutCreatingSession(t *testing.T) {
 	tests := []struct {
 		name string

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -174,5 +176,29 @@ func TestListSessionsCmdError(t *testing.T) {
 	}
 	if lm.Sessions != nil {
 		t.Fatalf("expected nil sessions on err, got %+v", lm.Sessions)
+	}
+}
+
+func TestListSessionPageFetchesOnlyRequestedPage(t *testing.T) {
+	fake := &fakeListSessionsClient{resp: &mecatlv1.ListSessionsResponse{
+		Sessions: []*mecatlv1.SessionSummary{{SessionId: "s1"}}, NextCursor: "opaque-next", TotalCount: 200,
+	}}
+	page, err := newFakeClient(fake).ListSessionPage(context.Background(), "opaque-current")
+	if err != nil {
+		t.Fatalf("ListSessionPage: %v", err)
+	}
+	if fake.lastReq.GetCursor() != "opaque-current" || fake.lastReq.GetPageSize() != sessionInventoryPageSize {
+		t.Fatalf("request = %+v", fake.lastReq)
+	}
+	if len(page.Sessions) != 1 || page.NextCursor != "opaque-next" || page.TotalCount != 200 {
+		t.Fatalf("page = %+v", page)
+	}
+}
+
+func TestListSessionPageMapsStaleCursorToRestart(t *testing.T) {
+	fake := &fakeListSessionsClient{err: status.Error(codes.Aborted, "catalog generation changed")}
+	_, err := newFakeClient(fake).ListSessionPage(context.Background(), "stale")
+	if !errors.Is(err, ErrSessionInventoryRestart) {
+		t.Fatalf("error = %v, want ErrSessionInventoryRestart", err)
 	}
 }

@@ -5883,6 +5883,19 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   retention (`SessionMetadataPager`) and stale-session reconciliation (`MetaList`),
   while preserving their downstream state, liveness, and lease rechecks.
 
+  `cmd/mecatui/client/sessions_list.go` (`ListSessionPage`) is the single
+  proto-to-client paging boundary. It fetches exactly one 100-row page and maps
+  the gRPC `ABORTED` stale-cursor signal to a client sentinel; only non-interactive
+  `--resume-latest` consumes all pages synchronously. Both `mecatui sessions` and
+  `/sessions` use `cmd/mecatui/ui/sessions.go` (`applySessionPage`): page one is
+  rendered before the returned Bubble Tea command requests page two, pages merge
+  in deterministic metadata order with exact-ID deduplication, and tab/filter/
+  exact-ID selection/scroll state survive each append. A later error retains rows
+  and its cursor for retry. A stale cursor keeps the visible rows while page one is
+  requested against a fresh generation, then atomically replaces the old set.
+  Closing, leaving, or cancelling the panel cancels its generation-scoped context;
+  late messages are ignored and cannot create or rebind a session.
+
   `Append` writes a per-record format-tagged line
   `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via `appendLine` under the
   stable family flock. Save, Delete, legacy promotion/removal, EventLog.Append,

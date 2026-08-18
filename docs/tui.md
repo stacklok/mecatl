@@ -1216,6 +1216,17 @@ relationship metadata (parent/call, schedule/origin, team/member). This keeps
 scheduled fires and delegation children discoverable without making their IDs
 part of the UI contract.
 
+Inventory is progressive in both launch and in-chat forms. Mecatui renders the
+first bounded page before it asks for the next one, then appends deterministic,
+ID-deduplicated rows without changing the active tab, search text, exact-ID
+selection, or scroll position. The footer distinguishes **loading more** from a
+complete inventory. Press **`c`** while pages are loading to stop pagination;
+**`r`** restarts after cancellation or retries a failed page. A later-page failure
+keeps every row already shown. If the server reports that the cursor generation is
+stale, the panel says it is restarting and replaces the old generation only when
+the new first page arrives. Closing the panel or quitting the startup browser
+cancels the outstanding request and never creates or rebinds a session.
+
 Each row shows a state badge, relative modification time, turn count, title,
 digest handle, and model. The active chat is explicitly marked **`[current]`**;
 a team member row also identifies its member. The digest is a lowercase SHA-256

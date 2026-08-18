@@ -130,6 +130,15 @@ New-chat creation waits for saved model defaults to be reconciled. Seed-prompt f
 
 `/sessions` opens a searchable inventory in four tabs: **Chats**, **Scheduled runs**, **Child runs**, and **Other**. Unknown legacy or custom rows appear under Other instead of being mislabeled as children. Rows show state, time, turns, title, model, and a short digest handle; the chat you are currently using is marked **`[current]`**. The search applies to the selected tab and matches the row's title, model, workspace, digest, and available relationship details.
 
+Large inventories are progressive: the first page is usable immediately while
+mecatui loads more in the background. New pages preserve your tab, search, exact
+selection, and scroll position, and duplicate rows are suppressed. Press **`c`**
+while loading to stop; **`r`** restarts a cancelled load or retries a failed later
+page. A later failure leaves the rows already on screen. If storage changed between
+pages, mecatui explicitly restarts from page one instead of mixing two inventory
+generations. Closing `/sessions`, or quitting a `mecatui sessions` startup browser,
+cancels outstanding requests without creating or switching chats.
+
 The selected row shows only actions the server advertises: **`y`** copies its exact
 opaque ID, **`v`** opens its authoritative transcript without attaching, **`f`** forks
 an eligible main chat and adopts the peer, **`r`** edits its persisted title, and

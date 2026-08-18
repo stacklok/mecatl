@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +34,18 @@ const (
 	sessionsNone sessionsView = iota
 	sessionsPanel
 	sessionsTranscript
+)
+
+type sessionsLoadState int
+
+const (
+	sessionsInitialLoading sessionsLoadState = iota + 1
+	sessionsLoadingMore
+	sessionsComplete
+	sessionsCancelled
+	sessionsStaleRestart
+	sessionsLaterPageError
+	sessionsInitialPageError
 )
 
 type sessionDetailsView struct {
@@ -73,9 +88,16 @@ type sessionsState struct {
 	handles  map[string]string
 	filter   textinput.Model
 	cursor   int
+	scroll   int
 	selected client.SessionListItem
 	inspect  bool
 	loadErr  error
+
+	loadState      sessionsLoadState
+	nextCursor     string
+	pageCtx        context.Context
+	pageCancel     context.CancelFunc
+	pageGeneration uint64
 
 	renaming      bool
 	renameInput   textinput.Model
@@ -211,7 +233,66 @@ func newSessionsPanelState() sessionsState {
 	ti.Placeholder = "search sessions…"
 	ti.SetWidth(40)
 	ti.Focus()
-	return sessionsState{view: sessionsPanel, tab: tabChats, loading: true, filter: ti}
+	return sessionsState{view: sessionsPanel, tab: tabChats, loading: true, loadState: sessionsInitialLoading, filter: ti}
+}
+
+func (m Model) beginSessionPagination() Model {
+	return m.beginSessionPaginationAt("")
+}
+
+func (m Model) beginSessionPaginationAt(cursor string) Model {
+	if m.sessions.pageCancel != nil {
+		m.sessions.pageCancel()
+	}
+	ctx := m.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.sessionsPageSeq++
+	m.sessions.pageCtx, m.sessions.pageCancel = context.WithCancel(ctx)
+	m.sessions.pageGeneration = m.sessionsPageSeq
+	m.sessions.nextCursor = cursor
+	m.sessions.loading = cursor == ""
+	if cursor == "" {
+		m.sessions.loadState = sessionsInitialLoading
+	} else {
+		m.sessions.loadState = sessionsLoadingMore
+	}
+	m.sessions.err = nil
+	return m
+}
+
+func (m Model) restartStalePagination() Model {
+	if m.sessions.pageCancel != nil {
+		m.sessions.pageCancel()
+	}
+	ctx := m.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.sessionsPageSeq++
+	m.sessions.pageCtx, m.sessions.pageCancel = context.WithCancel(ctx)
+	m.sessions.pageGeneration = m.sessionsPageSeq
+	m.sessions.nextCursor = ""
+	m.sessions.loading = false
+	m.sessions.loadState = sessionsStaleRestart
+	return m
+}
+
+func (m Model) ensureSessionPagination() Model {
+	if m.sessions.pageCtx == nil {
+		return m.beginSessionPagination()
+	}
+	return m
+}
+
+func (m Model) sessionPageCmd() tea.Cmd {
+	if m.deps.Sessions == nil || m.sessions.pageCtx == nil {
+		return nil
+	}
+	return client.ListSessionsPageCmd(
+		m.sessions.pageCtx, m.deps.Sessions, m.sessions.nextCursor, m.sessions.pageGeneration,
+	)
 }
 
 func (m Model) openSessions() (tea.Model, tea.Cmd) {
@@ -220,10 +301,15 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	}
 	m.ta.Blur()
 	m.sessions = newSessionsPanelState()
-	return m, tea.Batch(client.ListSessionsCmd(m.deps.Ctx, m.deps.Sessions), textinput.Blink)
+	m = m.beginSessionPagination()
+	return m, tea.Batch(m.sessionPageCmd(), textinput.Blink)
 }
 
 func (m Model) closeSessions() (tea.Model, tea.Cmd) {
+	if m.sessions.pageCancel != nil {
+		m.sessions.pageCancel()
+	}
+	m.sessionsPageSeq++
 	m.sessions = sessionsState{}
 	cmd := m.ta.Focus()
 	return m, cmd
@@ -238,6 +324,21 @@ func (m Model) onSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if m.sessions.confirmDelete {
 		return m.onSessionDeleteConfirmKey(msg)
+	}
+	if msg.String() == "c" && (m.sessions.loadState == sessionsInitialLoading || m.sessions.loadState == sessionsLoadingMore || m.sessions.loadState == sessionsStaleRestart) {
+		if m.sessions.pageCancel != nil {
+			m.sessions.pageCancel()
+		}
+		m.sessions.loading = false
+		m.sessions.loadState = sessionsCancelled
+		return m, nil, true
+	}
+	if msg.String() == "r" && (m.sessions.loadState == sessionsLaterPageError || m.sessions.loadState == sessionsInitialPageError || m.sessions.loadState == sessionsCancelled) {
+		if m.sessions.loadState != sessionsLaterPageError {
+			m.sessions.nextCursor = ""
+		}
+		m = m.beginSessionPaginationAt(m.sessions.nextCursor)
+		return m, m.sessionPageCmd(), true
 	}
 	if m.sessions.actionLoading {
 		return m, nil, true
@@ -266,6 +367,10 @@ func (m Model) onStartupSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 		return m, nil, false
 	}
 	if key.Matches(msg, m.keys.Close) {
+		if m.sessions.pageCancel != nil {
+			m.sessions.pageCancel()
+		}
+		m.sessionsPageSeq++
 		return m, tea.Quit, true
 	}
 	if msg.String() != "n" {
@@ -275,9 +380,35 @@ func (m Model) onStartupSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 		m.statusMsg = m.deps.Theme.Style("muted").Render("loading model defaults…")
 		return m, nil, true
 	}
+	if m.sessions.pageCancel != nil {
+		m.sessions.pageCancel()
+	}
+	m.sessionsPageSeq++
 	m.sessions = sessionsState{}
 	m.phase = phaseConnecting
 	return m, m.createSessionCmd(), true
+}
+
+const sessionsVisibleRows = 12
+
+func (m Model) keepSessionCursorVisible() Model {
+	if m.sessions.cursor < m.sessions.scroll {
+		m.sessions.scroll = m.sessions.cursor
+	}
+	if m.sessions.cursor >= m.sessions.scroll+sessionsVisibleRows {
+		m.sessions.scroll = m.sessions.cursor - sessionsVisibleRows + 1
+	}
+	maxScroll := len(m.sessions.filtered) - sessionsVisibleRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.sessions.scroll > maxScroll {
+		m.sessions.scroll = maxScroll
+	}
+	if m.sessions.scroll < 0 {
+		m.sessions.scroll = 0
+	}
+	return m
 }
 
 func (m Model) onSessionsNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
@@ -294,17 +425,21 @@ func (m Model) onSessionsNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd,
 		if m.sessions.cursor > 0 {
 			m.sessions.cursor--
 		}
+		m = m.keepSessionCursorVisible()
 		return m, nil, true
 	case msg.String() == keyMenuDown:
 		if m.sessions.cursor < len(m.sessions.filtered)-1 {
 			m.sessions.cursor++
 		}
+		m = m.keepSessionCursorVisible()
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollTop):
 		m.sessions.cursor = 0
+		m.sessions.scroll = 0
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollBottom):
 		m.sessions.cursor = clampModelsCursor(len(m.sessions.filtered)-1, len(m.sessions.filtered))
+		m = m.keepSessionCursorVisible()
 		return m, nil, true
 	case key.Matches(msg, m.keys.Choose):
 		return m.chooseSession()
@@ -337,7 +472,7 @@ func (m Model) syncSessionsFilter() Model {
 	if m.sessions.cursor >= len(m.sessions.filtered) {
 		m.sessions.cursor = 0
 	}
-	return m
+	return m.keepSessionCursorVisible()
 }
 
 func filterSessionsByTab(sessions []client.SessionListItem, tab sessionsTab) []client.SessionListItem {
@@ -604,6 +739,11 @@ func (m Model) loadSessionTranscript(row client.SessionListItem, inspect bool) (
 	}
 	m.sessions.selected = row
 	m.sessions.inspect = inspect
+	if m.sessions.pageCancel != nil {
+		m.sessions.pageCancel()
+		m.sessions.pageCancel = nil
+	}
+	m.sessionsPageSeq++
 	m.sessions.loadErr = nil
 	m.sessions.loading = true
 	m.sessions.transcript = conversation{}
@@ -613,18 +753,110 @@ func (m Model) loadSessionTranscript(row client.SessionListItem, inspect bool) (
 	return m, client.GetSessionTranscriptCmd(m.deps.Ctx, m.deps.Transcript, row.ID), true
 }
 
+func selectedSessionID(st sessionsState) string {
+	if st.cursor >= 0 && st.cursor < len(st.filtered) {
+		return st.filtered[st.cursor].ID
+	}
+	return ""
+}
+
+func mergeSessionPages(existing, incoming []client.SessionListItem, replace bool) []client.SessionListItem {
+	out := existing
+	if replace {
+		out = nil
+	}
+	seen := make(map[string]struct{}, len(out)+len(incoming))
+	for _, row := range out {
+		seen[row.ID] = struct{}{}
+	}
+	for _, row := range incoming {
+		if _, ok := seen[row.ID]; ok {
+			continue
+		}
+		seen[row.ID] = struct{}{}
+		out = append(out, row)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ModifiedAt != out[j].ModifiedAt {
+			return out[i].ModifiedAt > out[j].ModifiedAt
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func (m Model) applySessionPage(msg client.SessionInventoryPageMsg) (tea.Model, tea.Cmd, bool) {
+	if m.sessions.view != sessionsPanel || (msg.Generation != 0 && msg.Generation != m.sessions.pageGeneration) {
+		return m, nil, true
+	}
+	selectedID := selectedSessionID(m.sessions)
+	if m.sessions.actionID != "" {
+		selectedID = m.sessions.actionID
+	}
+	scroll := m.sessions.scroll
+	if msg.Err != nil {
+		m.sessions.loading = false
+		m.sessions.err = msg.Err
+		m.sessions.nextCursor = msg.Cursor
+		switch {
+		case errors.Is(msg.Err, client.ErrSessionInventoryRestart):
+			m = m.restartStalePagination()
+			return m, m.sessionPageCmd(), true
+		case errors.Is(msg.Err, context.Canceled):
+			m.sessions.loadState = sessionsCancelled
+		case len(m.sessions.sessions) > 0:
+			m.sessions.loadState = sessionsLaterPageError
+		default:
+			m.sessions.loadState = sessionsInitialPageError
+		}
+		return m, nil, true
+	}
+
+	replace := msg.Cursor == "" && (m.sessions.loadState == sessionsInitialLoading || m.sessions.loadState == sessionsStaleRestart)
+	m.sessions.sessions = mergeSessionPages(m.sessions.sessions, msg.Page.Sessions, replace)
+	m.sessions.err = nil
+	m.sessions.loading = false
+	m = m.syncSessionsFilter()
+	if selectedID != "" {
+		for i := range m.sessions.filtered {
+			if m.sessions.filtered[i].ID == selectedID {
+				m.sessions.cursor = i
+				break
+			}
+		}
+	}
+	m.sessions.scroll = scroll
+	m = m.keepSessionCursorVisible()
+	m.sessions.nextCursor = msg.Page.NextCursor
+	m.sessions.actionID = ""
+	if msg.Page.NextCursor == "" {
+		m.sessions.loadState = sessionsComplete
+		if m.sessions.pageCancel != nil {
+			m.sessions.pageCancel()
+			m.sessions.pageCancel = nil
+		}
+		return m, nil, true
+	}
+	m.sessions.loadState = sessionsLoadingMore
+	return m, m.sessionPageCmd(), true
+}
+
 func (m Model) updateSessionsMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, cmd, handled := m.updateSessionActionMsg(msg); handled {
 		return mm, cmd, true
 	}
 	switch sm := msg.(type) {
+	case client.SessionInventoryPageMsg:
+		return m.applySessionPage(sm)
 	case client.SessionsListedMsg:
 		m.sessions.loading = false
+		m.sessions.loadState = sessionsComplete
 		selectedID := ""
 		if m.sessions.cursor >= 0 && m.sessions.cursor < len(m.sessions.filtered) {
 			selectedID = m.sessions.filtered[m.sessions.cursor].ID
 		}
 		if sm.Err != nil {
+			m.sessions.loadState = sessionsInitialPageError
 			m.sessions.err = sm.Err
 			m.sessions.sessions = nil
 			m.sessions.filtered = nil
@@ -695,7 +927,8 @@ func (m Model) updateSessionActionMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = m.syncSessionsFilter()
 		m.statusMsg = m.deps.Theme.Style("success").Render("renamed session")
 		if m.deps.Sessions != nil {
-			return m, client.ListSessionsCmd(m.deps.Ctx, m.deps.Sessions), true
+			m = m.beginSessionPagination()
+			return m, m.sessionPageCmd(), true
 		}
 		return m, nil, true
 	case client.SessionDeletedMsg:
@@ -807,8 +1040,13 @@ func (m Model) closeSessionsTranscript() (tea.Model, tea.Cmd) {
 	m.phase = phaseIdle
 	m.statusMsg = ""
 	m.stuck = true
+	var cmd tea.Cmd
+	if m.sessions.nextCursor != "" && m.deps.Sessions != nil {
+		m = m.beginSessionPaginationAt(m.sessions.nextCursor)
+		cmd = m.sessionPageCmd()
+	}
 	m.refreshView()
-	return m, nil
+	return m, cmd
 }
 
 func (m Model) switchSessionsTab() Model {
@@ -880,6 +1118,9 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, _ client.Capabilities
 		return b.String()
 	}
 	renderSessionRows(&b, th, st, current)
+	if status := sessionsPaginationStatus(st); status != "" {
+		b.WriteString(th.Style("muted").Render(status) + "\n")
+	}
 	b.WriteString("\n" + th.Style("muted").Render(sessionActionsHint(st, hk)))
 	return b.String()
 }
@@ -893,9 +1134,17 @@ func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (st
 	case st.confirmDelete:
 		return th.Style("errorText").Render("Permanently delete session "+safeSessionID(st.actionID)+"?") + "\n\n" +
 			th.Style("muted").Render("y/"+hk.choose+": delete  "+hk.closeOnly+": cancel"), true
-	case st.loading || st.actionLoading:
+	case st.actionLoading:
 		return th.Style("muted").Render("loading…"), true
-	case st.err != nil:
+	case st.loadState == sessionsInitialLoading || (st.loadState == 0 && st.loading):
+		return th.Style("muted").Render("loading sessions…  c: cancel"), true
+	case st.loadState == sessionsInitialPageError:
+		hint := "r: retry  " + hk.closeOnly + ": close"
+		if st.startup {
+			hint = "r: retry  " + sessionsPanelHint(hk, true)
+		}
+		return th.Style("errorText").Render("could not list sessions") + "\n" + th.Style("muted").Render(hint), true
+	case st.err != nil && len(st.sessions) == 0:
 		hint := hk.closeOnly + ": close"
 		if st.startup {
 			hint = sessionsPanelHint(hk, true)
@@ -912,8 +1161,32 @@ func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (st
 	}
 }
 
+func sessionsPaginationStatus(st sessionsState) string {
+	switch st.loadState {
+	case sessionsLoadingMore:
+		return "loading more sessions…  c: cancel"
+	case sessionsCancelled:
+		return "loading cancelled — r: restart"
+	case sessionsStaleRestart:
+		return "session inventory changed — restarting from page one…"
+	case sessionsLaterPageError:
+		return "could not load more sessions — showing partial results · r: retry"
+	default:
+		return ""
+	}
+}
+
 func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, current string) {
-	for i, s := range st.filtered {
+	start := st.scroll
+	if start < 0 || start >= len(st.filtered) {
+		start = 0
+	}
+	end := start + sessionsVisibleRows
+	if end > len(st.filtered) {
+		end = len(st.filtered)
+	}
+	for i := start; i < end; i++ {
+		s := st.filtered[i]
 		marker := "  "
 		if i == st.cursor {
 			marker = "▶ "

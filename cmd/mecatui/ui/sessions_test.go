@@ -24,6 +24,11 @@ func (f *fakeSessionLister) ListSessions(context.Context) ([]client.SessionListI
 	return f.sessions, f.err
 }
 
+func (f *fakeSessionLister) ListSessionPage(context.Context, string) (client.SessionInventoryPage, error) {
+	f.calls++
+	return client.SessionInventoryPage{Sessions: f.sessions}, f.err
+}
+
 type fakeSessionReplayer struct {
 	stream *client.FakeEventStream
 	err    error
