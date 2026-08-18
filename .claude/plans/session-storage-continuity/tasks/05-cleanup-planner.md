@@ -2,9 +2,9 @@
 id: 05-cleanup-planner
 title: Retention planner and safe cleanup API
 blocked_by: [02-indexed-inventory, 02b-bounded-pagination, 02c-inventory-locking]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/05-cleanup-planner"
+worktree: ".scratch/plan-session-storage-continuity-05-cleanup-planner"
 issue: "590"
 retries: 0
 last_error: ""
