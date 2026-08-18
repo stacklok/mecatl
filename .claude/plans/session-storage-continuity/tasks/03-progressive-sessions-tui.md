@@ -2,9 +2,9 @@
 id: 03-progressive-sessions-tui
 title: Progressive Sessions inventory
 blocked_by: [02-indexed-inventory, 02b-bounded-pagination, 02c-inventory-locking]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/03-progressive-sessions-tui"
+worktree: ".scratch/plan-session-storage-continuity-03-progressive-sessions-tui"
 issue: "588"
 retries: 0
 last_error: ""
