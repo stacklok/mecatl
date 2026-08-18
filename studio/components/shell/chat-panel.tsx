@@ -35,6 +35,18 @@ export type TaskSummary = {
   updatedAt: number;
   running?: boolean;
   projectId?: string;
+  /**
+   * Whether the daemon will accept a rename or a delete for this chat. A chat
+   * that is running, awaiting an approval, or stored somewhere that cannot be
+   * pruned is refused server-side, so the menu says so up front instead of
+   * offering an action that will fail. Undefined means a local draft, which this
+   * client owns outright.
+   */
+  canRename?: boolean;
+  canDelete?: boolean;
+  /** Why the action is unavailable, already phrased for a person. */
+  renameReason?: string;
+  deleteReason?: string;
 };
 
 export type ProjectSummary = { id: string; name: string; workspace: string };
@@ -90,6 +102,9 @@ export function ChatPanel({
     cancelledRef.current = false;
     setEditingId(id);
   };
+
+  // Undefined is a local draft: nothing server-side can refuse it.
+  const allows = (capability?: boolean) => capability !== false;
 
   /**
    * Blur is the ONLY commit path — Enter and Escape just blur the field.
@@ -222,6 +237,8 @@ export function ChatPanel({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-48">
                     <DropdownMenuItem
+                      disabled={!allows(task.canRename)}
+                      title={allows(task.canRename) ? undefined : task.renameReason}
                       onSelect={() => beginRename(task.id)}
                       className="cursor-pointer"
                     >
@@ -231,8 +248,11 @@ export function ChatPanel({
                     <DropdownMenuItem
                       // A running task is mid-stream into this transcript;
                       // deleting it would leave the run writing to a task the
-                      // list no longer has. Stop it first.
-                      disabled={task.running}
+                      // list no longer has. Stop it first. The daemon refuses
+                      // the same case — and others this client cannot see, like
+                      // a run owned by another browser — so both gates apply.
+                      disabled={task.running || !allows(task.canDelete)}
+                      title={allows(task.canDelete) ? undefined : task.deleteReason}
                       // Two-step rather than a dialog: the first select arms
                       // the confirm and keeps the menu open, so a mis-click
                       // cannot destroy a transcript.
@@ -260,9 +280,11 @@ export function ChatPanel({
                       />
                       {task.running
                         ? "Delete (stop it first)"
-                        : confirmingId === task.id
-                          ? "Click again to delete"
-                          : "Delete"}
+                        : !allows(task.canDelete)
+                          ? "Delete unavailable"
+                          : confirmingId === task.id
+                            ? "Click again to delete"
+                            : "Delete"}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

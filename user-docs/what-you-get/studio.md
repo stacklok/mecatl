@@ -68,6 +68,25 @@ The memory panel is deliberately read-only. Mecatl's memory tool calls are injec
 
 A schedule that fires while you are watching shows up as its own `sched--` session, so unattended work is visible in the same place as your own.
 
+## Your chats live on the daemon
+
+The chat list is `mecated`'s session store, not your browser's. Studio reads it from the daemon, so the same chats appear on every browser and machine pointed at that daemon, and clearing your browser data does not lose them.
+
+That means the actions on a chat are real:
+
+- **Rename** stores the new title on the session. It is what the next client to open sees, and it replaces the label mecatl derived from your first prompt.
+- **Delete** removes the session, its transcript, and its event log from the daemon's store. It is not a hide, and it cannot be undone from Studio.
+- **Opening a chat** loads its stored transcript, so you can pick up a conversation started somewhere else.
+
+Two things follow from the daemon being in charge:
+
+- **Some chats cannot be renamed or deleted right now**, and the menu says why — usually because the chat is mid-run or waiting on an approval, or because the daemon's store cannot delete at all. Finish or stop the run and the actions come back.
+- **A chat you have not sent yet is a draft.** It exists only in that browser until the first prompt creates its session, so a draft cannot be shared or recovered elsewhere.
+
+## Reloading during a run
+
+Closing or reloading the page does not stop a run — `mecated` owns it, not the browser. Studio marks the chat as still working on the daemon and reads the finished transcript back when the run ends. It cannot re-attach to the live stream, so you will not see the tokens that arrived while the page was away; the completed answer appears once the run finishes.
+
 ## See also
 
 - [Using mecatui](./mecatui.md) — the terminal client.

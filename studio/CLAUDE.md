@@ -38,7 +38,8 @@ task studio:typecheck # tsc --noEmit
   the resolved workspace on `/status`.
 - `scripts/dev-local.mjs` — starts the controller and Next server in managed
   mode; with `MECATL_BASE_URL`, starts Next only.
-- `lib/protocol.ts` — the typed runtime decoder for daemon wire JSON.
+- `lib/protocol.ts` — the typed runtime decoder for daemon wire JSON, including
+  the stored-chat inventory and transcript envelopes.
 - `tests/rendered-html.test.mjs` — server rendering, authenticated external
   proxy, control-policy, egress-policy, and wire-decoder behavior tests.
 
@@ -57,6 +58,26 @@ task studio:typecheck # tsc --noEmit
   scrim and its shadow, which are meant to be dark in both themes.
 - **Type sizes are rem, never px.** The font-scale control works by setting the
   ROOT font-size, so a px value silently opts that text out of scaling.
+- **The daemon owns the chat list, not the browser.** Which chats exist, what
+  each is called, and what was said in each live in mecated's session store
+  ([ADR 0227](../docs/adr/0227-studio-server-backed-chats.md)). Rename is
+  `POST /v1/sessions/{id}/rename`, delete is `POST …/delete`, opening a chat
+  reads `GET …/transcript`, and the list is `GET /v1/sessions`. `localStorage`
+  is a CACHE plus the home for unsent drafts — never the record. A "rename" or
+  "delete" that only touches local state is the bug this replaced: it lied to
+  the operator, because the next browser to open showed the old title and the
+  chat they thought they had deleted.
+- **A row is removed only after it was proven to exist.** The inventory walk is
+  bounded, so a truncated walk has proved nothing about what it did not read.
+  Deleting a local row on absence alone would drop a chat created seconds ago.
+- **Action eligibility comes from the row, not from client rules.** Each summary
+  carries `capabilities` plus a closed reason per disabled action. Render the
+  reason; do not re-derive who may rename or delete what, or the client drifts
+  from the daemon and offers actions that fail.
+- **Only a 404 detaches a chat from its session.** Any other failed turn keeps
+  the session id: mecated recovers a completed, cancelled, or failed session at
+  its run entry. Clearing the id on every error orphans a live session and
+  starts a fresh, context-free one in its place.
 - **The workspace is resolved, never hardcoded.** The controller derives the repo
   root from its own location and reports it on `/status`; the client refuses to
   open a session until it has one. Do not reintroduce a literal path — the app
@@ -75,6 +96,11 @@ task studio:typecheck # tsc --noEmit
 - **A failed turn must render as failed.** A provider failure arrives as a
   well-formed `result` carrying `stop:"error"` and no text — the "Done." fallback
   must not swallow it.
+- **A reload does not stop a run.** mecated keeps working after the page that
+  started it goes away, so the copy must not claim the task "was interrupted".
+  Studio cannot reattach to a live stream — `GET …/events` is a finite replay of
+  the durable log — so it says the run is still going and reads the transcript
+  back once it ends.
 - **Skills stay project-scoped.** `--skills-dir` only; never
   `--skills-conventional`, which would widen discovery to the user-global tree.
 
