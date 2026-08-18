@@ -5896,6 +5896,25 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   retention (`SessionMetadataPager`) and stale-session reconciliation (`MetaList`),
   while preserving their downstream state, liveness, and lease rechecks.
 
+  `engine/port/sessionmigration.go` defines the OPTIONAL physical-maintenance
+  capability consumed only by the authenticated server. `PlanSessionMigration`
+  performs a read-only physical scan and returns a principal+generation-bound opaque
+  plan with format/error counts and byte estimates. Apply mints a separate random
+  durable job under the adapter-private `sid-v1/migration-jobs/` registry; records
+  contain one-way principal/item handles, bounded counters, and stable sanitized
+  errors—never session ids, paths, backend errors, or content. Every apply/resume call
+  processes at most 100 families (25 by default), checkpointing after each committed
+  family. Cancellation is forward-only and completed jobs are idempotent.
+
+  Per-family lock order is `Service.runEntryMu` → optional maintenance
+  `SessionLease` → jsonlstore `.family.lock`. Under those exclusions the service and
+  adapter revalidate liveness, owner identity digest, durable kind (including
+  `unknown`), state, and source fingerprint. Jsonlstore moves legacy sidecars first,
+  writes one same-directory v2 replacement temp, verifies the complete v2 envelope and
+  sessnap payload by rereading it, and only then removes v1. An ENOSPC/write/sync/rename
+  failure therefore leaves canonical v1 or an already-readable v2 authoritative; a
+  lost checkpoint converges on resume. Logical mtime and sidecar bytes are preserved.
+
   `cmd/mecatui/client/sessions_list.go` (`ListSessionPage`) is the single
   proto-to-client paging boundary. It fetches exactly one 100-row page and maps
   the gRPC `ABORTED` stale-cursor signal to a client sentinel; only non-interactive

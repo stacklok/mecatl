@@ -13,6 +13,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Resumable session-storage migration** (issue #589, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+  `port.SessionMigrationStore` and its plan/family/job value objects define an
+  optional server-side v1-to-v2 physical-maintenance capability with durable bounded
+  progress and sanitized item errors, without widening `SessionStore`. Added (minor).
 - **Bounded session-storage health** (issue #592, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.SessionStorageHealth`, `SessionStorageHealthProvider`, and explicit
   availability fields let optional backends expose content-free indexed aggregate

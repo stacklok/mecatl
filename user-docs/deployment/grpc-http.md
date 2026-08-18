@@ -242,6 +242,24 @@ The HTTP adapter wraps the same service. Every event is one SSE `data:` line car
 | `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for unknown/finished child |
 | `POST /v1/sessions/{id}/fork` | `{title?}` | `200` `{session_id}` — fork a peer session from a conversation snapshot |
 
+### Storage management endpoints
+
+These routes require the deployment's authenticated management authority. Unsupported
+backends return `501`; unauthorized, missing, and cross-caller job handles do not reveal
+storage scope or family existence.
+
+| Method + path | Body | Response |
+|---|---|---|
+| `GET /v1/storage/health` | — | Aggregate content-free storage status |
+| `POST /v1/storage/migrations/plan` | — | Read-only v1/v2/error counts and byte estimates plus opaque plan id |
+| `POST /v1/storage/migrations/apply` | `{plan_id,batch_size?}` | Durable job status after one bounded batch |
+| `GET /v1/storage/migrations/{id}` | — | Caller-bound durable job status |
+| `POST /v1/storage/migrations/{id}/resume` | `{batch_size?}` | Status after another bounded batch |
+| `POST /v1/storage/migrations/{id}/cancel` | — | Forward-only cancellation status |
+
+Migration is physical optimization, not retention: it preserves every session and its
+semantic kind, owner, transcript snapshot, logical modification time, and sidecars.
+
 Scheduled-tasks has its own REST surface under `/v1/schedules` — see [Scheduled tasks](/what-you-get/scheduled-tasks.md#managing-schedules-in-chat-grpc-and-rest).
 
 ### Creating a session and running a prompt

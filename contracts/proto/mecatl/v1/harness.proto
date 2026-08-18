@@ -207,6 +207,14 @@ service HarnessService {
   // status. It never returns session ids, owners, paths, or transcript content.
   rpc GetStorageHealth(GetStorageHealthRequest) returns (GetStorageHealthResponse);
 
+  // Session migration is authenticated, semantics-preserving physical
+  // maintenance. Plan is read-only; apply/resume process bounded batches.
+  rpc PlanSessionMigration(PlanSessionMigrationRequest) returns (SessionMigrationPlan);
+  rpc ApplySessionMigration(ApplySessionMigrationRequest) returns (SessionMigrationJob);
+  rpc ResumeSessionMigration(ResumeSessionMigrationRequest) returns (SessionMigrationJob);
+  rpc CancelSessionMigration(CancelSessionMigrationRequest) returns (SessionMigrationJob);
+  rpc GetSessionMigrationJob(GetSessionMigrationJobRequest) returns (SessionMigrationJob);
+
   // ListSkills returns the resolved skills inventory snapshot: each discovered
   // skill's name + one-line description. Derived from the snapshot taken at
   // startup (skills are discovered once at build time and immutable for the
@@ -531,6 +539,9 @@ message ServerCapabilities {
   // legacy_adoption is true only when authenticated, caller-owned adoption with
   // explicit engine bindings is available.
   bool legacy_adoption = 20;
+  // storage_migration is true only when the backend implements durable bounded
+  // v1-to-v2 maintenance and a management authorizer is configured.
+  bool storage_migration = 21;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -829,6 +840,61 @@ message GetStorageHealthResponse {
   bool next_sweep_available = 20;
   string active_job = 21;
   string last_failure = 22;
+}
+
+message PlanSessionMigrationRequest {}
+
+message SessionMigrationPlan {
+  string plan_id = 1;
+  bool available = 2;
+  string unavailable_reason = 3;
+  int64 v1_families = 4;
+  int64 v2_families = 5;
+  int64 invalid_families = 6;
+  int64 skipped_families = 7;
+  int64 current_bytes = 8;
+  int64 reclaimable_bytes = 9;
+  int64 temporary_bytes = 10;
+}
+
+message ApplySessionMigrationRequest {
+  string plan_id = 1 [(buf.validate.field).string.min_len = 1];
+  int32 batch_size = 2;
+}
+
+message ResumeSessionMigrationRequest {
+  string job_id = 1 [(buf.validate.field).string.min_len = 1];
+  int32 batch_size = 2;
+}
+
+message CancelSessionMigrationRequest {
+  string job_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message GetSessionMigrationJobRequest {
+  string job_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message SessionMigrationItemError {
+  string item_handle = 1;
+  string reason_code = 2;
+  string message = 3;
+}
+
+message SessionMigrationJob {
+  string job_id = 1;
+  string state = 2;
+  int64 v1_families = 3;
+  int64 v2_families = 4;
+  int64 invalid_families = 5;
+  int64 skipped_families = 6;
+  int64 current_bytes = 7;
+  int64 reclaimable_bytes = 8;
+  int64 temporary_bytes = 9;
+  int64 processed = 10;
+  int64 migrated = 11;
+  int64 failed = 12;
+  repeated SessionMigrationItemError errors = 13;
 }
 
 // SetModeRequest changes a session's permission posture.

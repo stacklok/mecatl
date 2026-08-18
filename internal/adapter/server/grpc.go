@@ -785,6 +785,69 @@ func toProtoStorageHealth(h StorageHealth) *mecatlv1.GetStorageHealthResponse {
 	return resp
 }
 
+func toProtoMigrationPlan(plan MigrationPlan) *mecatlv1.SessionMigrationPlan {
+	return &mecatlv1.SessionMigrationPlan{
+		PlanId: plan.ID, Available: plan.Available, UnavailableReason: plan.UnavailableReason,
+		V1Families: plan.V1Families, V2Families: plan.V2Families, InvalidFamilies: plan.InvalidFamilies,
+		SkippedFamilies: plan.SkippedFamilies, CurrentBytes: plan.CurrentBytes,
+		ReclaimableBytes: plan.ReclaimableBytes, TemporaryBytes: plan.TemporaryBytes,
+	}
+}
+
+func toProtoMigrationJob(job MigrationJob) *mecatlv1.SessionMigrationJob {
+	out := &mecatlv1.SessionMigrationJob{
+		JobId: job.ID, State: job.State, V1Families: job.V1Families, V2Families: job.V2Families,
+		InvalidFamilies: job.InvalidFamilies, SkippedFamilies: job.SkippedFamilies,
+		CurrentBytes: job.CurrentBytes, ReclaimableBytes: job.ReclaimableBytes, TemporaryBytes: job.TemporaryBytes,
+		Processed: job.Processed, Migrated: job.Migrated, Failed: job.Failed,
+		Errors: make([]*mecatlv1.SessionMigrationItemError, 0, len(job.Errors)),
+	}
+	for _, item := range job.Errors {
+		out.Errors = append(out.Errors, &mecatlv1.SessionMigrationItemError{ItemHandle: item.ItemHandle, ReasonCode: item.ReasonCode, Message: item.Message})
+	}
+	return out
+}
+
+func (h *HarnessServer) PlanSessionMigration(ctx context.Context, _ *mecatlv1.PlanSessionMigrationRequest) (*mecatlv1.SessionMigrationPlan, error) {
+	plan, err := h.svc.PlanSessionMigration(ctx)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoMigrationPlan(plan), nil
+}
+
+func (h *HarnessServer) ApplySessionMigration(ctx context.Context, req *mecatlv1.ApplySessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
+	job, err := h.svc.ApplySessionMigration(ctx, req.GetPlanId(), int(req.GetBatchSize()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoMigrationJob(job), nil
+}
+
+func (h *HarnessServer) ResumeSessionMigration(ctx context.Context, req *mecatlv1.ResumeSessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
+	job, err := h.svc.ResumeSessionMigration(ctx, req.GetJobId(), int(req.GetBatchSize()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoMigrationJob(job), nil
+}
+
+func (h *HarnessServer) CancelSessionMigration(ctx context.Context, req *mecatlv1.CancelSessionMigrationRequest) (*mecatlv1.SessionMigrationJob, error) {
+	job, err := h.svc.CancelSessionMigration(ctx, req.GetJobId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoMigrationJob(job), nil
+}
+
+func (h *HarnessServer) GetSessionMigrationJob(ctx context.Context, req *mecatlv1.GetSessionMigrationJobRequest) (*mecatlv1.SessionMigrationJob, error) {
+	job, err := h.svc.SessionMigrationJob(ctx, req.GetJobId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoMigrationJob(job), nil
+}
+
 // toStatus maps service sentinel errors to gRPC status codes.
 //
 //nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
@@ -792,6 +855,12 @@ func toStatus(err error) error {
 	switch {
 	case errors.Is(err, ErrManagementUnauthorized):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, ErrMigrationUnsupported):
+		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrMigrationConflict):
+		return status.Error(codes.Aborted, err.Error())
+	case errors.Is(err, ErrMigrationBackend):
+		return status.Error(codes.Internal, err.Error())
 	case errors.Is(err, ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, ErrNotFound):

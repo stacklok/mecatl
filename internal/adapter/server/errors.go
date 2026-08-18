@@ -14,6 +14,14 @@ var (
 	// ErrManagementUnauthorized is deliberately resource-free: an unauthorized
 	// caller learns neither backend support nor aggregate storage scope.
 	ErrManagementUnauthorized = errors.New("server: management authorization required")
+	// ErrMigrationUnsupported reports that the configured session store has no
+	// physical v1-to-v2 maintenance capability.
+	ErrMigrationUnsupported = errors.New("server: session migration is not supported")
+	// ErrMigrationConflict reports an invalid durable job transition.
+	ErrMigrationConflict = errors.New("server: migration job conflict")
+	// ErrMigrationBackend is the only caller-visible backend failure. Raw paths,
+	// records, and backend error strings stay behind the adapter boundary.
+	ErrMigrationBackend = errors.New("server: storage maintenance failed")
 	// ErrInvalidArgument signals a malformed or missing required field.
 	ErrInvalidArgument = errors.New("server: invalid argument")
 	// ErrNotFound signals an unknown session id.

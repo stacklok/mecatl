@@ -88,6 +88,11 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/worktrees", h.listWorktrees)
 	h.mux.HandleFunc("GET /v1/sessions", h.listSessions)
 	h.mux.HandleFunc("GET /v1/storage/health", h.getStorageHealth)
+	h.mux.HandleFunc("POST /v1/storage/migrations/plan", h.planSessionMigration)
+	h.mux.HandleFunc("POST /v1/storage/migrations/apply", h.applySessionMigration)
+	h.mux.HandleFunc("GET /v1/storage/migrations/{id}", h.getSessionMigrationJob)
+	h.mux.HandleFunc("POST /v1/storage/migrations/{id}/resume", h.resumeSessionMigration)
+	h.mux.HandleFunc("POST /v1/storage/migrations/{id}/cancel", h.cancelSessionMigration)
 	h.mux.HandleFunc("GET /v1/sessions/{id}/events", h.streamSessionEvents)
 	h.mux.HandleFunc("POST /v1/teams", h.createTeam)
 	h.mux.HandleFunc("POST /v1/teams/{id}/members", h.spawnTeammate)
@@ -212,6 +217,7 @@ type serverCapabilitiesJSON struct {
 	Reflection        bool   `json:"reflection"`
 	LearningProposals bool   `json:"learning_proposals"`
 	LearnedSkills     bool   `json:"learned_skills"`
+	StorageMigration  bool   `json:"storage_migration"`
 	LegacyAdoption    bool   `json:"legacy_adoption"`
 	Posture           string `json:"posture,omitempty"`
 }
@@ -234,6 +240,7 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		Reflection:        c.GetReflection(),
 		LearningProposals: c.GetLearningProposals(),
 		LearnedSkills:     c.GetLearnedSkills(),
+		StorageMigration:  c.GetStorageMigration(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
 		Posture:           c.GetPosture(),
 	}
@@ -1795,6 +1802,68 @@ func (h *HTTPHandler) getStorageHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toProtoStorageHealth(health))
 }
 
+func (h *HTTPHandler) planSessionMigration(w http.ResponseWriter, r *http.Request) {
+	plan, err := h.svc.PlanSessionMigration(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoMigrationPlan(plan))
+}
+
+func (h *HTTPHandler) applySessionMigration(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PlanID    string `json:"plan_id"`
+		BatchSize int    `json:"batch_size"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeServiceError(w, fmt.Errorf("%w: invalid migration request", ErrInvalidArgument))
+		return
+	}
+	job, err := h.svc.ApplySessionMigration(r.Context(), body.PlanID, body.BatchSize)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
+}
+
+func (h *HTTPHandler) resumeSessionMigration(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		BatchSize int `json:"batch_size"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeServiceError(w, fmt.Errorf("%w: invalid migration request", ErrInvalidArgument))
+			return
+		}
+	}
+	job, err := h.svc.ResumeSessionMigration(r.Context(), r.PathValue("id"), body.BatchSize)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
+}
+
+func (h *HTTPHandler) cancelSessionMigration(w http.ResponseWriter, r *http.Request) {
+	job, err := h.svc.CancelSessionMigration(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
+}
+
+func (h *HTTPHandler) getSessionMigrationJob(w http.ResponseWriter, r *http.Request) {
+	job, err := h.svc.SessionMigrationJob(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoMigrationJob(job))
+}
+
 // streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
 // durable event log as a Server-Sent Events stream (issue #245 Phase 1; cloud-
 // native Phase 3a read-back). This is the READ path: it never calls appendEvent
@@ -1884,6 +1953,12 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrManagementUnauthorized):
 		writeError(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrMigrationUnsupported):
+		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, ErrMigrationConflict):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrMigrationBackend):
+		writeError(w, http.StatusInternalServerError, err.Error())
 	case errors.Is(err, ErrInvalidArgument):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrNotFound):

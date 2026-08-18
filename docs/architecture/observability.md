@@ -110,10 +110,19 @@
   `port.SessionStorageHealthProvider` uses that already-ready catalog plus cheap
   file metadata to report aggregate bytes and format/kind/corruption counts. A
   stale or absent index is `unavailable`, never a measured zero, and unsupported
-  backends do not advertise the management capability. Reclaimable bytes remain
-  unavailable until a generation-bound maintenance plan exists; no cleanup or
-  migration action is implied by health inspection. Cursors retain neutral ordering and
-  bind the catalog fingerprint generation and ownership/filter scope; the backend
+  backends do not advertise the management capability. Authenticated migration
+  planning is a separate read-only scan that reports v1/v2/invalid/skipped family
+  counts, current/reclaimable bytes, and the largest one-family temporary-space
+  requirement. Its opaque plan binds the verified management caller and source
+  generation without writing. Apply creates a durable caller-bound job and processes
+  at most one bounded batch per call; cancel stops future families, while resume after
+  restart retains committed progress. Each family takes run-entry serialization and
+  the maintenance lease before the stable family flock, revalidates owner/kind/state/
+  liveness and source fingerprint, promotes one verified v2 snapshot, and removes v1
+  only after rereading that v2. Sidecars, complete sessnap bytes, unknown kind, owner,
+  and logical modification time are preserved. Public errors contain only stable
+  reason codes, bounded messages, and non-reversible item handles. Cursors retain
+  neutral ordering and bind the catalog fingerprint generation and ownership/filter scope; the backend
   token itself is issued and validated only by the pager. A stale, mismatched, or
   foreign cursor returns `port.ErrSessionMetadataCursorRestart`, requiring page-one restart
   rather than mixing generations or owner scopes. Ready-state inventory checks an

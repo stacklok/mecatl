@@ -60,6 +60,22 @@ separate a real zero from unsupported or not-yet-measured data. Jsonlstore suppo
 this view; memstore and remote backends that do not implement the seam report the
 feature as unsupported. The view is status-only: it does not run cleanup or migration.
 
+### Resumable v1-to-v2 migration
+
+Jsonlstore additionally implements the optional `port.SessionMigrationStore` management
+capability. An authenticated plan is read-only and reports v1/v2/invalid/skipped
+families, current and estimated reclaimable bytes, and the maximum temporary space for
+one family. Apply processes a bounded batch and returns a durable job handle; use resume
+to process later batches or continue after a server restart. Cancel stops future items
+and keeps already-migrated families committed.
+
+Migration preserves the complete snapshot, owner, durable kind (including `unknown`),
+logical modification time, and tool/event sidecars. It acquires the ordinary run-entry
+lease and the family's cross-process lock, rereads and verifies v2 before removing v1,
+and reports corrupt/torn records without discarding them. Job errors expose stable
+reason codes and sanitized text only. Memstore, Redis, and remote stores currently
+advertise migration as unsupported rather than returning fabricated zero counts.
+
 ### Snapshot mechanics via sessnap
 
 The snapshot format is defined in `engine/adapter/sessnap`. The `sessnap.Snapshot` struct is a stable JSON DTO that the store adapters share:

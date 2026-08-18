@@ -1,0 +1,352 @@
+package jsonlstore
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+const migrationJobsDir = "migration-jobs"
+
+var _ port.SessionMigrationStore = (*Store)(nil)
+
+// InspectSessionMigration performs a read-only physical inventory. It never
+// creates a catalog, job record, lock, quarantine, or replacement file.
+func (st *Store) InspectSessionMigration(ctx context.Context) (port.SessionMigrationInspection, error) {
+	if err := ctx.Err(); err != nil {
+		return port.SessionMigrationInspection{}, err
+	}
+	inspection := port.SessionMigrationInspection{Available: true}
+	type entry struct {
+		path string
+		info os.FileInfo
+	}
+	var v1 []entry
+	var generationParts []string
+	for _, dir := range []string{st.resolver.dir, st.resolver.canonicalDir()} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return port.SessionMigrationInspection{}, fmt.Errorf("jsonlstore: inspect migration storage: %w", err)
+		}
+		for _, item := range entries {
+			if item.IsDir() || !isSessionStorageFile(item.Name()) {
+				continue
+			}
+			path := filepath.Join(dir, item.Name())
+			info, err := os.Lstat(path)
+			if err != nil {
+				return port.SessionMigrationInspection{}, fmt.Errorf("jsonlstore: inspect migration entry: %w", err)
+			}
+			inspection.CurrentBytes += info.Size()
+			generationParts = append(generationParts, item.Name()+":"+fmt.Sprint(info.Size())+":"+fmt.Sprint(info.ModTime().UnixNano()))
+			if !info.Mode().IsRegular() {
+				inspection.InvalidFamilies++
+				continue
+			}
+			switch {
+			case strings.HasSuffix(item.Name(), sessionFileSuffix):
+				inspection.V1Families++
+				v1 = append(v1, entry{path: path, info: info})
+			case strings.HasSuffix(item.Name(), currentSnapshotSuffix):
+				inspection.V2Families++
+				if !validMigrationCurrent(path, item.Name()) {
+					inspection.InvalidFamilies++
+				}
+			}
+		}
+	}
+	sort.Strings(generationParts)
+	generation := sha256.Sum256([]byte(strings.Join(generationParts, "\n")))
+	inspection.Generation = hex.EncodeToString(generation[:16])
+
+	seen := make(map[session.SessionID]struct{}, len(v1))
+	for _, item := range v1 {
+		family, payloadSize, err := migrationFamily(item.path, item.info)
+		if err != nil {
+			inspection.InvalidFamilies++
+			continue
+		}
+		if _, duplicate := seen[family.ID]; duplicate {
+			inspection.SkippedFamilies++
+			continue
+		}
+		seen[family.ID] = struct{}{}
+		inspection.Families = append(inspection.Families, family)
+		reclaim := item.info.Size() - payloadSize
+		if reclaim > 0 {
+			inspection.ReclaimableBytes += reclaim
+		}
+		if payloadSize > inspection.TemporaryBytes {
+			inspection.TemporaryBytes = payloadSize
+		}
+	}
+	return inspection, nil
+}
+
+func validMigrationCurrent(path, name string) bool {
+	data, err := os.ReadFile(path) //nolint:gosec // path comes from the owner-only store scan
+	if err != nil {
+		return false
+	}
+	current, err := decodeCurrentSnapshot(data)
+	if err != nil {
+		return false
+	}
+	sess, err := sessnap.Unmarshal(current.Snapshot)
+	if err != nil || sess.ID == "" || name != encodeSessionToken(sess.ID)+currentSnapshotSuffix {
+		return false
+	}
+	return current.Metadata.ID == "" || current.Metadata.ID == sess.ID
+}
+
+func migrationFamily(path string, info os.FileInfo) (port.SessionMigrationFamily, int64, error) {
+	f, err := os.Open(path) //nolint:gosec // path comes from the owner-only store scan
+	if err != nil {
+		return port.SessionMigrationFamily{}, 0, err
+	}
+	defer func() { _ = f.Close() }()
+	line, err := readLastLineAt(f, info.Size())
+	if err != nil {
+		return port.SessionMigrationFamily{}, 0, err
+	}
+	sess, err := sessnap.Unmarshal(line)
+	if err != nil {
+		return port.SessionMigrationFamily{}, 0, err
+	}
+	if sess.ID == "" {
+		return port.SessionMigrationFamily{}, 0, errors.New("snapshot carries no session id")
+	}
+	fingerprint := migrationFingerprint(line, info)
+	ownerKey := migrationOwnerKey(sess.Owner)
+	handleSum := sha256.Sum256([]byte(sess.ID))
+	family := port.SessionMigrationFamily{
+		ID: sess.ID, Handle: hex.EncodeToString(handleSum[:8]), Fingerprint: fingerprint,
+		OwnerKey: ownerKey, Kind: sess.Kind, State: sess.State, Bytes: info.Size(),
+	}
+	envelope, err := json.Marshal(currentSnapshot{
+		Format: currentSnapshotFormat, ModifiedAt: info.ModTime(), Metadata: metaSnapshotFromSession(sess), Snapshot: line,
+	})
+	if err != nil {
+		return port.SessionMigrationFamily{}, 0, err
+	}
+	return family, int64(len(envelope)), nil
+}
+
+func migrationFingerprint(line []byte, info os.FileInfo) string {
+	h := sha256.New()
+	_, _ = h.Write(line)
+	_, _ = io.WriteString(h, fmt.Sprintf("\x00%d\x00%d", info.Size(), info.ModTime().UnixNano()))
+	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+func migrationOwnerKey(owner *session.Principal) string {
+	if owner == nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	return hex.EncodeToString(sum[:16])
+}
+
+// MigrateSessionFamily holds the stable family flock across revalidation,
+// promotion, v2 verification, and v1 removal. Item failures are returned as a
+// closed reason code; raw backend errors never cross the maintenance boundary.
+//
+//nolint:gocyclo // the linear crash-safety transaction keeps every fail-closed checkpoint explicit.
+func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.SessionMigrationFamily) (string, error) {
+	if err := validateSessionID(expected.ID); err != nil {
+		return "invalid_snapshot", nil
+	}
+	path := st.resolver.currentSnapshotPath(expected.ID)
+	var reason string
+	err := st.withSnapshotFamilyLock(ctx, path, func() error {
+		_, info, line, found, err := st.migrationSource(expected.ID)
+		if err != nil {
+			reason = "invalid_snapshot"
+			return nil
+		}
+		if !found {
+			// A previous attempt may have committed and removed v1 before its job
+			// checkpoint. A readable matching v2 is idempotent success.
+			if st.verifiedCurrent(expected.ID, nil) {
+				return nil
+			}
+			reason = "changed"
+			return nil
+		}
+		sess, err := sessnap.Unmarshal(line)
+		if err != nil || sess.ID != expected.ID {
+			reason = "invalid_snapshot"
+			return nil
+		}
+		if migrationFingerprint(line, info) != expected.Fingerprint || migrationOwnerKey(sess.Owner) != expected.OwnerKey ||
+			sess.Kind != expected.Kind || sess.State != expected.State {
+			reason = "changed"
+			return nil
+		}
+		currentExists := false
+		if currentInfo, statErr := os.Stat(path); statErr == nil {
+			currentExists = currentInfo.Mode().IsRegular()
+			if !currentExists || !st.verifiedCurrent(expected.ID, line) {
+				reason = "changed"
+				return nil
+			}
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+		if err := st.advanceInventoryGeneration(); err != nil {
+			return err
+		}
+		if err := st.resolver.prepareWrite(expected.ID); err != nil {
+			return err
+		}
+		v1Path := st.resolver.canonicalPath(expected.ID, kindSnapshot)
+		if !currentExists {
+			data, err := json.Marshal(currentSnapshot{
+				Format: currentSnapshotFormat, ModifiedAt: info.ModTime(), Metadata: metaSnapshotFromSession(sess), Snapshot: line,
+			})
+			if err != nil {
+				reason = "invalid_snapshot"
+				return nil
+			}
+			if err := replaceCurrentSnapshot(path, data, info.ModTime(), st.tempOwner, st.tempGeneration.Add(1), st.snapshot, st.durability); err != nil {
+				if errors.Is(err, syscall.ENOSPC) {
+					reason = "insufficient_space"
+					return nil
+				}
+				return err
+			}
+		}
+		if !st.verifiedCurrent(expected.ID, line) {
+			reason = "verification_failed"
+			return nil
+		}
+		if err := os.Remove(v1Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return st.syncCanonicalDir()
+	})
+	if err != nil {
+		return "backend_failure", nil
+	}
+	return reason, nil
+}
+
+func (st *Store) migrationSource(id session.SessionID) (string, os.FileInfo, []byte, bool, error) {
+	for _, path := range []string{st.resolver.canonicalPath(id, kindSnapshot), st.resolver.legacyPath(id, kindSnapshot)} {
+		f, err := os.Open(path) //nolint:gosec // confined store path
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", nil, nil, false, err
+		}
+		info, statErr := f.Stat()
+		if statErr != nil || !info.Mode().IsRegular() {
+			_ = f.Close()
+			if statErr != nil {
+				return "", nil, nil, false, statErr
+			}
+			return "", nil, nil, false, errors.New("migration source is not regular")
+		}
+		line, readErr := readLastLineAt(f, info.Size())
+		_ = f.Close()
+		if readErr != nil {
+			return "", nil, nil, false, readErr
+		}
+		sess, decodeErr := sessnap.Unmarshal(line)
+		if decodeErr != nil || sess.ID != id {
+			return "", nil, nil, false, errors.New("migration source ownership unproven")
+		}
+		return path, info, line, true, nil
+	}
+	return "", nil, nil, false, nil
+}
+
+func (st *Store) verifiedCurrent(id session.SessionID, want []byte) bool {
+	data, err := os.ReadFile(st.resolver.currentSnapshotPath(id)) //nolint:gosec // confined store path
+	if err != nil {
+		return false
+	}
+	current, err := decodeCurrentSnapshot(data)
+	if err != nil {
+		return false
+	}
+	sess, err := sessnap.Unmarshal(current.Snapshot)
+	if err != nil || sess.ID != id {
+		return false
+	}
+	return want == nil || string(current.Snapshot) == string(want)
+}
+
+func (st *Store) syncCanonicalDir() error {
+	if !st.durability.DirectorySync {
+		return nil
+	}
+	dir, err := st.snapshot.openDir(st.resolver.canonicalDir())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return st.snapshot.syncDir(dir)
+}
+
+func (st *Store) migrationJobPath(id string) (string, error) {
+	if len(id) != 32 {
+		return "", errors.New("invalid migration job handle")
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return "", errors.New("invalid migration job handle")
+	}
+	dir := filepath.Join(st.resolver.canonicalDir(), migrationJobsDir)
+	return filepath.Join(dir, id+".json"), nil
+}
+
+// SaveSessionMigrationJob atomically checkpoints one sanitized durable job record.
+func (st *Store) SaveSessionMigrationJob(_ context.Context, job port.SessionMigrationJob) error {
+	path, err := st.migrationJobPath(job.ID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("jsonlstore: create migration registry: %w", err)
+	}
+	data, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("jsonlstore: encode migration job: %w", err)
+	}
+	return replaceCurrentSnapshot(path, data, time.Now(), st.tempOwner, st.tempGeneration.Add(1), st.snapshot, st.durability)
+}
+
+// LoadSessionMigrationJob reloads one validated durable job record by opaque handle.
+func (st *Store) LoadSessionMigrationJob(_ context.Context, id string) (port.SessionMigrationJob, error) {
+	path, err := st.migrationJobPath(id)
+	if err != nil {
+		return port.SessionMigrationJob{}, err
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // validated handle under owner-only registry
+	if err != nil {
+		return port.SessionMigrationJob{}, err
+	}
+	var job port.SessionMigrationJob
+	if err := json.Unmarshal(data, &job); err != nil {
+		return port.SessionMigrationJob{}, fmt.Errorf("jsonlstore: decode migration job: %w", err)
+	}
+	if job.ID != id {
+		return port.SessionMigrationJob{}, errors.New("jsonlstore: migration job identity mismatch")
+	}
+	return job, nil
+}

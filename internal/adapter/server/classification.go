@@ -241,6 +241,11 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
 	"ListSessionPage":           {KindCallerOwned, "passes caller ownership into the store query before keyset page formation and counting"},
 	"StorageHealth":             {KindCallerOwned, "requires the trusted-context management authorizer before reading any process-wide aggregate"},
+	"PlanSessionMigration":      {KindCallerOwned, "requires management authorization and binds its generation handle to the verified caller"},
+	"ApplySessionMigration":     {KindCallerOwned, "requires management authorization and creates a caller-bound durable bounded-batch job"},
+	"ResumeSessionMigration":    {KindCallerOwned, "requires management authorization and the same caller binding before processing another bounded batch"},
+	"CancelSessionMigration":    {KindCallerOwned, "requires management authorization and the same caller binding before stopping future items"},
+	"SessionMigrationJob":       {KindCallerOwned, "requires management authorization and conceals missing and cross-caller job handles identically"},
 	"StreamSessionEvents":       {KindCallerOwned, "event log/live stream resolves through the owning session's authorizeSession check"},
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
