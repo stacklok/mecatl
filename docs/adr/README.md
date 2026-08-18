@@ -30,6 +30,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
 - [0104 — Session families get a bounded, injective, non-reversible physical name](./0104-session-family-physical-naming.md)
 - [0217 — Session discovery uses durable kind metadata and an authoritative transcript](./0217-session-discovery-continuation.md)
+- [0226 — Session storage separates current state, indexed metadata, and maintenance](./0226-session-storage-maintenance.md)
 - [0207 — Operator-owned exact context-window overrides](./0207-context-window-overrides.md)
 - [0209 — Attribute schedule origins through the run context](./0209-schedule-origin-run-context.md) *(supersedes ADR 0075's origin-binding mechanism)*
 - [0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)
@@ -70,6 +71,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0106 — Optional completion-learning seam](./0106-optional-learning-seam.md)
 - [0107 — Operator-profile memory lifecycle](./0107-operator-profile-memory-lifecycle.md)
 - [0109 — Evidence-backed reflection and durable staged learning](./0109-staged-learning-proposals.md)
+- [0227 — Dream consolidation safety boundary](./0227-dream-consolidation-safety-boundary.md)
+- [0228 — Manual dream review](./0228-manual-dream-review.md)
 - [0110 — Evaluated, versioned agent-owned skills](./0110-evaluated-agent-owned-skills.md) *(superseded by 0111)*
 - [0111 — Hardened publication and recovery for agent-owned skills](./0111-hardened-agent-owned-skill-publication.md)
 
@@ -156,6 +159,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0206 — Ship reusable OIDC caller identity as an opt-in module](./0206-oidc-authn-module.md)
 - [0212 — Enforce caller ownership at every application access path](./0212-caller-ownership-enforcement.md) *(agent-identity Track A; application isolation)*
 - [0213 — Enforce caller ownership at remote driver boundaries](./0213-driver-caller-ownership.md) *(B-lite follow-up to application isolation)*
+- [0225 — Operator settings validation command](./0225-operator-settings-validation.md)
 - [0024 — System-prompt research](./0024-system-prompt-research.md) *(research)*
 - [0041 — Output-economy default prompt](./0041-output-economy-default-prompt.md)
 - [0054 — Reasoning rebalance of the default-tone prompt](./0054-reasoning-rebalance-default-prompt.md)

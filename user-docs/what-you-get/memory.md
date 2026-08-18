@@ -37,9 +37,43 @@ Each entry has a key, a value, and an optional one-line description. The descrip
 
 ### Dream consolidation
 
-Consolidation is an optional background pass that distills stored memory — merging near-duplicates, dropping stale entries, and tightening descriptions. It runs as a background LLM call on a configurable interval via `--memory-consolidate-interval`. It is **off by default** on both `mecated` and the embedded TUI server to avoid silent token spend.
+Consolidation has two separate maintenance surfaces. Neither is completed-trajectory reflection or
+learning.
 
-Memory works correctly without consolidation. Consolidation is an optimization for stores that have accumulated many entries over many sessions.
+**Automatic schedules** are optional and **off by default**. Their planner can classify exact
+duplicates, but unattended application is narrower: the local file-backed store must atomically
+compare bound survivor/source versions and tombstone only sources whose active value and
+description exactly match the survivor. The survivor is never rewritten. Configure the independent
+project-memory and user-model schedules with `--memory-consolidate-interval` and
+`--user-model-consolidate-interval`; these flags do not change `learning.mode`.
+
+**Manual review** is available in mecatui through `/dream` when the server advertises a supported
+target. The flow is:
+
+1. choose project memory or the cross-project user model;
+2. acknowledge that generation sends the selected bounded values/descriptions to the configured
+   model and spends tokens;
+3. inspect every exact-duplicate and synthesized-replacement operation, with every untrusted line quoted
+   and prefixed and the complete bounded reason visible;
+4. apply or dismiss the whole plan; and
+5. read the receipt's planned, applied, conflicted, skipped, and failed source counts.
+
+Exact duplicates keep the displayed survivor unchanged. Hidden controls or Unicode format characters in
+model-authored replacement/reason text reject the plan before retention, so an accepted review and apply
+use the same replacement bytes. For an approved synthesis, the local store
+atomically rewrites the displayed survivor to the displayed replacement and tombstones all displayed
+sources for that operation. Operations are independent, so a whole-plan apply may be partial; there
+are no per-source toggles, grouped transaction, or grouped undo.
+
+Plans are short-lived and process-local. A same decision still applying and a genuinely indeterminate
+transport error preserve the exact plan ID and decision for explicit same-decision receipt retrieval;
+the latter may hide an already-applied request. An opposite applying decision is non-retryable and
+offers no fresh generation until terminal; a known terminal opposite decision permits explicit fresh
+generation. Restart, expiry, or another replica makes the old plan non-retryable and offers a fresh
+plan instead. No state offers the opposite decision.
+Manual review is unavailable while ownership enforcement is enabled, when no planner is configured, or
+when the selected store lacks reviewed atomic consolidation (including current remote/base-only
+stores). It shows no provider/model identity and collects no recall-usage telemetry.
 
 ### Memory and lifecycle tools
 
@@ -155,10 +189,11 @@ for one compatibility window. Proposal data defaults beside the user-model store
 The explicit memory and SkillDraft tools are independent and remain available while
 completed-trajectory learning is off. Dream intervals also do not enable that learning.
 
-A separate `--user-model-consolidate-interval > 0` independently authorizes a process-wide
-dream consolidator scoped to the cross-project `user/` namespace. It runs when the
-user-model store and provider are available regardless of effective workspace
-`learning.mode`; a project `off` setting cannot suppress this operator schedule.
+A separate `--user-model-consolidate-interval > 0` independently authorizes the automatic
+exact-duplicate-only schedule for the cross-project `user/` namespace. It remains off by default,
+and a project `learning.mode: off` cannot suppress that explicit operator schedule. Manual `/dream`
+review is immediate and separate from this flag: it can inspect exact and synthesized operations for
+the user model, but only on a supported local lifecycle store and never under ownership enforcement.
 
 **Disable the user model entirely** with `--no-user-model`.
 
@@ -171,7 +206,8 @@ user-model store and provider are available regardless of effective workspace
 | Per-project memory tools | **On** (mecatui: per-project dir under `~/.local/share/mecatui/memory/`) | `--no-memory` to disable; `--memory-dir` to relocate |
 | Tier-0 memory index (at session start) | **On** when memory is enabled | Automatic; not configurable separately |
 | BM25 SearchMemory | **On** when memory is enabled | Automatic |
-| Dream consolidation | **Off** | `--memory-consolidate-interval` |
+| Dream consolidation schedules | **Off** | `--memory-consolidate-interval` / `--user-model-consolidate-interval` |
+| Manual dream review | **Available when advertised** | mecatui `/dream`; unavailable under ownership enforcement or without a supported planner/store |
 | Soul | **On** if `~/.config/mecatl/soul.md` exists | `--no-soul` to disable; `--soul-file` to relocate |
 | User model tools + live operator profile | **On** | `--no-user-model` to disable; `--user-model-dir` to relocate |
 | Automatic evidence reflection | **Off** | `learning.mode: review` stages proposals; `auto` may conservatively promote eligible facts |

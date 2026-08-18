@@ -55,6 +55,10 @@ type Capabilities struct {
 	StorageMigration  bool
 	StorageCleanup    bool
 	LegacyAdoption    bool
+	// ManualDream is nil when an older server does not expose the capability object.
+	// A non-nil value keeps /dream discoverable even when both targets are unavailable,
+	// so the overlay can explain the target-specific reasons.
+	ManualDream *ManualDreamCapabilities
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -86,7 +90,25 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		StorageMigration:  c.GetStorageMigration(),
 		StorageCleanup:    c.GetStorageCleanup(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
+		ManualDream:       manualDreamCapabilitiesFrom(c.GetManualDream()),
 	}
+}
+
+func manualDreamCapabilitiesFrom(c *mecatlv1.ManualDreamCapabilities) *ManualDreamCapabilities {
+	if c == nil {
+		return nil
+	}
+	return &ManualDreamCapabilities{
+		ProjectMemory: dreamTargetCapabilityFrom(c.GetProjectMemory()),
+		UserModel:     dreamTargetCapabilityFrom(c.GetUserModel()),
+	}
+}
+
+func dreamTargetCapabilityFrom(c *mecatlv1.DreamTargetCapability) DreamTargetCapability {
+	if c == nil {
+		return DreamTargetCapability{}
+	}
+	return DreamTargetCapability{Generate: c.GetGenerate(), Decide: c.GetDecide(), UnavailableReason: validText(c.GetUnavailableReason())}
 }
 
 // ResolvedModel is the proto-free mirror of mecatlv1.ResolvedModel: the EFFECTIVE

@@ -104,6 +104,8 @@ func (m Model) renderBody() string {
 		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.reflections.view != reflectionsNone:
 		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case m.dream.view != dreamClosed:
+		return renderDreamOverlay(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.models.view != modelsNone:
 		return renderModelsOverlay(m.deps.Theme, m.models, m.caps, m.modelProvenanceLine(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.effort.view != effortNone:

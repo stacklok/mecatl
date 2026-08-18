@@ -209,6 +209,7 @@ func run(argv []string) error {
 		Soul:                cl,
 		UserModel:           cl,
 		Reflections:         cl,
+		Dream:               cl,
 		Models:              cl,
 		Worktrees:           cl,
 		Sched:               cl,

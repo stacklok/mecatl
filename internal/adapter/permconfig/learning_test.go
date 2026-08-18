@@ -5,6 +5,42 @@ import (
 	"time"
 )
 
+func TestValidateYAML(t *testing.T) {
+	t.Parallel()
+
+	valid := `learning:
+  mode: auto
+  sensitivity: balanced
+  skills:
+    activation: validated
+  automatic:
+    cooldown: 10m
+    window: 1h
+    max_reflections: 8
+    max_tokens: 100000
+    max_reflections_per_principal: 4
+    max_tokens_per_principal: 50000
+`
+	cases := []struct {
+		name    string
+		doc     string
+		wantErr bool
+	}{
+		{name: "valid learning config", doc: valid},
+		{name: "malformed", doc: "learning: [\n", wantErr: true},
+		{name: "unknown learning key", doc: "learning:\n  mode: auto\n  unknown: true\n", wantErr: true},
+		{name: "duplicate learning key", doc: "learning:\n  mode: auto\n  mode: review\n", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateYAML([]byte(tc.doc))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateYAML() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestLearningStrictParse(t *testing.T) {
 	for _, mode := range []string{"off", "review", "auto"} {
 		cfg, err := parseYAML([]byte("learning:\n  mode: " + mode + "\n"))

@@ -314,6 +314,7 @@ func TestTopLevelHelpRealRendererContainsCommands(t *testing.T) {
 		"acp                     serve the Agent Client Protocol over stdio",
 		"import                  import a Codex or Claude Code session",
 		"config init             write/print the operator settings.yaml skeleton",
+		"config validate         validate operator settings.yaml without writing",
 		"skills promote          promote a model-authored candidate skill",
 		"perf-mcp print-config   print a paste-ready client",
 		"mecated <command> --help",

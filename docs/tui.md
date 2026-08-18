@@ -456,14 +456,15 @@ agents overlay pinned to the Teams tab — same surface as `ctrl+a`, which picks
 context-sensitive default tab), `/skills` (browse the skills inventory),
 `/soul` (inspect the persona — read-only), `/usermodel` (inspect the user
 model and its proposal linkage — read-only), `/reflections` (review bounded pending/recent
-learning proposals), `/reflect` (explicitly reflect the current completed session),
+learning proposals), `/reflect` (explicitly reflect the current completed session), `/dream`
+(manually review project-memory or user-model consolidation),
 `/models` (pick the model for the next session), `/worktrees`
 (switch to a sibling git worktree), and `/schedule` (browse & manage scheduled
 tasks) appear
 only when the connected server advertises those capabilities (and, for
-`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/models`/`/worktrees`/`/schedule`, the matching client
+`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/dream`/`/models`/`/worktrees`/`/schedule`, the matching client
 collaborator is wired). The fixed palette order is
-`clear, help, mcp, agents, team, skills, soul, usermodel, reflections, reflect, models, effort, worktrees, schedule, learning, learning-sensitivity` (locked by a test).
+`clear, help, mcp, agents, team, skills, soul, usermodel, reflections, reflect, dream, models, effort, worktrees, schedule, learning, learning-sensitivity` (locked by a test).
 `/learning` is local embedded-server operator-settings UX: each invocation selects the
 next Off→Review→Auto value in `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving
 unrelated YAML and comments. `/learning-sensitivity` independently cycles
@@ -507,6 +508,38 @@ sanitized. Old/base-only stores show the current value and honestly report histo
 unavailable. Proposal-linked revisions show the proposal id beside their existing provenance.
 `esc` returns from detail or closes the panel. The surface is read-only:
 Forget remains an ordinary model tool behind its permission gate.
+
+**`/dream` (manual memory maintenance).** The command appears only when the server sends
+the `manual_dream` capability object and the dream client is wired; an older server hides it.
+Choose project memory or the cross-project user model. Each target row reports the server's
+independent generation/decision availability and bounded reason. Pressing enter explicitly
+acknowledges that generation sends the selected bounded memory values and descriptions to the
+configured planner and spends tokens. This action does not enable or change either consolidation
+schedule.
+
+The scrollable review shows every exact-duplicate or synthesized-replacement operation: survivor,
+sources, current values/descriptions, proposed replacement, reason, and exact-duplicate eligibility.
+Every untrusted physical line is quoted and prefixed. Model-authored replacement/reason text containing
+hidden controls or Unicode format characters is rejected before retention, so the replacement approved
+in this view is byte-for-byte the replacement that apply can persist.
+`a` confirms apply of the **whole plan**; `x` confirms whole-plan dismissal with no mutation.
+There are no source checkboxes. Approved synthesis rewrites the displayed survivor and tombstones
+the displayed sources atomically per operation, but independent operations may conflict or fail and
+the receipt therefore reports planned/applied/conflicted/skipped/failed source counts without a
+grouped-undo claim. `r` explicitly generates a fresh plan and warns that this makes another provider
+call and spends again; nothing auto-refreshes after a conflict or failure. A same-decision request while
+apply is still running keeps `t` available for exact idempotent receipt retrieval. A genuinely
+indeterminate transport error does the same because the first request may already have applied. An
+opposite decision is never offered. An opposite decision against an active apply makes the old plan
+non-actionable with no fresh-generation action; a known terminal opposite decision offers explicit `r`
+regeneration. `NOT_FOUND` after expiry, restart, or wrong-replica routing cannot retrieve a receipt and
+offers only explicit fresh generation.
+
+Plans are opaque, process-local, bounded, and expire. Restart, expiry, or a decision routed to a
+server replica other than the generator can make the retained plan unrecoverable; starting a separate
+fresh review spends another provider call. The workflow is unavailable while ownership enforcement is enabled,
+when no configured planner exists, or when the selected target store lacks both reviewed atomic
+operations. It does not display provider/model identity and has no recall-usage counters.
 
 **`/reflections` and `/reflect` (proposal review).** `/reflections` is gated on the
 server's proposal capability. It loads at most 50 operator proposals plus at most 50 proposals
@@ -630,8 +663,11 @@ under `~/.local/share/mecatui/memory/<path-slug>/` (or `$XDG_DATA_HOME/...` when
 set), where `<path-slug>` is the absolute workspace path with `/` replaced by `-`
 (e.g. `-home-me-dev-mecatl`) — deterministic, human-legible, and collision-free
 across same-named checkouts. Pass `--no-memory` to disable it or `--memory-dir` to
-relocate the store. Background memory consolidation (the "dream" distiller, which
-spends tokens) stays **off** on the embedded server.
+relocate the store. Automatic memory consolidation (which spends tokens) stays **off** on the
+embedded server and retires exact duplicates only; it never rewrites a survivor. The separate
+`/dream` command explicitly generates an inspectable exact/synthesized plan and requires whole-plan
+apply or dismiss. Generation and regeneration spend tokens, and pending plans do not survive restart
+or move across replicas.
 
 **The durable session store is ON by default** (issue #79): the embedded server
 persists every session as append-only JSONL — the snapshot, the tool-call audit
@@ -850,7 +886,7 @@ show the plain prompt-hint card.
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
-| `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
+| `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
 | `alt+m` | cycle the current session permission mode: **default → plan → accept-edits → default**. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `x` (agents overlay, on a **running** lane) | **cancel that child agent** (sends `CancelChild` with the lane's child id; the run itself keeps streaming). Works on all three tabs: a **Subagents** lane (roster or focus pane), a **Parallel branch** (inside a focused group — `↑/↓` selects the branch), and a **team member** (Teams roster or focus pane; mid-drive OR idle between rounds — the member is de-scheduled and its claimed tasks released). Confirm-less, because it is recoverable: the child is persisted (a subagent stays **resumable** by its `agentId`; a cancelled branch reads `[FAILED] cancelled by user`; a cancelled member shows `stopped — cancelled`). Inert on a done lane. If the child was parked on a surfaced permission ask, the server retracts it (`permission.retract`) and the approval modal dismisses itself. |

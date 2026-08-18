@@ -61,6 +61,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/sessions/{id}/adoption:preflight", h.preflightSessionAdoption)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/adopt", h.adoptSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/reflect", h.reflectSession)
+	h.mux.HandleFunc("POST /v1/dream/plans", h.generateDreamPlan)
+	h.mux.HandleFunc("POST /v1/dream/plans/{plan_id}/decision", h.decideDreamPlan)
 	h.mux.HandleFunc("GET /v1/learning/proposals", h.listLearningProposals)
 	h.mux.HandleFunc("GET /v1/learning/proposals/{id}", h.getLearningProposal)
 	h.mux.HandleFunc("POST /v1/learning/proposals/{id}/decision", h.decideLearningProposal)
@@ -209,21 +211,24 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 // client gets. Populated from the shared Service.capabilities() so the two
 // surfaces cannot drift.
 type serverCapabilitiesJSON struct {
-	MCP               bool   `json:"mcp"`
-	SlashCommands     bool   `json:"slash_commands"`
-	Memory            bool   `json:"memory"`
-	Skills            bool   `json:"skills"`
-	Teams             bool   `json:"teams"`
-	Bash              bool   `json:"bash"`
-	Image             bool   `json:"image"`
-	Audio             bool   `json:"audio"`
-	ModelSelection    bool   `json:"model_selection"`
-	Reflection        bool   `json:"reflection"`
-	LearningProposals bool   `json:"learning_proposals"`
-	LearnedSkills     bool   `json:"learned_skills"`
-	StorageMigration  bool   `json:"storage_migration"`
-	LegacyAdoption    bool   `json:"legacy_adoption"`
-	Posture           string `json:"posture,omitempty"`
+	MCP               bool                              `json:"mcp"`
+	SlashCommands     bool                              `json:"slash_commands"`
+	Memory            bool                              `json:"memory"`
+	Skills            bool                              `json:"skills"`
+	Teams             bool                              `json:"teams"`
+	Bash              bool                              `json:"bash"`
+	Image             bool                              `json:"image"`
+	Audio             bool                              `json:"audio"`
+	ModelSelection    bool                              `json:"model_selection"`
+	Reflection        bool                              `json:"reflection"`
+	LearningProposals bool                              `json:"learning_proposals"`
+	LearnedSkills     bool                              `json:"learned_skills"`
+	StorageHealth     bool                              `json:"storage_health"`
+	StorageMigration  bool                              `json:"storage_migration"`
+	StorageCleanup    bool                              `json:"storage_cleanup"`
+	LegacyAdoption    bool                              `json:"legacy_adoption"`
+	ManualDream       *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
+	Posture           string                            `json:"posture,omitempty"`
 }
 
 // capabilitiesJSON projects the shared proto capabilities onto the JSON shape.
@@ -244,8 +249,11 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		Reflection:        c.GetReflection(),
 		LearningProposals: c.GetLearningProposals(),
 		LearnedSkills:     c.GetLearnedSkills(),
+		StorageHealth:     c.GetStorageHealth(),
 		StorageMigration:  c.GetStorageMigration(),
+		StorageCleanup:    c.GetStorageCleanup(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
+		ManualDream:       c.GetManualDream(),
 		Posture:           c.GetPosture(),
 	}
 }
@@ -269,6 +277,14 @@ type sessionResp struct {
 	// this session resolved to (from Service.ResolvedModel, the composition single
 	// source). Omitted (nil) when no model resolved (older-server-equivalent).
 	ResolvedModel *resolvedModelJSON `json:"resolved_model,omitempty"`
+}
+
+type dreamGenerateBody struct {
+	Target string `json:"target"`
+}
+
+type dreamDecisionBody struct {
+	Decision string `json:"decision"`
 }
 
 type modeBody struct {
@@ -1693,6 +1709,34 @@ func (h *HTTPHandler) reflectSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.ReflectSessionResponse{Receipt: receipt})
 }
 
+func (h *HTTPHandler) generateDreamPlan(w http.ResponseWriter, r *http.Request) {
+	var body dreamGenerateBody
+	if err := decodeLearningJSON(r, 1<<10, &body, false); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid dream generation request")
+		return
+	}
+	review, err := h.svc.GenerateDream(r.Context(), DreamTarget(body.Target))
+	if err != nil {
+		writeServiceError(w, normalizeDreamError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.GenerateDreamPlanResponse{Plan: toProtoDreamReview(review)})
+}
+
+func (h *HTTPHandler) decideDreamPlan(w http.ResponseWriter, r *http.Request) {
+	var body dreamDecisionBody
+	if err := decodeLearningJSON(r, 1<<10, &body, false); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid dream decision request")
+		return
+	}
+	receipt, err := h.svc.DecideDream(r.Context(), r.PathValue("plan_id"), DreamDecision(body.Decision))
+	if err != nil && (!errors.Is(err, ErrDreamApplyFailed) || receipt.ID == "") {
+		writeServiceError(w, normalizeDreamError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.DecideDreamPlanResponse{Receipt: toProtoDreamReceipt(receipt)})
+}
+
 func (h *HTTPHandler) listLearningProposals(w http.ResponseWriter, r *http.Request) {
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil && r.URL.Query().Get("limit") != "" {
@@ -2035,6 +2079,26 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotImplemented, err.Error())
 	case errors.Is(err, ErrProposalConflict):
 		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrDreamUnavailable):
+		writeError(w, http.StatusNotImplemented, ErrDreamUnavailable.Error())
+	case errors.Is(err, ErrDreamNotFound):
+		writeError(w, http.StatusNotFound, ErrDreamNotFound.Error())
+	case errors.Is(err, ErrDreamInProgress):
+		writeError(w, http.StatusConflict, ErrDreamInProgress.Error())
+	case errors.Is(err, ErrDreamConflict):
+		writeError(w, http.StatusPreconditionFailed, ErrDreamConflict.Error())
+	case errors.Is(err, ErrDreamTerminalConflict):
+		writeError(w, http.StatusGone, ErrDreamTerminalConflict.Error())
+	case errors.Is(err, ErrDreamCapacity):
+		writeError(w, http.StatusTooManyRequests, ErrDreamCapacity.Error())
+	case errors.Is(err, ErrDreamGenerateFailed):
+		writeError(w, http.StatusInternalServerError, ErrDreamGenerateFailed.Error())
+	case errors.Is(err, ErrDreamApplyFailed):
+		writeError(w, http.StatusInternalServerError, ErrDreamApplyFailed.Error())
+	case errors.Is(err, ErrDreamDeadline):
+		writeError(w, http.StatusGatewayTimeout, ErrDreamDeadline.Error())
+	case errors.Is(err, ErrDreamRequestFailed):
+		writeError(w, http.StatusInternalServerError, ErrDreamRequestFailed.Error())
 	case errors.Is(err, ErrFailedPrecondition):
 		writeError(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, ErrTeamsDisabled):

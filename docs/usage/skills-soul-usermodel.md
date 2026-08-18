@@ -266,9 +266,23 @@ It surfaces three ways:
   (`0`/`1` inert; hard triggers bypass). Reflection never reopens
   or re-runs the user's session.
 - **Scheduled consolidation:** `--user-model-consolidate-interval > 0` independently
-  authorizes a process-wide `dream` consolidator over the cross-project `user/` namespace.
-  It runs when the user-model store and provider are available regardless of effective
-  workspace `learning.mode`; a project `off` ceiling cannot suppress this operator schedule.
+  authorizes a process-wide consolidator over the cross-project `user/` namespace. It only retires
+  byte-identical active duplicates through lifecycle CAS; base-only and non-identical proposals are
+  skipped. It runs when the user-model store and provider are available regardless of effective
+  workspace `learning.mode`; a project `off` ceiling cannot suppress this operator schedule. The
+  schedule is off by default.
+- **Manual consolidation:** mecatui `/dream` is a separate immediate maintenance flow. Choose project
+  memory or the user model, acknowledge one planner call/token spend, review exact-duplicate and
+  synthesized-replacement operations, then apply or dismiss the whole process-local plan. Approved
+  synthesis atomically rewrites its displayed survivor and tombstones its displayed sources per
+  operation; independent operations can produce a partial receipt. Plans are process-local. Restart,
+  expiry, or wrong-replica routing makes the old decision non-retryable and offers explicit fresh
+  generation. A same decision still applying, or an indeterminate transport outcome, preserves the exact
+  plan ID and decision for same-decision receipt retrieval. An opposite decision is never offered; an
+  opposite applying decision enables no fresh generation, while a known terminal conflict permits an
+  explicit fresh plan. The feature is unavailable under
+  ownership enforcement or without a planner and both reviewed atomic target capabilities. It has
+  no per-source toggles, durable plans, grouped undo, provider/model display, or recall counters.
 
 **Rules vs facts — the operator boundary.** The user model holds **FACTS about the
 operator** (stated preferences, communication style, domain background), **never rules

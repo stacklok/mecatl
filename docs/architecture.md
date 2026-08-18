@@ -397,6 +397,16 @@ Two deliberate cycle-breaks worth noting, documented in code:
   `governance` without a cycle); the `Evaluator` works on primitive args, and
   the `permpolicy` adapter bridges `session` types into it.
 
+**Offline operator-config validation.** `mecated config validate` opens the final
+settings-file component with a no-follow, nonblocking descriptor, requires the opened
+descriptor to be a regular file, bounded-reads it, and runs the same `permconfig.ValidateYAML`
+parser used by runtime loading without starting composition or printing values. Its optional
+`--learning-patch` input is deliberately not a generic merge: it accepts exactly
+one top-level `learning:` mapping, replaces or inserts only that YAML node in
+memory, and validates the complete result without writing either file. A supplied
+patch may preflight a missing base as an empty new document. See
+[ADR 0225](adr/0225-operator-settings-validation.md).
+
 **Default prompt behavior.** `engine/prompt/builder.go` (`defaultTone`) owns one
 cache-stable default tone. Its concise-delivery guidance is explicitly scoped away
 from investigation and reasoning depth, while the minimum-change ladder,

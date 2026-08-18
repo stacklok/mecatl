@@ -94,7 +94,7 @@ explicitly enable the imported skills directory.
 | `--store-dir` | `""` | directory for the JSONL session store (empty → in-memory) |
 | `--session-store-url` | `""` | `host:port` of a remote **session-store gRPC driver** (`mecatl.driver.v1.SessionStoreService`); replaces the local store — mutually exclusive with `--store-dir`. **See the store-driver note below.** |
 | `--memory-dir` | `""` | per-project **memory store** directory; setting it enables the `Remember`/`Recall`/`SearchMemory` tools (empty disables them). |
-| `--memory-consolidate-interval` | `0` | interval for background consolidation ("dream") of the per-project memory store; `0` disables. Only meaningful with `--memory-dir`. |
+| `--memory-consolidate-interval` | `0` | interval for optional **automatic** project-memory consolidation; `0` disables. Automatic application retires only byte-identical active value+description duplicates through the local lifecycle transaction; synthesized replacements are manual-review-only. Only meaningful with `--memory-dir`; independent of `/dream`. |
 | `--memory-store-url` | `""` | `host:port` of a remote **memory-store gRPC driver** (`mecatl.driver.v1.MemoryStoreService`); replaces the local flock store — mutually exclusive with `--memory-dir`, enables the memory tools like `--memory-dir` does. |
 | `--event-log-url` | `""` | `host:port` of a remote **event-log gRPC driver** (`mecatl.driver.v1.EventLogService`) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); **INDEPENDENT of the session store** (not mutually exclusive with `--store-dir`). Empty keeps the local default (the `--store-dir` JSONL log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as `--session-store-url` (equal URLs share one connection). **See the store-driver note below.** |
 | `--schedule-store-url` | `""` | `host:port` of a remote **schedule-store gRPC driver** (`mecatl.driver.v1.ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry (scheduled tasks); **INDEPENDENT of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the byte-identical default (the configured store's own `ScheduleStore()` accessor, or no scheduling). The driver's `Claim`/`ClaimNow`/`ReArmOneShot` run the atomic advance server-side. Same auth/TLS posture as `--session-store-url` (equal URLs share one connection). |
@@ -139,7 +139,7 @@ explicitly enable the imported skills directory.
 | `--no-user-model` | `false` | disable the user model entirely (explicit tools and live operator profile). |
 | `--user-model-review` | `false` | deprecated compatibility alias for operator `learning.mode: auto`; runs the synchronous completed-trajectory user-model reviewer after eligible clean completions and never reopens the user session. |
 | `--user-model-review-interval` | `1` | deprecated post-threshold downsampler for weighted automatic admission. `0`/`1` are inert; hard genuine-current-prompt triggers bypass it. Use `learning.automatic` for process-local budgets. |
-| `--user-model-consolidate-interval` | `0` | independently authorize process-wide background consolidation (dream) of the cross-project user-model store's `user/` namespace; 0 disables. A project `learning.mode: off` cannot suppress a positive operator schedule. |
+| `--user-model-consolidate-interval` | `0` | independently authorize automatic consolidation of the cross-project user-model store's `user/` namespace; `0` disables. It is exact-duplicate-only and separate from manual `/dream`; a project `learning.mode: off` cannot suppress a positive operator schedule. |
 | `--permissions-conventional` | `true` | auto-discover the per-project permission config (`<workspace>/.mecatl/settings.yaml`, and with `--import-claude-permissions` also `<workspace>/.claude/settings.json`) plus the user-global file. **Re-resolved per session** against each session's workspace root. ON and inert until such a file exists. **See the permission-config note below.** |
 | `--import-claude-permissions` | `false` | also import Claude-Code `settings.json` permissions (project + user). **Lossy** (fail-safe): see the table below. |
 | `--trust-project` | `false` | honour the discovered **project authority set**: the project's ALLOW rules (its deny/ask are always honoured regardless), its project persona/soul at `<workspace>/.mecatl/soul.md`, AND the **project tier** of agent definitions, slash commands, skills, and project rules (`.claude/rules`, issue #329) (`<workspace>/.mecatl/*`, `<workspace>/.claude/*`). It also gates the **read-only subagent/team-member shell**: on an untrusted workspace, Subagent children and read-only members run Bash-less (Read/Grep/Glob only — creating their worktree runs a `git` checkout over the repo's `.git`, where a tracked `.gitattributes` can name filter drivers that execute code with nobody having run anything); mutating members and Parallel branches keep their hardened shells (force-copy forks are created by a pure file copy with no git invocation, and their git afterwards runs over the copied repo — the same exposure as the operator's own session). OFF by default (the safe stance) — an untrusted repo's grants, persona, agents, commands, skills, rules, and subagent shell are withheld; the agent still runs in "ask the human" mode (see the workspace-trust note below). **See the permission-config, persona/soul, and workspace-trust notes below.** |
@@ -677,6 +677,21 @@ mecated config daemon init --print
 mecated config daemon validate
 mecated config daemon validate --file /etc/mecatl/daemon.yaml
 ```
+
+Operator `settings.yaml` has its own offline validator:
+
+```sh
+mecated config validate
+mecated config validate --file /etc/mecatl/settings.yaml
+mecated config validate --file /etc/mecatl/settings.yaml \
+  --learning-patch .scratch/learning.yaml
+```
+
+The default path is the same conventional path used by `config init`.
+`--learning-patch` accepts only one top-level `learning:` mapping, applies it in
+memory, and validates the complete result without writing either input. It may
+preflight a missing base as a new file; validation without a patch requires the
+base to exist. File contents and values are never printed.
 
 `config init` still owns the operator `settings.yaml` (POLICY); `config daemon`
 owns `daemon.yaml` (TOPOLOGY). The help distinguishes the two surfaces.

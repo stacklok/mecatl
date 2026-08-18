@@ -116,6 +116,40 @@ func TestStoreForget(t *testing.T) {
 	}
 }
 
+func TestSynthesizeReplacementRenameFailureIsAtomicAcrossReopen(t *testing.T) {
+	dir := t.TempDir()
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := tool.WithMemoryAttribution(context.Background(), tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginConsolidation})
+	for _, entry := range []tool.MemoryEntry{{Key: "a", Value: "old", Description: "old description"}, {Key: "b", Value: "source", Description: "source description"}} {
+		if err := st.RememberEntry(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	survivor, _, _ := st.Inspect(ctx, "a")
+	source, _, _ := st.Inspect(ctx, "b")
+	st.rename = func(string, string) error { return errors.New("injected rename failure") }
+	if _, err := st.SynthesizeReplacement(ctx, tool.MemoryEntry{Key: "a", Value: "new", Description: "new description"}, survivor.Current.Version, []string{"b"}, []tool.MemoryVersion{source.Current.Version}); err == nil {
+		t.Fatal("SynthesizeReplacement succeeded despite rename failure")
+	}
+	st.rename = os.Rename
+
+	reopened, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSurvivor, found, err := reopened.Inspect(ctx, "a")
+	if err != nil || !found || gotSurvivor.Current.Value != "old" || len(gotSurvivor.Revisions) != len(survivor.Revisions) {
+		t.Fatalf("survivor changed after failed commit: found=%v record=%+v err=%v", found, gotSurvivor, err)
+	}
+	gotSource, found, err := reopened.Inspect(ctx, "b")
+	if err != nil || !found || gotSource.Current.Status != tool.MemoryStatusActive || len(gotSource.Revisions) != len(source.Revisions) {
+		t.Fatalf("source changed after failed commit: found=%v record=%+v err=%v", found, gotSource, err)
+	}
+}
+
 func TestLifecycleRenameFailurePreservesPriorState(t *testing.T) {
 	st, err := New(t.TempDir())
 	if err != nil {
@@ -134,6 +168,48 @@ func TestLifecycleRenameFailurePreservesPriorState(t *testing.T) {
 	got, found, err := st.Inspect(ctx, "profile/editor")
 	if err != nil || !found || got.Current.Value != "vim" || len(got.Revisions) != 1 {
 		t.Fatalf("state after rename failure = (%+v, %v, %v)", got, found, err)
+	}
+}
+
+func TestRetireDuplicateAtomicallyChecksBothVersionsAndRecordsProvenance(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := st.RememberEntry(ctx, tool.MemoryEntry{Key: "a", Value: "v", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RememberEntry(ctx, tool.MemoryEntry{Key: "b", Value: "v", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	survivor, _, _ := st.Inspect(ctx, "a")
+	source, _, _ := st.Inspect(ctx, "b")
+	if err := st.RememberEntry(ctx, tool.MemoryEntry{Key: "a", Value: "changed", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RetireDuplicate(ctx, "a", survivor.Current.Version, "b", source.Current.Version); err == nil {
+		t.Fatal("stale survivor version accepted")
+	}
+	active, found, err := st.Inspect(ctx, "b")
+	if err != nil || !found || active.Current.Status != tool.MemoryStatusActive || len(active.Revisions) != 1 {
+		t.Fatalf("source changed on conflict: found=%v record=%+v err=%v", found, active, err)
+	}
+
+	survivor, _, _ = st.Inspect(ctx, "a")
+	attributed := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterSystem, Origin: tool.MemoryOriginConsolidation})
+	retired, err := st.RetireDuplicate(attributed, "a", survivor.Current.Version, "b", source.Current.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired.Current.Status != tool.MemoryStatusDeleted || len(retired.Revisions) != 2 {
+		t.Fatalf("retired history = %+v", retired)
+	}
+	if retired.Revisions[0].Value != "v" || retired.Revisions[0].Description != "d" {
+		t.Fatalf("source history lost content: %+v", retired.Revisions)
+	}
+	if retired.Current.Writer != tool.MemoryWriterSystem || retired.Current.Origin != tool.MemoryOriginConsolidation {
+		t.Fatalf("retirement provenance = (%q, %q)", retired.Current.Writer, retired.Current.Origin)
 	}
 }
 

@@ -12,6 +12,24 @@ $ mecated config init --print    # print the skeleton to stdout, write nothing
 $ mecated config init --force    # overwrite an existing file
 ```
 
+Validate operator settings offline without starting the server or printing file
+contents or values:
+
+```console
+$ mecated config validate
+$ mecated config validate --file /etc/mecatl/settings.yaml
+$ mecated config validate --file /etc/mecatl/settings.yaml --learning-patch .scratch/learning.yaml
+```
+
+Without `--file`, validation uses the same conventional path as `config init` and
+fails if it is missing. `--learning-patch` must be a single YAML document with
+exactly one top-level `learning:` mapping. The command replaces or inserts that
+node only in memory, validates the resulting complete settings document, and
+never writes either file. A missing base is accepted only when a patch is supplied
+and reports `valid (new file)`, enabling first-creation preflight. Both reads are
+limited to 256 KiB; symlinks, directories, irregular files, aliases, duplicate
+keys, and multi-document YAML are rejected.
+
 For the exhaustive, auto-generated key/type/default/tier table, see the
 [configuration reference](../configuration-reference.md). The inline examples in
 this guide are illustrative; the reference page is the complete source of truth
@@ -121,11 +139,25 @@ call. Authenticated explicit reflection remains bounded and synchronous, lazily 
 The proposal store defaults to a `reflections/` directory beside the conventional or configured
 user-model store; in off mode that directory/flock is not created until the first explicit reflection or proposal operation.
 
-Consolidation is a separate maintenance authorization, not a learning mode:
-`--user-model-consolidate-interval > 0` starts the process-wide, cross-project user-model
-dream consolidator when its store and provider are available. An effective project
-`learning.mode: off` cannot suppress that explicit operator schedule. Conversely, dream
-intervals and SkillDraft do not raise `learning.mode` or enable completed-trajectory review.
+Consolidation is a separate maintenance authorization, not a learning mode. Positive
+`--memory-consolidate-interval` and `--user-model-consolidate-interval` values independently start
+automatic maintenance; both remain off by default and apply only byte-identical exact duplicates.
+They do not raise `learning.mode`, and an effective project `learning.mode: off` cannot suppress an
+explicit operator schedule.
+
+Manual review is a separate, immediate maintenance action rather than a setting. In mecatui,
+`/dream` chooses project memory or the user model, explicitly acknowledges that generation sends the
+selected bounded values and descriptions to the configured model and spends tokens, and displays
+exact-duplicate and synthesized-replacement operations. The operator applies or dismisses the whole
+plan and receives applied/conflicted/skipped/failed counts. Regeneration is explicit and makes
+another provider call. Manual dreaming requires the target store's reviewed atomic operations and a
+planner, and is unavailable while ownership enforcement is enabled. Its bounded plans are
+process-local and expire, so restart, expiry, or a wrong replica returns a non-retryable not-found state
+that offers explicit fresh generation. A same-decision request still applying and an indeterminate
+transport failure preserve the plan ID and exact decision for explicit same-decision receipt retrieval;
+an opposite decision is never offered, and an applying opposite decision enables no fresh generation.
+A terminal opposite decision is non-retryable and permits explicit fresh generation. Manual dreaming neither
+changes schedule flags nor collects recall-usage telemetry.
 
 The legacy `--user-model-review` flag maps to `auto` for one compatibility window and
 conflicts with an explicit non-auto `learning.mode`. Changes are build-time settings and

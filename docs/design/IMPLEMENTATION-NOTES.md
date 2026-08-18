@@ -3640,9 +3640,42 @@ that linkage without a second write. Undo requires that linked resulting revisio
 otherwise the proposal conflicts and newer memory is untouched. Procedures remain
 `deferred_unsupported`; exact duplicates do not write; user-explicit, newer, and ambiguous facts are
 never automatically overwritten. Heterogeneous batches can partially promote explicitly because no
-cross-store transaction is claimed. Dream consolidation uses lifecycle CAS when available and retains
-the legacy path only for base-only stores. This chunk deliberately does not wire reflection output into
-the repository automatically and adds no server/TUI surface.
+cross-store transaction is claimed. Dream consolidation has a separate maintenance boundary in
+`internal/adapter/dream/dream.go` (`GeneratePlan`, `ApplyPlan`, `ApplyReviewedPlan`). The strict
+planner accepts exactly the `exact_duplicates` and `synthesized_replacements` families over existing
+keys. Unknown/missing members, trailing content, repeated/cross-role keys, unchanged synthesis, and
+standalone deletion fail the whole plan. The bounded rotating selection sends complete selected
+values/descriptions and collects no recall-usage telemetry.
+
+Automatic `ApplyPlan` admits only byte-identical exact duplicates through the local adapter's
+internal duplicate-retirement operation; schedules remain off by default. Manual review is separate
+from reflection/learning: `internal/app/dream_review.go` (`dreamReviewCoordinator`) retains the
+instance-bound plan behind a random opaque ID, while `internal/adapter/server/dreamreview.go`
+(`GenerateDream`, `DecideDream`) accepts only a closed target and whole-plan apply/dismiss. The
+registry is bounded to 64 records and 8 pending plans per target, expires records after ten minutes
+with lazy cleanup, starts no goroutine, and zeroes plan/review/target content at terminal state while
+retaining the idempotent receipt. Same terminal decisions replay that receipt. During apply, the same
+decision reports retryable in-progress while the opposite decision reports a non-retryable conflict.
+An opposite terminal decision is separately classified so the client can safely offer explicit fresh
+generation; not-found after restart, expiry, or wrong-replica routing also offers fresh generation but
+cannot retrieve the old receipt. Only an indeterminate transport error preserves the exact ID and
+decision for same-decision retry because the first request may have applied. No error state offers the
+opposite decision.
+
+Reviewed synthesis calls `internal/adapter/memory/store.go` (`SynthesizeReplacement`) through the
+adapter-internal structural capability: one flocked operation compares the displayed survivor and all
+source versions, rewrites that survivor to the displayed replacement, and tombstones all displayed
+sources. Exact duplicates retain their source-at-a-time transaction. Independent operations continue
+after conflict/failure and report source counts, so whole-plan approval can yield a partial receipt;
+there is no per-source toggle, grouped transaction, or grouped undo. The plan is not persisted or
+replicated. Restart, expiry, or a wrong replica makes the old decision non-retryable and permits
+explicit fresh generation. During an apply, only the same decision is retryable; its opposite is
+non-actionable and cannot trigger fresh generation until a terminal decision is known. A genuinely
+indeterminate transport failure preserves the exact ID and decision for explicit same-decision receipt
+retrieval because the request may already have applied.
+`internal/app/dream_review.go` (`buildDreamReview`) exposes each target only when the planner
+and both reviewed atomic store capabilities exist, and ownership enforcement disables the entire
+manual surface in v1. No provider/model identity is projected.
 
 **Standard coordinator and staged wiring (#509 Chunk C):** `internal/app/reflection_coordinator.go`
 owns one dormant Build-lifetime coordinator in every mode, never one goroutine per completion. Workers start only after first admission, so Off starts none until explicit reflection. Its global and per-principal

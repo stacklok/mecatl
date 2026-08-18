@@ -165,8 +165,9 @@ func topLevelHelpAction(all bool) subcommandAction {
 }
 
 // resolveConfigSubcommand classifies the `config` subcommand group. The
-// subcommands are `config init` (settings.yaml skeleton) and `config daemon
-// <init|validate>` (daemon topology YAML). A bare `config`, an unknown
+// subcommands are `config init` (settings.yaml skeleton), `config validate`
+// (settings.yaml validation), and `config daemon <init|validate>` (daemon topology
+// YAML). A bare `config`, an unknown
 // `config <x>`, or an unknown/missing `config daemon <x>` is a usage error (a
 // typo starting an unauthenticated server is a nasty surprise): fail closed
 // before the daemon boots — never fall through to run().
@@ -176,6 +177,14 @@ func resolveConfigSubcommand(args []string) commandResolution {
 			handled: true,
 			run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
 				return runConfigInit(args[3:], stdout)
+			}),
+		}
+	}
+	if len(args) >= 3 && args[2] == "validate" {
+		return commandResolution{
+			handled: true,
+			run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error {
+				return runConfigValidate(args[3:], stdout)
 			}),
 		}
 	}
@@ -227,6 +236,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize an operator-configured OAuth MCP server\n")
 	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write/print the operator settings.yaml skeleton (--print, --force)\n")
+	_, _ = fmt.Fprintf(out, "  config validate         validate operator settings.yaml without writing (--file, --learning-patch)\n")
 	_, _ = fmt.Fprintf(out, "  config daemon init      write/print the daemon.yaml listener-topology skeleton (--print, --force)\n")
 	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
 	_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
@@ -282,9 +292,9 @@ func configUsageError(argv []string) error {
 		sub = argv[2]
 	}
 	if sub == "" {
-		return errors.New("config: missing subcommand\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config daemon <init|validate>  manage the daemon.yaml listener topology")
+		return errors.New("config: missing subcommand\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config validate         validate operator settings.yaml without writing\n  config daemon <init|validate>  manage the daemon.yaml listener topology")
 	}
-	return fmt.Errorf("config: unknown subcommand %q\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config daemon <init|validate>  manage the daemon.yaml listener topology", sub)
+	return fmt.Errorf("config: unknown subcommand %q\navailable subcommands:\n  config init             write/print the operator settings.yaml skeleton (permissions/trust POLICY)\n  config validate         validate operator settings.yaml without writing\n  config daemon <init|validate>  manage the daemon.yaml listener topology", sub)
 }
 
 // configDaemonUsageError builds the error message for a bare/unknown

@@ -407,6 +407,13 @@ type Config struct {
 	ProjectPromotionAllowed func(project string) bool
 	ProposalActionAvailable func(project string) (bool, string)
 
+	// DreamReviewer is the transport-neutral, process-local manual consolidation
+	// coordinator. DreamCapabilities is the composition-computed availability
+	// snapshot for the exact Build-owned project-memory and user-model stores. Both
+	// zero values keep manual dreaming unavailable.
+	DreamReviewer     DreamReviewer
+	DreamCapabilities DreamCapabilities
+
 	// LearnedSkills exposes caller-partitioned, agent-owned lifecycle records. The
 	// publisher atomically refreshes the shared live Skill catalog after mutations.
 	LearnedSkills             learning.SkillRepository
@@ -1755,6 +1762,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		StorageMigration:  s.cfg.StorageManagementAuthorized != nil && func() bool { _, ok := migrationStore(s.cfg.Store); return ok }(),
 		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && supportsCleanupDelete(s.cfg.Store),
 		LegacyAdoption:    s.cfg.OwnershipEnforced && s.cfg.SessionEngine != nil,
+		ManualDream:       toProtoDreamCapabilities(s.ManualDreamCapabilities()),
 	}
 }
 

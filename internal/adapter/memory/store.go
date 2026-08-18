@@ -523,6 +523,95 @@ func (s *Store) ForgetVersioned(ctx context.Context, key string, expected tool.M
 	return out, err
 }
 
+// RetireDuplicate atomically verifies the active survivor and source revisions and
+// appends a source tombstone in one exclusive load/mutate/save transaction.
+func (s *Store) RetireDuplicate(ctx context.Context, survivorKey string, survivorVersion tool.MemoryVersion, sourceKey string, sourceVersion tool.MemoryVersion) (tool.MemoryRecord, error) {
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var out tool.MemoryRecord
+	err := s.withExclusiveLock(lctx, func(data *persisted) error {
+		if survivorKey == sourceKey {
+			return fmt.Errorf("memory: duplicate survivor and source key %q", survivorKey)
+		}
+		if err := data.compare(survivorKey, survivorVersion); err != nil {
+			return err
+		}
+		if _, ok := data.Entries[survivorKey]; !ok {
+			return fmt.Errorf("memory: %q: %w", survivorKey, tool.ErrMemoryNotFound)
+		}
+		if err := data.compare(sourceKey, sourceVersion); err != nil {
+			return err
+		}
+		if _, ok := data.Entries[sourceKey]; !ok {
+			return fmt.Errorf("memory: %q: %w", sourceKey, tool.ErrMemoryNotFound)
+		}
+		data.materializeLegacy(sourceKey)
+		if err := data.appendDeleted(ctx, sourceKey, tool.MemoryOriginConsolidation, ""); err != nil {
+			return err
+		}
+		out = data.snapshot(sourceKey)
+		return nil
+	})
+	return out, err
+}
+
+// SynthesizeReplacement atomically verifies every participant, appends a new
+// survivor revision with the reviewed bytes, and tombstones all sources in one
+// exclusive load/mutate/save transaction. Undo remains per-key and is intentionally
+// not exposed as a grouped inverse of this operation.
+func (s *Store) SynthesizeReplacement(ctx context.Context, survivor tool.MemoryEntry, survivorVersion tool.MemoryVersion, sourceKeys []string, sourceVersions []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	attribution, _ := tool.MemoryAttributionFromContext(ctx)
+	if err := tool.ValidateMemoryEntryWrite(survivor, attribution); err != nil {
+		return tool.MemoryRecord{}, err
+	}
+	if len(sourceKeys) == 0 || len(sourceKeys) != len(sourceVersions) {
+		return tool.MemoryRecord{}, fmt.Errorf("memory: synthesized replacement requires matching sources and versions")
+	}
+	lctx, cancel := lockCtx(ctx)
+	defer cancel()
+	var out tool.MemoryRecord
+	err := s.withExclusiveLock(lctx, func(data *persisted) error {
+		if err := data.compare(survivor.Key, survivorVersion); err != nil {
+			return err
+		}
+		current, ok := data.Entries[survivor.Key]
+		if !ok {
+			return fmt.Errorf("memory: %q: %w", survivor.Key, tool.ErrMemoryNotFound)
+		}
+		if current.Value == survivor.Value && current.Description == survivor.Description {
+			return fmt.Errorf("memory: synthesized replacement must change the survivor")
+		}
+		seen := map[string]struct{}{survivor.Key: {}}
+		for i, key := range sourceKeys {
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("memory: repeated synthesis participant %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := data.compare(key, sourceVersions[i]); err != nil {
+				return err
+			}
+			if _, ok := data.Entries[key]; !ok {
+				return fmt.Errorf("memory: %q: %w", key, tool.ErrMemoryNotFound)
+			}
+		}
+		data.materializeLegacy(survivor.Key)
+		r := record{Value: survivor.Value, Description: survivor.Description, UpdatedAt: time.Now().UTC()}
+		data.Entries[survivor.Key] = r
+		if err := data.appendActive(ctx, survivor.Key, r, tool.MemoryOriginConsolidation); err != nil {
+			return err
+		}
+		for _, key := range sourceKeys {
+			data.materializeLegacy(key)
+			if err := data.appendDeleted(ctx, key, tool.MemoryOriginConsolidation, ""); err != nil {
+				return err
+			}
+		}
+		out = data.snapshot(survivor.Key)
+		return nil
+	})
+	return out, err
+}
+
 // UndoLatest appends a compensating revision for the newest mutation not already
 // compensated. Recording the target version makes repeated undo walk backward
 // and prevents concurrent callers from reversing one mutation twice.

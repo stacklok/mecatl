@@ -11,14 +11,54 @@
 `tool.MemoryStore` (`RememberEntry`/`Recall`/`List`/`Forget`/`Index`/`Search`) is
 the seam for conservative, **per-project** memory (every implementation must pass
 the shared `engine/adapter/memconformance` conformance suite). The file-backed
-`internal/adapter/memory` implementation persists entries scoped to a project
-directory and exposes them to the model as the **Remember**, **Recall**, and
-**SearchMemory** tools
-(opt-in via `memory.Register`, `--memory-dir`). On top of it, `internal/adapter/dream` is an opt-in background
-**consolidation** ("sleep") service: `dream.Consolidator` distills the stored
-memory with an LLM call — merging duplicates and dropping stale entries — but is
-deliberately conservative (it never invents keys and is fail-safe on error), run
-once or on a ticker via `RunPeriodically` (`--memory-consolidate-interval`).
+`internal/adapter/memory` persists entries scoped to a project directory and exposes them to
+the model as the **Remember**, **Recall**, and **SearchMemory** tools (opt-in via
+`memory.Register`, `--memory-dir`). `internal/adapter/dream` supplies both automatic and
+manual consolidation. Planning sorts keys, selects a bounded rotating window, sends whole
+values and descriptions to the configured model, and accepts one strict bare JSON object with
+exactly two operation families: exact duplicates and synthesized replacements. Both families
+must identify existing survivor/source keys; synthesis also carries the complete proposed
+replacement value and description. Unknown/missing members, trailing content, repeated or
+cross-role keys, unchanged synthesis, and standalone deletion are rejected.
+
+Candidate rotation is process-local and bounded by entry count and aggregate input bytes.
+For a stable finite set in one continuously running consolidator, every fitting entry gets a
+turn. Insertions, removals, oversized entries, and restart can change the order; the cursor
+resets on restart. Plans bind the exact inspected lifecycle versions.
+
+**Automatic maintenance** remains exact-duplicate-only. It requires the local store's internal
+atomic duplicate-retirement operation, compares the survivor and source versions, and
+requires byte-identical active value and description. One source is tombstoned per transaction,
+the survivor is never rewritten, lifecycle history is retained, and base/convergence-only
+remote stores skip application. `--memory-consolidate-interval` and
+`--user-model-consolidate-interval` remain separate opt-in schedules and default to zero.
+Periodic diagnostics contain counts only.
+
+**Manual maintenance** is an explicit human review, not reflection or learning. mecatui
+`/dream` chooses project memory or the cross-project user model, warns that generation sends
+the selected bounded values and descriptions to the configured model and spends tokens, then
+shows every exact-duplicate or synthesized-replacement operation. Model-authored replacement and
+reason fields that contain hidden controls or Unicode format characters are rejected before the plan
+is retained; review and mutation use the same accepted bytes. Stored participant text is not rewritten
+and is rendered as quoted, per-line-prefixed data. Apply and dismiss are
+whole-plan decisions. Approved synthesis atomically compares the bound inspected versions for
+the displayed participants, rewrites
+the displayed survivor to the displayed replacement, and tombstones all displayed sources
+for that operation. Independent operations continue after conflicts/failures, so the receipt
+can be partial; no grouped transaction or grouped undo is claimed.
+
+Manual plans have opaque random IDs in a bounded Build-owned registry (64 records, at most 8
+pending per target), expire after 10 minutes with lazy cleanup, and retain no plan/review
+content after a terminal decision. Same decisions are idempotent. A same-decision retry while apply
+is still running reports in-progress and remains retryable; an opposite decision is non-retryable, with
+fresh-plan generation offered only after the old decision is terminal. Plans are not durable or
+cross-replica. `NOT_FOUND` after restart, expiry, or wrong-replica routing cannot retrieve a receipt and
+offers explicit fresh generation. Only an indeterminate transport failure preserves the exact plan ID
+and decision for explicit same-decision retry because the first request may already have applied. No
+error path offers the opposite decision. Manual review requires a planner
+and a target store implementing both reviewed atomic operations, and is unavailable while
+ownership enforcement is enabled. It does not change automatic schedule flags and collects
+no recall-usage telemetry.
 
 **User model and live operator profile.** A SECOND `memory.Store` — user-scoped and
 **cross-project** (`<xdg>/mecatl/usermodel`, distinct from the per-project store) —
@@ -63,8 +103,12 @@ through the same repository before conservatively promoting eligible non-conflic
 facts with source-session attribution. Explicit reflection remains available in Off via
 a lazy path. Project candidates are staged only for the exact admitted configured root.
 Proposal detail re-checks source ownership and evidence digests and exposes only a bounded,
-redacted canonical preview before approval. Consolidation is independently operator-scheduled and deliberately uses only the six base-store operations,
-so local and old remote stores execute the same coherent plan.
+redacted canonical preview before approval. Consolidation is independently maintained: automatic schedules remain off by default and
+retire only byte-identical duplicates through the local atomic operation. Manual `/dream`
+review may show exact duplicates and synthesized replacements for whole-plan apply/dismiss;
+its version-bound plans are process-local, expire, and require regeneration after restart or
+a wrong-replica decision. Neither surface collects recall-usage telemetry or changes
+completed-trajectory learning.
 
 Every final model/wire/TUI projection first uses the shared
 `tool.CanonicalMemoryText` representation: it repairs invalid UTF-8 and strips the exact
