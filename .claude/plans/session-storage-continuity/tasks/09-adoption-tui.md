@@ -2,9 +2,9 @@
 id: 09-adoption-tui
 title: Adopt-as-chat Sessions workflow
 blocked_by: [03-progressive-sessions-tui, 08-legacy-adoption-server]
-status: pending
-branch: ""
-worktree: ""
+status: in-progress
+branch: "plan-session-storage-continuity/09-adoption-tui"
+worktree: ".scratch/plan-session-storage-continuity-09-adoption-tui"
 issue: "594"
 retries: 0
 last_error: ""
