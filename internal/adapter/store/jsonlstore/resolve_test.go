@@ -423,6 +423,78 @@ func TestInterruptedMigrationRetriesAfterSidecarAlreadyMoved(t *testing.T) {
 	}
 }
 
+func TestResolverRootRejectsTraversalDuringMigration(t *testing.T) {
+	st := newInternalStore(t)
+	root, err := st.resolver.openRoot()
+	if err != nil {
+		t.Fatalf("openRoot: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	foreign := filepath.Join(filepath.Dir(st.resolver.dir), "foreign-migration-source")
+	want := []byte("foreign\n")
+	writeBytes(t, foreign, want)
+	dst, err := st.resolver.canonicalRelativeName("traversal", kindSnapshot)
+	if err != nil {
+		t.Fatalf("canonicalRelativeName: %v", err)
+	}
+	if err := moveLegacyFile(root, filepath.Join("..", filepath.Base(foreign)), dst); err == nil {
+		t.Fatal("moveLegacyFile accepted a source outside the store root")
+	}
+	assertBytes(t, foreign, want)
+	assertMissing(t, st.resolver.canonicalPath("traversal", kindSnapshot))
+}
+
+func TestCanonicalSymlinkToForeignDescendantFailsClosed(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("symlinked-canonical")
+	foreign := filepath.Join(st.resolver.dir, "foreign.session.jsonl")
+	foreignBytes := append(snapshotLine(t, id, "foreign"), '\n')
+	writeBytes(t, foreign, foreignBytes)
+	writeBytes(t, st.resolver.legacyPath(id, kindSnapshot), append(snapshotLine(t, id, "legacy"), '\n'))
+
+	canonical := st.resolver.canonicalPath(id, kindSnapshot)
+	if err := os.Symlink(filepath.Join("..", filepath.Base(foreign)), canonical); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	if _, err := st.Load(context.Background(), id); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("Load through canonical symlink error = %v, want fail-closed infrastructure error", err)
+	}
+	assertBytes(t, foreign, foreignBytes)
+	if info, err := os.Lstat(canonical); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("canonical symlink changed: info=%v err=%v", info, err)
+	}
+}
+
+func TestMigrationRejectsSymlinkSourceToForeignDescendant(t *testing.T) {
+	st := newInternalStore(t)
+	root, err := st.resolver.openRoot()
+	if err != nil {
+		t.Fatalf("openRoot: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	foreign := filepath.Join(st.resolver.dir, "foreign-tools")
+	want := []byte("foreign-tools\n")
+	writeBytes(t, foreign, want)
+	src, err := st.resolver.legacyName("symlink-source", kindTools)
+	if err != nil {
+		t.Fatalf("legacyName: %v", err)
+	}
+	if err := os.Symlink(filepath.Base(foreign), filepath.Join(st.resolver.dir, src)); err != nil {
+		t.Fatalf("Symlink source: %v", err)
+	}
+	dst, err := st.resolver.canonicalRelativeName("symlink-source", kindTools)
+	if err != nil {
+		t.Fatalf("canonicalRelativeName: %v", err)
+	}
+	if err := moveLegacyFile(root, src, dst); err == nil {
+		t.Fatal("moveLegacyFile accepted a symlink source")
+	}
+	assertBytes(t, foreign, want)
+	assertMissing(t, st.resolver.canonicalPath("symlink-source", kindTools))
+}
+
 func TestLoadPresentCorruptCanonicalDoesNotFallback(t *testing.T) {
 	st := newInternalStore(t)
 	id := session.SessionID("corrupt-new")

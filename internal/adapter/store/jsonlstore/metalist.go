@@ -423,24 +423,10 @@ func metadataRowAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadat
 		(row.ModifiedAt.Equal(cursor.ModifiedAt) && row.ID > cursor.ID)
 }
 
-// readLastLine returns the last non-blank record without reading older history.
+// readLastLineAt returns the last non-blank record without reading older history.
 // It grows an EOF window geometrically until it finds the delimiter immediately
 // before that record, so bytes read and allocated are bounded by a small constant
 // factor of the latest record rather than by the append-only file's total size.
-func readLastLine(path string) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // path is derived from the store dir listing
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-
-	st, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	return readLastLineAt(f, st.Size())
-}
-
 func readLastLineAt(r io.ReaderAt, size int64) ([]byte, error) {
 	if size == 0 {
 		return nil, nil
