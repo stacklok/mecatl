@@ -464,7 +464,8 @@ server logs the effective planner summary first, and durable `unknown` sessions
 remain protected. The authenticated storage-health response reports the secret-free
 effective `retention/v1` policy. Embedded mecatui has local-only policy flags;
 `mecatui connect` rejects them and cannot configure a remote server without an
-advertised management capability.
+advertised management capability. Follow [Operate local session storage](session-storage-operations.md)
+for tested systemd/launchd service definitions and the backup, migration, and restore runbook.
 The `--session-store-url` flag replaces the JSONL store with a remote gRPC driver
 (`mecatl.driver.v1.SessionStoreService`). This is the path for a managed Redis backend
 (`mecak8s` uses it internally) or a custom store behind the driver protocol. It is
