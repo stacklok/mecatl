@@ -3,7 +3,7 @@
 **Phase:** Large historical stores, migration, cleanup, and writable legacy continuity.
 **Status:** in-progress, 2026-08-17. Wave 1 dispatched after architecture and security adversarial review.
 **Issue:** [stacklok/mecatl#583](https://github.com/stacklok/mecatl/issues/583), with sub-issues [#586](https://github.com/stacklok/mecatl/issues/586)–[#596](https://github.com/stacklok/mecatl/issues/596).
-**ADR:** [ADR-0225](../adr/0225-session-storage-maintenance.md) — bounded current snapshots, indexed metadata, distinct maintenance jobs, and explicit legacy adoption.
+**ADR:** [ADR-0226](../adr/0226-session-storage-maintenance.md) — bounded current snapshots, indexed metadata, distinct maintenance jobs, and explicit legacy adoption.
 **Accumulator branch:** `acc/session-storage-continuity` (off `main`).
 
 The smallest set of work that lets a large historical session store stay responsive, stop
@@ -18,7 +18,7 @@ client demonstrate, not which packages exist on disk.
 - [ADR-0217](../adr/0217-session-discovery-continuation.md) keeps durable kind and the authoritative transcript server-owned; missing metadata never grants chat continuation.
 - [ADR-0027](../adr/0027-cloud-native.md) keeps the loop storage-agnostic and makes snapshots, event logs, leases, and restart fidelity distinct resources.
 - [ADR-0104](../adr/0104-session-family-physical-naming.md) keeps session IDs opaque and deletion/migration family-safe.
-- [ADR-0225](../adr/0225-session-storage-maintenance.md) separates physical optimization from destructive cleanup and semantic adoption.
+- [ADR-0226](../adr/0226-session-storage-maintenance.md) separates physical optimization from destructive cleanup and semantic adoption.
 - Existing v1 stores remain readable throughout; there is no startup rewrite of an entire historical store.
 
 ## In scope — 9 scenarios, in implementation order
@@ -31,7 +31,7 @@ assume earlier ones but do not weaken their acceptance criteria.
 An operator drives the same JSONL-backed session through many saves. The store keeps one
 versioned current snapshot, preserves append-only tool/event sidecars, and can still load v1
 records through the bounded reader. Atomic replacement and snapshot fidelity follow
-[ADR-0225](../adr/0225-session-storage-maintenance.md), [ADR-0027](../adr/0027-cloud-native.md),
+[ADR-0226](../adr/0226-session-storage-maintenance.md), [ADR-0027](../adr/0027-cloud-native.md),
 and the SessionStore boundary in [`architecture.md`](../architecture.md).
 
 **Work:**
@@ -57,7 +57,7 @@ and the SessionStore boundary in [`architecture.md`](../architecture.md).
 
 A client asks for page one and page two from a store containing hundreds of large transcripts.
 The store consults only derivative inventory metadata, not conversations; cursors bind one
-catalog generation and filter set. Catalog rebuild and lock scope follow [ADR-0225](../adr/0225-session-storage-maintenance.md), while public ordering/ownership keep
+catalog generation and filter set. Catalog rebuild and lock scope follow [ADR-0226](../adr/0226-session-storage-maintenance.md), while public ordering/ownership keep
 [ADR-0217](../adr/0217-session-discovery-continuation.md)'s contract and the inward dependency
 rule in [`AGENTS.md`](../../AGENTS.md).
 
@@ -103,7 +103,7 @@ selection drift, and preserve useful rows on a later failure. This is one shared
 
 An authenticated operator plans and applies semantics-preserving v1-to-v2 compaction. The job
 runs server-side in bounded batches, survives disconnect/restart, and never changes durable kind
-or sidecars. It is the physical migration from [ADR-0225](../adr/0225-session-storage-maintenance.md), not the semantic adoption from [ADR-0217](../adr/0217-session-discovery-continuation.md).
+or sidecars. It is the physical migration from [ADR-0226](../adr/0226-session-storage-maintenance.md), not the semantic adoption from [ADR-0217](../adr/0217-session-discovery-continuation.md).
 
 **Acceptance:**
 - AC4.1: Dry-run reports v1/v2/invalid/skipped family counts, current bytes, estimated reclaimable bytes, and temporary-space requirements without writing.
@@ -153,7 +153,7 @@ physical deletion retains ADR-0104 family ordering and mutation-time lease prote
 A local embedded user and a daemon operator can inspect the effective retention policy and
 storage health without scanning transcripts. Configuration remains operator-tier and follows the
 existing precedence/documentation discipline in [`architecture.md`](../architecture.md) and
-[ADR-0225](../adr/0225-session-storage-maintenance.md).
+[ADR-0226](../adr/0226-session-storage-maintenance.md).
 
 **Acceptance:**
 - AC6.1: Versioned operator configuration exposes main/child/scheduled age and count limits plus sweep cadence; `0` consistently disables, invalid/negative/unknown values fail, and explicit CLI values outrank configuration.
@@ -172,7 +172,7 @@ existing precedence/documentation discipline in [`architecture.md`](../architect
 An operator inspecting an owned `unknown` session asks the server to adopt it. The server
 preflights and revalidates, creates a new explicit-main aggregate from the authoritative
 transcript, and leaves the legacy source untouched. This is an explicit authority boundary under
-[ADR-0217](../adr/0217-session-discovery-continuation.md), [ADR-0225](../adr/0225-session-storage-maintenance.md), caller ownership, and the run-entry lease invariants in
+[ADR-0217](../adr/0217-session-discovery-continuation.md), [ADR-0226](../adr/0226-session-storage-maintenance.md), caller ownership, and the run-entry lease invariants in
 [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
@@ -191,7 +191,7 @@ transcript, and leaves the legacy source untouched. This is an explicit authorit
 
 The Sessions panel labels legacy rows, offers **Adopt as chat** only when the server advertises
 it, and keeps semantics-preserving **Optimize storage** separate from destructive **Clean up
-sessions**. The capability-driven client and explicit vocabulary follow [ADR-0217](../adr/0217-session-discovery-continuation.md), [ADR-0225](../adr/0225-session-storage-maintenance.md), and
+sessions**. The capability-driven client and explicit vocabulary follow [ADR-0217](../adr/0217-session-discovery-continuation.md), [ADR-0226](../adr/0226-session-storage-maintenance.md), and
 [`docs/tui.md`](../tui.md).
 
 **Acceptance:**
@@ -212,7 +212,7 @@ sessions**. The capability-driven client and explicit vocabulary follow [ADR-021
 
 A daemon operator follows tested systemd or macOS launchd examples, inspects policy and dry-run
 impact, and performs a quiesced backup/migration/restore. The daemon remains the sole automatic
-cleanup owner under [ADR-0225](../adr/0225-session-storage-maintenance.md), with storage privacy
+cleanup owner under [ADR-0226](../adr/0226-session-storage-maintenance.md), with storage privacy
 and lifecycle documented in [`docs/usage/configuration.md`](../usage/configuration.md).
 
 **Acceptance:**
@@ -227,12 +227,12 @@ and lifecycle documented in [`docs/usage/configuration.md`](../usage/configurati
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Reclassifying legacy rows in place | Not planned; adoption creates a new main session | [ADR-0225](../adr/0225-session-storage-maintenance.md) |
+| Reclassifying legacy rows in place | Not planned; adoption creates a new main session | [ADR-0226](../adr/0226-session-storage-maintenance.md) |
 | Automatic or bulk semantic adoption | Not planned; explicit per-row authority only | [ADR-0217](../adr/0217-session-discovery-continuation.md) |
-| External cron/systemd-timer/launchd deletion scripts | Not supported; daemon-owned sweeper | [ADR-0225](../adr/0225-session-storage-maintenance.md) |
+| External cron/systemd-timer/launchd deletion scripts | Not supported; daemon-owned sweeper | [ADR-0226](../adr/0226-session-storage-maintenance.md) |
 | Replacing the SessionStore port with SQL/CQRS | Future backend choice, not required here | [ADR-0027](../adr/0027-cloud-native.md) |
 | Event/tool log compaction semantics | Separate audit-retention decision | [ADR-0027](../adr/0027-cloud-native.md) |
-| Rollback of already-completed maintenance items | Not promised; cancellation stops future work | [ADR-0225](../adr/0225-session-storage-maintenance.md) |
+| Rollback of already-completed maintenance items | Not promised; cancellation stops future work | [ADR-0226](../adr/0226-session-storage-maintenance.md) |
 
 ## Cross-cutting deliverables
 
@@ -243,7 +243,7 @@ and lifecycle documented in [`docs/usage/configuration.md`](../usage/configurati
 
 ## Sequencing recommendation
 
-1. Land ADR-0225 and any optional port/domain contracts before adapter work.
+1. Land ADR-0226 and any optional port/domain contracts before adapter work.
 2. Build the atomic v2 snapshot and indexed catalog foundations; both depend on the bounded v1 reader already shipped, and catalog readers consume v2 headers once available.
 3. Add progressive inventory after indexed pagination.
 4. Build migration, cleanup planner, health, and adoption as parallel server-side capabilities over the indexed foundation.
@@ -268,7 +268,7 @@ The scenario test names are the `verify:` identifiers above. `TestInvariant_rete
 
 ## Deferred decisions and known risks
 
-- **Catalog implementation detail.** ADR-0225 pins behavior, rebuildability, and generation semantics, not a specific database/library; the implementation should prefer stdlib and existing dependencies unless measured evidence requires otherwise.
+- **Catalog implementation detail.** ADR-0226 pins behavior, rebuildability, and generation semantics, not a specific database/library; the implementation should prefer stdlib and existing dependencies unless measured evidence requires otherwise.
 - **Shared-directory coordination.** File locks/generation checks must cover external writers; a process-local unchecked cache is explicitly insufficient.
 - **Maintenance authorization.** Management capability and caller separation must be explicit for remote deployments; unsupported is safer than broad access.
 - **Disk pressure.** Atomic replacement and migration need temporary space; plan/apply must estimate and fail without destroying the committed source.

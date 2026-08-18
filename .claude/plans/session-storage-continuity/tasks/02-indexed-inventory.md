@@ -15,7 +15,7 @@ accumulator: acc/session-storage-continuity
 
 Implement the derivative, rebuildable jsonlstore metadata catalog foundation. It stores only inventory-safe metadata, rebuilds from v2 headers or bounded v1 tails, detects missing/corrupt/stale state and external/shared-directory changes, and never becomes transcript authority. Keep catalog persistence/format adapter-private and update ADR-0027 resource inventory. Leave cursor wire semantics, page-work bounds, and lock decomposition to 02b/02c.
 
-Follow ADR-0225, ADR-0217, ADR-0027, ADR-0104 and AGENTS.md. Use stdlib/existing dependencies, offline tests, and no TUI/maintenance/adoption work.
+Follow ADR-0226, ADR-0217, ADR-0027, ADR-0104 and AGENTS.md. Use stdlib/existing dependencies, offline tests, and no TUI/maintenance/adoption work.
 
 ## Acceptance criteria
 

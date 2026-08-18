@@ -15,7 +15,7 @@ accumulator: acc/session-storage-continuity
 
 Implement the adapter-private v2 current-snapshot core: one bounded current snapshot, v1 read compatibility and lazy per-session promotion with complete sessnap/logical-mtime fidelity, and unchanged append-only tool/event sidecars. Keep `port.SessionStore` unchanged and format-neutral. Define verified-v2 authority over coexisting v1, but leave crash injection/disk failure mechanics and cross-process orphan-temp locking to the dependent tasks.
 
-Follow ADR-0225, ADR-0217, ADR-0027, ADR-0104, AGENTS.md layering/security invariants, and existing repository conventions. Keep tests offline. Do not absorb catalog, migration-job, cleanup, health, or TUI work. Update living docs/user docs touched by the core format.
+Follow ADR-0226, ADR-0217, ADR-0027, ADR-0104, AGENTS.md layering/security invariants, and existing repository conventions. Keep tests offline. Do not absorb catalog, migration-job, cleanup, health, or TUI work. Update living docs/user docs touched by the core format.
 
 ## Acceptance criteria
 

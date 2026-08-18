@@ -801,7 +801,7 @@ durable artifact survives and is reloaded), or **lost** (gone, possibly leaking)
 
 | 55 | Automatic-learning sliding reservations, per-principal cooldown map, and completed trajectory-digest LRU (ADR 0114) | `app.Build` constructs one `automaticAdmissionController` only when automatic learning is enabled and shares it across main/per-session reflection observers | process (one mutex; one-hour process/principal count+reserved-token entries, per-principal weighted cooldowns, and a 24-hour completed-digest LRU capped at 1024; digests contain no raw identity/text labels) | no goroutine or durable handle. Coordinator capacity and in-flight duplicate checks run before the reservation callback; accepted failures/timeouts/abstentions retain reservations. `Built.Close` closes the coordinator, and the controller dies with composition. No shutdown/startup catch-up | **reset-by-design**: restart resets windows, cooldowns, and completed digests. Durable proposal IDs/CAS remain authoritative and converge any retry. Budgets are deliberately process-local; multiple replicas multiply aggregate capacity. See List 2 row 32 | `internal/app/learning_controller.go` (`automaticAdmissionController`, `reserve`, `complete`); `internal/app/reflection_observer.go` (`submit`) |
 
-**Session-storage temp-locking re-audit (List 1 / List 2 — issue #586, ADR 0225).**
+**Session-storage temp-locking re-audit (List 1 / List 2 — issue #586, ADR 0226).**
 The jsonlstore resource in List 1 row 8 now includes one stable per-family flock sentinel
 and generation/owner-tagged replacement temps. The flock is acquired per operation and
 released on return; process death releases it in the kernel. A later startup or Save
@@ -810,7 +810,7 @@ temps while holding it, so repeated crashes converge without deleting a live pro
 temp or the committed snapshot. This is adapter-owned persisted storage and reconstructible
 synchronization, not new session/run state; List 2 gains no row.
 
-**Session-storage indexed-inventory re-audit (List 1 / List 2 — issue #587, ADR 0225).**
+**Session-storage indexed-inventory re-audit (List 1 / List 2 — issue #587, ADR 0226).**
 List 1 row 8 now includes jsonlstore's durable, adapter-private metadata catalog. It
 outlives calls but holds only a rebuildable `SessionDiscoveryMeta` projection and a
 snapshot-directory fingerprint: no conversation, tool argument, event body, or authority
@@ -994,7 +994,7 @@ what is persisted), **reset-by-design** (documented, acceptable),
 | 30 | Reflection queue, running jobs, singleflight keys, and bounded completion receipts (issue #509; List 1 row 47) | process-local `reflectionCoordinator` maps/queues and workers | restart cancels/loses uncommitted queued or running extraction and ephemeral receipts; already staged proposals and memory revisions remain durable | **reset-by-design**: there is no retrospective sweep of old sessions. A caller may explicitly reflect a completed session again; deterministic proposal IDs and CAS make that retry converge | 0109 |
 | 31 | Agent-owned skill lifecycle and proposal linkage (issue #510; List 1 row 48) | `skillstore` bounded manifest plus immutable content-addressed `SKILL.md` files; the proposal's terminal linkage remains in `reflectionstore` | restart reloads exact versions, revisions, lifecycle states, histories, and active selection. A crash after draft persistence but before proposal linkage leaves an inactive Draft and possibly an unreferenced immutable file; retry converges the exact body/provenance and CAS-links the same SkillID | **persist-in-store**: both stores are independently atomic. ProposalID provenance and deterministic SkillID/version provide idempotent reconciliation without claiming a distributed transaction; no startup sweep and no automatic activation | 0110 |
 | 32 | Automatic-learning process/principal windows, weighted cooldowns, and completed-digest cache (ADR 0114; List 1 row 55) | process-local `automaticAdmissionController` only; nothing is persisted | restart grants a fresh automatic window and forgets cooldown/completed-cache membership. Existing staged/promoted proposal state remains durable and deterministic proposal IDs make a retried reflection converge. There is no historical/startup/shutdown sweep | **reset-by-design**: spend-control and duplicate-suppression hints, not accepted learning state. N replicas have N independent budgets | 0114 |
-| 33 | Redis derivative session inventory rows, owner indexes, and cursor generations (List 1 row 7) | managed Redis keys updated atomically with each current snapshot | restart reloads the persisted index and generations; an older Redis database with snapshots but no complete index is marked stale at adapter startup | **derive-on-write / fail honest**: current Save and Delete maintain the projection; legacy databases report metadata paging unsupported rather than rebuilding by transcript scan on a page | ADR 0225 |
+| 33 | Redis derivative session inventory rows, owner indexes, and cursor generations (List 1 row 7) | managed Redis keys updated atomically with each current snapshot | restart reloads the persisted index and generations; an older Redis database with snapshots but no complete index is marked stale at adapter startup | **derive-on-write / fail honest**: current Save and Delete maintain the projection; legacy databases report metadata paging unsupported rather than rebuilding by transcript scan on a page | ADR 0226 |
 
 Two ledger observations worth stating in prose:
 
@@ -1122,7 +1122,7 @@ deployer responsibility; the code below still assumes it everywhere a writer exi
 in the no-lease default:
 
 - **jsonlstore v2 snapshots are atomically replaced and explicitly report crash
-  durability.** Later storage-continuity work (ADR 0225) replaced the append-only
+  durability.** Later storage-continuity work (ADR 0226) replaced the append-only
   snapshot writer while leaving v1 readable and tool/event sidecars append-only.
   `Save` writes one complete same-directory temporary, syncs it, renames it over
   the authoritative v2 snapshot, then syncs the directory where supported. The

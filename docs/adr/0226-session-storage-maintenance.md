@@ -1,4 +1,4 @@
-# ADR 0225 — Session storage separates current state, indexed metadata, and maintenance
+# ADR 0226 — Session storage separates current state, indexed metadata, and maintenance
 
 - Status: Proposed
 - Date: 2026-08-17

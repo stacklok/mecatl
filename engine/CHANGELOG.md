@@ -13,7 +13,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Generation-bound session metadata continuation** (issue #587, [ADR 0225](../docs/adr/0225-session-storage-maintenance.md)) —
+- **Generation-bound session metadata continuation** (issue #587, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.ErrSessionMetadataCursorRestart` makes stale/filter-mismatched continuation
   explicit, and `PaginateSessionMetadataBound` gives scan-based adapters the same
   generation and ownership-scope contract as indexed stores. Added (minor).
@@ -749,7 +749,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
-- **Opaque session metadata continuation** (issue #587, [ADR 0225](../docs/adr/0225-session-storage-maintenance.md)) —
+- **Opaque session metadata continuation** (issue #587, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.SessionMetadataCursor` retains neutral ordering, generation, and ownership-scope
   bindings while replacing the storage-specific numeric position with an opaque
   pager-owned `Continuation`. Jsonlstore privately encodes and validates its direct

@@ -15,7 +15,7 @@ accumulator: acc/session-storage-continuity
 
 Add capability-driven server preflight and caller-bound idempotent adoption that copies one eligible owned unknown transcript into a new explicit-main session, keeps the source unchanged, and never escalates reserved provenance.
 
-Follow ADR-0225, ADR-0217, ADR-0027, ADR-0104, AGENTS.md layering/security invariants, and existing repository conventions. Keep tests offline. Do not absorb later tasks or weaken fail-closed behavior. Update the living docs and user-docs affected by this task.
+Follow ADR-0226, ADR-0217, ADR-0027, ADR-0104, AGENTS.md layering/security invariants, and existing repository conventions. Keep tests offline. Do not absorb later tasks or weaken fail-closed behavior. Update the living docs and user-docs affected by this task.
 
 ## Acceptance criteria
 
