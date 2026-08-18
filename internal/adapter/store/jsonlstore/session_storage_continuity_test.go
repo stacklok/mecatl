@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +28,12 @@ func TestSessionStorageContinuity_Scenario1_BoundedRepeatedSaves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat current v2 snapshot: %v", err)
 	}
+
+	// A second family makes this assertion deliberately target-scoped: it must
+	// neither count nor disturb artifacts belonging to other sessions.
+	if err := st.Save(ctx, session.New("other-session", session.ModeDefault, "/other", session.Limits{}, time.Now())); err != nil {
+		t.Fatalf("Save other session: %v", err)
+	}
 	for range 999 {
 		if err := st.Save(ctx, s); err != nil {
 			t.Fatalf("repeated Save: %v", err)
@@ -38,23 +46,102 @@ func TestSessionStorageContinuity_Scenario1_BoundedRepeatedSaves(t *testing.T) {
 	if final.Size() > initial.Size()+4096 {
 		t.Fatalf("snapshot grew with save count: initial=%d final=%d", initial.Size(), final.Size())
 	}
-
-	entries, err := os.ReadDir(filepath.Dir(path))
-	if err != nil {
-		t.Fatalf("ReadDir snapshot family: %v", err)
+	if err := assertBoundedSnapshotArtifacts(dir, s.ID); err != nil {
+		t.Fatal(err)
 	}
-	var snapshotArtifacts int
-	for _, entry := range entries {
-		if bytes.Contains([]byte(entry.Name()), []byte(".session.")) {
-			snapshotArtifacts++
+
+	// Mutation proof: a snapshot leak in the old root namespace must trip the
+	// same target-family assertion rather than being hidden by the sid-v1 scan.
+	leakedLegacySnapshot := legacyFamilyPath(dir, s.ID, ".session.jsonl")
+	if err := os.WriteFile(leakedLegacySnapshot, []byte("leaked\n"), 0o600); err != nil {
+		t.Fatalf("plant legacy snapshot leak: %v", err)
+	}
+	if err := assertBoundedSnapshotArtifacts(dir, s.ID); err == nil {
+		t.Fatal("legacy snapshot leak did not violate the bounded artifact contract")
+	}
+}
+
+type snapshotArtifactCounts struct {
+	canonicalV2 int
+	canonicalV1 int
+	legacyV2    int
+	legacyV1    int
+	temp        int
+	lock        int
+	sidecar     int
+}
+
+func assertBoundedSnapshotArtifacts(dir string, id session.SessionID) error {
+	canonicalV2 := filepath.Base(canonicalSnapshotPath(dir, id))
+	canonicalStem := strings.TrimSuffix(canonicalV2, ".session.json")
+	legacyStem := strings.TrimSuffix(filepath.Base(legacyFamilyPath(dir, id, ".session.jsonl")), ".session.jsonl")
+	counts := snapshotArtifactCounts{}
+
+	for _, namespace := range []struct {
+		path      string
+		stem      string
+		canonical bool
+	}{
+		{path: dir, stem: legacyStem},
+		{path: filepath.Join(dir, "sid-v1"), stem: canonicalStem, canonical: true},
+	} {
+		entries, err := os.ReadDir(namespace.path)
+		if err != nil {
+			return fmt.Errorf("read %s snapshot namespace: %w", namespace.path, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			switch {
+			case name == namespace.stem+".session.json":
+				if namespace.canonical {
+					counts.canonicalV2++ // The v2 envelope carries bounded session metadata.
+				} else {
+					counts.legacyV2++
+				}
+			case name == namespace.stem+".session.jsonl":
+				if namespace.canonical {
+					counts.canonicalV1++
+				} else {
+					counts.legacyV1++
+				}
+			case strings.HasPrefix(name, namespace.stem+".session.json.tmp-v1-"):
+				counts.temp++
+			case name == namespace.stem+".family.lock":
+				counts.lock++
+			case name == namespace.stem+".tools.jsonl" || name == namespace.stem+".events.jsonl":
+				counts.sidecar++
+			}
 		}
 	}
-	if snapshotArtifacts > 2 {
-		t.Fatalf("snapshot artifacts = %d, want one current snapshot plus at most one bounded temporary", snapshotArtifacts)
+
+	if counts.canonicalV2 != 1 || counts.canonicalV1 != 0 || counts.legacyV2 != 0 || counts.legacyV1 != 0 ||
+		counts.temp > 1 || counts.lock > 1 || counts.sidecar != 0 {
+		return fmt.Errorf("target session %q artifacts = %+v, want one canonical v2 snapshot (with metadata), no v1/legacy/sidecars, and at most one temp and lock", id, counts)
 	}
-	if _, err := os.Stat(canonicalFamilyPath(dir, s.ID, ".session.jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("new v2 session unexpectedly retained v1 snapshot: %v", err)
+	return nil
+}
+
+func legacyFamilyPath(dir string, id session.SessionID, suffix string) string {
+	if id == "" {
+		return filepath.Join(dir, "_empty_"+suffix)
 	}
+	var b strings.Builder
+	for _, r := range string(id) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	stem := b.String()
+	if strings.HasPrefix(stem, ".") {
+		stem = "_" + stem[1:]
+	}
+	return filepath.Join(dir, stem+suffix)
 }
 
 func TestSessionStorageContinuity_Scenario1_V1PromotionFidelity(t *testing.T) {
