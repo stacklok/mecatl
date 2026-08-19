@@ -549,9 +549,6 @@ message ServerCapabilities {
   bool learning_proposals = 17;
   // learned_skills is true when the caller-partitioned lifecycle API is available.
   bool learned_skills = 18;
-  // storage_health is true only when the backend implements bounded indexed
-  // health and this deployment has a management authorizer.
-  bool storage_health = 19;
   // legacy_adoption is true only when authenticated, caller-owned adoption with
   // explicit engine bindings is available.
   bool legacy_adoption = 20;
@@ -566,7 +563,10 @@ message ServerCapabilities {
   // manual_dream is the composition-time availability snapshot for the two
   // deployment-owned manual consolidation targets. An older server leaves it
   // absent; unavailable reasons are bounded, content-free operator categories.
-  ManualDreamCapabilities manual_dream = 23;
+  ManualDreamCapabilities manual_dream = 19;
+  // storage_health is true only when the backend implements bounded indexed
+  // health and this deployment has a management authorizer.
+  bool storage_health = 23;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
