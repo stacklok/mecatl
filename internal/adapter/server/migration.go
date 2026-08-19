@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -97,11 +96,7 @@ func (s *Service) authorizeMigration(ctx context.Context) (port.SessionMigration
 }
 
 func newMigrationHandle() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
+	return randomHexID(16)
 }
 
 // PlanSessionMigration performs no writes. The opaque plan handle binds the

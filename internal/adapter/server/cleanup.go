@@ -463,11 +463,16 @@ func recordCleanupOutcome(job *cleanupJobRecord, candidate CleanupCandidate, rea
 }
 
 func newCleanupID() (string, error) {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
+	return randomHexID(16)
+}
+
+// randomHexID returns a hex-encoded id from n cryptographically random bytes.
+func randomHexID(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(buf[:]), nil
+	return hex.EncodeToString(buf), nil
 }
 
 func cleanupItemHandle(id session.SessionID) string {

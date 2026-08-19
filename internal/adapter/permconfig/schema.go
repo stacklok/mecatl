@@ -261,17 +261,25 @@ func (s *RetentionLimitSection) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func validateRetentionDuration(raw string) error {
+	_, err := ParseRetentionDuration(raw)
+	return err
+}
+
+// ParseRetentionDuration parses a retention/sweep-cadence duration string.
+// An empty or "0" value means disabled (0, nil); anything else must be a
+// valid, non-negative time.ParseDuration value.
+func ParseRetentionDuration(raw string) (time.Duration, error) {
 	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "0" {
-		return nil
+		return 0, nil
 	}
 	d, err := time.ParseDuration(strings.TrimSpace(raw))
 	if err != nil {
-		return fmt.Errorf("invalid duration %q", raw)
+		return 0, fmt.Errorf("invalid duration %q", raw)
 	}
 	if d < 0 {
-		return fmt.Errorf("must be non-negative")
+		return 0, fmt.Errorf("must be non-negative")
 	}
-	return nil
+	return d, nil
 }
 
 // MCPSection is the strict operator-only mcp: subtree.

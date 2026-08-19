@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -74,11 +73,8 @@ func applyOperatorRetention(cfg *Config, r *permconfig.RetentionSection) error {
 }
 
 func parseRetentionDuration(path, raw string) (time.Duration, error) {
-	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "0" {
-		return 0, nil
-	}
-	d, err := time.ParseDuration(strings.TrimSpace(raw))
-	if err != nil || d < 0 {
+	d, err := permconfig.ParseRetentionDuration(raw)
+	if err != nil {
 		return 0, fmt.Errorf("%s must be a non-negative duration", path)
 	}
 	return d, nil
