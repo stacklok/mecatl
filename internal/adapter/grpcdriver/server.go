@@ -186,8 +186,8 @@ func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.Pag
 	}
 	if cursor := req.GetCursor(); cursor != nil {
 		if cursor.GetModifiedAt() == nil || cursor.GetSessionId() == "" || cursor.GetModifiedAt().CheckValid() != nil ||
-			cursor.GetGeneration() == "" || cursor.GetScope() == "" || cursor.GetContinuation() == "" {
-			return nil, status.Error(codes.InvalidArgument, "cursor requires a valid key, generation, scope, and continuation")
+			!legacyOrBoundCursorFields(cursor.GetGeneration(), cursor.GetScope(), cursor.GetContinuation()) {
+			return nil, status.Error(codes.InvalidArgument, "cursor requires a valid key, and either all of generation/scope/continuation or none")
 		}
 		request.Cursor = &port.SessionMetadataCursor{
 			ModifiedAt: cursor.GetModifiedAt().AsTime(), ID: session.SessionID(cursor.GetSessionId()),
