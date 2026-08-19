@@ -1434,8 +1434,17 @@ func (b *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	tok, err := b.token(req.Context())
 	if err != nil {
 		// The error is already sanitised (no bearer material). Do NOT include
-		// the token, the URL's query, or req.Header — return the error as-is.
-		return nil, err
+		// the token, the URL's query, or req.Header.
+		//
+		// Wrap it with llmresilience.ErrCredentials so the resilience layer can
+		// tell a credential failure from a provider failure. It cannot otherwise:
+		// net/http wraps whatever a RoundTripper returns in *url.Error, which
+		// satisfies net.Error, so an unmintable token would be retried
+		// MaxAttempts times, counted toward the shared circuit breaker, and then
+		// replaced by the breaker's own cooldown error — burying the one message
+		// that names the fix (re-run the login) behind an opaque "provider
+		// unhealthy" verdict for as long as the credential stays broken.
+		return nil, fmt.Errorf("%w: %w", llmresilience.ErrCredentials, err)
 	}
 	// Clone the request per RoundTripper contract (the caller may reuse it);
 	// mutate ONLY the Authorization header on the clone.
