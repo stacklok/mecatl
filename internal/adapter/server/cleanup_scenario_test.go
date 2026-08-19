@@ -103,6 +103,16 @@ func TestMaintenanceMutationCapabilityRequiresProvenExclusion(t *testing.T) {
 		if _, err := store.Load(ctx, "remote-no-lease"); err != nil {
 			t.Fatalf("unsafe posture deleted the session: %v", err)
 		}
+		page, err := store.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10})
+		if err != nil || len(page.Sessions) != 1 {
+			t.Fatalf("metadata page = %+v, %v", page, err)
+		}
+		if err := svc.DeleteSessionForRetentionCandidate(ctx, page.Sessions[0]); !errors.Is(err, ErrMaintenanceExclusionUnavailable) {
+			t.Fatalf("automatic retention delete = %v, want ErrMaintenanceExclusionUnavailable", err)
+		}
+		if _, err := store.Load(ctx, "remote-no-lease"); err != nil {
+			t.Fatalf("automatic retention bypassed maintenance exclusion: %v", err)
+		}
 	})
 
 	t.Run("remote with lease allowed", func(t *testing.T) {

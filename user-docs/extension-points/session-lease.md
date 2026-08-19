@@ -132,13 +132,21 @@ On SIGTERM, mecak8s iterates `Service.heldLeases` and releases every held lease 
 
 ---
 
-## The default path — no flag, no lease
+## The default path
 
-When no `--session-lease-*` flag is given, `buildSessionLease` returns `nil`. The composition layer skips acquire, renew, and release entirely. The in-process per-id mutex is still present and still enforces single-writer for concurrent requests in the same process. Behavior is byte-identical to a pre-lease deployment.
+When no `--session-lease-*` flag is given, a local JSONL `--store-dir` automatically
+uses the flock backend at `<store-dir>/.session-leases`. This makes every current
+local composition participate in the same cross-process run-entry and maintenance
+exclusion. A store without a local directory uses its own `port.SessionLease` when
+implemented; otherwise the composition remains unleased and destructive maintenance
+fails closed. The in-process per-id mutex still serializes same-process requests.
 
 :::note[Auto-wiring is intentional]
 
-`memstore` deliberately does NOT implement `port.SessionLease` directly. Leasing is a separately-selected concern: a memstore deployment that does not pass `--session-lease-*` never acquires a lease. The `memstore.NewLease` constructor exists so the type-assert discovery path can be exercised, but it is never auto-wired.
+`memstore` deliberately does NOT implement `port.SessionLease` directly: it is
+process-private, so its in-process mutex is already an independent single-writer
+proof. The `memstore.NewLease` constructor exists so the type-assert discovery path
+can be exercised, but it is never auto-wired.
 
 :::
 

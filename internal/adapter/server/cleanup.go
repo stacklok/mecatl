@@ -368,14 +368,13 @@ func (s *Service) ApplySessionCleanup(ctx context.Context, token string) (Cleanu
 	}
 	s.rememberCleanupJob(job)
 	s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: job.ID, State: StorageMaintenanceStarted})
-	deleteCtx := withMaintenanceRetentionDelete(ctx)
 	for _, candidate := range plan.Eligible {
 		if ctx.Err() != nil || s.cleanupCancelled(job.ID, principalKey) {
 			job.State = cleanupStateCancelled
 			break
 		}
 		job.Processed++
-		reason := cleanupDeletionReason(s.DeleteSessionForRetentionCandidate(deleteCtx, candidate.metadata))
+		reason := cleanupDeletionReason(s.DeleteSessionForRetentionCandidate(ctx, candidate.metadata))
 		recordCleanupOutcome(&job, candidate, reason)
 		job.State = cleanupStateRunning
 		s.rememberCleanupJob(job)

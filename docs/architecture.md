@@ -362,7 +362,10 @@ shared assembly with **k8s-native defaults** — a **Redis** session store + dur
 managed service the pod talks to over the network (Redis + the k8s API server). Redis
 metadata paging and retention are zero-load and work-bounded after index publication; the
 retention worker is owned by `app.Build`, whose idempotent close cancels and joins any
-startup/ticker sweep before Service and store teardown. An
+startup/ticker sweep before Service and store teardown. Every automatic deletion uses
+that same mandatory maintenance lease as manual cleanup (except a genuinely
+process-private in-memory store), so a shareable store with no working lease fails
+closed rather than trusting process-local liveness. An
 upgraded legacy keyspace stays honestly unavailable until the authenticated, resumable
 storage-migration job CAS-adopts every snapshot row and atomically publishes a stable
 source generation. It defaults

@@ -1082,6 +1082,59 @@ func TestBuildChildGCSweepsStaleJSONLChild(t *testing.T) {
 	}
 }
 
+// TestBuildAutomaticRetentionRespectsAnotherLocalInstance proves that every
+// local StoreDir composition joins the same flock lease domain. A second Build's
+// startup GC cannot delete a stale candidate whose session lease is held by the
+// first instance.
+func TestBuildAutomaticRetentionRespectsAnotherLocalInstance(t *testing.T) {
+	storeDir := t.TempDir()
+	seed, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	child, err := session.NewSubagent("subagent-protected", session.ModeDefault, "/ws", session.Limits{}, time.Now().Add(-48*time.Hour), "parent", "call")
+	if err != nil {
+		t.Fatalf("NewSubagent: %v", err)
+	}
+	if err := seed.Save(context.Background(), child); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+	staleFile := jsonlSnapshotPath(t, storeDir, child.ID)
+	setJSONLSnapshotMtime(t, staleFile, time.Now().Add(-48*time.Hour))
+
+	_, _, blocker, blockerOwner, closeBlocker, err := buildStoreAndLease(Config{StoreDir: storeDir})
+	if err != nil {
+		t.Fatalf("build blocking local instance: %v", err)
+	}
+	defer closeBlocker()
+	held, err := blocker.Acquire(context.Background(), child.ID, blockerOwner)
+	if err != nil {
+		t.Fatalf("hold candidate lease: %v", err)
+	}
+	defer func() { _ = blocker.Release(context.Background(), held) }()
+
+	diag := newCapturingDiagnostics()
+	built, err := Build(context.Background(), Config{
+		Workspace: t.TempDir(), Model: "mock", UseMock: true,
+		StoreDir: storeDir, ChildRetention: 24 * time.Hour, Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for diag.countContaining("session GC: some deletes failed") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("automatic retention did not observe the other instance's lease")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(staleFile); err != nil {
+		t.Fatalf("automatic retention deleted another instance's leased session: %v", err)
+	}
+}
+
 // TestBuildZeroConfigChildGCIsNoOp is the build-level posture guard: a
 // zero-config Build (in-memory store, no retention fields set) narrates the
 // DISABLED fact and starts no sweeper goroutine (the package's goleak TestMain

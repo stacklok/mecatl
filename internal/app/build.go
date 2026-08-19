@@ -466,7 +466,8 @@ type Config struct {
 	//     namespace (the in-cluster multi-replica path; needs RBAC — see usage.md).
 	//   - SessionLeaseDir: a single-host flock lease under that directory (one
 	//     machine, several processes; flock auto-releases on crash).
-	// All empty = no override → type-assert the store → else no lease.
+	// All empty = no explicit override → local StoreDir gets an automatic flock
+	// lease, otherwise type-assert the store → else no lease.
 	SessionLeaseURL          string
 	SessionLeaseDir          string
 	SessionLeaseK8sNamespace string
@@ -1618,7 +1619,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		Store:                               store,
 		OwnershipEnforced:                   cfg.OwnershipEnforced,
 		StorageManagementAuthorized:         storageManagementAuthorizer(cfg),
-		LocalStorageMaintenanceSingleWriter: cfg.LocalStorageManagement,
+		LocalStorageMaintenanceSingleWriter: localStorageMaintenanceSingleWriter(store),
 		RetentionPolicy: server.RetentionPolicy{
 			Version:    "retention/v1",
 			MainMaxAge: cfg.MainRetention, MainMaxCount: cfg.MainRetentionMaxTotal,
@@ -2620,8 +2621,9 @@ func buildStore(cfg Config) (port.SessionStore, port.EventLog, func(), error) {
 // top, the OPTIONAL cross-process session lease (cloud-native Phase 4). The lease
 // resolves AFTER the store so its type-assert fallback can discover a
 // store-provided lease; its close chains onto the store's, so the caller holds a
-// single teardown for the pair. sessionLease is nil (and leaseOwner empty) when no
-// lease backend is selected — the byte-identical default.
+// single teardown for the pair. A local StoreDir always resolves the existing
+// flock lease beneath that root; sessionLease is nil (and leaseOwner empty) only
+// when no explicit/store-provided backend and no local durable store is selected.
 func buildStoreAndLease(cfg Config) (port.SessionStore, port.EventLog, port.SessionLease, string, func(), error) {
 	store, eventLog, storeClose, err := buildStore(cfg)
 	if err != nil {
@@ -2635,6 +2637,16 @@ func buildStoreAndLease(cfg Config) (port.SessionStore, port.EventLog, port.Sess
 	return store, eventLog, sessionLease, leaseOwner, chainClose(leaseClose, storeClose), nil
 }
 
+// localStorageMaintenanceSingleWriter reports the only Build-owned storage
+// posture that is independently single-writer without a cross-process lease:
+// the process-private in-memory store. Management authorization is deliberately
+// absent from this proof; authority to request maintenance says nothing about
+// whether another process can be writing the same durable store.
+func localStorageMaintenanceSingleWriter(store port.SessionStore) bool {
+	_, ok := store.(*memstore.Store)
+	return ok
+}
+
 // buildSessionLease resolves the OPTIONAL cross-process session lease (cloud-native
 // Phase 4, ADR 0027). It returns (lease, owner, close, err): lease is nil (and
 // close a no-op) when no backend is selected — the byte-identical default that
@@ -2645,9 +2657,12 @@ func buildStoreAndLease(cfg Config) (port.SessionStore, port.EventLog, port.Sess
 // Resolution precedence mirrors --event-log-url's INDEPENDENT-of-store stance:
 //  1. an explicit override backend (URL → driver, k8s namespace → coordination
 //     Lease, dir → flock) wins;
-//  2. else the configured SessionStore is type-asserted for port.SessionLease
-//     (the issue's literal requirement: a store that also leases opts in);
-//  3. else no lease (the single-writer-by-affinity v1 default).
+//  2. else every local StoreDir composition receives the existing flock lease
+//     beneath that root (management authority does not prove exclusion; the
+//     actual shared lease makes local multi-process use safe by default);
+//  3. else the configured SessionStore is type-asserted for port.SessionLease
+//     (a store that also leases opts in);
+//  4. else no lease (the single-writer-by-affinity v1 default).
 //
 // The lease close is meaningful only for the driver backend (its dialled conn);
 // flock/k8s/type-assert hold no Build-scoped resource of their own, so their close
@@ -2683,6 +2698,19 @@ func buildSessionLease(cfg Config, store port.SessionStore) (port.SessionLease, 
 			return nil, "", nil, fmt.Errorf("open flock session lease %q: %w", cfg.SessionLeaseDir, err)
 		}
 		cfg.diag().Log(context.Background(), port.LevelInfo, "session lease: flock (single-host)", "dir", cfg.SessionLeaseDir, "owner", owner)
+		return l, owner, noop, nil
+
+	case cfg.StoreDir != "":
+		// A local JSONL StoreDir is shareable by multiple processes regardless of
+		// management authority. Auto-wire the existing flock SessionLease for every
+		// local composition so run entry and destructive maintenance share a real
+		// cross-process exclusion without requiring a safety-critical opt-in.
+		leaseDir := filepath.Join(cfg.StoreDir, ".session-leases")
+		l, err := flocklease.New(leaseDir, ttl, wallclock.Clock{})
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("open local-store flock session lease %q: %w", leaseDir, err)
+		}
+		cfg.diag().Log(context.Background(), port.LevelInfo, "session lease: flock (local store)", "dir", leaseDir, "owner", owner)
 		return l, owner, noop, nil
 	}
 

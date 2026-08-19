@@ -43,12 +43,12 @@ The loop stays storage-agnostic throughout. It only emits — it never imports `
 | Shape | Disposable process | Externalized state | Durable record |
 |---|---|---|---|
 | **Embed the engine** | No — you wire it | You implement `port.SessionStore` and `port.EventLog` | You implement `port.EventLog` |
-| **mecated** | Yes, with `--store-dir` + `--session-lease-*` | JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) | JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`) |
+| **mecated** | Yes, with `--store-dir` (single-host flock lease is automatic) or a remote store + `--session-lease-*` | JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) | JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`) |
 | **mecak8s** | Yes, out of the box | Redis (`internal/adapter/redisstore`) | Redis via same adapter |
 
 **Embed:** the engine exports the ports; the reference adapters under `engine/adapter/` — `memstore`, `memlease`, `sessnap` — give you a working in-process starting point. For real externalization, implement `port.SessionStore`, `port.EventLog`, and `port.SessionLease` against your own backing service and wire them in composition.
 
-**mecated:** the `--store-dir` flag selects JSONL persistence (`internal/adapter/store/jsonlstore`), which implements `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder` in one `Store` type. For multi-replica disposability, wire a session lease (`--session-lease-dir` for single-host flock, `--session-lease-k8s-namespace` for Kubernetes, `--session-lease-url` for a gRPC driver). Without a lease, session-affinity routing is the deployer's responsibility.
+**mecated:** the `--store-dir` flag selects JSONL persistence (`internal/adapter/store/jsonlstore`), which implements `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder` in one `Store` type. It automatically composes the single-host flock lease under `<store-dir>/.session-leases`. Remote or multi-host deployments must wire an appropriate session lease (`--session-lease-k8s-namespace` for Kubernetes or `--session-lease-url` for a gRPC driver); without one, session-affinity routing is the deployer's responsibility and destructive maintenance fails closed.
 
 **mecak8s:** wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup, with no flags required. The three properties hold out of the box.
 
@@ -90,7 +90,7 @@ Three sub-phases, all shipped.
 
 ### Phase 4 — Session leasing / multi-replica readiness (SHIPPED)
 
-Cross-process single-writer enforcement via `port.SessionLease` (`engine/port/lease.go`). The seam is optional and discovered by type assertion, exactly like `port.PrunableStore` — the default path is byte-identical with no lease.
+Cross-process single-writer enforcement via `port.SessionLease` (`engine/port/lease.go`). The seam is optional and discovered by type assertion, exactly like `port.PrunableStore`; local JSONL stores additionally auto-compose the existing flock adapter beneath their store root.
 
 The lease is acquired at the run-entry funnel (`internal/adapter/server/service.go` (`acquireLease`)) after the per-session `runEntryMu`, so same-process exclusion stays cheap. A competing live owner gets `ErrSessionLeasedElsewhere` (gRPC `FAILED_PRECONDITION` / HTTP 409). The lease is renewed by a `Service`-owned goroutine (`renewLoop`) and released on `CloseSession` or shutdown.
 
@@ -137,7 +137,7 @@ Everything else is either persisted in the snapshot, replayed from the event log
 
 ### Lease-based exclusion
 
-Without a lease backend, the deployer is responsible for session-affinity routing. Two replicas over one shared store without a lease can interleave snapshot appends — jsonlstore uses `O_APPEND` with an in-process mutex only; there is no cross-process guard.
+Local JSONL `--store-dir` compositions automatically share a single-host flock lease domain. For remote stores or multi-host storage without a suitable lease backend, the deployer remains responsible for session-affinity routing; destructive maintenance fails closed rather than relying on process-local liveness.
 
 With a lease backend wired, the run-entry funnel acquires the lease before starting a run. A second replica attempting to start the same session gets HTTP 409 / gRPC `FAILED_PRECONDITION`. If the lease-holding process dies, the flock lease auto-releases on file-handle close; the Kubernetes `coordination.k8s.io` lease lapses after the TTL (configurable via `--session-lease-ttl`, default `30s`, shared across all lease backends).
 

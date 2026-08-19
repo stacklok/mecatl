@@ -45,7 +45,7 @@ The cost: you own the composition. There is no out-of-the-box server, no auth la
 
 It defaults to loopback-only binds with no auth — the single-user localhost trust model. Before exposing off-loopback, configure `--auth-token` and TLS. A non-loopback bind with no auth generates a loud startup warning but does not hard-fail, because a service mesh may legitimately front it.
 
-Sessions are in-memory by default (`--store-dir ""` means no persistence). Add `--store-dir` for JSONL persistence on disk. For multi-replica deployments, mecated expects session affinity — two replicas over a shared store have no cross-process exclusion by default. Wire a session lease (`--session-lease-dir` for single-host flock, `--session-lease-k8s-namespace` for Kubernetes) to get cross-process single-writer enforcement.
+Sessions are in-memory by default (`--store-dir ""` means no persistence). Add `--store-dir` for JSONL persistence on disk; it automatically uses a single-host flock lease under the store root. Remote or multi-host stores still need a Kubernetes or gRPC session-lease backend for cross-process single-writer enforcement.
 
 The cost: you run a process and keep it alive. Durable sessions mean a PV or shared storage. Multi-replica without affinity requires a lease backend. For Kubernetes deployments where storage-free pods are a hard requirement, mecak8s is a better fit.
 

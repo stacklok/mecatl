@@ -187,10 +187,11 @@ type Config struct {
 	// trusted request context, never request-supplied owner data.
 	StorageManagementAuthorized func(context.Context) bool
 	// LocalStorageMaintenanceSingleWriter is true only when composition has proved
-	// this Service is a private, embedded, single-process writer (the in-process
-	// IsLive registry plus backend family locks are then sufficient). Remotely
-	// reachable or multi-writer deployments must leave it false and wire a working
-	// SessionLease before destructive migration or cleanup is advertised or run.
+	// the store itself is private to this process (the in-process IsLive registry
+	// plus backend family locks are then sufficient). Management authorization is
+	// not such a proof. Any durable or otherwise shareable store must leave this
+	// false and wire a working SessionLease before destructive migration, cleanup,
+	// or automatic retention is advertised or run.
 	LocalStorageMaintenanceSingleWriter bool
 	// RetentionPolicy is the effective operator policy projected into health.
 	RetentionPolicy RetentionPolicy
@@ -2154,17 +2155,10 @@ var (
 	errRetentionCandidateChanged = fmt.Errorf("%w: retention candidate changed", ErrFailedPrecondition)
 )
 
-type maintenanceRetentionDeleteKey struct{}
-
-// withMaintenanceRetentionDelete requires the management-only exclusion proof;
-// automatic local retention keeps the seam's existing optional-lease posture.
-func withMaintenanceRetentionDelete(ctx context.Context) context.Context {
-	return context.WithValue(ctx, maintenanceRetentionDeleteKey{}, true)
-}
-
 // DeleteSessionForRetentionCandidate removes one exact planner candidate while
-// keeping run-entry and lease exclusions held through the backend's atomic final
-// metadata comparison and family deletion.
+// keeping the mandatory maintenance/run-entry lease exclusions held through the
+// backend's atomic final metadata comparison and family deletion. Automatic and
+// manual retention intentionally use the same exclusion posture.
 func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candidate port.SessionDiscoveryMeta) error {
 	unlock := s.runEntryMu.lock(candidate.ID)
 	defer unlock()
@@ -2175,13 +2169,7 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	if s.IsLive(candidate.ID) {
 		return errRetentionCandidateActive
 	}
-	var release func()
-	var err error
-	if requireMaintenance, _ := ctx.Value(maintenanceRetentionDeleteKey{}).(bool); requireMaintenance {
-		release, err = s.acquireMaintenanceMutationLease(ctx, candidate.ID)
-	} else {
-		release, err = s.acquireMutationLease(ctx, candidate.ID)
-	}
+	release, err := s.acquireMaintenanceMutationLease(ctx, candidate.ID)
 	if err != nil {
 		return err
 	}

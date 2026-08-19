@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -40,6 +42,51 @@ func TestStorageManagementAuthorityIsExplicit(t *testing.T) {
 	}
 	if local(session.WithPrincipal(context.Background(), tenant)) {
 		t.Fatal("local embedded authority accepted a request principal")
+	}
+}
+
+func TestLocalStorageManagementAuthorityUsesCrossProcessLease(t *testing.T) {
+	storeDir := t.TempDir()
+	cfg := Config{StoreDir: storeDir, LocalStorageManagement: true}
+	_, _, first, firstOwner, closeFirst, err := buildStoreAndLease(cfg)
+	if err != nil {
+		t.Fatalf("first buildStoreAndLease: %v", err)
+	}
+	defer closeFirst()
+	_, _, second, secondOwner, closeSecond, err := buildStoreAndLease(cfg)
+	if err != nil {
+		t.Fatalf("second buildStoreAndLease: %v", err)
+	}
+	defer closeSecond()
+	if first == nil || second == nil {
+		t.Fatal("embedded durable stores did not receive a cross-process lease")
+	}
+	if firstOwner == secondOwner {
+		t.Fatal("independent embedded instances share a lease owner")
+	}
+
+	id := session.SessionID("maintenance-target")
+	lease, err := first.Acquire(context.Background(), id, firstOwner)
+	if err != nil {
+		t.Fatalf("first lease acquire: %v", err)
+	}
+	defer func() { _ = first.Release(context.Background(), lease) }()
+	if _, err := second.Acquire(context.Background(), id, secondOwner); !errors.Is(err, port.ErrLeaseHeld) {
+		t.Fatalf("second lease acquire = %v, want ErrLeaseHeld", err)
+	}
+}
+
+func TestManagementAuthorityIsNotSingleWriterProof(t *testing.T) {
+	store, _, closeStore, err := buildStore(Config{StoreDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("buildStore: %v", err)
+	}
+	defer closeStore()
+	if localStorageMaintenanceSingleWriter(store) {
+		t.Fatal("shareable local store was classified single-writer")
+	}
+	if !storageManagementAuthorizer(Config{LocalStorageManagement: true})(context.Background()) {
+		t.Fatal("local management authority was not granted independently")
 	}
 }
 

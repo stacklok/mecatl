@@ -274,9 +274,11 @@
   assertion, the `PrunableStore` precedent): `memlease` (in-memory reference;
   `memstore` also implements it), `flocklease` (single-host flock), `grpcdriver`
   `SessionLeaseService` (`--session-lease-url`, multi-host), `k8slease`
-  (`coordination.k8s.io` Lease, `--session-lease-k8s-namespace`, in-cluster). Wired
-  ONLY when an operator selects a backend (`internal/app` (`buildSessionLease`));
-  nil otherwise — byte-identical default (single-writer-by-affinity). The
+  (`coordination.k8s.io` Lease, `--session-lease-k8s-namespace`, in-cluster).
+  Explicit backends win; every local JSONL StoreDir otherwise auto-wires
+  `flocklease` beneath the store root, then composition falls back to a
+  store-provided lease (`internal/app` (`buildSessionLease`)). Other stores remain
+  nil/single-writer-by-affinity. The
   conformance contract is `leaseconformance`. See `docs/adr/0027-cloud-native.md`
   Phase 4.
 

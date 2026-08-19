@@ -5949,8 +5949,14 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   Cancellation is monotonic: once persisted,
   resume conflicts and no stale checkpoint can restore `running`. Completed jobs are idempotent.
 
-  Per-family lock order is `Service.runEntryMu` → optional maintenance
-  `SessionLease` → jsonlstore `.family.lock`. Under those exclusions the service and
+  Per-family lock order is `Service.runEntryMu` → mandatory maintenance
+  `SessionLease` (unless the store is genuinely process-private) → jsonlstore
+  `.family.lock`. Management authorization is deliberately not an exclusion proof.
+  Automatic retention and manual cleanup use the same mutation path and therefore
+  fail closed when a shareable store has no working lease. Every local JSONL
+  `StoreDir` keeps local usability by automatically composing the existing flock
+  lease beneath its root; two local processes sharing that root consequently
+  contend on the same per-session lease. Under those exclusions the service and
   adapter revalidate liveness, owner identity digest, durable kind (including
   `unknown`), state, and source fingerprint. Jsonlstore moves legacy sidecars first,
   writes one same-directory v2 replacement temp, verifies the complete v2 envelope and
@@ -5977,7 +5983,8 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   adapter's sidecar-first/snapshot-last deletion. Failures expose bounded stable
   codes/messages only and a new plan safely retries survivors. The management
   authorizer gates plan/apply/cancel/job/health before support, token, or scope is
-  disclosed. `TestInvariant_retention_requires_durable_taxonomy` pins the fail-closed
+  disclosed, but never contributes to the separate single-writer proof.
+  `TestInvariant_retention_requires_durable_taxonomy` pins the fail-closed
   taxonomy and cap-slot rule.
 
   **Storage-management authority and health.** `storage_management.version: 1`

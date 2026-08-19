@@ -337,8 +337,10 @@ background (`--session-lease-renew-interval`, default `--session-lease-ttl`/3),
 and released on session end / shutdown. A crashed holder's lease lapses after
 `--session-lease-ttl` (or, for the flock backend, releases immediately on process
 death), after which a survivor takes over. Losing the lease mid-run cancels the
-run cleanly (recoverable). The three backends are **mutually exclusive**; empty =
-no leasing (the byte-identical default).
+run cleanly (recoverable). The three explicit backends are **mutually exclusive**.
+With no lease flag, a local `--store-dir` automatically uses a flock lease under
+`<store-dir>/.session-leases`; other stores use a store-provided lease or remain
+unleased.
 
 - **`--session-lease-dir` (flock):** SINGLE-HOST only. Several mecated processes
   on ONE machine sharing the dir contend via `flock(2)`, with free crash recovery

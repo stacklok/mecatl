@@ -276,10 +276,10 @@ func TestCrossProcessDoubleExecutionPreventedByLease(t *testing.T) {
 	}
 }
 
-// TestCompositionByteIdenticalWithoutLease confirms the default path: a Build with
-// NO lease flag wires a nil SessionLease, so a StartRun acquires nothing and the
-// run proceeds exactly as before Phase 4.
-func TestCompositionByteIdenticalWithoutLease(t *testing.T) {
+// TestCompositionAutoWiresLocalStoreLease confirms the safe local default: a Build
+// with StoreDir and no explicit lease flag auto-wires the shared flock lease and
+// an uncontended run proceeds normally.
+func TestCompositionAutoWiresLocalStoreLease(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
 	workspace := t.TempDir()
@@ -302,14 +302,14 @@ func TestCompositionByteIdenticalWithoutLease(t *testing.T) {
 	}
 	defer built.Close()
 
-	// No lease flag → buildSessionLease returns nil → the run proceeds normally.
+	// The automatically wired local lease is uncontended, so the run proceeds.
 	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	run, err := built.Service.StartRun(ctx, sess.ID, "hello")
 	if err != nil {
-		t.Fatalf("StartRun without a lease = %v, want success (byte-identical default)", err)
+		t.Fatalf("StartRun with automatic local lease = %v, want success", err)
 	}
 	drain(run)
 	built.Service.FinishRun(sess.ID, run)
@@ -318,7 +318,7 @@ func TestCompositionByteIdenticalWithoutLease(t *testing.T) {
 		t.Fatalf("GetSession: %v", err)
 	}
 	if final.State != session.StateCompleted {
-		t.Fatalf("run without a lease final state = %q, want completed", final.State)
+		t.Fatalf("run with automatic local lease final state = %q, want completed", final.State)
 	}
 }
 

@@ -549,12 +549,13 @@ Three lease backends are available:
 The ServiceAccount for the k8s backend needs `get,create,update,delete` on
 `leases.coordination.k8s.io` in the configured namespace — no `list` or `watch`.
 
-:::warning[Two replicas + shared store + no lease = no exclusion]
+:::warning[Remote shared stores still need an explicit lease]
 
-Without a lease backend AND without session affinity, two replicas over a shared
-JSONL directory or remote store have no mutual exclusion. Both may drive the same
-session concurrently. The lease backend is the fix; affinity routing is sufficient
-for the common case without it.
+A local `--store-dir` automatically uses a flock lease beneath the store root, so
+multiple current mecated processes on one host participate without another flag.
+Remote stores and multi-host filesystems still require an explicit Kubernetes or
+gRPC lease backend (and local flock is not reliable over NFS/EFS). Without one,
+use session affinity; destructive maintenance fails closed.
 
 :::
 

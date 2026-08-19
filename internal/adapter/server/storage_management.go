@@ -29,9 +29,9 @@ func (s *Service) storageManagementPrincipalKey(ctx context.Context) (string, er
 }
 
 // maintenanceMutationAvailable is the capability truth for destructive storage
-// maintenance. A private embedded server may rely on its process-local liveness
-// registry and family locks; every remotely reachable or multi-writer deployment
-// requires a configured lease backend that has not reported unsupported.
+// maintenance. A genuinely process-private store may rely on its process-local
+// liveness registry and family locks; every shareable store requires a configured
+// lease backend that has not reported unsupported. Authorization is orthogonal.
 func (s *Service) maintenanceMutationAvailable() bool {
 	if s.cfg.LocalStorageMaintenanceSingleWriter {
 		return true
