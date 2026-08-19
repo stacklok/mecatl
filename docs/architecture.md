@@ -365,7 +365,11 @@ retention worker is owned by `app.Build`, whose idempotent close cancels and joi
 startup/ticker sweep before Service and store teardown. Every automatic deletion uses
 that same mandatory maintenance lease as manual cleanup (except a genuinely
 process-private in-memory store), so a shareable store with no working lease fails
-closed rather than trusting process-local liveness. An
+closed rather than trusting process-local liveness. Engine-owned delegation children use
+that same lease backend: Subagent and Parallel sessions, plus Team members (including
+queued, between-round, and synthesis lifetimes), acquire before becoming runnable and
+release only after their actual lifecycle teardown, so a remote retention or manual-cleanup
+worker cannot delete a live child. An
 upgraded legacy keyspace stays honestly unavailable until the authenticated, resumable
 storage-migration job CAS-adopts every snapshot row. Each drive carries one required,
 context-bound acquisition shared by both built-in stores. Redis renews its fenced lock,

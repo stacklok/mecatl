@@ -302,8 +302,10 @@ func newChildRunRegistry() *childRunRegistry {
 // (see childEntry.displaced); it is dropped for good once the new attempt
 // genuinely starts (markRunning) or terminates (markDone).
 func (g *childRunRegistry) register(childID string, family childFamily, goal string, cancel context.CancelFunc, background bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	_ = g.registerProtected(context.Background(), childID, family, goal, cancel, background)
+}
+
+func (g *childRunRegistry) registerProtected(ctx context.Context, childID string, family childFamily, goal string, cancel context.CancelFunc, background bool) error {
 	e := &childEntry{
 		family:     family,
 		goal:       goal,
@@ -314,12 +316,19 @@ func (g *childRunRegistry) register(childID string, family childFamily, goal str
 		doneCh:     make(chan struct{}),
 	}
 	if g.liveness != nil && family != childFamilyBashCmd {
-		e.releaseLiveness = g.liveness.Register(session.SessionID(childID))
+		release, err := g.liveness.Register(ctx, session.SessionID(childID), cancel)
+		if err != nil {
+			return err
+		}
+		e.releaseLiveness = release
 	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if old, ok := g.entries[childID]; ok && old.state == childDone {
 		e.displaced = old
 	}
 	g.entries[childID] = e
+	return nil
 }
 
 // attachOutputTail stores a background-Bash job's live output sink on its entry

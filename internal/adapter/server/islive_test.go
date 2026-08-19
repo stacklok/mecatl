@@ -60,7 +60,7 @@ type testLiveness struct {
 	active map[session.SessionID]int
 }
 
-func (r *testLiveness) Register(id session.SessionID) func() {
+func (r *testLiveness) Register(_ context.Context, id session.SessionID, _ context.CancelFunc) (func(), error) {
 	r.mu.Lock()
 	if r.active == nil {
 		r.active = make(map[session.SessionID]int)
@@ -75,7 +75,7 @@ func (r *testLiveness) Register(id session.SessionID) func() {
 			r.active[id]--
 		}
 		r.mu.Unlock()
-	})
+	}), nil
 }
 
 func (r *testLiveness) IsLive(id session.SessionID) bool {
@@ -100,7 +100,10 @@ func TestServiceIsLiveIncludesEngineChildren(t *testing.T) {
 	defer svc.Close()
 
 	for _, child := range []session.SessionID{"subagent-child", "parallel-child-0", "team-child-lead"} {
-		release := tracker.Register(child)
+		release, err := tracker.Register(context.Background(), child, func() {})
+		if err != nil {
+			t.Fatalf("Register(%q): %v", child, err)
+		}
 		if !svc.IsLive(child) {
 			t.Fatalf("IsLive(%q) = false for registered engine child", child)
 		}

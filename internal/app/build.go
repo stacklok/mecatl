@@ -1591,8 +1591,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		agentClose = func() {}
 	}
 	// One process-wide liveness registry bridges engine-owned delegation children
-	// to Service/retention without introducing an engine→server dependency.
-	cfg.sessionLiveness = newSessionLiveness()
+	// to Service/retention without introducing an engine→server dependency. When
+	// leasing is configured it owns distributed child holds as well.
+	childLiveness := newSessionLiveness(sessionLease, leaseOwner, cfg.SessionLeaseTTL,
+		cfg.SessionLeaseRenewInterval, cfg.diag())
+	cfg.sessionLiveness = childLiveness
 	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, agentReg)
 	if err != nil {
 		agentClose()
@@ -2067,6 +2070,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		refreshClose()
 		svc.Close()
+		childLiveness.Close()
 		mcpClose()
 		agentClose()
 		storeClose()
@@ -2103,6 +2107,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		schedClose()
 		refreshClose()
 		svc.Close()
+		childLiveness.Close()
 		mcpClose()
 		closeProfiles()
 		agentClose()

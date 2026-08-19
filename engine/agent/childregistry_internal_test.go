@@ -902,7 +902,7 @@ type testSessionLiveness struct {
 	active map[session.SessionID]int
 }
 
-func (r *testSessionLiveness) Register(id session.SessionID) func() {
+func (r *testSessionLiveness) Register(_ context.Context, id session.SessionID, _ context.CancelFunc) (func(), error) {
 	r.mu.Lock()
 	if r.active == nil {
 		r.active = make(map[session.SessionID]int)
@@ -917,7 +917,7 @@ func (r *testSessionLiveness) Register(id session.SessionID) func() {
 			r.active[id]--
 		}
 		r.mu.Unlock()
-	})
+	}), nil
 }
 
 func (r *testSessionLiveness) IsLive(id session.SessionID) bool {

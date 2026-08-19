@@ -239,7 +239,7 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, en
 	// deadline-kill (DeadlineExceeded) apart from a parent cancellation.
 	jobCtx, timeoutCtx, cancelTimeout := applyCallTimeout(jobCtx, &args.TimeoutMS)
 
-	caps.registerChildRun(jobID, childFamilyBashCmd, bashCommandLabel(args.Command), cancelJob, true)
+	_ = caps.registerChildRun(jobCtx, jobID, childFamilyBashCmd, bashCommandLabel(args.Command), cancelJob, true)
 	tail := newTailBuffer(maxBashJobTailBytes)
 	caps.attachChildOutputTail(jobID, tail)
 	caps.startChildRun(jobID)

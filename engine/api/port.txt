@@ -49,7 +49,7 @@
     ifacemethod func (SessionLease).Release(ctx context.Context, l Lease) error
     ifacemethod func (SessionLease).Renew(ctx context.Context, l Lease) (Lease, error)
     ifacemethod func (SessionLiveness).IsLive(session.SessionID) bool
-    ifacemethod func (SessionLiveness).Register(session.SessionID) (release func())
+    ifacemethod func (SessionLiveness).Register(ctx context.Context, id session.SessionID, cancel context.CancelFunc) (release func(), err error)
     ifacemethod func (SessionMetadataPager).PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
     ifacemethod func (SessionMigrationStore).AcquireSessionMigrationJob(context.Context, string) (acquired context.Context, release func() error, err error)
     ifacemethod func (SessionMigrationStore).CheckSessionMigrationJobOwnership(context.Context) error
@@ -134,7 +134,7 @@ type ScheduleStore interface{Claim(ctx context.Context, name string, now time.Ti
 type SessionDeleteSupport interface{SupportsSessionDelete() bool}
 type SessionDiscoveryMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; TitleProvenance session.TitleProvenance; Owner *session.Principal; Workspace string; Kind session.SessionKind; Relationship session.SessionRelationship; EstimatedBytes int64}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
-type SessionLiveness interface{IsLive(session.SessionID) bool; Register(session.SessionID) (release func())}
+type SessionLiveness interface{IsLive(session.SessionID) bool; Register(ctx context.Context, id session.SessionID, cancel context.CancelFunc) (release func(), err error)}
 type SessionMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; Owner *session.Principal}
 type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID; Generation string; Scope string; Continuation string}
 type SessionMetadataPage struct{Sessions []SessionDiscoveryMeta; NextCursor *SessionMetadataCursor; TotalCount int}

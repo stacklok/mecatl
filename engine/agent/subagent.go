@@ -220,10 +220,11 @@ func (c parentCaps) inheritOwner(child *session.Session) {
 // no-op — the child then simply is not client-cancellable, unchanged behaviour.
 // background marks a detached-delivery Subagent child (the other families always
 // pass false).
-func (c parentCaps) registerChildRun(childID session.SessionID, family childFamily, goal string, cancel context.CancelFunc, background bool) {
+func (c parentCaps) registerChildRun(ctx context.Context, childID session.SessionID, family childFamily, goal string, cancel context.CancelFunc, background bool) error {
 	if c.children != nil {
-		c.children.register(string(childID), family, goal, cancel, background)
+		return c.children.registerProtected(ctx, string(childID), family, goal, cancel, background)
 	}
+	return nil
 }
 
 // startChildRun is the nil-safe running-state advance (the child's drive has
@@ -2244,6 +2245,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	return child, runEnv, cleanupWS, advisory, editsSurvived, session.ToolResult{}, true
 }
 
+//nolint:gocyclo // lifecycle validation is intentionally linear; distributed lease admission adds one fail-safe branch.
 func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args subagentArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
@@ -2349,7 +2351,12 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// `resume` of an id already run THIS run re-registers and OVERWRITES the done
 	// entry (fresh doneCh — A5).
 	ctx, cancelCall := context.WithCancel(ctx)
-	caps.registerChildRun(childID, childFamilySubagent, subagentGoal(args), cancelCall, args.Background)
+	if err := caps.registerChildRun(ctx, childID, childFamilySubagent, subagentGoal(args), cancelCall, args.Background); err != nil {
+		cancelCall()
+		cancelTimeout()
+		t.releaseChildID(childID)
+		return session.NewToolError(call.ID, fmt.Sprintf("Subagent: child session could not be protected: %v", err)), nil
+	}
 
 	// BACKGROUND (D7/D8): fail-fast gate, synchronous start event, detach the drive.
 	if args.Background {

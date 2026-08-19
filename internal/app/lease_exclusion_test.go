@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +35,33 @@ func leaseBaseCfg(t *testing.T, storeDir, leaseDir, workspace, memoryDir string)
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}),
 		liveModelHTTPClient: offlineHTTPClient(),
 	}
+}
+
+type firstThenBlockingProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *firstThenBlockingProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+	if call == 1 {
+		return func(yield func(port.Chunk, error) bool) {
+			if yield(port.Chunk{Kind: port.ChunkText, Text: "round complete"}, nil) {
+				yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+			}
+		}, nil
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		<-ctx.Done()
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopCancelled}, nil)
+	}, nil
+}
+
+func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
 }
 
 // TestCrossProcessLeaseExclusion is the cloud-native Phase 4 falsifiable gate: a
@@ -273,6 +302,98 @@ func TestCrossProcessDoubleExecutionPreventedByLease(t *testing.T) {
 	// The Write must NOT have executed on #2 (it has no lease, so it never resumed).
 	if _, statErr := os.Stat(target); statErr == nil {
 		t.Fatal("the parked Write executed on the leased-out replica — double execution not prevented")
+	}
+}
+
+// TestBuildChildLeaseBlocksRemoteRetention proves that engine-owned child
+// lifecycles join the same distributed lease domain as manual cleanup and GC.
+// Two Builds share one JSONL store and flock lease directory; while replica A's
+// direct-team member is running, replica B's retention deletion is refused.
+func TestBuildChildLeaseBlocksRemoteRetention(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	leaseDir := t.TempDir()
+	workspace := t.TempDir()
+	memoryDir := t.TempDir()
+
+	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
+	cfg1.EnableTeams = true
+	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		return &firstThenBlockingProvider{}
+	}
+	built1, err := Build(ctx, cfg1)
+	if err != nil {
+		t.Fatalf("Build #1: %v", err)
+	}
+	defer built1.Close()
+
+	cfg2 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
+	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		return mockllm.New(mockllm.TextTurn("idle"))
+	}
+	built2, err := Build(ctx, cfg2)
+	if err != nil {
+		t.Fatalf("Build #2: %v", err)
+	}
+	defer built2.Close()
+
+	teamID, _, err := built1.Service.CreateTeam(ctx, workspace, "lease-test", "hold", 0,
+		[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "wait"}})
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	memberID := agent.MemberSessionID(teamID, "lead")
+	runCtx, cancelRun := context.WithCancel(ctx)
+	runDone := make(chan error, 1)
+	go func() {
+		_, runErr := built1.Service.RunTeam(runCtx, teamID, nil)
+		runDone <- runErr
+	}()
+	joined := false
+	defer func() {
+		cancelRun()
+		if joined {
+			return
+		}
+		select {
+		case <-runDone:
+		case <-time.After(5 * time.Second):
+		}
+	}()
+
+	deadline := time.After(5 * time.Second)
+	var lastErr error
+	for {
+		_, loadErr := built2.Service.GetSession(ctx, memberID)
+		lastErr = loadErr
+		if loadErr == nil {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("team member never reached the shared store (err=%v)", lastErr)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case err := <-runDone:
+		t.Fatalf("RunTeam ended before remote cleanup check: %v", err)
+	default:
+	}
+
+	if err := built2.Service.DeleteSessionForRetention(ctx, memberID); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		cancelRun()
+		t.Fatalf("remote retention delete = %v, want ErrSessionLeasedElsewhere", err)
+	}
+	cancelRun()
+	select {
+	case err := <-runDone:
+		joined = true
+		if err != nil {
+			t.Fatalf("RunTeam after cancel: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunTeam did not stop after cancellation")
 	}
 }
 

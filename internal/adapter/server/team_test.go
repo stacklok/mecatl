@@ -30,7 +30,7 @@ type teamLivenessTracker struct {
 	active map[session.SessionID]int
 }
 
-func (r *teamLivenessTracker) Register(id session.SessionID) func() {
+func (r *teamLivenessTracker) Register(_ context.Context, id session.SessionID, _ context.CancelFunc) (func(), error) {
 	r.mu.Lock()
 	if r.active == nil {
 		r.active = make(map[session.SessionID]int)
@@ -45,7 +45,7 @@ func (r *teamLivenessTracker) Register(id session.SessionID) func() {
 			r.active[id]--
 		}
 		r.mu.Unlock()
-	})
+	}), nil
 }
 
 func (r *teamLivenessTracker) IsLive(id session.SessionID) bool {

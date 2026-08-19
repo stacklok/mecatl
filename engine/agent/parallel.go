@@ -878,7 +878,10 @@ func (t *ParallelTool) launchBranch(ctx context.Context, sem chan struct{}, call
 	branchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	childID := t.childSessionID(caps.parentSessionID, callID, i)
-	caps.registerChildRun(childID, childFamilyParallelBranch, branchLabel(i), cancel, false)
+	if err := caps.registerChildRun(branchCtx, childID, childFamilyParallelBranch, branchLabel(i), cancel, false); err != nil {
+		return branchResult{index: i, label: branchLabel(i), childID: string(childID), failed: true,
+			failReason: fmt.Sprintf("child session could not be protected: %v", err)}
+	}
 	select {
 	case sem <- struct{}{}:
 		defer func() { <-sem }()
