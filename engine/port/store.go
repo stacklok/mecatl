@@ -3,11 +3,8 @@ package port
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"time"
 
@@ -250,7 +247,7 @@ type SessionStorageHealthProvider interface {
 // single page without a generation-bound continuation. Pager implementations
 // should use PaginateSessionMetadataBound.
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage {
-	page, _ := paginateSessionMetadata(rows, request, false)
+	page, _ := paginateSessionMetadata(rows, request, "")
 	return page
 }
 
@@ -259,27 +256,30 @@ func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadat
 // than mixing rows when the current inventory or owner scope differs from the
 // cursor. Indexed adapters may implement the same contract with adapter-private
 // opaque continuations instead of scanning.
-func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) (SessionMetadataPage, error) {
-	return paginateSessionMetadata(rows, request, true)
+//
+// generation is the CALLER's own cheap, monotonic "has anything in this store
+// changed" signal (e.g. a counter bumped on every Save/Delete) — this helper
+// does not derive one from rows itself. An earlier version computed a
+// generation by JSON-marshalling and SHA-256-hashing the entire filtered row
+// set on every call, which made every page after the first cost O(total rows)
+// instead of O(page size); that violates the "page work is bounded, not
+// proportional to store size" contract callers rely on (see
+// docs/acceptance/session-storage-continuity.md AC2.1). A caller with no
+// cheaper signal available may still pass a content hash, but should prefer a
+// real counter.
+func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error) {
+	return paginateSessionMetadata(rows, request, generation)
 }
 
 const scanMetadataContinuation = "mecatl-scan-keyset-v1"
 
-func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, bind bool) (SessionMetadataPage, error) {
+func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error) {
 	filtered := prepareSessionMetadataRows(rows, request)
 	scope := metadataPageScope(request)
-	generation := ""
-	if bind {
-		encoded, err := json.Marshal(filtered)
-		if err != nil {
-			return SessionMetadataPage{}, fmt.Errorf("port: encode session metadata generation: %w", err)
-		}
-		sum := sha256.Sum256(encoded)
-		generation = hex.EncodeToString(sum[:])
-		if request.Cursor != nil && (request.Cursor.Generation != generation || request.Cursor.Scope != scope ||
-			request.Cursor.Continuation != scanMetadataContinuation) {
-			return SessionMetadataPage{}, ErrSessionMetadataCursorRestart
-		}
+	bind := generation != ""
+	if bind && request.Cursor != nil && (request.Cursor.Generation != generation || request.Cursor.Scope != scope ||
+		request.Cursor.Continuation != scanMetadataContinuation) {
+		return SessionMetadataPage{}, ErrSessionMetadataCursorRestart
 	}
 
 	start := 0

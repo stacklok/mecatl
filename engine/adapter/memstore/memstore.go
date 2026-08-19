@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -35,6 +36,17 @@ type Store struct {
 	estimatedBytes map[session.SessionID]int64
 	deleteFailures map[session.SessionID]error
 	now            func() time.Time
+	// generation is a monotonic counter bumped on every Save/Delete, and
+	// handed to port.PaginateSessionMetadataBound as the cheap O(1)
+	// "has anything changed" signal a bound cursor is checked against. This
+	// is coarser than jsonlstore's real per-family bookkeeping (any mutation
+	// anywhere invalidates every outstanding cursor, not just ones scoped to
+	// the changed row) but matches how the real indexed adapters' own
+	// rebuild-generation counters work (e.g. redisstore's
+	// metadataRebuildGenerationKey) — a single global counter, not a
+	// per-owner one; owner-scope mismatches are caught separately by the
+	// Scope field, not Generation.
+	generation uint64
 }
 
 // compile-time assertions that Store satisfies the port plus the optional
@@ -101,6 +113,7 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	st.sessions[s.ID] = snap
 	st.savedAt[s.ID] = st.now()
 	st.estimatedBytes[s.ID] = estimatedBytes
+	st.generation++
 	st.mu.Unlock()
 	return nil
 }
@@ -147,8 +160,9 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 			EstimatedBytes: st.estimatedBytes[id],
 		})
 	}
+	generation := st.generation
 	st.mu.RUnlock()
-	return port.PaginateSessionMetadataBound(rows, request)
+	return port.PaginateSessionMetadataBound(rows, request, strconv.FormatUint(generation, 10))
 }
 
 // estimateSnapshotBytes is an allocation-free approximation of the persisted
@@ -242,6 +256,7 @@ func (st *Store) DeleteSessionIfUnchanged(_ context.Context, expected port.Sessi
 	delete(st.sessions, expected.ID)
 	delete(st.savedAt, expected.ID)
 	delete(st.estimatedBytes, expected.ID)
+	st.generation++
 	return true, nil
 }
 
@@ -252,6 +267,9 @@ func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	defer st.mu.Unlock()
 	if err := st.deleteFailures[id]; err != nil {
 		return err
+	}
+	if _, ok := st.sessions[id]; ok {
+		st.generation++
 	}
 	delete(st.sessions, id)
 	delete(st.savedAt, id)
