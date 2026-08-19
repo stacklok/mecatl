@@ -499,8 +499,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// enabled IS the caller-isolation on-switch (ADR 0212). Without this line
 		// mecak8s attributes ownership correctly but never enforces it — every
 		// caller-owned application boundary silently falls back to its
-		// ownerless-compatibility path, and deploy/mecak8s-oidc's isolation claim
-		// does not hold for this binary.
+		// ownerless-compatibility path, and the Helm chart's oidc.enabled
+		// isolation claim does not hold for this binary.
 		OwnershipEnforced:             cfg.oidc.Enabled(),
 		SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace,
 		SessionLeaseTTL:               cfg.sessionLeaseTTL,

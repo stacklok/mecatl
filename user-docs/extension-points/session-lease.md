@@ -126,7 +126,7 @@ Select it with `--session-lease-dir <dir>`. The directory must exist and be writ
 
 `k8slease` uses `coordination.k8s.io` `Lease` objects in a Kubernetes namespace. This is the backend mecak8s wires by default.
 
-Select it with `--session-lease-k8s-namespace <ns>`. The ServiceAccount running the pod needs `get,create,update,delete` on `leases` in `coordination.k8s.io` in that namespace (see the kustomize RBAC in `deploy/mecak8s/`).
+Select it with `--session-lease-k8s-namespace <ns>`. The ServiceAccount running the pod needs `get,create,update,delete` on `leases` in `coordination.k8s.io` in that namespace (see the RBAC template in `deploy/helm/mecak8s/templates/rbac.yaml`).
 
 On SIGTERM, mecak8s iterates `Service.heldLeases` and releases every held lease before exiting. A survivor pod acquires the freed leases immediately rather than waiting for TTL expiry. Interrupted sessions are recoverable from the Redis snapshot on the successor pod.
 

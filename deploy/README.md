@@ -98,54 +98,60 @@ Both the pod- and container-level `securityContext` satisfy the PSS
 static base), `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`,
 `seccompProfile: RuntimeDefault`, and `capabilities.drop: [ALL]`.
 
-## Caller identity (OIDC) — the opt-in overlay
+## Caller identity (OIDC) — the opt-in chart values
 
-`deploy/mecak8s-oidc/` is a kustomize overlay over `deploy/mecak8s/` that turns
-on **caller identity and ownership isolation**: a real IdP authenticates each
+`deploy/helm/mecak8s/`'s `oidc.*` values turn on **caller identity and
+ownership isolation** for the mecak8s agent: a real IdP authenticates each
 caller, and every new session and schedule records the verified `(issuer,
-subject)` that owns it. With the verifier enabled, callers can access only their
-own records; historical ownerless records are deliberately unavailable rather
-than adopted.
+subject)` that owns it. With the verifier enabled, callers can access only
+their own records; historical ownerless records are deliberately unavailable
+rather than adopted.
 
 ```sh
-# Use a registry your target cluster can pull from; ko.local is not sufficient.
-export KO_DOCKER_REPO=registry.example/mecatl
-task deploy:apply ROOT=deploy/mecak8s-oidc     # edit the three flag values first
+helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
+  --set image.repository=registry.example/mecak8s \
+  --set image.tag=v<release-version> \
+  --set redis.endpoint=redis.example.internal:6379 \
+  --set redis.credentialsSecret=mecak8s-redis \
+  --set oidc.enabled=true \
+  --set oidc.issuer=https://idp.example.com/realms/mecatl \
+  --set oidc.audience=mecatl
 ```
 
-It appends four flags to the agent — `--oidc-issuer`, `--oidc-audience`
-(required whenever the issuer is set), the optional `--oidc-jwks-uri` (pin the
-signing-key endpoint and skip discovery, for an air-gapped or pinned-key
-deployment), and `--oidc-max-jwks-staleness=1h`. The base deploys with identity
-**off**, byte-identically to a mecatl without it, so nothing changes for existing
-users of these manifests.
+Enabling `oidc.enabled` appends four flags to the agent — `--oidc-issuer`,
+`--oidc-audience` (required whenever the issuer is set), the optional
+`--oidc-jwks-uri` (pin the signing-key endpoint and skip discovery, for an
+air-gapped or pinned-key deployment; set via `oidc.jwksURI`), and
+`--oidc-max-jwks-staleness` (`oidc.maxJWKSStaleness`, default `1h`). The
+default is identity **off**, byte-identically to a mecak8s without it, so
+nothing changes for existing installs of this chart.
 
 **This is an isolation cutover, not an ownerless-data migration.** Before
-applying the overlay, inventory and back up ownerless sessions and schedules
-from the configured stores: they remain available only to a deployment without
-the verifier. The scheduler intentionally skips ownerless schedules after the
+enabling it, inventory and back up ownerless sessions and schedules from the
+configured stores: they remain available only to a deployment without the
+verifier. The scheduler intentionally skips ownerless schedules after the
 cutover, so it neither adopts nor retries historical work. Disabling the
 verifier restores only the existing ownerless compatibility behavior; it does
 not assign historical records to a caller.
 
-**Raw drivers are trusted infrastructure.** The overlay includes
-`raw-driver-networkpolicy.yaml`, which permits ingress to pods labelled
-`app.kubernetes.io/component: raw-driver` only from the mecak8s agent pod.
-Tenant workloads must not use that label and must reach the authenticated public
-service instead. Until remote drivers receive caller claims (ADR 0213), deploy a
-raw driver with that label and its listener on TCP 9090 in the same namespace;
-do not expose it through a Service, Ingress, or tenant NetworkPolicy.
+**Raw drivers are trusted infrastructure.** When `oidc.enabled` is true, the
+chart also renders a `raw-driver` NetworkPolicy that permits ingress to pods
+labelled `app.kubernetes.io/component: raw-driver` only from the mecak8s agent
+pod. Tenant workloads must not use that label and must reach the
+authenticated public service instead. Until remote drivers receive caller
+claims (ADR 0213), deploy a raw driver with that label and its listener on TCP
+9090 in the same namespace; do not expose it through a Service, Ingress, or
+tenant NetworkPolicy.
 
-**Point it at a real external IdP over HTTPS.** That is the only shape that works
-with the token validator's security defaults intact: it refuses an `http://`
-issuer, and refuses a `jwks_uri` that resolves to a private, loopback or
-link-local address — which is what stops a `jwks_uri` aimed at cloud instance
-metadata (`169.254.169.254`). An **in-cluster** IdP needs a flag that relaxes
-both checks; that flag exists for the end-to-end test fixtures only and is
-deliberately absent from these manifests, because a published example must not
-ship SSRF relaxation. No `NetworkPolicy` patch is needed either: the base egress
-already allows DNS plus TCP 443 to any destination IP, exactly what an external
-IdP requires.
+**Point it at a real external IdP over HTTPS.** That is the only shape that
+works with the token validator's security defaults intact: it refuses an
+`http://` issuer, and refuses a `jwks_uri` that resolves to a private,
+loopback or link-local address — which is what stops a `jwks_uri` aimed at
+cloud instance metadata (`169.254.169.254`). An **in-cluster** IdP needs a flag
+that relaxes both checks; that flag exists for the end-to-end test fixtures
+only (applied there via a runtime `kubectl patch`, never through this chart)
+and is deliberately absent from `deploy/helm/mecak8s/`, because a published
+chart must not ship SSRF relaxation.
 
 ### Validator and signing-key availability
 
@@ -154,14 +160,14 @@ configuration — including an unreachable initial key fetch — is fatal at sta
 the deployment never silently becomes unauthenticated.
 
 After a successful fetch, a short IdP outage can use the last good JWKS. The
-explicit overlay value `--oidc-max-jwks-staleness=1h` bounds that availability
+default `oidc.maxJWKSStaleness=1h` bounds that availability
 fallback: after one hour the validator tries to refresh and returns **503 Service
 Unavailable** when it cannot obtain current keys. That is distinct from a bad,
 expired, wrong-issuer, or wrong-audience token, which is rejected as **401**.
 The hour is the maximum additional exposure for a signing key revoked at the IdP
 during an outage; it is **not** per-token revocation. A token that remains valid
 under a still-trusted signing key is accepted until its normal expiry. Set the
-flag to `0` only to deliberately restore unbounded cached-key availability and
+value to `0` only to deliberately restore unbounded cached-key availability and
 its corresponding signing-key revocation exposure.
 
 The JWKS cache is process-local and is not persisted. Restarting fetches current

@@ -29,6 +29,18 @@ redis:
   local:
     enabled: false
 
+oidc:
+  # Caller identity (ADR 0204/0205). Off by default — the byte-identical
+  # no-auth posture. Enabling it requires issuer + audience.
+  enabled: false
+  issuer: ""
+  audience: ""
+  # jwksURI is optional: pins the signing-key endpoint and skips OIDC
+  # discovery (air-gapped / pinned-key deployment). Leave empty to derive it
+  # from the issuer's discovery document.
+  jwksURI: ""
+  maxJWKSStaleness: 1h
+
 resources:
   requests:
     cpu: 100m

@@ -1,5 +1,6 @@
 {{- include "mecak8s.validateImage" . -}}
 {{- include "mecak8s.validateRedis" . -}}
+{{- include "mecak8s.validateOIDC" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -54,6 +55,14 @@ spec:
             {{- else }}
             - --redis-tls
             {{- end }}
+            {{- end }}
+            {{- if .Values.oidc.enabled }}
+            - --oidc-issuer={{ .Values.oidc.issuer }}
+            - --oidc-audience={{ .Values.oidc.audience }}
+            {{- if .Values.oidc.jwksURI }}
+            - --oidc-jwks-uri={{ .Values.oidc.jwksURI }}
+            {{- end }}
+            - --oidc-max-jwks-staleness={{ .Values.oidc.maxJWKSStaleness }}
             {{- end }}
           ports:
             - {name: grpc, containerPort: 8080}

@@ -78,7 +78,7 @@ all identical to `mecated`'s (see §3).
 
 #### Production Helm chart (`deploy/helm/mecak8s/`)
 
-The production contract is the Helm chart. It never installs Redis: an install must provide an externally managed Redis endpoint and a Secret reference when any Secret key is configured. The CA-bundle Secret key is optional: leaving `redis.caKey` empty selects system-trust TLS and mounts no Secret unless an ACL key is also set. ACL password/username Secret keys are optional; a username key requires a password key. Supply exactly one agent image selector: a signed release tag (the enterprise distribution model) or a digest. The chart preserves the storage-free restricted workload, bounded resources, rolling update, probes, PDB, and namespaced Lease RBAC. It ships **no** NetworkPolicy: network isolation is the cluster's job, and a policy the chart cannot keep complete (the agent's egress depends on the operator's provider, MCP, and API-server endpoints) is worse than none. The legacy manifests under `deploy/mecak8s/` keep their policies as a starting point.
+The production contract is the Helm chart. It never installs Redis: an install must provide an externally managed Redis endpoint and a Secret reference when any Secret key is configured. The CA-bundle Secret key is optional: leaving `redis.caKey` empty selects system-trust TLS and mounts no Secret unless an ACL key is also set. ACL password/username Secret keys are optional; a username key requires a password key. Supply exactly one agent image selector: a signed release tag (the enterprise distribution model) or a digest. The chart preserves the storage-free restricted workload, bounded resources, rolling update, probes, PDB, and namespaced Lease RBAC. It ships **no** general NetworkPolicy: network isolation is the cluster's job, and a policy the chart cannot keep complete (the agent's egress depends on the operator's provider, MCP, and API-server endpoints) is worse than none. The `oidc.*` values (below) additionally render a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
@@ -90,10 +90,17 @@ helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-n
 
 The Secret is mounted read-only at `/var/run/secrets/redis` with `defaultMode: 0440`; the chart projects exactly the configured CA and ACL keys, not the whole Secret. Their values are never chart values or command arguments. The external chart passes the CA path when `redis.caKey` is set and `--redis-tls` otherwise, and conditionally passes configured password and username paths. Both TLS modes verify the Redis certificate against the hostname from `redis.endpoint` (including IP SAN rules); hostname verification is never disabled. TLS with no ACL is valid, and a system-trust install with no ACL renders no Secret volume at all. `values-kind.yaml` is a separate disposable-only profile for the local `ko.local` image and plaintext Redis fixture, and its rendered command includes the explicit `--redis-allow-plaintext` opt-in. It must not be used for a production install.
 
-#### Legacy manifests (`deploy/mecak8s/`)
+#### Caller identity (`oidc.*` chart values)
 
-The existing Kustomize manifests remain for the legacy qualification suite. New production deployments use the Helm chart above.
-
+The chart's `oidc.*` values wire the same four flags the legacy kustomize overlay
+used to append: `oidc.enabled` (default `false`), `oidc.issuer`, `oidc.audience`
+(required together with `oidc.enabled`), the optional `oidc.jwksURI`, and
+`oidc.maxJWKSStaleness` (default `1h`). See [`deploy/README.md`](https://github.com/stacklok/mecatl/blob/main/deploy/README.md#caller-identity-oidc--the-opt-in-chart-values)
+for the full walkthrough, and [multi-user caller identity](https://github.com/stacklok/mecatl/blob/main/user-docs/deployment/mecak8s.md#multi-user-caller-identity-and-ownership-isolation-opt-in)
+for the isolation semantics. When `oidc.enabled` is true the chart also renders
+a `raw-driver` NetworkPolicy scoping ingress on a `app.kubernetes.io/component:
+raw-driver`-labelled pod to the mecak8s agent pod only — trusted-infrastructure
+raw gRPC drivers are not yet caller-enforced (ADR 0213).
 
 #### Kind e2e (`task e2e:k8s`)
 

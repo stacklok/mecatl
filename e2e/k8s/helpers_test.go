@@ -10,9 +10,10 @@
 //  3. Session persistence across an agent pod restart (Redis-backed).
 //
 // It is GATED behind the `kind_e2e` build tag so `task test` never compiles
-// it; it runs via `task e2e:k8s` (needs Docker + kind + ko + kubectl). The
-// suite skips gracefully (ginkgo.Skip, not a failure) when a tool is missing,
-// so a bare `go test -tags kind_e2e` without the toolchain does not hard-fail.
+// it; it runs via `task e2e:k8s` (needs Docker + kind + ko + helm + kubectl).
+// The suite skips gracefully (ginkgo.Skip, not a failure) when a tool is
+// missing, so a bare `go test -tags kind_e2e` without the toolchain does not
+// hard-fail.
 //
 // Unlike e2e_test (which spawns local mecated processes), this suite drives
 // pods via kubectl/port-forward — it imports NO engine/ code and shares none of
@@ -30,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -38,15 +40,14 @@ import (
 	"github.com/onsi/gomega"
 )
 
-// Cluster + manifest constants (ADR 0048 §4h, deploy/mecak8s/).
+// Cluster + manifest constants (ADR 0048 §4h, deploy/helm/mecak8s/).
 const (
 	kindClusterName = "mecatl-e2e"
 	kindNodeImage   = "kindest/node:v1.34.3"
 	k8sNamespace    = "mecatl"
 	agentComponent  = "agent" // app.kubernetes.io/component label value
-	partOfLabel     = "mecak8s"
-	agentGRPCPort   = 8080 // the gRPC listener (--grpc-addr default in the pod)
-	agentPodPort    = 8081 // the HTTP/SSE listener (--http-addr default in the pod)
+	agentGRPCPort   = 8080    // the gRPC listener (--grpc-addr default in the pod)
+	agentPodPort    = 8081    // the HTTP/SSE listener (--http-addr default in the pod)
 
 	// liveProviderSecret is the k8s Secret holding OPENROUTER_API_KEY for the live
 	// specs. The key is staged from the test process's environment into a Secret —
@@ -69,14 +70,14 @@ func liveProviderEnabled() bool {
 // --- tool availability / cluster lifecycle -----------------------------------
 
 // requireTools skips the suite (ginkgo.Skip) if a container runtime (Docker OR
-// podman), kind, ko, or kubectl is not on PATH. This is a tool-availability
+// podman), kind, ko, helm, or kubectl is not on PATH. This is a tool-availability
 // gate, not a failure — the Taskfile also has preconditions, but the Go code
 // skips too so a bare `go test -tags kind_e2e` does not hard-fail on a machine
-// without the toolchain. The suite header says "Needs Docker + kind + ko +
+// without the toolchain. The suite header says "Needs Docker + kind + ko + helm +
 // kubectl", but podman is an ACCEPTABLE ALTERNATIVE container runtime: when
 // KIND_EXPERIMENTAL_PROVIDER=podman is set, ko loads into podman's store and
 // `podman save` feeds the kind `image-archive` load. So EITHER docker OR podman
-// satisfies the runtime requirement (the other three tools are mandatory);
+// satisfies the runtime requirement (the other tools are mandatory);
 // without a runtime those commands hit an Expect and fail the spec instead of
 // skipping.
 func requireTools() {
@@ -88,9 +89,9 @@ func requireTools() {
 	if dockerErr != nil && podmanErr != nil {
 		ginkgo.Skip("neither docker nor podman is on PATH — skipping the kind k8s e2e suite")
 	}
-	for _, tool := range []string{"kind", "ko", "kubectl"} {
+	for _, tool := range []string{"kind", "ko", "helm", "kubectl"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			ginkgo.Skip(fmt.Sprintf("%q is not on PATH — skipping the kind k8s e2e suite (needs container runtime + kind + ko + kubectl)", tool))
+			ginkgo.Skip(fmt.Sprintf("%q is not on PATH — skipping the kind k8s e2e suite (needs container runtime + kind + ko + helm + kubectl)", tool))
 		}
 	}
 }
@@ -112,44 +113,29 @@ func kindDeleteCluster() {
 	_ = exec.Command("kind", "delete", "cluster", "--name", kindClusterName).Run()
 }
 
-// koResolveMecak8s is the SINGLE build+resolve step: `ko resolve -f
-// deploy/mecak8s/` builds the mecak8s image (loading it into the local container
-// daemon under `ko.local/mecak8s-<hash>:<sha>`) AND renders the manifests with
-// the `ko://` placeholder substituted by that EXACT ref. It returns the rendered
-// YAML plus the resolved image ref — ONE build, ONE ref, ONE load. There is no
-// second `ko build` producing a differently-shaped `ko.local:<sha>` bare tag, so
-// no retagging and no image-ref mismatch is possible.
-//
-// KO_DOCKER_REPO=ko.local keeps the image local (no registry push, no
-// credentials). The image lands in whichever local daemon ko selects (docker by
-// default; podman when the environment routes ko there).
-func koResolveMecak8s() (yaml []byte, imageRef string) {
+// e2eImageRef is the deterministic local image ref koBuildMecak8sImage produces:
+// KO_DOCKER_REPO pins the repo path, --bare --tags=e2e make the tag reproducible.
+// ko also prints a sha-tagged ref on its own stdout, but --tags adds a SECOND,
+// deterministic tag to that SAME image — deploy/mecak8s-vmcp/Taskfile.yml's
+// image-build-load task uses the identical pattern, so there is no ref to parse
+// out of ko's output.
+const e2eImageRef = "ko.local/mecak8s:e2e"
+
+// koBuildMecak8sImage builds the mecak8s image with ko into the local container
+// daemon under e2eImageRef. Unlike the old one-shot kustomize-era `ko resolve`
+// (which built the image AND rendered manifests with the ko:// placeholder
+// substituted), the Helm chart takes explicit image.repository/image.tag values
+// instead of a placeholder, so building and installing are two separate steps —
+// see helmInstallMecak8sChart.
+func koBuildMecak8sImage() {
 	ginkgo.GinkgoHelper()
 	ctx := ginkgoSuiteCtx()
-	resolve := exec.CommandContext(ctx, "ko", "resolve", "-f", "deploy/mecak8s/")
-	resolve.Dir = repoRoot()
-	resolve.Env = append(resolve.Environ(), "KO_DOCKER_REPO=ko.local")
-	out, err := resolve.Output()
+	build := exec.CommandContext(ctx, "ko", "build", "--local", "--bare", "--tags=e2e", "./cmd/mecak8s")
+	build.Dir = repoRoot()
+	build.Env = append(build.Environ(), "KO_DOCKER_REPO=ko.local/mecak8s")
+	out, err := build.CombinedOutput()
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
-		"ko resolve -f deploy/mecak8s/ failed\n--- output ---\n%s", out)
-	imageRef = extractImageRef(out)
-	return out, imageRef
-}
-
-// extractImageRef scans rendered manifests for the agent container's image line
-// — the EXACT string the pod will reference. It matches `image: ko.local/...`
-// (the built agent image), not the Redis image (pulled from Docker Hub, no
-// ko.local prefix).
-func extractImageRef(rendered []byte) string {
-	ginkgo.GinkgoHelper()
-	for _, line := range strings.Split(string(rendered), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "image: ko.local/") {
-			return strings.TrimPrefix(line, "image: ")
-		}
-	}
-	ginkgo.Fail("could not find the resolved agent image ref in ko resolve output")
-	return ""
+		"ko build --local --bare --tags=e2e ./cmd/mecak8s failed\n--- output ---\n%s", out)
 }
 
 // containerRuntime is the local daemon ko loaded the image into: podman when
@@ -198,97 +184,136 @@ func saveAndLoadImage(imageRef string) {
 		"kind load image-archive %s failed\n--- output ---\n%s", tmpPath, loadOut)
 }
 
-// applyResolvedManifests applies the pre-resolved manifests (the YAML returned
-// by koResolveMecak8s) — no second `ko resolve` call. The image MUST already be
-// loaded into the kind node (saveAndLoadImage) so the pod can pull it.
+// helmInstallMecak8sChart creates + labels the mecatl namespace (PSS restricted,
+// mirroring deploy/mecak8s-vmcp/Taskfile.yml's chart-apply task) and installs the
+// deploy/helm/mecak8s chart with the disposable Kind values profile
+// (values-kind.yaml — mockProvider + an in-chart plaintext Redis fixture),
+// pointed at the image koBuildMecak8sImage already loaded into the kind node.
 //
-// The Kustomization resource itself leaks into ko resolve's output (a ko
-// version behavior); it must be filtered out before kubectl apply, or the API
-// server rejects it as an unknown kind.
-//
-// The namespace is applied FIRST and waited on before the rest: kubectl apply
-// processes documents in order, but the namespace's "active" state is set by
-// the namespace controller asynchronously — resources in that namespace fail
-// with "namespaces not found" if applied in the same invocation.
-func applyResolvedManifests(resolved []byte) {
+// fullnameOverride pins the Deployment's name to mecak8s-agent, matching what
+// oidc_helpers_test.go's kubectl patch functions and the rest of this suite
+// already reference by that literal name. The pod-selection labels
+// (podNames/waitPodsReady select on app.kubernetes.io/part-of=mecak8s and
+// app.kubernetes.io/component=agent) are unaffected by fullnameOverride — the
+// chart's _helpers.tpl renders those labels identically regardless of the
+// resource name.
+func helmInstallMecak8sChart() {
 	ginkgo.GinkgoHelper()
 	ctx := ginkgoSuiteCtx()
+	chartDir := filepath.Join(repoRoot(), "deploy", "helm", "mecak8s")
 
-	// Filter out the Kustomization resource (ko emits it; kubectl can't apply it).
-	filtered := filterKustomization(resolved)
+	nsYAML := runCmd(ctx, "kubectl", "create", "namespace", k8sNamespace, "--dry-run=client", "-o", "yaml")
+	apply := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+	apply.Stdin = strings.NewReader(nsYAML)
+	applyOut, err := apply.CombinedOutput()
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
+		"kubectl apply namespace failed\n--- output ---\n%s", applyOut)
+	runCmd(ctx, "kubectl", "label", "namespace", k8sNamespace,
+		"pod-security.kubernetes.io/enforce=restricted",
+		"pod-security.kubernetes.io/audit=restricted",
+		"pod-security.kubernetes.io/warn=restricted",
+		"--overwrite")
 
-	// Split into namespace-first + rest: the namespace must be active before
-	// namespaced resources can be created.
-	namespaceDoc, restDocs := splitNamespace(filtered)
-	if namespaceDoc != nil {
-		apply := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
-		apply.Stdin = bytes.NewReader(namespaceDoc)
-		applyOut, err := apply.CombinedOutput()
-		gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
-			"kubectl apply namespace failed\n--- output ---\n%s", applyOut)
-		// Wait for the namespace to be active (the controller sets it asynchronously).
-		gomega.Eventually(func() string {
-			return runCmdQuiet("kubectl", "get", "namespace", k8sNamespace,
-				"-o", "jsonpath={.status.phase}")
-		}, 30*time.Second, time.Second).Should(gomega.Equal("Active"),
-			"namespace %s did not become Active", k8sNamespace)
-	}
-	if len(restDocs) > 0 {
-		apply := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
-		apply.Stdin = bytes.NewReader(restDocs)
-		applyOut, err := apply.CombinedOutput()
-		gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
-			"kubectl apply failed\n--- output ---\n%s", applyOut)
-	}
+	installOut, err := exec.CommandContext(ctx, "helm", "upgrade", "--install", "mecak8s", chartDir,
+		"--namespace", k8sNamespace,
+		"--values", filepath.Join(chartDir, "values-kind.yaml"),
+		"--set", "image.repository=ko.local/mecak8s",
+		"--set", "image.tag=e2e",
+		"--set", "fullnameOverride=mecak8s-agent",
+		"--wait", "--timeout=4m").CombinedOutput()
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
+		"helm upgrade --install mecak8s failed\n--- output ---\n%s", installOut)
+
+	kubectlApplyStdin(ctx, []byte(agentBaselineEgressNetworkPolicy))
 }
 
-// filterKustomization removes any `kind: Kustomization` YAML document from the
-// multi-document stream. ko resolve (ko v0.18) emits the kustomization.yaml
-// itself as a resource in the output, which kubectl apply rejects as an unknown
-// kind (the Kustomization CRD is not installed on a vanilla cluster).
-func filterKustomization(input []byte) []byte {
-	var out bytes.Buffer
-	docs := bytes.Split(input, []byte("\n---\n"))
-	for _, doc := range docs {
-		if bytes.Contains(doc, []byte("kind: Kustomization")) {
-			continue
-		}
-		if out.Len() > 0 {
-			out.Write([]byte("\n---\n"))
-		}
-		out.Write(doc)
-	}
-	return out.Bytes()
-}
+// agentBaselineEgressNetworkPolicy re-homes, into the e2e fixture, the three
+// egress rules deploy/mecak8s/networkpolicy.yaml used to provide before the
+// kustomize→Helm convergence (the chart itself now ships no NetworkPolicy by
+// design — network isolation is left to the cluster). It is REQUIRED here for
+// a structural reason, not belt-and-suspenders: the OIDC specs' own
+// mecak8s-agent-allow-dex-egress / -jwks-proxy-egress policies (in
+// oidc_helpers_test.go) select the agent pod with an Egress policyType, and
+// Kubernetes NetworkPolicy semantics mean the FIRST policy of a given
+// policyType that selects a pod flips that pod from unrestricted to
+// deny-except-explicitly-listed for that direction — additively unioned
+// across every policy that also selects it. Without this baseline, applying
+// the Dex fixture's policies leaves the agent pod able to reach ONLY Dex and
+// the JWKS proxy, and loses DNS, the k8s API (Lease coordination), and Redis
+// — which is exactly what broke when the agent pod's labels were corrected
+// from the stale kustomize-era `mecatl` to the chart's actual `mecak8s` (see
+// the fix in oidc_helpers_test.go): the label fix made those two Egress
+// policies start matching the real agent pod, which then had no baseline
+// allow-rule to union with.
+//
+// Applied unconditionally in helmInstallMecak8sChart — even before any OIDC
+// spec runs — because it must be in place BEFORE the Dex fixture's own
+// policies are applied for a later spec to have any chance of correct union
+// semantics, and applying it early costs nothing (the same DNS/API/Redis
+// egress every spec, OIDC or not, already needs).
+const agentBaselineEgressNetworkPolicy = `
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mecak8s-agent-baseline-egress
+  namespace: mecatl
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mecak8s
+      app.kubernetes.io/component: agent
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # No 'to' selector = any destination IP on 443: the k8s API server
+    # (Lease coordination) and, when the live provider is enabled, the
+    # external LLM endpoint. Same rationale as the deleted kustomize policy.
+    - ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+`
 
-// splitNamespace separates the Namespace document from the rest so the namespace
-// can be applied (and waited on) first. Returns (namespaceDoc, restDocs).
-func splitNamespace(input []byte) (namespaceDoc, rest []byte) {
-	docs := bytes.Split(input, []byte("\n---\n"))
-	var restBuf bytes.Buffer
-	for _, doc := range docs {
-		if bytes.Contains(doc, []byte("kind: Namespace")) {
-			namespaceDoc = doc
-			continue
-		}
-		if restBuf.Len() > 0 {
-			restBuf.Write([]byte("\n---\n"))
-		}
-		restBuf.Write(doc)
-	}
-	return namespaceDoc, restBuf.Bytes()
-}
-
-// waitPodsReady waits for every pod in the mecatl namespace carrying the
-// part-of=mecak8s label to be Ready. This covers both agent replicas AND the
-// Redis pod (both carry the label). The Redis image is pulled from Docker Hub
-// on first apply, so the timeout must allow for an image pull.
+// waitPodsReady waits for both agent replicas AND the Redis pod to be Ready.
+// The two waits are SEPARATE label selectors, not one part-of=mecak8s query:
+// the chart's agent pods carry only name/instance/component
+// (mecak8s.selectorLabels) — part-of is a resource-level label
+// (mecak8s.labels), never applied to the Pod template — so a single
+// part-of=mecak8s selector matches only the Redis pod (redis-local.yaml sets
+// part-of inline on its own pod template) and silently misses both agent
+// replicas; kubectl wait on a selector matching zero resources returns success
+// immediately rather than erroring, so that gap was invisible until Dex's own
+// NetworkPolicies (keyed on the agent pod's actual labels) surfaced it. The
+// Redis image is pulled from Docker Hub on first apply, so the timeout must
+// allow for an image pull.
 func waitPodsReady() {
 	ginkgo.GinkgoHelper()
 	runCmd(ginkgoSuiteCtx(), "kubectl", "wait",
 		"--for=condition=Ready", "pod",
 		"-n", k8sNamespace,
-		"-l", "app.kubernetes.io/part-of="+partOfLabel,
+		"-l", "app.kubernetes.io/component="+agentComponent,
+		"--timeout=180s")
+	runCmd(ginkgoSuiteCtx(), "kubectl", "wait",
+		"--for=condition=Ready", "pod",
+		"-n", k8sNamespace,
+		"-l", "app.kubernetes.io/name=redis",
 		"--timeout=180s")
 }
 
@@ -800,7 +825,7 @@ func runCmdQuiet(name string, args ...string) string {
 }
 
 // repoRoot returns the repository root directory so ko/kubectl commands that
-// reference relative paths (./cmd/mecak8s, deploy/mecak8s/) resolve correctly
+// reference relative paths (./cmd/mecak8s, deploy/helm/mecak8s/) resolve correctly
 // regardless of the Go test's working directory.
 func repoRoot() string {
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()

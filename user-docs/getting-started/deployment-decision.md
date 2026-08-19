@@ -55,7 +55,7 @@ The cost: you run a process and keep it alive. Durable sessions mean a PV or sha
 
 `mecak8s` inverts `mecated`'s interactive defaults: `--headless` is on and `--posture` defaults to `auto`. It is designed for unattended daemon operation, not interactive clients.
 
-The `deploy/mecak8s/` kustomize base includes the full topology: namespace, RBAC, Redis StatefulSet, agent Deployment (two replicas, no PVC), Service, PodDisruptionBudget, and a default-deny NetworkPolicy.
+The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas, no PVC), Service, and PodDisruptionBudget. It creates no Redis and ships no NetworkPolicy — network isolation is left to the cluster's own policy layer.
 
 The cost: Redis is a required dependency — you need a managed Redis or a Redis StatefulSet in-cluster. The ServiceAccount needs `get,create,update,delete` on `leases` in `coordination.k8s.io`. The Prometheus/OTel admin surface and the `perf-mcp` subcommand are dropped (not exposed by `mecak8s`). If you need those or want to keep the operator surface identical to `mecated`, run `mecated` with `--redis-url` is not an option — `mecated` does not expose that flag; the Redis store is wired only by `cmd/mecak8s`.
 

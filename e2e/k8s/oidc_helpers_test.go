@@ -419,8 +419,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: mecatl
-      app.kubernetes.io/part-of: mecak8s
+      app.kubernetes.io/name: mecak8s
       app.kubernetes.io/component: agent
   policyTypes: ["Egress"]
   egress:
@@ -446,8 +445,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: mecatl
-              app.kubernetes.io/part-of: mecak8s
+              app.kubernetes.io/name: mecak8s
               app.kubernetes.io/component: agent
       ports:
         - protocol: TCP
@@ -627,8 +625,7 @@ spec:
               kubernetes.io/metadata.name: mecatl
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: mecatl
-              app.kubernetes.io/part-of: mecak8s
+              app.kubernetes.io/name: mecak8s
               app.kubernetes.io/component: agent
       ports:
         - protocol: TCP
@@ -642,8 +639,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: mecatl
-      app.kubernetes.io/part-of: mecak8s
+      app.kubernetes.io/name: mecak8s
       app.kubernetes.io/component: agent
   policyTypes:
     - Egress

@@ -270,3 +270,75 @@ func TestMecak8sHelmChart_Scenario1_KindLifecycleUsesNamedCluster(t *testing.T) 
 		}
 	}
 }
+
+func TestMecak8sHelmChart_OIDC_DisabledByDefault(t *testing.T) {
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render production values: %v", err)
+	}
+	for _, forbidden := range []string{"--oidc-issuer", "--oidc-audience", "--oidc-jwks-uri", "kind: NetworkPolicy", "raw-driver"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("default render (oidc disabled) unexpectedly contains %q", forbidden)
+		}
+	}
+}
+
+func TestMecak8sHelmChart_OIDC_EnabledRendersArgs(t *testing.T) {
+	base := append(productionArgs(), "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl")
+
+	rendered, err := helm(t, base...)
+	if err != nil {
+		t.Fatalf("render oidc-enabled values: %v", err)
+	}
+	for _, want := range []string{"--oidc-issuer=https://idp.example.com", "--oidc-audience=mecatl", "--oidc-max-jwks-staleness=1h"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("oidc-enabled render missing %q", want)
+		}
+	}
+	if strings.Contains(rendered, "--oidc-jwks-uri") {
+		t.Fatal("oidc-enabled render without jwksURI unexpectedly set --oidc-jwks-uri")
+	}
+
+	withJWKS := append(append([]string{}, base...), "--set", "oidc.jwksURI=https://idp.example.com/certs")
+	rendered, err = helm(t, withJWKS...)
+	if err != nil {
+		t.Fatalf("render oidc-enabled values with jwksURI: %v", err)
+	}
+	if !strings.Contains(rendered, "--oidc-jwks-uri=https://idp.example.com/certs") {
+		t.Fatal("oidc-enabled render with jwksURI missing --oidc-jwks-uri")
+	}
+}
+
+func TestMecak8sHelmChart_OIDC_EnabledWithoutAudienceFails(t *testing.T) {
+	args := append(productionArgs(), "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com")
+	if _, err := helm(t, args...); err == nil {
+		t.Fatal("render accepted oidc.enabled=true with no oidc.audience")
+	}
+}
+
+func TestMecak8sHelmChart_OIDC_EnabledWithoutIssuerFails(t *testing.T) {
+	args := append(productionArgs(), "--set", "oidc.enabled=true", "--set", "oidc.audience=mecatl")
+	if _, err := helm(t, args...); err == nil {
+		t.Fatal("render accepted oidc.enabled=true with no oidc.issuer")
+	}
+}
+
+func TestMecak8sHelmChart_OIDC_RawDriverNetworkPolicyShape(t *testing.T) {
+	args := append(productionArgs(), "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl")
+	rendered, err := helm(t, args...)
+	if err != nil {
+		t.Fatalf("render oidc-enabled values: %v", err)
+	}
+	if !strings.Contains(rendered, "name: production-mecak8s-raw-driver") {
+		t.Fatal("oidc-enabled render missing the raw-driver NetworkPolicy")
+	}
+	for _, want := range []string{
+		"app.kubernetes.io/component: raw-driver",
+		"app.kubernetes.io/component: agent",
+		"port: 9090",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("raw-driver NetworkPolicy render missing %q", want)
+		}
+	}
+}

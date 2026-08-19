@@ -289,7 +289,7 @@ tasks:
       session persistence, and OIDC caller identity against an in-cluster Dex.
       Export OPENROUTER_API_KEY to ALSO run the LIVE variant (real LLM turns
       through the pods proving the plumbing under load; the live specs Skip
-      without the key). Needs Docker + kind + ko + kubectl. NOT part of
+      without the key). Needs Docker + kind + ko + helm + kubectl. NOT part of
       `task test` (slow ~5-8 min mock-only, ~10-15 min with live).
     deps: [build]
     preconditions:
@@ -297,6 +297,8 @@ tasks:
         msg: "kind is not installed (https://kind.sigs.k8s.io/docs/user/quick-start/#installation)"
       - sh: command -v ko >/dev/null 2>&1
         msg: "ko is not installed (https://ko.build/install/)"
+      - sh: command -v helm >/dev/null 2>&1
+        msg: "helm is not installed (https://helm.sh/docs/intro/install/)"
       - sh: command -v kubectl >/dev/null 2>&1
         msg: "kubectl is not installed"
     cmds:
@@ -310,113 +312,65 @@ tasks:
 
   deploy:check:
     desc: |
-      Validate every deploy/ kustomize root WITHOUT a cluster: schema-check the
-      rendered manifests and assert the caller-identity boundaries (ADR 0204).
-      Needs kustomize + kubeconform; needs NO cluster and NO KO_DOCKER_REPO, so
-      it runs in CI and on a laptop.
+      Validate the deploy/helm/mecak8s chart WITHOUT a cluster: schema-check the
+      rendered manifests (default + oidc.enabled=true) and assert the
+      caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
+      cluster, so it runs in CI and on a laptop.
+    vars:
+      PROD_SET: image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials
+      OIDC_SET: oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
     preconditions:
-      - sh: command -v kustomize >/dev/null 2>&1
-        msg: "kustomize is not installed (https://kubectl.docs.kubernetes.io/installation/kustomize/)"
+      - sh: command -v helm >/dev/null 2>&1
+        msg: "helm is not installed (https://helm.sh/docs/intro/install/)"
       - sh: command -v kubeconform >/dev/null 2>&1
         msg: "kubeconform is not installed (go install github.com/yannh/kubeconform/cmd/kubeconform@latest)"
     cmds:
       # Schema validation is kubeconform, NOT `kubectl apply --dry-run=client`:
       # kubectl maps kinds against the API server even with --validate=false, so
       # it needs a reachable cluster and cannot run here.
-      - for root in deploy/mecak8s deploy/mecak8s-oidc; do echo "== $root"; kustomize build "$root" | kubeconform -strict -summary -; done
-      # The base must stay identity-OFF: caller identity is opt-in, and the
-      # published example must keep deploying what operators already expect.
       - cmd: |
-          if kustomize build deploy/mecak8s | grep -qi 'oidc'; then
-            echo "deploy/mecak8s (the BASE) mentions oidc — caller identity must stay opt-in"; exit 1
+          set -eu
+          helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' | kubeconform -strict -summary -
+          helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' --set '{{.OIDC_SET}}' | kubeconform -strict -summary -
+        silent: true
+      # The default render must stay identity-OFF: caller identity is opt-in,
+      # and the published example must keep deploying what operators already
+      # expect.
+      - cmd: |
+          set -eu
+          if helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' | grep -qi 'oidc'; then
+            echo "the default chart render mentions oidc — caller identity must stay opt-in"; exit 1
           fi
         silent: true
-      # A published example must never ship SSRF relaxation: the flag that lets
-      # the validator reach a private/in-cluster or http:// issuer exists for the
-      # e2e fixtures ONLY. (--oidc-jwks-uri is a URL, not a relaxation.)
+      # No render, default or oidc-enabled, may ever ship SSRF relaxation: the
+      # flag that lets the validator reach a private/in-cluster or http://
+      # issuer exists for the e2e fixtures ONLY, applied there via a runtime
+      # kubectl patch, never through the chart. (--oidc-jwks-uri is a URL, not
+      # a relaxation.)
       - cmd: |
-          if kustomize build deploy/mecak8s-oidc | grep -qiE 'insecure|allow-private'; then
-            echo "deploy/mecak8s-oidc ships an SSRF relaxation flag — that belongs to the e2e fixtures only"; exit 1
-          fi
+          set -eu
+          for extra in '' '--set {{.OIDC_SET}}'; do
+            if helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' $extra | grep -qiE 'insecure|allow-private'; then
+              echo "chart render ships an SSRF relaxation flag — that belongs to the e2e fixtures only"; exit 1
+            fi
+          done
         silent: true
-      # The overlay APPENDS its flags (JSON6902 add) — a strategic-merge patch
-      # mentioning `args` would REPLACE the atomic list and silently drop the
-      # storage + lease flags while every schema check still passed. This is the
-      # regression guard for that.
+      # The oidc-enabled render must carry every base arg alongside the oidc
+      # args: Helm composes ONE args: list template-side rather than
+      # JSON6902-patching an existing one, so the specific "did the patch drop
+      # args" failure mode is structurally less likely here — kept anyway, it's
+      # cheap and still guards a future refactor of the args block.
       - cmd: |
+          set -eu
           missing=""
-          rendered=$(kustomize build deploy/mecak8s-oidc)
-          for arg in --redis-url --redis-allow-plaintext --session-lease-k8s-namespace --headless --posture --grpc-addr --http-addr --oidc-issuer --oidc-audience --oidc-jwks-uri --oidc-max-jwks-staleness=1h; do
+          rendered=$(helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' --set '{{.OIDC_SET}}')
+          for arg in --grpc-addr --http-addr --redis-url --session-lease-k8s-namespace --headless --posture --oidc-issuer --oidc-audience --oidc-max-jwks-staleness=1h; do
             echo "$rendered" | grep -q -- "$arg" || missing="$missing $arg"
           done
           if [ -n "$missing" ]; then
-            echo "deploy/mecak8s-oidc DROPPED base args:$missing — the patch must be a JSON6902 append, not a strategic merge"; exit 1
+            echo "oidc-enabled chart render is missing base args:$missing"; exit 1
           fi
         silent: true
-
-  deploy:render:
-    desc: |
-      Render a deploy/ kustomize root with the ko-built image ref, on stdout.
-      ROOT defaults to deploy/mecak8s (set ROOT=deploy/mecak8s-oidc for the
-      caller-identity overlay). Honours KO_DOCKER_REPO. NOTE: KO_DOCKER_REPO=ko.local
-      renders a ref no cluster can PULL (ko.local is not a registry) — fine for
-      inspecting the output, not for deploying; see deploy:apply.
-      This is the composition to use for a kustomize root:
-      `ko resolve -f <dir>` does NOT run kustomize (it globs the directory as
-      plain YAML and even emits kustomization.yaml as a resource), so the
-      kustomize build must come first and ko must read it on stdin.
-    vars:
-      ROOT: '{{.ROOT | default "deploy/mecak8s"}}'
-    preconditions:
-      - sh: command -v kustomize >/dev/null 2>&1
-        msg: "kustomize is not installed"
-      - sh: command -v ko >/dev/null 2>&1
-        msg: "ko is not installed (https://ko.build/install/)"
-      - sh: '[ -n "${KO_DOCKER_REPO:-}" ]'
-        msg: "KO_DOCKER_REPO is required (e.g. export KO_DOCKER_REPO=ko.local for a local image)"
-    cmds:
-      - kustomize build {{.ROOT}} | ko resolve -f -
-
-  deploy:apply:
-    desc: |
-      Render a deploy/ kustomize root and apply it, namespace FIRST. ROOT defaults
-      to deploy/mecak8s. Honours KO_DOCKER_REPO and the CURRENT kubectl context —
-      it deploys to whatever `kubectl config current-context` points at, so check
-      that first.
-      REQUIRES A REGISTRY THE CLUSTER CAN PULL FROM. This task does not distribute
-      images: with KO_DOCKER_REPO=ko.local the pods get ErrImagePull, because
-      ko.local lives in the local Docker daemon and is not a registry the node can
-      resolve. For kind, either push to a real registry, or build+load first (the
-      way e2e/k8s does it: save the ref to a tarball and `kind load
-      image-archive`, which survives daemons where `kind load docker-image`
-      fails).
-    vars:
-      ROOT: '{{.ROOT | default "deploy/mecak8s"}}'
-    preconditions:
-      - sh: command -v kubectl >/dev/null 2>&1
-        msg: "kubectl is not installed"
-      - sh: command -v kustomize >/dev/null 2>&1
-        msg: "kustomize is not installed"
-      - sh: '[ -n "${KO_DOCKER_REPO:-}" ]'
-        msg: "KO_DOCKER_REPO is required (a registry the CLUSTER can pull from; ko.local is not one — see the task description)"
-      # Refuse the footgun rather than deploying pods that can only ErrImagePull.
-      - sh: '[ "${KO_DOCKER_REPO:-}" != "ko.local" ]'
-        msg: "KO_DOCKER_REPO=ko.local cannot be pulled by a cluster node (it is the local Docker daemon, not a registry). Push to a real registry, or build+load the image into the node first (see e2e/k8s saveAndLoadImage)."
-    cmds:
-      # Two-phase apply. kubectl processes documents in order, but the namespace
-      # controller marks a new namespace Active ASYNCHRONOUSLY, so namespaced
-      # resources in the SAME invocation fail with "namespaces not found".
-      # e2e/k8s/helpers_test.go splits the same way for the same reason.
-      - cmd: |
-          set -eu
-          rendered=$(kustomize build {{.ROOT}} | ko resolve -f -)
-          nsdoc=$(printf '%s\n' "$rendered" | awk 'BEGIN{RS="\n---\n"} /^kind: Namespace$|\nkind: Namespace$/ {print; exit}')
-          if [ -n "$nsdoc" ]; then
-            printf '%s\n' "$nsdoc" | kubectl apply -f -
-            ns=$(printf '%s\n' "$nsdoc" | awk '/^  name:/ {print $2; exit}')
-            kubectl wait --for=jsonpath='{.status.phase}'=Active "namespace/$ns" --timeout=60s
-          fi
-          printf '%s\n' "$rendered" | kubectl apply -f -
 
   fuzz:
     desc: |

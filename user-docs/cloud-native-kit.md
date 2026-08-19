@@ -116,7 +116,7 @@ mecak8s (`cmd/mecak8s`) is the **reference cloud-native deployment**. It is a th
 - `--headless` on, `--posture auto` by default.
 - SIGTERM triggers `Service.Drain()` (an `atomic.Bool draining` flag checked at `acquireLease`, returning `ErrUnavailable` / HTTP 503), then a bounded `GracefulStop` (30s, then `grpcSrv.Stop()` fallback). In-flight runs are cancelled, not drained, and `Recover`-able on the successor.
 
-The `deploy/mecak8s/` kustomize base includes the full topology: namespace, RBAC, Redis StatefulSet, agent Deployment (two replicas, no PVC), Service, PodDisruptionBudget, and a default-deny NetworkPolicy.
+The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas, no PVC), Service, and PodDisruptionBudget. It creates no Redis and ships no NetworkPolicy — network isolation is left to the cluster's own policy layer.
 
 For the full deployment guide, see [mecak8s deployment](/deployment/mecak8s.md).
 

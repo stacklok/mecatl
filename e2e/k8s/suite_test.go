@@ -29,20 +29,15 @@ func TestK8sE2E(t *testing.T) {
 }
 
 // BeforeSuite runs the cluster lifecycle (MECAK8S-PLAN §4h):
-//  1. require kind/ko/kubectl (skip gracefully if missing)
+//  1. require kind/ko/helm/kubectl (skip gracefully if missing)
 //  2. kind create cluster
-//  3. ko resolve builds + renders the mecak8s image + manifests (ONE ref)
+//  3. ko build compiles the mecak8s image into the local container daemon
+//     under a deterministic ref (ko.local/mecak8s:e2e)
 //  4. save the image to a tarball + kind load image-archive into the cluster node
-//  5. kubectl apply the resolved deploy/mecak8s/ manifests (namespace first)
+//  5. helm upgrade --install the deploy/helm/mecak8s chart with the Kind values
+//     profile, pointed at that image (namespace created + PSS-labelled first)
 //  6. kubectl wait for all part-of=mecak8s pods Ready (agent replicas + Redis)
 //  7. capture the two agent pod names
-//
-// The build+resolve is a SINGLE `ko resolve` step: it builds the image under the
-// EXACT ref the pod references (`ko.local/mecak8s-<hash>:<sha>`) and renders the
-// manifests with that ref substituted in. That ref is then saved to a tarball
-// and loaded into the kind node via `kind load image-archive` (bypassing the
-// containerd-snapshotter bridge that breaks `kind load docker-image` on some
-// Docker daemons). One build, one ref, one load — no retagging, no mismatch.
 //
 // AfterSuite deletes the cluster. The cluster is created ONCE per suite run and
 // shared across the three specs (Serial + Ordered), so the ~30s kind bring-up
@@ -53,14 +48,14 @@ var _ = ginkgo.BeforeSuite(func() {
 	ginkgo.By("creating the kind cluster")
 	kindCreateCluster()
 
-	ginkgo.By("building + resolving the mecak8s image with ko")
-	resolvedYAML, imageRef := koResolveMecak8s()
+	ginkgo.By("building the mecak8s image with ko")
+	koBuildMecak8sImage()
 
 	ginkgo.By("saving the image to a tarball + loading it into the kind node")
-	saveAndLoadImage(imageRef)
+	saveAndLoadImage(e2eImageRef)
 
-	ginkgo.By("applying the deploy/mecak8s/ manifests")
-	applyResolvedManifests(resolvedYAML)
+	ginkgo.By("installing the deploy/helm/mecak8s chart (values-kind.yaml)")
+	helmInstallMecak8sChart()
 
 	ginkgo.By("waiting for all mecak8s pods to be Ready")
 	waitPodsReady()

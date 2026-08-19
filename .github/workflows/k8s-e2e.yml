@@ -16,7 +16,7 @@
 # Deliberately uses `pull_request` (NOT `pull_request_target`): this job checks out
 # and executes untrusted PR code, so it must run WITHOUT access to repo secrets —
 # the same pwn-request rationale as ci.yml. The suite is fully offline (no provider
-# key); `KO_DOCKER_REPO=ko.local` builds the image into the local Docker daemon with
+# key); the image is built into the local Docker daemon under a ko.local ref with
 # no registry push, so no credentials are needed at all.
 #
 # All third-party actions are SHA-pinned (with a # vX.Y.Z comment) so a re-pointed
@@ -36,8 +36,7 @@ on:
       - internal/adapter/server/errors.go
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
-      - deploy/mecak8s/**
-      - deploy/mecak8s-oidc/**
+      - deploy/helm/mecak8s/**
       - e2e/k8s/**
       - go.mod
       - go.sum
@@ -54,8 +53,7 @@ on:
       - internal/adapter/server/errors.go
       - internal/adapter/server/grpc.go
       - internal/adapter/server/http.go
-      - deploy/mecak8s/**
-      - deploy/mecak8s-oidc/**
+      - deploy/helm/mecak8s/**
       - e2e/k8s/**
       - go.mod
       - go.sum
@@ -105,13 +103,14 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Validate the published base and OIDC overlay before the runtime suite. The
-      # Dex fixture adds its test-only private-issuer relaxation imperatively, so
-      # it cannot prove the operator-facing overlay remains safe or well-formed.
+      # Validate the chart's default + oidc.enabled renders before the runtime
+      # suite. The Dex fixture adds its test-only private-issuer relaxation
+      # imperatively, so it cannot prove the operator-facing chart remains safe
+      # or well-formed. helm is pre-installed on ubuntu-24.04 runners (verified
+      # against actions/runner-images' Ubuntu2404-Readme.md, Helm 3.x); no
+      # install step needed.
       - name: Install deploy manifest validators
-        run: |
-          go install sigs.k8s.io/kustomize/kustomize/v5@v5.7.1
-          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
 
       - name: task deploy:check
         run: task deploy:check
@@ -128,18 +127,20 @@ jobs:
       - name: Install ko
         run: go install github.com/google/ko@v0.18.1
 
-      # kubectl is pre-installed on ubuntu-24.04 runners; no install step.
+      # kubectl and helm are pre-installed on ubuntu-24.04 runners; no install step.
 
       # `task e2e:k8s` == `task build` (deps), then
       # `GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...`.
-      # KO_DOCKER_REPO=ko.local keeps the image local (no push, no credentials).
-      # The suite builds + resolves in a SINGLE `ko resolve` step (one image ref,
-      # no retagging), then `<runtime> save` + `kind load image-archive` loads the
-      # tarball into the kind node — bypassing `kind load docker-image`'s
-      # containerd-snapshotter bridge, which fails on the runner's Docker daemon
-      # ("failed to detect containerd snapshotter"). No podman needed. Output is
-      # teed so the failure-artifact upload has the full log; explicit
-      # `shell: bash` gives `-o pipefail` so the tee never masks a test failure.
+      # The suite builds the image with `ko build` under a deterministic
+      # ko.local/mecak8s:e2e ref (the test itself pins KO_DOCKER_REPO, so this
+      # step's env is a documentation-only fallback), then `<runtime> save` +
+      # `kind load image-archive` loads the tarball into the kind node —
+      # bypassing `kind load docker-image`'s containerd-snapshotter bridge, which
+      # fails on the runner's Docker daemon ("failed to detect containerd
+      # snapshotter"). No podman needed. It then `helm upgrade --install`s the
+      # deploy/helm/mecak8s chart with the Kind values profile. Output is teed so
+      # the failure-artifact upload has the full log; explicit `shell: bash`
+      # gives `-o pipefail` so the tee never masks a test failure.
       - name: task e2e:k8s
         shell: bash
         env:

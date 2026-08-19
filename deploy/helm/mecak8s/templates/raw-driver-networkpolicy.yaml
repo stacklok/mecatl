@@ -1,0 +1,28 @@
+{{- if .Values.oidc.enabled }}
+# Raw gRPC drivers predate caller propagation (ADR 0213). They are trusted
+# infrastructure, not tenant-facing services: only the mecak8s agent may reach
+# a pod that opts into this label. A tenant pod must not receive the `agent`
+# component label. Gated on oidc.enabled: this is a caller-identity/tenant-
+# isolation boundary, not the general workload-egress policy this chart
+# deliberately omits for Kind (Kind never enables OIDC, so this never renders
+# there).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecak8s.fullname" . }}-raw-driver
+  labels: {{- include "mecak8s.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: raw-driver
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: agent
+      ports:
+        - protocol: TCP
+          port: 9090
+{{- end }}

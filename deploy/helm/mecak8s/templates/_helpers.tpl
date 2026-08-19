@@ -15,7 +15,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: agent
 {{- end }}
 {{- define "mecak8s.validateImage" -}}
-{{- required "image.repository is required" .Values.image.repository -}}
+{{- $_ := required "image.repository is required" .Values.image.repository -}}
 {{- if and .Values.image.digest .Values.image.tag -}}
 {{- fail "set exactly one of image.digest or image.tag" -}}
 {{- end -}}
@@ -32,7 +32,6 @@ app.kubernetes.io/component: agent
 {{- if or (lt (int $port) 1) (gt (int $port) 65535) -}}
 {{- fail "redis.endpoint port must be between 1 and 65535" -}}
 {{- end -}}
-{{- $port -}}
 {{- end -}}
 {{/*
 mecak8s.redisSecretMounted is non-empty when the external profile has at least one
@@ -49,13 +48,19 @@ mounted
 {{- end -}}
 {{- define "mecak8s.validateRedis" -}}
 {{- if not .Values.redis.local.enabled -}}
-{{- required "redis.endpoint is required when redis.local.enabled is false" .Values.redis.endpoint -}}
-{{- include "mecak8s.redisPort" . -}}
+{{- $_ := required "redis.endpoint is required when redis.local.enabled is false" .Values.redis.endpoint -}}
+{{- $_ := include "mecak8s.redisPort" . -}}
 {{- if and (include "mecak8s.redisSecretMounted" .) (not .Values.redis.credentialsSecret) -}}
 {{- fail "redis.credentialsSecret is required when any of redis.caKey/passwordKey/usernameKey is set" -}}
 {{- end -}}
 {{- if and .Values.redis.usernameKey (not .Values.redis.passwordKey) -}}
 {{- fail "redis.usernameKey requires redis.passwordKey" -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- define "mecak8s.validateOIDC" -}}
+{{- if .Values.oidc.enabled -}}
+{{- $_ := required "oidc.issuer is required when oidc.enabled is true" .Values.oidc.issuer -}}
+{{- $_ := required "oidc.audience is required when oidc.enabled is true" .Values.oidc.audience -}}
 {{- end -}}
 {{- end -}}

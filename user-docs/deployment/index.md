@@ -34,7 +34,7 @@ The [Pick your deployment shape](/getting-started/deployment-decision.md) guide 
 
 - [**Operate local session storage**](session-storage-operations.md) — tested systemd user-service and launchd examples, daemon-owned retention, management capability truth, and the quiesced backup/migration/restore runbook.
 
-- [**Cloud-native k8s with mecak8s**](mecak8s.md) — deploy the `cmd/mecak8s` composition root using the `deploy/mecak8s/` kustomize base; covers the Redis StatefulSet, RBAC requirements for `leases`, pod drain, and lease release on SIGTERM.
+- [**Cloud-native k8s with mecak8s**](mecak8s.md) — deploy the `cmd/mecak8s` composition root using the `deploy/helm/mecak8s/` Helm chart; covers the external Redis requirement, RBAC requirements for `leases`, pod drain, and lease release on SIGTERM.
 
 - [**Single-shot CI with mecatequi**](mecatequi.md) — adopt the `mecatequi-reusable.yml` reusable workflow, understand the split-privilege job graph (agent job holds no write token; publish job applies the patch as data), and read `stop-reason` + `non-empty-diff` from action outputs correctly.
 

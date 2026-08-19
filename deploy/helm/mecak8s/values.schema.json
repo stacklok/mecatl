@@ -6,6 +6,7 @@
   "properties": {
     "image": {"type": "object", "additionalProperties": false, "required": ["repository", "digest", "tag", "pullPolicy"], "properties": {"repository": {"type": "string", "minLength": 1}, "digest": {"type": "string"}, "tag": {"type": "string"}, "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}}},
     "redis": {"type": "object", "additionalProperties": false, "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "local"], "properties": {"endpoint": {"type": "string"}, "credentialsSecret": {"type": "string"}, "passwordKey": {"type": "string"}, "caKey": {"type": "string"}, "usernameKey": {"type": "string"}, "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}}},
+    "oidc": {"type": "object", "additionalProperties": false, "required": ["enabled", "issuer", "audience", "jwksURI", "maxJWKSStaleness"], "properties": {"enabled": {"type": "boolean"}, "issuer": {"type": "string"}, "audience": {"type": "string"}, "jwksURI": {"type": "string"}, "maxJWKSStaleness": {"type": "string"}}},
     "replicaCount": {"type": "integer", "minimum": 2},
     "mockProvider": {"type": "boolean"},
     "resources": {"type": "object"},
