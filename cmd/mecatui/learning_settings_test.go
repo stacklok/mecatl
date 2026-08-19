@@ -7,8 +7,19 @@ import (
 	"testing"
 )
 
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonicalize temporary directory: %v", err)
+	}
+	// On macOS, t.TempDir may be under /var, which symlinks to /private/var.
+	// Canonicalize test roots so production's symlink defense is exercised only deliberately.
+	return dir
+}
+
 func TestLearningSettingsWiringMatchesTransport(t *testing.T) {
-	configHome := t.TempDir()
+	configHome := canonicalTempDir(t)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	local := learningSettingsForConfig(config{transportMode: modeLocal})
 	wantPath := filepath.Join(configHome, "mecatl", "settings.yaml")
@@ -40,7 +51,7 @@ func TestLearningSettingsWiringMatchesTransport(t *testing.T) {
 }
 
 func TestOperatorLearningSettingsCyclesSensitivityAndPreservesMode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.yaml")
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
 	if err := os.WriteFile(path, []byte("# retained\nlearning:\n  mode: review\n  sensitivity: conservative\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +73,7 @@ func TestOperatorLearningSettingsCyclesSensitivityAndPreservesMode(t *testing.T)
 }
 
 func TestOperatorLearningSettingsPreservesUnrelatedYAMLAndComments(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mecatl", "settings.yaml")
+	path := filepath.Join(canonicalTempDir(t), "mecatl", "settings.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +101,7 @@ func TestOperatorLearningSettingsPreservesUnrelatedYAMLAndComments(t *testing.T)
 }
 
 func TestOperatorLearningSettingsPreservesExplicitEvaluatedActivation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.yaml")
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
 	body := "learning:\n  mode: review\n  skills:\n    # keep assurance\n    activation: evaluated\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -112,7 +123,7 @@ func TestOperatorLearningSettingsPreservesExplicitEvaluatedActivation(t *testing
 }
 
 func TestOperatorLearningSettingsConcurrentAdvanceIsSerialized(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.yaml")
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
 	if err := os.WriteFile(path, []byte("learning:\n  mode: off\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +167,7 @@ func TestOperatorLearningSettingsRejectsInvalidYAMLWithoutModification(t *testin
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "settings.yaml")
+			path := filepath.Join(canonicalTempDir(t), "settings.yaml")
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -176,7 +187,7 @@ func TestOperatorLearningSettingsRejectsInvalidYAMLWithoutModification(t *testin
 
 func TestOperatorLearningSettingsRejectsSymlinks(t *testing.T) {
 	t.Run("settings file", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := canonicalTempDir(t)
 		target := filepath.Join(dir, "target.yaml")
 		if err := os.WriteFile(target, []byte("learning:\n  mode: off\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -190,7 +201,7 @@ func TestOperatorLearningSettingsRejectsSymlinks(t *testing.T) {
 		}
 	})
 	t.Run("parent directory", func(t *testing.T) {
-		base := t.TempDir()
+		base := canonicalTempDir(t)
 		realDir := filepath.Join(base, "real")
 		if err := os.Mkdir(realDir, 0o700); err != nil {
 			t.Fatal(err)
@@ -210,7 +221,7 @@ func TestOperatorLearningSettingsRejectsSymlinks(t *testing.T) {
 }
 
 func TestOperatorLearningSettingsRejectsSymlinkIntroducedDuringMutation(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	path := filepath.Join(dir, "settings.yaml")
 	target := filepath.Join(dir, "target.yaml")
 	const targetBody = "learning:\n  mode: auto\n"
@@ -244,7 +255,7 @@ func TestOperatorLearningSettingsRejectsSymlinkIntroducedDuringMutation(t *testi
 }
 
 func TestOperatorLearningSettingsRemoteIsReadOnly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.yaml")
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
 	body := "learning:\n  mode: off\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -266,7 +277,7 @@ func TestOperatorLearningSettingsRemoteIsReadOnly(t *testing.T) {
 }
 
 func TestOperatorLearningSettingsWriteError(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	if _, _, _, err := (&operatorLearningSettings{path: dir}).Advance(); err == nil {
 		t.Fatal("Advance should report a read/write error for a directory path")
 	}
