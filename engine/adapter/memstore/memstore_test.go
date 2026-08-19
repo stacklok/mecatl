@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -96,6 +97,91 @@ func TestConcurrentSaveLoad(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestEstimatedBytesTracksTranscriptOverwriteAndDelete(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+
+	if err := st.Save(ctx, sessionWithTranscript(t, "estimate", 1, "x")); err != nil {
+		t.Fatalf("Save small: %v", err)
+	}
+	small := onlyEstimatedBytes(t, st)
+
+	if err := st.Save(ctx, sessionWithTranscript(t, "estimate", 128, string(make([]byte, 1024)))); err != nil {
+		t.Fatalf("Save large overwrite: %v", err)
+	}
+	large := onlyEstimatedBytes(t, st)
+	if large <= small {
+		t.Fatalf("large transcript estimate = %d, want greater than small estimate %d", large, small)
+	}
+
+	if err := st.Delete(ctx, "estimate"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	page, err := st.PageSessionMetadata(ctx, sessionMetadataRequest())
+	if err != nil {
+		t.Fatalf("PageSessionMetadata after delete: %v", err)
+	}
+	if len(page.Sessions) != 0 {
+		t.Fatalf("sessions after delete = %d, want 0", len(page.Sessions))
+	}
+}
+
+func TestPageSessionMetadataWorkIsIndependentOfTranscriptSize(t *testing.T) {
+	measure := func(sess *session.Session) testing.BenchmarkResult {
+		st := memstore.New()
+		if err := st.Save(context.Background(), sess); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		request := sessionMetadataRequest()
+		return testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				page, err := st.PageSessionMetadata(context.Background(), request)
+				if err != nil || len(page.Sessions) != 1 {
+					b.Fatalf("PageSessionMetadata: rows=%d err=%v", len(page.Sessions), err)
+				}
+			}
+		})
+	}
+
+	small := measure(sessionWithTranscript(t, "work", 256, string(make([]byte, 4096))))
+	large := measure(sessionWithTranscript(t, "work", 1024, string(make([]byte, 4096))))
+	if large.AllocedBytesPerOp() > small.AllocedBytesPerOp()+256 {
+		t.Fatalf("page allocated bytes grew with transcript: small=%d large=%d (allocs small=%d large=%d)",
+			small.AllocedBytesPerOp(), large.AllocedBytesPerOp(), small.AllocsPerOp(), large.AllocsPerOp())
+	}
+}
+
+func sessionWithTranscript(t testing.TB, id session.SessionID, messages int, text string) *session.Session {
+	t.Helper()
+	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	if err := s.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	for range messages {
+		if err := s.RecordAssistant(session.NewAssistantMessage(text, "", nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s
+}
+
+func onlyEstimatedBytes(t testing.TB, st *memstore.Store) int64 {
+	t.Helper()
+	page, err := st.PageSessionMetadata(context.Background(), sessionMetadataRequest())
+	if err != nil {
+		t.Fatalf("PageSessionMetadata: %v", err)
+	}
+	if len(page.Sessions) != 1 {
+		t.Fatalf("page sessions = %d, want 1", len(page.Sessions))
+	}
+	return page.Sessions[0].EstimatedBytes
+}
+
+func sessionMetadataRequest() port.SessionMetadataPageRequest {
+	return port.SessionMetadataPageRequest{Limit: 10}
 }
 
 // TestWithNowStampsDeterministicModifiedAt pins the injected-clock seam: List
