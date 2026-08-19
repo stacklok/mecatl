@@ -208,6 +208,14 @@ func migrationOwnerKey(owner *session.Principal) string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// adoptMetadataScript is the ONE deliberate exemption from
+// metadataRebuildGenerationKey's "every mutator INCRs it" invariant (see the
+// doc comment on that constant in metadata_index.go): its writes happen
+// under the exclusive fenced migration lock, entirely before the exact-
+// coverage verification window opens, so they must NOT bump the generation
+// migration itself is about to verify against. It shares
+// metadataOwnerIndexBase's Redis-Cluster key-declaration caveat too (same
+// file).
 var adoptMetadataScript = redis.NewScript(`
 if redis.call('GET', KEYS[4]) ~= ARGV[1] then
   return -1

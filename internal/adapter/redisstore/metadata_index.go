@@ -23,8 +23,32 @@ const (
 	metadataIndexReady           = "redis-metadata-index/1"
 	metadataIndexStale           = "redis-metadata-index/stale"
 	metadataGlobalIndexKey       = "mecatl:session-metadata:index:all"
-	metadataOwnerIndexBase       = "mecatl:session-metadata:index:owner:"
-	metadataGenerationKey        = "mecatl:session-metadata:generations"
+	// metadataOwnerIndexBase is concatenated with an owner scope INSIDE each
+	// mutating Lua script below (saveMetadataScript/deleteMetadataScript/
+	// conditionalDeleteMetadataScript here, adoptMetadataScript in
+	// migration.go) rather than being declared in the script's KEYS[] array.
+	// That is fine for a single-node/Sentinel redis.Client (the only client
+	// this package constructs today) but is a Redis CLUSTER landmine: a
+	// cluster mandates every key a script touches be named in KEYS[] for
+	// slot routing/validation, and a dynamically-built key outside KEYS[]
+	// raises a cross-slot error the moment this runs against a real
+	// cluster. Adding Cluster support later is NOT a client-swap — each of
+	// these four scripts needs hash-tagged keys or KEYS-array key building
+	// first.
+	metadataOwnerIndexBase = "mecatl:session-metadata:index:owner:"
+	metadataGenerationKey  = "mecatl:session-metadata:generations"
+	// metadataRebuildGenerationKey's INCR is the load-bearing half of the
+	// exact-coverage proof in migration.go's verify*Coverage functions:
+	// "generation unchanged across the verification window ⇒ no membership
+	// drift" holds ONLY because every mutator of metadataGlobalIndexKey/an
+	// owner index either INCRs this key in the same script (saveMetadataScript,
+	// deleteMetadataScript, conditionalDeleteMetadataScript) or is a
+	// deliberate, reviewed exemption (migration.go's adoptMetadataScript,
+	// whose writes happen under the exclusive fenced migration lock before
+	// the verification window starts). If a FIFTH mutator of those sorted
+	// sets is ever added, it must either INCR this key too or be added to
+	// this exemption list — otherwise the coverage proof silently degrades
+	// to "probably fine."
 	metadataRebuildGenerationKey = "mecatl:session-metadata:rebuild-generation"
 	metadataGlobalScope          = "redis-v1:all"
 	metadataOwnerScopeBase       = "redis-v1:owner:"
