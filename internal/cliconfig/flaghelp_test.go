@@ -12,9 +12,9 @@ import (
 // exclusions is BYTE-IDENTICAL to (*flag.FlagSet).PrintDefaults across a
 // representative FlagSet exercising every stdlib flag shape (bool, string, int,
 // int64, uint, uint64, float64, duration, a back-quoted-name string, and a
-// custom flag.Value). This is the parity test that pins the ONE formatter to
-// the standard library's output, so the grouped/excluded progressive-help
-// renderers cannot drift from flag.PrintDefaults.
+// custom flag.Value). Every usage string here stays within helpWrapWidth, so
+// this pins the ONE formatter to the standard library's output on short usage
+// bodies; TestWrapUsageLines* covers the wrapping divergence on long ones.
 func TestPrintDefaultsExcludingParity(t *testing.T) {
 	fs := flag.NewFlagSet("parity", flag.ContinueOnError)
 	var (
@@ -80,7 +80,8 @@ func TestPrintDefaultsExcludingHonoursExclude(t *testing.T) {
 }
 
 // TestPrintFlagDefaultMatchesStdlib proves the per-flag selected form matches the
-// corresponding line(s) from flag.PrintDefaults.
+// corresponding line(s) from flag.PrintDefaults when the usage body fits within
+// the wrap width (short-name flags with short usage bodies are byte-identical).
 func TestPrintFlagDefaultMatchesStdlib(t *testing.T) {
 	fs := flag.NewFlagSet("single", flag.ContinueOnError)
 	var s string
@@ -95,6 +96,79 @@ func TestPrintFlagDefaultMatchesStdlib(t *testing.T) {
 
 	if got.String() != want.String() {
 		t.Fatalf("PrintFlagDefault diverged from flag.PrintDefaults:\n--- want ---\n%s\n--- got ---\n%s", want.String(), got.String())
+	}
+}
+
+// TestWrapUsageLinesWrapsWideBody proves that a usage body longer than
+// helpWrapWidth is re-wrapped across continuation lines, that every rendered
+// continuation line stays within the width budget, and that the header line is
+// preserved verbatim.
+func TestWrapUsageLinesWrapsWideBody(t *testing.T) {
+	block := "  -wide string\n    \tembedded server only: this usage body repeats filler text until it exceeds the eighty-column wrap budget that flaghelp applies to narrow-terminal help output"
+	rendered := wrapUsageLines(block)
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected the wide usage body to wrap across at least two continuation lines; got %d lines: %q", len(lines), rendered)
+	}
+	if lines[0] != "  -wide string" {
+		t.Fatalf("header line mutated:\n%s", lines[0])
+	}
+	for i, line := range lines[1:] {
+		if !strings.HasPrefix(line, continuationIndent) {
+			t.Fatalf("continuation line %d lost its %q indent: %q (full block: %q)", i, continuationIndent, line, rendered)
+		}
+		if len(line) > helpWrapWidth {
+			t.Fatalf("wrapped continuation line %d exceeds helpWrapWidth=%d: %d cols: %q", i, helpWrapWidth, len(line), line)
+		}
+		// Every continuation line should carry SOME of the wrapped body (not
+		// empty, which would mean the indent was added to a blank split).
+		if strings.TrimSpace(strings.TrimPrefix(line, continuationIndent)) == "" {
+			t.Fatalf("wrapped continuation line %d is empty apart from indent: %q", i, line)
+		}
+	}
+}
+
+// TestWrapUsageLinesPreservesNarrowBody proves a narrow usage body (fits within
+// helpWrapWidth) renders byte-identical to the stdlib passthrough, and an
+// empty-second-line block is returned unchanged too.
+func TestWrapUsageLinesPreservesNarrowBody(t *testing.T) {
+	narrow := "  -narrow string\n    \ta short usage body"
+	if got := wrapUsageLines(narrow); got != narrow {
+		t.Fatalf("narrow body was re-wrapped; want byte-identical passthrough:\n--- want ---\n%s\n--- got ---\n%s", narrow, got)
+	}
+}
+
+// TestWrapUsageLinesSingleLineBlock proves a header-only block (no continuation
+// lines — e.g. an unusual flag shape) is returned unchanged.
+func TestWrapUsageLinesSingleLineBlock(t *testing.T) {
+	single := "  -one string"
+	if got := wrapUsageLines(single); got != single {
+		t.Fatalf("single-line block mutated:\n--- want ---\n%s\n--- got ---\n%s", single, got)
+	}
+}
+
+// TestPrintDefaultsExcludingWideUsageWrapped proves the one formatter wires
+// wrapUsageLines into both exported entry points (PrintDefaultsExcluding +
+// PrintFlagDefault) — a wide usage body renders wrapped, not as a single
+// >helpWrapWidth line.
+func TestPrintDefaultsExcludingWideUsageWrapped(t *testing.T) {
+	fs := flag.NewFlagSet("wide-wrapped", flag.ContinueOnError)
+	var s string
+	fs.StringVar(&s, "wide", "x", "embedded server only: this usage body repeats filler text until it exceeds the eighty-column wrap budget that flaghelp applies to narrow-terminal help output")
+
+	var got bytes.Buffer
+	PrintDefaultsExcluding(&got, fs, nil)
+
+	for i, line := range strings.Split(got.String(), "\n") {
+		if strings.HasPrefix(line, continuationIndent) && len(line) > helpWrapWidth {
+			t.Fatalf("line %d exceeds helpWrapWidth=%d (%d cols): %q", i, helpWrapWidth, len(line), line)
+		}
+	}
+
+	var got2 bytes.Buffer
+	PrintFlagDefault(&got2, fs.Lookup("wide"))
+	if got.String() != got2.String() {
+		t.Fatalf("PrintDefaultsExcluding and PrintFlagDefault disagree:\n--- excl ---\n%s\n--- single ---\n%s", got.String(), got2.String())
 	}
 }
 
