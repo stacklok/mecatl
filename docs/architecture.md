@@ -367,12 +367,17 @@ that same mandatory maintenance lease as manual cleanup (except a genuinely
 process-private in-memory store), so a shareable store with no working lease fails
 closed rather than trusting process-local liveness. An
 upgraded legacy keyspace stays honestly unavailable until the authenticated, resumable
-storage-migration job CAS-adopts every snapshot row. Each drive carries its own fenced
-Redis lock acquisition, renews it while work is active, and fails closed if ownership is
-lost; stale checkpoints/releases cannot borrow a successor token. Inspection retries to a
-stable source generation and deduplicates `SCAN` results. Bounded per-family installs build
-the duplicate-free global index, then one constant-work generation-and-count CAS publishes
-readiness—no snapshot-key list enters the publication script ([ADR 0229](adr/0229-redis-migration-fencing.md)). It defaults
+storage-migration job CAS-adopts every snapshot row. Each drive carries one required,
+context-bound acquisition shared by both built-in stores. Redis renews its fenced lock,
+cancels the bound operation context on ownership loss, and compares the exact lock token as
+the first operation inside both mutation Lua scripts; a stale holder therefore has no side
+effects. Stable inspection deduplicates `SCAN` results and proves each valid snapshot's exact
+global/owner metadata membership, turning missing or stale rows into repair candidates.
+Invalid snapshots complete the job with failures and keep paging unavailable. Only after
+candidate processing and a clean stable inspection does one constant-work
+generation-and-cardinality CAS publish readiness—an orphan row then makes the count too
+large rather than offsetting missing coverage, and no snapshot-key list enters the publication
+script ([ADR 0230](adr/0230-redis-migration-atomic-ownership-and-coverage.md)). It defaults
 `--headless=true` and `--posture=auto` (an unattended daemon, inverted from `mecated`'s
 interactive defaults), drops `mecated`'s subcommands + Prometheus/OTel admin surface, and
 exposes `--redis-url` (mutually exclusive with `--store-dir`/`--session-store-url`). The

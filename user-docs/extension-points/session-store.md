@@ -78,10 +78,14 @@ logical modification time, and tool/event sidecars. For jsonlstore it acquires t
 ordinary run-entry lease and the family's cross-process lock, rereads and verifies v2
 before removing v1, and reports corrupt/torn records without discarding them. Redis uses
 the same authenticated, durable, bounded job to adopt the derivative metadata index on
-upgrade: inventory and cleanup remain unavailable while stale; each family row is
-CAS-installed; concurrent Save/Delete advances the source generation; and `ready` is
-published atomically only after every extant snapshot is covered. Job errors expose
-stable reason codes and sanitized text only. Memstore and remote stores advertise
+upgrade: inventory and cleanup remain unavailable while stale; stable inspection verifies
+that every valid snapshot has its exact global/owner index row and makes missing or bad
+coverage a repair candidate; each repair and final publication atomically verifies the job's
+exact lock token before any write. Concurrent Save/Delete advances the source generation,
+and `ready` is published only after clean per-snapshot coverage plus the final
+constant-work cardinality check. Invalid snapshots complete the job with failures while
+keeping paging unavailable; repair or remove them, then create a fresh plan/job. Job errors
+expose stable reason codes and sanitized text only. Memstore and remote stores advertise
 migration as unsupported rather than returning fabricated zero counts.
 
 ### Authenticated cleanup planning

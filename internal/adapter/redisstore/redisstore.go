@@ -95,6 +95,7 @@ type Store struct {
 
 	metadataWorkObserver        func(metadataWorkKind)
 	migrationInspectionObserver func()
+	migrationMutationObserver   func()
 }
 
 // New connects to the Redis broker at addr and pings it to fail fast on an

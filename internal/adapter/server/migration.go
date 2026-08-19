@@ -69,18 +69,11 @@ type sessionMigrationFinalizer interface {
 }
 
 func lockSessionMigrationJob(ctx context.Context, backend port.SessionMigrationStore, id string) (context.Context, func() error, error) {
-	if acquirer, ok := backend.(port.SessionMigrationJobAcquirer); ok {
-		return acquirer.AcquireSessionMigrationJob(ctx, id)
-	}
-	release, err := backend.LockSessionMigrationJob(ctx, id)
-	return ctx, release, err
+	return backend.AcquireSessionMigrationJob(ctx, id)
 }
 
 func checkSessionMigrationOwnership(ctx context.Context, backend port.SessionMigrationStore) error {
-	if checker, ok := backend.(port.SessionMigrationJobAcquirer); ok {
-		return checker.CheckSessionMigrationJobOwnership(ctx)
-	}
-	return nil
+	return backend.CheckSessionMigrationJobOwnership(ctx)
 }
 
 func migrationStore(store port.SessionStore) (port.SessionMigrationStore, bool) {
@@ -186,7 +179,8 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 			V1Families: inspection.V1Families, V2Families: inspection.V2Families,
 			InvalidFamilies: inspection.InvalidFamilies, SkippedFamilies: inspection.SkippedFamilies,
 			CurrentBytes: inspection.CurrentBytes, ReclaimableBytes: inspection.ReclaimableBytes,
-			TemporaryBytes: inspection.TemporaryBytes, TerminalItems: make(map[string]bool),
+			TemporaryBytes: inspection.TemporaryBytes, Failed: inspection.InvalidFamilies,
+			TerminalItems: make(map[string]bool),
 		}
 	} else {
 		beforeLock, err = loadBoundMigrationJob(ctx, backend, id, principalKey)
@@ -278,17 +272,19 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		if err := checkSessionMigrationOwnership(ctx, backend); err != nil {
 			return MigrationJob{}, sanitizedMigrationBackendError()
 		}
-		if finalizer, ok := backend.(sessionMigrationFinalizer); ok {
-			expectedFamilies := inspection.V1Families + inspection.V2Families + inspection.InvalidFamilies
-			published, finalizeErr := finalizer.FinalizeSessionMigrationCoverage(ctx, inspection.Generation, expectedFamilies)
-			if finalizeErr != nil {
-				s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: storage backend unavailable", Resumable: true})
-				return MigrationJob{}, sanitizedMigrationBackendError()
-			}
-			remaining = !published
-			if remaining {
-				for _, family := range inspection.Families {
-					delete(job.TerminalItems, family.Handle)
+		if inspection.InvalidFamilies == 0 {
+			if finalizer, ok := backend.(sessionMigrationFinalizer); ok {
+				expectedFamilies := inspection.V1Families + inspection.V2Families
+				published, finalizeErr := finalizer.FinalizeSessionMigrationCoverage(ctx, inspection.Generation, expectedFamilies)
+				if finalizeErr != nil {
+					s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: storage backend unavailable", Resumable: true})
+					return MigrationJob{}, sanitizedMigrationBackendError()
+				}
+				remaining = !published
+				if remaining {
+					for _, family := range inspection.Families {
+						delete(job.TerminalItems, family.Handle)
+					}
 				}
 			}
 		}

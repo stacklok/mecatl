@@ -82,22 +82,16 @@ type SessionMigrationJob struct {
 
 // SessionMigrationStore is an optional physical-maintenance capability. The
 // engine loop never consumes it; authenticated server composition does. A
-// mutating load-to-checkpoint sequence must hold LockSessionMigrationJob for the
-// job's opaque ID. Implementations must provide stable cross-process exclusion;
-// the returned release function relinquishes it and must be called exactly once.
+// mutating load-to-checkpoint sequence must hold AcquireSessionMigrationJob for
+// the job's opaque ID. Implementations must provide stable cross-process
+// exclusion, bind the exact acquisition to the returned context, and reject
+// ownership checks, mutations, and checkpoints made without that acquisition.
+// The returned release function relinquishes it and must be called exactly once.
 type SessionMigrationStore interface {
 	InspectSessionMigration(context.Context) (SessionMigrationInspection, error)
 	MigrateSessionFamily(context.Context, SessionMigrationFamily) (string, error)
-	LockSessionMigrationJob(context.Context, string) (release func() error, err error)
-	SaveSessionMigrationJob(context.Context, SessionMigrationJob) error
-	LoadSessionMigrationJob(context.Context, string) (SessionMigrationJob, error)
-}
-
-// SessionMigrationJobAcquirer is the optional renewable/fenced form of job
-// exclusion. The returned context binds the exact acquisition; implementations
-// must use it for checkpoints and ownership checks so an expired holder cannot
-// act with a successor's token. Release is token-bound and joins any renewer.
-type SessionMigrationJobAcquirer interface {
 	AcquireSessionMigrationJob(context.Context, string) (acquired context.Context, release func() error, err error)
 	CheckSessionMigrationJobOwnership(context.Context) error
+	SaveSessionMigrationJob(context.Context, SessionMigrationJob) error
+	LoadSessionMigrationJob(context.Context, string) (SessionMigrationJob, error)
 }

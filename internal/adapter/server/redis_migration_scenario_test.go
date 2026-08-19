@@ -97,19 +97,24 @@ func TestRedisMetadataIndexAdoptionThroughAuthenticatedMaintenanceJob(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != "running" {
-		t.Fatalf("corrupt legacy row did not hold publication stale: %+v", job)
+	if job.State != "completed" || job.Failed != 1 {
+		t.Fatalf("corrupt legacy row was not reported as completed-with-failures: %+v", job)
 	}
 	if _, err := store2.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
 		t.Fatalf("corrupt coverage published ready: %v", err)
 	}
 
-	// Removing the corrupt legacy record is itself generation-tracked. The next
-	// empty bounded batch re-verifies complete coverage and atomically publishes.
+	// Removing the corrupt legacy record is itself generation-tracked. A fresh
+	// plan/job then re-verifies complete coverage and atomically publishes; the
+	// completed-with-failures job remains immutable and honest.
 	if err := store2.Delete(ctx, "corrupt-private-id"); err != nil {
 		t.Fatal(err)
 	}
-	job, err = svc2.ResumeSessionMigration(ctx, job.ID, 10)
+	plan, err = svc2.PlanSessionMigration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err = svc2.ApplySessionMigration(ctx, plan.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

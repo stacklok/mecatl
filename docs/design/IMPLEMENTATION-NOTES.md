@@ -5946,13 +5946,22 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   check atomically publishes `ready` only after every extant snapshot is covered.
   Redis inspection deduplicates `SCAN` output and retries boundedly until its before/after
   rebuild generation agrees; sustained drift returns `inventory_changed_restart` with no
-  mixed counters or candidates. A Redis job drive carries a per-acquisition monotonic fence
-  plus nonce in its context and renews the expiring lock. Checkpoint, ownership checks, and
-  release bind that exact acquisition; renewal/token loss stops further mutation and cannot
-  affect a successor. Coverage accumulates through the at-most-100-family CAS batches into
-  the duplicate-free global sorted index. Final readiness is one constant-work Lua CAS over
-  stable generation plus the inspected unique-family count (`ZCARD`), never an
-  O(total-store) key list or script.
+  mixed counters or candidates. The base migration port requires a context-carrying,
+  ownership-checking acquisition; jsonlstore binds its stable flock and Redis binds a
+  per-acquisition monotonic fence plus nonce. Redis renews the expiring lock and cancels the
+  bound operation context on renewal/token loss. Checkpoint, family repair, readiness
+  publication, ownership checks, and release bind that exact acquisition. Both mutation Lua
+  scripts compare the exact lock key/token before any write, so loss between the server's
+  precheck and Lua has zero side effects and cannot affect a successor.
+  Stable inspection derives each valid snapshot's exact metadata member and verifies its
+  hash metadata plus global/owner index memberships. Missing or stale coverage becomes a
+  bounded repair candidate; repair removes stale memberships and atomically installs the
+  derived row. Invalid snapshots are not countable coverage: they complete the job with a
+  failure count while keeping paging unavailable, and operator repair requires a fresh plan.
+  After every candidate is processed and inspection is clean, final readiness is one
+  constant-work Lua CAS over stable generation plus valid snapshot count (`ZCARD`). Because
+  per-snapshot membership was proved first, an orphan row makes cardinality too large rather
+  than offsetting a missing row; the script never receives an O(total-store) key list.
   Concurrent Redis Save/Delete operations advance that generation and maintain their own
   rows, so stale publication retries fail closed while paging and cleanup remain unsupported.
   Cancellation is monotonic: once persisted,

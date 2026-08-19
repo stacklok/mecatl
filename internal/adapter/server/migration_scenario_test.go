@@ -90,9 +90,9 @@ type signalingMigrationStore struct {
 	once    sync.Once
 }
 
-func (st *signalingMigrationStore) LockSessionMigrationJob(ctx context.Context, id string) (func() error, error) {
+func (st *signalingMigrationStore) AcquireSessionMigrationJob(ctx context.Context, id string) (context.Context, func() error, error) {
 	st.once.Do(func() { close(st.locking) })
-	return st.Store.LockSessionMigrationJob(ctx, id)
+	return st.Store.AcquireSessionMigrationJob(ctx, id)
 }
 
 func reopenMigrationStore(t *testing.T, dir string) *jsonlstore.Store {
@@ -674,7 +674,7 @@ func TestSessionStorageContinuity_Scenario4_MaintenanceErrorsAreSanitized(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Failed != 1 || len(job.Errors) != 1 || job.Errors[0].ReasonCode != "backend_failure" ||
+	if job.Failed != 2 || len(job.Errors) != 1 || job.Errors[0].ReasonCode != "backend_failure" ||
 		job.Errors[0].Message != "storage maintenance could not process this item" {
 		t.Fatalf("sanitized item failure = %+v", job)
 	}

@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-19
 - Scope: Redis session-metadata migration locking, inspection, and readiness publication
+- Superseded by: ADR 0230
 
 ## Context
 

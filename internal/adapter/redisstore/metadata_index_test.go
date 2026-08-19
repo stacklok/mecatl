@@ -339,6 +339,11 @@ func TestMetadataRebuildRejectsStaleGenerationBeforeAtomicPublication(t *testing
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	ctx := context.Background()
+	ctx, release, err := st.AcquireSessionMigrationJob(ctx, strings.Repeat("d", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = release() })
 	inspection, err := st.InspectSessionMigration(ctx)
 	if err != nil || len(inspection.Families) != 1 {
 		t.Fatalf("inspection = %+v, %v", inspection, err)
