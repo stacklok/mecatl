@@ -54,7 +54,7 @@ func TestLearningAdmissionIsGlobalAcrossConcurrentProviderObservers(t *testing.T
 
 func learningResolverConfig(t *testing.T, operator, workspace string) Config {
 	t.Helper()
-	cfg := Config{Workspace: workspace, PermissionsConventional: true}
+	cfg := Config{Workspace: workspace, PermissionsConventional: workspace != ""}
 	if operator != "" {
 		path := filepath.Join(t.TempDir(), "settings.yaml")
 		if err := os.WriteFile(path, []byte("learning:\n  mode: "+operator+"\n"), 0o600); err != nil {

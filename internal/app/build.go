@@ -372,8 +372,10 @@ type Config struct {
 	// RetentionCLISet records explicit legacy retention flags so CLI outranks settings.yaml.
 	RetentionCLISet RetentionCLISet
 	// AcknowledgeMainRetention is explicit consent for destructive main-session cleanup.
-	AcknowledgeMainRetention bool
-	storageMaintenance       *storageMaintenanceState
+	AcknowledgeMainRetention     bool
+	storageMaintenance           *storageMaintenanceState
+	sessionLiveness              port.SessionLiveness
+	maintenanceMutationAvailable func() bool
 
 	// Remote store drivers (Phase B): gRPC driver endpoints that replace the
 	// LOCAL session/memory stores with internal/adapter/grpcdriver clients.
@@ -1588,6 +1590,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if agentClose == nil {
 		agentClose = func() {}
 	}
+	// One process-wide liveness registry bridges engine-owned delegation children
+	// to Service/retention without introducing an engine→server dependency.
+	cfg.sessionLiveness = newSessionLiveness()
 	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, agentReg)
 	if err != nil {
 		agentClose()
@@ -1620,6 +1625,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		OwnershipEnforced:                   cfg.OwnershipEnforced,
 		StorageManagementAuthorized:         storageManagementAuthorizer(cfg),
 		LocalStorageMaintenanceSingleWriter: localStorageMaintenanceSingleWriter(store),
+		SessionLiveness:                     cfg.sessionLiveness,
 		RetentionPolicy: server.RetentionPolicy{
 			Version:    "retention/v1",
 			MainMaxAge: cfg.MainRetention, MainMaxCount: cfg.MainRetentionMaxTotal,
@@ -2074,9 +2080,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	svc.SetScheduleMinInterval(cfg.SchedulerMinInterval)
 
 	// Child-session retention GC (issue #38): wired AFTER the Service exists
-	// because the sweep's liveness predicate is the Service's in-flight run
-	// registry. No-op (one INFO) when the policy is disabled or the store is
-	// not prunable; otherwise a startup sweep + ticker owned by Built.Close.
+	// because the sweep's liveness and maintenance-exclusion predicates are the
+	// Service's process-wide truth. No worker is started when exclusion is
+	// permanently unavailable; runtime loss stickily settles health unavailable.
+	cfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
 	childGCClose := startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
@@ -3643,6 +3650,7 @@ func engineDepsForProvider(
 		// entering awaiting and at run end; both share this store, so the latest
 		// snapshot is always current for auto-resume after a restart.
 		Store:            store,
+		SessionLiveness:  cfg.sessionLiveness,
 		Sink:             cfg.Sink,
 		ToolCallRecorder: cfg.ToolCallRecorder,
 		// Clock: the production wall clock (issue #53). Before it was wired here the

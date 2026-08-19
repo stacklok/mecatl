@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
@@ -244,7 +245,7 @@ func TestChildGCMainPassDisabledByDefault(t *testing.T) {
 // TestChildGCMainAgePassSkipsLive pins the liveness exclusion on the MAIN AGE
 // pass specifically (issue #79): a LIVE main older than mainRetention keeps its
 // slot — the in-flight run protects it from the age pass, mirroring the
-// child-side TestChildGCSkipsLiveChildren age-pass leg. (Mutation-verified:
+// child-side TestChildGCSkipsLiveEngineChildren age-pass leg. (Mutation-verified:
 // removing the `!g.isLive(e.ID)` guard from sweepMain's age loop makes this
 // fail.)
 func TestChildGCMainAgePassSkipsLive(t *testing.T) {
@@ -413,13 +414,14 @@ func TestChildGCCapPassOldestFirst(t *testing.T) {
 	}
 }
 
-// TestChildGCSkipsLiveChildren pins the liveness exclusion: an id with an
-// in-flight run keeps its slot under the cap (the next-oldest non-live id is
-// deleted instead) and is never deleted by the age pass.
-func TestChildGCSkipsLiveChildren(t *testing.T) {
+// TestChildGCSkipsLiveEngineChildren pins the shared process-wide exclusion: an
+// engine-owned child registration survives both age and cap planning, is excluded
+// from cap slots, and becomes eligible immediately after its lifecycle releases.
+func TestChildGCSkipsLiveEngineChildren(t *testing.T) {
 	f := newGCFixture(t, childGCPolicy{retention: 24 * time.Hour, maxPerFamily: 2})
-	live := map[session.SessionID]bool{"subagent-live-old": true}
-	f.gc.isLive = func(id session.SessionID) bool { return live[id] }
+	live := newSessionLiveness()
+	release := live.Register("subagent-live-old")
+	f.gc.isLive = live.IsLive
 
 	f.save(t, "subagent-live-old") // ancient but live: must survive BOTH passes
 	f.save(t, "subagent-dead-old") // ancient and dead: age pass takes it
@@ -450,6 +452,14 @@ func TestChildGCSkipsLiveChildren(t *testing.T) {
 	}
 	if !got["subagent-y3"] {
 		t.Error("newest child was deleted under the cap pass")
+	}
+
+	release()
+	if deleted, _ := f.gc.sweep(context.Background()); deleted != 1 {
+		t.Fatalf("post-terminal sweep deleted %d, want released aged child", deleted)
+	}
+	if f.ids(t)["subagent-live-old"] {
+		t.Fatal("released engine child leaked from the liveness registry")
 	}
 }
 
@@ -787,6 +797,60 @@ func TestChildGCTickerStopsAfterUnsupportedRetention(t *testing.T) {
 				t.Fatalf("health after unsupported sweep = %+v", got)
 			}
 		})
+	}
+}
+
+func TestChildGCMaintenanceExclusionUnavailableNeverStartsOrSchedules(t *testing.T) {
+	store := &countingPrunable{Store: memstore.New(), listed: make(chan struct{}, 1)}
+	health := &storageMaintenanceState{}
+	closeGC := startChildGC(context.Background(), Config{
+		ChildRetention: time.Hour, ChildGCInterval: time.Millisecond,
+		Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
+		maintenanceMutationAvailable: func() bool { return false },
+	}, store, func(session.SessionID) bool { return false })
+	waitChildGCClose(t, closeGC)
+	time.Sleep(5 * time.Millisecond)
+	if got := store.lists.Load(); got != 0 {
+		t.Fatalf("unavailable GC consulted storage %d times, want zero", got)
+	}
+	if got := health.snapshot(); got.ActiveJob != "" || got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
+		t.Fatalf("unavailable GC health = %+v", got)
+	}
+}
+
+func TestChildGCRuntimeMaintenanceUnsupportedSettlesUnavailable(t *testing.T) {
+	now := time.Now()
+	store := &countingPrunable{Store: memstore.New(memstore.WithNow(func() time.Time { return now.Add(-2 * time.Hour) }))}
+	s := session.New("subagent-old", session.ModeDefault, "/ws", session.Limits{}, now.Add(-2*time.Hour))
+	if err := s.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	health := &storageMaintenanceState{}
+	closeGC := startChildGC(context.Background(), Config{
+		ChildRetention: time.Hour, ChildGCInterval: time.Millisecond,
+		Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
+		maintenanceMutationAvailable: func() bool { return true },
+	}, store, func(session.SessionID) bool { return false }, func(context.Context, port.SessionDiscoveryMeta) error {
+		return server.ErrMaintenanceExclusionUnavailable
+	})
+	defer closeGC()
+	deadline := time.Now().Add(time.Second)
+	for health.snapshot().LastFailure != "retention sweep unavailable" {
+		if time.Now().After(deadline) {
+			t.Fatal("runtime unsupported exclusion did not settle health unavailable")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	calls := store.lists.Load()
+	time.Sleep(5 * time.Millisecond)
+	if store.lists.Load() != calls {
+		t.Fatal("runtime-unavailable GC remained scheduled")
+	}
+	if _, err := store.Load(context.Background(), s.ID); err != nil {
+		t.Fatalf("runtime-unavailable GC deleted candidate: %v", err)
 	}
 }
 

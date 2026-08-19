@@ -1890,6 +1890,7 @@ func (s *Supervisor) cleanupAll() {
 			default:
 				s.caps.abortChildRun(m.sess.ID)
 			}
+			s.caps.releaseChildLiveness(m.sess.ID)
 		}
 		if m.cleanup != nil {
 			_ = m.cleanup()

@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/sessionretention"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
@@ -134,21 +135,9 @@ type childGC struct {
 	pager           port.SessionMetadataPager
 	deleteCandidate func(context.Context, port.SessionDiscoveryMeta) error
 	policy          childGCPolicy
-	// isLive reports whether a session id has an in-flight run in this
-	// process (Service.IsLive). A live id is never deleted, by EITHER pass.
-	//
-	// INVARIANT — the live-skip does NOT protect engine-spawned children.
-	// Service.IsLive reads the TOP-LEVEL run registry only; a mid-run
-	// subagent/parallel/team child is driven inside its parent's run and is
-	// never registered there, so IsLive("subagent-…") answers false even
-	// while that child is executing (pinned by
-	// TestServiceIsLiveDoesNotKnowEngineChildren in internal/adapter/server).
-	// Engine children are instead protected by AGE HORIZON + SNAPSHOT
-	// FRESHNESS: every child persists at its terminal, and a RESUMED child
-	// re-persists at resume start (engine/agent/subagent.go), so an
-	// in-flight child's snapshot is always younger than any sane retention.
-	// The seam stays because it IS protective for API-client-driven sessions
-	// that carry a child prefix (StartRun on such an id registers it here).
+	// isLive reports whether a top-level or engine-owned child session is active
+	// in this process (Service.IsLive). A live id is never planned by age or cap,
+	// and deletion rechecks the same predicate under the run-entry lock.
 	isLive func(session.SessionID) bool
 	now    func() time.Time
 	diag   port.Diagnostics
@@ -160,6 +149,9 @@ type childGC struct {
 	// failed records whether the most recent sweep hit a transient list/delete
 	// failure, for Build-owned health projection. It is worker-confined.
 	failed bool
+	// unavailable is set when the mandatory maintenance-exclusion seam becomes
+	// runtime-unsupported. The worker settles health unavailable and exits.
+	unavailable bool
 }
 
 // Ask the store for one complete retention snapshot. Today's v1 pagers form a
@@ -304,6 +296,9 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 		if g.remove(ctx, item.Metadata, &errs) {
 			deleted++
 		}
+		if g.unavailable {
+			break
+		}
 	}
 	retained = len(entries) - deleted
 
@@ -337,6 +332,10 @@ func (g *childGC) remove(ctx context.Context, candidate port.SessionDiscoveryMet
 		deleteSession = g.deleteCandidate
 	}
 	if err := deleteSession(ctx, candidate); err != nil {
+		if errors.Is(err, server.ErrMaintenanceExclusionUnavailable) {
+			g.unavailable = true
+			return false
+		}
 		errs.count++
 		if errs.first == nil {
 			errs.first = err
@@ -368,6 +367,11 @@ func startChildGC(parent context.Context, cfg Config, store port.SessionStore, i
 	}
 	if !policy.enabled() {
 		cfg.diag().Log(parent, port.LevelInfo, "session GC DISABLED (no child retention/cap and no main retention/cap)")
+		return noop
+	}
+	if cfg.maintenanceMutationAvailable != nil && !cfg.maintenanceMutationAvailable() {
+		cfg.storageMaintenance.disableSweep()
+		cfg.diag().Log(parent, port.LevelInfo, "session GC unavailable (maintenance exclusion is unavailable); store is never swept")
 		return noop
 	}
 	prunable, ok := store.(port.PrunableStore)
@@ -408,46 +412,55 @@ func startChildGC(parent context.Context, cfg Config, store port.SessionStore, i
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer cfg.storageMaintenance.stopSweepSchedule()
-		runSweep := func() {
-			cfg.storageMaintenance.beginSweep()
-			defer func() {
-				if ctx.Err() != nil {
-					cfg.storageMaintenance.stopSweepSchedule()
-					return
-				}
-				if gc.disabled {
-					cfg.storageMaintenance.disableSweep()
-					return
-				}
-				if gc.failed {
-					cfg.storageMaintenance.failSweep(time.Now(), cfg.ChildGCInterval)
-					return
-				}
-				cfg.storageMaintenance.finishSweep(time.Now(), cfg.ChildGCInterval)
-			}()
-			gc.sweep(ctx)
-		}
-		runSweep()
-		if cfg.ChildGCInterval <= 0 || gc.disabled || ctx.Err() != nil {
-			return // startup-only, unsupported store, or shutdown
-		}
-		ticker := time.NewTicker(cfg.ChildGCInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				runSweep()
-				if gc.disabled {
-					return // sticky: the store signalled ErrPruneUnsupported
-				}
-			}
-		}
+		runChildGCWorker(ctx, cfg, gc)
 	}()
 	return sync.OnceFunc(func() {
 		cancel()
 		wg.Wait()
 	})
+}
+
+func runChildGCWorker(ctx context.Context, cfg Config, gc *childGC) {
+	defer cfg.storageMaintenance.stopSweepSchedule()
+	runSweep := func() {
+		if cfg.maintenanceMutationAvailable != nil && !cfg.maintenanceMutationAvailable() {
+			gc.unavailable = true
+			cfg.storageMaintenance.disableSweep()
+			return
+		}
+		cfg.storageMaintenance.beginSweep()
+		defer func() {
+			if ctx.Err() != nil {
+				cfg.storageMaintenance.stopSweepSchedule()
+				return
+			}
+			if gc.disabled || gc.unavailable {
+				cfg.storageMaintenance.disableSweep()
+				return
+			}
+			if gc.failed {
+				cfg.storageMaintenance.failSweep(time.Now(), cfg.ChildGCInterval)
+				return
+			}
+			cfg.storageMaintenance.finishSweep(time.Now(), cfg.ChildGCInterval)
+		}()
+		gc.sweep(ctx)
+	}
+	runSweep()
+	if cfg.ChildGCInterval <= 0 || gc.disabled || gc.unavailable || ctx.Err() != nil {
+		return
+	}
+	ticker := time.NewTicker(cfg.ChildGCInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runSweep()
+			if gc.disabled || gc.unavailable {
+				return
+			}
+		}
+	}
 }

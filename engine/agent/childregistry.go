@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -185,6 +186,9 @@ type childRunRegistry struct {
 	// bound headless/child run has no router, so its gate returns false for every
 	// id — correct: nothing was ever surfaced, so there is nothing to retract.
 	unregisterAsk func(askID string) bool
+	// liveness is the process-wide exclusion seam shared with Service/retention.
+	// Only delegation families register; background Bash has no child session.
+	liveness port.SessionLiveness
 }
 
 // childEntry is one registered child's control block.
@@ -218,6 +222,10 @@ type childEntry struct {
 	// stale already-answered id emits nothing.
 	askIDs map[string]struct{}
 	state  childState
+	// releaseLiveness ends this attempt's process-wide maintenance exclusion.
+	// It is idempotent and belongs to the entry pointer, so a same-id resume can
+	// replace the map entry without releasing the new attempt from an old terminal.
+	releaseLiveness func()
 	// stop is the child's terminal stop reason (set by markDone).
 	stop session.StopReason
 	// displaced is the DONE entry this registration OVERWROTE (a `resume` of an
@@ -304,6 +312,9 @@ func (g *childRunRegistry) register(childID string, family childFamily, goal str
 		askIDs:     make(map[string]struct{}),
 		state:      childQueued,
 		doneCh:     make(chan struct{}),
+	}
+	if g.liveness != nil && family != childFamilyBashCmd {
+		e.releaseLiveness = g.liveness.Register(session.SessionID(childID))
 	}
 	if old, ok := g.entries[childID]; ok && old.state == childDone {
 		e.displaced = old
@@ -431,6 +442,9 @@ func (g *childRunRegistry) markDoneResult(childID string, stop session.StopReaso
 	e.stop = stop
 	e.result = result
 	e.displaced = nil
+	if e.family != childFamilyTeamMember && e.releaseLiveness != nil {
+		e.releaseLiveness()
+	}
 	close(e.doneCh)
 	g.bumpGenLocked()
 }
@@ -451,6 +465,9 @@ func (g *childRunRegistry) remove(childID string) {
 	if !ok || e.state == childDone {
 		return
 	}
+	if e.releaseLiveness != nil {
+		e.releaseLiveness()
+	}
 	close(e.doneCh)
 	if e.displaced != nil {
 		g.entries[childID] = e.displaced
@@ -458,6 +475,17 @@ func (g *childRunRegistry) remove(childID string) {
 		delete(g.entries, childID)
 	}
 	g.bumpGenLocked()
+}
+
+// releaseLiveness ends a long-lived team's process-wide exclusion at team
+// teardown. Team entries may be marked done when de-scheduled before the lead's
+// final synthesis, so their ordinary markDone cannot mean lifecycle completion.
+func (g *childRunRegistry) releaseLiveness(childID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if e := g.entries[childID]; e != nil && e.releaseLiveness != nil {
+		e.releaseLiveness()
+	}
 }
 
 // bumpGenLocked wakes every "any child" waiter parked on the current terminal

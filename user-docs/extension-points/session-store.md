@@ -91,7 +91,10 @@ migration as unsupported rather than returning fabricated zero counts.
 ### Authenticated cleanup planning
 
 The server exposes one retention planner to both automatic sweeps and authenticated
-manual cleanup. A manual dry-run is read-only and owner-scoped. It reports only durable
+manual cleanup. A manual dry-run is non-destructive and owner-scoped. On a shared store,
+it samples cross-process lease status at the planning instant with sequential bounded trial
+acquire/immediate-release calls; this does not promise that a candidate remains idle for apply,
+which always reacquires and revalidates. It reports only durable
 kind/state counts, age or cap reasons, modification times, and byte estimates; transcript,
 tool arguments, paths, credentials, and foreign-owner rows are never projected. Unknown,
 invalid, corrupt, running, awaiting, live, and leased sessions are protected and do not

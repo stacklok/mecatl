@@ -193,6 +193,11 @@ type Config struct {
 	// false and wire a working SessionLease before destructive migration, cleanup,
 	// or automatic retention is advertised or run.
 	LocalStorageMaintenanceSingleWriter bool
+	// SessionLiveness carries process-local engine-owned child activity. Service's
+	// own runs map covers top-level runs; delegation children never enter that map,
+	// so destructive maintenance must consult both. Cross-process activity remains
+	// protected by SessionLease.
+	SessionLiveness port.SessionLiveness
 	// RetentionPolicy is the effective operator policy projected into health.
 	RetentionPolicy RetentionPolicy
 	// StorageMaintenanceStatus reports the shared retention/migration/cleanup lifecycle.
@@ -3585,28 +3590,16 @@ func (s *Service) LookupRun(id session.SessionID) (*agent.Run, bool) {
 	return st.run, true
 }
 
-// IsLive reports whether a run is currently in flight for the session id — a
-// pure read over the same in-flight registry LookupRun consults. It is the
-// liveness predicate the composition layer's child-session GC injects so a
-// sweep never deletes the snapshot of a session that is mid-run in THIS
-// process.
-//
-// HONESTY: this knows TOP-LEVEL run ids only. Children spawned BY a live run
-// (subagent-*/parallel-*/team-* ids) are driven inside their parent's run and
-// never registered here, so IsLive answers false for them even mid-run
-// (pinned by TestServiceIsLiveDoesNotKnowEngineChildren). Engine children are
-// protected from the sweep by age horizon + snapshot freshness instead: they
-// persist at their terminal AND a resumed child re-persists at resume start,
-// so an in-flight child's snapshot is always fresh (see the invariant note in
-// internal/app/childgc.go). A client-driven id carrying a delegation-child
-// prefix (subagent-*/parallel-*/team-*) can no longer register here at all —
-// StartRunContent's isDelegationChildSessionID guard rejects it with
-// ErrInvalidArgument before it ever reaches this registry.
+// IsLive reports whether a top-level Service run or an engine-owned delegation
+// child is currently in flight in this process. The two registries share one
+// predicate so stale reconciliation and every destructive maintenance path see
+// the same process-local exclusion. Cross-process liveness is protected by the
+// separately configured SessionLease.
 func (s *Service) IsLive(id session.SessionID) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.runs[id]
-	return ok
+	_, topLevel := s.runs[id]
+	s.mu.Unlock()
+	return topLevel || s.cfg.SessionLiveness != nil && s.cfg.SessionLiveness.IsLive(id)
 }
 
 // Approve resolves the paused permission ask on the session's in-flight run with

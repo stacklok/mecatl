@@ -276,6 +276,14 @@ func (c parentCaps) abortChildRun(childID session.SessionID) {
 	}
 }
 
+// releaseChildLiveness ends a long-lived team member's maintenance exclusion at
+// final supervisor teardown. Team markDone means de-scheduled, not fully quiescent.
+func (c parentCaps) releaseChildLiveness(childID session.SessionID) {
+	if c.children != nil {
+		c.children.releaseLiveness(string(childID))
+	}
+}
+
 // liveBackgroundChildIDs is the nil-safe read of the currently-live background
 // child ids (the gate-full fail-fast error's list — ids only, A9).
 func (c parentCaps) liveBackgroundChildIDs() []string {

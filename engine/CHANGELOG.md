@@ -13,6 +13,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Process-local engine-child liveness** ([ADR 0027](../docs/adr/0027-cloud-native.md)) —
+  `port.SessionLiveness` and `agent.Deps.SessionLiveness` let a host protect
+  engine-owned Subagent, Parallel, and Team session lifecycles from destructive
+  maintenance without coupling the loop to a server adapter. Cross-process
+  exclusion remains `port.SessionLease`. Added (minor).
+
 - **Context-bound session-migration ownership** ([ADR 0230](../docs/adr/0230-redis-migration-atomic-ownership-and-coverage.md)) —
   `port.SessionMigrationStore.AcquireSessionMigrationJob` binds the exact
   ownership-checking acquisition to a context required by mutations and durable

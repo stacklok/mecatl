@@ -135,8 +135,10 @@
   only after rereading that v2. Sidecars, complete sessnap bytes, unknown kind, owner,
   and logical modification time are preserved. Public errors contain only stable
   reason codes, bounded messages, and non-reversible item handles. The authenticated cleanup
-  API runs a side-effect-free dry-run over the store-wide generation after the explicit
-  management-authority gate and
+  API runs a non-destructive dry-run over the store-wide generation after the explicit
+  management-authority gate. On a shared store, lease status is sampled at the planning instant
+  through sequential bounded trial acquire/immediate-release operations because the lease port has
+  no inspect verb; apply makes no future-validity claim and reacquires/revalidates every candidate. It
   returns age/cap candidates oldest-first by `(modified_at ASC, session_id ASC)`,
   protected and eligible kind/state/reason counts, mtimes, and byte estimates—never transcript,
   tool arguments, paths, secrets, or foreign-owner rows. Automatic sweeps and manual

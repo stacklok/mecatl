@@ -166,6 +166,13 @@ type Deps struct {
 	Hooks port.HookRunner
 	// Store persists session state (optional; nil disables persistence).
 	Store port.SessionStore
+	// SessionLiveness is the optional process-local registry for engine-owned
+	// child sessions. The parent run registers each delegation child before it can
+	// queue or drive and releases it on every terminal or pre-start-abort path.
+	// Composition and destructive maintenance share this seam so a live child is
+	// never selected by age or count retention. Cross-process exclusion remains a
+	// SessionLease concern.
+	SessionLiveness port.SessionLiveness
 	// Clock supplies wall time for tool-call timing (optional; nil → no timing).
 	Clock port.Clock
 	// ToolCallRecorder records tool-execution observability — the tool-call audit
@@ -1013,6 +1020,7 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	// through registry.safeEmit over this binding (A4c); a delivered event mirrors
 	// to the sink like every loop emit.
 	r.children = newChildRunRegistry()
+	r.children.liveness = e.deps.SessionLiveness
 	r.children.emit = func(ev session.Event) {
 		if r.emitOrAbort(ev, r.children.emitAbort) && e.deps.Sink != nil {
 			e.deps.Sink.Emit(r.ctx, ev)

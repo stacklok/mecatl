@@ -115,12 +115,44 @@ func TestMaintenanceMutationCapabilityRequiresProvenExclusion(t *testing.T) {
 		}
 	})
 
-	t.Run("remote with lease allowed", func(t *testing.T) {
-		store := memstore.New()
+	t.Run("remote with lease allowed and dry-run releases probe", func(t *testing.T) {
+		store := memstore.New(memstore.WithNow(func() time.Time { return now.Add(-48 * time.Hour) }))
+		const id = session.SessionID("remote-probe-release")
+		saveCleanupSession(t, store, id, cleanupAlice, session.SessionKindMain)
 		lease := memlease.New(wallclock.Clock{}, time.Minute)
 		svc := maintenanceSafetyService(t, store, false, lease, now)
 		if !svc.capabilities().GetStorageCleanup() {
 			t.Fatal("leased remote cleanup was not advertised")
+		}
+		plan, err := svc.PlanSessionCleanup(ctx, CleanupScope{})
+		if err != nil || !plan.Available || len(plan.Eligible) != 1 {
+			t.Fatalf("dry-run plan = %+v, %v", plan, err)
+		}
+		probe, err := lease.Acquire(ctx, id, "post-plan-proof")
+		if err != nil {
+			t.Fatalf("dry-run leaked its trial lease: %v", err)
+		}
+		if err := lease.Release(ctx, probe); err != nil {
+			t.Fatalf("release proof lease: %v", err)
+		}
+	})
+
+	t.Run("cross-process lease is protected at planning instant", func(t *testing.T) {
+		store := memstore.New(memstore.WithNow(func() time.Time { return now.Add(-48 * time.Hour) }))
+		const id = session.SessionID("remote-peer-live")
+		saveCleanupSession(t, store, id, cleanupAlice, session.SessionKindMain)
+		lease := memlease.New(wallclock.Clock{}, time.Minute)
+		peer, err := lease.Acquire(ctx, id, "peer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := maintenanceSafetyService(t, store, false, lease, now)
+		plan, err := svc.PlanSessionCleanup(ctx, CleanupScope{})
+		if err != nil || !plan.Available || len(plan.Eligible) != 0 || plan.Protected.ByReason["leased"] != 1 {
+			t.Fatalf("peer-leased dry-run = %+v, %v", plan, err)
+		}
+		if err := lease.Release(ctx, peer); err != nil {
+			t.Fatal(err)
 		}
 	})
 
@@ -134,21 +166,21 @@ func TestMaintenanceMutationCapabilityRequiresProvenExclusion(t *testing.T) {
 			saveCleanupSession(t, store, id, cleanupAlice, session.SessionKindMain)
 			svc := maintenanceSafetyService(t, store, false, maintenanceErrorLease{err: leaseErr}, now)
 			plan, err := svc.PlanSessionCleanup(ctx, CleanupScope{})
-			if err != nil || !plan.Available || len(plan.Eligible) != 1 {
-				t.Fatalf("PlanSessionCleanup = %+v, %v", plan, err)
-			}
-			job, err := svc.ApplySessionCleanup(ctx, plan.Token)
 			if err != nil {
-				t.Fatalf("ApplySessionCleanup: %v", err)
+				t.Fatalf("PlanSessionCleanup: %v", err)
 			}
-			if job.Deleted != 0 || job.Failed+job.Skipped != 1 {
-				t.Fatalf("cleanup job mutated without exclusion: %+v", job)
+			if errors.Is(leaseErr, port.ErrLeaseUnsupported) {
+				if plan.Available || plan.UnavailableReason != "maintenance_exclusion_unavailable" {
+					t.Fatalf("unsupported lease plan = %+v", plan)
+				}
+				if svc.capabilities().GetStorageCleanup() {
+					t.Fatal("unsupported lease remained advertised after detection")
+				}
+			} else if !plan.Available || len(plan.Eligible) != 0 || plan.Protected.ByReason["leased"] != 1 {
+				t.Fatalf("held lease plan was not protected: %+v", plan)
 			}
 			if _, err := store.Load(ctx, id); err != nil {
-				t.Fatalf("cleanup deleted lease-protected session: %v", err)
-			}
-			if errors.Is(leaseErr, port.ErrLeaseUnsupported) && svc.capabilities().GetStorageCleanup() {
-				t.Fatal("unsupported lease remained advertised after detection")
+				t.Fatalf("cleanup planning deleted lease-protected session: %v", err)
 			}
 		})
 	}

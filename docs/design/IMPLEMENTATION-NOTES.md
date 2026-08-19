@@ -5991,9 +5991,15 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   excluded from cap slots. Candidates are age-first and then cap-selected within
   durable-kind partitions, globally emitted oldest-first by `(ModifiedAt, ID)`.
   Manual dry-run enters the store-wide pager only after explicit management
-  authorization;
-  its opaque HMAC token binds principal, canonical kind scope, exact generation,
-  effective policy version, candidate count, and estimated bytes. Dry-run reports
+  authorization. For a shared store it then checks each otherwise-retainable
+  terminal row's lease status sequentially with bounded, cancellation-aware trial
+  acquire/release calls (the lease port has no inspect verb); every successful
+  probe is released immediately with a cancel-detached bounded context. The
+  live/leased partition is truthful only at that planning instant—apply never
+  assumes it remains current and reacquires/revalidates each candidate. No session
+  family or maintenance job is mutated by planning. Its opaque HMAC token binds
+  principal, canonical kind scope, exact generation, effective policy version,
+  candidate count, and estimated bytes. Dry-run reports
   both eligible and protected durable-kind/state/reason counts. Apply re-plans
   before mutation, then takes `runEntryMu` → mutation lease → adapter family lock;
   `port.ConditionalPrunableStore` compares exact owner/kind/state/relationship/

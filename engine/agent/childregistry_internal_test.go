@@ -896,3 +896,82 @@ func TestChildRegistrySealVsEmitRace(t *testing.T) {
 		consumed.Wait()
 	}
 }
+
+type testSessionLiveness struct {
+	mu     sync.Mutex
+	active map[session.SessionID]int
+}
+
+func (r *testSessionLiveness) Register(id session.SessionID) func() {
+	r.mu.Lock()
+	if r.active == nil {
+		r.active = make(map[session.SessionID]int)
+	}
+	r.active[id]++
+	r.mu.Unlock()
+	return sync.OnceFunc(func() {
+		r.mu.Lock()
+		if r.active[id] <= 1 {
+			delete(r.active, id)
+		} else {
+			r.active[id]--
+		}
+		r.mu.Unlock()
+	})
+}
+
+func (r *testSessionLiveness) IsLive(id session.SessionID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.active[id] > 0
+}
+
+// TestChildRegistryLivenessCoversEveryTerminalPath pins the structural chokepoints
+// used by foreground/background Subagent, Parallel, and Team. Team markDone is
+// deliberately not final because the lead may still synthesise; final supervisor
+// cleanup releases it. Pre-start aborts release immediately and Bash is excluded.
+func TestChildRegistryLivenessCoversEveryTerminalPath(t *testing.T) {
+	tracker := &testSessionLiveness{}
+	reg := newChildRunRegistry()
+	reg.liveness = tracker
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, tc := range []struct {
+		id     session.SessionID
+		family childFamily
+		abort  bool
+	}{
+		{"subagent-foreground", childFamilySubagent, false},
+		{"subagent-background", childFamilySubagent, false},
+		{"parallel-branch", childFamilyParallelBranch, false},
+		{"team-member-lead", childFamilyTeamMember, false},
+		{"subagent-prestart", childFamilySubagent, true},
+	} {
+		reg.register(string(tc.id), tc.family, "test", cancel, tc.id == "subagent-background")
+		if !tracker.IsLive(tc.id) {
+			t.Fatalf("%s was not registered live", tc.id)
+		}
+		if tc.abort {
+			reg.remove(string(tc.id))
+		} else {
+			reg.markDone(string(tc.id), session.StopEndTurn)
+			reg.markDone(string(tc.id), session.StopEndTurn)
+		}
+		if tc.family == childFamilyTeamMember {
+			if !tracker.IsLive(tc.id) {
+				t.Fatalf("%s lost liveness between de-scheduling and team teardown", tc.id)
+			}
+			reg.releaseLiveness(string(tc.id))
+		}
+		if tracker.IsLive(tc.id) {
+			t.Fatalf("%s leaked its liveness registration", tc.id)
+		}
+	}
+
+	reg.register("bashcmd-test", childFamilyBashCmd, "test", cancel, true)
+	if tracker.IsLive("bashcmd-test") {
+		t.Fatal("background Bash has no child session and must not register session liveness")
+	}
+	reg.markDone("bashcmd-test", session.StopEndTurn)
+}

@@ -170,7 +170,17 @@ func (s *Service) PlanSessionCleanup(ctx context.Context, scope CleanupScope) (C
 		return CleanupPlan{}, ErrCleanupBackend
 	}
 	rows = filterCleanupScope(rows, scope)
-	live, leased := s.cleanupRuntimeProtection(rows)
+	live, leased, err := s.cleanupRuntimeProtection(ctx, rows)
+	if err != nil {
+		if errors.Is(err, ErrMaintenanceExclusionUnavailable) {
+			return CleanupPlan{UnavailableReason: "maintenance_exclusion_unavailable"}, nil
+		}
+		if ctx.Err() != nil {
+			return CleanupPlan{}, ctx.Err()
+		}
+		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: "cleanup-plan", State: StorageMaintenanceFailed, Failure: "cleanup: lease status unavailable"})
+		return CleanupPlan{}, ErrCleanupBackend
+	}
 	result := PlanManualRetention(rows, s.cfg.RetentionPolicy, nil, live, leased, s.cfg.Now())
 	plan := cleanupPlanProjection(result)
 	plan.Available = true
@@ -255,20 +265,55 @@ func canonicalScope(scope CleanupScope) []string {
 	return out
 }
 
-func (s *Service) cleanupRuntimeProtection(rows []port.SessionDiscoveryMeta) (map[session.SessionID]bool, map[session.SessionID]bool) {
+// cleanupRuntimeProtection takes an instant-in-time process/lease snapshot for
+// planning. Lease probes are sequential and individually bounded; pagination and
+// caller cancellation therefore bound total work without an N-goroutine fan-out.
+// Apply never relies on this snapshot: it reacquires and revalidates every item.
+func (s *Service) cleanupRuntimeProtection(ctx context.Context, rows []port.SessionDiscoveryMeta) (map[session.SessionID]bool, map[session.SessionID]bool, error) {
 	live := make(map[session.SessionID]bool)
 	leased := make(map[session.SessionID]bool)
-	s.mu.Lock()
 	for _, row := range rows {
-		if _, ok := s.runs[row.ID]; ok {
-			live[row.ID] = true
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
 		}
-		if _, ok := s.heldLeases[row.ID]; ok {
+		if s.IsLive(row.ID) {
+			live[row.ID] = true
+			continue
+		}
+		if !s.cleanupLeaseProbeCandidate(row) {
+			continue
+		}
+		held, err := s.probeMaintenanceMutationLease(ctx, row.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if held {
 			leased[row.ID] = true
 		}
 	}
-	s.mu.Unlock()
-	return live, leased
+	return live, leased, nil
+}
+
+func (s *Service) cleanupLeaseProbeCandidate(row port.SessionDiscoveryMeta) bool {
+	if session.ValidateSessionMetadata(row.Kind, row.Relationship) != nil {
+		return false
+	}
+	switch row.State {
+	case session.StateIdle, session.StateCompleted, session.StateFailed, session.StateCancelled:
+	default:
+		return false
+	}
+	policy := s.cfg.RetentionPolicy
+	switch row.Kind {
+	case session.SessionKindMain:
+		return policy.MainMaxAge > 0 || policy.MainMaxCount > 0
+	case session.SessionKindSubagent, session.SessionKindParallelBranch, session.SessionKindTeamMember:
+		return policy.ChildMaxAge > 0 || policy.ChildMaxCount > 0
+	case session.SessionKindScheduled:
+		return policy.ScheduledMaxAge > 0 || policy.ScheduledMaxCount > 0
+	default:
+		return false
+	}
 }
 
 func cleanupPlanProjection(result sessionretention.Result) CleanupPlan {

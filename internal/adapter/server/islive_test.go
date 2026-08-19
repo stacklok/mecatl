@@ -2,11 +2,18 @@ package server_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // TestServiceIsLiveTracksRunRegistry pins the IsLive contract the composition
@@ -48,41 +55,59 @@ func TestServiceIsLiveTracksRunRegistry(t *testing.T) {
 	}
 }
 
-// TestServiceIsLiveDoesNotKnowEngineChildren is the HONESTY pin: IsLive reads
-// the TOP-LEVEL run registry only, so an engine-spawned child id
-// ("subagent-<callID>" etc.) answers FALSE even while its parent run — the run
-// that is actually driving it — is live. The composition layer's child-session
-// GC therefore cannot rely on the live-skip to protect engine children;
-// their protection is age horizon + snapshot freshness (children persist at
-// their terminal, and a resumed child re-persists at resume start) — see the
-// invariant note on childGC.isLive in internal/app/childgc.go.
-func TestServiceIsLiveDoesNotKnowEngineChildren(t *testing.T) {
-	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), allowRules())
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+type testLiveness struct {
+	mu     sync.Mutex
+	active map[session.SessionID]int
+}
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
+func (r *testLiveness) Register(id session.SessionID) func() {
+	r.mu.Lock()
+	if r.active == nil {
+		r.active = make(map[session.SessionID]int)
 	}
-	run, err := svc.StartRunContent(ctx, sess.ID, "go", nil)
-	if err != nil {
-		t.Fatalf("StartRunContent: %v", err)
-	}
-	defer func() {
-		for range run.Events() {
+	r.active[id]++
+	r.mu.Unlock()
+	return sync.OnceFunc(func() {
+		r.mu.Lock()
+		if r.active[id] <= 1 {
+			delete(r.active, id)
+		} else {
+			r.active[id]--
 		}
-		svc.FinishRun(sess.ID, run)
-	}()
+		r.mu.Unlock()
+	})
+}
 
-	if !svc.IsLive(sess.ID) {
-		t.Fatal("precondition: the parent run must be live")
+func (r *testLiveness) IsLive(id session.SessionID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.active[id] > 0
+}
+
+func TestServiceIsLiveIncludesEngineChildren(t *testing.T) {
+	tracker := &testLiveness{}
+	llm := mockllm.New(mockllm.TextTurn("ok"))
+	engine := agent.NewEngine(agent.Deps{
+		LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test",
+	})
+	svc, err := server.NewService(server.Config{
+		Engine: engine, Store: memstore.New(), SessionLiveness: tracker,
+		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, child := range []session.SessionID{
-		"subagent-" + sess.ID, "parallel-" + sess.ID + "-0", "team-" + sess.ID + "-lead",
-	} {
+	defer svc.Close()
+
+	for _, child := range []session.SessionID{"subagent-child", "parallel-child-0", "team-child-lead"} {
+		release := tracker.Register(child)
+		if !svc.IsLive(child) {
+			t.Fatalf("IsLive(%q) = false for registered engine child", child)
+		}
+		release()
+		release()
 		if svc.IsLive(child) {
-			t.Errorf("IsLive(%q) = true; engine-child ids must NOT appear in the top-level run registry", child)
+			t.Fatalf("IsLive(%q) remained true after terminal release", child)
 		}
 	}
 }
