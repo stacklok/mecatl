@@ -391,19 +391,11 @@ func TestCleanupDeletionReasonsMatchRetentionCandidateOutcomes(t *testing.T) {
 	}
 }
 
-func TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity(t *testing.T) {
-	now := time.Now().UTC()
-	rows := []port.SessionDiscoveryMeta{
-		{ID: "b", ModifiedAt: now.Add(-time.Hour), State: session.StateCompleted, Kind: session.SessionKindMain, Owner: cleanupAlice},
-		{ID: "a", ModifiedAt: now.Add(-2 * time.Hour), State: session.StateCompleted, Kind: session.SessionKindMain, Owner: cleanupAlice},
-	}
-	policy := RetentionPolicy{MainMaxCount: 1}
-	auto := PlanAutomaticRetention(rows, policy, cleanupAlice, nil, nil, now)
-	manual := PlanManualRetention(rows, policy, cleanupAlice, nil, nil, now)
-	if !reflect.DeepEqual(auto.Eligible, manual.Eligible) || auto.Generation != manual.Generation {
-		t.Fatalf("automatic=%+v manual=%+v", auto, manual)
-	}
-}
+// TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity (AC5.5)
+// now lives in internal/app/childgc_test.go, where it can drive the REAL
+// automatic sweep (childGC.sweep) rather than a same-package shim: see the
+// note on PlanManualRetention above for why the old in-package version was
+// tautological.
 
 func TestSessionStorageContinuity_Scenario5_DeterministicCleanupOrdering(t *testing.T) {
 	now := time.Now().UTC()

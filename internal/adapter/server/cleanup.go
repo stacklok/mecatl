@@ -104,16 +104,15 @@ type cleanupTokenPayload struct {
 	IssuedAt       int64    `json:"i"`
 }
 
-// PlanManualRetention and PlanAutomaticRetention intentionally call the same
-// side-effect-free planner. They are separate names only to make parity explicit
-// at their two composition call sites.
+// PlanManualRetention runs the shared, side-effect-free retention planner
+// (sessionretention.Plan) behind the manual cleanup API. internal/app's
+// automatic sweep (childGC.sweep) calls sessionretention.Plan directly with
+// the same policy/scope shape; see
+// TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity in
+// internal/app/childgc_test.go for the cross-check between the two real call
+// sites (AC5.5).
 func PlanManualRetention(rows []port.SessionDiscoveryMeta, policy RetentionPolicy, owner *session.Principal, live, leased map[session.SessionID]bool, now time.Time) sessionretention.Result {
 	return sessionretention.Plan(rows, retentionPlannerPolicy(policy), sessionretention.Scope{Owner: owner}, sessionretention.RuntimeProtection{Live: live, Leased: leased}, now)
-}
-
-// PlanAutomaticRetention invokes the same pure planner as manual cleanup.
-func PlanAutomaticRetention(rows []port.SessionDiscoveryMeta, policy RetentionPolicy, owner *session.Principal, live, leased map[session.SessionID]bool, now time.Time) sessionretention.Result {
-	return PlanManualRetention(rows, policy, owner, live, leased, now)
 }
 
 func retentionPlannerPolicy(policy RetentionPolicy) sessionretention.Policy {

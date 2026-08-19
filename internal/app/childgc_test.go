@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -214,6 +216,56 @@ func TestChildGCMainSessionCountCap(t *testing.T) {
 	}
 	if !got["main-d"] {
 		t.Error("newest main was deleted under the cap pass")
+	}
+}
+
+// TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity (AC5.5)
+// cross-checks the REAL automatic sweep (childGC.sweep — the only production
+// caller of sessionretention.Plan on the automatic path) against
+// server.PlanManualRetention (the manual cleanup planner) over the identical
+// store state, policy, and liveness set. It reads the store's rows BEFORE
+// sweeping (so the manual plan sees the same input the automatic sweep saw),
+// sweeps for real, then asserts the manual planner would have selected
+// exactly the sessions the real sweep actually deleted — a genuine
+// cross-check between the two real call sites, not two names for one
+// same-package shim.
+func TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity(t *testing.T) {
+	f := newGCFixture(t, childGCPolicy{mainMaxTotal: 1})
+	live := map[session.SessionID]bool{"main-a": true}
+	f.gc.isLive = func(id session.SessionID) bool { return live[id] }
+	all := []session.SessionID{"main-a", "main-b", "main-c"}
+	for i, id := range all {
+		f.save(t, id)
+		f.now = f.now.Add(time.Duration(i+1) * time.Minute)
+	}
+
+	rows, err := f.gc.retentionMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("retentionMetadata: %v", err)
+	}
+
+	deleted, _ := f.gc.sweep(context.Background())
+	if deleted == 0 {
+		t.Fatal("expected the real sweep to delete at least one session")
+	}
+	remaining := f.ids(t)
+	var actuallyDeleted []session.SessionID
+	for _, id := range all {
+		if !remaining[id] {
+			actuallyDeleted = append(actuallyDeleted, id)
+		}
+	}
+
+	manual := server.PlanManualRetention(rows, server.RetentionPolicy{MainMaxCount: 1}, nil, live, nil, f.now)
+	var manualEligible []session.SessionID
+	for _, item := range manual.Eligible {
+		manualEligible = append(manualEligible, item.ID)
+	}
+
+	slices.Sort(actuallyDeleted)
+	slices.Sort(manualEligible)
+	if !reflect.DeepEqual(actuallyDeleted, manualEligible) {
+		t.Fatalf("automatic sweep deleted %v, manual planner selected %v — automatic/manual retention diverged", actuallyDeleted, manualEligible)
 	}
 }
 
