@@ -49,7 +49,7 @@ func TestRedisStoreSessionMigrationConformance(t *testing.T) {
 		t.Cleanup(func() { _ = st.Close() })
 		return st
 	}
-	seed := func(t *testing.T, _ port.SessionStore) session.SessionID {
+	seed := func(_ *testing.T, _ port.SessionStore) session.SessionID {
 		return id
 	}
 	storeconformance.RunSessionMigration(t, newStore, seed)
