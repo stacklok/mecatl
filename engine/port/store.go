@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -247,7 +248,7 @@ type SessionStorageHealthProvider interface {
 // single page without a generation-bound continuation. Pager implementations
 // should use PaginateSessionMetadataBound.
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage {
-	page, _ := paginateSessionMetadata(rows, request, "")
+	page, _ := paginateSessionMetadata(rows, request, "", false)
 	return page
 }
 
@@ -261,22 +262,27 @@ func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadat
 // changed" signal (e.g. a counter bumped on every Save/Delete) — this helper
 // does not derive one from rows itself. An earlier version computed a
 // generation by JSON-marshalling and SHA-256-hashing the entire filtered row
-// set on every call, which made every page after the first cost O(total rows)
-// instead of O(page size); that violates the "page work is bounded, not
-// proportional to store size" contract callers rely on (see
-// docs/acceptance/session-storage-continuity.md AC2.1). A caller with no
-// cheaper signal available may still pass a content hash, but should prefer a
-// real counter.
+// set on every call; the real cost that removed is a full JSON encode +
+// SHA-256 of every row on every page (a large constant factor) — the row
+// copy/sort prepareSessionMetadataRows does is still O(rows) per call
+// regardless, so this is not an asymptotic change. A caller with no cheaper
+// signal available may still pass a content hash, but should prefer a real
+// counter. generation must be non-empty: an empty value cannot mean "unbound"
+// here (that's PaginateSessionMetadata) — silently downgrading would let a
+// stale cursor mix rows instead of restarting, exactly what
+// ErrSessionMetadataCursorRestart exists to prevent.
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error) {
-	return paginateSessionMetadata(rows, request, generation)
+	if generation == "" {
+		return SessionMetadataPage{}, fmt.Errorf("port: PaginateSessionMetadataBound requires a non-empty generation")
+	}
+	return paginateSessionMetadata(rows, request, generation, true)
 }
 
 const scanMetadataContinuation = "mecatl-scan-keyset-v1"
 
-func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error) {
+func paginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string, bind bool) (SessionMetadataPage, error) {
 	filtered := prepareSessionMetadataRows(rows, request)
 	scope := metadataPageScope(request)
-	bind := generation != ""
 	if bind && request.Cursor != nil && (request.Cursor.Generation != generation || request.Cursor.Scope != scope ||
 		request.Cursor.Continuation != scanMetadataContinuation) {
 		return SessionMetadataPage{}, ErrSessionMetadataCursorRestart

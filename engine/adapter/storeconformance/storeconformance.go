@@ -927,14 +927,20 @@ func RunSessionMigration(t *testing.T, newStore func(t *testing.T) port.SessionS
 	}
 
 	// Release, then confirm every acquisition-gated call rejects again.
+	// context.WithoutCancel: releasing may cancel boundCtx itself (e.g.
+	// redisstore's release cancels the acquisition's operation context), and
+	// a plain cancelled-context error would make this pass even if the
+	// adapter's OWN ownership fence were broken — it must be the fence being
+	// tested, not ctx cancellation.
 	if err := release(); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 	released = true
-	if err := migrator.CheckSessionMigrationJobOwnership(boundCtx); err == nil {
+	releasedCtx := context.WithoutCancel(boundCtx)
+	if err := migrator.CheckSessionMigrationJobOwnership(releasedCtx); err == nil {
 		t.Fatal("CheckSessionMigrationJobOwnership(released) = nil, want a rejection")
 	}
-	if err := migrator.SaveSessionMigrationJob(boundCtx, job); err == nil {
+	if err := migrator.SaveSessionMigrationJob(releasedCtx, job); err == nil {
 		t.Fatal("SaveSessionMigrationJob(released) = nil, want a rejection")
 	}
 }

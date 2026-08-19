@@ -59,9 +59,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   gives scan-based adapters the same generation and ownership-scope contract as
   indexed stores. The caller supplies its own cheap monotonic generation signal
   (e.g. a counter bumped on mutation) rather than the helper deriving one by
-  hashing the full filtered row set on every call — the latter made every page
-  after the first cost O(total rows) instead of O(page size), violating AC2.1's
-  page-work-bounded contract on memstore, the one adapter that used this helper.
+  JSON-encoding and SHA-256-hashing the full filtered row set on every call — a
+  large constant-factor cost removed from every page after the first on
+  memstore, the one adapter that used this helper (the row copy/sort itself
+  stays O(rows) per call either way, so this is not an asymptotic change).
   Added (minor).
 
 - **Shared session-metadata ordering and owner-scope hashing** ([ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
