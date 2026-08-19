@@ -25,6 +25,35 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+type teamLivenessTracker struct {
+	mu     sync.Mutex
+	active map[session.SessionID]int
+}
+
+func (r *teamLivenessTracker) Register(id session.SessionID) func() {
+	r.mu.Lock()
+	if r.active == nil {
+		r.active = make(map[session.SessionID]int)
+	}
+	r.active[id]++
+	r.mu.Unlock()
+	return sync.OnceFunc(func() {
+		r.mu.Lock()
+		if r.active[id] <= 1 {
+			delete(r.active, id)
+		} else {
+			r.active[id]--
+		}
+		r.mu.Unlock()
+	})
+}
+
+func (r *teamLivenessTracker) IsLive(id session.SessionID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.active[id] > 0
+}
+
 // teamService builds a team-enabled Service whose per-member Engine uses the
 // supplied mockllm provider (shared by all members) and carries that member's
 // coordination tools.
@@ -768,6 +797,63 @@ func TestCleanupTeamRejectsRunning(t *testing.T) {
 	_, err = h.CleanupTeam(ctx, &mecatlv1.CleanupTeamRequest{TeamId: teamID})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("CleanupTeam(already gone): code = %v, want NotFound (err=%v)", status.Code(err), err)
+	}
+}
+
+func TestDirectRunTeamProtectsMembersWithIndependentLiveness(t *testing.T) {
+	tracker := &teamLivenessTracker{}
+	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
+		cat := tool.NewCatalog()
+		for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
+			cat.MustRegister(tl)
+		}
+		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: allow, Model: "mock"})}
+	}
+	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"})
+	svc, err := server.NewService(server.Config{
+		Engine: engine, Store: memstore.New(), Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now: func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine, SessionLiveness: tracker,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	ctx := context.Background()
+	teamID, _, err := svc.CreateTeam(ctx, "/ws", "test", "goal", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}})
+	if err != nil {
+		t.Fatalf("CreateTeamWithRoster: %v", err)
+	}
+	memberID := agent.MemberSessionID(teamID, "lead")
+
+	runCtx, cancel := context.WithCancel(ctx)
+	started := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = svc.RunTeam(runCtx, teamID, func(agent.TeamEvent) {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for direct team member to run")
+	}
+	if !tracker.IsLive(memberID) {
+		t.Fatalf("direct team member %q was not protected while running", memberID)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for direct team cleanup")
+	}
+	if tracker.IsLive(memberID) {
+		t.Fatalf("direct team member %q leaked liveness after cleanup", memberID)
 	}
 }
 

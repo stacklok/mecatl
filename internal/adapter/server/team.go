@@ -185,6 +185,9 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 	if s.cfg.Store != nil {
 		opts = append(opts, agent.WithMemberStore(s.cfg.Store))
 	}
+	if s.cfg.SessionLiveness != nil {
+		opts = append(opts, agent.WithMemberLiveness(s.cfg.SessionLiveness))
+	}
 	// Clamp the per-request budget against the server's ceiling at create time:
 	// tighten-only, so the wire can never loosen the operator's bound.
 	if budget := agent.TightenTeamTokenBudget(s.cfg.TeamTokenBudget, maxTeamTokens); budget > 0 {

@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 
@@ -170,12 +170,17 @@ func migrationOwnerKey(owner *session.Principal) string {
 //
 //nolint:gocyclo // the linear crash-safety transaction keeps every fail-closed checkpoint explicit.
 func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.SessionMigrationFamily) (string, error) {
+	releaseOwnership, err := st.holdMigrationAcquisition(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	defer releaseOwnership()
 	if err := validateSessionID(expected.ID); err != nil {
 		return "invalid_snapshot", nil
 	}
 	path := st.resolver.currentSnapshotPath(expected.ID)
 	var reason string
-	err := st.withSnapshotFamilyLock(ctx, path, func() error {
+	err = st.withSnapshotFamilyLock(ctx, path, func() error {
 		_, info, line, found, err := st.migrationSource(expected.ID)
 		if err != nil {
 			reason = "invalid_snapshot"
@@ -321,8 +326,23 @@ func (st *Store) migrationJobPath(id string) (string, error) {
 type migrationAcquisitionContextKey struct{}
 
 type migrationAcquisition struct {
+	mu     sync.Mutex
+	store  *Store
 	id     string
-	active atomic.Bool
+	active bool
+}
+
+func (st *Store) holdMigrationAcquisition(ctx context.Context, id string) (func(), error) {
+	acquisition, ok := ctx.Value(migrationAcquisitionContextKey{}).(*migrationAcquisition)
+	if !ok || acquisition == nil {
+		return nil, errors.New("jsonlstore: migration job lock acquisition not bound")
+	}
+	acquisition.mu.Lock()
+	if !acquisition.active || acquisition.store != st || id != "" && acquisition.id != id {
+		acquisition.mu.Unlock()
+		return nil, errors.New("jsonlstore: migration job lock acquisition not bound")
+	}
+	return acquisition.mu.Unlock, nil
 }
 
 // AcquireSessionMigrationJob holds one stable cross-process job exclusion until
@@ -346,31 +366,39 @@ func (st *Store) AcquireSessionMigrationJob(ctx context.Context, id string) (con
 		_ = fl.Close()
 		return nil, nil, errors.New("jsonlstore: migration job lock not acquired")
 	}
-	acquisition := &migrationAcquisition{id: id}
-	acquisition.active.Store(true)
+	acquisition := &migrationAcquisition{store: st, id: id, active: true}
 	bound := context.WithValue(ctx, migrationAcquisitionContextKey{}, acquisition)
+	var once sync.Once
+	var releaseErr error
 	return bound, func() error {
-		acquisition.active.Store(false)
-		return fl.Close()
+		once.Do(func() {
+			acquisition.mu.Lock()
+			acquisition.active = false
+			releaseErr = fl.Close()
+			acquisition.mu.Unlock()
+		})
+		return releaseErr
 	}, nil
 }
 
 // CheckSessionMigrationJobOwnership rejects contexts without the active exact
 // acquisition used by this store.
-func (*Store) CheckSessionMigrationJobOwnership(ctx context.Context) error {
-	acquisition, ok := ctx.Value(migrationAcquisitionContextKey{}).(*migrationAcquisition)
-	if !ok || acquisition == nil || !acquisition.active.Load() {
+func (st *Store) CheckSessionMigrationJobOwnership(ctx context.Context) error {
+	release, err := st.holdMigrationAcquisition(ctx, "")
+	if err != nil {
 		return errors.New("jsonlstore: migration job lock lost")
 	}
+	release()
 	return nil
 }
 
 // SaveSessionMigrationJob atomically checkpoints one sanitized durable job record.
 func (st *Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMigrationJob) error {
-	acquisition, ok := ctx.Value(migrationAcquisitionContextKey{}).(*migrationAcquisition)
-	if !ok || acquisition == nil || acquisition.id != job.ID || !acquisition.active.Load() {
-		return errors.New("jsonlstore: migration job lock acquisition not bound")
+	releaseOwnership, err := st.holdMigrationAcquisition(ctx, job.ID)
+	if err != nil {
+		return err
 	}
+	defer releaseOwnership()
 	path, err := st.migrationJobPath(job.ID)
 	if err != nil {
 		return err

@@ -30,6 +30,20 @@ func seedMigrationV1(t *testing.T, st *Store, id session.SessionID) string {
 	return path
 }
 
+func acquireMigrationTestContext(t *testing.T, st *Store) (context.Context, func()) {
+	t.Helper()
+	ctx, release, err := st.AcquireSessionMigrationJob(context.Background(), "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx, func() {
+		t.Helper()
+		if err := release(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailures(t *testing.T) {
 	ctx := context.Background()
 	st, err := newStoreWithSnapshotOps(t.TempDir(), defaultSnapshotOps())
@@ -43,7 +57,9 @@ func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailure
 	}
 	original := st.snapshot.write
 	st.snapshot.write = func(*os.File, []byte) (int, error) { return 0, syscall.ENOSPC }
-	reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0])
+	migrationCtx, releaseMigration := acquireMigrationTestContext(t, st)
+	reason, err := st.MigrateSessionFamily(migrationCtx, inspection.Families[0])
+	releaseMigration()
 	if err != nil || reason != "insufficient_space" {
 		t.Fatalf("space failure = %q, %v", reason, err)
 	}
@@ -69,7 +85,9 @@ func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailure
 	}
 	originalSync := st2.snapshot.syncDir
 	st2.snapshot.syncDir = func(*os.File) error { return errors.New("injected post-rename crash") }
-	reason, err = st2.MigrateSessionFamily(ctx, inspection.Families[0])
+	migrationCtx, releaseMigration = acquireMigrationTestContext(t, st2)
+	defer releaseMigration()
+	reason, err = st2.MigrateSessionFamily(migrationCtx, inspection.Families[0])
 	if err != nil || reason != "backend_failure" {
 		t.Fatalf("post-rename failure = %q, %v", reason, err)
 	}
@@ -80,7 +98,7 @@ func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailure
 		t.Fatalf("promoted v2 is not authoritative: %v", err)
 	}
 	st2.snapshot.syncDir = originalSync
-	reason, err = st2.MigrateSessionFamily(ctx, inspection.Families[0])
+	reason, err = st2.MigrateSessionFamily(migrationCtx, inspection.Families[0])
 	if err != nil || reason != "" {
 		t.Fatalf("retry = %q, %v", reason, err)
 	}
@@ -90,5 +108,50 @@ func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailure
 	matches, err := filepath.Glob(st2.resolver.currentSnapshotPath("post-rename-crash") + snapshotTempMarker + "*")
 	if err != nil || len(matches) > 1 {
 		t.Fatalf("replacement temps = %v, %v", matches, err)
+	}
+}
+
+func TestMigrateSessionFamilyRequiresActiveAcquisition(t *testing.T) {
+	st, err := newStoreWithSnapshotOps(t.TempDir(), defaultSnapshotOps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1Path := seedMigrationV1(t, st, "ownership-boundary")
+	inspection, err := st.InspectSessionMigration(context.Background())
+	if err != nil || len(inspection.Families) != 1 {
+		t.Fatalf("inspection = %+v, %v", inspection, err)
+	}
+	family := inspection.Families[0]
+
+	if _, err := st.MigrateSessionFamily(context.Background(), family); err == nil {
+		t.Fatal("migration without an acquisition succeeded")
+	}
+	if _, err := os.Stat(v1Path); err != nil {
+		t.Fatalf("absent acquisition mutated v1: %v", err)
+	}
+
+	staleCtx, release := acquireMigrationTestContext(t, st)
+	release()
+	if _, err := st.MigrateSessionFamily(staleCtx, family); err == nil {
+		t.Fatal("migration with a released acquisition succeeded")
+	}
+	if _, err := os.Stat(v1Path); err != nil {
+		t.Fatalf("stale acquisition mutated v1: %v", err)
+	}
+
+	other, err := newStoreWithSnapshotOps(t.TempDir(), defaultSnapshotOps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignCtx, releaseForeign := acquireMigrationTestContext(t, other)
+	defer releaseForeign()
+	if _, err := st.MigrateSessionFamily(foreignCtx, family); err == nil {
+		t.Fatal("migration with another store's acquisition succeeded")
+	}
+	if _, err := os.Stat(v1Path); err != nil {
+		t.Fatalf("foreign acquisition mutated v1: %v", err)
+	}
+	if _, err := os.Stat(st.resolver.currentSnapshotPath(family.ID)); !os.IsNotExist(err) {
+		t.Fatalf("rejected migrations created v2: %v", err)
 	}
 }

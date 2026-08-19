@@ -355,6 +355,11 @@ type Supervisor struct {
 	// running (members drain on independent errgroup goroutines), and the late verdict
 	// routes back via the parent router keyed on the member's child-namespaced askID.
 	caps parentCaps
+	// liveness is an optional process-local maintenance exclusion owned by the
+	// supervisor lifecycle. It is deliberately independent of caps: direct Service
+	// RunTeam supervisors keep zero permission/ask capabilities while still protecting
+	// member sessions from retention for the full Run lifetime.
+	liveness port.SessionLiveness
 
 	members map[string]*memberRT
 	order   []string
@@ -389,9 +394,13 @@ type memberRT struct {
 	// ctx-Err check instead. Both fields are immutable after AddMember, so
 	// CancelMember may be called from any goroutine. nil on a memberRT constructed
 	// outside AddMember (internal tests) — every reader nil-guards.
-	ctx        context.Context
-	cancel     context.CancelFunc
-	ranInitial bool
+	// releaseLiveness ends the supervisor-owned process-local maintenance
+	// exclusion. It is registered at Run entry before any member can be driven and
+	// released only by cleanupAll, including cancellation/error/pre-start exits.
+	releaseLiveness func()
+	ctx             context.Context
+	cancel          context.CancelFunc
+	ranInitial      bool
 	// ran reports that this member was DRIVEN at least once (set at the top of
 	// driveOneTurn — rounds AND the lead-synthesis drive). cleanupAll reads it for
 	// the A5 ghost-entry vocabulary: a never-driven, never-cancelled member (an
@@ -638,6 +647,15 @@ func WithUntrustedGoal(untrusted bool) SupervisorOption {
 // the agent-internal parentCaps, so it is unexported (no adapter type crosses).
 func withParentCaps(caps parentCaps) SupervisorOption {
 	return func(s *Supervisor) { s.caps = caps }
+}
+
+// WithMemberLiveness injects the process-local maintenance exclusion used for
+// team-member sessions. Run registers every member before scheduling begins and
+// cleanupAll releases each registration after the between-round and synthesis
+// lifecycle has ended. This capability is independent of parent permission/ask
+// capabilities, so a direct Service RunTeam can remain zero-capability.
+func WithMemberLiveness(liveness port.SessionLiveness) SupervisorOption {
+	return func(s *Supervisor) { s.liveness = liveness }
 }
 
 // WithMemberStore injects the optional session store the supervisor uses to persist
@@ -1122,6 +1140,17 @@ type turnInput struct {
 // run is bounded by ctx: cancelling it stops scheduling further rounds and lets the
 // in-flight round finish. Forked member workspaces are cleaned up on return.
 func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome {
+	// Direct Service RunTeam has no parent child registry by design. Register its
+	// members through the independent lifecycle capability before planning can run;
+	// registrations remain held through idle rounds and lead synthesis.
+	if s.liveness != nil {
+		for _, name := range s.order {
+			m := s.members[name]
+			if m != nil && m.sess != nil && m.releaseLiveness == nil {
+				m.releaseLiveness = s.liveness.Register(m.sess.ID)
+			}
+		}
+	}
 	defer s.cleanupAll()
 	if sink == nil {
 		sink = func(TeamEvent) {}
@@ -1891,6 +1920,10 @@ func (s *Supervisor) cleanupAll() {
 				s.caps.abortChildRun(m.sess.ID)
 			}
 			s.caps.releaseChildLiveness(m.sess.ID)
+		}
+		if m.releaseLiveness != nil {
+			m.releaseLiveness()
+			m.releaseLiveness = nil
 		}
 		if m.cleanup != nil {
 			_ = m.cleanup()

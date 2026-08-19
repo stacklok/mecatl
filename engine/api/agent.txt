@@ -140,6 +140,7 @@ func WithMaxBranches(n int) ParallelOption
 func WithMaxConcurrentChildren(n int) SubagentOption
 func WithMaxRounds(n int) SupervisorOption
 func WithMemberErrorRetries(n int) SupervisorOption
+func WithMemberLiveness(liveness port.SessionLiveness) SupervisorOption
 func WithMemberSessionPrefix(p string) SupervisorOption
 func WithMemberStore(store port.SessionStore) SupervisorOption
 func WithMemberTurnBudget(n int) SupervisorOption
