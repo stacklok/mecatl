@@ -58,6 +58,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   explicit, and `PaginateSessionMetadataBound` gives scan-based adapters the same
   generation and ownership-scope contract as indexed stores. Added (minor).
 
+- **Shared session-metadata ordering and owner-scope hashing** ([ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
+  `port.CompareSessionMetadataOrder` is the one comparator for the pagination
+  ordering (`ModifiedAt` DESC, `ID` ASC) that `port`, jsonlstore, and redisstore
+  already had to agree on independently; `session.PrincipalScopeHash` is the raw
+  `sha256(Issuer + "\x00" + Subject)` primitive `port`, jsonlstore, and redisstore
+  build their own prefixed/truncated owner scope keys on top of. Both are
+  extractions of pre-existing, unchanged behavior — no on-disk or wire format
+  changed. Added (minor).
+
 - **Validated automatic learned-skill activation ([ADR 0224](../docs/adr/0224-validated-automatic-skill-activation.md))** —
   `learning.SkillActivationPolicy` adds the closed validated/evaluated assurance vocabulary and
   `learning.ValidatedSkillActivator` adds an optional atomic repository capability for

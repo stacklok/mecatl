@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -212,7 +213,7 @@ func inventoryOwnerScope(owner *session.Principal) string {
 	if owner == nil {
 		return "owner:none"
 	}
-	sum := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	sum := session.PrincipalScopeHash(owner)
 	return "owner:" + hex.EncodeToString(sum[:])
 }
 
@@ -311,12 +312,7 @@ func validInventoryRows(rows []port.SessionDiscoveryMeta) bool {
 }
 
 func sortInventoryRows(rows []port.SessionDiscoveryMeta) {
-	sort.Slice(rows, func(i, j int) bool {
-		if !rows[i].ModifiedAt.Equal(rows[j].ModifiedAt) {
-			return rows[i].ModifiedAt.After(rows[j].ModifiedAt)
-		}
-		return rows[i].ID < rows[j].ID
-	})
+	slices.SortFunc(rows, port.CompareSessionMetadataOrder)
 }
 
 func (st *Store) writeInventoryCatalog(fingerprint string, sources map[string]inventoryCatalogSource, rows []port.SessionDiscoveryMeta) error {
@@ -386,8 +382,7 @@ func (st *Store) writeInventoryFile(path string, data []byte) error {
 }
 
 func (st *Store) writeInventoryFileWithPattern(path string, data []byte, pattern string) error {
-	name, err := st.inventoryCatalogRelativePath(path)
-	if err != nil {
+	if _, err := st.inventoryCatalogRelativePath(path); err != nil {
 		return err
 	}
 	root, err := st.inventoryCatalogRoot()
@@ -395,47 +390,13 @@ func (st *Store) writeInventoryFileWithPattern(path string, data []byte, pattern
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	tmp, err := os.CreateTemp(st.inventoryCatalogDir(), pattern) //nolint:gosec // CreateTemp creates an adapter-private temporary in the owner-only catalog directory.
-	if err != nil {
-		return fmt.Errorf("jsonlstore: create inventory catalog temporary: %w", err)
-	}
-	tmpName, err := st.inventoryCatalogRelativePath(tmp.Name())
-	if err != nil {
-		_ = tmp.Close()
-		_ = root.Remove(filepath.Base(tmp.Name()))
-		return fmt.Errorf("jsonlstore: validate inventory catalog temporary: %w", err)
-	}
-	defer func() {
-		_ = tmp.Close()
-		_ = root.Remove(tmpName)
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		return fmt.Errorf("jsonlstore: chmod inventory catalog temporary: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("jsonlstore: write inventory catalog: %w", err)
-	}
-	if st.durability.FileSync {
-		if err := tmp.Sync(); err != nil {
-			return fmt.Errorf("jsonlstore: sync inventory catalog: %w", err)
-		}
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("jsonlstore: close inventory catalog: %w", err)
-	}
-	if err := root.Rename(tmpName, name); err != nil {
-		return fmt.Errorf("jsonlstore: replace inventory catalog: %w", err)
-	}
-	if !st.durability.DirectorySync {
-		return nil
-	}
-	dir, err := os.Open(st.inventoryCatalogDir()) //nolint:gosec // adapter-private owner-only path
-	if err != nil {
-		return fmt.Errorf("jsonlstore: open inventory catalog directory: %w", err)
-	}
-	defer func() { _ = dir.Close() }()
-	if err := dir.Sync(); err != nil {
-		return fmt.Errorf("jsonlstore: sync inventory catalog directory: %w", err)
-	}
-	return nil
+	// defaultSnapshotOps, NOT st.snapshot: st.snapshot is the store's
+	// fault-injectable ops used by crash-safety tests to simulate a failure
+	// during the SNAPSHOT write. advanceInventoryGeneration runs first in
+	// Save/MigrateSessionFamily, so an injected fault here would fire on the
+	// inventory-catalog write before the snapshot write it's meant to test
+	// ever happens — masking the durability property under test and
+	// misclassifying disk-full errors (e.g. ENOSPC) that migration.go only
+	// maps to a sanitized reason code at the snapshot call site.
+	return replaceCurrentSnapshot(path, data, time.Time{}, pattern, defaultSnapshotOps(), st.durability, root)
 }

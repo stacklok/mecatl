@@ -411,20 +411,30 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
 		}
 		generation := st.tempGeneration.Add(1)
-		return replaceCurrentSnapshot(path, data, modifiedAt, st.tempOwner, generation, st.snapshot, st.durability)
+		pattern := snapshotTempPattern(path, st.tempOwner, generation)
+		return replaceCurrentSnapshot(path, data, modifiedAt, pattern, st.snapshot, st.durability, nil)
 	})
 }
 
+// replaceCurrentSnapshot durably replaces the file at path with data via
+// create-temp-in-same-dir -> write -> optional stamp/fsync -> rename ->
+// optional directory fsync. tempPattern is the os.CreateTemp glob pattern
+// (callers own its naming scheme — e.g. snapshotTempPattern's owner/generation
+// stem, or a caller-private literal pattern); a zero modifiedAt skips the
+// mtime stamp. root, when non-nil, confines the rename/cleanup step to that
+// already-open directory root instead of the raw path (defense-in-depth for
+// a caller whose target directory warrants it); it is opened and closed by
+// the caller, never here.
 func replaceCurrentSnapshot(
 	path string,
 	data []byte,
 	modifiedAt time.Time,
-	tempOwner string,
-	tempGeneration uint64,
+	tempPattern string,
 	ops snapshotOps,
 	durability SnapshotDurabilityCapability,
+	root *os.Root,
 ) (retErr error) {
-	tmp, err := ops.createTemp(filepath.Dir(path), snapshotTempPattern(path, tempOwner, tempGeneration)) //nolint:gosec // owner-only store dir
+	tmp, err := ops.createTemp(filepath.Dir(path), tempPattern) //nolint:gosec // owner-only store dir
 	if err != nil {
 		return fmt.Errorf("jsonlstore: create snapshot temp: %w", err)
 	}
@@ -432,7 +442,11 @@ func replaceCurrentSnapshot(
 	defer func() {
 		_ = tmp.Close()
 		if retErr != nil {
-			_ = os.Remove(tmpPath)
+			if root != nil {
+				_ = root.Remove(filepath.Base(tmpPath))
+			} else {
+				_ = os.Remove(tmpPath)
+			}
 		}
 	}()
 	written, err := ops.write(tmp, data)
@@ -442,8 +456,10 @@ func replaceCurrentSnapshot(
 	if written != len(data) {
 		return fmt.Errorf("jsonlstore: write snapshot temp: wrote %d of %d bytes: %w", written, len(data), io.ErrShortWrite)
 	}
-	if err := os.Chtimes(tmpPath, modifiedAt, modifiedAt); err != nil {
-		return fmt.Errorf("jsonlstore: stamp snapshot temp: %w", err)
+	if !modifiedAt.IsZero() {
+		if err := os.Chtimes(tmpPath, modifiedAt, modifiedAt); err != nil {
+			return fmt.Errorf("jsonlstore: stamp snapshot temp: %w", err)
+		}
 	}
 	if durability.FileSync {
 		if err := ops.syncFile(tmp); err != nil {
@@ -453,7 +469,11 @@ func replaceCurrentSnapshot(
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("jsonlstore: close snapshot temp: %w", err)
 	}
-	if err := ops.rename(tmpPath, path); err != nil {
+	if root != nil {
+		if err := root.Rename(filepath.Base(tmpPath), filepath.Base(path)); err != nil {
+			return fmt.Errorf("jsonlstore: replace current snapshot: %w", err)
+		}
+	} else if err := ops.rename(tmpPath, path); err != nil {
 		return fmt.Errorf("jsonlstore: replace current snapshot: %w", err)
 	}
 	if !durability.DirectorySync {

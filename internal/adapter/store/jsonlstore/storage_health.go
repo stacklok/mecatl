@@ -92,9 +92,9 @@ func (st *Store) measureStorageFiles(health *port.SessionStorageHealth) error {
 			health.FileCount++
 			health.CurrentBytes += info.Size()
 			switch {
-			case strings.HasSuffix(name, ".session.jsonl"):
+			case strings.HasSuffix(name, sessionFileSuffix):
 				health.V1Count++
-			case strings.HasSuffix(name, ".session.json"):
+			case strings.HasSuffix(name, currentSnapshotSuffix):
 				health.V2Count++
 			}
 		}
@@ -106,6 +106,6 @@ func (st *Store) measureStorageFiles(health *port.SessionStorageHealth) error {
 }
 
 func isSessionStorageFile(name string) bool {
-	return strings.HasSuffix(name, ".session.json") || strings.HasSuffix(name, ".session.jsonl") ||
-		strings.HasSuffix(name, ".tools.jsonl") || strings.HasSuffix(name, ".events.jsonl")
+	return strings.HasSuffix(name, currentSnapshotSuffix) || strings.HasSuffix(name, sessionFileSuffix) ||
+		strings.HasSuffix(name, toolsFileSuffix) || strings.HasSuffix(name, eventsFileSuffix)
 }

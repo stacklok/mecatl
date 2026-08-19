@@ -1,6 +1,7 @@
 package session
 
 import (
+	"crypto/sha256"
 	"errors"
 	"strings"
 )
@@ -139,6 +140,20 @@ func claimString(claims map[string]any, key string) string {
 // normalized. An absent principal never identifies an owner.
 func (p *Principal) SameIdentity(other *Principal) bool {
 	return p != nil && other != nil && p.Issuer == other.Issuer && p.Subject == other.Subject
+}
+
+// PrincipalScopeHash returns the SHA-256 digest of p's (Issuer, Subject)
+// identity pair, joined by a NUL separator — the raw hash core several
+// owner-scope-keying call sites build on top of with their own nil-handling,
+// prefix, and truncation conventions (which are load-bearing for their
+// on-disk/wire formats and must NOT be changed here). A nil p hashes the
+// empty string; callers that need a distinct nil representation apply that
+// before calling this.
+func PrincipalScopeHash(p *Principal) [32]byte {
+	if p == nil {
+		return sha256.Sum256(nil)
+	}
+	return sha256.Sum256([]byte(p.Issuer + "\x00" + p.Subject))
 }
 
 // Authority is Track C's placeholder label on the Session aggregate. It is

@@ -1,13 +1,14 @@
 package port
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -326,13 +327,19 @@ func prepareSessionMetadataRows(rows []SessionDiscoveryMeta, request SessionMeta
 		}
 		filtered = append(filtered, row)
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		if !filtered[i].ModifiedAt.Equal(filtered[j].ModifiedAt) {
-			return filtered[i].ModifiedAt.After(filtered[j].ModifiedAt)
-		}
-		return filtered[i].ID < filtered[j].ID
-	})
+	slices.SortFunc(filtered, CompareSessionMetadataOrder)
 	return filtered
+}
+
+// CompareSessionMetadataOrder is the shared (ModifiedAt DESC, ID ASC) ordering
+// every SessionMetadataPager/MetaLister implementation sorts session inventory
+// rows by. It returns a negative number when a sorts before b, zero when the
+// two share the same order key, and a positive number when a sorts after b.
+func CompareSessionMetadataOrder(a, b SessionDiscoveryMeta) int {
+	if c := b.ModifiedAt.Compare(a.ModifiedAt); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.ID, b.ID)
 }
 
 func metadataPageScope(request SessionMetadataPageRequest) string {
@@ -342,7 +349,7 @@ func metadataPageScope(request SessionMetadataPageRequest) string {
 	if request.Owner == nil {
 		return "owner:none"
 	}
-	sum := sha256.Sum256([]byte(request.Owner.Issuer + "\x00" + request.Owner.Subject))
+	sum := session.PrincipalScopeHash(request.Owner)
 	return "owner:" + hex.EncodeToString(sum[:])
 }
 

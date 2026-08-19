@@ -92,6 +92,7 @@ const SessionMigrationRunning SessionMigrationState = "running"
 const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0
 const TriggerOneShot TriggerKind = 2
+func CompareSessionMetadataOrder(a SessionDiscoveryMeta, b SessionDiscoveryMeta) int
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) (SessionMetadataPage, error)
 func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content

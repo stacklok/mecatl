@@ -160,7 +160,7 @@ func migrationOwnerKey(owner *session.Principal) string {
 	if owner == nil {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	sum := session.PrincipalScopeHash(owner)
 	return hex.EncodeToString(sum[:16])
 }
 
@@ -230,7 +230,8 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 				reason = "invalid_snapshot"
 				return nil
 			}
-			if err := replaceCurrentSnapshot(path, data, info.ModTime(), st.tempOwner, st.tempGeneration.Add(1), st.snapshot, st.durability); err != nil {
+			pattern := snapshotTempPattern(path, st.tempOwner, st.tempGeneration.Add(1))
+			if err := replaceCurrentSnapshot(path, data, info.ModTime(), pattern, st.snapshot, st.durability, nil); err != nil {
 				if errors.Is(err, syscall.ENOSPC) {
 					reason = "insufficient_space"
 					return nil
@@ -410,7 +411,8 @@ func (st *Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMi
 	if err != nil {
 		return fmt.Errorf("jsonlstore: encode migration job: %w", err)
 	}
-	return replaceCurrentSnapshot(path, data, time.Now(), st.tempOwner, st.tempGeneration.Add(1), st.snapshot, st.durability)
+	pattern := snapshotTempPattern(path, st.tempOwner, st.tempGeneration.Add(1))
+	return replaceCurrentSnapshot(path, data, time.Now(), pattern, st.snapshot, st.durability, nil)
 }
 
 // LoadSessionMigrationJob reloads one validated durable job record by opaque handle.

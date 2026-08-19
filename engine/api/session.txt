@@ -188,6 +188,7 @@ func NewUserMessageWithParts(text string, parts []Content) Message
 func ParseArgs(call ToolCall, dst any) (msg string, ok bool)
 func PrincipalFromClaims(claims map[string]any) *Principal
 func PrincipalFromContext(ctx context.Context) *Principal
+func PrincipalScopeHash(p *Principal) [32]byte
 func RepairToolResult(r ToolResult) ToolResult
 func StripProviderState(messages []Message) []Message
 func ToValidUTF8(s string) string

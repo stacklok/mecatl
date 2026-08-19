@@ -419,8 +419,8 @@ func decodeInventoryPageRow(line []byte, request port.SessionMetadataPageRequest
 }
 
 func metadataRowAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadataCursor) bool {
-	return row.ModifiedAt.Before(cursor.ModifiedAt) ||
-		(row.ModifiedAt.Equal(cursor.ModifiedAt) && row.ID > cursor.ID)
+	cursorRow := port.SessionDiscoveryMeta{ModifiedAt: cursor.ModifiedAt, ID: cursor.ID}
+	return port.CompareSessionMetadataOrder(row, cursorRow) > 0
 }
 
 // readLastLineAt returns the last non-blank record without reading older history.

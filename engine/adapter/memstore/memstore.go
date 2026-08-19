@@ -9,6 +9,7 @@ package memstore
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"sync"
 	"time"
@@ -212,7 +213,7 @@ func estimateContentBytes(part session.Content) int64 {
 }
 
 func encodedBytesLen(n int) int {
-	return ((n + 2) / 3) * 4
+	return base64.StdEncoding.EncodedLen(n)
 }
 
 // DeleteSessionIfUnchanged atomically revalidates metadata and deletes the
