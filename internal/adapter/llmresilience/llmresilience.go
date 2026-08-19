@@ -143,28 +143,11 @@ var ErrCredentials = errors.New("credential unavailable")
 type BreakerError struct {
 	// RetryAfter is how long until the breaker half-opens.
 	RetryAfter time.Duration
-	// Cause is the failure that most recently opened the breaker, or nil when
-	// the breaker was opened by a provider that reported none.
-	//
-	// Without it this error is a dead end for diagnosis: the breaker rejection
-	// replaces the failure that caused it, so an operator reading a turn that
-	// died sees only a cooldown and never learns what went wrong. That is
-	// especially costly when the cause names its own remediation, which a
-	// credential failure does.
-	Cause error
 }
 
 func (e *BreakerError) Error() string {
-	if e.Cause == nil {
-		return fmt.Sprintf("llmresilience: circuit breaker open, retry after %s", e.RetryAfter)
-	}
-	return fmt.Sprintf("llmresilience: circuit breaker open, retry after %s (last failure: %v)",
-		e.RetryAfter, e.Cause)
+	return fmt.Sprintf("llmresilience: circuit breaker open, retry after %s", e.RetryAfter)
 }
-
-// Unwrap exposes the opening cause so errors.Is/As reach it through the
-// rejection.
-func (e *BreakerError) Unwrap() error { return e.Cause }
 
 // ExhaustedError is returned when every attempt to establish the stream failed.
 // It wraps the last underlying error.
@@ -288,9 +271,6 @@ type breakerState struct {
 	openedAt time.Time
 	// halfOpen is true when a single trial is permitted after cooldown.
 	halfOpen bool
-	// lastErr is the failure that most recently opened the breaker, carried onto
-	// every BreakerError so a rejection still names its cause.
-	lastErr error
 }
 
 type resilientProvider struct {
@@ -398,9 +378,9 @@ func (p *resilientProvider) allow(now time.Time) error {
 	}
 	elapsed := now.Sub(p.breaker.openedAt)
 	if elapsed < p.cfg.BreakerCooldown {
-		return &BreakerError{RetryAfter: p.cfg.BreakerCooldown - elapsed, Cause: p.breaker.lastErr}
+		return &BreakerError{RetryAfter: p.cfg.BreakerCooldown - elapsed}
 	}
-	// Cooldown elapsed: admit a single half-open trial.
+	// Cooldown elapsed: admit a half-open trial.
 	p.breaker.halfOpen = true
 	p.diag().Log(context.Background(), port.LevelInfo, "llm circuit breaker half-open; admitting a trial")
 	return nil
@@ -416,7 +396,6 @@ func (p *resilientProvider) recordSuccess() {
 	p.breaker.consecutiveFailures = 0
 	p.breaker.open = false
 	p.breaker.halfOpen = false
-	p.breaker.lastErr = nil
 	p.breaker.mu.Unlock()
 	if wasOpen {
 		p.diag().Log(context.Background(), port.LevelInfo, "llm circuit breaker closed (recovered)")
@@ -429,21 +408,20 @@ func (p *resilientProvider) recordSuccess() {
 // network errors, per-attempt timeouts — see isTransientForBreaker); permanent
 // client errors (4xx other than 408/429) and caller cancellations are
 // breaker-neutral and never reach here.
-func (p *resilientProvider) recordFailure(now time.Time, cause error) {
+func (p *resilientProvider) recordFailure(now time.Time) {
 	if p.cfg.BreakerThreshold < 1 {
 		return
 	}
 	p.breaker.mu.Lock()
-	p.breaker.lastErr = cause
-	// A half-open trial leaves open=true (allow() sets halfOpen without clearing
-	// open), so a failed trial is NOT a closed→open crossing by the open bit
-	// alone. Treat a failed half-open trial as its own crossing: it is an
-	// operator-meaningful "breaker re-opened" event. `crossing` is therefore the
-	// UNION of (closed→open) and (half-open trial failed and re-opened).
-	wasOpen := p.breaker.open
+	// A failure from an attempt already in flight when another request opened the
+	// breaker must not restart its cooldown or overwrite its opening state.
+	if p.breaker.open && !p.breaker.halfOpen {
+		p.breaker.mu.Unlock()
+		return
+	}
 	wasHalfOpen := p.breaker.halfOpen
 	p.breaker.consecutiveFailures++
-	if p.breaker.halfOpen {
+	if wasHalfOpen {
 		// A failed trial re-opens the breaker and restarts the cooldown.
 		p.breaker.halfOpen = false
 		p.breaker.open = true
@@ -452,8 +430,8 @@ func (p *resilientProvider) recordFailure(now time.Time, cause error) {
 		p.breaker.open = true
 		p.breaker.openedAt = now
 	}
-	// Emit on a fresh closed→open crossing OR on a half-open→open re-open.
-	opened := p.breaker.open && (!wasOpen || wasHalfOpen)
+	// Emit on a fresh closed→open crossing or on a failed half-open trial.
+	opened := p.breaker.open && (wasHalfOpen || p.breaker.consecutiveFailures == p.cfg.BreakerThreshold)
 	failures := p.breaker.consecutiveFailures
 	p.breaker.mu.Unlock()
 	// Log the open transition exactly once per crossing: the initial
@@ -543,7 +521,7 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 		// the breaker in open&halfOpen — the next allow re-admits a trial after
 		// cooldown; permanent errors never drive breaker state.)
 		if isTransientForBreaker(err) {
-			p.recordFailure(p.cfg.Clock(), err)
+			p.recordFailure(p.cfg.Clock())
 		}
 		// A per-attempt timeout (establishment deadline) is a distinct, diagnosable
 		// stall signal — surface it before backing off / retrying.

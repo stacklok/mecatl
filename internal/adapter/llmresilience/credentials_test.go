@@ -128,41 +128,56 @@ func TestCredentialFailureSurfacesOnFirstAttemptAndNeverOpensBreaker(t *testing.
 	}
 }
 
-// ── BreakerError carries the cause that opened it ────────────────────────────
+// ── Breaker rejections never expose a prior request's failure ─────────────────
 
-func TestBreakerErrorCarriesOpeningCause(t *testing.T) {
-	cause := apiErr(503)
-	f := &fakeProvider{steps: []step{{outerErr: cause}, {outerErr: cause}}}
+func TestBreakerRejectionIsGeneric(t *testing.T) {
+	cause := errors.New("session-a credential: secret remediation detail")
+	f := &fakeProvider{steps: []step{{outerErr: fmt.Errorf("%w: %w", cause, apiErr(503))}}}
 	cfg := tinyBackoffCfg(1)
 	cfg.BreakerThreshold = 1
 	cfg.BreakerCooldown = 30 * time.Second
 	p := Wrap(f, cfg)
 
-	// First turn trips the breaker (threshold 1).
+	// First request trips the shared breaker.
 	if _, err := p.Stream(context.Background(), port.LLMRequest{}); err == nil {
-		t.Fatal("expected the first turn to fail")
+		t.Fatal("expected the first request to fail")
 	}
 
-	// Second turn is rejected by the open breaker and must still name the cause.
+	// A later request must get a cooldown-only error, not session A's error.
 	_, err := p.Stream(context.Background(), port.LLMRequest{})
 	var breakerErr *BreakerError
 	if !errors.As(err, &breakerErr) {
 		t.Fatalf("err = %v, want a *BreakerError", err)
 	}
-	if breakerErr.Cause == nil {
-		t.Fatal("BreakerError.Cause must name the failure that opened the breaker")
+	if errors.Is(err, cause) {
+		t.Fatalf("breaker rejection must not unwrap the opening failure: %v", err)
 	}
-	if !errors.Is(err, cause) {
-		t.Fatalf("the opening cause must be reachable through the rejection, got %v", err)
+	if strings.Contains(err.Error(), cause.Error()) {
+		t.Fatalf("breaker rejection must not render the opening failure: %q", err)
 	}
-	if !strings.Contains(err.Error(), "last failure") {
-		t.Fatalf("the rendered message must mention the cause, got %q", err.Error())
+	if breakerErr.RetryAfter <= 0 || breakerErr.RetryAfter > cfg.BreakerCooldown {
+		t.Fatalf("RetryAfter = %s, want a positive duration no greater than %s", breakerErr.RetryAfter, cfg.BreakerCooldown)
 	}
 }
 
-func TestBreakerErrorWithoutCauseKeepsOriginalMessage(t *testing.T) {
-	e := &BreakerError{RetryAfter: 30 * time.Second}
-	if got, want := e.Error(), "llmresilience: circuit breaker open, retry after 30s"; got != want {
-		t.Fatalf("Error() = %q, want %q", got, want)
+func TestBreakerCooldownStartsAtInitialOpening(t *testing.T) {
+	openedAt := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	p := &resilientProvider{cfg: Config{
+		BreakerThreshold: 1,
+		BreakerCooldown:  30 * time.Second,
+	}}
+
+	p.recordFailure(openedAt)
+	// Model an attempt that was already in flight when the breaker opened and
+	// fails later. It must not extend the existing cooldown.
+	p.recordFailure(openedAt.Add(10 * time.Second))
+
+	err := p.allow(openedAt.Add(29 * time.Second))
+	var breakerErr *BreakerError
+	if !errors.As(err, &breakerErr) {
+		t.Fatalf("allow() error = %v, want a *BreakerError", err)
+	}
+	if got, want := breakerErr.RetryAfter, time.Second; got != want {
+		t.Fatalf("RetryAfter = %s, want %s (from the initial opening)", got, want)
 	}
 }
