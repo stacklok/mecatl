@@ -2,10 +2,11 @@
 package sessionretention
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -81,12 +82,7 @@ type Result struct {
 
 // ContainsEligible reports whether id is selected for cleanup.
 func (r Result) ContainsEligible(id session.SessionID) bool {
-	for _, item := range r.Eligible {
-		if item.ID == id {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(r.Eligible, func(item Item) bool { return item.ID == id })
 }
 
 // Plan selects oldest-first candidates without performing I/O or mutation.
@@ -178,11 +174,8 @@ func limits(kind session.SessionKind, policy Policy) (time.Duration, int) {
 }
 
 func sortItems(items []Item) {
-	sort.Slice(items, func(i, j int) bool {
-		if !items[i].ModifiedAt.Equal(items[j].ModifiedAt) {
-			return items[i].ModifiedAt.Before(items[j].ModifiedAt)
-		}
-		return items[i].ID < items[j].ID
+	slices.SortStableFunc(items, func(a, b Item) int {
+		return cmp.Or(a.ModifiedAt.Compare(b.ModifiedAt), cmp.Compare(a.ID, b.ID))
 	})
 }
 
@@ -224,8 +217,8 @@ func generation(rows []Item, policy Policy, scope Scope, protection RuntimeProte
 			payload.Leased = append(payload.Leased, id)
 		}
 	}
-	sort.Slice(payload.Live, func(i, j int) bool { return payload.Live[i] < payload.Live[j] })
-	sort.Slice(payload.Leased, func(i, j int) bool { return payload.Leased[i] < payload.Leased[j] })
+	slices.Sort(payload.Live)
+	slices.Sort(payload.Leased)
 	encoded, _ := json.Marshal(payload)
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
