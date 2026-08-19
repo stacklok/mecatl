@@ -117,7 +117,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 	}
 	m = applyAll(m, cmd())
 	dryRun := stripANSIstr(m.View().Content)
-	for _, want := range []string{"Optimize storage", "Sessions are preserved", "v1: 7", "v2: 9", "Invalid: 2", "Skipped: 3", "Reclaimable: 4.0 KiB", "Temporary space required: 2.0 KiB"} {
+	for _, want := range []string{"Optimize storage", "Sessions are preserved", "v1: 7", "v2: 9", "Invalid: 2", "Skipped: 3", "Reclaimable: 4.1 KB", "Temporary space required: 2 KB"} {
 		if !strings.Contains(dryRun, want) {
 			t.Fatalf("optimize dry-run missing %q:\n%s", want, dryRun)
 		}

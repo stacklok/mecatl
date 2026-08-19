@@ -188,7 +188,6 @@ type sessionsState struct {
 	handles   map[string]string
 	filter    textinput.Model
 	cursor    int
-	scroll    int
 	selected  client.SessionListItem
 	inspect   bool
 	loadErr   error
@@ -636,26 +635,6 @@ func (m Model) onStartupSessionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 
 const sessionsVisibleRows = 12
 
-func (m Model) keepSessionCursorVisible() Model {
-	if m.sessions.cursor < m.sessions.scroll {
-		m.sessions.scroll = m.sessions.cursor
-	}
-	if m.sessions.cursor >= m.sessions.scroll+sessionsVisibleRows {
-		m.sessions.scroll = m.sessions.cursor - sessionsVisibleRows + 1
-	}
-	maxScroll := len(m.sessions.filtered) - sessionsVisibleRows
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if m.sessions.scroll > maxScroll {
-		m.sessions.scroll = maxScroll
-	}
-	if m.sessions.scroll < 0 {
-		m.sessions.scroll = 0
-	}
-	return m
-}
-
 func (m Model) onSessionsNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -670,24 +649,20 @@ func (m Model) onSessionsNavigationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd,
 		if m.sessions.cursor > 0 {
 			m.sessions.cursor--
 		}
-		m = m.keepSessionCursorVisible()
 		m = m.invalidateAdoptionPreflight()
 		return m, m.adoptionPreflightCmd(), true
 	case msg.String() == keyMenuDown:
 		if m.sessions.cursor < len(m.sessions.filtered)-1 {
 			m.sessions.cursor++
 		}
-		m = m.keepSessionCursorVisible()
 		m = m.invalidateAdoptionPreflight()
 		return m, m.adoptionPreflightCmd(), true
 	case key.Matches(msg, m.keys.ScrollTop):
 		m.sessions.cursor = 0
-		m.sessions.scroll = 0
 		m = m.invalidateAdoptionPreflight()
 		return m, m.adoptionPreflightCmd(), true
 	case key.Matches(msg, m.keys.ScrollBottom):
 		m.sessions.cursor = clampModelsCursor(len(m.sessions.filtered)-1, len(m.sessions.filtered))
-		m = m.keepSessionCursorVisible()
 		m = m.invalidateAdoptionPreflight()
 		return m, m.adoptionPreflightCmd(), true
 	case key.Matches(msg, m.keys.Choose):
@@ -723,7 +698,7 @@ func (m Model) syncSessionsFilter() Model {
 	if m.sessions.cursor >= len(m.sessions.filtered) {
 		m.sessions.cursor = 0
 	}
-	return m.keepSessionCursorVisible()
+	return m
 }
 
 func filterSessionsByTab(sessions []client.SessionListItem, tab sessionsTab) []client.SessionListItem {
@@ -1150,7 +1125,6 @@ func (m Model) applySessionPage(msg client.SessionInventoryPageMsg) (tea.Model, 
 	if m.sessions.actionID != "" {
 		selectedID = m.sessions.actionID
 	}
-	scroll := m.sessions.scroll
 	if msg.Err != nil {
 		m.sessions.loading = false
 		m.sessions.err = msg.Err
@@ -1182,8 +1156,6 @@ func (m Model) applySessionPage(msg client.SessionInventoryPageMsg) (tea.Model, 
 			}
 		}
 	}
-	m.sessions.scroll = scroll
-	m = m.keepSessionCursorVisible()
 	m.sessions.nextCursor = msg.Page.NextCursor
 	m.sessions.actionID = ""
 	if msg.Page.NextCursor == "" {
@@ -1642,10 +1614,10 @@ func renderStorageHealth(th theme.Theme, st sessionsState, caps client.Capabilit
 			h := *st.health
 			bytesText, reclaimable := unavailableText, unavailableText
 			if h.CurrentBytesAvailable {
-				bytesText = formatBytes(h.CurrentBytes)
+				bytesText = humanizeBytes(h.CurrentBytes)
 			}
 			if h.ReclaimableBytesAvailable {
-				reclaimable = formatBytes(h.ReclaimableBytes)
+				reclaimable = humanizeBytes(h.ReclaimableBytes)
 			}
 			last, next := unavailableText, unavailableText
 			if h.LastSweepAvailable {
@@ -1693,8 +1665,8 @@ func renderMigrationPlan(th theme.Theme, plan client.SessionMigrationPlan, hk he
 		th.Style("askTitle").Render("Optimize storage — dry run"), "",
 		"Sessions are preserved; this changes only their physical storage format.",
 		fmt.Sprintf("v1: %d  v2: %d  Invalid: %d  Skipped: %d", plan.V1Families, plan.V2Families, plan.InvalidFamilies, plan.SkippedFamilies),
-		"Current: " + formatBytes(plan.CurrentBytes) + "  Reclaimable: " + formatBytes(plan.ReclaimableBytes),
-		"Temporary space required: " + formatBytes(plan.TemporaryBytes), "",
+		"Current: " + humanizeBytes(plan.CurrentBytes) + "  Reclaimable: " + humanizeBytes(plan.ReclaimableBytes),
+		"Temporary space required: " + humanizeBytes(plan.TemporaryBytes), "",
 		th.Style("muted").Render(hk.choose + ": start resumable optimization  " + hk.closeOnly + ": back"),
 	}, "\n")
 }
@@ -1744,7 +1716,7 @@ func renderCleanupPlan(th theme.Theme, st sessionsState, hk helpKeys) string {
 		th.Style("errorText").Render("Clean up sessions — DESTRUCTIVE dry run"), "",
 		fmt.Sprintf("Eligible: %d  Main: %d  Child: %d  Scheduled: %d", eligible.Total, cleanupKindCount(eligible, "main"), cleanupKindCount(eligible, "subagent", "parallel_branch", "team_member"), cleanupKindCount(eligible, "scheduled")),
 		fmt.Sprintf("Protected: %d  Unknown: %d protected  Live: %d  Awaiting: %d", protected.Total, cleanupKindCount(protected, "unknown"), protected.ByReason["live"], protected.ByState["awaiting"]),
-		"Estimated deletion: " + formatBytes(plan.EstimatedBytes),
+		"Estimated deletion: " + humanizeBytes(plan.EstimatedBytes),
 		"Unknown sessions are protected by default. Active, live, and awaiting sessions are not selected.", "",
 		"To confirm this bulk operation, type CLEAN UP (single-row delete consent is not accepted):", st.cleanupConfirm.View(), "",
 		th.Style("muted").Render(hk.choose + ": apply exact dry-run  " + hk.closeOnly + ": back"),
@@ -1767,19 +1739,6 @@ func renderCleanupJob(th theme.Theme, job client.CleanupJob, hk helpKeys) string
 	}
 	lines = append(lines, "", th.Style("muted").Render("r: new dry run  s: refresh status  c: cancel  "+hk.closeOnly+": back"))
 	return strings.Join(lines, "\n")
-}
-
-func formatBytes(n int64) string {
-	const unit = int64(1024)
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := unit, 0
-	for value := n / unit; value >= unit && exp < 4; value /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func renderSessionAdoptionReview(th theme.Theme, st sessionsState, hk helpKeys) string {
@@ -1863,14 +1822,7 @@ func sessionsPaginationStatus(st sessionsState) string {
 }
 
 func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, current string) {
-	start := st.scroll
-	if start < 0 || start >= len(st.filtered) {
-		start = 0
-	}
-	end := start + sessionsVisibleRows
-	if end > len(st.filtered) {
-		end = len(st.filtered)
-	}
+	start, end := scrollWindow(st.cursor, len(st.filtered), sessionsVisibleRows)
 	for i := start; i < end; i++ {
 		s := st.filtered[i]
 		marker := "  "

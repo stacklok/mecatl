@@ -2531,7 +2531,7 @@ func summarizeStringValue(s string) string {
 		preview += "…"
 	}
 	preview = sanitizeTerminal(preview)
-	return fmt.Sprintf("%s / %s · %q", humanizeBytes(len(s)), plural(lines, "line"), preview)
+	return fmt.Sprintf("%s / %s · %q", humanizeBytes(int64(len(s))), plural(lines, "line"), preview)
 }
 
 // summarizeArrayValue renders a JSON array value and reports whether it collapsed:
@@ -2591,23 +2591,27 @@ func firstLine(s string) string {
 }
 
 // humanizeBytes renders a byte count compactly: bytes verbatim under 1 KB, then
-// "N.N KB"/"N.N MB" with one decimal (trailing ".0" trimmed). Sibling of the
-// humanizeTokens/humanizeDuration formatters; used for the collapsed long-string
-// arg row size signal. The math is SI/decimal (1 KB = 1000 B, 1 MB = 1e6 B) so a
-// human-facing size reconciles with how file/content sizes are reported
-// everywhere — the labels stay "KB"/"MB" (now honest, not mislabelled KiB/MiB).
-func humanizeBytes(n int) string {
+// "N.N KB"/"N.N MB"/"N.N GB"/"N.N TB" with one decimal (trailing ".0" trimmed).
+// Sibling of the humanizeTokens/humanizeDuration formatters; used for the
+// collapsed long-string arg row size signal AND the session-storage byte
+// counts (which can run into the GB range). The math is SI/decimal (1 KB =
+// 1000 B, 1 MB = 1e6 B, …) so a human-facing size reconciles with how
+// file/content sizes are reported everywhere — the labels stay "KB"/"MB"/…
+// (honest, not mislabelled KiB/MiB).
+func humanizeBytes(n int64) string {
 	if n < 0 {
 		n = 0
 	}
-	switch {
-	case n < 1000:
-		return strconv.Itoa(n) + " B"
-	case n < 1000*1000:
-		return trimDecimal(float64(n)/1000.0) + " KB"
-	default:
-		return trimDecimal(float64(n)/(1000.0*1000.0)) + " MB"
+	const unit = 1000
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
 	}
+	div, exp := int64(unit), 0
+	for value := n / unit; value >= unit && exp < 3; value /= unit {
+		div *= unit
+		exp++
+	}
+	return trimDecimal(float64(n)/float64(div)) + " " + [...]string{"KB", "MB", "GB", "TB"}[exp]
 }
 
 // parseMCPName splits an MCP tool name "mcp__<server>__<tool>" into its server

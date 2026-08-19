@@ -232,7 +232,7 @@ func TestHumanizeBytesSI(t *testing.T) {
 	// SI/decimal math (1 KB = 1000 B, 1 MB = 1e6 B) — the number must reconcile
 	// with bytes/1000, so a labelled "KB" is honest (not mislabelled KiB).
 	cases := []struct {
-		n    int
+		n    int64
 		want string
 	}{
 		{0, "0 B"},
@@ -244,6 +244,9 @@ func TestHumanizeBytesSI(t *testing.T) {
 		{999999, "1000 KB"},
 		{1000000, "1 MB"}, // exactly 1e6 → 1 MB
 		{2500000, "2.5 MB"},
+		{1_000_000_000, "1 GB"},
+		{2_500_000_000, "2.5 GB"},
+		{1_000_000_000_000, "1 TB"},
 	}
 	for _, c := range cases {
 		if got := humanizeBytes(c.n); got != c.want {

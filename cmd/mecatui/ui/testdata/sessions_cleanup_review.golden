@@ -6,7 +6,7 @@ Clean up sessions — DESTRUCTIVE dry run
 
 Eligible: 9  Main: 5  Child: 2  Scheduled: 2
 Protected: 7  Unknown: 3 protected  Live: 2  Awaiting: 1
-Estimated deletion: 6.0 MiB
+Estimated deletion: 6.3 MB
 Unknown sessions are protected by default. Active, live, and awaiting sessions are not selected.
 
 To confirm this bulk operation, type CLEAN UP (single-row delete consent is not accepted):

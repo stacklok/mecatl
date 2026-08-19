@@ -113,7 +113,6 @@ func TestSessionStorageContinuity_Scenario3_IncrementalStateStable(t *testing.T)
 	m = m.syncSessionsFilter()
 	m.sessions.cursor = 12
 	selectedID := m.sessions.filtered[m.sessions.cursor].ID
-	m.sessions.scroll = 1
 
 	msg := client.SessionInventoryPageMsg{Cursor: "page-2", Page: client.SessionInventoryPage{Sessions: []client.SessionListItem{
 		{ID: selectedID, Title: "duplicate must not win", Kind: client.SessionKindSubagent, ModifiedAt: 88},
@@ -129,9 +128,6 @@ func TestSessionStorageContinuity_Scenario3_IncrementalStateStable(t *testing.T)
 	}
 	if m.sessions.filtered[m.sessions.cursor].ID != selectedID {
 		t.Fatalf("selection drifted to %q", m.sessions.filtered[m.sessions.cursor].ID)
-	}
-	if m.sessions.scroll != 1 {
-		t.Fatalf("scroll = %d, want 1", m.sessions.scroll)
 	}
 	for _, row := range m.sessions.sessions {
 		if row.ID == selectedID && row.Title != "needle original" {
