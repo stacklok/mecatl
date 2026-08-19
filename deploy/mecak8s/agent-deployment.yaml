@@ -68,6 +68,11 @@ spec:
             - --http-addr=0.0.0.0:8081
             # STORAGE-FREE: state goes to Redis, not a local dir.
             - --redis-url=redis:6379
+            # This base is the DISPOSABLE offline fixture (ko.local image, --mock
+            # provider, in-cluster Redis StatefulSet with no auth), so it takes the
+            # explicit plaintext opt-in ADR 0233 requires. A production deployment
+            # must NOT copy this line: use --redis-tls or --redis-tls-ca instead.
+            - --redis-allow-plaintext
             # The lease is a managed service (coordination.k8s.io Lease per
             # session via the k8s API server).
             - --session-lease-k8s-namespace=mecatl

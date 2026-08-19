@@ -181,6 +181,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	cfg, err := parseFlags([]string{
 		"--mock", // offline: no provider key in CI
 		"--redis-url", mr.Addr(),
+		"--redis-allow-plaintext", // disposable miniredis fixture
 		"--metrics-addr", free,
 		"--grpc-addr", "127.0.0.1:0",
 		"--http-addr", "127.0.0.1:0",
@@ -287,6 +288,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	cfg, err := parseFlags([]string{
 		"--mock",
 		"--redis-url", mr.Addr(),
+		"--redis-allow-plaintext", // disposable miniredis fixture
 		"--grpc-addr", "127.0.0.1:0",
 		"--http-addr", "127.0.0.1:0",
 		"--session-lease-k8s-namespace", "", // no k8s apiserver in a test

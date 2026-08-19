@@ -33,6 +33,7 @@ require (
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000
 	github.com/stacklok/toolhive v0.40.0
+	github.com/stacklok/toolhive-core v0.0.39
 	github.com/tiktoken-go/tokenizer v0.8.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.69.0
 	go.opentelemetry.io/otel v1.45.0
@@ -230,7 +231,6 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/stacklok/mecatl/provider/ssefilter v0.0.0 // indirect
-	github.com/stacklok/toolhive-core v0.0.39 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect

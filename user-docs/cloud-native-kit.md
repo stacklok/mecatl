@@ -50,7 +50,7 @@ The loop stays storage-agnostic throughout. It only emits — it never imports `
 
 **mecated:** the `--store-dir` flag selects JSONL persistence (`internal/adapter/store/jsonlstore`), which implements `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder` in one `Store` type. It automatically composes the single-host flock lease under `<store-dir>/.session-leases`. Remote or multi-host deployments must wire an appropriate session lease (`--session-lease-k8s-namespace` for Kubernetes or `--session-lease-url` for a gRPC driver); without one, session-affinity routing is the deployer's responsibility and destructive maintenance fails closed.
 
-**mecak8s:** wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup, with no flags required. The three properties hold out of the box.
+**mecak8s:** wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup. The three properties hold out of the box; the Redis connection itself must be pointed somewhere and secured — `--redis-url` plus either verified TLS (`--redis-tls` or `--redis-tls-ca`) or, for a disposable local fixture only, the explicit `--redis-allow-plaintext` opt-in.
 
 ---
 

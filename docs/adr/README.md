@@ -52,6 +52,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md) *(skill read-root carve-out superseded by 0108)*
 - [0108 — Read skill assets on demand by logical name](./0108-on-demand-logical-skill-assets.md) *(supersedes only ADR 0005/0047's skill-asset materialization/read-root decisions)*
 - [0048 — mecak8s: Kubernetes-native agent harness (storage-free, managed-service state)](./0048-mecak8s.md)
+- [0233 — Secure external Redis on the shared connection layer](./0233-secure-external-redis.md)
 - [0059 — Scheduled tasks](./0059-scheduled-tasks.md)
 - [0065 — Conversation fork: peer session from a history snapshot](./0065-conversation-fork.md)
 - [0073 — Schedule tool](./0073-schedule-tool.md)

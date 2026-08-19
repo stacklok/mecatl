@@ -84,7 +84,7 @@ The `redisstore` adapter reuses `sessnap.Marshal`/`Unmarshal` — the same snaps
 
 Before applying the kustomize base you need:
 
-1. **Redis.** A Redis instance reachable from the agent pods — either the in-cluster `redis-statefulset.yaml` from the kustomize base, or a managed service (ElastiCache, MemoryStore, etc.). The `--redis-url` flag takes `host:port`, e.g. `redis:6379`.
+1. **Redis.** A Redis instance reachable from the agent pods — either the in-cluster `redis-statefulset.yaml` from the kustomize base, or a managed service (ElastiCache, MemoryStore, etc.). The `--redis-url` flag takes a bare `host:port`, e.g. `redis:6379` — not a `redis://` URL. A managed service also needs verified TLS (see [Secure Redis credentials and TLS](#secure-redis-credentials-and-tls) below); the in-cluster fixture needs the explicit `--redis-allow-plaintext` opt-in.
 
 2. **Kubernetes RBAC.** The `mecak8s-agent` ServiceAccount needs `get`, `create`, `update`, `delete` on `leases` in `coordination.k8s.io` in the `mecatl` namespace. The `rbac.yaml` in the base grants exactly those verbs — never `list` or `watch`.
 
@@ -95,6 +95,32 @@ Before applying the kustomize base you need:
    ```
 
 ---
+
+## Secure Redis credentials and TLS
+
+Redis credentials reach `mecak8s` as **paths to files** projected from a Kubernetes Secret volume — never as container arguments, environment variables, or ConfigMap entries. Mount the Secret read-only (`defaultMode: 0440` is a good default), then point the flags at the mounted paths:
+
+```text
+--redis-url=redis.example.internal:6379                     # bare host:port, never a redis:// URL
+--redis-username-file=/var/run/secrets/redis/username       # optional ACL username
+--redis-password-file=/var/run/secrets/redis/password       # optional ACL password
+--redis-tls-ca=/var/run/secrets/redis/ca.pem                # private CA...
+--redis-tls                                                 # ...or verify against the system trust store
+```
+
+Every credential requires verified TLS, from one of two sources: the host's system trust store (`--redis-tls`) for a managed Redis whose certificate chains to a public CA, or a mounted PEM CA bundle (`--redis-tls-ca`) for a private one. `--redis-tls-ca` **replaces** the system trust store rather than adding to it. Both modes verify the server certificate against the hostname in `--redis-url` (including IP SAN rules); hostname verification is never disabled and TLS 1.2 or newer is required. TLS with no ACL is valid. ACL is optional: a password without a username uses Redis's default ACL user, while a username requires a password.
+
+`mecak8s` reads credential values only from these mounted files at startup, so rotating the Secret needs a pod restart to take effect. Credential files may end in one newline, as Kubernetes Secret projections commonly do; other whitespace remains part of the credential.
+
+`--redis-url` takes a bare `host:port`. A `redis://` or `rediss://` URL is rejected on every path, plaintext included, and the rejection never repeats the address back — a URL's userinfo can carry a password, and these errors land in the operator's log.
+
+Client-certificate (mTLS) authentication is **not supported**: the shared `toolhive-core/redis` connection layer cannot express it ([ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-secure-external-redis.md)), and it is tracked upstream at [toolhive-core#240](https://github.com/stacklok/toolhive-core/issues/240).
+
+:::warning[Plaintext Redis is fixture-only]
+
+An address-only `--redis-url` is plaintext and unauthenticated, and is **rejected at startup** unless you also pass `--redis-allow-plaintext`. That opt-in exists for the disposable in-cluster fixture (the kustomize base below, with its mock provider and no-auth Redis StatefulSet). Production deployments must not set it: use verified TLS, and add ACL credentials when the managed Redis service requires them.
+
+:::
 
 ## The kustomize base
 
@@ -163,6 +189,9 @@ patches:
           - --grpc-addr=0.0.0.0:8080
           - --http-addr=0.0.0.0:8081
           - --redis-url=redis:6379
+          # Disposable in-cluster fixture Redis: no auth, no TLS. A production
+          # deployment drops this line and uses --redis-tls / --redis-tls-ca.
+          - --redis-allow-plaintext
           - --session-lease-k8s-namespace=mecatl
           - --headless=true
           - --posture=auto
@@ -503,7 +532,7 @@ Stated plainly so it is not inferred:
 | **Historical data migration** | None. Enabling identity makes every pre-existing ownerless session/schedule/team/memory entry permanently unavailable to every caller — there is no adoption-by-first-reader and no migration path. Export or back up anything you need first. |
 | **Signing-key revocation** | Bounded, not immediate: with the default `--oidc-max-jwks-staleness=1h`, a last-good JWKS may remain trusted for up to one hour during an IdP outage; then validation fails 503 until refresh succeeds. `0` deliberately restores unbounded exposure. This is **not per-token revocation**: an otherwise valid token remains accepted until expiry. |
 | **Rate limiting / quotas** | mecak8s registers no rate-limit flags at all; a pod is assumed to sit behind a Service or mesh. One caller can exhaust the shared Redis, lease namespace and provider budget. |
-| **Store confidentiality** | `--redis-url` takes a bare `host:port`: no password, no TLS. Conversations and owner labels sit in plaintext, protected only by the NetworkPolicy. |
+| **Store confidentiality** | Verified TLS and ACL credentials are available (`--redis-tls` / `--redis-tls-ca`, `--redis-password-file`), and any credential *requires* TLS. Without them — the `--redis-allow-plaintext` fixture path — conversations and owner labels sit in plaintext, protected only by the NetworkPolicy. Client-certificate (mTLS) authentication is not supported. |
 | **PII controls** | `name` (often an email) is copied onto every durable event, the session snapshot and schedule records, unredacted, with no retention or erasure hook. |
 | **Audit signals** | Telemetry is opt-in and off by default (`--metrics-addr` to expose `/metrics`, `--otlp-*` to push to a collector), and **no authn metric exists at all** — the emitted set covers runs, events, permission asks and process stats, not authentication outcomes. Combined with failures not being logged, an authn problem is invisible: you see the caller's status code and nothing on the server side. |
 | **Machine-vs-human grant** | `grant_type` is best-effort and IdP-dependent. A token with no grant hint resolves to `user`, which includes most IdPs' service accounts. |

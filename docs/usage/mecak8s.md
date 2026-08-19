@@ -29,7 +29,7 @@ Prometheus/OTel admin surface. It inverts `mecated`'s interactive defaults: `--h
 defaults **on** and `--posture` defaults to **`auto`** (an unattended daemon).
 
 ```console
-$ go run ./cmd/mecak8s --redis-url redis:6379 --session-lease-k8s-namespace mecatl --openai
+$ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-lease-k8s-namespace mecatl --openai
 ```
 
 #### Flags
@@ -39,7 +39,11 @@ $ go run ./cmd/mecak8s --redis-url redis:6379 --session-lease-k8s-namespace meca
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--redis-url` | `""` | Redis address (`host:port`) for the session store + durable event log (ADR 0048, storage-free). The `redisstore` `Store` doubles as its own `EventLog` (like `jsonlstore`). **Mutually exclusive with `--store-dir` / `--session-store-url`** (rejected at `Build`). |
+| `--redis-url` | `""` | Redis address (`host:port`) for the session store + durable event log (ADRs 0048 and [0233](../adr/0233-secure-external-redis.md), storage-free). The `redisstore` `Store` doubles as its own `EventLog` (like `jsonlstore`). **Mutually exclusive with `--store-dir` / `--session-store-url`** (rejected at `Build`). Takes a bare `host:port`: a `redis://` or `rediss://` URL is rejected. An address alone is not a plaintext opt-in — see `--redis-allow-plaintext`. |
+| `--redis-allow-plaintext` | `false` | Explicitly allow unauthenticated plaintext Redis; disposable local/Kind use only. Without it an address-only `--redis-url` is **rejected at `Build`**. Never set it for a production external Redis. |
+| `--redis-username-file` / `--redis-password-file` | `""` | Paths to optional Redis ACL credentials in a mounted Kubernetes Secret. A password without a username authenticates as Redis's default ACL user; a username requires a password. Credential values are never accepted as command arguments. Any credential requires verified TLS — `--redis-tls` or `--redis-tls-ca`. |
+| `--redis-tls` | `false` | Verify Redis TLS against the host system trust store. Use for a managed Redis whose certificate chains to a public CA (Azure Cache for Redis, ElastiCache in-transit encryption). |
+| `--redis-tls-ca` | `""` | Path to a PEM CA bundle from a mounted Secret used to verify Redis TLS, **replacing** the system trust store. Use for a private CA; takes precedence over `--redis-tls`. Either flag is mandatory whenever ACL credentials are configured. Client-certificate (mTLS) authentication is not supported — see [ADR 0233](../adr/0233-secure-external-redis.md). |
 | `--session-lease-k8s-namespace` | `mecatl` | Kubernetes namespace for `coordination.k8s.io` Lease-backed session leasing (the in-cluster multi-replica single-writer path). Uses in-cluster config (or the default kubeconfig out-of-cluster). The ServiceAccount needs `get,create,update,delete` on `leases` in `coordination.k8s.io` for this namespace. Empty = no leasing. |
 | `--session-lease-ttl` | `30s` | session-lease lifetime; a crashed/killed holder's lease becomes claimable after this long. |
 | `--session-lease-renew-interval` | `0` | how often the per-session renewer refreshes a held lease; `0` = `--session-lease-ttl` / 3. |

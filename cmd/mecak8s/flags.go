@@ -100,8 +100,17 @@ type config struct {
 	noBash     bool
 
 	// Storage-free state (ADR 0048): --redis-url points the session store +
-	// durable event log at a Redis managed service. NO --store-dir.
-	redisURL string
+	// durable event log at a Redis managed service. Credentials are read from
+	// Secret-mounted files; no credential value is accepted on the command line.
+	// Verified TLS comes from either the system trust store (--redis-tls) or a
+	// mounted PEM CA bundle (--redis-tls-ca). No client-certificate/mTLS support
+	// (ADR 0233).
+	redisURL            string
+	redisUsernameFile   string
+	redisPasswordFile   string
+	redisTLSCAFile      string
+	redisTLS            bool
+	redisAllowPlaintext bool
 
 	// Session leasing: a coordination.k8s.io Lease per session in this
 	// namespace (the in-cluster multi-replica path). Defaults to "mecatl".
@@ -283,7 +292,12 @@ func parseFlags(argv []string) (config, error) {
 
 	// Storage-free state (ADR 0048): --redis-url is the session store + durable
 	// event log. NO --store-dir (mutually exclusive, rejected at Build).
-	fs.StringVar(&cfg.redisURL, "redis-url", "", "Redis address (host:port) for the session store + durable event log (ADR 0048, storage-free). Mutually exclusive with --store-dir / --session-store-url. The Store doubles as its own EventLog (like jsonlstore)")
+	fs.StringVar(&cfg.redisURL, "redis-url", "", "Redis address (host:port) for the session store + durable event log (ADR 0048, storage-free). Secure Redis uses mounted file paths")
+	fs.BoolVar(&cfg.redisAllowPlaintext, "redis-allow-plaintext", false, "EXPLICITLY allow unauthenticated plaintext Redis for a disposable local/Kind fixture; production Redis must use CA-verified TLS")
+	fs.StringVar(&cfg.redisUsernameFile, "redis-username-file", "", "path to optional Redis ACL username in a mounted Secret; requires a password and verified TLS")
+	fs.StringVar(&cfg.redisPasswordFile, "redis-password-file", "", "path to optional Redis password in a mounted Secret; never pass the password as an argument; requires verified TLS")
+	fs.BoolVar(&cfg.redisTLS, "redis-tls", false, "verify Redis TLS against the host system trust store; use for a managed Redis whose certificate chains to a public CA. Use --redis-tls-ca instead for a private CA")
+	fs.StringVar(&cfg.redisTLSCAFile, "redis-tls-ca", "", "path to a PEM CA bundle in a mounted Secret used to verify Redis TLS, REPLACING the system trust store. Either this or --redis-tls is required whenever ACL credentials are configured")
 
 	// Session leasing: coordination.k8s.io Lease per session. DEFAULT "mecatl".
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", defaultK8sLeaseNamespace,
@@ -476,6 +490,11 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		Shell:                  cfg.shell,
 		NoBash:                 cfg.noBash,
 		RedisURL:               cfg.redisURL,
+		RedisUsernameFile:      cfg.redisUsernameFile,
+		RedisPasswordFile:      cfg.redisPasswordFile,
+		RedisTLSCAFile:         cfg.redisTLSCAFile,
+		RedisTLS:               cfg.redisTLS,
+		RedisAllowPlaintext:    cfg.redisAllowPlaintext,
 		// OwnershipEnforced mirrors cmd/mecated's wiring: the OIDC verifier being
 		// enabled IS the caller-isolation on-switch (ADR 0212). Without this line
 		// mecak8s attributes ownership correctly but never enforces it — every

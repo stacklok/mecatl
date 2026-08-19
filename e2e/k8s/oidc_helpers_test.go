@@ -198,12 +198,16 @@ func (d *idp) forgedToken(ctx context.Context, sub string) string {
 //
 // The list is replaced wholesale by a JSON6902 `replace`, so it must carry every
 // flag the pod needs; dropping --redis-url would leave the pod with no session
-// store while still looking like a successful patch.
+// store while still looking like a successful patch. --redis-allow-plaintext is
+// REQUIRED here, not optional: redisstore now rejects an address-only Redis URL
+// at startup unless the caller explicitly opts into plaintext (ADR 0233), so
+// omitting it crash-loops every pod this list is applied to (fail-closed).
 func baseAgentArgs() []string {
 	return []string{
 		"--grpc-addr=0.0.0.0:8080",
 		"--http-addr=0.0.0.0:8081",
 		"--redis-url=redis:6379",
+		"--redis-allow-plaintext",
 		"--session-lease-k8s-namespace=" + k8sNamespace,
 		"--headless=true",
 		"--posture=auto",

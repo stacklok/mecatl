@@ -343,7 +343,7 @@ tasks:
       - cmd: |
           missing=""
           rendered=$(kustomize build deploy/mecak8s-oidc)
-          for arg in --redis-url --session-lease-k8s-namespace --headless --posture --grpc-addr --http-addr --oidc-issuer --oidc-audience --oidc-jwks-uri --oidc-max-jwks-staleness=1h; do
+          for arg in --redis-url --redis-allow-plaintext --session-lease-k8s-namespace --headless --posture --grpc-addr --http-addr --oidc-issuer --oidc-audience --oidc-jwks-uri --oidc-max-jwks-staleness=1h; do
             echo "$rendered" | grep -q -- "$arg" || missing="$missing $arg"
           done
           if [ -n "$missing" ]; then

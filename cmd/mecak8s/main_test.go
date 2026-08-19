@@ -90,6 +90,11 @@ func TestParseFlagsK8sDefaults(t *testing.T) {
 func TestAppConfigMapsK8sFields(t *testing.T) {
 	cfg, err := parseFlags([]string{
 		"--redis-url", "redis:6379",
+		"--redis-allow-plaintext",
+		"--redis-username-file", "/var/run/redis/username",
+		"--redis-password-file", "/var/run/redis/password",
+		"--redis-tls-ca", "/var/run/redis/ca.pem",
+		"--redis-tls",
 		"--session-lease-k8s-namespace", "myns",
 		"--headless=false",
 		"--posture", "trusted",
@@ -101,6 +106,15 @@ func TestAppConfigMapsK8sFields(t *testing.T) {
 	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	if ac.RedisURL != "redis:6379" {
 		t.Errorf("app.Config RedisURL = %q, want redis:6379", ac.RedisURL)
+	}
+	if !ac.RedisAllowPlaintext {
+		t.Error("app.Config RedisAllowPlaintext = false after --redis-allow-plaintext")
+	}
+	if ac.RedisUsernameFile != "/var/run/redis/username" || ac.RedisPasswordFile != "/var/run/redis/password" || ac.RedisTLSCAFile != "/var/run/redis/ca.pem" {
+		t.Error("app.Config Redis Secret file paths did not match parsed paths")
+	}
+	if !ac.RedisTLS {
+		t.Error("app.Config RedisTLS = false after --redis-tls")
 	}
 	if ac.SessionLeaseK8sNamespace != "myns" {
 		t.Errorf("app.Config SessionLeaseK8sNamespace = %q, want myns", ac.SessionLeaseK8sNamespace)
@@ -159,6 +173,7 @@ func TestBuildOverRedisDrivesRunToCompletion(t *testing.T) {
 		NoSoul:                  true,
 		NoUserModel:             true,
 		RedisURL:                mr.Addr(),
+		RedisAllowPlaintext:     true,
 		Interactive:             false, // mecak8s headless default (Interactive=!headless)
 		Posture:                 app.PostureAuto,
 		PermissionsConventional: false,
@@ -302,6 +317,7 @@ func TestStorageReadyViaComposition(t *testing.T) {
 		NoSoul:                  true,
 		NoUserModel:             true,
 		RedisURL:                mr.Addr(),
+		RedisAllowPlaintext:     true,
 		PermissionsConventional: false,
 		AgentsConventional:      false,
 		Diagnostics:             port.NopDiagnostics{},

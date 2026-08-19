@@ -27,6 +27,11 @@ func validateDriverConfig(cfg Config) error {
 	if cfg.StoreDir != "" && cfg.SessionStoreURL != "" {
 		return fmt.Errorf("--store-dir %q and --session-store-url %q are mutually exclusive: the session store is either the local JSONL dir or the remote driver, never both", cfg.StoreDir, cfg.SessionStoreURL)
 	}
+	// Redis Secret-file fields are meaningful only when the Redis store is selected.
+	// Reject them rather than silently falling back to an unrelated store.
+	if cfg.RedisURL == "" && (cfg.RedisUsernameFile != "" || cfg.RedisPasswordFile != "" || cfg.RedisTLSCAFile != "" || cfg.RedisTLS) {
+		return fmt.Errorf("--redis-username-file/--redis-password-file/--redis-tls-ca/--redis-tls require --redis-url: Redis connection material must not be silently ignored")
+	}
 	// Redis (ADR 0048, mecak8s) is a third store option, mutually exclusive with
 	// BOTH the local dir and the gRPC driver (one store per seam — a silent
 	// precedence would hide an operator mistake).

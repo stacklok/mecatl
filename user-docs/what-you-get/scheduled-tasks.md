@@ -117,7 +117,7 @@ The tick loop is **ON by default** whenever the configured store exposes a `Sche
 
 ```sh
 mecated serve --store-dir ./state --scheduler-tick-interval 30s   # ticks by default
-mecak8s --redis-url redis://...                             # multi-replica, ticks by default
+mecak8s --redis-url redis.example:6379 --redis-tls          # multi-replica, ticks by default
 mecated serve --store-dir ./state --no-scheduler                  # opt out (manual management still works)
 ```
 

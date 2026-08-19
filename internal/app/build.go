@@ -149,9 +149,19 @@ type Config struct {
 	// adapter reuses sessnap-json/1 snapshots + the event-log envelope shape, so
 	// it is a TRANSPORT alternative to jsonlstore — validated by the same
 	// conformance suites. The Store doubles as its own EventLog (like jsonlstore).
-	RedisURL string
-	Shell    string
-	NoBash   bool
+	// The file paths name Kubernetes Secret mounts; their values are read only by
+	// redisstore and never projected into diagnostics.
+	RedisURL          string
+	RedisUsernameFile string
+	RedisPasswordFile string
+	// RedisTLSCAFile is a PEM CA bundle path that REPLACES the system trust
+	// store; RedisTLS verifies against the system trust store instead. Either
+	// one satisfies the credentials-imply-verified-TLS policy (ADR 0233).
+	RedisTLSCAFile      string
+	RedisTLS            bool
+	RedisAllowPlaintext bool
+	Shell               string
+	NoBash              bool
 	// OwnershipEnforced enables application caller isolation when the command edge
 	// has configured the fail-closed OIDC verifier. Its zero value preserves
 	// existing ownerless deployments and hand-built test configurations.
@@ -3058,7 +3068,14 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 	// its own EventLog (like jsonlstore), so wire it as both. Mutually exclusive
 	// with StoreDir/SessionStoreURL (validateDriverConfig enforces it).
 	if cfg.RedisURL != "" {
-		st, err := redisstore.New(cfg.RedisURL)
+		st, err := redisstore.NewWithConfig(redisstore.Config{
+			Addr:           cfg.RedisURL,
+			UsernameFile:   cfg.RedisUsernameFile,
+			PasswordFile:   cfg.RedisPasswordFile,
+			CAFile:         cfg.RedisTLSCAFile,
+			TLS:            cfg.RedisTLS,
+			AllowPlaintext: cfg.RedisAllowPlaintext,
+		})
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("redis store: %w", err)
 		}

@@ -32,11 +32,14 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	tcredis "github.com/stacklok/toolhive-core/redis"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
@@ -91,23 +94,65 @@ var (
 // in-process miniredis for tests). It is safe for concurrent use: Redis
 // serializes commands, so no client-side mutex is required.
 type Store struct {
-	client *redis.Client
+	client redis.UniversalClient
 
 	metadataWorkObserver        func(metadataWorkKind)
 	migrationInspectionObserver func()
 	migrationMutationObserver   func()
 }
 
-// New connects to the Redis broker at addr and pings it to fail fast on an
-// unreachable backend. The returned Store is ready to serve all four ports.
+// Config configures a Redis connection using Kubernetes Secret-mounted files.
+// Address-only configuration is intentionally supported for the disposable local
+// and Kind path, and requires an explicit AllowPlaintext opt-in. Any credential
+// requires VERIFIED TLS — either the host's system trust store (TLS) or an
+// explicit PEM CA bundle (CAFile). Certificate verification is never disabled.
+//
+// Client-certificate (mTLS) authentication is NOT supported. The shared
+// toolhive-core Redis layer this adapter delegates to exposes no
+// client-certificate field; see ADR 0233 for the decision and the upstream
+// tracking issue.
+type Config struct {
+	Addr         string
+	UsernameFile string
+	PasswordFile string
+	// CAFile is a PEM CA bundle path. It REPLACES the system trust store, so a
+	// managed service with a private CA needs it and one with a publicly-rooted
+	// certificate does not.
+	CAFile string
+	// TLS enables verified TLS against the host's system trust store. CAFile
+	// takes precedence when both are set.
+	TLS            bool
+	AllowPlaintext bool
+}
+
+// New connects to a plaintext, unauthenticated Redis broker. It is retained for
+// local and Kind fixtures; production callers should use NewWithConfig with
+// Secret-mounted credential files and verified TLS.
 func New(addr string) (*Store, error) {
-	if addr == "" {
-		return nil, errors.New("redisstore: empty redis address")
+	return NewWithConfig(Config{Addr: addr, AllowPlaintext: true})
+}
+
+// NewWithConfig connects to Redis and pings it to fail fast. Secret values are
+// read only from their mounted files and are never included in returned errors.
+//
+// Client construction, TLS assembly, dial/read/write timeout defaults, and the
+// connectivity Ping are delegated to the shared toolhive-core Redis layer (ADR
+// 0233). What stays here is the half that layer deliberately leaves to its
+// callers: reading credentials from mounted files, and the policy that a
+// credential implies verified TLS.
+func NewWithConfig(cfg Config) (*Store, error) {
+	if err := validateAddr(cfg.Addr); err != nil {
+		return nil, err
 	}
-	client := redis.NewClient(&redis.Options{Addr: addr})
-	if err := client.Ping(context.Background()).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("redisstore: ping %q: %w", addr, err)
+	conn, err := connectionConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	client, err := tcredis.NewClient(context.Background(), &conn)
+	if err != nil {
+		// cfg.Addr is safe to name here: validateAddr has already rejected every
+		// URL-shaped value that could carry a credential in its userinfo.
+		return nil, fmt.Errorf("redisstore: connect %q: %w", cfg.Addr, err)
 	}
 	st := &Store{client: client}
 	if err := st.initializeMetadataIndex(context.Background()); err != nil {
@@ -115,6 +160,90 @@ func New(addr string) (*Store, error) {
 		return nil, err
 	}
 	return st, nil
+}
+
+// validateAddr enforces host:port on EVERY path, secure and plaintext alike.
+// Its errors never echo addr: an operator who passes a redis:// URL can embed a
+// password in the userinfo, and this error reaches the diagnostics log.
+func validateAddr(addr string) error {
+	if addr == "" {
+		return errors.New("redisstore: empty redis address")
+	}
+	if strings.ContainsAny(addr, "@/") {
+		return errors.New("redisstore: redis address must be host:port, not a URL (no scheme, no embedded credentials)")
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil || host == "" || portStr == "" {
+		return errors.New("redisstore: redis address must be host:port")
+	}
+	return nil
+}
+
+// connectionConfig folds this adapter's file-and-policy layer into the shared
+// toolhive-core connection config.
+func connectionConfig(cfg Config) (tcredis.Config, error) {
+	verifiedTLS := cfg.TLS || cfg.CAFile != ""
+	hasCredentials := cfg.UsernameFile != "" || cfg.PasswordFile != ""
+	if !verifiedTLS && !hasCredentials {
+		if !cfg.AllowPlaintext {
+			return tcredis.Config{}, errors.New("redisstore: plaintext Redis requires explicit opt-in")
+		}
+		return tcredis.Config{Addr: cfg.Addr}, nil
+	}
+	if !verifiedTLS {
+		return tcredis.Config{}, errors.New("redisstore: Redis credentials require verified TLS: enable system-trust TLS or supply a PEM CA bundle")
+	}
+	if cfg.UsernameFile != "" && cfg.PasswordFile == "" {
+		return tcredis.Config{}, errors.New("redisstore: a Redis username requires a password")
+	}
+	username, password, err := readCredentials(cfg)
+	if err != nil {
+		return tcredis.Config{}, err
+	}
+	// A non-nil TLSConfig with a nil CACert means "verify against the system
+	// trust store". An unparsable bundle is reported by the shared layer's
+	// BuildTLSConfig, before any network I/O.
+	tlsCfg := &tcredis.TLSConfig{}
+	if cfg.CAFile != "" {
+		caPEM, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return tcredis.Config{}, fmt.Errorf("redisstore: read Redis CA bundle: %w", err)
+		}
+		tlsCfg.CACert = caPEM
+	}
+	return tcredis.Config{Addr: cfg.Addr, Username: username, Password: password, TLS: tlsCfg}, nil
+}
+
+func readCredentials(cfg Config) (string, string, error) {
+	username, password := "", ""
+	var err error
+	if cfg.UsernameFile != "" {
+		username, err = readSecretFile(cfg.UsernameFile)
+		if err != nil {
+			return "", "", fmt.Errorf("redisstore: read Redis username file: %w", err)
+		}
+		if username == "" {
+			return "", "", errors.New("redisstore: Redis username file is empty")
+		}
+	}
+	if cfg.PasswordFile != "" {
+		password, err = readSecretFile(cfg.PasswordFile)
+		if err != nil {
+			return "", "", fmt.Errorf("redisstore: read Redis password file: %w", err)
+		}
+		if password == "" {
+			return "", "", errors.New("redisstore: Redis password file is empty")
+		}
+	}
+	return username, password, nil
+}
+
+func readSecretFile(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(strings.TrimSuffix(string(body), "\r\n"), "\n"), nil
 }
 
 // Save stores a sessnap-encoded snapshot of s under the session key, stamping

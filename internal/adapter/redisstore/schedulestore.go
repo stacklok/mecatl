@@ -288,7 +288,7 @@ redis.call('SET', KEYS[1], ARGV[2])
 return 1
 `)
 
-// scheduleStore is a Redis-backed port.ScheduleStore sharing the parent *Store's
+// scheduleStore is a Redis-backed port.ScheduleStore sharing the parent Store's
 // *redis.Client. It is the MULTI-REPLICA production schedule backend
 // (scheduled-tasks issue #189, Phase 1d): the SAME logic as
 // memschedulestore/jsonlstore.scheduleStore with Redis persistence + a Lua-script
@@ -300,7 +300,7 @@ return 1
 // does not read ScheduleSpec.Misfire) — the same discipline as the in-memory and
 // jsonl references.
 type scheduleStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // compile-time assertion that scheduleStore satisfies the port.

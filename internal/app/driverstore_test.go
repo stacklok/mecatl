@@ -43,6 +43,23 @@ func TestValidateDriverConfigExclusivity(t *testing.T) {
 		{name: "mixed across seams", cfg: Config{StoreDir: "/tmp/s", MemoryStoreURL: "127.0.0.1:7443"}},
 		{name: "redis only", cfg: Config{RedisURL: "redis:6379"}},
 		{
+			name:    "redis secret file without redis URL",
+			cfg:     Config{RedisPasswordFile: "/var/run/redis/password"},
+			wantErr: "require --redis-url",
+		},
+		{
+			name:    "redis TLS file without redis URL",
+			cfg:     Config{RedisTLSCAFile: "/var/run/redis/ca.pem"},
+			wantErr: "require --redis-url",
+		},
+		{
+			name:    "redis system-trust TLS without redis URL",
+			cfg:     Config{RedisTLS: true},
+			wantErr: "require --redis-url",
+		},
+		{name: "redis CA-only ownership passes", cfg: Config{RedisURL: "redis:6379", RedisTLSCAFile: "/var/run/redis/ca.pem"}},
+		{name: "redis system-trust TLS ownership passes", cfg: Config{RedisURL: "redis:6379", RedisTLS: true}},
+		{
 			name:    "session store both",
 			cfg:     Config{StoreDir: "/tmp/s", SessionStoreURL: "127.0.0.1:7443"},
 			wantErr: "mutually exclusive",
@@ -174,7 +191,7 @@ func TestBuildStoreRedisURL(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	defer mr.Close()
-	st, eventLog, closeFn, err := buildStore(Config{RedisURL: mr.Addr()})
+	st, eventLog, closeFn, err := buildStore(Config{RedisURL: mr.Addr(), RedisAllowPlaintext: true})
 	if err != nil {
 		t.Fatalf("buildStore(RedisURL): %v", err)
 	}
