@@ -32,7 +32,6 @@ type Store struct {
 	// for determinism; the real clock by default). It backs the optional
 	// port.PrunableStore List/Delete retention seam.
 	savedAt        map[session.SessionID]time.Time
-	estimatedBytes map[session.SessionID]int64
 	deleteFailures map[session.SessionID]error
 	now            func() time.Time
 }
@@ -77,7 +76,6 @@ func New(opts ...Option) *Store {
 	st := &Store{
 		sessions:       make(map[session.SessionID]sessnap.Snapshot),
 		savedAt:        make(map[session.SessionID]time.Time),
-		estimatedBytes: make(map[session.SessionID]int64),
 		deleteFailures: make(map[session.SessionID]error),
 		now:            time.Now,
 	}
@@ -96,14 +94,9 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := json.Marshal(snap)
-	if err != nil {
-		return fmt.Errorf("memstore: estimate snapshot bytes: %w", err)
-	}
 	st.mu.Lock()
 	st.sessions[s.ID] = snap
 	st.savedAt[s.ID] = st.now()
-	st.estimatedBytes[s.ID] = int64(len(encoded))
 	st.mu.Unlock()
 	return nil
 }
@@ -138,6 +131,11 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 	st.mu.RLock()
 	rows := make([]port.SessionDiscoveryMeta, 0, len(st.sessions))
 	for id, snap := range st.sessions {
+		encoded, err := json.Marshal(snap)
+		if err != nil {
+			st.mu.RUnlock()
+			return port.SessionMetadataPage{}, fmt.Errorf("memstore: estimate snapshot bytes: %w", err)
+		}
 		kind := snap.Kind
 		if kind == "" {
 			kind = session.SessionKindUnknown
@@ -147,7 +145,7 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
 			Title: snap.Title, TitleProvenance: snap.TitleProvenance, Workspace: snap.Workspace,
 			Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
-			EstimatedBytes: st.estimatedBytes[id],
+			EstimatedBytes: int64(len(encoded)),
 		})
 	}
 	st.mu.RUnlock()
@@ -179,7 +177,6 @@ func (st *Store) DeleteSessionIfUnchanged(_ context.Context, expected port.Sessi
 	}
 	delete(st.sessions, expected.ID)
 	delete(st.savedAt, expected.ID)
-	delete(st.estimatedBytes, expected.ID)
 	return true, nil
 }
 
@@ -193,6 +190,5 @@ func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	}
 	delete(st.sessions, id)
 	delete(st.savedAt, id)
-	delete(st.estimatedBytes, id)
 	return nil
 }

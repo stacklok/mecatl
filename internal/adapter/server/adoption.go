@@ -226,7 +226,8 @@ func (s *Service) existingAdoption(ctx context.Context, id, source session.Sessi
 	if existing == nil || !sameCreateOwner(existing.Owner, owner) {
 		return nil, fmt.Errorf("%w", ErrNotFound)
 	}
-	if existing.Kind != session.SessionKindMain || existing.AdoptionSourceID != source || existing.AdoptionRequestDigest != digest {
+	metadata := existing.Adoption
+	if existing.Kind != session.SessionKindMain || metadata == nil || metadata.AdoptionSourceID != source || metadata.AdoptionRequestDigest != digest {
 		return nil, fmt.Errorf("%w: idempotency key was reused with a different adoption request", ErrInvalidArgument)
 	}
 	return existing, nil
@@ -254,9 +255,18 @@ func (s *Service) newAdoptionTarget(source *session.Session, targetID session.Se
 	target.EnvironmentRef = bindings.EnvironmentRef
 	target.Title = source.Title
 	target.TitleProvenance = source.TitleProvenance
-	target.AdoptionSourceID = source.ID
-	target.AdoptionRequestDigest = digest
+	target.Adoption = &session.AdoptionMetadata{
+		AdoptionSourceID:      source.ID,
+		AdoptionRequestDigest: digest,
+	}
 	return target, nil
+}
+
+func adoptionSourceID(s *session.Session) session.SessionID {
+	if s.Adoption == nil {
+		return ""
+	}
+	return s.Adoption.AdoptionSourceID
 }
 
 // AdoptSession atomically publishes a new explicit-main copy of one eligible

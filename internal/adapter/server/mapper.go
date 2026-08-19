@@ -746,7 +746,7 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		Title:                   valid(s.Title),
 		TitleProvenance:         string(s.TitleProvenance),
 		Capabilities:            caps,
-		AdoptionSourceSessionId: valid(string(s.AdoptionSourceID)),
+		AdoptionSourceSessionId: valid(string(adoptionSourceID(s))),
 	}
 }
 

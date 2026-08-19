@@ -57,11 +57,13 @@ func TestSaveDeepCopyNoAliasing(t *testing.T) {
 	ctx := context.Background()
 	st := memstore.New()
 	s := driven(t)
+	s.Adoption = &session.AdoptionMetadata{AdoptionSourceID: "legacy", AdoptionRequestDigest: "digest"}
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	// Mutate the original after saving; the stored copy must be unaffected.
 	_ = s.RecordToolResults([]session.ToolResult{session.NewToolResult("c2", "more")})
+	s.Adoption.AdoptionRequestDigest = "changed"
 
 	got, err := st.Load(ctx, "s1")
 	if err != nil {
@@ -69,6 +71,9 @@ func TestSaveDeepCopyNoAliasing(t *testing.T) {
 	}
 	if got.Conversation.Len() != 2 {
 		t.Fatalf("stored conversation len = %d, want 2 (no aliasing to mutated original)", got.Conversation.Len())
+	}
+	if got.Adoption == nil || got.Adoption.AdoptionRequestDigest != "digest" {
+		t.Fatalf("stored adoption metadata aliased original: %+v", got.Adoption)
 	}
 }
 

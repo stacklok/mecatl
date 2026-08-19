@@ -243,7 +243,8 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
 	//     Profile, ProviderID, ModelID, ReasoningEffort, Title, TitleProvenance,
-	//     Kind, Relationship, AdoptionSourceID, AdoptionRequestDigest, CreatedAt
+	//     Kind, Relationship, CreatedAt; adoption metadata is supplied via
+	//     SessionMeta and restored as optional Session.Adoption metadata
 	//   not-event-carried identity labels (ADR 0204/0214): Owner, Authority,
 	//     EnvironmentRef — the event annotation is log-only and the fold neither
 	//     requires nor re-derives any of them, so a folded session keeps the
@@ -254,7 +255,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
 		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "Kind": {},
-		"Relationship": {}, "AdoptionSourceID": {}, "AdoptionRequestDigest": {}, "CreatedAt": {},
+		"Relationship": {}, "Adoption": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,

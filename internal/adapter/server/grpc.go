@@ -224,7 +224,7 @@ func (h *HarnessServer) AdoptSession(ctx context.Context, req *mecatlv1.AdoptSes
 		return nil, toStatus(err)
 	}
 	caps := h.svc.SessionCapabilities(sess.ID)
-	return &mecatlv1.AdoptSessionResponse{SessionId: string(sess.ID), SourceSessionId: string(sess.AdoptionSourceID), Capabilities: h.svc.capabilities(), SessionCapabilities: &mecatlv1.SessionCapabilities{Image: caps.Image, Audio: caps.Audio}, ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID))}, nil
+	return &mecatlv1.AdoptSessionResponse{SessionId: string(sess.ID), SourceSessionId: string(adoptionSourceID(sess)), Capabilities: h.svc.capabilities(), SessionCapabilities: &mecatlv1.SessionCapabilities{Image: caps.Image, Audio: caps.Audio}, ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID))}, nil
 }
 
 // Converse drives one run over a bidi stream. The first frame MUST be a Prompt;

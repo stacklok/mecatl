@@ -537,7 +537,7 @@ func (h *HTTPHandler) adoptSession(w http.ResponseWriter, r *http.Request) {
 		SourceSessionID string                  `json:"source_session_id"`
 		Capabilities    *serverCapabilitiesJSON `json:"capabilities"`
 		ResolvedModel   *resolvedModelJSON      `json:"resolved_model"`
-	}{string(sess.ID), string(sess.AdoptionSourceID), capabilitiesJSON(h.svc.capabilities()), resolvedModelToJSON(h.svc.ResolvedModel(sess.ID))})
+	}{string(sess.ID), string(adoptionSourceID(sess)), capabilitiesJSON(h.svc.capabilities()), resolvedModelToJSON(h.svc.ResolvedModel(sess.ID))})
 }
 
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {

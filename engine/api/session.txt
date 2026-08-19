@@ -1,3 +1,4 @@
+    method func (*AdoptionMetadata).Clone() *AdoptionMetadata
     method func (*Conversation).Append(m Message)
     method func (*Conversation).Len() int
     method func (*Principal).Clone() *Principal
@@ -200,6 +201,7 @@ func ValidateToolPairing(msgs []Message) error
 func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
 func WithPrincipal(ctx context.Context, p *Principal) context.Context
+type AdoptionMetadata struct{AdoptionSourceID SessionID "json:\"adoption_source_id,omitempty\""; AdoptionRequestDigest string "json:\"adoption_request_digest,omitempty\""}
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
 type ApprovalVerdict int
 type AskOrigin int
@@ -227,7 +229,7 @@ type Principal struct{Issuer string; Subject string; GrantType GrantType; Name s
 type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool}
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; AdoptionSourceID SessionID; AdoptionRequestDigest string; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; Adoption *AdoptionMetadata; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""}

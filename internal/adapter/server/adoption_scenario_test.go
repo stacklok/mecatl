@@ -323,7 +323,8 @@ func TestSessionStorageContinuity_Scenario7_NewMainCopyPreservesSource(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.ID == source.ID || target.Kind != session.SessionKindMain || target.State != session.StateIdle || target.AdoptionSourceID != source.ID {
+	adoption := target.Adoption
+	if target.ID == source.ID || target.Kind != session.SessionKindMain || target.State != session.StateIdle || adoption == nil || adoption.AdoptionSourceID != source.ID {
 		t.Fatalf("target metadata = %+v", target)
 	}
 	after, err := store.Load(ctx, source.ID)

@@ -47,10 +47,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   availability fields let optional backends expose content-free indexed aggregate
   status without widening `SessionStore` or fabricating zero values. Added (minor).
 - **Legacy-session adoption audit labels** (issue #593, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
-  `session.Session.AdoptionSourceID` and `AdoptionRequestDigest` persist the source
-  relationship and caller/source/request-bound retry proof on explicitly adopted
-  main sessions. Existing sessions leave both fields empty. Additions to the
-  exported `Session` struct are classified Changed below.
+  optional `session.Session.Adoption` metadata persists the source relationship and
+  caller/source/request-bound retry proof on explicitly adopted main sessions.
+  Existing sessions leave the pointer nil. `session.AdoptionMetadata` and its
+  nil-preserving `Clone` method are Added (minor); replacing the two inline Session
+  fields with the pointer is classified Changed below.
 
 - **Generation-bound session metadata continuation** (issue #587, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.ErrSessionMetadataCursorRestart` makes stale/filter-mismatched continuation
@@ -805,10 +806,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   compatible; external unkeyed literals are breaking, so this is Changed for a
   pre-v1 minor bump.
 
-- **Adoption audit fields on `session.Session`** (issue #593) —
-  `AdoptionSourceID` and `AdoptionRequestDigest` are additive for keyed literals
-  but breaking for external unkeyed literals; classified Changed for a pre-v1
-  minor bump.
+- **Optional adoption audit metadata on `session.Session`** (issue #593) —
+  the inline `AdoptionSourceID` and `AdoptionRequestDigest` fields are replaced by
+  `Adoption *AdoptionMetadata`, keeping ordinary sessions on the pre-adoption hot-path
+  layout while preserving the same persisted labels. The field replacement is
+  breaking for external literals and classified Changed for a pre-v1 minor bump.
 
 - **Opaque session metadata continuation** (issue #587, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.SessionMetadataCursor` retains neutral ordering, generation, and ownership-scope

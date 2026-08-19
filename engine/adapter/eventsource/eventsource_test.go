@@ -42,8 +42,9 @@ func TestFoldAdoptionAuditMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if folded.AdoptionSourceID != metadata.AdoptionSourceID || folded.AdoptionRequestDigest != metadata.AdoptionRequestDigest {
-		t.Fatalf("adoption metadata = %q/%q, want %q/%q", folded.AdoptionSourceID, folded.AdoptionRequestDigest, metadata.AdoptionSourceID, metadata.AdoptionRequestDigest)
+	adoption := folded.Adoption
+	if adoption == nil || adoption.AdoptionSourceID != metadata.AdoptionSourceID || adoption.AdoptionRequestDigest != metadata.AdoptionRequestDigest {
+		t.Fatalf("adoption metadata = %+v, want %q/%q", adoption, metadata.AdoptionSourceID, metadata.AdoptionRequestDigest)
 	}
 }
 

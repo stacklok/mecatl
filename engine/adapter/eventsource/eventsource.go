@@ -161,8 +161,12 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
-	s.AdoptionSourceID = meta.AdoptionSourceID
-	s.AdoptionRequestDigest = meta.AdoptionRequestDigest
+	if meta.AdoptionSourceID != "" || meta.AdoptionRequestDigest != "" {
+		s.Adoption = &session.AdoptionMetadata{
+			AdoptionSourceID:      meta.AdoptionSourceID,
+			AdoptionRequestDigest: meta.AdoptionRequestDigest,
+		}
+	}
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
 

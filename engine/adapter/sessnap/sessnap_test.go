@@ -820,3 +820,61 @@ func TestSnapshotEnvironmentRefForwardCompat(t *testing.T) {
 		t.Fatalf("forward EnvironmentRef = %+v, want local /ws", got.EnvironmentRef)
 	}
 }
+
+func TestSnapshotAdoptionMetadataStaysFlatAndOptional(t *testing.T) {
+	ordinary := session.New("ordinary", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0).UTC())
+	ordinaryJSON := mustMarshal(t, ordinary)
+	if strings.Contains(string(ordinaryJSON), "adoption_") {
+		t.Fatalf("ordinary snapshot contains adoption metadata: %s", ordinaryJSON)
+	}
+
+	adopted := session.New("adopted", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0).UTC())
+	adopted.Adoption = &session.AdoptionMetadata{
+		AdoptionSourceID:      "legacy-source",
+		AdoptionRequestDigest: "request-digest",
+	}
+	line := mustMarshal(t, adopted)
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(line, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if string(wire["adoption_source_id"]) != `"legacy-source"` || string(wire["adoption_request_digest"]) != `"request-digest"` {
+		t.Fatalf("flat adoption fields missing from %s", line)
+	}
+	if _, nested := wire["adoption"]; nested {
+		t.Fatalf("adoption metadata became nested: %s", line)
+	}
+
+	restored, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := restored.Adoption
+	if metadata == nil || metadata.AdoptionSourceID != "legacy-source" || metadata.AdoptionRequestDigest != "request-digest" {
+		t.Fatalf("restored adoption metadata = %+v", metadata)
+	}
+}
+
+func TestSnapshotAdoptionMetadataDecodesExistingV2Fields(t *testing.T) {
+	v2 := `{"id":"adopted","state":"idle","mode":"default","limits":{},"counters":{},` +
+		`"workspace":"/ws","created_at":"2023-11-14T22:13:20Z","messages":[],` +
+		`"adoption_source_id":"legacy-source","adoption_request_digest":"request-digest","future_key":123}`
+	got, err := sessnap.Unmarshal([]byte(v2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := got.Adoption
+	if metadata == nil || metadata.AdoptionSourceID != "legacy-source" || metadata.AdoptionRequestDigest != "request-digest" {
+		t.Fatalf("existing v2 adoption metadata = %+v", metadata)
+	}
+}
+
+func BenchmarkSnapshotOrdinarySession(b *testing.B) {
+	s := session.New("ordinary", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0).UTC())
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := sessnap.Of(s); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
