@@ -76,24 +76,24 @@ all identical to `mecated`'s (see §3).
 > **`--redis-url` is mecak8s-only.** `mecated` does **not** expose it (its flag set has no
 > `--redis-url`); the field exists on `app.Config` but is wired only by `cmd/mecak8s`.
 
-#### Manifests (`deploy/mecak8s/`)
+#### Production Helm chart (`deploy/helm/mecak8s/`)
 
-A kustomize base deploys the full topology: a `mecatl` namespace (PSS restricted), RBAC
-(ServiceAccount + `leases` Role + RoleBinding), a Redis StatefulSet + Service (the managed
-stateful backing service — `redis:6379`), two storage-free agent replicas (no PVC, no
-volumes), an agent Service (gRPC + HTTP), a PodDisruptionBudget (`minAvailable: 1`), and a
-default-deny NetworkPolicy with explicit egress (DNS 53, k8s API 443, Redis 6379, LLM 443).
+The production contract is the Helm chart. It never installs Redis: an install must provide an externally managed Redis endpoint and a Secret reference when any Secret key is configured. The CA-bundle Secret key is optional: leaving `redis.caKey` empty selects system-trust TLS and mounts no Secret unless an ACL key is also set. ACL password/username Secret keys are optional; a username key requires a password key. Supply exactly one agent image selector: a signed release tag (the enterprise distribution model) or a digest. The chart preserves the storage-free restricted workload, bounded resources, rolling update, probes, PDB, and namespaced Lease RBAC. It ships **no** NetworkPolicy: network isolation is the cluster's job, and a policy the chart cannot keep complete (the agent's egress depends on the operator's provider, MCP, and API-server endpoints) is worse than none. The legacy manifests under `deploy/mecak8s/` keep their policies as a starting point.
 
 ```sh
-# Resolve the manifests with ko (image refs baked in) and apply:
-task ko:build:k8s                       # build the mecak8s image locally with ko
-task ko:resolve | kubectl apply -f -    # or: ko resolve -f deploy/mecak8s/ | kubectl apply -f -
-kubectl wait --for=condition=Ready pod -n mecatl -l app.kubernetes.io/part-of=mecak8s
+helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
+  --set image.repository=registry.example/mecak8s \
+  --set image.tag=v<release-version> \
+  --set redis.endpoint=redis.example.internal:6379 \
+  --set redis.credentialsSecret=mecak8s-redis
 ```
 
-The agent Deployment sets `terminationGracePeriodSeconds: 60`, `preStop: httpGet /drain`,
-and `automountServiceAccountToken: true` (for leases); `strategy: RollingUpdate,
-maxSurge:1, maxUnavailable:0`.
+The Secret is mounted read-only at `/var/run/secrets/redis` with `defaultMode: 0440`; the chart projects exactly the configured CA and ACL keys, not the whole Secret. Their values are never chart values or command arguments. The external chart passes the CA path when `redis.caKey` is set and `--redis-tls` otherwise, and conditionally passes configured password and username paths. Both TLS modes verify the Redis certificate against the hostname from `redis.endpoint` (including IP SAN rules); hostname verification is never disabled. TLS with no ACL is valid, and a system-trust install with no ACL renders no Secret volume at all. `values-kind.yaml` is a separate disposable-only profile for the local `ko.local` image and plaintext Redis fixture, and its rendered command includes the explicit `--redis-allow-plaintext` opt-in. It must not be used for a production install.
+
+#### Legacy manifests (`deploy/mecak8s/`)
+
+The existing Kustomize manifests remain for the legacy qualification suite. New production deployments use the Helm chart above.
+
 
 #### Kind e2e (`task e2e:k8s`)
 

@@ -1,0 +1,45 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/stacklok/mecatl/mecak8s
+  # Supply exactly one immutable release selector at install time: a signed
+  # release tag or a digest. This chart supports the enterprise distribution's
+  # version-tag release model as well as digest-pinned images.
+  digest: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+mockProvider: false
+
+redis:
+  # A production release never creates Redis. Supply the managed endpoint and,
+  # when the service needs a private CA or ACL credentials, a Secret holding
+  # them. Client-certificate (mTLS) authentication is not supported (ADR 0233).
+  endpoint: ""
+  credentialsSecret: ""
+  passwordKey: ""
+  # caKey names a PEM CA bundle key in credentialsSecret. Leave it EMPTY for a
+  # managed Redis whose certificate chains to a public CA: the agent then
+  # verifies against the system trust store (--redis-tls) and mounts no Secret
+  # unless an ACL key is also set. Verification is never disabled either way.
+  caKey: ca.pem
+  usernameKey: ""
+  local:
+    enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+service:
+  type: ClusterIP
+  grpcPort: 8080
+  httpPort: 8081
+
+podAnnotations: {}

@@ -1,0 +1,15 @@
+# Disposable Kind/offline qualification only. This is the sole profile allowed
+# to use a loaded ko.local image and an in-chart plaintext Redis fixture.
+image:
+  repository: ko.local/mecak8s
+  digest: ""
+  tag: dev
+  pullPolicy: IfNotPresent
+
+mockProvider: true
+
+redis:
+  endpoint: redis:6379
+  credentialsSecret: ""
+  local:
+    enabled: true

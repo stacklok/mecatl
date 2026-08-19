@@ -1,0 +1,104 @@
+{{- include "mecak8s.validateImage" . -}}
+{{- include "mecak8s.validateRedis" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mecak8s.fullname" . }}
+  labels: {{- include "mecak8s.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {{- include "mecak8s.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mecak8s.selectorLabels" . | nindent 8 }}
+      annotations: {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "mecak8s.fullname" . }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: agent
+          image: {{ if .Values.image.digest }}{{ .Values.image.repository }}@{{ .Values.image.digest }}{{ else }}{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --grpc-addr=0.0.0.0:8080
+            - --http-addr=0.0.0.0:8081
+            - --redis-url={{ .Values.redis.endpoint }}
+            - --session-lease-k8s-namespace={{ .Release.Namespace }}
+            - --headless=true
+            - --posture=auto
+            {{- if .Values.mockProvider }}
+            - --mock
+            {{- end }}
+            {{- if .Values.redis.local.enabled }}
+            - --redis-allow-plaintext
+            {{- else }}
+            {{- if .Values.redis.usernameKey }}
+            - --redis-username-file=/var/run/secrets/redis/{{ .Values.redis.usernameKey }}
+            {{- end }}
+            {{- if .Values.redis.passwordKey }}
+            - --redis-password-file=/var/run/secrets/redis/{{ .Values.redis.passwordKey }}
+            {{- end }}
+            {{- if .Values.redis.caKey }}
+            - --redis-tls-ca=/var/run/secrets/redis/{{ .Values.redis.caKey }}
+            {{- else }}
+            - --redis-tls
+            {{- end }}
+            {{- end }}
+          ports:
+            - {name: grpc, containerPort: 8080}
+            - {name: http, containerPort: 8081}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              httpGet: {path: /drain, port: http}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- if include "mecak8s.redisSecretMounted" . }}
+            - {name: redis-credentials, mountPath: /var/run/secrets/redis, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
+        {{- if include "mecak8s.redisSecretMounted" . }}
+        - name: redis-credentials
+          secret:
+            secretName: {{ .Values.redis.credentialsSecret }}
+            defaultMode: 0440
+            items:
+              {{- if .Values.redis.caKey }}
+              - {key: {{ .Values.redis.caKey | quote }}, path: {{ .Values.redis.caKey | quote }}}
+              {{- end }}
+              {{- if .Values.redis.passwordKey }}
+              - {key: {{ .Values.redis.passwordKey | quote }}, path: {{ .Values.redis.passwordKey | quote }}}
+              {{- end }}
+              {{- if .Values.redis.usernameKey }}
+              - {key: {{ .Values.redis.usernameKey | quote }}, path: {{ .Values.redis.usernameKey | quote }}}
+              {{- end }}
+        {{- end }}

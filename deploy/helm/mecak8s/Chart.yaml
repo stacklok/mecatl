@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mecak8s
+description: Storage-free mecak8s agent backed by externally managed Redis and Kubernetes Leases.
+type: application
+version: 0.1.0
+appVersion: "dev"

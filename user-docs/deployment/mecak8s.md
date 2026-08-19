@@ -22,6 +22,10 @@ flowchart TD
 
 Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
 
+## Local ToolHive-free Kind profile
+
+For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create vMCP resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. See `deploy/mecak8s-vmcp/README.md` for the local workflow.
+
 For global MCP OAuth, use an externally provisioned read-only environment credential and
 restart pods after rotation. `mecak8s` never launches a browser; a local mutable credential
 root conflicts with the normal storage-free posture. See [MCP client](/what-you-get/mcp-client.md).
@@ -77,6 +81,20 @@ process-local; the default fails before refresh network when no writer exists.
 | Single-writer lease | k8s API server | `internal/adapter/k8slease` | `port.SessionLease` |
 
 The `redisstore` adapter reuses `sessnap.Marshal`/`Unmarshal` — the same snapshot format `jsonlstore` and the gRPC driver use (`sessnap-json/1`). It is a transport alternative, not a new format. Event log records use `RPUSH`/`LRANGE` so append order is preserved. The adapter is validated by the same `storeconformance.Run`, `eventlogconformance.Run`, and `storeconformance.RunPrunable` suites that `jsonlstore` passes, tested offline against `miniredis`.
+
+## Production Helm chart
+
+`deploy/helm/mecak8s/` is the production deployment contract. It creates no Redis StatefulSet and will not render until the operator supplies an external Redis endpoint, a credentials Secret reference when a configured key needs reading, and exactly one image selector: a signed release tag or a digest. The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, exact namespaced Lease RBAC, and no agent PVC. It ships no NetworkPolicy — the agent's egress set depends on your provider, MCP, and API-server endpoints, so network isolation belongs to the cluster's own policy layer rather than to a chart that cannot know them. The legacy manifests under `deploy/mecak8s/` keep their policies as a worked example.
+
+```sh
+helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
+  --set image.repository=registry.example/mecak8s \
+  --set image.tag=v<release-version> \
+  --set redis.endpoint=redis.example.internal:6379 \
+  --set redis.credentialsSecret=mecak8s-redis
+```
+
+The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exactly the configured CA and ACL keys; unrelated Secret keys are not exposed. A password key alone uses Redis's default ACL user, while a username key requires a password key. `caKey` is optional: leaving it empty selects system-trust TLS, so an install against a publicly-rooted managed Redis with no ACL renders `--redis-tls` and no Secret volume at all. `credentialsSecret` is required exactly when some key needs reading. TLS-without-ACL external deployments are valid. The rendered command receives paths only, never Secret values. `values-kind.yaml` is deliberately the only profile that permits `ko.local` and plaintext Redis, and it passes `--redis-allow-plaintext` explicitly. It is not a production configuration.
 
 ---
 
