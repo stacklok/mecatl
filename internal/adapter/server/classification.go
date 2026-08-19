@@ -26,6 +26,21 @@ const (
 	// decision (ownsResource/authorizeSession/authorizeSchedule, or an
 	// equivalent per-kind check such as memory.CallerStore's context-derived
 	// namespace) on every call, denying a foreign caller as absence.
+	//
+	// MANAGEMENT-AUTHORITY SUB-CASE (the storage-maintenance boundaries:
+	// StorageHealth, Plan/Apply/Resume/CancelSessionMigration,
+	// SessionMigrationJob, Plan/Apply/CancelSessionCleanup,
+	// SessionCleanupJob): the boundary still resolves a real per-caller
+	// identity decision — "is this the verified management principal", and
+	// for the ones that mint a job/plan/token, "does this handle belong to
+	// THIS caller" — so KindCallerOwned's structural contract (a real ctx
+	// check, no bypass) holds. But unlike an ordinary caller-owned boundary,
+	// the underlying DATA these operate over is store-wide (every session),
+	// never narrowed to "this caller's own rows". Don't read their entries'
+	// "caller-owned" kind as data-scoping; read the rationale text for what
+	// is actually decided. A future 5th AccessKind naming this sub-case
+	// explicitly would need its own ADR (per ADR 0212's closed 4-kind
+	// taxonomy) — not done here.
 	KindCallerOwned AccessKind = iota
 	// KindDerived means the boundary carries no independent decision of its
 	// own: it operates on an identifier a caller can only obtain from an
@@ -240,16 +255,16 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"EndSession":                {KindCallerOwned, "authorizes via GetSession before CloseSession"},
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
 	"ListSessionPage":           {KindCallerOwned, "passes caller ownership into the store query before keyset page formation and counting"},
-	"StorageHealth":             {KindCallerOwned, "requires the trusted-context management authorizer before reading any process-wide aggregate"},
-	"PlanSessionMigration":      {KindCallerOwned, "requires management authorization and binds its generation handle to the verified caller"},
-	"ApplySessionMigration":     {KindCallerOwned, "requires management authorization and creates a caller-bound durable bounded-batch job"},
-	"ResumeSessionMigration":    {KindCallerOwned, "requires management authorization and the same caller binding before processing another bounded batch"},
-	"CancelSessionMigration":    {KindCallerOwned, "requires management authorization and the same caller binding before stopping future items"},
-	"SessionMigrationJob":       {KindCallerOwned, "requires management authorization and conceals missing and cross-caller job handles identically"},
-	"PlanSessionCleanup":        {KindCallerOwned, "requires management authority and scopes metadata paging to the verified context principal before planning"},
-	"ApplySessionCleanup":       {KindCallerOwned, "requires management authority plus a caller-bound signed plan before revalidated deletion"},
-	"CancelSessionCleanup":      {KindCallerOwned, "requires management authority and matches the verified principal against the bounded job registry"},
-	"SessionCleanupJob":         {KindCallerOwned, "requires management authority and returns only a caller-bound sanitized job projection"},
+	"StorageHealth":             {KindCallerOwned, "gates on the trusted-context management authorizer, NOT caller ownership — the aggregate it reads is store-wide (every session), never scoped to the caller's own rows; see the AccessKind doc comment note on management-authority boundaries"},
+	"PlanSessionMigration":      {KindCallerOwned, "gates on management authorization over the ENTIRE store, not the caller's own sessions; only the returned generation handle is bound to the verified caller for later Apply/Resume/Cancel binding"},
+	"ApplySessionMigration":     {KindCallerOwned, "gates on management authorization over the entire store; only the created job is caller-bound, so a foreign-caller job lookup is denied identically to a missing job"},
+	"ResumeSessionMigration":    {KindCallerOwned, "gates on management authorization; the same caller-bound job-handle check applies before processing another bounded batch — the underlying migration data remains store-wide, never caller-owned"},
+	"CancelSessionMigration":    {KindCallerOwned, "gates on management authorization; the same caller-bound job-handle check applies before stopping future items — the underlying migration data remains store-wide, never caller-owned"},
+	"SessionMigrationJob":       {KindCallerOwned, "gates on management authorization and conceals missing and cross-caller job handles identically; the underlying migration data is store-wide, not the caller's own sessions"},
+	"PlanSessionCleanup":        {KindCallerOwned, "gates on management authority, NOT caller ownership — the metadata pager plans over the ENTIRE store (owner scope is nil); the decision resolved here is 'is this caller a management principal', never per-session ownership"},
+	"ApplySessionCleanup":       {KindCallerOwned, "gates on management authority over the entire store; only the confirmation token/plan is bound to the verified caller, so a stolen or foreign token is rejected before any deletion"},
+	"CancelSessionCleanup":      {KindCallerOwned, "gates on management authority; matches the verified principal against the bounded job registry — the underlying cleanup scope is store-wide, never caller-owned"},
+	"SessionCleanupJob":         {KindCallerOwned, "gates on management authority and returns only a caller-bound sanitized job projection; the underlying cleanup data is store-wide, not the caller's own sessions"},
 	"StreamSessionEvents":       {KindCallerOwned, "event log/live stream resolves through the owning session's authorizeSession check"},
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
