@@ -751,6 +751,11 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	cfg.providerFlags.ApplyResolved(&out, keys)
 	out.UseOpenAI = keys.OpenAI != ""
 	cfg.toolhiveLLMFlags.Apply(&out)
+	// Operator-tier mcp.servers profiles (settings.yaml): the embedded server
+	// is a composition root like mecated, so it loads the operator MCP profiles
+	// over the same resolver the other binaries use. The legacy --mcp-server
+	// flag stays off (heavier opt-in), but operator settings are honored here.
+	out.MCPProfileLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
 	return out
 }
 

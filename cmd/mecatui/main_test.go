@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
 
@@ -30,6 +31,25 @@ func TestMain(m *testing.M) {
 		}
 		return m.Run()
 	}))
+}
+
+// TestEmbeddedConfigWiresMCPProfileLoader pins the fix for the silent-ignore of
+// operator-tier mcp.servers by mecatui's embedded server: embeddedConfig MUST set
+// a non-nil MCPProfileLoader so app.Build loads the operator profiles instead of
+// dropping them. The test uses parseFlags(nil), the same cmd test seam the other
+// bare-mode config tests in this package use.
+func TestEmbeddedConfigWiresMCPProfileLoader(t *testing.T) {
+	cfg, err := parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags(nil): %v", err)
+	}
+	ac := embeddedConfig(cfg, nil)
+	if ac.MCPProfileLoader == nil {
+		t.Fatal("app.Config.MCPProfileLoader is nil; operator profiles would be ignored")
+	}
+	if _, ok := ac.MCPProfileLoader.(*cliconfig.MCPProfileResolver); !ok {
+		t.Fatalf("MCPProfileLoader = %T, want *cliconfig.MCPProfileResolver", ac.MCPProfileLoader)
+	}
 }
 
 func TestConventionalAuthFileIsIsolated(t *testing.T) {

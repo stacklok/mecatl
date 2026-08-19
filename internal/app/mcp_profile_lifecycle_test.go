@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -188,5 +189,39 @@ func TestBuildFailureClosesMCPProfileLifecycle(t *testing.T) {
 	}
 	if got := closer.calls.Load(); got != 1 {
 		t.Fatalf("profile lifecycle Close calls = %d, want 1", got)
+	}
+}
+
+// TestBuildWarnsWhenOperatorMCPConfiguredWithoutLoader pins the WARN mecatui's
+// embedded server used to silently drop: an operator-tier mcp.servers block with
+// no MCPProfileLoader wired must surface a settings-only diagnostic so any
+// consumer omitting the loader sees the ignored servers.
+func TestBuildWarnsWhenOperatorMCPConfiguredWithoutLoader(t *testing.T) {
+	settings := t.TempDir() + "/settings.yaml"
+	if err := os.WriteFile(settings, []byte("mcp:\n  servers:\n    - name: public\n      url: https://mcp.example.com/mcp\n      auth:\n        mode: none\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	diag := &kvDiag{}
+	built, err := Build(context.Background(), Config{
+		Workspace: t.TempDir(), Model: "mock", MockProvider: mockllm.New(),
+		PermissionConfigs: []string{settings}, Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	want := "operator-tier mcp.servers configured"
+	found := false
+	for i, msg := range diag.msgs {
+		if strings.Contains(msg, want) {
+			found = true
+			if diag.lvl[i] != port.LevelWarn {
+				t.Fatalf("log level = %v, want WARN", diag.lvl[i])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %v, want a WARN containing %q", diag.msgs, want)
 	}
 }

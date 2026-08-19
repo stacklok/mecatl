@@ -1312,6 +1312,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, learningErr
 	}
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
+		if cfg.MCPProfileLoader == nil {
+			if mcpCfg := resolver.OperatorMCP(); mcpCfg != nil && len(mcpCfg.Servers) > 0 {
+				cfg.diag().Log(ctx, port.LevelWarn,
+					"operator-tier mcp.servers configured but no MCP profile loader is wired; servers ignored",
+					"count", len(mcpCfg.Servers))
+			}
+		}
 		if cfg.MCPProfileLoader != nil {
 			profiles, lifecycle, err := cfg.MCPProfileLoader.Load(resolver.OperatorMCP())
 			if err != nil {

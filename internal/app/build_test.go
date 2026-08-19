@@ -365,13 +365,15 @@ type kvDiag struct {
 	mu   sync.Mutex
 	msgs []string
 	args [][]any
+	lvl  []port.Level
 }
 
-func (d *kvDiag) Log(_ context.Context, _ port.Level, msg string, args ...any) {
+func (d *kvDiag) Log(_ context.Context, lvl port.Level, msg string, args ...any) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.msgs = append(d.msgs, msg)
 	d.args = append(d.args, args)
+	d.lvl = append(d.lvl, lvl)
 }
 
 func (d *kvDiag) With(...any) port.Diagnostics { return d }
