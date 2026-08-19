@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -87,6 +88,37 @@ func TestManagementAuthorityIsNotSingleWriterProof(t *testing.T) {
 	}
 	if !storageManagementAuthorizer(Config{LocalStorageManagement: true})(context.Background()) {
 		t.Fatal("local management authority was not granted independently")
+	}
+}
+
+func TestRetentionHealthTerminalStatesDoNotClobberOtherMaintenance(t *testing.T) {
+	state := &storageMaintenanceState{}
+	now := time.Now()
+	state.start("migration", "migration-a")
+	state.beginSweep()
+	state.finishSweep(now, time.Hour)
+	state.beginSweep()
+	state.failSweep(now.Add(time.Minute), time.Hour)
+
+	got := state.snapshot()
+	if got.ActiveJob != "migration" || !got.LastSweepAvailable || !got.LastSweep.Equal(now) ||
+		!got.NextSweepAvailable || got.LastFailure != "retention sweep failed" {
+		t.Fatalf("failed repeat sweep health = %+v", got)
+	}
+
+	state.beginSweep()
+	state.disableSweep()
+	got = state.snapshot()
+	if got.ActiveJob != "migration" || !got.LastSweepAvailable || !got.LastSweep.Equal(now) ||
+		got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
+		t.Fatalf("disabled sweep health = %+v", got)
+	}
+
+	state.beginSweep()
+	state.stopSweepSchedule()
+	got = state.snapshot()
+	if got.ActiveJob != "migration" || got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
+		t.Fatalf("cancelled sweep health = %+v", got)
 	}
 }
 

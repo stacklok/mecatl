@@ -31,6 +31,29 @@ func (s *storageMaintenanceState) failSweep(now time.Time, cadence time.Duration
 	s.finishSweepAttempt(now, cadence, "retention sweep failed", false)
 }
 
+func (s *storageMaintenanceState) disableSweep() {
+	s.settleStoppedSweep("retention sweep unavailable")
+}
+
+func (s *storageMaintenanceState) stopSweepSchedule() {
+	s.settleStoppedSweep("")
+}
+
+func (s *storageMaintenanceState) settleStoppedSweep(failure string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	delete(s.active, maintenanceKey("retention_sweep", "retention_sweep"))
+	if failure != "" {
+		s.status.LastFailure = failure
+	}
+	s.status.NextSweep = time.Time{}
+	s.status.NextSweepAvailable = false
+	s.refreshActiveLocked()
+	s.mu.Unlock()
+}
+
 func (s *storageMaintenanceState) finishSweepAttempt(now time.Time, cadence time.Duration, failure string, completed bool) {
 	if s == nil {
 		return

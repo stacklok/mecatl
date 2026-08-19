@@ -408,11 +408,16 @@ func startChildGC(parent context.Context, cfg Config, store port.SessionStore, i
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer cfg.storageMaintenance.stopSweepSchedule()
 		runSweep := func() {
 			cfg.storageMaintenance.beginSweep()
 			defer func() {
 				if ctx.Err() != nil {
-					cfg.storageMaintenance.finish("retention_sweep", "retention_sweep", "")
+					cfg.storageMaintenance.stopSweepSchedule()
+					return
+				}
+				if gc.disabled {
+					cfg.storageMaintenance.disableSweep()
 					return
 				}
 				if gc.failed {

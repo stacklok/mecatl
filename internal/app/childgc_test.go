@@ -745,28 +745,48 @@ func TestChildGCPruneUnsupportedDisablesStickily(t *testing.T) {
 	}
 }
 
-// TestChildGCTickerStopsAfterPruneUnsupported pins the goroutine half of the
-// sticky disable: after the startup sweep hits ErrPruneUnsupported, no later
-// tick performs a List (the sweeper goroutine exits; goleak at TestMain is the
-// leak gate).
-func TestChildGCTickerStopsAfterPruneUnsupported(t *testing.T) {
-	cs := &countingPrunable{Store: memstore.New(), listed: make(chan struct{}, 16), listErr: pruneUnsupportedErr()}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cfg := Config{
-		ChildRetention:  time.Hour,
-		ChildGCInterval: 2 * time.Millisecond,
-		Diagnostics:     port.NopDiagnostics{},
-	}
-	startChildGC(ctx, cfg, cs, func(session.SessionID) bool { return false })
-	select {
-	case <-cs.listed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the startup sweep never consulted the store")
-	}
-	time.Sleep(60 * time.Millisecond) // many would-be ticks
-	if got := cs.lists.Load(); got != 1 {
-		t.Errorf("sweeper kept Listing after ErrPruneUnsupported (%d Lists, want 1)", got)
+// TestChildGCTickerStopsAfterUnsupportedRetention pins the goroutine and health
+// halves of sticky disable: either runtime unsupported sentinel ends the worker,
+// clears active/next-sweep state, and reports maintenance unavailability without
+// claiming a successful sweep.
+func TestChildGCTickerStopsAfterUnsupportedRetention(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "prune", err: pruneUnsupportedErr()},
+		{name: "metadata paging", err: port.ErrSessionMetadataPagingUnsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := &countingPrunable{Store: memstore.New(), listed: make(chan struct{}, 16), listErr: tc.err}
+			health := &storageMaintenanceState{}
+			cfg := Config{
+				ChildRetention: time.Hour, ChildGCInterval: 2 * time.Millisecond,
+				Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
+			}
+			closeGC := startChildGC(context.Background(), cfg, cs, func(session.SessionID) bool { return false })
+			defer closeGC()
+			select {
+			case <-cs.listed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the startup sweep never consulted the store")
+			}
+			deadline := time.Now().Add(time.Second)
+			for health.snapshot().LastFailure == "" {
+				if time.Now().After(deadline) {
+					t.Fatal("unsupported sweep did not settle health")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			time.Sleep(20 * time.Millisecond) // many would-be ticks
+			if got := cs.lists.Load(); got != 1 {
+				t.Errorf("sweeper kept Listing after unsupported result (%d Lists, want 1)", got)
+			}
+			got := health.snapshot()
+			if got.ActiveJob != "" || got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
+				t.Fatalf("health after unsupported sweep = %+v", got)
+			}
+		})
 	}
 }
 
@@ -775,20 +795,25 @@ func TestChildGCTickerStopsAfterPruneUnsupported(t *testing.T) {
 // TestMain catches a lingering goroutine).
 func TestChildGCStartupOnlySweepsOnceAndExits(t *testing.T) {
 	cs := &countingPrunable{Store: memstore.New(), listed: make(chan struct{}, 4)}
+	health := &storageMaintenanceState{}
 	cfg := Config{
 		ChildRetention: time.Hour, // ChildGCInterval deliberately zero
-		Diagnostics:    port.NopDiagnostics{},
+		Diagnostics:    port.NopDiagnostics{}, storageMaintenance: health,
 	}
 	closeGC := startChildGC(context.Background(), cfg, cs, func(session.SessionID) bool { return false })
-	defer closeGC()
-	select {
-	case <-cs.listed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the startup sweep never consulted the store")
+	deadline := time.Now().Add(time.Second)
+	for !health.snapshot().LastSweepAvailable {
+		if time.Now().After(deadline) {
+			t.Fatal("startup-only sweep did not settle health")
+		}
+		time.Sleep(time.Millisecond)
 	}
-	time.Sleep(50 * time.Millisecond)
+	waitChildGCClose(t, closeGC)
 	if got := cs.lists.Load(); got != 1 {
 		t.Errorf("startup-only mode performed %d Lists, want exactly 1", got)
+	}
+	if got := health.snapshot(); got.ActiveJob != "" || !got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "" {
+		t.Fatalf("startup-only health = %+v", got)
 	}
 }
 
@@ -868,9 +893,10 @@ func TestChildGCCleanupCancelsStartupSweepJoinsAndIsIdempotent(t *testing.T) {
 
 func TestChildGCCleanupCancelsBlockedTickerSweep(t *testing.T) {
 	store := newBlockingRetentionStore(2)
+	health := &storageMaintenanceState{}
 	cfg := Config{
 		ChildRetention: time.Hour, ChildGCInterval: time.Millisecond,
-		Diagnostics: port.NopDiagnostics{}, storageMaintenance: &storageMaintenanceState{},
+		Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
 	}
 	closeGC := startChildGC(context.Background(), cfg, store, func(session.SessionID) bool { return false })
 	select {
@@ -878,11 +904,17 @@ func TestChildGCCleanupCancelsBlockedTickerSweep(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("ticker sweep did not start")
 	}
+	if got := health.snapshot(); got.ActiveJob != "retention_sweep" || !got.LastSweepAvailable || !got.NextSweepAvailable {
+		t.Fatalf("health during ticker sweep = %+v", got)
+	}
 	waitChildGCClose(t, closeGC)
 	calls := store.calls.Load()
 	time.Sleep(10 * time.Millisecond)
 	if got := store.calls.Load(); got != calls {
 		t.Fatalf("post-close ticker touched store: calls %d -> %d", calls, got)
+	}
+	if got := health.snapshot(); got.ActiveJob != "" || !got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "" {
+		t.Fatalf("health after ticker shutdown = %+v", got)
 	}
 	store.close(t)
 }

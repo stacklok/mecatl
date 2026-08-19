@@ -6011,7 +6011,12 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   retention, migration, and cleanup lifecycle callbacks. Health renders sorted
   closed job kinds, adding counts for same-kind concurrency instead of silently
   overwriting one string. Durable running migration jobs reattach on inspection or
-  resume; each terminal transition removes only its own key. Stable sanitized
+  resume; each terminal transition removes only its own key. Retention records
+  `LastSweep` only after a completed pass. A transient failure keeps the worker's
+  next retry visible, while runtime unsupported metadata disables the worker,
+  clears active/next-sweep availability, and reports `retention sweep unavailable`
+  through `LastFailure`; cancellation and shutdown clear active/next without
+  overwriting the last success or failure. Stable sanitized
   migration/cleanup/health failures replace and retain `LastFailure`; backend errors,
   paths, ids, and content never enter the state.
 
