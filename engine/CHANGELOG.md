@@ -11,6 +11,19 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ## [Unreleased]
 
+### Changed
+
+- **`agent.SteerOutcome` enum: superseded/slot_full dropped, appended added**
+  (issue #512, the landed steer-while-running contract). The round-2/task-13
+  rework replaced `SteerSuperseded` with `SteerSlotFull`, and the round-3
+  append-default rework then removed BOTH from the enum and added
+  `SteerAppended` (`"appended"`): a second steer on the occupied slot merges
+  into the pending bundle (`pending += "\n\n" + text`) instead of rejecting
+  or replacing. The shipped enum is `accepted` / `appended` / `retracted` /
+  `none_pending` / `too_late`. Because neither intermediate value ever shipped
+  in a tagged release, the net public change over the pre-steer baseline is a
+  breaking `Changed` only for the enum vocabulary (pre-v1 a minor bump).
+
 ### Added
 
 - **Engine-child lifecycle exclusion** ([ADR 0027](../docs/adr/0027-cloud-native.md)) —
@@ -163,6 +176,46 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `agent.NewUserModelObserver` constructing the storage-free automatic path; its
   legacy ID-based `Review` path retains the SessionStore-backed constructor. All are
   new exported identifiers/fields and therefore Added (minor).
+- **Steer-while-running: in-flight operator steer injection** (issue #512,
+  [ADR 0232](../docs/adr/0232-steer-while-running.md)) — a `Run`-scoped,
+  single-slot, append-default mutex inbox that the agent loop drains at the
+  Step 2a turn boundary (the same provider-legal seam
+  `injectBackgroundNotice`/`drainPendingDelivery` use) and records as an
+  ordinary harness-authored user continuation (`recordContinuation`:
+  `RecordUserPrompt` + the log-only `EvUserPrompt`), so a drained steer
+  replays to the model as an ordinary user turn and flows through compaction /
+  `session.ValidateToolPairing` / ADR-0038 rehydration unchanged. Steer text is
+  UTF-8-repaired at ingress (`session.ToValidUTF8`) so recorded history ==
+  `EvSteer` echo == model view. A pending (un-drained) steer is in-memory and
+  lost with its run (crash/cancel/Abandon) — never persisted (reset-by-design,
+  ADR 0027 rows 60/37). A parked steer blocks a clean terminal until it drains
+  (the clean-exit continue-run rule; never-drop holds engine-internally), and
+  both terminate paths drain-then-close so a parked steer is recorded into
+  durable history before the inbox closes. All Added (a minor bump):
+  - `agent.Deps.EnableSteer` — the opt-in knob (default false = strict no-op,
+    byte-identical to the pre-steer posture). Composition plumbs it to
+    `ServerCapabilities.steer`; no `port` interface is widened.
+  - `(*agent.Run).EnqueueSteer` — the exported, wire-facing steer entry point
+    the Service routes a live run's operator steer through: `SteerAccepted on
+    an empty slot, `SteerAppended` on an occupied slot (the bundle grows by
+    `"\n\n"` + text), `SteerTooLate` (plain value, never an error) past the
+    terminal close the Service promotes on.
+  - `(*agent.Run).CancelSteer` — the wire-facing steer-cancel entry point
+    (retracts the run's PENDING, un-drained steer; reports `SteerRetracted` /
+    `SteerNonePending`).
+  - `(*agent.Engine).SteerEnabled` — the read-only seam composition reads to
+    advertise the capability from the SAME wired knob (single-source, never
+    recomputed per sink).
+  - `agent.SteerOutcome` + the closed enum vocabulary `SteerAccepted` /
+    `SteerAppended` / `SteerRetracted` / `SteerNonePending` / `SteerTooLate` —
+    the authoritative result of an enqueue/cancel transition (an ENUM, not
+    stacked booleans).
+  - `session.EvSteer` (`"steer"`) + `session.SteerPayload` + the
+    `session.Event.Steer` field — the CLIENT-VISIBLE drain echo carrying the
+    COMMITTED merged bundle text (the version actually drained). The recorded
+    == streamed == model-view invariant holds: the echoed text is byte-identical
+    to the user message recorded into history and replayed to the model. Wire
+    string passthrough (no proto enum).
 
 - **OpenRouter downstream-provider routing echo** (issue #480) — two new
   constants that surface which DOWNSTREAM inference provider OpenRouter routed a

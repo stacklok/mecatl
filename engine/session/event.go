@@ -252,6 +252,27 @@ const (
 	// session's durable EventLog ONLY (pull-only via GetFire/ListFires); carries
 	// SchedulePayload (kind="failed", stop/err populated).
 	EvScheduleFailed EventType = "schedule.failed"
+
+	// EvSteer is emitted when the run's steer inbox DRAIN commits a pending
+	// operator steer at a turn boundary (steer-while-running, issue #512). It
+	// carries the SteerPayload — the COMMITTED text that was just recorded into
+	// the conversation as an ordinary user continuation (recordContinuation).
+	//
+	// It is the AUTHORITATIVE ECHO: the engine is the sole authority on which
+	// appended bundle drained (the client cannot observe the exact drain moment
+	// across stream latency), so the client renders THIS text rather than
+	// guessing which of its staged steers landed. The recorded == streamed ==
+	// model-view invariant holds: the echoed text is byte-identical to the user
+	// message recorded into history and replayed to the model on the next turn.
+	//
+	// It is CLIENT-VISIBLE (unlike the log-only EvUserPrompt / EvApproval /
+	// EvCompactionArchive): the relay forwards it on the live wire so the client
+	// renders the committed steer as it happens. It is NOT recorded to the
+	// model's conversation history (the recorded user message is the model-facing
+	// half; this event is the client-facing echo of the same fact). It maps to
+	// the proto event-type string verbatim (no proto enum; the wire `type` field
+	// is a string passthrough, like EvNoProgress — no task generate).
+	EvSteer EventType = "steer"
 )
 
 // ParallelEventKind discriminates which lifecycle transition an EvParallelBranch event
@@ -426,6 +447,22 @@ type CompactionArchivePayload struct {
 	// are always recoverable from it regardless of how the Compactor split the cut.
 	// See the LOG-GROWTH COST note above for why the full slice (not a delta) is kept.
 	Replaced []Message
+}
+
+// SteerPayload is the structured detail carried by an EvSteer Event: the
+// committed operator steer the turn-boundary drain just recorded into the
+// conversation. It is the client-facing ECHO of the drain — the engine is
+// authoritative on which appended bundle drained, so Text is the version
+// ACTUALLY drained (never a stale draft the client may still be holding).
+//
+// The text is the run's OWN operator input (the top-level run's steer), never
+// child content — the same posture as UserPromptPayload (gauntlet #7): a child
+// run's steer, if any, rides the child stream, never the parent's.
+type SteerPayload struct {
+	// Text is the committed steer text, byte-identical to the user message
+	// recorded into history and replayed to the model (the recorded == streamed
+	// == model-view invariant).
+	Text string
 }
 
 // UserPromptPayload is the structured detail carried by an EvUserPrompt Event: the
@@ -1206,4 +1243,8 @@ type Event struct {
 	// the loop. Client-visible (unlike the log-only EvApproval /
 	// EvCompactionArchive / EvUserPrompt). See SchedulePayload.
 	Schedule *SchedulePayload
+	// Steer is set on EvSteer: the committed operator steer the turn-boundary
+	// drain just recorded (the authoritative echo). Client-visible. See
+	// SteerPayload.
+	Steer *SteerPayload
 }

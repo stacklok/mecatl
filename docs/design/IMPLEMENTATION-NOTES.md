@@ -7392,6 +7392,101 @@ go test's panic path — the arithmetic lives in `e2e/suite_test.go`. The `MECAT
 (the `e2e-live` label; `pull_request`, never `pull_request_target`, so fork PRs get no
 secrets).
 
+## Steer-while-running (issue #512, ADR 0232)
+
+Steer injects a user message into an **in-flight** run — Claude Code's "steer while
+running" — instead of waiting for the run to end and submitting a fresh prompt (the
+#228 terminal-queue). The enabler is that the LLM adapters are stateless
+(`store:false`, full replay each turn): a steer is just an appended
+`Message{Role: user}` before the next replay, so **no provider API support is
+required** and it is portable across Anthropic Messages / OpenAI Responses / Chat
+Completions.
+
+**Engine (`engine/agent/steer.go`).** A `Run`-scoped, single-slot, append-default
+**mutex** inbox (a `sync.Mutex` + `{closed, pending, has}` triple — every
+transition is ONE critical section). At most one pending steer bundle per run:
+a second `EnqueueSteer` on the occupied slot **APPENDS** (`pending += "\n\n" +
+text`, outcome `SteerAppended`) — replacing a pending bundle is the explicit
+cancel-then-resend (`CancelSteer`, then a fresh steer with a fresh `message_id`).
+`CancelSteer` retracts; the boundary drain commits the merged bundle as ONE user
+message. The outcome is a closed enum (`accepted`/`appended`/`retracted`/
+`none_pending`/`too_late`), not booleans. Steer text is UTF-8-repaired at
+ingress (`session.ToValidUTF8`) so history == echo == model-view. The inbox is
+in-memory and **best-effort** — a pending (un-drained) steer is lost with the
+run on a crash (reset-by-design, not persisted across restart — ADR 0027 List 1
+row 57 / List 2 row 34). It is armed only when `Deps.EnableSteer` (wired from
+`Config.DisableSteer`, opt-out, default ON, posture-independent) and closed
+(`closeSteer`) only on a genuine terminal (`terminate`/`terminateComplete`),
+never on the `awaiting` park — so a steer submitted while parked on an ask is
+held and drained at the resumed run's first boundary (queue-only; the ask still
+requires an explicit verdict). **Clean-exit continue-run:** a would-be clean end
+while a steer is parked does NOT terminate — `finishTurnNoTools` re-enters the
+loop so the next Step 2a drains the steer (the never-drop contract stays
+engine-internal; the run extends, bounded by `Limits.MaxTurns`); and the
+terminate paths drain-then-close (`closeSteerDrained`) so a parked steer is
+recorded into durable history before the inbox closes, never closed unconsumed.
+
+**Injection seam.** The drain (`drainPendingSteer`) rides the SAME Step 2a
+turn-boundary seam in `runLoop` as `injectBackgroundNotice`/`drainPendingDelivery`
+(sequenced by `runBoundaryInjections`, BEFORE `BeginTurn` and the pre-turn-terminal
+checks), recording via `recordContinuation` (`RecordUserPrompt` + the log-only
+`EvUserPrompt`). History at that boundary always ends on a user prompt / tool
+result / nudge, so the steer is appended **after** the settled tool results — never
+inside a `tool_use` pair (`session.ValidateToolPairing` holds), it rehydrates under
+ADR 0038, and the byte-stable prompt prefix stays a valid cache prefix (the steer
+costs no prompt-cache rebuild beyond normal history growth). The drain emits
+`EvSteer` carrying the committed text — the authoritative echo; the client renders
+the echoed truth (recorded == streamed == model-view).
+
+**Wire (gRPC-only v1).** A `steer`/`steer_cancel` oneof arm on the bidi `Converse`
+stream, a `ServerCapabilities.steer` bit (additive grow, computed once in
+composition), and the `EvSteer` echo. The routing has ONE owner —
+`Service.Steer`/`Service.CancelSteer` (`internal/adapter/server/service.go`); the
+gRPC handler is a dumb frame→Service mapper. **Correlation (watermark).** Every
+frame carries a client-minted `message_id`; the ack lane echoes its own frame's
+id on each outcome. The engine inbox parks text only, so the Service keeps a
+per-session FIFO of the ordered frame ids (`trackSteerMessageID`/
+`LookupSteerMessageID`/`dropSteerMessageID`); on drain the relay pops the whole
+list and stamps the `EvSteer` echo with the LATEST (tail) id — the **watermark**
+the client splits its ordered queue on (positional, never text-match — pinned by
+`TestLookupSteerMessageIDExactUnderDuplicateTexts`). Ids are clamped to a 64-rune
+prefix at track before touching the FIFO or any log (CWE-770). **Lost terminal
+race → auto-promote + sequential handoff:** a steer arriving for a session whose
+run is already terminal is promoted to a fresh follow-up run through the hardened
+run-entry funnel (`StartRunContent`/`loadAndReopen` + lease + recover-if-terminal)
+— never silently dropped; the promote path awaits the original run's
+deregistration (bounded by `steerPromoteGrace`) so a terminate-window steer
+promotes instead of erroring on `IsLive`. The promoted run relays **sequentially
+on the same stream**: `Converse` relays the original run, then each promoted run
+in turn before returning — one relay owner at a time (`runRelay.sendErr`
+single-owner, every `Send` across the one `streamSender` mutex — a gRPC stream
+is not goroutine-safe), the control target (`ResumeApproval`/`Cancel`/
+`CancelChild`) swaps to the promoted run atomically before its relay starts, and
+the promoted run is `FinishRun`-deregistered before the RPC returns (its terminal
+outcome is reported inline as the `steer.outcome` ack, `promoted=true`).
+**HTTP/SSE and ACP steer are deferred** (no client→server mid-run channel; a
+unary `POST .../steer` mirroring `approve`/`cancel` is the cheap follow-up
+shape), as is **steer-to-child** (needs a richer parent→child channel than
+`CancelChild`).
+
+**mecatui.** Reads the `steer` capability off the CreateSession echo: present →
+`enter` mid-run sends a `steer` frame (each `enter` mints a fresh `message_id`,
+the wire carries ONLY that line's text; the engine appends server-side); absent
+→ the #228 local merge-queue, byte-identical. The TUI keeps an **ordered queue
+of sends** (id + fragment); the `EvSteer` echo carries the **watermark** (the
+tail contributing send's id) and the queue splits on it — prefix drained
+(rendered in context at the echo's true stream position), suffix pending. The
+card renders each fragment on its own line (re-composed fragments, whose text
+embeds the merge separator, split per-part at render). Acks advance the
+lifecycle only (the queue splits on the echo, never on an ack); a stale ack
+(id no longer in queue) is dropped. `↑` is **cancel-then-recompose** — it
+issues a `steer_cancel` for the outstanding bundle (the watermark id), pulls
+the pending sends into the input as ONE editable blob, and resends as a fresh
+fragment under a NEW `message_id` (already-drained sends are never re-sent; a
+late `none_pending` ack means the drain won — the steer shipped). The queue is
+the single correlation source — no separate burn maps; the watermark derives
+from the tail send.
+
 
 ---
 

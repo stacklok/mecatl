@@ -256,6 +256,13 @@ type Deps struct {
 	// bug). Default OFF (zero cost when unset); main.go reads the env var.
 	DebugMouse bool
 
+	// DebugSteer turns on a steer correlation trace in the status line (env
+	// MECATUI_DEBUG_STEER=1): each steer ack/echo logs the incoming message_id,
+	// the live bundle's id, and the match/burn/drop decision, so a stuck or
+	// mis-correlated steer lifecycle is visible in the TUI rather than opaque.
+	// Default OFF (zero cost when unset); main.go reads the env var.
+	DebugSteer bool
+
 	// DebugAsk registers the /debug-ask built-in (env MECATUI_DEBUG_ASK=1): it
 	// injects a fake permission ask with long Bash args through the REAL ask
 	// reducer, so the modal's wrap/scroll/full-screen-args behaviour (issue #488)
@@ -308,6 +315,71 @@ const maxQueued = 16
 // staged instruction as its own paragraph in the merged prompt (and in the
 // textarea on an edit-back), which reads naturally as a multi-part request.
 const queueMergeSep = "\n\n"
+
+// steerPhase is the AUTHORITATIVE lifecycle of a steer-mode (Capabilities.Steer)
+// mid-run operator steer. The server is the sole authority on what happened to a
+// steer (the client cannot observe the exact drain moment across stream latency),
+// so these phases are driven ONLY by the server's steer.outcome acks and the
+// steer drain echo — never assumed client-side.
+type steerPhase int
+
+const (
+	// steerPending: the merged text was sent on the Converse stream but the
+	// server's steer.outcome ack has not arrived yet (send in flight).
+	steerPending steerPhase = iota
+	// steerSent: the server acked accepted/appended — the steer is parked in the
+	// run's single-slot inbox awaiting the next turn-boundary drain.
+	steerSent
+	// steerPromoted: the server acked too_late+promoted — the run had already gone
+	// terminal, so the text was auto-promoted to a fresh follow-up run.
+	steerPromoted
+	// steerFailed: the server acked too_late WITHOUT promoted — the promotion
+	// failed (routing / run-entry / lease / funnel error) and the text was NOT
+	// delivered. Distinct from promoted so the ui does NOT report a successful
+	// follow-up. The text is preserved (it may be re-sent or dropped explicitly).
+	steerFailed
+	// steerRetracted: a steer_cancel won — the pending steer was retracted before
+	// it drained (the run drains nothing for it).
+	steerRetracted
+)
+
+// steerQueuedSend is ONE send in the ordered steer queue: the fresh client-minted
+// message_id of THIS send and the (fragment) text it carried. The ordered queue
+// (steerState.sends) lets the TUI split "drained up to the watermark id" from
+// "still pending after it" on each drain echo, instead of collapsing everything
+// into one re-minted bundle (the duplication bug the append model exposed).
+type steerQueuedSend struct {
+	ID   string
+	Text string
+}
+
+// steerState is the ONE-ELEMENT steer-mode mid-run state: the pending bundle —
+// an ORDERED queue of sends (steerQueuedSend), its merged display text, and its
+// authoritative lifecycle phase. The ordered queue is the SINGLE correlation
+// source (the watermark id is the tail's message_id — derived, never stored);
+// text-display is the blank-line join of sends (cached to avoid a per-render
+// re-join).
+type steerState struct {
+	// Text is the merged display text (the blank-line join of sends) shown on the
+	// card; the wire sends each send's OWN fragment (never the whole merged
+	// text — that would re-append drained text, the duplication bug).
+	Text string
+	// Phase is the authoritative lifecycle (see steerPhase).
+	Phase steerPhase
+	// Sends is the ordered queue of sends currently in this bundle (ID+fragment).
+	// On a drain echo the prefix up to and incl. the watermark id is dropped
+	// (drained); the suffix stays pending and Text re-joins from the remainder.
+	Sends []steerQueuedSend
+}
+
+// watermarkID derives the bundle's current watermark id — the tail send's
+// message_id — or "" for an empty queue (the steerCancel frame's scoping hint).
+func (s *steerState) watermarkID() string {
+	if s == nil || len(s.Sends) == 0 {
+		return ""
+	}
+	return s.Sends[len(s.Sends)-1].ID
+}
 
 // phase is the model's coarse state machine.
 type phase int
@@ -445,11 +517,22 @@ type Model struct {
 	dream           dreamState
 	dreamGen        uint64
 	dreamRequest    uint64
-	models          modelsState    // /models picker overlay state (view==modelsNone when closed)
-	effort          effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
-	worktrees       worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
-	schedule        scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
-	sessions        sessionsState  // /sessions overlay state (view==sessionsNone when closed) — issue #245
+	// steer is the steer-mode (Capabilities.Steer) mid-run state: ONE bundle (the
+	// merged operator steer text + its client-minted message_id) with its
+	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,
+	// awaiting drain) → promoted (too_late; the server auto-started a follow-up
+	// run) → failed (too_late without promoted) → retracted (steer_cancel won). nil
+	// when no steer is in flight (the common case) OR steer is disabled (the #228
+	// local merge-queue then owns mid-run input, byte-identical). A ONE-BUNDLE
+	// state — the client-side merge collapses staged lines into ONE text BEFORE
+	// send, so the engine's single-slot inbox only ever has one bundle outstanding.
+	steer     *steerState
+	steerSeq  int            // session-scoped message-id serial (1-based; "steer-%04d")
+	models    modelsState    // /models picker overlay state (view==modelsNone when closed)
+	effort    effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
+	worktrees worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
+	schedule  scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
+	sessions  sessionsState  // /sessions overlay state (view==sessionsNone when closed) — issue #245
 	// activeModel is the currently-selected (provider, model) the NEXT CreateSession
 	// will carry (apply-on-next-create). Seeded from Deps.InitialModel, updated by the
 	// picker, and reconciled-to-default at connect when its provider is unavailable. It

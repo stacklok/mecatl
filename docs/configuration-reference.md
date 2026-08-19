@@ -149,6 +149,16 @@ Exact verified OIDC issuer/subject pairs authorized for process-wide storage hea
 | `storage_management.principals[].issuer` | `string` | `(empty)` | Issuer must equal the verified token issuer byte-for-byte. |
 | `storage_management.principals[].subject` | `string` | `(empty)` | Subject must equal the verified token subject byte-for-byte. |
 
+## `steer`
+
+Tier: **operator**
+
+OPERATOR-TIER mid-run steer knob (steer-while-running, issue #512): when true (the DEFAULT), a client may inject an operator instruction into an in-flight run, drained at the next turn boundary. Set false to disable the steer inbox (the capability echo then reads false and a steer frame reports too_late). A project-tier steer: is IGNORED with a WARN (the harness's operator surface is not a project repo's to flip). Omit = keep the CLI/default (steer ON).
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `steer` | `bool` | `true` | Steer is the OPERATOR-TIER mid-run steer knob (steer-while-running, issue #512): enable (default) or disable the mid-run steer inbox. Like Posture/ReasoningEffort it is honoured ONLY from the user-global + CLI tiers; a project-tier file's steer: key is IGNORED with a WARN (operator-tier only — the harness's operator surface is not a project repo's to flip, in either direction). It is a *bool so ABSENT is distinguishable from an explicit false: nil = absent (the resolver reports not-present and composition keeps the DEFAULT-ON); a non-nil value is honoured (composition maps steer: false onto the opt-OUT DisableSteer). |
+
 ## `models`
 
 Tier: **operator + project**

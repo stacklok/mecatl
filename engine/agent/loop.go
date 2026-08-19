@@ -382,6 +382,22 @@ type Deps struct {
 	// fire path's enqueue is a no-op against a nil queue. It is a port (port.DeliveryQueue),
 	// so the agent package imports no concrete adapter.
 	DeliveryQueue port.DeliveryQueue
+
+	// EnableSteer, when true, arms each Run with an in-memory, best-effort
+	// steer inbox (steer-while-running, issue #512): an operator-supplied
+	// instruction enqueued mid-run that the loop drains at the next turn
+	// boundary (Step 2a, the same seam injectBackgroundNotice /
+	// drainPendingDelivery use) and records as an ordinary user continuation
+	// via recordContinuation, so it replays to the model and flows through
+	// compaction / session.ValidateToolPairing / ADR-0038 rehydration
+	// unchanged. It is a plain loop-concern bool — NOT a port.LLMRequest field
+	// and never reaches the model as anything but an ordinary recorded user
+	// message. DEFAULT false (the zero value): no inbox is armed and the drain
+	// is a strict no-op, byte-identical to the pre-steer posture. Composition
+	// plumbs it from Config; child engines inherit the shared deps.
+	// A pending (un-drained) steer is in-memory only and lost with the run —
+	// never persisted (see steer.go).
+	EnableSteer bool
 }
 
 // Engine builds Runs from a fixed set of ports. It is safe for concurrent use:
@@ -496,6 +512,14 @@ func (e *Engine) HasTool(name string) bool {
 	_, ok := e.deps.Catalog.Lookup(name)
 	return ok
 }
+
+// SteerEnabled reports whether this engine arms its Runs with the mid-run
+// steer inbox (Deps.EnableSteer, steer-while-running issue #512). It is the
+// read-only seam composition reads to advertise the feature — the
+// ServerCapabilities.steer bit reads the SAME wired knob the runs consult, so
+// the advertisement can never claim a steer path the engine did not arm
+// (single-source, never recomputed per sink).
+func (e *Engine) SteerEnabled() bool { return e.deps.EnableSteer }
 
 // catalogToolInfo is a (name, read-only) summary of one tool in an Engine's
 // catalog. The supervisor uses it to verify a member's tool set without
@@ -678,6 +702,14 @@ type Run struct {
 	// it in the final history; if compaction removed it, automatic admission gets an
 	// invalid span and fails closed.
 	currentPrompt *session.Message
+	// steer is this run's in-memory, best-effort pending-steer inbox (steer-
+	// while-running, issue #512). It is armed in startRun ONLY when the engine
+	// carries Deps.EnableSteer; a nil inbox is the byte-identical no-steer
+	// posture (the drain is a strict no-op). A drained steer is recorded into
+	// durable history (recordContinuation) and echoed to the client (EvSteer);
+	// a PENDING (un-drained) steer lives only here and is lost with the run on
+	// crash / Cancel / Abandon — never persisted. See steer.go.
+	steer *steerInbox
 }
 
 // runSerial mints the process-unique Run.serial discriminator (see Run.serial).
@@ -1006,6 +1038,13 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	if e.deps.SubagentModelRouter != nil {
 		r.router = &modelRouterBreaker{max: defaultModelRouterMaxMisses}
 	}
+	// An engine with steer enabled (Deps.EnableSteer) arms this run's in-memory
+	// steer inbox so an operator instruction enqueued mid-flight drains at the
+	// next turn boundary (Step 2a). nil when disabled — the byte-identical
+	// no-steer posture; the drain is then a strict no-op.
+	if e.deps.EnableSteer {
+		r.steer = newSteerInbox()
+	}
 	// The child-run registry is created UNCONDITIONALLY (cancel is interactive-only
 	// but the registry's bookkeeping is not), with its emit bound to this run's
 	// sequenced stream via emitOrAbort — a send that blocks until delivered (the
@@ -1134,36 +1173,16 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			return
 		}
 
-		// Step 2a: background-completion NOTICE injection (A2 — notice-only), BEFORE
-		// the terminal checks so the notice is durable history even when the run ends
-		// at this very boundary. Newly-finished background children that were neither
-		// noticed nor collected are announced in ONE harness-framed user message (ids
-		// + stop labels only); their result bodies stay collectible via SubagentStatus.
-		// The seam is provider-legal: history here always ends on the user prompt,
-		// tool results, or a nudge message — never inside a tool_use pair — so the
-		// injected message replays cleanly (it IS ordinary history) and flows through
-		// compaction/ValidateToolPairing like any user message. It does NOT consume a
-		// no-progress nudge, emits no event, and does not itself consume a turn — the
-		// following BeginTurn does, which is what Limits.MaxTurns bounds. A child
-		// finishing between this scan and the rest of the iteration is simply noticed
-		// at the NEXT boundary.
-		if err := e.injectBackgroundNotice(ctx, r, sess); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
-			return
-		}
-
-		// Step 2a (delivery drain): drain any pending fire-result delivery notes
-		// queued for THIS session (ADR 0075 decision #3, fire-result-delivery
-		// Scenario 4) — the SAME turn-boundary seam as the background notice, BEFORE
-		// BeginTurn, so the recorded notes are provider-legal (history here always
-		// ends on a user prompt / tool result / nudge, never inside a tool_use pair)
-		// and never orphans a pending tool call. Each pending note is recorded as an
-		// ordinary harness-framed user continuation (recordContinuation) and marked
-		// delivered via MarkDelivered (the session-scoped exactly-once ledger). nil
-		// DeliveryQueue (child engines, the no-delivery posture) is a no-op. A drain
-		// read fault WARNs and ends the run StopError (a broken queue must not
-		// silently lose notes); a record fault likewise.
-		if err := e.drainPendingDelivery(ctx, r, sess); err != nil {
+		// Step 2a: the turn-boundary injection drains (background-completion notice,
+		// fire-result delivery, and the operator steer inbox) run BEFORE BeginTurn
+		// and BEFORE the preTurnTerminal stop checks — the provider-legal seam where
+		// history always ends on a user prompt / tool result / nudge, never inside a
+		// tool_use pair. Recording before the stop checks is load-bearing: a message
+		// drained at a boundary where the turn-limit / budget brake also trips is
+		// STILL durable history (the run then terminates StopMaxTurns / StopBudget
+		// normally; the recorded message is addressed by the next run). See
+		// runBoundaryInjections.
+		if err := e.runBoundaryInjections(ctx, r, sess); err != nil {
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
@@ -1297,6 +1316,34 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 	}
 }
 
+// runBoundaryInjections runs the Step 2a turn-boundary injection drains, in
+// order, BEFORE BeginTurn and the preTurnTerminal stop checks: the
+// background-completion notice, the fire-result delivery drain (ADR 0075), and
+// the operator steer drain (steer-while-running, issue #512). Extracting them
+// keeps runLoop's complexity flat; the ordering and the record-before-stop-checks
+// discipline are unchanged from when they were inline. Each is provider-legal at
+// a turn boundary (history ends on a user prompt / tool result / nudge, never
+// inside a tool_use pair) and a no-op when its source is empty/disabled. Any
+// drain's error is returned for the caller to terminate StopError.
+func (e *Engine) runBoundaryInjections(ctx context.Context, r *Run, sess *session.Session) error {
+	// Background-completion NOTICE injection (A2 — notice-only): newly-finished
+	// background children are announced in ONE harness-framed user message (ids +
+	// stop labels only).
+	if err := e.injectBackgroundNotice(ctx, r, sess); err != nil {
+		return err
+	}
+	// Fire-result delivery drain (ADR 0075 decision #3): pending notes queued for
+	// THIS session are recorded as ordinary harness-framed user continuations and
+	// marked delivered. nil DeliveryQueue is a no-op.
+	if err := e.drainPendingDelivery(ctx, r, sess); err != nil {
+		return err
+	}
+	// Operator steer drain (steer-while-running, issue #512): a pending steer off
+	// the run's in-memory inbox is recorded as an ordinary user continuation. A
+	// nil inbox (EnableSteer off) or empty slot is a strict no-op.
+	return e.drainPendingSteer(ctx, r, sess)
+}
+
 // finishTurnNoTools classifies and acts on a completed turn that produced NO tool
 // calls. The empty assistant message has ALREADY been recorded by the caller, so its
 // reasoning blob is on history for replay across a nudge (decision D-4). It returns
@@ -1351,12 +1398,30 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 //     persisted child stays inspectable/resumable) — acceptable by design.
 //   - the nudged continuation re-enters Step 2 (notice injection + BeginTurn), so
 //     Limits.MaxTurns still bounds it exactly like a no-progress nudge.
+//
+// Steer clean-exit defer: a PARKED steer BLOCKS the clean exit — the run does
+// NOT terminateComplete while the inbox holds an un-drained steer. Instead the
+// loop re-enters Step 2 with no recorded continuation, so the very next Step 2a
+// drains the steer (recorded + echoed there) and the turn it feeds consumes it.
+// UNLIKE the background-pending nudge this is not once-only and injects NO
+// harness nudge text: the run extends until the steer is consumed, and the
+// steer itself is the next turn's input. It lives on the same real-clean-end
+// branch as the background-pending check (BEFORE the clean-terminal call sites)
+// and runs FIRST — a parked steer always owns the defer (it is the never-drop
+// contract, not an optional collect). Bounded by
+// Limits.MaxTurns like every loop continuation (the steered turn goes through
+// BeginTurn).
 func (e *Engine) finishTurnNoTools(ctx context.Context, r *Run, sess *session.Session, asst session.Message, streamStop session.StopReason, turnIdx int, lastText string, total session.Usage, noProgressNudges *int, nudgeCap int, bgPendingNudged *bool) (done bool) {
 	// A turn with meaningful text is a real answer: end the run, honouring streamStop.
 	if strings.TrimSpace(asst.Text) != "" {
 		stop := session.StopEndTurn
 		if streamStop != session.StopNone {
 			stop = streamStop
+		}
+		// A parked steer defers the clean exit until it drains at the next Step
+		// 2a (the never-drop contract, engine-internal).
+		if stop == session.StopEndTurn && r.hasSteer() {
+			return false
 		}
 		if stop == session.StopEndTurn && !*bgPendingNudged && r.children != nil {
 			if ids := r.children.liveBackgroundIDsMatching(nil); len(ids) > 0 {
@@ -2329,6 +2394,7 @@ func joinChildren(joins []backgroundJoin, d time.Duration) []backgroundJoin {
 // a tripped limit) and emits the terminal result Event. permanent records whether
 // a StopError failure is permanent (unrecoverable; retry will fail again).
 func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, cause error, permanent bool) {
+	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
 	switch reason {
 	case session.StopCancelled:
@@ -2381,6 +2447,7 @@ func (e *Engine) planApprovalTerminal(ctx context.Context, r *Run, sess *session
 // permanent is always false here (the ChunkDone StopError path has NO Go error
 // to classify — honest fail-open).
 func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string) {
+	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
 	if !sess.State.IsTerminal() {
 		_ = sess.Stop(reason)

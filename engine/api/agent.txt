@@ -14,6 +14,7 @@
     method func (*Engine).Model() string
     method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run
     method func (*Engine).Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run
+    method func (*Engine).SteerEnabled() bool
     method func (*EvidenceReflector).Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error)
     method func (*EvidenceReflector).RequestTokenEstimate(in learning.Input) (int, error)
     method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
@@ -32,6 +33,8 @@
     method func (*Run).Approve(askID string, v session.ApprovalVerdict)
     method func (*Run).Cancel()
     method func (*Run).CancelChild(childID string) bool
+    method func (*Run).CancelSteer() (SteerOutcome, error)
+    method func (*Run).EnqueueSteer(text string) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleQueryTool).ReadOnly() bool
@@ -84,6 +87,11 @@ const RouterMissDegenerateInput untyped string = "degenerate-input"
 const RouterMissUnknownCategory untyped string = "unknown-category"
 const ScheduleQueryToolName untyped string = "ScheduleQuery"
 const ScheduleToolName untyped string = "Schedule"
+const SteerAccepted SteerOutcome = "accepted"
+const SteerAppended SteerOutcome = "appended"
+const SteerNonePending SteerOutcome = "none_pending"
+const SteerRetracted SteerOutcome = "retracted"
+const SteerTooLate SteerOutcome = "too_late"
 const StopReasonBudget MemberStopReason = "budget"
 const StopReasonCancelled MemberStopReason = "cancelled"
 const StopReasonError MemberStopReason = "error"
@@ -190,7 +198,7 @@ type ChildAskReview struct{Allowed bool; Reason string}
 type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}
 type ChildAskReviewer interface{Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)}
 type Compactor interface{Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)}
-type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; SessionLiveness port.SessionLiveness; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; OperatorProfileSource prompt.OperatorProfileSource; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue}
+type Deps struct{LLM port.LLMProvider; Catalog *tool.Catalog; Policy port.PermissionPolicy; Hooks port.HookRunner; Store port.SessionStore; SessionLiveness port.SessionLiveness; Clock port.Clock; ToolCallRecorder port.ToolCallRecorder; Sink port.EventSink; Diagnostics port.Diagnostics; LearningMode learning.Mode; LearningObserver learning.Observer; Compactor Compactor; TokenCounter TokenCounter; Instructions prompt.InstructionAssembler; CommandExpander prompt.CommandExpander; PromptConfig prompt.Config; PromptBuilder prompt.Builder; OperatorProfileSource prompt.OperatorProfileSource; Model string; ContextWindow func() int; CompactionRatio float64; Role string; MaxNoProgressNudges int; Interactive bool; PlanModeAutoApprove bool; ChildAskReviewer ChildAskReviewer; ChildAskReviewMaxDenies int; MaxRunTokens int; SubagentModelRouter func(ctx context.Context, taskPrompt string) (category string, model string, usage session.Usage, missReason string, ok bool); ProgressiveTools bool; DeliveryQueue port.DeliveryQueue; EnableSteer bool}
 type Engine struct{}
 type EngineAskReviewerOption func(*engineAskReviewer)
 type EngineJudgeOption func(*engineJudge)
@@ -216,6 +224,7 @@ type Run struct{}
 type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
+type SteerOutcome string
 type SubagentOption func(*SubagentTool)
 type SubagentStatusTool struct{}
 type SubagentTool struct{}

@@ -277,6 +277,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ApprovePlan":              {KindCallerOwned, "authorizes the session before resolving the parked plan ask"},
 	"Cancel":                   {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
 	"CancelChild":              {KindCallerOwned, "authorizes the PARENT session via GetSession before reaching into its child registry"},
+	"Steer":                    {KindCallerOwned, "authorizes via GetSession before enqueueing to the live run's inbox or promoting through StartRunContent"},
+	"CancelSteer":              {KindCallerOwned, "authorizes via GetSession before reaching into the live run's steer inbox"},
 	"Persist":                  {KindCallerOwned, "authorizes via GetSession before consulting the live run registry"},
 
 	// --- caller-owned: schedules ---
@@ -310,6 +312,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"PublishSessionEvent":          {KindDerived, "publishes to subscribers already registered via the (caller-owned) Subscribe for this id; PublishSessionEvent itself takes no ctx and makes no independent decision"},
 	"AppendRunEvent":               {KindDerived, "durable-append passthrough to the single appendEvent chokepoint for an id the in-process caller (the scheduler fire loop) already owns via its own run"},
 	"RecoverNotice":                {KindDerived, "pops a notice keyed by id that only the relay's own immediately-preceding, already-authorized StartRunContent call could have set"},
+	"LookupSteerMessageID":         {KindDerived, "pops a steer message-id correlation only the relay's own already-authorized Steer call could have parked; consumed by the gRPC relay's EvSteer echo stamp on the same stream"},
 	"SetSessionEnvironment":        {KindDerived, "called only with the id CreateSession* just returned to the same caller (internal/adapter/acp); renamed from SetSessionWorkspace by the execution-environments refactor"},
 	"CloseSession":                 {KindDerived, "internal cleanup for an id the caller (EndSession, already authorized) or the owning connection has already established as its own; takes no ctx"},
 	"EmitScheduleEvent":            {KindDerived, "stamps the fire's ALREADY-established actor (the scheduler's system principal for a tick fire, or FireNow's caller) captured at fire time; makes no independent ownership decision"},

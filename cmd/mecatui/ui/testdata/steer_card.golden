@@ -1,0 +1,30 @@
+ mecatui  ·  session #b9ba2286  ·  mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▌ you
+ │ first
+
+
+
+
+
+
+
+
+
+
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                          ┃
+┃  ⏳ steer queued · ↑ edit · esc retract  ┃
+┃    also check b.go                       ┃
+┃                                          ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ⣾  thinking…                                                                ctx 0 · ↑0 ↓0 cache 0%
+enter queue · esc cancel/clear · ? help · / commands · ctrl+c quit

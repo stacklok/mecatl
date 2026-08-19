@@ -210,6 +210,31 @@ func (s *Stream) SendCancelChild(childID string) error {
 	})
 }
 
+// SendSteer sends a mid-run operator steer frame on the bidi Converse stream
+// (steer-while-running, issue #512). The server routes it to the live run's
+// single-slot inbox; the AUTHORITATIVE outcome (accepted / appended /
+// too_late+promoted) arrives on the SAME stream as a SteerOutcomeMsg — never
+// assumed client-side, since the client cannot observe the exact drain moment
+// across stream latency. The ui only calls this when Capabilities.Steer is true
+// (a disabled/old server falls back to the client-side merge-queue instead).
+// messageID is the client-minted correlation key the server echoes verbatim on
+// the ack and the drain echo; empty degrades to text-order matching.
+func (s *Stream) SendSteer(text, messageID string) error {
+	return s.sendFrame(&mecatlv1.ConverseRequest{
+		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: text, MessageId: messageID}},
+	})
+}
+
+// SendSteerCancel retracts the run's PENDING (un-drained) steer, if any. The
+// authoritative outcome (retracted / none_pending) arrives as a SteerOutcomeMsg.
+// messageID echoes the id of the Steer frame it cancels (the ui only ever has
+// ONE bundle outstanding, so the id is a scoping hint, not a selector).
+func (s *Stream) SendSteerCancel(messageID string) error {
+	return s.sendFrame(&mecatlv1.ConverseRequest{
+		Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{MessageId: messageID}},
+	})
+}
+
 // sendFrame serialises one Send under the mutex.
 func (s *Stream) sendFrame(req *mecatlv1.ConverseRequest) error {
 	s.mu.Lock()

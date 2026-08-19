@@ -44,6 +44,21 @@ func (rr *requestRecorder) observe(req port.LLMRequest) {
 	rr.mu.Unlock()
 }
 
+// get returns the i-th recorded request (by model-call order). The steer tests
+// index per turn; callers must ensure at least i+1 calls were made.
+func (rr *requestRecorder) get(i int) port.LLMRequest {
+	rr.mu.Lock()
+	defer rr.mu.Unlock()
+	return rr.reqs[i]
+}
+
+// count reports how many requests (model calls) were recorded.
+func (rr *requestRecorder) count() int {
+	rr.mu.Lock()
+	defer rr.mu.Unlock()
+	return len(rr.reqs)
+}
+
 // toolResultContents flattens every tool-result body seen across the recorded
 // requests.
 func (rr *requestRecorder) toolResultContents() []string {

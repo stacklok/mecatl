@@ -72,7 +72,7 @@ func TestOpenDiagLogWriterQuietDiscards(t *testing.T) {
 	// --quiet must yield io.Discard regardless of a resolvable state base, and open
 	// no file (the dir/file must NOT be created).
 	dir := t.TempDir()
-	w, closer, toFile := openDiagLogWriter(stateEnv(dir), true)
+	w, closer, toFile := openDiagLogWriter(stateEnv(dir), true, "")
 	defer func() { _ = closer.Close() }()
 	if w != io.Discard {
 		t.Fatalf("--quiet writer = %T, want io.Discard", w)
@@ -87,7 +87,7 @@ func TestOpenDiagLogWriterQuietDiscards(t *testing.T) {
 
 func TestOpenDiagLogWriterOpensFileForAppend(t *testing.T) {
 	dir := t.TempDir()
-	w, closer, toFile := openDiagLogWriter(stateEnv(dir), false)
+	w, closer, toFile := openDiagLogWriter(stateEnv(dir), false, "")
 	t.Cleanup(func() { _ = closer.Close() })
 	if !toFile {
 		t.Fatal("a resolvable state base (not quiet) must open a file")
@@ -132,10 +132,43 @@ func TestOpenDiagLogWriterDiscardsWhenUnresolvable(t *testing.T) {
 		UserHomeDir: func() (string, error) { return "", errors.New("no home") },
 		ReadFile:    os.ReadFile,
 	}
-	w, closer, toFile := openDiagLogWriter(env, false)
+	w, closer, toFile := openDiagLogWriter(env, false, "")
 	defer func() { _ = closer.Close() }()
 	if w != io.Discard || toFile {
 		t.Fatalf("no resolvable state base must discard (w=%T toFile=%v)", w, toFile)
+	}
+}
+
+func TestOpenDiagLogWriterOverridePath(t *testing.T) {
+	// --diagnostics-log <path> opens THAT exact file (created mode 0600, parent
+	// 0700) instead of the shared per-user mecatui.log, so one instance can route
+	// its diagnostics to an operator-chosen location (multi-instance testing).
+	dir := t.TempDir()
+	override := filepath.Join(dir, "custom", "steer-test.log")
+	w, closer, toFile := openDiagLogWriter(stateEnv(dir), false, override)
+	t.Cleanup(func() { _ = closer.Close() })
+	if !toFile {
+		t.Fatal("an override path (not quiet) must open a file")
+	}
+	if _, err := w.Write([]byte("x\n")); err != nil {
+		t.Fatalf("write to override log: %v", err)
+	}
+	if _, err := os.Stat(override); err != nil {
+		t.Fatalf("override log must exist at the given path: %v", err)
+	}
+	fi, err := os.Stat(filepath.Dir(override))
+	if err != nil {
+		t.Fatalf("stat override dir: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("override dir perm = %o, want 0700", perm)
+	}
+	lfi, err := os.Stat(override)
+	if err != nil {
+		t.Fatalf("stat override file: %v", err)
+	}
+	if perm := lfi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("override file perm = %o, want 0600", perm)
 	}
 }
 

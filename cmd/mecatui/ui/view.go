@@ -887,6 +887,56 @@ func (m Model) renderQueue() string {
 	return th.Style("askCard").Render(b.String())
 }
 
+// renderSteer draws the steer-mode (Capabilities.Steer) "in-flight steer" card
+// shown just above the input whenever a steer is live. It mirrors renderQueue's
+// visual language (muted / toolArgs / ctxWarn on the askCard style) but reflects
+// the AUTHORITATIVE server-reported state — the engine is the sole authority on
+// what happened to a steer (the client cannot observe the drain moment across
+// stream latency), so the card shows what the server acked/echoed, never a
+// client-side guess. Returns "" when no steer is in flight (layout omits it then).
+//
+// Four honest states:
+//   - PENDING (steerPending): sent, ack not yet back — a muted "⏳ steer: sending…".
+//   - SENT (steerSent): acked accepted/appended, parked for the next turn
+//     boundary — a muted "⏳ steer queued · ↑ edit · esc retract".
+//   - PROMOTED (steerPromoted): acked too_late — the run had ended, so the text
+//     auto-started a follow-up — a ctxWarn "↪ steer sent as a follow-up (run had
+//     already ended)".
+//   - RETRACTED (steerRetracted): the steer_cancel won — a muted "✕ steer
+//     retracted".
+func (m Model) renderSteer() string {
+	if m.steer == nil {
+		return ""
+	}
+	th := m.deps.Theme
+	hk := m.helpKeyMarkings()
+	muted := th.Style("muted")
+	var b strings.Builder
+	switch m.steer.Phase {
+	case steerPending:
+		b.WriteString(muted.Render("⏳ steer: sending…"))
+	case steerSent:
+		b.WriteString(muted.Render("⏳ steer queued · " + hk.editBack + " edit · " + hk.cancel + " retract"))
+	case steerPromoted:
+		b.WriteString(th.Style("ctxWarn").Render("↪ steer sent as a follow-up (run had already ended)"))
+	case steerFailed:
+		b.WriteString(th.Style("warning").Render("✕ steer not sent (promotion failed) · ↑ to edit · esc to drop"))
+	case steerRetracted:
+		b.WriteString(muted.Render("✕ steer retracted"))
+	}
+	// Preview each logical message on its own line. A re-composed (↑-edit)
+	// fragment carries the WHOLE merged bundle in its Text (with blank-line
+	// separators INSIDE), so split each send's text on the merge separator:
+	// the wire stays one frame while the card shows the parts as separate
+	// queued lines.
+	for _, s := range m.steer.Sends {
+		for _, part := range strings.Split(s.Text, queueMergeSep) {
+			b.WriteString("\n" + th.Style("toolArgs").Render("  "+truncate(oneLine(runePrefix(part, queuePreviewBound)), queuePreviewWidth)))
+		}
+	}
+	return th.Style("askCard").Render(b.String())
+}
+
 // renderInput renders the textarea (now always focused — it stays editable while a
 // run streams so a follow-up can be composed and enqueued), memoized on the
 // renderer's single-entry input cache (renderer.inputKey — see its doc): when no

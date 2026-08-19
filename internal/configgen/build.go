@@ -28,6 +28,7 @@ func BuildModel(docs Docs) *Model {
 		learningSubtree(docs),
 		retentionSubtree(docs),
 		storageManagementSubtree(docs),
+		steerSubtree(docs),
 		modelsSubtree(docs),
 		openRouterSubtree(docs),
 		mcpSubtree(docs),
@@ -268,6 +269,28 @@ func planModeAutoApproveSubtree(docs Docs) *Subtree {
 			Default:      "false",
 			Doc:          docFor(docs, "Config.PlanModeAutoApprove", "auto-approve a presented plan with NO HUMAN REVIEW (default off)"),
 			ExampleValue: "true",
+		}},
+	}
+}
+
+func steerSubtree(docs Docs) *Subtree {
+	return &Subtree{
+		Key:  "steer",
+		Tier: TierOperator,
+		Doc: "OPERATOR-TIER mid-run steer knob (steer-while-running, issue #512): when true " +
+			"(the DEFAULT), a client may inject an operator instruction into an in-flight run, " +
+			"drained at the next turn boundary. Set false to disable the steer inbox (the " +
+			"capability echo then reads false and a steer frame reports too_late). A " +
+			"project-tier steer: is IGNORED with a WARN (the harness's operator surface is not " +
+			"a project repo's to flip). Omit = keep the CLI/default (steer ON).",
+		CommentedOut: true,
+		Scalar:       true,
+		Fields: []*Field{{
+			Key:          "steer",
+			Type:         "bool",
+			Default:      "true",
+			Doc:          docFor(docs, "Config.Steer", "enable the mid-run steer inbox (default on)"),
+			ExampleValue: "false",
 		}},
 	}
 }

@@ -484,6 +484,62 @@ type ProviderRouteMsg struct{ Text string }
 // content).
 type RecoverNoticeMsg struct{ Text string }
 
+// SteerOutcome is the proto-free, closed-enum result of a steer / steer_cancel
+// frame (steer-while-running, issue #512) — the mirror of the proto SteerOutcome
+// (and the engine's agent.SteerOutcome). The server is AUTHORITATIVE: the client
+// cannot observe the exact drain moment across stream latency, so it renders the
+// outcome the server reports rather than guessing which version won a race.
+type SteerOutcome string
+
+const (
+	// SteerAccepted reports the steer parked in the empty single slot; it drains
+	// at the next turn boundary.
+	SteerAccepted SteerOutcome = "accepted"
+	// SteerAppended reports the steer found the pending slot OCCUPIED and was
+	// MERGED into it (append is the default): the pending bundle's text grew by a
+	// blank-line separator + text, and it still drains as ONE bundle.
+	// Distinguished from SteerAccepted (a NEW pending bundle) so the ui can render
+	// "merged onto pending" honestly. Replacing the pending bundle is explicit
+	// steer_cancel-then-resend.
+	SteerAppended SteerOutcome = "appended"
+	// SteerRetracted reports a steer_cancel found a pending steer and retracted it.
+	SteerRetracted SteerOutcome = "retracted"
+	// SteerNonePending reports a steer_cancel found the slot EMPTY (nothing to
+	// retract).
+	SteerNonePending SteerOutcome = "none_pending"
+	// SteerTooLate reports the steer arrived after the run went terminal; it is
+	// never parked. When Promoted is set on the msg, the server auto-promoted the
+	// text to a fresh follow-up run (never silently dropped).
+	SteerTooLate SteerOutcome = "too_late"
+)
+
+// SteerOutcomeMsg is the AUTHORITATIVE ack for a steer / steer_cancel frame the
+// ui sent on the Converse stream (proto type "steer.outcome"). One per frame,
+// sequenced in send order. Text echoes the steer text the outcome is about
+// (empty for steer_cancel); Promoted is true only for a too_late steer the
+// server promoted to a fresh follow-up run. MessageID echoes the client-minted
+// id of the Steer / SteerCancel frame this ack answers — the ui correlates by
+// ID and ignores stale acks (text is not a safe key).
+type SteerOutcomeMsg struct {
+	Outcome   SteerOutcome
+	Text      string
+	Promoted  bool
+	MessageID string
+}
+
+// SteerEchoMsg is the run's steer-inbox DRAIN echo (proto type "steer"): the
+// COMMITTED operator steer just recorded into the conversation as an ordinary
+// user continuation. CLIENT-VISIBLE and AUTHORITATIVE — the engine is the sole
+// authority on which pending bundle drained, so the ui renders THIS text,
+// byte-identical to the recorded user message replayed to the model
+// (recorded == streamed == model-view). MessageID echoes the client-minted id
+// of the Steer frame that drained (empty for an id-less sender), so the ui
+// matches the echo to the frame it sent.
+type SteerEchoMsg struct {
+	Text      string
+	MessageID string
+}
+
 // ResultMsg is the terminal event: stop reason, final text, error, usage.
 type ResultMsg struct {
 	Stop  string
@@ -1049,6 +1105,13 @@ func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return NoProgressMsg{Text: ev.GetText()}
 	case "provider.route":
 		return ProviderRouteMsg{Text: ev.GetText()}
+	case "steer":
+		// The steer-inbox DRAIN echo (committed text) + the authoritative
+		// steer.outcome ack ride this dispatcher (not EventToMsg's main switch) to
+		// keep EventToMsg under the cyclomatic-complexity bound.
+		return SteerEchoMsg{Text: ev.GetSteer().GetText(), MessageID: ev.GetSteer().GetMessageId()}
+	case "steer.outcome":
+		return steerOutcomeMsg(ev.GetSteerOutcome())
 	default:
 		return nil
 	}
@@ -1187,6 +1250,28 @@ func approvalMsg(a *mecatlv1.Approval) ApprovalMsg {
 		CallID:      a.GetCallId(),
 		AllowAlways: a.GetAllowAlways(),
 	}
+}
+
+// steerOutcomeMsg builds a SteerOutcomeMsg from a proto SteerAck payload
+// (nil-safe via the generated getters). It is the single translation point for
+// the "steer.outcome" event kind; the proto enum maps to the proto-free
+// SteerOutcome closed string set (UNSPECIFIED / unknown → "" so a
+// forward-compat value is inert, not a crash).
+func steerOutcomeMsg(a *mecatlv1.SteerAck) SteerOutcomeMsg {
+	var outcome SteerOutcome
+	switch a.GetOutcome() {
+	case mecatlv1.SteerOutcome_STEER_OUTCOME_ACCEPTED:
+		outcome = SteerAccepted
+	case mecatlv1.SteerOutcome_STEER_OUTCOME_APPENDED:
+		outcome = SteerAppended
+	case mecatlv1.SteerOutcome_STEER_OUTCOME_RETRACTED:
+		outcome = SteerRetracted
+	case mecatlv1.SteerOutcome_STEER_OUTCOME_NONE_PENDING:
+		outcome = SteerNonePending
+	case mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE:
+		outcome = SteerTooLate
+	}
+	return SteerOutcomeMsg{Outcome: outcome, Text: a.GetText(), Promoted: a.GetPromoted(), MessageID: a.GetMessageId()}
 }
 
 // compactionArchiveMsg builds a CompactionArchiveMsg from a proto

@@ -61,9 +61,10 @@ func resolveDiagLogPath(env xdgconfig.ResolveEnv) string {
 // diagnostics. The contract (and the render-leak fix it exists for):
 //
 //   - quiet ⇒ io.Discard (the operator asked for zero on-disk diagnostics);
-//   - else open $XDG_STATE_HOME/mecatl/mecatui.log (fallback
-//     ~/.local/state/mecatl/mecatui.log) for APPEND, creating the dir 0700;
-//   - on ANY failure (no resolvable state base, mkdir/open error) ⇒ io.Discard,
+//   - else open overridePath when non-empty (--diagnostics-log), else
+//     $XDG_STATE_HOME/mecatl/mecatui.log (fallback ~/.local/state/mecatl/mecatui.log)
+//     for APPEND, creating the dir 0700;
+//   - on ANY failure (no resolvable path, mkdir/open error) ⇒ io.Discard,
 //     so the TUI never crashes on a diagnostics-sink problem.
 //
 // It NEVER returns os.Stderr/os.Stdout: a diagnostics line on either corrupts the
@@ -71,12 +72,15 @@ func resolveDiagLogPath(env xdgconfig.ResolveEnv) string {
 // non-nil only when a real file was opened (so the caller closes it on shutdown);
 // for the discard paths it is a no-op closer. The bool reports whether a file was
 // actually opened (logged once by the caller, off the TUI render path).
-func openDiagLogWriter(env xdgconfig.ResolveEnv, quiet bool) (w io.Writer, closer io.Closer, toFile bool) {
+func openDiagLogWriter(env xdgconfig.ResolveEnv, quiet bool, overridePath string) (w io.Writer, closer io.Closer, toFile bool) {
 	noop := io.NopCloser(nil)
 	if quiet {
 		return io.Discard, noop, false
 	}
-	path := resolveDiagLogPath(env)
+	path := overridePath
+	if path == "" {
+		path = resolveDiagLogPath(env)
+	}
 	if path == "" {
 		return io.Discard, noop, false
 	}

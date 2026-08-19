@@ -262,6 +262,9 @@ func run(argv []string) error {
 		// Diagnostic: MECATUI_DEBUG_MOUSE=1 shows raw mouse coords + content mapping in
 		// the footer (for diagnosing selection/coordinate issues). Default off.
 		DebugMouse: os.Getenv("MECATUI_DEBUG_MOUSE") != "",
+		// Diagnostic: MECATUI_DEBUG_STEER=1 traces steer ack/echo correlation (incoming
+		// id vs live id, match/burn/drop) in the status line. Default off.
+		DebugSteer: os.Getenv("MECATUI_DEBUG_STEER") != "",
 		// Diagnostic: MECATUI_DEBUG_ASK=1 registers /debug-ask, which injects a fake
 		// long-args permission ask through the real reducer (for exercising the
 		// modal's wrap/scroll/full-screen-args behaviour by hand). Default off;
@@ -484,7 +487,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// BOTH the app.Diagnostics sink and the perf surface's slog.Logger, so neither
 	// path leaks a line to the terminal. The file handle (when one was opened) is
 	// closed by the returned cleanup alongside the server.
-	diagW, diagCloser, toFile := openDiagLogWriter(xdgconfig.OSEnv, cfg.quiet)
+	diagW, diagCloser, toFile := openDiagLogWriter(xdgconfig.OSEnv, cfg.quiet, cfg.diagnosticsLog)
 	diag := slogdiag.New(diagW, false, port.LevelInfo)
 	// A dedicated slog.Logger over the SAME writer for the perf surface's Logger field.
 	// Explicit injection (rather than relying on the redirected default below) keeps the
@@ -733,6 +736,11 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// mecatui is interactive, so trusted/auto/yolo retain the developer
 		// workspace-trust floor.
 		Headless: false,
+		// Steer (steer-while-running, issue #512): the opt-OUT of the default-ON
+		// mid-run inbox on the embedded server. noSteerFlagSet lets CLI out-rank the
+		// settings.yaml steer: key.
+		DisableSteer:        cfg.noSteer,
+		DisableSteerFlagSet: cfg.noSteerFlagSet,
 		// Diagnostics is the injected file-backed (or, under --quiet, discarding) sink.
 		// It is NEVER stderr: an operational line on stderr corrupts the Bubble Tea
 		// alt-screen. The caller (resolveTransport) opens the sink once over

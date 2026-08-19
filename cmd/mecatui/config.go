@@ -131,6 +131,11 @@ type config struct {
 	openCodeKey          string
 	mock                 bool
 	noBash               bool
+	// noSteer disables the mid-run steer inbox (steer-while-running, issue #512) on
+	// the embedded server — the opt-OUT of a DEFAULT-ON knob. noSteerFlagSet records
+	// an explicit --no-steer so CLI out-ranks the settings.yaml steer: key.
+	noSteer        bool
+	noSteerFlagSet bool
 
 	// resumeID and resumeLatest select an existing owned main chat for static
 	// startup adoption. They are shared by embedded and connect modes and mutually
@@ -204,6 +209,13 @@ type config struct {
 	// (never stderr — stderr corrupts the Bubble Tea alt-screen). --quiet drops them
 	// entirely for an operator who wants zero on-disk diagnostics.
 	quiet bool
+
+	// diagnosticsLog overrides the embedded server's diagnostics log path. Empty
+	// (the default) means the shared per-user $XDG_STATE_HOME/mecatl/mecatui.log;
+	// a non-empty value is the exact file to open (created mode 0600, parent dir
+	// 0700). Used to give a specific mecatui instance its own diagnostics file
+	// (e.g. ad-hoc multi-instance testing) instead of sharing the per-user log.
+	diagnosticsLog string
 
 	// Embedded-server memory config (used only when hosting an in-process
 	// server). An empty memoryDir means "compute the per-project default under
@@ -381,6 +393,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	})
 	fs.BoolVar(&cfg.mock, "mock", false, "embedded server only: use the canned offline mock provider instead of OpenAI (no network)")
 	fs.BoolVar(&cfg.noBash, "no-bash", false, "embedded server only: disable the Bash tool (shell-less mode)")
+	fs.BoolVar(&cfg.noSteer, "no-steer", false, "embedded server only: disable the mid-run steer inbox (steer-while-running, issue #512): `enter` mid-run then falls back to the client-side terminal merge-queue and ServerCapabilities.steer reads false. Steer is ON by default; this is the opt-OUT. The operator-tier settings.yaml `steer: false` scalar is the YAML twin (CLI out-ranks YAML; a project-tier steer: key is ignored)")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "embedded server only: per-attempt timeout for ESTABLISHING an LLM stream (connect + first chunk only; never cuts an actively-streaming turn). 0 disables; large-context reasoning models can take a long time to first token")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "embedded server only: max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "embedded server only: override the model's context window in tokens for BOTH the compaction trigger (compaction fires at 80% of it) AND the footer context-meter denominator echoed to clients. Set this to the model's ACTUAL window when a model under-reports its window or sits behind a proxy that does. 0 (default) keeps the configured/live/catalogued/128k resolution unchanged. A small value (below a few thousand tokens) forces the agent to compact on nearly every turn — degraded, only useful for stress-testing compaction.")
@@ -395,6 +408,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		"embedded server only: OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only (xhigh/max clamp to high); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key). A per-session /effort out-ranks it. Operator-tier only; a project-tier key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
 	fs.BoolVar(&cfg.quiet, "quiet", false,
 		"discard the embedded server's operational diagnostics instead of writing them to $XDG_STATE_HOME/mecatl/mecatui.log (fallback ~/.local/state/mecatl/mecatui.log). Diagnostics NEVER go to stderr (that corrupts the TUI alt-screen); --quiet drops them entirely")
+	fs.StringVar(&cfg.diagnosticsLog, "diagnostics-log", "",
+		"embedded server only: override the diagnostics log file. Empty (default) writes to the shared per-user $XDG_STATE_HOME/mecatl/mecatui.log; a non-empty value is the exact file to open (created mode 0600, parent dir 0700). Use to give one mecatui instance its own diagnostics file (e.g. multi-instance testing) instead of sharing the per-user log. Ignored under --quiet")
 	fs.StringVar(&cfg.memoryDir, "memory-dir", "", "embedded server only: per-project memory store directory (empty = a per-project default under $XDG_DATA_HOME/mecatui/memory)")
 	fs.BoolVar(&cfg.noMemory, "no-memory", false, "embedded server only: disable cross-session memory (Remember/Recall) entirely")
 	fs.StringVar(&cfg.storeDir, "store-dir", "", "embedded server only: durable JSONL session/event store directory (empty = a per-workspace default under $XDG_STATE_HOME/mecatui/sessions, so sessions survive restart and can be inspected after the fact). PRIVACY: stores the RAW conversation (prompts, model output, tool args/results) in PLAINTEXT; the dir is created mode 0700 (owner-only). Tool args/results include file contents and command output the agent read, so secrets it touched (e.g. a .env it opened) are persisted too")
@@ -501,30 +516,37 @@ func validateSessionsLaunch(cfg config) error {
 // workspace to an absolute path. It is extracted from parseTransportFlags to
 // keep parseTransportFlags' cyclomatic complexity under the lint gate; the
 // helper owns the post-parse branches.
+// recordExplicitFlag records ONE explicitly-passed flag's "set" marker onto cfg, so
+// composition lets CLI out-rank the operator-global settings.yaml keys (mirrors
+// mecated's recordExplicitFlags). Split out of finalizeParsedConfig's fs.Visit to keep
+// that function under the cyclomatic-complexity bound.
+func recordExplicitFlag(f *flag.Flag, cfg *config) {
+	switch f.Name {
+	case "posture":
+		cfg.postureFlagSet = true
+	case "subagent-model-router":
+		// Kill-switch (ADR 0042): record that the flag was given so embeddedConfig can
+		// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
+		// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
+		cfg.subagentModelRouterSet = true
+	case "no-steer":
+		// Record an explicit --no-steer so CLI out-ranks the settings.yaml steer: key.
+		cfg.noSteerFlagSet = true
+	case "reasoning-effort":
+		cfg.reasoningEffortFlagSet = true
+	case "default-provider":
+		cfg.defaultProviderFlagSet = true
+	case "terminal-title":
+		cfg.terminalTitleFlagSet = true
+	}
+	markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
+}
+
 func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
-	// Record an explicit --posture so CLI out-ranks the operator-global settings.yaml
-	// posture: key (mirrors mecated).
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "posture":
-			cfg.postureFlagSet = true
-		case "subagent-model-router":
-			// Kill-switch (ADR 0042): record that the flag was given so embeddedConfig can
-			// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
-			// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
-			cfg.subagentModelRouterSet = true
-		}
-		markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
-		if f.Name == "reasoning-effort" {
-			cfg.reasoningEffortFlagSet = true
-		}
-		if f.Name == "default-provider" {
-			cfg.defaultProviderFlagSet = true
-		}
-		if f.Name == "terminal-title" {
-			cfg.terminalTitleFlagSet = true
-		}
-	})
+	// Record explicit flags so composition lets CLI out-rank the operator-global
+	// settings.yaml keys (mirrors mecated). Extracted to recordExplicitFlag to keep
+	// this function under the cyclomatic-complexity bound.
+	fs.Visit(func(f *flag.Flag) { recordExplicitFlag(f, cfg) })
 
 	if cfg.authToken == "" {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")

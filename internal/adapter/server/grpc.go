@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -263,12 +264,50 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	}
 	defer h.svc.deregister(id, run)
 
-	// Read subsequent control frames concurrently so an approval/cancel can be
-	// delivered while events are still streaming. The reader exits on stream
-	// EOF (client closed its send half) or context cancellation.
-	go h.readControl(ctx, stream, run)
+	// The single-writer gate for EVERY Send on this bidi stream: a gRPC stream
+	// is NOT goroutine-safe — Send called concurrently from the RecoverNotice
+	// pre-send below and the run relay would race without it. streamSender
+	// serializes every Send behind one mutex, so no two goroutines are ever
+	// inside a Send on this stream at once. (The promoted-steer follow-up relay
+	// is driven on the relay goroutine itself through this same sender — the
+	// sequential handoff below; the gate is the structural guarantee, not a
+	// per-goroutine coincidence.)
+	snd := &streamSender{stream: stream}
 
-	logCtx := context.WithoutCancel(ctx)
+	// The steer-ack lane: readControl enqueues the AUTHORITATIVE outcome of
+	// each steer / steer_cancel frame here and the relay interleaves the acks
+	// onto the event stream in send order (a client learns what actually
+	// happened to its steer — the engine is authoritative on the slot / drain
+	// race, never the client's guess). Buffered so a burst of steer frames
+	// never blocks the control reader behind a slow client.
+	steerAcks := make(chan *mecatlv1.SteerAck, 16)
+
+	// The handoff mailbox: a too_late steer the Service PROMOTED to a fresh
+	// follow-up run is POSTED here by readControl, and after the original run's
+	// relay drains, Converse TAKES it and relays the promoted run SEQUENTIALLY
+	// on this same stream (reusing snd + the same relay discipline) — never an
+	// orphaned second relay goroutine left running when the RPC returns, and
+	// runRelay.sendErr keeps a single owner.
+	ho := newSteerHandoff()
+
+	// The control frame target: ResumeApproval / Cancel / CancelChild apply to
+	// the ACTIVE run — the original until a promoted steer hands off, then the
+	// promoted run (the swap is atomic with the relay handoff, so a control
+	// frame never hits the terminal original behind the client's back).
+	ct := &controlTarget{run: run}
+
+	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, snd: snd}
+
+	// Read subsequent control frames concurrently so an approval/cancel/steer
+	// can be delivered while events are still streaming. The reader exits on
+	// stream EOF (client closed its send half) or context cancellation; a
+	// parked bidi Recv does NOT observe ctx cancellation promptly (it is
+	// buffered), so Converse — not the reader's exit — owns the handoff
+	// mailbox's seal (see the relay loop below), and stopControl exists to
+	// release the reader's non-Recv paths on the RPC's way out.
+	controlCtx, stopControl := context.WithCancel(ctx)
+	defer stopControl() // every early return releases the reader too
+	go h.readControl(controlCtx, id, ct, rl, ho)
 
 	// Inject a pre-flight EvRecoverNotice when the session just recovered from a
 	// PERMANENT failure — surface the advisory BEFORE the main event loop burns a
@@ -277,53 +316,380 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	if notice := h.svc.RecoverNotice(id); notice != "" {
 		ev := session.Event{Type: session.EvRecoverNotice, Text: notice}
 		// Durable log first (cancel-detached, survives client disconnect).
-		h.svc.appendEvent(logCtx, id, ev)
-		// Forward to the client wire.
-		if err := stream.Send(&mecatlv1.ConverseResponse{Event: toProto(ev)}); err != nil {
+		h.svc.appendEvent(rl.logCtx, id, ev)
+		// Forward to the client wire through the same serialized sender.
+		if err := snd.Send(&mecatlv1.ConverseResponse{Event: toProto(ev)}); err != nil {
 			return err
 		}
 	}
 
-	// Relay events on this goroutine; the channel closes when the run ends. On
-	// the FIRST Send error (the client is gone) the relay cancels the run but
-	// KEEPS RANGING, discarding events until the channel closes: a run that keeps
-	// emitting (a busy team / fan-out winding down) must never wedge in its own
-	// sends behind a dead relay. The error is sticky — no further Send happens
-	// after it — and is returned once the run has fully drained.
-	//
-	// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
-	// client send: it runs for EVERY observed event, BEFORE and independent of the
-	// drain-to-discard guard, so a disconnected client never stops the log (the
-	// whole point of a server-side durable log is to survive the client — it must
-	// record the post-disconnect tail, including the terminal EvResult). It uses a
-	// cancel-detached context so a cancelled stream ctx (client gone) cannot abort
-	// the durable write. This is DISTINCT from the EvPermissionAsk Persist below,
-	// which is snapshot semantics gated to the healthy path: the log is append-only
-	// history and must record what happened regardless of client liveness.
-	var sendErr error
-	for ev := range run.Events() {
-		if sendErr != nil {
-			// drain-to-discard: the client is gone. Still append to the durable
-			// log (it must record the post-disconnect tail), but skip Persist /
-			// auto-approve / the client send.
-			h.svc.appendEvent(logCtx, id, ev)
-			continue
+	// The sequential active-run handoff: relay the original run, then — while a
+	// promoted steer is pending — relay EACH promoted run in turn on this same
+	// stream BEFORE the RPC returns. The original's deregister fires before the
+	// first take, the promoted run's FinishRun before the next take / the
+	// return, so Converse never returns while a run it owns is still registered
+	// (no orphaned relay). The relay runs on its own goroutine so the read below
+	// can ALSO block on the next handoff post (the
+	// promote-grace window — the promote legitimately completes only after the
+	// original's relay drained, so readControl cannot have posted before the
+	// take without this). relayRes accumulates the per-run results (a
+	// mutex-guarded slice — a cap-N results channel could deadlock the producer
+	// when a post arrives while an earlier result sits unread).
+	var relayRes struct {
+		mu   sync.Mutex
+		errs []error
+	}
+	pushErr := func(err error) {
+		relayRes.mu.Lock()
+		relayRes.errs = append(relayRes.errs, err)
+		relayRes.mu.Unlock()
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pushErr(h.relayRun(rl, run))
+		// The terminal original must leave the registry before a steer already
+		// being routed can reopen the session. Finish it before sealing the
+		// mailbox; a route that began before the seal is allowed to post its
+		// promoted run, while a later frame is correctly too late.
+		h.svc.FinishRun(id, run)
+		// Seal new routes and wait only for a Steer handler that has already
+		// received its frame. This closes the receive→post race without adding a
+		// grace delay to ordinary completed runs.
+		ho.closeAndWait()
+		for {
+			p, ok := ho.take()
+			if !ok {
+				return // sealed AND nothing queued: the RPC ends
+			}
+			// The control target swaps BEFORE the promoted relay starts, so a
+			// control frame received from here on applies to the ACTIVE run —
+			// never the terminal original.
+			ct.swap(p.run)
+			pushErr(h.relayRun(rl, p.run))
+			h.svc.FinishRun(id, p.run)
+			// The promoted run's terminal ack is SENT INLINE (never the ack
+			// lane — relayRun already returned, so a lane-queued ack could lose
+			// the select race to the closed events channel and ride after the
+			// RPC returned): the promoted run's terminal EvResult drained
+			// strictly before this point (causal order), and the RPC returns
+			// only after it (no ack-after-close).
+			if rl.sendErr == nil {
+				if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: &mecatlv1.Event{
+					Type: "steer.outcome",
+					SteerOutcome: &mecatlv1.SteerAck{
+						Outcome:   mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE,
+						Text:      valid(p.text),
+						Promoted:  true,
+						MessageId: valid(p.messageID),
+					},
+				}}); err != nil {
+					rl.sendErr = err
+				}
+			}
 		}
-		if !h.svc.relayEvent(ctx, logCtx, id, ev, true) {
-			continue // log-only event: consumed by the durable log, not relayed to the client wire
-		}
-		if err := stream.Send(&mecatlv1.ConverseResponse{Event: toProto(ev)}); err != nil {
-			sendErr = err
-			run.Cancel()
+	}()
+	// Wait out the relay loop: done closes only after the original relay AND
+	// every queued promotion's relay (plus its terminal ack) finished — the
+	// seal guarantees nothing later can be queued.
+	<-done
+	relayRes.mu.Lock()
+	defer relayRes.mu.Unlock()
+	// The promoted-relay terminal ack may have set sendErr after the last
+	// pushErr; the sticky relay error is the first non-nil of the recorded
+	// results, else the relay's own final state.
+	for _, err := range relayRes.errs {
+		if err != nil {
+			return err // the FIRST Send error, per the relay contract
 		}
 	}
-	return sendErr
+	return rl.sendErr
 }
 
-// readControl reads ResumeApproval / Cancel / CancelChild frames until the
-// client closes its send half or the context is cancelled, dispatching each
-// onto run.
-func (*HarnessServer) readControl(ctx context.Context, stream mecatlv1.HarnessService_ConverseServer, run *agent.Run) {
+// streamSender is the single-writer gate every Send on one Converse bidi stream
+// goes through. A gRPC stream is NOT goroutine-safe: the RecoverNotice pre-send
+// and the run relay reach the same stream, and only the mutex keeps any two of
+// them out of a concurrent Send. (The sequential active-run handoff relays the
+// promoted run on the SAME goroutine as the original, but the gate stays: it is
+// the structural guarantee, not a per-goroutine coincidence.)
+type streamSender struct {
+	mu     sync.Mutex
+	stream mecatlv1.HarnessService_ConverseServer
+}
+
+// Send serializes a single Send onto the stream.
+func (s *streamSender) Send(m *mecatlv1.ConverseResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.Send(m)
+}
+
+// relayRun drains run.Events() onto the Converse stream until the channel
+// closes (the terminal result was delivered), interleaving any steer.outcome
+// acks the control reader produces. It returns the FIRST Send error, if any —
+// but only after the run fully drained (see the drain-to-discard contract
+// below). Extracted from Converse so the steer too-late→promoted follow-up run
+// (the sequential active-run handoff) reuses the EXACT same relay discipline
+// rather than growing a second copy.
+//
+// On the FIRST Send error (the client is gone) the relay cancels the run but
+// KEEPS RANGING, discarding events until the channel closes: a run that keeps
+// emitting (a busy team / fan-out winding down) must never wedge in its own
+// sends behind a dead relay. The error is sticky — no further Send happens
+// after it — and is returned once the run has fully drained.
+//
+// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
+// client send: it runs for EVERY observed event, BEFORE and independent of the
+// drain-to-discard guard, so a disconnected client never stops the log (the
+// whole point of a server-side durable log is to survive the client — it must
+// record the post-disconnect tail, including the terminal EvResult). It uses a
+// cancel-detached context so a cancelled stream ctx (client gone) cannot abort
+// the durable write. This is DISTINCT from the EvPermissionAsk Persist below,
+// which is snapshot semantics gated to the healthy path: the log is append-only
+// history and must record what happened regardless of client liveness.
+//
+// The select has no priority: a buffered steer ack may be delivered ahead of an
+// already-buffered run event (Go picks a ready case at random). That is the
+// honest contract — an ack's precise interleave position is unobservable
+// ordering across stream latency anyway; the drain echo (EvSteer) is the
+// authoritative committed-text surface.
+// runRelay carries the one Converse stream's relay state the SHARED relayRun
+// consumes: the ctx + cancel-detached logCtx, the session id, the steer-ack
+// lane it interleaves, and the first Send error (sticky — drain-to-discard).
+// Driving it through the runRelay (never the raw stream) keeps EVERY relay
+// send on the stream's single-writer streamSender.
+//
+// sendErr has a SINGLE OWNER: the relay goroutine is the only reader AND
+// writer — the sequential active-run handoff drives the promoted run's relay
+// on the SAME goroutine (one relayRun call at a time), so no cross-goroutine
+// access exists by construction.
+type runRelay struct {
+	ctx     context.Context
+	logCtx  context.Context
+	id      session.SessionID
+	acks    chan *mecatlv1.SteerAck
+	snd     *streamSender
+	sendErr error
+}
+
+// sendEvent relays one run event through the streamSender, applying the
+// drain-to-discard + first-error contract. It NEVER sends after the first
+// error: a client-gone relay appends to the durable log only.
+func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
+	if rl.sendErr != nil {
+		// drain-to-discard: the client is gone. Still append to the durable
+		// log (it must record the post-disconnect tail), but skip Persist /
+		// auto-approve / the client send.
+		h.svc.appendEvent(rl.logCtx, rl.id, ev)
+		return
+	}
+	if !h.svc.relayEvent(rl.ctx, rl.logCtx, rl.id, ev, true) {
+		return // log-only event: consumed by the durable log, not relayed to the client wire
+	}
+	proto := toProto(ev)
+	if ev.Type == session.EvSteer && proto.GetSteer() != nil {
+		// The EvSteer drain echo echoes the client-minted message_id of the
+		// Steer frame that parked this text: the engine inbox carries text only,
+		// so the id lives at the Service's wire-correlation FIFO — popped here
+		// positionally (the TAIL). An unmatched echo (an id-less steer) rides
+		// with "".
+		id := h.svc.LookupSteerMessageID(rl.id)
+		if id == "" {
+			// The correlation FAILED: the echo carries "" and the client cannot
+			// match it to the frame it sent (the queue can stall — the exact
+			// symptom this WARN exists to make visible). No session.Event owns a
+			// correlation miss, so it goes to diagnostics, text clamped to a prefix.
+			h.svc.Diagnostics().Log(rl.logCtx, port.LevelWarn, "steer echo uncorrelated (no message_id for drained text)", "session", string(rl.id), "text_prefix", valid(firstRunes(ev.Steer.Text, 40)))
+		} else {
+			h.svc.Diagnostics().Log(rl.logCtx, port.LevelInfo, "steer drain echo correlated",
+				"session", string(rl.id), "message_id", id, "text_len", len(ev.Steer.Text))
+		}
+		proto.GetSteer().MessageId = valid(id)
+	}
+	if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: proto}); err != nil {
+		rl.sendErr = err
+	}
+}
+
+// relayRun drains run.Events() onto the Converse stream until the channel
+// closes (the terminal result was delivered), interleaving any steer.outcome
+// acks the control reader produces. It returns the runRelay's FIRST Send error,
+// if any — but only after the run fully drained (see the drain-to-discard
+// contract above). Shared by the original run and a promoted-steer follow-up
+// run (the sequential active-run handoff drives them ONE AT A TIME on the same
+// goroutine), so every send crosses the stream's one single-writer streamSender
+// and runRelay.sendErr keeps its single owner.
+//
+// On the FIRST Send error (the client is gone) the relay cancels the run but
+// KEEPS RANGING, discarding events until the channel closes: a run that keeps
+// emitting (a busy team / fan-out winding down) must never wedge in its own
+// sends behind a dead relay. The error is sticky — no further Send happens after
+// it (the sendEvent hard guard) — and is returned once the run has drained.
+func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
+	events := run.Events()
+	acks := rl.acks
+	for events != nil {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				events = nil // the run ended
+				continue
+			}
+			h.sendEvent(rl, ev)
+			if rl.sendErr != nil {
+				run.Cancel() // first error: drain-to-discard from here
+			}
+		case ack, ok := <-acks:
+			if !ok {
+				acks = nil
+				continue
+			}
+			if rl.sendErr != nil {
+				continue // client gone: acks have no durable-log home; drop them
+			}
+			if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: &mecatlv1.Event{
+				Type:         "steer.outcome",
+				SteerOutcome: ack,
+			}}); err != nil {
+				rl.sendErr = err
+				run.Cancel()
+			}
+		}
+	}
+	return rl.sendErr
+}
+
+// controlTarget is the ACTIVE run the stream's control frames apply to: the
+// original run until a promoted steer hands off, then the promoted run. The
+// relay handoff swaps it BEFORE the promoted relay starts, so a ResumeApproval
+// / Cancel / CancelChild received after the handoff hits the run actually
+// driving — never the terminal original.
+type controlTarget struct {
+	mu  sync.RWMutex
+	run *agent.Run
+}
+
+func (c *controlTarget) swap(r *agent.Run) {
+	c.mu.Lock()
+	c.run = r
+	c.mu.Unlock()
+}
+
+func (c *controlTarget) active() *agent.Run {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.run
+}
+
+// steerHandoff is the promoted-steer mailbox readControl posts into and
+// Converse's sequential relay loop drains. It is a channel-based queue: at most
+// one promotion is ever in flight per session (the promoted run is REGISTERED
+// the moment Service.Steer returns it, so a second promote hits the funnel's
+// liveness guard and is refused), so the buffered channel never blocks a
+// poster, and take NEVER blocks — the relay loop consumes it only AFTER
+// sealing, so a blocking take is never needed.
+type steerHandoff struct {
+	mu        sync.Mutex
+	q         []steerPromotion
+	closed    bool
+	routing   int
+	routeDone chan struct{}
+}
+
+// steerPromotion is one posted handoff: the promoted follow-up run plus the
+// steer frame fields its terminal ack echoes.
+type steerPromotion struct {
+	run       *agent.Run
+	text      string
+	messageID string
+}
+
+func newSteerHandoff() *steerHandoff { return &steerHandoff{} }
+
+// beginRoute reserves the handoff for a steer frame already received by the
+// control reader. Once the original relay seals the mailbox, only such an
+// in-flight route may still post a promotion.
+func (h *steerHandoff) beginRoute() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return false
+	}
+	if h.routing == 0 {
+		h.routeDone = make(chan struct{})
+	}
+	h.routing++
+	return true
+}
+
+func (h *steerHandoff) endRoute() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.routing--
+	if h.routing == 0 {
+		close(h.routeDone)
+	}
+}
+
+// post queues a promoted run for the relay loop. A route that started before
+// close is allowed to finish its post; frames received after close are dropped.
+func (h *steerHandoff) post(p steerPromotion) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed && h.routing == 0 {
+		return
+	}
+	h.q = append(h.q, p)
+}
+
+// take pops the OLDEST queued promotion; the second return is false once the
+// mailbox is sealed AND drained (the relay loop's exit condition).
+func (h *steerHandoff) take() (steerPromotion, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.q) == 0 {
+		return steerPromotion{}, false
+	}
+	p := h.q[0]
+	h.q = h.q[1:]
+	return p, true
+}
+
+// close seals the handoff against new routes. It is idempotent: Converse seals
+// after the original relay drains and readControl seals again on exit.
+func (h *steerHandoff) close() {
+	h.mu.Lock()
+	h.closed = true
+	h.mu.Unlock()
+}
+
+// closeAndWait seals the handoff and waits for a steer route that was already
+// received to finish posting. No new route may begin after the seal, so the
+// captured channel is sufficient and an ordinary terminal run returns at once.
+func (h *steerHandoff) closeAndWait() {
+	h.mu.Lock()
+	h.closed = true
+	done := h.routeDone
+	h.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+}
+
+// readControl reads ResumeApproval / Cancel / CancelChild / Steer / SteerCancel
+// frames until the client closes its send half or the context is cancelled.
+// Approval / cancel / cancel-child go to the ACTIVE run (ct — the original
+// until a promoted steer hands off, then the promoted run, swapped atomically);
+// a steer / steer_cancel frame routes through the Service (the single routing
+// owner) and produces exactly ONE authoritative ack on the runRelay's ack lane
+// (the relay interleaves them onto the stream). A too_late steer the Service
+// PROMOTED is posted to the handoff mailbox: Converse relays it SEQUENTIALLY
+// after the active run drains, and its terminal outcome is reported back as
+// the steer ack. On exit readControl closes the mailbox so the relay loop
+// learns no more promotions can arrive.
+func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, ct *controlTarget, rl *runRelay, ho *steerHandoff) {
+	defer ho.close()
+	stream := rl.snd.stream
 	for {
 		if ctx.Err() != nil {
 			return
@@ -338,22 +704,142 @@ func (*HarnessServer) readControl(ctx context.Context, stream mecatlv1.HarnessSe
 		case *mecatlv1.ConverseRequest_ResumeApproval:
 			if k.ResumeApproval != nil {
 				ra := k.ResumeApproval
-				run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+				ct.active().Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
 			}
 		case *mecatlv1.ConverseRequest_Cancel:
-			run.Cancel()
+			ct.active().Cancel()
 		case *mecatlv1.ConverseRequest_CancelChild:
 			if k.CancelChild != nil {
 				// Per-child cancel, addressed by the child session id. A false return
 				// (unknown / already-done child) is ignored by design on the stream: the
 				// finished-as-you-pressed race is benign and the observable outcome is the
 				// child's terminal event (clients disable the key for done lanes).
-				_ = run.CancelChild(k.CancelChild.GetChildId())
+				_ = ct.active().CancelChild(k.CancelChild.GetChildId())
+			}
+		case *mecatlv1.ConverseRequest_Steer:
+			if k.Steer != nil && ho.beginRoute() {
+				h.handleSteerFrame(ctx, id, k.Steer, rl, ho)
+				ho.endRoute()
+			}
+		case *mecatlv1.ConverseRequest_SteerCancel:
+			if k.SteerCancel != nil {
+				h.handleSteerCancelFrame(ctx, id, k.SteerCancel.GetMessageId(), rl)
 			}
 		default:
 			// A second Prompt or an unknown frame is ignored: the run is
 			// already driving and a new prompt cannot start a second run here.
 		}
+	}
+}
+
+// handleSteerFrame routes one steer frame through the Service (the single
+// routing owner — the handler is a dumb frame→Service mapper, mirroring how
+// the Approve/Cancel frames route). The Service decides live-enqueue vs
+// terminal-race promote: an accepted/appended outcome acks immediately, and a
+// too_late frame the Service PROMOTED to a fresh follow-up run is POSTED to
+// the handoff mailbox — Converse's sequential relay loop drives it on the SAME
+// stream after the active run drains (no orphaned relay goroutine), then
+// reports its terminal outcome back as the steer ack (promoted=true: never a
+// drop). Every ack echoes the frame's client-minted message_id.
+func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.SessionID, frame *mecatlv1.Steer, rl *runRelay, ho *steerHandoff) {
+	text, msgID := frame.GetText(), frame.GetMessageId()
+	outcome, promoted, promotedRun, err := h.svc.Steer(ctx, id, text, msgID)
+	switch {
+	case err != nil:
+		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "steer route failed", "session", string(id), "error", err)
+		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE, Text: valid(text), MessageId: valid(msgID)})
+		return
+	case !promoted || promotedRun == nil:
+		// The Service's live path answered (accepted / appended — the run
+		// parked/merged it). Ack the engine's authoritative outcome and log
+		// the correlation state (id + outcome only — never the text, which is
+		// producer-influenced and carries no diagnostic value).
+		h.svc.Diagnostics().Log(ctx, port.LevelInfo, "steer frame enqueued",
+			"session", string(id), "message_id", firstRunes(msgID, msgIDLogMax),
+			"text_len", len(text), "outcome", string(outcome))
+		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: steerOutcomeToProto(outcome), Text: valid(text), MessageId: valid(msgID)})
+		return
+	}
+	// too_late + promoted: post the follow-up run to the handoff mailbox. The
+	// sequential relay loop relays its full event stream on this stream after
+	// the active run drains, FinishRun-deregisters it BEFORE the RPC returns,
+	// and reports its terminal outcome as the steer ack (promoted=true: never a
+	// drop, never an ack-after-close).
+	h.svc.Diagnostics().Log(ctx, port.LevelInfo, "steer frame promoted (too_late follow-up)",
+		"session", string(id), "message_id", firstRunes(msgID, msgIDLogMax), "text_len", len(text))
+	ho.post(steerPromotion{run: promotedRun, text: text, messageID: msgID})
+}
+
+// handleSteerCancelFrame routes a steer_cancel frame through the Service and
+// reports its authoritative outcome, echoing the frame's client-minted
+// message_id. A session with no live run (the run went terminal behind the
+// client's belief) reports none_pending — there is no inbox to retract from;
+// the pending steer is already lost with its run.
+func (h *HarnessServer) handleSteerCancelFrame(ctx context.Context, id session.SessionID, msgID string, rl *runRelay) {
+	outcome, err := h.svc.CancelSteer(ctx, id)
+	if err != nil {
+		outcome = agent.SteerNonePending // never wedge the reader on a cancel fault
+	}
+	// Log only on a RETRACTED outcome (a none_pending cancel is the
+	// information-free common case — the ack carries it; the none_pending
+	// line would be unbounded attacker-driven log volume, CWE-770). The
+	// client-minted message_id is clamped to a bounded prefix.
+	if outcome == agent.SteerRetracted {
+		h.svc.Diagnostics().Log(ctx, port.LevelInfo, "steer_cancel frame retracted",
+			"session", string(id), "message_id", firstRunes(msgID, msgIDLogMax), "outcome", string(outcome))
+	}
+	enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: steerOutcomeToProto(outcome), MessageId: valid(msgID)})
+}
+
+// enqueueSteerAck delivers an ack on the lane, bounded by ctx: a buffered lane
+// accepts it immediately; a FULL lane (a burst outrunning a stalled client)
+// drops it on ctx cancel rather than wedging the control reader (the run's own
+// guard sends give up on the same signal).
+func enqueueSteerAck(ctx context.Context, acks chan<- *mecatlv1.SteerAck, ack *mecatlv1.SteerAck) {
+	select {
+	case acks <- ack:
+	case <-ctx.Done():
+	}
+}
+
+// msgIDLogMax bounds the client-minted message_id before it reaches any
+// diagnostics log (CWE-770 — the log echo is bounded; the wire ack continues
+// to carry the verbatim id for correlation). Shared by the three frame-handler
+// log sites.
+const msgIDLogMax = 64
+
+// firstRunes returns the first n runes of s without allocating a []rune (the
+// range-over-string form; used to clamp a diagnostics text preview).
+func firstRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	for i := range s {
+		if n == 0 {
+			return s[:i]
+		}
+		n--
+	}
+	return s
+}
+
+// steerOutcomeToProto maps the engine's closed-enum agent.SteerOutcome onto the
+// wire enum. The zero/unknown value maps to UNSPECIFIED (never sent in
+// practice — every engine outcome has an arm).
+func steerOutcomeToProto(o agent.SteerOutcome) mecatlv1.SteerOutcome {
+	switch o {
+	case agent.SteerAccepted:
+		return mecatlv1.SteerOutcome_STEER_OUTCOME_ACCEPTED
+	case agent.SteerAppended:
+		return mecatlv1.SteerOutcome_STEER_OUTCOME_APPENDED
+	case agent.SteerRetracted:
+		return mecatlv1.SteerOutcome_STEER_OUTCOME_RETRACTED
+	case agent.SteerNonePending:
+		return mecatlv1.SteerOutcome_STEER_OUTCOME_NONE_PENDING
+	case agent.SteerTooLate:
+		return mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE
+	default:
+		return mecatlv1.SteerOutcome_STEER_OUTCOME_UNSPECIFIED
 	}
 }
 

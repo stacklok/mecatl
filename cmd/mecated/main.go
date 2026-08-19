@@ -464,6 +464,13 @@ type config struct {
 	// reasoningEffortFlagSet is true when --reasoning-effort was passed explicitly,
 	// so composition lets CLI out-rank the settings.yaml reasoning-effort: key.
 	reasoningEffortFlagSet bool
+	// noSteer disables the mid-run steer inbox (steer-while-running, issue #512) —
+	// the opt-OUT of a DEFAULT-ON knob (steer is armed unless this is passed or the
+	// operator-tier settings.yaml steer: false folds in).
+	noSteer bool
+	// noSteerFlagSet is true when --no-steer was passed explicitly, so composition
+	// lets CLI out-rank the settings.yaml steer: key.
+	noSteerFlagSet bool
 
 	// planModeAutoApprove is the OPT-IN, OPERATOR-TIER-ONLY, DEFAULT-OFF flag that
 	// auto-approves a plan-mode PresentPlan ask when the run ends without a human
@@ -1156,6 +1163,10 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Diagnostics:            diag,
 		// Plan-mode auto-approve (issue #206 Wave 6a): the OPT-IN operator flag.
 		PlanModeAutoApprove: cfg.planModeAutoApprove,
+		// Steer (steer-while-running, issue #512): the opt-OUT of the default-ON
+		// mid-run inbox. noSteerFlagSet lets CLI out-rank the settings.yaml steer: key.
+		DisableSteer:        cfg.noSteer,
+		DisableSteerFlagSet: cfg.noSteerFlagSet,
 	}
 	// Project the once-resolved credentials and parsed base URLs without I/O.
 	// An OPENAI_API_KEY in the environment implies the user wants the real provider —
@@ -1501,6 +1512,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.websearchQueryParam, "websearch-query-param", "", "WEBSEARCH: URL query parameter the search string is placed in (default \"q\"). Tune for a generic JSON search endpoint that expects a different parameter name. See docs/usage.md \"Enabling web search\"")
 	fs.IntVar(&cfg.forkPreservedCap, "fork-preserved-cap", agent.DefaultPreservedForkCap, "max PRESERVED winner forks (join=first/judge) kept on disk at once; the oldest beyond this is LRU-reaped. Preserved forks stay inspectable until reaped")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", true, "register the experimental agent-teams capability (CreateTeam/SpawnTeammate/RunTeam); on by default and inert until a client drives a team. Pass --enable-teams=false to disable")
+	fs.BoolVar(&cfg.noSteer, "no-steer", false, "disable the mid-run steer inbox (steer-while-running, issue #512): a client `steer` frame on the Converse stream then reports too_late and ServerCapabilities.steer reads false. Steer is ON by default; this is the opt-OUT. The operator-tier settings.yaml `steer: false` scalar is the YAML twin (CLI out-ranks YAML; a project-tier steer: key is ignored)")
 
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
 	fs.BoolVar(&cfg.mcpResourceTools, "mcp-resource-tools", true, "register the ListMcpResources/ReadMcpResource meta-tools when a connected MCP server exposes resources (no-op when none do). TRUST BOUNDARY: a remote resource's contents enter the model context like any other MCP output — enable only for servers you trust")
@@ -1689,6 +1701,8 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			cfg.retentionCLISet.ScheduledMaxCount = true
 		case "child-gc-interval":
 			cfg.retentionCLISet.SweepCadence = true
+		case "no-steer":
+			cfg.noSteerFlagSet = true
 		}
 		if f.Name == "reasoning-effort" {
 			cfg.reasoningEffortFlagSet = true

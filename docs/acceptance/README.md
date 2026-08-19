@@ -81,6 +81,10 @@ when the code that satisfies the plan has landed.
 - [Session storage continuity](session-storage-continuity.md) — bounded current
   snapshots, indexed progressive inventory, resumable migration/cleanup, configurable
   retention, and explicit legacy-chat adoption. Status: draft.
+- [Steer-while-running](steer-while-running.md) — inject a user message into an
+  in-flight run (Claude Code's "steer"): an engine-side supersedable inbox drained
+  at the turn boundary, a gRPC `Converse` frame, the authoritative drain echo, and
+  the mecatui capability flip; gRPC-only v1 (HTTP deferred). Status: draft.
 
 ## See also
 

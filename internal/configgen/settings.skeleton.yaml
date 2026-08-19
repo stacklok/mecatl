@@ -201,6 +201,15 @@
 #     - issuer: https://idp.example/realms/operators
 #       subject: storage-admin
 
+#| === steer === (tier: operator)
+#| OPERATOR-TIER mid-run steer knob (steer-while-running, issue #512): when true (the
+#| DEFAULT), a client may inject an operator instruction into an in-flight run, drained
+#| at the next turn boundary. Set false to disable the steer inbox (the capability echo
+#| then reads false and a steer frame reports too_late). A project-tier steer: is
+#| IGNORED with a WARN (the harness's operator surface is not a project repo's to flip).
+#| Omit = keep the CLI/default (steer ON).
+# steer: false
+
 #| === models === (tier: operator + project)
 #| Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and the
 #| semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all

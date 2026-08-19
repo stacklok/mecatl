@@ -224,6 +224,19 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel
 The run terminates with a `result` whose `stop` is `cancelled`. No in-flight run
 → `404` `{"error":"no in-flight run for session"}`.
 
+### Mid-run steer is gRPC-only (v1)
+
+The **steer** capability (steer-while-running, issue #512 — inject an operator
+instruction into an *in-flight* run, drained at the next turn boundary) rides the
+bidi gRPC `Converse` stream as a `steer` / `steer_cancel` request arm. The HTTP/SSE
+run path has **no mid-run client→server channel** — `POST /v1/sessions/{id}/runs`
+streams server→client only — so an HTTP/SSE client **cannot steer** in v1. Read the
+`steer` bit off the `CreateSession` capabilities echo: when present/true a gRPC
+client may send `steer` frames; when absent/false the server reports `too_late`
+(and, over gRPC, auto-promotes the text to a fresh follow-up run). A unary
+`POST /v1/sessions/{id}/steer` endpoint is a possible cheap follow-up (mirroring
+`approve`/`cancel`), deferred.
+
 ### ACP over stdio (`mecated acp`)
 
 `mecated acp` serves the **Agent Client Protocol** — JSON-RPC 2.0 over

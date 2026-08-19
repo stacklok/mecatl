@@ -121,6 +121,16 @@ type Config struct {
 	// Learning configures optional completed-trajectory observation. The subtree is
 	// strict; composition parses the closed off/review/auto mode vocabulary.
 	Learning *LearningSection `yaml:"learning"`
+	// Steer is the OPERATOR-TIER mid-run steer knob (steer-while-running, issue
+	// #512): enable (default) or disable the mid-run steer inbox. Like
+	// Posture/ReasoningEffort it is honoured ONLY from the user-global + CLI tiers;
+	// a project-tier file's steer: key is IGNORED with a WARN (operator-tier only —
+	// the harness's operator surface is not a project repo's to flip, in either
+	// direction). It is a *bool so ABSENT is distinguishable from an explicit false:
+	// nil = absent (the resolver reports not-present and composition keeps the
+	// DEFAULT-ON); a non-nil value is honoured (composition maps steer: false onto
+	// the opt-OUT DisableSteer).
+	Steer *bool `yaml:"steer"`
 	// OpenRouter holds the OPERATOR-TIER OpenRouter downstream-provider routing
 	// config (issue #480): a per-model preferred DOWNSTREAM provider order, sent as
 	// OpenRouter's `provider` request-body object. Like Guardrails/Posture it is

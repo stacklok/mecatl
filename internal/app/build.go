@@ -753,6 +753,26 @@ type Config struct {
 	// ErrTeamsDisabled.
 	EnableTeams bool
 
+	// DisableSteer turns OFF the mid-run steer inbox (steer-while-running, issue
+	// #512) — an OPT-OUT of a DEFAULT-ON knob, mirroring NoBash/WebSearchOff (the
+	// zero value false = steer ON, so every existing hand-built Config / test is
+	// byte-identical and steer is armed by default). Threaded through
+	// engineDepsForProvider into agent.Deps.EnableSteer (true = armed) and reflected
+	// — via the SAME wired engine's Engine.SteerEnabled() — in
+	// ServerCapabilities.steer, so the capability advertisement can never claim a
+	// path the engine did not arm. The CLI surface is --no-steer (mecated +
+	// mecatui); the operator-tier settings.yaml `steer: false` scalar (user-global
+	// + CLI tiers ONLY — a project-tier key is WARN-ignored by permconfig, the
+	// same operator-only discipline as posture:) folds in via foldOperatorSteer
+	// (CLI out-ranks YAML). It is POSTURE-INDEPENDENT: the ladder does not derive
+	// it at any tier (a mid-run operator instruction is not an automation grant).
+	DisableSteer bool
+	// DisableSteerFlagSet records whether the operator passed an explicit --no-steer
+	// flag. When true, foldOperatorSteer leaves the operator-YAML steer: value alone
+	// (CLI out-ranks YAML, mirroring PostureFlagSet/ReasoningEffortFlagSet). Set by
+	// the cmd mains alongside DisableSteer.
+	DisableSteerFlagSet bool
+
 	// MCP: static servers, the resource meta-tools toggle, the prompt-expander
 	// toggle, and the live ToolHive workload source.
 	MCPServers []mcp.ServerConfig
@@ -996,6 +1016,14 @@ type Config struct {
 	// engine lifecycle on a fully built provider path. Production leaves it nil,
 	// which preserves the inert hookexec.New(nil) default.
 	hookRunner port.HookRunner
+	// extraCoreTools is the composition-only test seam (mirroring
+	// providerConstructor/envDetector) for registering ADDITIONAL core tools into
+	// the shared catalog on top of the production set — a test parks a run
+	// mid-dispatch with a blocking tool so a mid-run seam (steer-while-running)
+	// is genuinely LIVE when the test drives it. Nil in production (the
+	// production core set is untouched). Unexported: an internal composition
+	// detail, not an operator knob.
+	extraCoreTools []tool.Tool
 
 	// toolhiveConfigPath is the composition-only test seam for the ToolHive
 	// config-file path (mirroring envDetector/liveModelHTTPClient): ""
@@ -1265,6 +1293,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorPosture(cfg)
 	cfg = foldOperatorReasoningEffort(cfg)
 	cfg = foldOperatorPlanModeAutoApprove(cfg)
+	cfg = foldOperatorSteer(cfg)
 	cfg.Posture = resolvePosture(cfg, postureNoCeiling)
 	cfg = applyPosture(cfg)
 	// AUTHORITATIVE root/no-sandbox refusal: applied HERE, after the full posture fold,
@@ -3695,6 +3724,12 @@ func engineDepsForProvider(
 		// plan-approval ask (PresentPlan) even when headless so the Service can
 		// auto-resolve it. Operator-tier only, DEFAULT off.
 		PlanModeAutoApprove: cfg.PlanModeAutoApprove,
+		// Steer (steer-while-running, issue #512): arm the mid-run steer inbox.
+		// DEFAULT ON — the Config knob is the opt-OUT (DisableSteer), so true here
+		// unless the operator disabled it. ServerCapabilities.steer reads the SAME
+		// wired value back via Engine.SteerEnabled(), so the advertisement and the
+		// inbox can never disagree.
+		EnableSteer: !cfg.DisableSteer,
 	}
 }
 
@@ -4471,6 +4506,12 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS bool, searchProv
 		cat.MustRegister(t)
 	}
 	cat.MustRegister(tools.NewWebSearchTool(searchProvider))
+	// Test seam: register any ADDITIONAL core tools a test injected (nil in
+	// production — the production core set above is untouched). Appended AFTER the
+	// production set so an injected tool can shadow nothing and adds only itself.
+	for _, t := range cfg.extraCoreTools {
+		cat.MustRegister(t)
+	}
 	if runner := buildCommandRunner(cfg); runner != nil {
 		// The AGENT-loop Bash tool (not the fstools one): foreground byte-identical,
 		// plus the `background: true` detach over the run's child registry. Its
@@ -7374,6 +7415,32 @@ func foldOperatorPlanModeAutoApprove(cfg Config) Config {
 	if res.OperatorPlanModeAutoApprove() {
 		cfg.PlanModeAutoApprove = true
 	}
+	return cfg
+}
+
+// foldOperatorSteer merges the OPERATOR-TIER `steer:` YAML scalar (read by the
+// permconfig resolver from the user-global + CLI tiers ONLY — never the project
+// file, which is IGNORED with a WARN, the same operator-only discipline as
+// posture:) onto cfg.DisableSteer. The YAML `steer: false` maps to DisableSteer=true
+// (the knob is the opt-OUT of the default-ON steer inbox). A CLI --no-steer
+// (cfg.DisableSteerFlagSet) OUT-RANKS the YAML value (mirroring
+// foldOperatorPosture/foldOperatorReasoningEffort). It is a no-op when no
+// operator-tier steer: key was configured, and a YAML `steer: true` cannot
+// RE-ENABLE steer over an explicit --no-steer (CLI wins). cfg is taken and
+// returned by value (issue #512).
+func foldOperatorSteer(cfg Config) Config {
+	if cfg.DisableSteerFlagSet {
+		return cfg // CLI wins; YAML cannot override an explicit --no-steer.
+	}
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg
+	}
+	yamlSteer, present := res.OperatorSteer()
+	if !present {
+		return cfg
+	}
+	cfg.DisableSteer = !yamlSteer
 	return cfg
 }
 

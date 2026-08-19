@@ -166,7 +166,18 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.CompactionArchive != nil {
 		out.CompactionArchive = toProtoCompactionArchive(*ev.CompactionArchive)
 	}
+	if ev.Steer != nil {
+		out.Steer = toProtoSteer(*ev.Steer)
+	}
 	return out
+}
+
+// toProtoSteer maps a session.SteerPayload to its proto SteerEcho form: the
+// CLIENT-VISIBLE, authoritative echo of the committed operator steer (EvSteer).
+// The text is operator-supplied (producer-influenced), so it rides the valid()
+// backstop like every other non-harness string.
+func toProtoSteer(p session.SteerPayload) *mecatlv1.SteerEcho {
+	return &mecatlv1.SteerEcho{Text: valid(p.Text)}
 }
 
 // toProtoParallel maps a session.ParallelPayload to its proto Parallel form: the

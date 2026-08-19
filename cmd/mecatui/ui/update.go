@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -879,9 +880,196 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Text (no model content).
 		m.conv.addRecoverNotice(msg.Text)
 		return m.afterEvent()
+	case client.SteerOutcomeMsg:
+		return m.applySteerOutcome(msg)
+	case client.SteerEchoMsg:
+		return m.applySteerEcho(msg)
 	default:
 		return m, nil
 	}
+}
+
+// mintSteerID derives the next session-scoped steer message id (1-based
+// "steer-%04d"). Session-scoped needs no crypto — within one session the
+// client is the sole sender on its single stream, and the server only ever
+// echoes them verbatim; a per-process shared counter would not survive the
+// module boundary anyway.
+func (m *Model) mintSteerID() string {
+	m.steerSeq++
+	return fmt.Sprintf("steer-%04d", m.steerSeq)
+}
+
+// applySteerOutcome reduces the server's AUTHORITATIVE ack for a steer /
+// steer_cancel frame into the steer lifecycle, keyed BY message_id (never text —
+// a stale ack for a drained id or one bundle's ack during a recomposed bundle's
+// flight is ignored). The phases advance ONLY here (and in applySteerEcho),
+// never on send — the client cannot observe the drain moment across stream
+// latency, so it renders what the server reports:
+//
+//   - accepted → steerSent (parked in the run's inbox, awaiting the boundary
+//     drain); Text adopts the acked text (the version the engine last confirmed).
+//   - appended → merged into the pending bundle server-side (it drains as ONE
+//     bundle). The queue display stays derived from Sends (the ack's lone
+//     fragment must NOT overwrite the merged join).
+//   - too_late + promoted → steerPromoted (the run had gone terminal; the text
+//     auto-started a fresh follow-up run). The card states it honestly.
+//   - retracted → steerRetracted (the cancel won; the run drains nothing).
+//   - none_pending → the cancel found an empty slot (the drain already won, or
+//     nothing was pending); the steer state clears (there is nothing to show).
+//
+// An ack for a frame the ui no longer tracks (steer == nil, a burned id, or an
+// id that is not the live bundle's — e.g. a late ack after the echo committed,
+// or one outstanding bundle's ack racing a recomposed replacement) is
+// idempotently dropped.
+// steerTrace emits a one-line correlation trace into the status bar when
+// Deps.DebugSteer is set (env MECATUI_DEBUG_STEER=1): the ack/echo kind, the
+// incoming message_id, the live bundle's id, and the decision. It makes a stuck
+// or mis-correlated steer lifecycle visible in the TUI rather than opaque. A nil
+// live bundle renders "-".
+func (m Model) steerTrace(kind, inID, decision string) string {
+	if !m.deps.DebugSteer {
+		return ""
+	}
+	live := "-"
+	if m.steer != nil {
+		live = orDash(m.steer.watermarkID())
+	}
+	return m.deps.Theme.Style("muted").Render("[steer] " + kind + " id=" + orDash(inID) + " live=" + live + " → " + decision)
+}
+
+// steerSendIndex returns the index of the send with id in the ordered queue, or
+// -1 when absent (a watermark split drops sends[0:idx+1]).
+func steerSendIndex(sends []steerQueuedSend, id string) int {
+	return slices.IndexFunc(sends, func(s steerQueuedSend) bool { return s.ID == id })
+}
+
+// joinSteerSends re-joins the ordered queue's fragment texts with the blank-line
+// separator (the merged display text shown on the card).
+func joinSteerSends(sends []steerQueuedSend) string {
+	parts := make([]string, 0, len(sends))
+	for _, s := range sends {
+		parts = append(parts, s.Text)
+	}
+	return strings.Join(parts, queueMergeSep)
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func (m Model) applySteerOutcome(msg client.SteerOutcomeMsg) (tea.Model, tea.Cmd) {
+	if m.steer == nil {
+		// A stale ack (drained id, or an id-less legacy ack with nothing live)
+		// reconciles to nothing — there is no card to advance.
+		if tr := m.steerTrace("ack:"+string(msg.Outcome), msg.MessageID, "dropped (no live bundle)"); tr != "" {
+			m.statusMsg = tr
+		}
+		return m.afterEvent()
+	}
+	// Correlate BY QUEUED id: acks scope a queued send (an EMPTY id is legacy
+	// and falls through). A drained id leaves the queue at the echo split, so
+	// "not in queue" alone marks it stale — no burn map needed.
+	if msg.MessageID != "" && steerSendIndex(m.steer.Sends, msg.MessageID) < 0 {
+		if tr := m.steerTrace("ack:"+string(msg.Outcome), msg.MessageID, "ignored (id not in queue)"); tr != "" {
+			m.statusMsg = tr
+		}
+		return m.afterEvent()
+	}
+	switch msg.Outcome {
+	case client.SteerAccepted:
+		m.steer.Phase = steerSent
+		m.statusMsg = m.deps.Theme.Style("muted").Render("steer queued")
+	case client.SteerAppended:
+		// The engine merged the new line into the outstanding pending bundle (append
+		// is the default): the bundle's Text grew, and it still drains as ONE. The
+		// card honestly reports "merged onto the in-flight steer" — the merged queue
+		// display stays derived from Sends (the ack's lone fragment must NOT
+		// overwrite it).
+		m.steer.Phase = steerSent
+		m.statusMsg = m.deps.Theme.Style("muted").Render("line merged onto the in-flight steer (↑ to edit)")
+	case client.SteerTooLate:
+		if msg.Promoted {
+			m.steer.Phase = steerPromoted
+			m.statusMsg = m.deps.Theme.Style("muted").Render("steer arrived after the run ended — sent as a follow-up")
+		} else {
+			// Promotion failed (routing / run-entry / lease / funnel error): the
+			// text was NOT delivered. Do NOT report a successful follow-up — show an
+			// explicit not-sent so the user can retry (the text is preserved).
+			m.steer.Phase = steerFailed
+			m.statusMsg = m.deps.Theme.Style("warning").Render("steer not sent — promotion failed (try again)")
+		}
+	case client.SteerRetracted:
+		m.steer.Phase = steerRetracted
+		m.statusMsg = m.deps.Theme.Style("muted").Render("steer retracted")
+	case client.SteerNonePending:
+		m.steer = nil
+		m.statusMsg = m.deps.Theme.Style("muted").Render("no pending steer to retract")
+	}
+	return m.afterEvent()
+}
+
+// applySteerEcho reduces the run's steer-inbox DRAIN echo (the COMMITTED text
+// recorded into history). It is the authoritative "the steer landed" signal,
+// keyed BY message_id: the in-flight card clears (the committed text now lives
+// in the transcript) and the landed line renders IN CONTEXT at the echo's stream
+// position (after the settling tool activity, before the next turn-start). A
+// duplicate echo for an already-burned id is ignored, so the landed line never
+// double-renders.
+func (m Model) applySteerEcho(msg client.SteerEchoMsg) (tea.Model, tea.Cmd) {
+	// Watermark split: the echo's message_id is the TAIL of the drained bundle —
+	// drop every send in this bundle's queue up to and including it (drained),
+	// and keep the suffix (still pending). The queue is the ONLY correlation
+	// source: a duplicate or stale echo finds its id already out of the queue
+	// and is a no-op (no burn map). For an id-less legacy echo, clear the whole
+	// bundle. The landed line renders ONLY when the echo matched live state —
+	// a stale/duplicate echo never double-renders the transcript.
+	// The echo is authoritative ONLY while a live bundle can correlate it — a
+	// late/duplicate echo with no live bundle drops to the no-render arm (never
+	// re-renders the transcript line; the one drain = one echo invariant makes
+	// the duplicate a server non-occurrence).
+	landed := false
+	if m.steer != nil {
+		if msg.MessageID == "" {
+			// id-less legacy echo: clear the whole bundle.
+			m.steer = nil
+			landed = true
+		} else {
+			idx := steerSendIndex(m.steer.Sends, msg.MessageID)
+			switch {
+			case idx >= 0:
+				rest := m.steer.Sends[idx+1:]
+				if len(rest) == 0 {
+					m.steer = nil // the whole bundle drained
+				} else {
+					m.steer.Sends = rest
+					m.steer.Text = joinSteerSends(rest)
+				}
+				landed = true
+				if tr := m.steerTrace("echo", msg.MessageID, "split queue at watermark; tail pending"); tr != "" {
+					m.statusMsg = tr
+				}
+			case len(m.steer.Sends) == 0:
+				// An ack already emptied the queue client-side (the phase
+				// advanced); the echo is the drain confirming it — clear.
+				m.steer = nil
+				landed = true
+			default:
+				if tr := m.steerTrace("echo", msg.MessageID, "no matching live bundle (card left)"); tr != "" {
+					m.statusMsg = tr
+				}
+			}
+		}
+	}
+	if landed {
+		// Render the landed line IN CONTEXT (its true stream position — the echo
+		// arrives exactly where the drain committed the user continuation).
+		m.conv.addUser(msg.Text)
+		m.statusMsg = m.deps.Theme.Style("muted").Render("steer applied")
+	}
+	return m.afterEvent()
 }
 
 // applyResult handles a terminal ResultMsg: it folds the run's usage into the running
@@ -1724,31 +1912,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// textarea default so the keypress drives the overlay, never the input.
 		return m.openAgents()
 	case key.Matches(msg, m.keys.Cancel):
-		if strings.TrimSpace(m.ta.Value()) != "" {
-			// Staged-but-unsent input: esc clears it first (mirrors a text editor's
-			// "esc clears the line"), leaving the queue and the run untouched.
-			m.ta.Reset()
-			return m.afterInputEdit(nil)
-		}
-		if len(m.queued) > 0 {
-			// No live input but staged follow-ups: esc drops the queue before it would
-			// cancel the run, so a user who changed their mind can clear the backlog
-			// without killing the in-flight turn.
-			m.queued = nil
-			m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
-			m.refreshView()
-			return m, nil
-		}
-		// Nothing staged: esc cancels the run (today's behaviour — the run ends with
-		// stop "cancelled"; the stream stays open until that terminal result).
-		stream := m.stream
-		m.statusMsg = "cancelling…"
-		return m, func() tea.Msg {
-			if stream != nil {
-				_ = stream.SendCancel()
-			}
-			return nil
-		}
+		return m.onRunningCancel()
 	case key.Matches(msg, m.keys.Newline):
 		m.ta.InsertRune('\n')
 		return m.afterInputEdit(nil)
@@ -1764,6 +1928,54 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.ta, cmd = m.ta.Update(msg)
 		return m.afterInputEdit(cmd)
+	}
+}
+
+// onRunningCancel handles esc while a run streams, in layered priority (extracted
+// from onRunningKey to keep its cyclomatic complexity under the bound): clear the
+// staged input first, else clear the staged queue, else retract a pending steer
+// (steer mode), else cancel the in-flight run.
+func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(m.ta.Value()) != "" {
+		// Staged-but-unsent input: esc clears it first (mirrors a text editor's
+		// "esc clears the line"), leaving the queue and the run untouched.
+		m.ta.Reset()
+		return m.afterInputEdit(nil)
+	}
+	if len(m.queued) > 0 {
+		// No live input but staged follow-ups: esc drops the queue before it would
+		// cancel the run, so a user who changed their mind can clear the backlog
+		// without killing the in-flight turn.
+		m.queued = nil
+		m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
+		m.refreshView()
+		return m, nil
+	}
+	// Steer mode with a pending/sent (un-drained) steer: esc RETRACTS it via a
+	// steer_cancel frame before it would cancel the run — the mirror of the
+	// clear-the-queue layer above. The authoritative retracted/none_pending ack
+	// drives the lifecycle (applySteerOutcome); a drain that already won reports
+	// none_pending and clears the card.
+	if m.steer != nil && (m.steer.Phase == steerPending || m.steer.Phase == steerSent) {
+		stream := m.stream
+		id := m.steer.watermarkID()
+		m.statusMsg = m.deps.Theme.Style("muted").Render("retracting steer…")
+		return m, func() tea.Msg {
+			if stream != nil {
+				_ = stream.SendSteerCancel(id)
+			}
+			return nil
+		}
+	}
+	// Nothing staged: esc cancels the run (today's behaviour — the run ends with
+	// stop "cancelled"; the stream stays open until that terminal result).
+	stream := m.stream
+	m.statusMsg = "cancelling…"
+	return m, func() tea.Msg {
+		if stream != nil {
+			_ = stream.SendCancel()
+		}
+		return nil
 	}
 }
 
@@ -1783,6 +1995,20 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.ta.Value())
 	if text == "" {
 		return m, nil
+	}
+	// Steer mode (Capabilities.Steer): mid-run enter sends a steer FRAME on the
+	// live Converse stream instead of staging locally — the engine drains it at the
+	// next turn boundary. The client-side merge (#228's merge-always) collapses the
+	// typed text into ONE bundle with a fresh message_id; a line typed while a
+	// bundle is still outstanding BATCHES onto it (the single-slot inbox can only
+	// ever hold one, so the wire never carries two at once — the batched line
+	// rides the bundle's Text client-side and the wire frame is the whole merged
+	// text). The ↑ edit-back cancels the outstanding bundle and recomposes. Paste
+	// placeholders expand inside sendSteer (there is no queue-full cap on the
+	// steer path — the engine's single-slot inbox is the bound). When steer is
+	// disabled the #228 local merge-queue below owns mid-run input, byte-identical.
+	if m.caps.Steer && m.stream != nil {
+		return m.sendSteer(text)
 	}
 	if len(m.queued) >= maxQueued {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("queue full (%d)", maxQueued))
@@ -1810,6 +2036,55 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 	return m.afterInputEdit(nil)
 }
 
+// sendSteer collapses the textarea text into ONE steer bundle and sends it on
+// the live Converse stream with a FRESH client-minted message_id. A bundle is
+// always a complete replacement: an in-flight bundle is CANCELED first (the ↑
+// edit-back path, cancel-then-recompose), so the old text is never merged onto
+// the new frame — resend carries exactly what the user edited, with a new id.
+// The lifecycle then advances ONLY on the server's authoritative steer.outcome
+// ack / steer drain echo (updateStreamSecondary), correlated BY the minted id —
+// never assumed client-side. The textarea is reset and the card moves to the
+// pending state.
+func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
+	// Expand staged large-paste placeholders so the steer frame carries FINAL text
+	// (mirrors the local-queue path). There is no queue-full cap here — the engine's
+	// single-slot inbox is the bound — so the expansion runs unconditionally. The
+	// staged store is textarea-scoped: the input is reset below, so its markers are
+	// gone and the store must not outlive them. A deleted marker's content is
+	// silently dropped (the image-marker UX).
+	if len(m.stagedPastes) > 0 {
+		text = strings.TrimSpace(expandPastePlaceholders(text, m.stagedPastes))
+		m.stagedPastes = nil
+		m.nextPasteN = 0
+		if text == "" {
+			// Every marker was deleted and nothing else was typed: nothing to steer.
+			m.ta.Reset()
+			return m.afterInputEdit(nil)
+		}
+	}
+	// A new send mints a fresh id and appends to the ordered queue; the WIRE
+	// carries ONLY this line's fragment (the engine appends it to the pending
+	// bundle — re-sending the full merged text would re-append drained text, the
+	// duplication bug). The bundle's display Text re-joins from the whole queue.
+	id := m.mintSteerID()
+	if m.steer == nil {
+		m.steer = &steerState{Phase: steerPending}
+	}
+	m.steer.Sends = append(m.steer.Sends, steerQueuedSend{ID: id, Text: text})
+	m.steer.Text = joinSteerSends(m.steer.Sends)
+	stream := m.stream
+	sendMsg := func() tea.Msg {
+		if err := stream.SendSteer(text, id); err != nil {
+			return client.StreamErrMsg{Err: err}
+		}
+		return nil
+	}
+	m.ta.Reset()
+	m.statusMsg = m.deps.Theme.Style("muted").Render("steering…")
+	m.refreshView()
+	return m, sendMsg
+}
+
 // wantsEditBack reports whether msg is the EditBack key (↑) pressed on an EMPTY
 // input line with a non-empty queue — the precondition for pulling the merged queue
 // back into the textarea (see editBackQueue). Gating on empty input keeps ↑ a plain
@@ -1817,18 +2092,50 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 // guard reads as one predicate in each switch (and keeps their cyclomatic complexity
 // under the cap).
 func (m Model) wantsEditBack(msg tea.KeyPressMsg) bool {
-	return key.Matches(msg, m.keys.EditBack) &&
-		strings.TrimSpace(m.ta.Value()) == "" && len(m.queued) > 0
+	if !key.Matches(msg, m.keys.EditBack) || strings.TrimSpace(m.ta.Value()) != "" {
+		return false
+	}
+	// Steer mode: ↑ pulls the COMBINED in-flight steer back for editing (the
+	// merged message, not a queue). Steer state takes precedence — with steer
+	// armed mid-run the local queue is never populated (steer owns mid-run input).
+	if m.steer != nil && (m.steer.Phase == steerPending || m.steer.Phase == steerSent) {
+		return true
+	}
+	return len(m.queued) > 0
 }
 
 // editBackQueue is the inverse of enqueuePrompt: it pulls the whole staged queue
 // back into the textarea (merged by queueMergeSep) so the user can revise it, and
 // CLEARS the queue + any pause. It is non-destructive — bound to ↑ on an EMPTY input
 // line with a non-empty queue (see onRunningKey / onIdleKey), distinct from esc,
-// which clears the queue outright. It sends nothing: the merged text is now an
-// ordinary draft the user edits and (re)submits or (re)enqueues. Callers gate on the
-// empty-input / non-empty-queue precondition, so this assumes m.queued is non-empty.
+// which clears the queue outright. It sends nothing on the queue path: the merged
+// text is now an ordinary draft the user edits and (re)submits or (re)enqueues.
+// Callers gate on the empty-input / non-empty-queue precondition, so this assumes
+// m.queued is non-empty.
 func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
+	// Steer mode (task-10 queue model): ↑ CANCELS the outstanding bundle WITHOUT
+	// waiting for the ack and pulls the whole not-yet-drained text back into the
+	// textarea as ONE editable blob. The old frame is NEVER left live to be merged
+	// onto the resend (the edit-back duplication bug): the steer_cancel rides the
+	// stream first, the draft is immediately editable, and the resend collapses
+	// the edited blob into ONE new bundle with a NEW message_id. A drained id is
+	// burned — after the echo there is no bundle to edit (wantsEditBack gates).
+	if m.steer != nil && len(m.steer.Sends) > 0 {
+		stream := m.stream
+		id := m.steer.watermarkID()
+		draft := joinSteerSends(m.steer.Sends)
+		m.steer = nil
+		m.ta.SetValue(draft)
+		m.statusMsg = m.deps.Theme.Style("muted").Render("steer pulled back for editing — resend to replace")
+		m.refreshView()
+		cancel := func() tea.Msg {
+			if stream != nil {
+				_ = stream.SendSteerCancel(id)
+			}
+			return nil
+		}
+		return m.afterInputEdit(cancel)
+	}
 	m.ta.SetValue(strings.Join(m.queued, queueMergeSep))
 	m.queued = nil
 	m.queuePaused = ""
@@ -3009,6 +3316,12 @@ func (m Model) endRun(stop string) Model {
 	m.approval.ask = pendingAsk{}
 	m.approval.queue = nil
 	m.approval.resolvedAsks = nil
+	// The run is terminal: its steer inbox is closed, so any in-flight steer state is
+	// over. A pending/sent (un-drained, un-acked) steer simply clears — it is lost
+	// with the run (the honest best-effort contract); a promoted/retracted terminal
+	// state already rendered its card. Clearing here keeps a dead run's steer card
+	// from surviving into idle.
+	m.steer = nil
 	m.phase = phaseIdle
 	// Ensure the input is focused now the run is done. With type-while-running the
 	// input is already focused during a run, so this is a no-op on the common path;

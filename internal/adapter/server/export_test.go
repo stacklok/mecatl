@@ -3,6 +3,8 @@ package server
 import (
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -89,4 +91,17 @@ func (s *Service) DropSessionEngineForTest(id session.SessionID) {
 // cases can be pinned directly without driving a full run.
 func (s *Service) NeedsRehydrationForTest(sess *session.Session) bool {
 	return s.needsRehydration(sess)
+}
+
+// TrackSteerMessageIDForTest appends one client-minted id to the session's
+// watermark FIFO — the test seam for the steer correlation invariant pin
+// (ADR-0232; assert positional, not textual, correlation).
+func (s *Service) TrackSteerMessageIDForTest(id session.SessionID, messageID string) {
+	s.trackSteerMessageID(id, messageID)
+}
+
+// SteerOutcomeToProtoForTest exposes the unexported steerOutcomeToProto mapper
+// so the full-matrix test can assert every agent.SteerOutcome arm.
+func SteerOutcomeToProtoForTest(o agent.SteerOutcome) mecatlv1.SteerOutcome {
+	return steerOutcomeToProto(o)
 }

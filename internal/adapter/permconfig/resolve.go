@@ -163,6 +163,18 @@ type Resolver struct {
 	// are evaluated separately because they may only tighten this ceiling.
 	operatorLearning *LearningSection
 
+	// operatorSteer is the OPERATOR-TIER steer: scalar (steer-while-running, issue
+	// #512), read ONCE at construction from the user-global + CLI tiers ONLY. A
+	// project-tier file's steer: key is deliberately IGNORED (operator-tier only,
+	// for consistency with posture — loadProjectRules WARNs when it sees one).
+	// operatorSteerSet records whether ANY operator-tier file carried the key, so
+	// ABSENT is distinguishable from an explicit steer: false (the knob is an
+	// opt-OUT of a default-ON feature, so the composition layer needs the
+	// presence bit, not just the bool). CLI (explicit files) out-ranks user-global
+	// (first-present keeps CLI).
+	operatorSteer    bool
+	operatorSteerSet bool
+
 	// operatorModels is the OPERATOR-TIER models: subtree (ADR 0030), read ONCE at
 	// construction from the user-global + CLI tiers ONLY (the SOLE capture path is
 	// captureModels from loadUserRules; there is no second capture path). It carries
@@ -310,6 +322,21 @@ func (r *Resolver) ProjectLearningSettings(ws tool.WorkspaceReader) []*LearningS
 		}
 	}
 	return result
+}
+
+// OperatorSteer returns the OPERATOR-TIER steer: bool (user-global + CLI only) and
+// whether ANY operator-tier file carried the key (steer-while-running, issue #512).
+// It is the SOLE accessor the composition layer uses to read the knob from config —
+// by construction it never returns a project-tier value (a project steer: is ignored
+// with a WARN in loadProjectRules). The presence bit matters because the knob is an
+// opt-OUT of a DEFAULT-ON feature: absent (present=false) means composition keeps the
+// default; an explicit steer: false (present=true, value=false) disables it. nil-safe.
+// Mirrors OperatorPosture().
+func (r *Resolver) OperatorSteer() (value, present bool) {
+	if r == nil {
+		return false, false
+	}
+	return r.operatorSteer, r.operatorSteerSet
 }
 
 // OperatorModelSlots returns the operator-tier models: subtree (user-global + CLI
@@ -595,6 +622,14 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"plan-mode-auto-approve: IGNORING a project-tier plan-mode-auto-approve: key (operator-tier only — a project repo cannot enable autonomous plan approval; set plan-mode-auto-approve in your user-global settings.yaml or via --plan-mode-auto-approve)",
 				"file", src.path, "root", ws.Root())
 		}
+		// Steer is OPERATOR-TIER ONLY (issue #512), for consistency with posture: a
+		// project file's steer: key is IGNORED with a loud WARN. The harness's
+		// operator surface is not a project repo's to flip in either direction.
+		if cfg.Steer != nil {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"steer: IGNORING a project-tier steer: key (operator-tier only — a project repo cannot change the mid-run steer surface; set steer in your user-global settings.yaml or via --no-steer)",
+				"file", src.path, "root", ws.Root())
+		}
 		// OpenRouter downstream-provider routing is OPERATOR-TIER ONLY (issue #480): a
 		// project file's openrouter: block is IGNORED with a loud WARN. Steering requests
 		// to a particular downstream inference provider is a spend/compliance/capability
@@ -819,6 +854,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 		// Operator-tier learning: same first-non-nil-keeps-CLI discipline.
 		r.captureLearning(cfg.Learning)
+		// Operator-tier steer (issue #512): same discipline as posture.
+		r.captureSteer(cfg.Steer)
 		// Operator-tier models: same first-non-nil-keeps-CLI discipline (ADR 0030).
 		r.captureModels(cfg.Models)
 		// Operator-tier openrouter: same first-non-nil-keeps-CLI discipline (issue #480).
@@ -855,6 +892,8 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 				// User-global learning: captured only if no higher CLI file already did.
 				r.captureLearning(cfg.Learning)
+				// User-global steer (issue #512): same discipline as posture.
+				r.captureSteer(cfg.Steer)
 				// User-global models: captured only if no higher CLI file already did.
 				r.captureModels(cfg.Models)
 				// User-global openrouter: captured only if no higher CLI file already did.
@@ -946,6 +985,21 @@ func (r *Resolver) capturePlanModeAutoApprove(p bool) {
 		return
 	}
 	r.operatorPlanModeAutoApprove = p
+}
+
+// captureSteer records the FIRST operator-tier steer: scalar seen during
+// construction (CLI files are parsed before user-global, so CLI wins on
+// first-present). It is called only from loadUserRules — the operator (user-global
+// + CLI) tiers — never from loadProjectRules, so a project file can never supply it
+// (operator-tier only, for consistency with posture — issue #512). A nil *bool
+// (the key absent) is a no-op; a non-nil value records BOTH the value and the
+// presence bit (the knob is an opt-OUT, so presence is load-bearing).
+func (r *Resolver) captureSteer(s *bool) {
+	if s == nil || r.operatorSteerSet {
+		return
+	}
+	r.operatorSteer = *s
+	r.operatorSteerSet = true
 }
 
 // captureModels records the FIRST operator-tier models: block seen during

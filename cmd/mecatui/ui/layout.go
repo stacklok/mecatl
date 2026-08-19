@@ -119,6 +119,13 @@ func (m Model) chrome() (above, below []region) {
 	if q := m.renderQueue(); q != "" {
 		below = append(below, region{role: regionQueue, content: q})
 	}
+	// Steer mode: the in-flight steer's AUTHORITATIVE state (pending / sent /
+	// promoted / retracted) is summarised in a muted card just above the input,
+	// shown whenever a steer is in flight. Mutually exclusive with the local-queue
+	// card (steer owns mid-run input when armed, so the queue is empty then).
+	if s := m.renderSteer(); s != "" {
+		below = append(below, region{role: regionQueue, content: s})
+	}
 	below = append(below,
 		// One blank row of top padding so the input box isn't jammed against the history.
 		region{role: regionInputSpacer, content: inputSpacerRow},

@@ -1630,6 +1630,53 @@ satisfied (so a queued `/clear` clears the transcript instead of sending a promp
 Queueing is **running-only**: while a permission modal is open the modal keys own the
 keyboard unchanged (no mid-approval queueing).
 
+### Steer mode (mid-run steer, when the server advertises it)
+
+When the server's engine arms the mid-run **steer inbox** (steer-while-running, issue
+#512 — ON by default; `mecated --no-steer` / `mecatui --no-steer` or the operator-tier
+`steer: false` settings.yaml key opts out), the `CreateSession` capabilities echo
+carries `steer: true` and the TUI **flips** mid-run input from the local terminal
+queue to the engine steer path:
+
+- `enter` mid-run **sends a `steer` frame** on the live Converse stream instead of
+  staging locally. Each `enter` mints a fresh client `message_id` and the frame
+  carries ONLY that line's text; the engine's single-slot inbox **appends** each
+  frame into the one pending bundle (merged with a blank-line separator) and
+  drains the bundle at the **next turn boundary**, recording it as an ordinary
+  user continuation — so the model is nudged *mid-flight*, no waiting for the
+  run to end. The TUI keeps an **ordered queue of sends** (id + text); the drain
+  echo carries the **watermark** (the latest contributing send's id) and the
+  queue splits on it: everything up to and including the watermark landed (it
+  renders in context), anything after stays pending.
+- The card above the input reflects the **authoritative** server-reported state —
+  the engine is the sole authority on what happened to a steer (the client cannot
+  observe the exact drain moment across stream latency), so the card shows what
+  the server acked/echoed, never a client-side guess: `⏳ steer: sending…` (sent,
+  ack in flight) → `⏳ steer queued · ↑ edit · esc retract` (acked, parked for the
+  next boundary) → `↪ steer sent as a follow-up (run had already ended)` (a
+  **too-late** race: the run had already gone terminal, so the text was
+  auto-promoted to a fresh follow-up run — never silently dropped) or
+  `✕ steer retracted` (a `steer_cancel` won). A second `enter` while a bundle is
+  parked **appends** to it server-side (the bundle drains as ONE merged message);
+  replacing a pending bundle is the explicit `↑`-cancel-then-recompose below. The
+  rendering is **queued-until-landed**: the pending card sits at the bottom of
+  the transcript, and the **drain echo** clears it as the committed steer appears
+  IN CONTEXT at its true position (an ordinary user turn at the boundary it
+  landed) — never rendered twice.
+- `↑` (empty input, in-flight steer) is **cancel-then-recompose**: it issues a
+  `steer_cancel` for the outstanding bundle (the watermark id) and pulls the
+  queue's pending sends back into the input as ONE editable blob; resending sends
+  the edited blob as a fresh fragment under a NEW `message_id` (an already-drained
+  send is never re-sent — the watermark split keeps the queue honest). A late
+  `none_pending` ack means the drain won — the steer shipped as sent. `esc` on a
+  pending/queued steer **retracts** it (`steer_cancel`) before it would cancel
+  the run.
+
+When the capability is **absent** (an older server, or steer disabled), none of this
+engages: mid-run input keeps the #228 local merge-queue behaviour **byte-identical**
+(staged, merged, and drained as a follow-up prompt when the run ends), and no `steer`
+frame is ever sent.
+
 ## Theming
 
 Themes are pure data: a `Palette` of semantic colour slots (e.g. `accent`,

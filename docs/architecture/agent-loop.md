@@ -2,7 +2,7 @@
 
 > Part of the [mecatl architecture guide](../architecture.md).
 
-**What this covers:** the `Engine.Run` drive algorithm, read-parallel / mutate-serial dispatch, permission pause/resume (`askRegistry`, `Run.Approve`), the plan-approval gate (`PresentPlan`), the token budget, and bounded no-progress nudging.
+**What this covers:** the `Engine.Run` drive algorithm, read-parallel / mutate-serial dispatch, permission pause/resume (`askRegistry`, `Run.Approve`), the plan-approval gate (`PresentPlan`), the token budget, bounded no-progress nudging, and steer-while-running (mid-run operator input).
 
 **Prerequisites:** [the ports](ports.md) — the seams the loop consumes.
 
@@ -43,7 +43,10 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
    final user text through the aggregate root.
 3. **Pre-turn stop guard**: announce any newly-finished background children
    (one harness-note user message, ids + stop labels only, family-aware across
-   the delegation families and background-Bash jobs; [subagents & teams](subagents-and-teams.md)); then, if
+   the delegation families and background-Bash jobs; [subagents & teams](subagents-and-teams.md));
+   drain the fire-result delivery queue (ADR 0075) and the **steer inbox**
+   (below) — the Step 2a boundary injections,
+   `engine/agent/loop.go` (`runBoundaryInjections`); then, if
    `sess.StopReason()` trips, `ctx` is cancelled, or the run **token budget**
    is crossed (below), terminate.
 4. `BeginTurn`, emit `turn.start`.
@@ -244,6 +247,91 @@ askable ask, a serialized provenance marker, and a verdict tail.
   next typed prompt drives the revision. The opt-in `--plan-mode-auto-approve`
   observer (`MaybeAutoApprovePlan`) auto-resolves a parked plan-ask headless
   (DEFAULT OFF, OPERATOR-TIER ONLY, loud "NO HUMAN REVIEW" diagnostic).
+
+## Steer-while-running
+
+A **steer** is an operator-supplied message injected into an *in-flight* run
+(issue #512, [ADR 0232](../adr/0232-steer-while-running.md)): it takes effect at
+a turn boundary after the current streamed response and its tool batch settle —
+never mid-stream, never aborting an in-flight model call — and rides the gRPC
+`Converse` stream as `steer` / `steer_cancel` frames. The pieces:
+
+- **The run-scoped mutex inbox** (`engine/agent/steer.go` (`steerInbox`)). Each
+  `Run` carries a single-slot pending-steer box guarded by one mutex
+  (`{closed, pending, has}`); every transition is one critical section.
+  `engine/agent/steer.go` (`Run.EnqueueSteer`) parks the steer when the slot is
+  empty (`accepted`), and **appends** into the pending bundle when one is already
+  pending (`appended` — `pending += "\n\n" + text`, merged with a blank-line
+  separator; the merged bundle still drains as ONE user message). Replacing a
+  pending bundle is an explicit `Run.CancelSteer`-then-resend. The inbox reports
+  `too_late` once it closes at run terminal. Steer text is repaired to valid
+  UTF-8 at ingress (`session.ToValidUTF8`) so recorded history, the echo, and
+  the model view stay byte-identical. The outcome is the closed enum
+  `engine/agent/steer.go` (`SteerOutcome`): `accepted` / `appended` /
+  `retracted` / `none_pending` / `too_late`.
+- **The Step 2a drain** (`engine/agent/steer.go` (`drainPendingSteer`)) runs in
+  `runBoundaryInjections` (step 3 above), the same provider-legal seam as the
+  background-completion notice and the delivery drain — history there always
+  ends on a user prompt / tool result / nudge, never inside a `tool_use` pair.
+  The drained steer is recorded as an ordinary harness-authored user
+  continuation (`recordContinuation`: `RecordUserPrompt` + the log-only
+  `EvUserPrompt`), persisted, then echoed to the client as `EvSteer` carrying
+  the committed text — the engine is the sole authority on what landed.
+- **The clean-exit continue-run rule** (`engine/agent/loop.go`
+  (`finishTurnNoTools`)). A would-be clean end (meaningful text, benign stop)
+  while a steer is still parked does NOT terminate: the loop re-enters step 2
+  with no injected nudge so the very next Step 2a drains the steer and the turn
+  it feeds consumes it. The never-drop contract stays engine-internal; the run
+  simply extends (bounded by `Limits.MaxTurns` like any continuation).
+- **The terminal close-drain** (`engine/agent/steer.go` (`closeSteerDrained`)).
+  Both terminate paths drain-then-close: a steer still parked when the run ends
+  for another reason is recorded into durable history first (addressed by the
+  next run), then the inbox closes — it is never closed unconsumed.
+- **Lost terminal race → promote** (`internal/adapter/server/service.go`
+  (`Service.Steer`)). A steer arriving when no live run can take it (no live
+  run, or the inbox already closed) is promoted to a fresh follow-up run through
+  the same hardened run-entry funnel a prompt uses (`StartRunContent` →
+  `loadAndReopen` + lease + recover-if-terminal). Because the just-terminal
+  run's relay may still be draining — still registered, so the funnel's
+  liveness guard would refuse — the promote path alone awaits the original
+  run's deregistration, bounded by the promote-grace
+  (`internal/adapter/server/service.go` (`promotedSteerRun`),
+  `awaitRunDeregister`); a run still registered at the lapse is genuinely
+  in-flight and the promotion is refused. Only the promoted steer pays the
+  wait; a concurrent prompt on a live session is never delayed.
+- **The sequential active-run handoff** (`internal/adapter/server/grpc.go`
+  (`Converse`)). The bidi RPC relays the original run, then — while a promoted
+  steer is queued in the `steerHandoff` mailbox — relays each promoted run in
+  turn on the SAME stream before the RPC returns: one relay owner at a time, so
+  `runRelay.sendErr` keeps a single owner, every `Send` still crosses the one
+  mutex (`streamSender`), and the control target (`ResumeApproval` / `Cancel` /
+  `CancelChild`) swaps to the promoted run atomically before its relay starts.
+  The promoted run is `FinishRun`-deregistered before the RPC returns, and its
+  terminal outcome is reported inline as the `steer.outcome` ack
+  (`promoted=true`) — never an orphaned relay, never an ack after close.
+- **The `message_id` watermark correlation.** Steer frames carry a
+  client-minted `message_id` (`contracts/proto/mecatl/v1/harness.proto`). The
+  engine inbox parks text only, so the Service keeps a small per-session FIFO
+  (`internal/adapter/server/service.go` (`trackSteerMessageID`)) of the ordered
+  frame ids appended into the pending bundle. On drain, the relay pops the
+  whole list and stamps the `EvSteer` echo with the LATEST (tail) id — the
+  **watermark** the client splits its ordered queue on (sends up to and
+  including it drained, sends after it still pending). The ack lane echoes each
+  frame's own id on its outcome; a retract drops the whole correlation list
+  (`dropSteerMessageID`); a `CloseSession` clears the map entry with the
+  session. The correlation is positional (never text-match) — pinned by
+  `internal/adapter/server/steer_watermark_pin_test.go`
+  (`TestLookupSteerMessageIDExactUnderDuplicateTexts`).
+- **Fidelity.** The inbox is in-memory and best-effort: a pending (un-drained)
+  steer is lost with its run on a crash — reset-by-design, inventoried in
+  [ADR 0027](../adr/0027-cloud-native.md) (List 1 / List 2). Only a steer that
+  reached a boundary and was recorded survives, as ordinary conversation
+  history.
+
+Awaiting-ask runs hold the steer parked: the loop is suspended in
+`PauseForApproval`, and the resumed run's first Step 2a drains it (the steer is
+purely additive — the ask still requires an explicit verdict). Steer-to-child
+(subagent / team / parallel) and HTTP/SSE + ACP steer are deferred (ADR 0232).
 
 ## Follow-on reading
 
