@@ -1,7 +1,8 @@
 version: '3'
 
 # Phase-A disposable Kind profile. It is deliberately ToolHive-free: no task in
-# this file resolves releases, downloads charts, or contacts GitHub.
+# this file resolves a ToolHive release, installs ToolHive, or creates vMCP
+# resources.
 vars:
   CLUSTER: mecatl-dev
   CONTEXT: kind-mecatl-dev
@@ -14,15 +15,16 @@ vars:
 
 tasks:
   kind-setup:
-    desc: Recreate the named ToolHive-free mecak8s Kind fixture from the local Helm chart
+    desc: Recreate the named ToolHive-free mecak8s + Dex Kind fixture from the local Helm chart
     cmds:
       - task: reset-state
       - task: cluster-create
       - task: image-build-load
       - task: chart-apply
+      - task: dex-apply
 
   kind-status:
-    desc: Show the named ToolHive-free Phase-A mecak8s fixture
+    desc: Show the named ToolHive-free mecak8s + Dex Phase-A fixture
     cmds:
       - task: cluster-ready
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods,services,statefulsets,networkpolicies -n {{.NAMESPACE}}
@@ -108,3 +110,15 @@ tasks:
           helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --wait --timeout=4m
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
+  dex-apply:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-vmcp/cleanup-on-failure.sh "$status"' EXIT
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/dex.yaml
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/dex -n {{.NAMESPACE}} --timeout=240s

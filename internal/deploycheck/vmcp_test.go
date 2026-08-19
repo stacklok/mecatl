@@ -59,14 +59,15 @@ func TestMecak8sTaskfileWiring(t *testing.T) {
 	}
 
 	setup := between(t, body, "  kind-setup:\n", "  kind-status:\n")
-	for _, step := range []string{"task: reset-state", "task: cluster-create", "task: image-build-load", "task: chart-apply"} {
+	for _, step := range []string{"task: reset-state", "task: cluster-create", "task: image-build-load", "task: chart-apply", "task: dex-apply"} {
 		if !strings.Contains(setup, step) {
 			t.Errorf("setup missing %q", step)
 		}
 	}
 	if strings.Index(setup, "task: cluster-create") > strings.Index(setup, "task: image-build-load") ||
-		strings.Index(setup, "task: image-build-load") > strings.Index(setup, "task: chart-apply") {
-		t.Error("setup must recreate the cluster, load the local image, then apply the chart")
+		strings.Index(setup, "task: image-build-load") > strings.Index(setup, "task: chart-apply") ||
+		strings.Index(setup, "task: chart-apply") > strings.Index(setup, "task: dex-apply") {
+		t.Error("setup must recreate the cluster, load the local image, apply the chart, then deploy Dex")
 	}
 	for _, forbidden := range []string{"ownership-guard", "mecatl-vmcp-owner", "OWNER_FILE", "SETUP_CREATED", "release-resolve", "live-llm", "toolhive-install", "receipts-record", "github.com", "VirtualMCPServer"} {
 		if strings.Contains(body, forbidden) {
@@ -109,6 +110,37 @@ func TestMecak8sTaskfileWiring(t *testing.T) {
 	} {
 		if !strings.Contains(chartApply, required) {
 			t.Errorf("chart application missing %q", required)
+		}
+	}
+
+	dexApply := body[strings.Index(body, "  dex-apply:\n"):]
+	for _, required := range []string{"deploy/mecak8s-vmcp/dex.yaml", "rollout status deployment/dex", "--namespace={{.NAMESPACE}}"} {
+		if !strings.Contains(dexApply, required) {
+			t.Errorf("Dex application missing %q", required)
+		}
+	}
+}
+
+func TestMecak8sDexFixtureHasDistinctDisposableUsers(t *testing.T) {
+	body := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
+	for _, required := range []string{
+		"storage:\n      type: memory",
+		"issuer: http://dex.mecatl-vmcp.svc.cluster.local:5556",
+		"email: alice@example.com",
+		"email: bob@example.com",
+		"app.kubernetes.io/name: dex",
+		"readOnlyRootFilesystem: true",
+		"capabilities:\n              drop: [\"ALL\"]",
+		"name: dex-allow-mecak8s",
+		"name: mecak8s-allow-dex",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("Dex fixture missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"VirtualMCPServer", "toolhive.stacklok.dev"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("Dex fixture must not introduce vMCP integration through %q", forbidden)
 		}
 	}
 }

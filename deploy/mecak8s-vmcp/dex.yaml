@@ -1,0 +1,142 @@
+# Disposable local-only identity provider for the mecak8s Kind qualification
+# fixture. It intentionally uses in-memory state and deterministic credentials.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dex-config
+data:
+  config.yaml: |
+    issuer: http://dex.mecatl-vmcp.svc.cluster.local:5556
+    storage:
+      type: memory
+    web:
+      http: 0.0.0.0:5556
+    oauth2:
+      passwordConnector: local
+      skipApprovalScreen: true
+    staticClients:
+      - id: mecatl
+        name: mecak8s Kind fixture
+        secret: mecatl-secret
+        public: false
+        redirectURIs:
+          - http://localhost:5555/callback
+    enablePasswordDB: true
+    staticPasswords:
+      - email: alice@example.com
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: alice
+        userID: alice-uid
+      - email: bob@example.com
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+        username: bob
+        userID: bob-uid
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex
+  labels:
+    app.kubernetes.io/name: dex
+    app.kubernetes.io/part-of: mecak8s
+    app.kubernetes.io/component: idp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dex
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dex
+        app.kubernetes.io/part-of: mecak8s
+        app.kubernetes.io/component: idp
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dex
+          image: ghcr.io/dexidp/dex:v2.44.0
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/dex", "serve", "/etc/dex/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 5556
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 2
+      volumes:
+        - name: config
+          configMap:
+            name: dex-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+  labels:
+    app.kubernetes.io/name: dex
+    app.kubernetes.io/part-of: mecak8s
+spec:
+  selector:
+    app.kubernetes.io/name: dex
+  ports:
+    - name: http
+      port: 5556
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dex-allow-mecak8s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dex
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mecak8s
+              app.kubernetes.io/instance: mecak8s
+              app.kubernetes.io/component: agent
+      ports:
+        - protocol: TCP
+          port: 5556
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mecak8s-allow-dex
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mecak8s
+      app.kubernetes.io/instance: mecak8s
+      app.kubernetes.io/component: agent
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dex
+      ports:
+        - protocol: TCP
+          port: 5556

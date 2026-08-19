@@ -1,6 +1,6 @@
 # mecatl
 
-> A markdown documentation corpus of 220 document(s) across 12 component(s), with 2254 heading(s) and 2036 resolved reference(s). Entries are ordered by importance (most-connected first). 19 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.82, docs ~2.2 clicks apart.
+> A markdown documentation corpus of 220 document(s) across 12 component(s), with 2255 heading(s) and 2036 resolved reference(s). Entries are ordered by importance (most-connected first). 19 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.82, docs ~2.2 clicks apart.
 
 ## Documentation
 
@@ -226,7 +226,7 @@
 - [Go table-driven tests](docs/examples/skills/go-table-tests/SKILL.md): Write idiomatic table-driven Go tests that stay offline and follow this repo's conventions. (linked from: docs/examples/README.md)
 - [GitHub Actions workflows for mecatl](.github/workflows/README.md): GitHub Actions workflows for mecatl
 - [Deploying mecated](deploy/README.md): Deploying mecated
-- [ToolHive-free local Kind profile](deploy/mecak8s-vmcp/README.md): ToolHive-free local Kind profile
+- [ToolHive-free local Kind mecak8s + Dex profile](deploy/mecak8s-vmcp/README.md): ToolHive-free local Kind mecak8s + Dex profile
 
 ## Suggested reading order
 
