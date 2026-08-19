@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,10 @@ const (
 	migrationLockKeyBase          = "mecatl:session-metadata:migration-lock:"
 	migrationFenceKeyBase         = "mecatl:session-metadata:migration-fence:"
 	migrationInspectionMaxRetries = 3
+	migrationScanBatchSize        = 100
 )
+
+var errMetadataIndexCoverage = errors.New("redisstore: metadata index coverage mismatch")
 
 var (
 	migrationLockTTL       = 10 * time.Minute
@@ -151,7 +155,7 @@ func (st *Store) snapshotKeys(ctx context.Context) ([]string, error) {
 	seen := make(map[string]struct{})
 	var cursor uint64
 	for {
-		batch, next, err := st.client.Scan(ctx, cursor, sessionKeyPrefix+"*", 100).Result()
+		batch, next, err := st.client.Scan(ctx, cursor, sessionKeyPrefix+"*", migrationScanBatchSize).Result()
 		if err != nil {
 			return nil, fmt.Errorf("redisstore: scan legacy snapshots: %w", err)
 		}
@@ -287,6 +291,172 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 	return "", nil
 }
 
+type expectedMetadataIndexes struct {
+	global map[string]struct{}
+	owners map[string]map[string]struct{}
+}
+
+func (st *Store) verifyMetadataIndexCoverage(ctx context.Context, generation int64, expectedFamilies int64) (bool, error) {
+	before, err := st.rebuildGeneration(ctx)
+	if err != nil || before != generation {
+		return false, err
+	}
+	expected, err := st.expectedMetadataIndexes(ctx)
+	if err != nil {
+		return false, err
+	}
+	if int64(len(expected.global)) != expectedFamilies {
+		return false, errMetadataIndexCoverage
+	}
+	if err := st.verifySortedSetCoverage(ctx, metadataGlobalIndexKey, expected.global); err != nil {
+		return false, err
+	}
+	if err := st.verifyOwnerIndexCoverage(ctx, expected.owners); err != nil {
+		return false, err
+	}
+	after, err := st.rebuildGeneration(ctx)
+	if err != nil {
+		return false, err
+	}
+	return after == generation, nil
+}
+
+func (st *Store) expectedMetadataIndexes(ctx context.Context) (expectedMetadataIndexes, error) {
+	keys, err := st.snapshotKeys(ctx)
+	if err != nil {
+		return expectedMetadataIndexes{}, err
+	}
+	expected := expectedMetadataIndexes{
+		global: make(map[string]struct{}, len(keys)),
+		owners: make(map[string]map[string]struct{}),
+	}
+	for _, key := range keys {
+		member, ownerScope, deriveErr := st.expectedMetadataMember(ctx, key)
+		if deriveErr != nil {
+			return expectedMetadataIndexes{}, deriveErr
+		}
+		expected.global[member] = struct{}{}
+		if ownerScope == "" {
+			continue
+		}
+		members := expected.owners[ownerScope]
+		if members == nil {
+			members = make(map[string]struct{})
+			expected.owners[ownerScope] = members
+		}
+		members[member] = struct{}{}
+	}
+	return expected, nil
+}
+
+func (st *Store) expectedMetadataMember(ctx context.Context, key string) (string, string, error) {
+	values, err := st.client.HMGet(ctx, key, fieldBlob, fieldMtime, fieldMetadataEntry, fieldMetadataOwner).Result()
+	if err != nil {
+		return "", "", fmt.Errorf("redisstore: verify metadata snapshot: %w", err)
+	}
+	if len(values) != 4 || values[0] == nil || values[1] == nil || values[2] == nil {
+		return "", "", errMetadataIndexCoverage
+	}
+	blob := []byte(redisResultString(values[0]))
+	mtimeRaw := redisResultString(values[1])
+	mtimeNS, parseErr := strconv.ParseInt(mtimeRaw, 10, 64)
+	sess, decodeErr := sessnap.Unmarshal(blob)
+	if parseErr != nil || decodeErr != nil || sessionKey(sess.ID) != key {
+		return "", "", errMetadataIndexCoverage
+	}
+	member, err := encodeMetadataMember(sessionMetadata(sess, time.Unix(0, mtimeNS).UTC(), int64(len(blob))))
+	if err != nil {
+		return "", "", err
+	}
+	ownerScope := ""
+	if sess.Owner != nil {
+		ownerScope = metadataOwnerScope(sess.Owner)
+	}
+	storedOwner := ""
+	if values[3] != nil {
+		storedOwner = redisResultString(values[3])
+	}
+	if redisResultString(values[2]) != member || storedOwner != ownerScope {
+		return "", "", errMetadataIndexCoverage
+	}
+	return member, ownerScope, nil
+}
+
+func (st *Store) verifyOwnerIndexCoverage(ctx context.Context, expected map[string]map[string]struct{}) error {
+	seen := make(map[string]struct{})
+	var cursor uint64
+	for {
+		keys, next, err := st.client.Scan(ctx, cursor, metadataOwnerIndexBase+"*", migrationScanBatchSize).Result()
+		if err != nil {
+			return fmt.Errorf("redisstore: scan owner metadata indexes: %w", err)
+		}
+		for _, key := range keys {
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			scope := strings.TrimPrefix(key, metadataOwnerIndexBase)
+			members, ok := expected[scope]
+			if !ok {
+				return errMetadataIndexCoverage
+			}
+			if err := st.verifySortedSetCoverage(ctx, key, members); err != nil {
+				return err
+			}
+			delete(expected, scope)
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	if len(expected) != 0 {
+		return errMetadataIndexCoverage
+	}
+	return nil
+}
+
+func (st *Store) verifySortedSetCoverage(ctx context.Context, key string, expected map[string]struct{}) error {
+	remaining := make(map[string]struct{}, len(expected))
+	for member := range expected {
+		remaining[member] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(expected))
+	var cursor uint64
+	for {
+		values, next, err := st.client.ZScan(ctx, key, cursor, "*", migrationScanBatchSize).Result()
+		if err != nil {
+			return fmt.Errorf("redisstore: scan metadata index: %w", err)
+		}
+		if len(values)%2 != 0 {
+			return errMetadataIndexCoverage
+		}
+		for i := 0; i < len(values); i += 2 {
+			member := values[i]
+			score, scoreErr := strconv.ParseFloat(values[i+1], 64)
+			if scoreErr != nil || score != 0 {
+				return errMetadataIndexCoverage
+			}
+			if _, duplicate := seen[member]; duplicate {
+				continue
+			}
+			seen[member] = struct{}{}
+			if _, ok := remaining[member]; !ok {
+				return errMetadataIndexCoverage
+			}
+			delete(remaining, member)
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	if len(remaining) != 0 {
+		return errMetadataIndexCoverage
+	}
+	return nil
+}
+
 var publishMetadataReadyScript = redis.NewScript(`
 if redis.call('GET', KEYS[4]) ~= ARGV[1] then
   return -1
@@ -302,16 +472,22 @@ redis.call('SET', KEYS[2], ARGV[3])
 return 1
 `)
 
-// FinalizeSessionMigrationCoverage publishes readiness with constant Redis work.
-// Stable inspection supplies the unique family count; per-family migration has
-// already verified and inserted each row into the duplicate-free sorted index.
+// FinalizeSessionMigrationCoverage proves the exact global and per-owner index
+// contents with bounded client-side scans before publishing readiness with a
+// constant-work Redis CAS. The CAS rechecks the generation, so a concurrent
+// Save or Delete cannot invalidate the proof before publication.
 func (st *Store) FinalizeSessionMigrationCoverage(ctx context.Context, generation string, expectedFamilies int64) (bool, error) {
-	if _, err := strconv.ParseInt(generation, 10, 64); err != nil || expectedFamilies < 0 {
+	generationNumber, err := strconv.ParseInt(generation, 10, 64)
+	if err != nil || expectedFamilies < 0 {
 		return false, errors.New("redisstore: invalid migration coverage")
 	}
 	acquisition, ok := migrationAcquisitionFromContext(ctx, "")
 	if !ok || acquisition.lost.Load() {
 		return false, errors.New("redisstore: migration job lock lost")
+	}
+	covered, err := st.verifyMetadataIndexCoverage(ctx, generationNumber, expectedFamilies)
+	if err != nil || !covered {
+		return false, err
 	}
 	if st.migrationMutationObserver != nil {
 		st.migrationMutationObserver()

@@ -376,12 +376,15 @@ context-bound acquisition shared by both built-in stores. Redis renews its fence
 cancels the bound operation context on ownership loss, and compares the exact lock token as
 the first operation inside both mutation Lua scripts; a stale holder therefore has no side
 effects. Stable inspection deduplicates `SCAN` results and proves each valid snapshot's exact
-global/owner metadata membership, turning missing or stale rows into repair candidates.
-Invalid snapshots complete the job with failures and keep paging unavailable. Only after
-candidate processing and a clean stable inspection does one constant-work
-generation-and-cardinality CAS publish readiness—an orphan row then makes the count too
-large rather than offsetting missing coverage, and no snapshot-key list enters the publication
-script ([ADR 0230](adr/0230-redis-migration-atomic-ownership-and-coverage.md)). It defaults
+expected global/owner metadata membership, turning missing or stale rows into repair
+candidates without mutating during planning. Invalid snapshots complete the job with failures
+and keep paging unavailable. Before publication, finalization derives the complete expected
+member sets and compares them in both directions with the global and every owner index through
+bounded client-side `SCAN`/`ZSCAN` batches. Orphaned, malformed, and wrong-owner memberships
+therefore fail closed for explicit operator repair. A constant-work Lua CAS then rechecks the
+stable generation, exact lock token, and global cardinality while publishing readiness, so a
+concurrent Save/Delete cannot invalidate the proof and no O(total) key or member list enters
+Lua ([ADR 0231](adr/0231-redis-owner-index-exact-coverage.md)). It defaults
 `--headless=true` and `--posture=auto` (an unattended daemon, inverted from `mecated`'s
 interactive defaults), drops `mecated`'s subcommands + Prometheus/OTel admin surface, and
 exposes `--redis-url` (mutually exclusive with `--store-dir`/`--session-store-url`). The

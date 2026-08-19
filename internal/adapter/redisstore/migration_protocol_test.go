@@ -3,6 +3,7 @@ package redisstore
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -228,8 +229,8 @@ func TestInspectionRepairsMissingCoverageDespiteEqualOrphanCardinality(t *testin
 		t.Fatalf("repair = %q, %v", reason, err)
 	}
 	published, err := st.FinalizeSessionMigrationCoverage(ctx, inspection.Generation, 1)
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, errMetadataIndexCoverage) {
+		t.Fatalf("orphan coverage error = %v, want exact-coverage mismatch", err)
 	}
 	if published {
 		t.Fatal("orphan row offset missing coverage and published readiness")
@@ -265,48 +266,171 @@ func TestInspectSessionMigrationReturnsExplicitRestartAfterGenerationDrift(t *te
 	}
 }
 
-func TestFinalizeSessionMigrationUsesConstantWorkCoverageCAS(t *testing.T) {
+func TestFinalizeSessionMigrationUsesBoundedCoverageProofAndConstantWorkCAS(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	for i := range 250 {
-		mr.ZAdd(metadataGlobalIndexKey, float64(i), string(rune(0x1000+i)))
-	}
-	mr.Set(metadataRebuildGenerationKey, "7")
-	mr.Set(metadataIndexStateKey, metadataIndexStale)
-	spy := &redisCommandSpy{}
-	mr.Server().SetPreHook(spy.hook)
 	st, err := New(mr.Addr())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "owner"}
+	for i := range 250 {
+		sess := session.New(session.SessionID("covered-"+strconv.Itoa(i)), session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+		if err := sess.RestoreLabels(owner, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Save(context.Background(), sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+	generation, err := st.rebuildGeneration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr.Set(metadataIndexStateKey, metadataIndexStale)
 	ctx, release, err := st.AcquireSessionMigrationJob(context.Background(), strings.Repeat("d", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = release() })
-	published, err := st.FinalizeSessionMigrationCoverage(ctx, "7", 251)
-	if err != nil || published {
-		t.Fatalf("incomplete coverage publication = %v, %v", published, err)
-	}
+	spy := &redisCommandSpy{}
+	mr.Server().SetPreHook(spy.hook)
 	spy.reset()
-	published, err = st.FinalizeSessionMigrationCoverage(ctx, "7", 250)
+
+	published, err := st.FinalizeSessionMigrationCoverage(ctx, strconv.FormatInt(generation, 10), 250)
 	if err != nil || !published {
 		t.Fatalf("complete coverage publication = %v, %v", published, err)
 	}
+	var sawSnapshotScan, sawOwnerScan, sawPublication bool
 	for _, command := range spy.snapshot() {
 		switch command.name {
+		case "SCAN":
+			sawSnapshotScan = true
+		case "ZSCAN":
+			sawOwnerScan = true
 		case "EVALSHA":
-			if len(command.args) == 0 || command.args[0] != publishMetadataReadyScript.Hash() || len(command.args) != 10 {
-				t.Fatalf("publication script is not constant-work: %#v", command.args)
+			if len(command.args) > 0 && command.args[0] == publishMetadataReadyScript.Hash() {
+				sawPublication = true
+				if len(command.args) != 10 {
+					t.Fatalf("publication script is not constant-work: %#v", command.args)
+				}
 			}
-		case "GET", "ZCARD", "SET":
-		default:
-			t.Fatalf("finalization performed unbounded work: %#v", command)
 		}
+	}
+	if !sawSnapshotScan || !sawOwnerScan || !sawPublication {
+		t.Fatalf("coverage protocol commands missing: snapshot_scan=%v owner_scan=%v publication=%v", sawSnapshotScan, sawOwnerScan, sawPublication)
+	}
+}
+
+func TestFinalizeRejectsUnmatchedOwnerMembershipsAndPublishesOnlyHealthyPaging(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		orphan func(*miniredis.Miniredis, string)
+	}{
+		{name: "malformed", orphan: func(mr *miniredis.Miniredis, ownerKey string) { mr.ZAdd(ownerKey, 0, "malformed-owner-row") }},
+		{name: "wrong-owner", orphan: func(mr *miniredis.Miniredis, ownerKey string) {
+			mr.ZAdd(ownerKey, 0, mr.HGet(sessionKey("bob"), fieldMetadataEntry))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mr, err := miniredis.Run()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(mr.Close)
+			st, err := New(mr.Addr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = st.Close() })
+			alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
+			bob := &session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
+			for _, fixture := range []struct {
+				id    session.SessionID
+				owner *session.Principal
+			}{{"alice", alice}, {"bob", bob}} {
+				sess := session.New(fixture.id, session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+				if err := sess.RestoreLabels(fixture.owner, ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.Save(context.Background(), sess); err != nil {
+					t.Fatal(err)
+				}
+			}
+			generation, err := st.rebuildGeneration(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ownerKey := metadataOwnerIndexBase + metadataOwnerScope(alice)
+			tc.orphan(mr, ownerKey)
+			if got := st.client.ZCard(context.Background(), metadataGlobalIndexKey).Val(); got != 2 {
+				t.Fatalf("global cardinality = %d, want equal snapshot count despite owner orphan", got)
+			}
+			mr.Set(metadataIndexStateKey, metadataIndexStale)
+			ownerCount := st.client.ZCard(context.Background(), ownerKey).Val()
+			inspection, err := st.InspectSessionMigration(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(inspection.Families) != 0 || st.client.ZCard(context.Background(), ownerKey).Val() != ownerCount {
+				t.Fatalf("read-only inspection mutated or misclassified owner orphan: %+v", inspection)
+			}
+			ctx, release, err := st.AcquireSessionMigrationJob(context.Background(), strings.Repeat("9", 32))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = release() })
+
+			published, err := st.FinalizeSessionMigrationCoverage(ctx, strconv.FormatInt(generation, 10), 2)
+			if published || !errors.Is(err, errMetadataIndexCoverage) {
+				t.Fatalf("owner orphan publication = %v, %v", published, err)
+			}
+			if _, err := st.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10, OwnershipEnforced: true, Owner: alice}); !errors.Is(err, port.ErrSessionMetadataPagingUnsupported) {
+				t.Fatalf("unready owner paging error = %v", err)
+			}
+
+			mr.ZRem(ownerKey, "malformed-owner-row")
+			mr.ZRem(ownerKey, mr.HGet(sessionKey("bob"), fieldMetadataEntry))
+			published, err = st.FinalizeSessionMigrationCoverage(ctx, strconv.FormatInt(generation, 10), 2)
+			if err != nil || !published {
+				t.Fatalf("repaired owner coverage publication = %v, %v", published, err)
+			}
+			page, err := st.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10, OwnershipEnforced: true, Owner: alice})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOwnerPage(t, page, alice, 1, 1)
+		})
+	}
+}
+
+func TestFinalizeRejectsGenerationDriftAfterExactCoverageProof(t *testing.T) {
+	st, mr := newMetadataTestStore(t)
+	sess := session.New("drift", session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+	if err := st.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	generation, err := st.rebuildGeneration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr.Set(metadataIndexStateKey, metadataIndexStale)
+	ctx, release, err := st.AcquireSessionMigrationJob(context.Background(), strings.Repeat("8", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = release() })
+	st.migrationMutationObserver = func() { mr.Incr(metadataRebuildGenerationKey, 1) }
+
+	published, err := st.FinalizeSessionMigrationCoverage(ctx, strconv.FormatInt(generation, 10), 1)
+	if err != nil || published {
+		t.Fatalf("drifted publication = %v, %v", published, err)
+	}
+	if got, _ := mr.Get(metadataIndexStateKey); got != metadataIndexStale {
+		t.Fatalf("drifted publication changed readiness to %q", got)
 	}
 }

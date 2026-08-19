@@ -5954,16 +5954,20 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   scripts compare the exact lock key/token before any write, so loss between the server's
   precheck and Lua has zero side effects and cannot affect a successor.
   Stable inspection derives each valid snapshot's exact metadata member and verifies its
-  hash metadata plus global/owner index memberships. Missing or stale coverage becomes a
-  bounded repair candidate; repair removes stale memberships and atomically installs the
-  derived row. Invalid snapshots are not countable coverage: they complete the job with a
-  failure count while keeping paging unavailable, and operator repair requires a fresh plan.
-  After every candidate is processed and inspection is clean, final readiness is one
-  constant-work Lua CAS over stable generation plus valid snapshot count (`ZCARD`). Because
-  per-snapshot membership was proved first, an orphan row makes cardinality too large rather
-  than offsetting a missing row; the script never receives an O(total-store) key list.
-  Concurrent Redis Save/Delete operations advance that generation and maintain their own
-  rows, so stale publication retries fail closed while paging and cleanup remain unsupported.
+  hash metadata plus expected global/owner index memberships. Missing or stale coverage
+  becomes a bounded repair candidate; inspection remains read-only, while repair removes
+  stale memberships and atomically installs the derived row. Invalid snapshots are not
+  countable coverage: they complete the job with a failure count while keeping paging
+  unavailable, and operator repair requires a fresh plan. After every candidate is processed,
+  finalization re-derives the complete expected global and per-owner member sets from snapshots
+  and compares them in both directions against every index using bounded client-side
+  `SCAN`/`ZSCAN` commands. An orphan, malformed, or wrong-owner membership is therefore an
+  explicit coverage failure rather than an implicit planning mutation. The final readiness
+  Lua script remains constant-work: it atomically rechecks the exact lock token, stable rebuild
+  generation, and global cardinality before setting ready, and never receives an O(total-store)
+  key or member list. Concurrent Redis Save/Delete operations update their indexes and advance
+  that generation in one script, so mutation after the proof makes publication fail closed
+  while paging and cleanup remain unsupported.
   Cancellation is monotonic: once persisted,
   resume conflicts and no stale checkpoint can restore `running`. Completed jobs are idempotent.
 

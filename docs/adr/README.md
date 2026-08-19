@@ -32,7 +32,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0217 — Session discovery uses durable kind metadata and an authoritative transcript](./0217-session-discovery-continuation.md)
 - [0226 — Session storage separates current state, indexed metadata, and maintenance](./0226-session-storage-maintenance.md)
 - [0229 — Redis migration uses fenced renewable ownership and indexed coverage](./0229-redis-migration-fencing.md) *(superseded by 0230)*
-- [0230 — Redis migration ownership and coverage are proved before mutation](./0230-redis-migration-atomic-ownership-and-coverage.md)
+- [0230 — Redis migration ownership and coverage are proved before mutation](./0230-redis-migration-atomic-ownership-and-coverage.md) *(superseded by 0231)*
+- [0231 — Redis readiness requires exact owner-index coverage](./0231-redis-owner-index-exact-coverage.md)
 - [0207 — Operator-owned exact context-window overrides](./0207-context-window-overrides.md)
 - [0209 — Attribute schedule origins through the run context](./0209-schedule-origin-run-context.md) *(supersedes ADR 0075's origin-binding mechanism)*
 - [0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)

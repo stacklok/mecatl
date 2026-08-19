@@ -4,6 +4,7 @@
 - Date: 2026-08-19
 - Scope: Session-migration port ownership, Redis metadata repair, and readiness publication
 - Supersedes: ADR 0229
+- Superseded by: ADR 0231
 
 ## Context
 
