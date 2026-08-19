@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	metadataIndexStateKey        = "mecatl:session-metadata:state"
-	metadataIndexReady           = "redis-metadata-index/1"
-	metadataIndexStale           = "redis-metadata-index/stale"
-	metadataGlobalIndexKey       = "mecatl:session-metadata:index:all"
+	metadataIndexStateKey  = "mecatl:session-metadata:state"
+	metadataIndexReady     = "redis-metadata-index/1"
+	metadataIndexStale     = "redis-metadata-index/stale"
+	metadataGlobalIndexKey = "mecatl:session-metadata:index:all"
 	// metadataOwnerIndexBase is concatenated with an owner scope INSIDE each
 	// mutating Lua script below (saveMetadataScript/deleteMetadataScript/
 	// conditionalDeleteMetadataScript here, adoptMetadataScript in
@@ -285,8 +285,8 @@ func (st *Store) decodeMetadataPage(result any, request port.SessionMetadataPage
 	if !ok || len(values) < 2 {
 		return port.SessionMetadataPage{}, fmt.Errorf("redisstore: invalid metadata page result")
 	}
-	generation := redisResultString(values[0])
-	total, err := strconv.Atoi(redisResultString(values[1]))
+	generation := toString(values[0])
+	total, err := strconv.Atoi(toString(values[1]))
 	if err != nil {
 		return port.SessionMetadataPage{}, fmt.Errorf("redisstore: invalid metadata count: %w", err)
 	}
@@ -302,7 +302,7 @@ func (st *Store) decodeMetadataPage(result any, request port.SessionMetadataPage
 	page := port.SessionMetadataPage{Sessions: rows, TotalCount: total}
 	if hasMore && len(rows) > 0 {
 		last := rows[len(rows)-1]
-		lastMember := redisResultString(values[1+len(rows)])
+		lastMember := toString(values[1+len(rows)])
 		page.NextCursor = &port.SessionMetadataCursor{
 			ModifiedAt: last.ModifiedAt, ID: last.ID, Generation: generation, Scope: scope,
 			Continuation: encodeMetadataContinuation(lastMember),
@@ -315,7 +315,7 @@ func (st *Store) decodeMetadataRows(members []any, request port.SessionMetadataP
 	rows := make([]port.SessionDiscoveryMeta, 0, len(members))
 	for _, value := range members {
 		st.observeMetadataWork(metadataWorkRow)
-		row, err := decodeMetadataMember(redisResultString(value))
+		row, err := decodeMetadataMember(toString(value))
 		if err != nil {
 			return nil, fmt.Errorf("redisstore: corrupt metadata index: %w", err)
 		}
@@ -391,15 +391,4 @@ func decodeMetadataContinuation(token string) (string, bool) {
 	encoded := strings.TrimPrefix(token, metadataContinuationV1)
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	return string(raw), err == nil && encoded != "" && encodeMetadataContinuation(string(raw)) == token
-}
-
-func redisResultString(value any) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	default:
-		return fmt.Sprint(v)
-	}
 }

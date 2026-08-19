@@ -272,8 +272,7 @@ func pageMetadataRequest(request port.SessionMetadataPageRequest) (*driverv1.Pag
 	}
 	req := &driverv1.PageSessionMetadataRequest{Limit: int32(request.Limit), OwnershipEnforced: request.OwnershipEnforced}
 	if request.Cursor != nil {
-		if request.Cursor.ID == "" || !utf8.ValidString(string(request.Cursor.ID)) ||
-			!legacyOrBoundCursorFields(request.Cursor.Generation, request.Cursor.Scope, request.Cursor.Continuation) {
+		if !validPortMetadataCursor(request.Cursor) {
 			return nil, fmt.Errorf("grpcdriver: page metadata: cursor is invalid")
 		}
 		if err := timestamppb.New(request.Cursor.ModifiedAt).CheckValid(); err != nil {

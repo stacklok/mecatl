@@ -96,8 +96,8 @@ func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generati
 			inspection.InvalidFamilies++
 			continue
 		}
-		blob := []byte(redisResultString(values[0]))
-		mtimeRaw := redisResultString(values[1])
+		blob := []byte(toString(values[0]))
+		mtimeRaw := toString(values[1])
 		inspection.CurrentBytes += int64(len(blob))
 		mtimeNS, parseErr := strconv.ParseInt(mtimeRaw, 10, 64)
 		sess, decodeErr := sessnap.Unmarshal(blob)
@@ -111,7 +111,7 @@ func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generati
 		}
 		member := ""
 		if values[2] != nil {
-			member = redisResultString(values[2])
+			member = toString(values[2])
 		}
 		if member == "" {
 			inspection.V1Families++
@@ -130,7 +130,7 @@ func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generati
 		}
 		storedOwner := ""
 		if values[3] != nil {
-			storedOwner = redisResultString(values[3])
+			storedOwner = toString(values[3])
 		}
 		globalScoreErr := st.client.ZScore(ctx, metadataGlobalIndexKey, expectedMember).Err()
 		if globalScoreErr != nil && !errors.Is(globalScoreErr, redis.Nil) {
@@ -258,8 +258,8 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 	if err != nil || len(values) != 2 || values[0] == nil || values[1] == nil {
 		return "changed", nil
 	}
-	blob := []byte(redisResultString(values[0]))
-	mtimeRaw := redisResultString(values[1])
+	blob := []byte(toString(values[0]))
+	mtimeRaw := toString(values[1])
 	if snapshotFingerprint(blob, mtimeRaw) != expected.Fingerprint {
 		return "changed", nil
 	}
@@ -365,8 +365,8 @@ func (st *Store) expectedMetadataMember(ctx context.Context, key string) (string
 	if len(values) != 4 || values[0] == nil || values[1] == nil || values[2] == nil {
 		return "", "", errMetadataIndexCoverage
 	}
-	blob := []byte(redisResultString(values[0]))
-	mtimeRaw := redisResultString(values[1])
+	blob := []byte(toString(values[0]))
+	mtimeRaw := toString(values[1])
 	mtimeNS, parseErr := strconv.ParseInt(mtimeRaw, 10, 64)
 	sess, decodeErr := sessnap.Unmarshal(blob)
 	if parseErr != nil || decodeErr != nil || sessionKey(sess.ID) != key {
@@ -382,9 +382,9 @@ func (st *Store) expectedMetadataMember(ctx context.Context, key string) (string
 	}
 	storedOwner := ""
 	if values[3] != nil {
-		storedOwner = redisResultString(values[3])
+		storedOwner = toString(values[3])
 	}
-	if redisResultString(values[2]) != member || storedOwner != ownerScope {
+	if toString(values[2]) != member || storedOwner != ownerScope {
 		return "", "", errMetadataIndexCoverage
 	}
 	return member, ownerScope, nil

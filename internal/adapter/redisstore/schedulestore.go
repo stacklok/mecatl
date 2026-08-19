@@ -1073,10 +1073,14 @@ func toString(v interface{}) string {
 	if v == nil {
 		return ""
 	}
-	if s, ok := v.(string); ok {
+	switch s := v.(type) {
+	case string:
 		return s
+	case []byte:
+		return string(s)
+	default:
+		return fmt.Sprint(v)
 	}
-	return fmt.Sprint(v)
 }
 
 // cloneSpec returns a copy of spec whose Parts slice is independent of the
