@@ -5944,6 +5944,15 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   lifecycle to adopt metadata indexes on upgrade: only an explicit plan scans legacy
   snapshot keys, each batch CAS-installs derivative rows, and a stable source-generation
   check atomically publishes `ready` only after every extant snapshot is covered.
+  Redis inspection deduplicates `SCAN` output and retries boundedly until its before/after
+  rebuild generation agrees; sustained drift returns `inventory_changed_restart` with no
+  mixed counters or candidates. A Redis job drive carries a per-acquisition monotonic fence
+  plus nonce in its context and renews the expiring lock. Checkpoint, ownership checks, and
+  release bind that exact acquisition; renewal/token loss stops further mutation and cannot
+  affect a successor. Coverage accumulates through the at-most-100-family CAS batches into
+  the duplicate-free global sorted index. Final readiness is one constant-work Lua CAS over
+  stable generation plus the inspected unique-family count (`ZCARD`), never an
+  O(total-store) key list or script.
   Concurrent Redis Save/Delete operations advance that generation and maintain their own
   rows, so stale publication retries fail closed while paging and cleanup remain unsupported.
   Cancellation is monotonic: once persisted,

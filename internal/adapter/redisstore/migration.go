@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,29 +22,62 @@ import (
 )
 
 const (
-	migrationJobKeyBase  = "mecatl:session-metadata:migration-job:"
-	migrationLockKeyBase = "mecatl:session-metadata:migration-lock:"
+	migrationJobKeyBase           = "mecatl:session-metadata:migration-job:"
+	migrationLockKeyBase          = "mecatl:session-metadata:migration-lock:"
+	migrationFenceKeyBase         = "mecatl:session-metadata:migration-fence:"
+	migrationInspectionMaxRetries = 3
+)
+
+var (
+	migrationLockTTL       = 10 * time.Minute
+	migrationRenewInterval = 3 * time.Minute
 )
 
 // InspectSessionMigration explicitly inventories legacy Redis snapshots for the
 // authenticated maintenance workflow. Inventory pages never call this path.
 func (st *Store) InspectSessionMigration(ctx context.Context) (port.SessionMigrationInspection, error) {
-	generation, err := st.rebuildGeneration(ctx)
+	for range migrationInspectionMaxRetries {
+		generation, err := st.rebuildGeneration(ctx)
+		if err != nil {
+			return port.SessionMigrationInspection{}, err
+		}
+		inspection, err := st.inspectSessionMigrationGeneration(ctx, generation)
+		if err != nil {
+			return port.SessionMigrationInspection{}, err
+		}
+		if st.migrationInspectionObserver != nil {
+			st.migrationInspectionObserver()
+		}
+		after, err := st.rebuildGeneration(ctx)
+		if err != nil {
+			return port.SessionMigrationInspection{}, err
+		}
+		if after == generation {
+			sort.Slice(inspection.Families, func(i, j int) bool { return inspection.Families[i].Handle < inspection.Families[j].Handle })
+			return inspection, nil
+		}
+	}
+	after, err := st.rebuildGeneration(ctx)
 	if err != nil {
 		return port.SessionMigrationInspection{}, err
 	}
+	return port.SessionMigrationInspection{
+		Available: false, UnavailableReason: "inventory_changed_restart",
+		Generation: strconv.FormatInt(after, 10),
+	}, nil
+}
+
+func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generation int64) (port.SessionMigrationInspection, error) {
 	state, err := st.client.Get(ctx, metadataIndexStateKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return port.SessionMigrationInspection{}, fmt.Errorf("redisstore: inspect metadata state: %w", err)
 	}
-
 	keys, err := st.snapshotKeys(ctx)
 	if err != nil {
 		return port.SessionMigrationInspection{}, err
 	}
 	inspection := port.SessionMigrationInspection{
-		Available:  state != metadataIndexReady,
-		Generation: strconv.FormatInt(generation, 10),
+		Available: state != metadataIndexReady, Generation: strconv.FormatInt(generation, 10),
 	}
 	if state == metadataIndexReady {
 		inspection.UnavailableReason = "already_current"
@@ -71,37 +106,33 @@ func (st *Store) InspectSessionMigration(ctx context.Context) (port.SessionMigra
 		}
 		inspection.V1Families++
 		inspection.ReclaimableBytes += int64(len(blob))
-		fingerprint := snapshotFingerprint(blob, mtimeRaw)
 		inspection.Families = append(inspection.Families, port.SessionMigrationFamily{
-			ID: sess.ID, Handle: migrationItemHandle(sess.ID), Fingerprint: fingerprint,
-			OwnerKey: migrationOwnerKey(sess.Owner), Kind: sess.Kind, State: sess.State,
-			Bytes: int64(len(blob)),
+			ID: sess.ID, Handle: migrationItemHandle(sess.ID), Fingerprint: snapshotFingerprint(blob, mtimeRaw),
+			OwnerKey: migrationOwnerKey(sess.Owner), Kind: sess.Kind, State: sess.State, Bytes: int64(len(blob)),
 		})
 	}
-	after, err := st.rebuildGeneration(ctx)
-	if err != nil {
-		return port.SessionMigrationInspection{}, err
-	}
-	if after != generation {
-		inspection.Generation = strconv.FormatInt(after, 10)
-	}
-	sort.Slice(inspection.Families, func(i, j int) bool { return inspection.Families[i].Handle < inspection.Families[j].Handle })
 	return inspection, nil
 }
 
 func (st *Store) snapshotKeys(ctx context.Context) ([]string, error) {
-	var keys []string
+	seen := make(map[string]struct{})
 	var cursor uint64
 	for {
 		batch, next, err := st.client.Scan(ctx, cursor, sessionKeyPrefix+"*", 100).Result()
 		if err != nil {
 			return nil, fmt.Errorf("redisstore: scan legacy snapshots: %w", err)
 		}
-		keys = append(keys, batch...)
+		for _, key := range batch {
+			seen[key] = struct{}{}
+		}
 		if next == 0 {
 			break
 		}
 		cursor = next
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	return keys, nil
@@ -206,26 +237,24 @@ local generation = redis.call('GET', KEYS[1]) or '0'
 if generation ~= ARGV[1] then
   return 0
 end
-for i = 3, #KEYS do
-  if redis.call('EXISTS', KEYS[i]) == 0 or not redis.call('HGET', KEYS[i], 'metadata_entry') then
-    return 0
-  end
+if redis.call('ZCARD', KEYS[3]) ~= tonumber(ARGV[3]) then
+  return 0
 end
 redis.call('SET', KEYS[2], ARGV[2])
 return 1
 `)
 
-// FinalizeSessionMigration atomically publishes the derivative index only after
-// a stable-generation scan proves every extant snapshot has a metadata row.
-func (st *Store) FinalizeSessionMigration(ctx context.Context, generation string) (bool, error) {
-	keys, err := st.snapshotKeys(ctx)
-	if err != nil {
-		return false, err
+// FinalizeSessionMigrationCoverage publishes readiness with constant Redis work.
+// Stable inspection supplies the unique family count; per-family migration has
+// already verified and inserted each row into the duplicate-free sorted index.
+func (st *Store) FinalizeSessionMigrationCoverage(ctx context.Context, generation string, expectedFamilies int64) (bool, error) {
+	if _, err := strconv.ParseInt(generation, 10, 64); err != nil || expectedFamilies < 0 {
+		return false, errors.New("redisstore: invalid migration coverage")
 	}
-	scriptKeys := make([]string, 0, len(keys)+2)
-	scriptKeys = append(scriptKeys, metadataRebuildGenerationKey, metadataIndexStateKey)
-	scriptKeys = append(scriptKeys, keys...)
-	result, err := publishMetadataReadyScript.Run(ctx, st.client, scriptKeys, generation, metadataIndexReady).Int()
+	result, err := publishMetadataReadyScript.Run(ctx, st.client,
+		[]string{metadataRebuildGenerationKey, metadataIndexStateKey, metadataGlobalIndexKey},
+		generation, metadataIndexReady, expectedFamilies,
+	).Int()
 	if err != nil {
 		return false, fmt.Errorf("redisstore: publish metadata index: %w", err)
 	}
@@ -256,25 +285,25 @@ func (st *Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMi
 	if err != nil {
 		return err
 	}
-	tokenValue, ok := st.migrationLocks.Load(job.ID)
+	acquisition, ok := migrationAcquisitionFromContext(ctx, job.ID)
 	if !ok {
-		return errors.New("redisstore: migration job lock not held")
+		return errors.New("redisstore: migration job lock acquisition not bound")
 	}
-	token, ok := tokenValue.(string)
-	if !ok {
-		return errors.New("redisstore: invalid migration job lock")
+	if acquisition.lost.Load() {
+		return errors.New("redisstore: migration job lock lost")
 	}
 	data, err := json.Marshal(job)
 	if err != nil {
 		return fmt.Errorf("redisstore: encode migration job: %w", err)
 	}
 	saved, err := saveMigrationJobScript.Run(ctx, st.client,
-		[]string{migrationLockKeyBase + job.ID, key}, token, data,
+		[]string{acquisition.key, key}, acquisition.token, data,
 	).Int()
 	if err != nil {
 		return fmt.Errorf("redisstore: save migration job: %w", err)
 	}
 	if saved != 1 {
+		acquisition.lost.Store(true)
 		return errors.New("redisstore: migration job lock lost")
 	}
 	return nil
@@ -304,29 +333,126 @@ end
 return 0
 `)
 
-// LockSessionMigrationJob excludes overlapping cross-process job drives.
-func (st *Store) LockSessionMigrationJob(ctx context.Context, id string) (func() error, error) {
-	if _, err := migrationJobKey(id); err != nil {
-		return nil, err
-	}
-	tokenBytes := make([]byte, 16)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return nil, err
-	}
-	token := hex.EncodeToString(tokenBytes)
-	key := migrationLockKeyBase + id
-	locked, err := st.client.SetNX(ctx, key, token, 10*time.Minute).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redisstore: acquire migration job lock: %w", err)
-	}
-	if !locked {
-		return nil, errors.New("redisstore: migration job lock not acquired")
-	}
-	st.migrationLocks.Store(id, token)
-	return func() error {
-		st.migrationLocks.CompareAndDelete(id, token)
-		return releaseMigrationLockScript.Run(context.WithoutCancel(ctx), st.client, []string{key}, token).Err()
-	}, nil
+var acquireMigrationLockScript = redis.NewScript(`
+local fence = redis.call('INCR', KEYS[2])
+local token = tostring(fence) .. ':' .. ARGV[1]
+if redis.call('SET', KEYS[1], token, 'NX', 'PX', ARGV[2]) then
+  return token
+end
+return ''
+`)
+
+var renewMigrationLockScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+`)
+
+type migrationAcquisitionContextKey struct{}
+
+type migrationLockAcquisition struct {
+	id     string
+	key    string
+	token  string
+	cancel context.CancelFunc
+	done   chan struct{}
+	lost   atomic.Bool
+	once   sync.Once
 }
 
-var _ port.SessionMigrationStore = (*Store)(nil)
+func migrationAcquisitionFromContext(ctx context.Context, id string) (*migrationLockAcquisition, bool) {
+	acquisition, ok := ctx.Value(migrationAcquisitionContextKey{}).(*migrationLockAcquisition)
+	return acquisition, ok && acquisition != nil && acquisition.id == id
+}
+
+// AcquireSessionMigrationJob binds one fenced acquisition to the returned
+// context. Renewal and every checkpoint/release use that exact acquisition.
+func (st *Store) AcquireSessionMigrationJob(ctx context.Context, id string) (context.Context, func() error, error) {
+	if _, err := migrationJobKey(id); err != nil {
+		return nil, nil, err
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, nil, err
+	}
+	key := migrationLockKeyBase + id
+	token, err := acquireMigrationLockScript.Run(ctx, st.client,
+		[]string{key, migrationFenceKeyBase + id}, hex.EncodeToString(nonce), migrationLockTTL.Milliseconds(),
+	).Text()
+	if err != nil {
+		return nil, nil, fmt.Errorf("redisstore: acquire migration job lock: %w", err)
+	}
+	if token == "" {
+		return nil, nil, errors.New("redisstore: migration job lock not acquired")
+	}
+	renewCtx, cancel := context.WithCancel(context.Background())
+	acquisition := &migrationLockAcquisition{id: id, key: key, token: token, cancel: cancel, done: make(chan struct{})}
+	go st.renewMigrationLock(renewCtx, acquisition)
+	bound := context.WithValue(ctx, migrationAcquisitionContextKey{}, acquisition)
+	release := func() error {
+		var releaseErr error
+		acquisition.once.Do(func() {
+			acquisition.cancel()
+			<-acquisition.done
+			result, err := releaseMigrationLockScript.Run(context.WithoutCancel(bound), st.client, []string{key}, token).Int()
+			if err != nil {
+				releaseErr = err
+				return
+			}
+			if result != 1 {
+				acquisition.lost.Store(true)
+				releaseErr = errors.New("redisstore: migration job lock lost")
+			}
+		})
+		return releaseErr
+	}
+	return bound, release, nil
+}
+
+func (st *Store) renewMigrationLock(ctx context.Context, acquisition *migrationLockAcquisition) {
+	defer close(acquisition.done)
+	ticker := time.NewTicker(migrationRenewInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewed, err := renewMigrationLockScript.Run(ctx, st.client,
+				[]string{acquisition.key}, acquisition.token, migrationLockTTL.Milliseconds(),
+			).Int()
+			if err != nil || renewed != 1 {
+				acquisition.lost.Store(true)
+				return
+			}
+		}
+	}
+}
+
+// CheckSessionMigrationJobOwnership fails closed once this acquisition is lost.
+func (st *Store) CheckSessionMigrationJobOwnership(ctx context.Context) error {
+	acquisition, ok := ctx.Value(migrationAcquisitionContextKey{}).(*migrationLockAcquisition)
+	if !ok || acquisition == nil || acquisition.lost.Load() {
+		return errors.New("redisstore: migration job lock lost")
+	}
+	value, err := st.client.Get(ctx, acquisition.key).Result()
+	if err != nil || value != acquisition.token {
+		acquisition.lost.Store(true)
+		return errors.New("redisstore: migration job lock lost")
+	}
+	return nil
+}
+
+// LockSessionMigrationJob preserves the optional port surface. Redis callers
+// that checkpoint must use AcquireSessionMigrationJob so the acquisition is
+// carried explicitly rather than looked up by job ID.
+func (st *Store) LockSessionMigrationJob(ctx context.Context, id string) (func() error, error) {
+	_, release, err := st.AcquireSessionMigrationJob(ctx, id)
+	return release, err
+}
+
+var (
+	_ port.SessionMigrationStore       = (*Store)(nil)
+	_ port.SessionMigrationJobAcquirer = (*Store)(nil)
+)

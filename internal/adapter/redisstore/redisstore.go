@@ -34,7 +34,6 @@ import (
 	"iter"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -94,9 +93,8 @@ var (
 type Store struct {
 	client *redis.Client
 
-	migrationLocks sync.Map
-
-	metadataWorkObserver func(metadataWorkKind)
+	metadataWorkObserver        func(metadataWorkKind)
+	migrationInspectionObserver func()
 }
 
 // New connects to the Redis broker at addr and pings it to fail fast on an

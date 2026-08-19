@@ -367,8 +367,12 @@ that same mandatory maintenance lease as manual cleanup (except a genuinely
 process-private in-memory store), so a shareable store with no working lease fails
 closed rather than trusting process-local liveness. An
 upgraded legacy keyspace stays honestly unavailable until the authenticated, resumable
-storage-migration job CAS-adopts every snapshot row and atomically publishes a stable
-source generation. It defaults
+storage-migration job CAS-adopts every snapshot row. Each drive carries its own fenced
+Redis lock acquisition, renews it while work is active, and fails closed if ownership is
+lost; stale checkpoints/releases cannot borrow a successor token. Inspection retries to a
+stable source generation and deduplicates `SCAN` results. Bounded per-family installs build
+the duplicate-free global index, then one constant-work generation-and-count CAS publishes
+readiness—no snapshot-key list enters the publication script ([ADR 0229](adr/0229-redis-migration-fencing.md)). It defaults
 `--headless=true` and `--posture=auto` (an unattended daemon, inverted from `mecated`'s
 interactive defaults), drops `mecated`'s subcommands + Prometheus/OTel admin surface, and
 exposes `--redis-url` (mutually exclusive with `--store-dir`/`--session-store-url`). The

@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Renewable fenced session-migration ownership** ([ADR 0229](../docs/adr/0229-redis-migration-fencing.md)) —
+  `port.SessionMigrationJobAcquirer` optionally binds a precise renewable/fenced
+  acquisition to a context, allowing adapters to reject stale checkpoints,
+  ownership checks, and releases without changing `SessionMigrationStore`.
+  Added (minor).
 - **Resumable session-storage migration** (issue #589, [ADR 0226](../docs/adr/0226-session-storage-maintenance.md)) —
   `port.SessionMigrationStore` and its plan/family/job value objects define an
   optional server-side v1-to-v2 physical-maintenance capability with durable bounded

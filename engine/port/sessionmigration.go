@@ -92,3 +92,12 @@ type SessionMigrationStore interface {
 	SaveSessionMigrationJob(context.Context, SessionMigrationJob) error
 	LoadSessionMigrationJob(context.Context, string) (SessionMigrationJob, error)
 }
+
+// SessionMigrationJobAcquirer is the optional renewable/fenced form of job
+// exclusion. The returned context binds the exact acquisition; implementations
+// must use it for checkpoints and ownership checks so an expired holder cannot
+// act with a successor's token. Release is token-bound and joins any renewer.
+type SessionMigrationJobAcquirer interface {
+	AcquireSessionMigrationJob(context.Context, string) (acquired context.Context, release func() error, err error)
+	CheckSessionMigrationJobOwnership(context.Context) error
+}

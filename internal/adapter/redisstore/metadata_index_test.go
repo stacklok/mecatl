@@ -349,7 +349,7 @@ func TestMetadataRebuildRejectsStaleGenerationBeforeAtomicPublication(t *testing
 	if err := st.Save(ctx, session.New("concurrent", session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())); err != nil {
 		t.Fatal(err)
 	}
-	published, err := st.FinalizeSessionMigration(ctx, inspection.Generation)
+	published, err := st.FinalizeSessionMigrationCoverage(ctx, inspection.Generation, inspection.V1Families+inspection.V2Families+inspection.InvalidFamilies)
 	if err != nil || published {
 		t.Fatalf("stale generation publication = %v, %v", published, err)
 	}
@@ -360,7 +360,7 @@ func TestMetadataRebuildRejectsStaleGenerationBeforeAtomicPublication(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	published, err = st.FinalizeSessionMigration(ctx, current.Generation)
+	published, err = st.FinalizeSessionMigrationCoverage(ctx, current.Generation, current.V1Families+current.V2Families+current.InvalidFamilies)
 	if err != nil || !published {
 		t.Fatalf("current generation publication = %v, %v", published, err)
 	}

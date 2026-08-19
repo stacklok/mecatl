@@ -65,7 +65,22 @@ type MigrationJob struct {
 }
 
 type sessionMigrationFinalizer interface {
-	FinalizeSessionMigration(context.Context, string) (bool, error)
+	FinalizeSessionMigrationCoverage(context.Context, string, int64) (bool, error)
+}
+
+func lockSessionMigrationJob(ctx context.Context, backend port.SessionMigrationStore, id string) (context.Context, func() error, error) {
+	if acquirer, ok := backend.(port.SessionMigrationJobAcquirer); ok {
+		return acquirer.AcquireSessionMigrationJob(ctx, id)
+	}
+	release, err := backend.LockSessionMigrationJob(ctx, id)
+	return ctx, release, err
+}
+
+func checkSessionMigrationOwnership(ctx context.Context, backend port.SessionMigrationStore) error {
+	if checker, ok := backend.(port.SessionMigrationJobAcquirer); ok {
+		return checker.CheckSessionMigrationJobOwnership(ctx)
+	}
+	return nil
 }
 
 func migrationStore(store port.SessionStore) (port.SessionMigrationStore, bool) {
@@ -180,7 +195,7 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		}
 		job = beforeLock
 	}
-	release, err := backend.LockSessionMigrationJob(ctx, job.ID)
+	ctx, release, err := lockSessionMigrationJob(ctx, backend, job.ID)
 	if err != nil {
 		return MigrationJob{}, sanitizedMigrationBackendError()
 	}
@@ -224,6 +239,10 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		if job.TerminalItems[family.Handle] {
 			continue
 		}
+		if err := checkSessionMigrationOwnership(ctx, backend); err != nil {
+			s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: job ownership lost", Resumable: true})
+			return MigrationJob{}, sanitizedMigrationBackendError()
+		}
 		reason := s.migrateOneFamily(ctx, backend, family)
 		attempted++
 		job.Processed++
@@ -256,8 +275,12 @@ func (s *Service) driveSessionMigration(ctx context.Context, id string, batchSiz
 		}
 	}
 	if !remaining && job.State != port.SessionMigrationCancelled {
+		if err := checkSessionMigrationOwnership(ctx, backend); err != nil {
+			return MigrationJob{}, sanitizedMigrationBackendError()
+		}
 		if finalizer, ok := backend.(sessionMigrationFinalizer); ok {
-			published, finalizeErr := finalizer.FinalizeSessionMigration(ctx, inspection.Generation)
+			expectedFamilies := inspection.V1Families + inspection.V2Families + inspection.InvalidFamilies
+			published, finalizeErr := finalizer.FinalizeSessionMigrationCoverage(ctx, inspection.Generation, expectedFamilies)
 			if finalizeErr != nil {
 				s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: migrationKind, Key: job.ID, State: StorageMaintenanceFailed, Failure: "migration: storage backend unavailable", Resumable: true})
 				return MigrationJob{}, sanitizedMigrationBackendError()
@@ -349,7 +372,7 @@ func (s *Service) CancelSessionMigration(ctx context.Context, id string) (Migrat
 	if err != nil {
 		return MigrationJob{}, err
 	}
-	release, err := backend.LockSessionMigrationJob(ctx, id)
+	ctx, release, err := lockSessionMigrationJob(ctx, backend, id)
 	if err != nil {
 		return MigrationJob{}, sanitizedMigrationBackendError()
 	}
