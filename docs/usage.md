@@ -1,5 +1,7 @@
 # mecatl — Usage & Operator Guide
 
+<!-- CI docs-only canary; this draft PR is intentionally never merged. -->
+
 `mecatl` is a headless, agentic coding harness. It owns its own context
 window, tool loop, permission policy and lifecycle hooks, and talks to OpenAI
 (or any OpenAI-compatible `/v1/responses` endpoint), OpenRouter, Anthropic
