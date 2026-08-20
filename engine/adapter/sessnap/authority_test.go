@@ -15,7 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0232_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold(t *testing.T) {
 	t.Parallel()
 	bound := authorityBinding(t)
 	s := session.New("authority-round-trip", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0).UTC())
@@ -39,7 +39,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFo
 	assertAuthorityBinding(t, folded, bound)
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData(t *testing.T) {
 	t.Parallel()
 	bound := authorityBinding(t)
 	s := session.New("authority-payload", session.ModeDefault, "/workspace/secret", session.Limits{}, time.Unix(1, 0).UTC())
@@ -63,7 +63,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeDa
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly(t *testing.T) {
 	t.Parallel()
 	line := []byte(`{"id":"malformed","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/workspace","created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
 	if _, err := sessnap.Unmarshal(line); err == nil || !strings.Contains(err.Error(), "authority") {
@@ -80,7 +80,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly(t
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState(t *testing.T) {
 	t.Parallel()
 	line := []byte(`{"id":"empty","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/workspace","created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
 	restored, err := sessnap.Unmarshal(line)
@@ -92,7 +92,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState(t *tes
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario2_RestoreRejectsIncompleteAuthorityClaims(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario2_RestoreRejectsIncompleteAuthorityClaims(t *testing.T) {
 	t.Parallel()
 	const snapshotPrefix = `{"id":"incomplete","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/workspace","created_at":"1970-01-01T00:00:01Z",`
 	for name, authority := range map[string]string{
@@ -122,7 +122,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario2_RestoreRejectsIncompleteAuthority
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name     string

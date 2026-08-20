@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestADR_0232_AuthorityEvaluator_Scenario1_NarrowIsIntersectionOnEveryAxis(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario1_NarrowIsIntersectionOnEveryAxis(t *testing.T) {
 	t.Parallel()
 
 	left := CapabilitySet{
@@ -37,7 +37,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario1_NarrowIsIntersectionOnEveryAxis(t
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario1_OperationsAreMonotone(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario1_OperationsAreMonotone(t *testing.T) {
 	t.Parallel()
 
 	left := CapabilitySet{Tools: []string{"Read", "Write"}, RemainingDelegationDepth: 2, FileSystem: true, DirectWrite: true}
@@ -80,7 +80,7 @@ func FuzzAuthorityOperationsAreMonotone(f *testing.F) {
 	})
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario1_DepthExhaustionIsAnError(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario1_DepthExhaustionIsAnError(t *testing.T) {
 	t.Parallel()
 
 	_, err := ConsumeDelegationHop(CapabilitySet{RemainingDelegationDepth: 0})
@@ -89,7 +89,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario1_DepthExhaustionIsAnError(t *testi
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario1_SingleRepresentationAndSerializer(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario1_SingleRepresentationAndSerializer(t *testing.T) {
 	t.Parallel()
 
 	set := CapabilitySet{Tools: []string{"Read"}, RemainingDelegationDepth: 1, FileSystem: true}

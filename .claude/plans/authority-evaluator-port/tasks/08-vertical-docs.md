@@ -20,7 +20,7 @@ dispatch, stale disclosure, meta-tool target authorization, restart/resume
 narrowing, and evaluator failure. The Cedar slice covers the shipped policy and
 an operator path rule.
 
-Write accepted ADR-0232 and update the living architecture, implementation
+Write accepted ADR-0233 and update the living architecture, implementation
 notes, and user-facing documentation for the evaluator selector and operator
 policy file. Follow documentation citation rules; do not cite salvage-only
 paths. Regenerate documentation through the Taskfile.
@@ -28,6 +28,6 @@ paths. Regenerate documentation through the Taskfile.
 ## Acceptance criteria
 
 - The final vertical proof exercises the local adapter from ordinary composition through managed-specialist child derivation, denied and allowed dispatch, stale disclosure, meta-tool target authorization, restart/resume narrowing, and evaluator failure.
-  - verify: `TestADR_0232_AuthorityEvaluator_VerticalSlice`
+  - verify: `TestADR_0233_AuthorityEvaluator_VerticalSlice`
 - The Cedar vertical proof reruns the shared stack with the shipped policy and an operator path rule.
-  - verify: `TestADR_0232_AuthorityEvaluator_VerticalSlice_Cedar`
+  - verify: `TestADR_0233_AuthorityEvaluator_VerticalSlice_Cedar`

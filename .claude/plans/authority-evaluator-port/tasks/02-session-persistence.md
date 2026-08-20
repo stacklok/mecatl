@@ -22,12 +22,12 @@ recovery transitions. Do not wire evaluator execution or child derivation.
 ## Acceptance criteria
 
 - AC2.1: A bound session persists its capability set, its provenance, and any resolved definition identity before its first runnable state, and restores them byte-equivalently through the snapshot and the event fold.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold`
 - AC2.2: The persisted payload contains no path, credential, token, header, catalog pointer, runner, or raw identity claim.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData`
 - AC2.3: A record that claims a capability set but cannot be decoded fails closed before a run starts, with a diagnostic naming the failure; a genuinely pre-feature record with no set is classified legacy and behaves as documented.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly`
 - AC2.4: A decode failure is never silently swallowed into a bound-but-empty state; no code path sets "this run is bound" while discarding the error that produced an empty set.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState`
 - AC2.5: Completed, cancelled, and failed bound sessions retain the same persisted set through Reopen, Interrupt, Recover, and Abandon.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet`

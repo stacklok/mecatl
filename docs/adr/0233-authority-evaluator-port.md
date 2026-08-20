@@ -1,4 +1,4 @@
-# ADR 0232 — Derived delegation authority behind an evaluator port
+# ADR 0233 — Derived delegation authority behind an evaluator port
 
 - Status: Accepted
 - Date: 2026-08-19

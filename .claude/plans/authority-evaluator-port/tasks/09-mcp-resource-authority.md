@@ -25,4 +25,4 @@ helper-only AC3.8 proof with dispatch-level coverage.
 ## Acceptance criteria
 
 - AC3.8: A bound run reaches MCP resources through a derived per-server resource capability carried in its set. Resource-only servers are reachable when their own capability is present; aggregate resource operations require a concrete server. The evaluator receives that capability separately from the resource operation action, and no separately authored grant exists.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_ResourceReachDerivesFromToolNames`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_ResourceReachDerivesFromToolNames`

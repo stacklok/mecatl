@@ -34,7 +34,7 @@ func meta() eventsource.SessionMeta {
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario2_EventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario2_EventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
 	t.Parallel()
 	m := meta()
 	m.Authority = &session.Authority{Provenance: "derived"}

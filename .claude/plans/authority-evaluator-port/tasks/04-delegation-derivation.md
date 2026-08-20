@@ -26,10 +26,10 @@ set to later delegation work; it must not derive children or implement Cedar.
 ## Acceptance criteria
 
 - AC3.4: An absent evaluator is a deliberate deployment mode selected by an explicit flag and reported in the build-once posture line; it is never a silent default.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_AbsentEvaluatorIsExplicitAndAnnounced`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_AbsentEvaluatorIsExplicitAndAnnounced`
 - AC6.2: Every field of a minted root set is populated explicitly at the mint site, and the minted root can consume one delegation hop.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly`, `TestADR_0232_AuthorityEvaluator_Scenario6_MintedRootCanDescend`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly`, `TestADR_0233_AuthorityEvaluator_Scenario6_MintedRootCanDescend`
 - AC6.3: A server-created team, a peer fork, and a scheduled fire each receive a set whose provenance is recorded and whose derivation point is documented; a fork copies its source's set and safe provenance without re-deriving.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit`
 - AC6.4: The composition posture line reports which evaluator adapter is active and whether enforcement is on.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_PostureLineReportsEvaluator`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_PostureLineReportsEvaluator`

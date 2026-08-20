@@ -44,7 +44,7 @@ is not restored either.
 Why no existing test caught it: the vertical slice calls `session.WithPrincipal`,
 so it always has an owner, and `mecademo` does not use `app.Build`, so it never
 binds authority at all. The one test that pins the new behaviour
-(`TestADR_0232_AuthorityEvaluator_OwnerlessBoundSessionFailsClosed`) asserts the
+(`TestADR_0233_AuthorityEvaluator_OwnerlessBoundSessionFailsClosed`) asserts the
 denial is correct — it encodes the regression as intended behaviour.
 
 **The underlying question the repair skipped:** should an unauthenticated

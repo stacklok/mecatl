@@ -210,7 +210,7 @@ operator-owned policy loaded at startup. Cedar stays in `internal/adapter`, so t
 importable engine has no Cedar dependency. Its policy can add constraints such as a
 workspace path boundary but cannot add a capability. The `CallMcpWithQuery` meta-tool
 is checked against its reconstructed `mcp__<server>__<tool>` target, not as blanket
-access to a server. See [ADR 0232](adr/0232-authority-evaluator-port.md).
+access to a server. See [ADR 0233](adr/0233-authority-evaluator-port.md).
 
 
 ## 2. The big picture

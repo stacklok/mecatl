@@ -27,12 +27,12 @@ or flags; later tasks own them.
 ## Acceptance criteria
 
 - AC1.1: `Narrow` returns the set intersection of tool names, the lower of the two delegation depths, and the conjunction of each execution-posture flag; the result is never a superset of either input on any axis.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_NarrowIsIntersectionOnEveryAxis`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_NarrowIsIntersectionOnEveryAxis`
 - AC1.2: Every operation on a capability set is monotone downward — for any two valid inputs, each input contains the result. No union, widening, or additive operation exists.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_OperationsAreMonotone`, `FuzzAuthorityOperationsAreMonotone`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_OperationsAreMonotone`, `FuzzAuthorityOperationsAreMonotone`
 - AC1.3: Consuming a delegation hop at remaining depth zero is an error, not a silent pass or a clamp.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_DepthExhaustionIsAnError`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_DepthExhaustionIsAnError`
 - AC1.4: A capability set has exactly one in-tree representation and exactly one place that serializes it; no second parser, canonical form, or field-count check exists in any package.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_SingleRepresentationAndSerializer`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_SingleRepresentationAndSerializer`
 - AC3.2: The request carries the derived set, the tool name, the delegation depth, and a principal comprising definition, instance, and owner; it carries no raw tool arguments, credentials, or Cedar-specific types.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_RequestShapeIsNeutralAndCarriesTheSet`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_RequestShapeIsNeutralAndCarriesTheSet`

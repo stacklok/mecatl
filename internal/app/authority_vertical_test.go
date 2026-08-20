@@ -19,10 +19,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
-// TestADR_0232_AuthorityEvaluator_VerticalSlice exercises the ordinary Build →
+// TestADR_0233_AuthorityEvaluator_VerticalSlice exercises the ordinary Build →
 // Service path. It keeps evaluator-outage injection at the engine adapter seam:
 // production composition deliberately selects only configured evaluator adapters.
-func TestADR_0232_AuthorityEvaluator_VerticalSlice(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_VerticalSlice(t *testing.T) {
 	ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "owner", GrantType: session.GrantTypeUser})
 	workspace := t.TempDir()
 	storeDir := filepath.Join(t.TempDir(), "sessions")
@@ -159,7 +159,7 @@ func TestADR_0232_AuthorityEvaluator_VerticalSlice(t *testing.T) {
 	assertAuthorityVerticalResumeRefusal(t, resumedParent)
 }
 
-func TestADR_0232_AuthorityEvaluator_VerticalSlice_Cedar(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_VerticalSlice_Cedar(t *testing.T) {
 	ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "owner", GrantType: session.GrantTypeUser})
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "vendor"), 0o700); err != nil {
@@ -234,7 +234,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 	t.Fatal("missing child Read result")
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario7_CedarDeniesSymlinkedTarget(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario7_CedarDeniesSymlinkedTarget(t *testing.T) {
 	ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "owner", GrantType: session.GrantTypeUser})
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "vendor"), 0o700); err != nil {
@@ -299,7 +299,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 	t.Fatal("missing Read result")
 }
 
-func TestADR_0232_AuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("ownerless readable\n"), 0o600); err != nil {
 		t.Fatalf("write workspace file: %v", err)
@@ -345,7 +345,7 @@ func TestADR_0232_AuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator(t *t
 	t.Fatal("missing ownerless local Read result")
 }
 
-func TestADR_0232_AuthorityEvaluator_OwnerlessCedarSessionFailsClosed(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_OwnerlessCedarSessionFailsClosed(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("not read\n"), 0o600); err != nil {
 		t.Fatalf("write workspace file: %v", err)

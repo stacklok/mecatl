@@ -27,4 +27,4 @@ Cedar policy in this task.
 ## Acceptance criteria
 
 - The evaluator request exposes a normalized resource descriptor only when the execution boundary can derive one from a recognized tool call; it never exposes raw tool-call arguments.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario7_ResourceAttributeIsDerivedWithoutRawArguments`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario7_ResourceAttributeIsDerivedWithoutRawArguments`

@@ -18,10 +18,10 @@ Review-2 blocker: caller identity is optional under ADR 0204. A bound authority 
 ## Acceptance criteria
 
 - AC3.2: The execution chokepoint consults the selected evaluator once per bound tool call and fails closed when the evaluator is unavailable; request shaping is never relied on for enforcement.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvaluatorOnce`, `TestADR_0232_AuthorityEvaluator_BoundSessionWithoutEvaluatorFailsClosed`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvaluatorOnce`, `TestADR_0233_AuthorityEvaluator_BoundSessionWithoutEvaluatorFailsClosed`
 - AC6.1: Composition selects the configured evaluator and mints a root authority that cannot be widened by child delegation.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly`
 - AC7.1: Cedar may apply additional operator policy denials without granting a capability absent from the carried set.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario7_CedarCanDenyWithoutWidening`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario7_CedarCanDenyWithoutWidening`
 - Repair proof: identity remains optional for local/noop `app.Build` sessions and required for Cedar evaluation.
-  - verify: `TestADR_0232_AuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator`, `TestADR_0232_AuthorityEvaluator_OwnerlessCedarSessionFailsClosed`
+  - verify: `TestADR_0233_AuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator`, `TestADR_0233_AuthorityEvaluator_OwnerlessCedarSessionFailsClosed`

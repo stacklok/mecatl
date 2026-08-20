@@ -44,7 +44,7 @@ child's carried set. Keep the policy outside project-controlled files.
 
 Authority failures are fail-closed. A denial tells the model that authority refused the
 call; an unavailable evaluator is reported separately to operators and is not treated
-as permission approval. See [ADR 0232](https://github.com/stacklok/mecatl/blob/main/docs/adr/0232-authority-evaluator-port.md)
+as permission approval. See [ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-authority-evaluator-port.md)
 for the boundary and constraints.
 
 ---

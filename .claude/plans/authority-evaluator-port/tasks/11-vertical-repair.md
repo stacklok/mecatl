@@ -23,4 +23,4 @@ injection solely for a test.
 ## Acceptance criteria
 
 - The final vertical proof exercises local composition through managed-specialist derivation, denied and allowed dispatch, stale disclosure, meta-tool target authorization, restart/resume narrowing, and evaluator failure at the appropriate layer.
-  - verify: `TestADR_0232_AuthorityEvaluator_VerticalSlice`
+  - verify: `TestADR_0233_AuthorityEvaluator_VerticalSlice`

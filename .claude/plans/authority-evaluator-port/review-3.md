@@ -102,9 +102,9 @@ can stay green while this required compatibility record is false.
 ### Authority documentation needs correction
 
 - `user-docs/what-you-get/permissions.md` names **ADR 0231** while linking
-  ADR-0232.
+  ADR-0233.
 - The acceptance plan properly remains `in-progress`, but it incorrectly says
-  ADR-0232 is still “to be written” and repeats that work item even though the ADR
+  ADR-0233 is still “to be written” and repeats that work item even though the ADR
   exists and is accepted.
 - AC3.8 duplicates the same `verify:` line.
 

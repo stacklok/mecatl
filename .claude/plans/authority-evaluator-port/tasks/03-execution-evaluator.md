@@ -24,14 +24,14 @@ child derivation, or Cedar.
 ## Acceptance criteria
 
 - AC3.1: Every tool execution passes the evaluator exactly once, from every dispatch path: sequential, read-parallel batch, awaiting-approval resume, cross-process resume, and guardrail approve-once.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvaluatorOnce`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvaluatorOnce`
 - AC3.3: A denial and an evaluator failure are distinguishable at the call site and produce different model-visible messages; an evaluator failure fails closed and emits an operator diagnostic.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFromDenial`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFromDenial`
 - AC3.5: The three adapters — noop, local, and Cedar — satisfy one shared conformance suite, including identical fail-closed behaviour on a malformed request.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_AdaptersSatisfyConformanceSuite`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_AdaptersSatisfyConformanceSuite`
 - AC3.6: Capability filtering at disclosure and at ToolSearch shapes the request only and is never relied on for enforcement. Dispatch refuses independently: a tool that is disclosed but absent from the derived set is still refused at `execute`, and no enforcement site survives between lookup and dispatch.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_DisclosureIsNotLoadBearing`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_DisclosureIsNotLoadBearing`
 - AC3.7: A call to the `CallMcpWithQuery` meta-tool is authorized against the remote tool it targets, not against the meta-tool's own name: the decorator reconstructs `mcp__<server>__<tool>` from the call arguments and applies the same predicate as `execute`, refusing with a message naming the reconstructed target.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_MetaToolIsAuthorizedAgainstItsTarget`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_MetaToolIsAuthorizedAgainstItsTarget`
 - AC3.8: A bound run may reach an MCP server's resources only if its derived set contains at least one tool name from that server; the reach is derived from the carried names and is not a separately authored grant.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_ResourceReachDerivesFromToolNames`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_ResourceReachDerivesFromToolNames`

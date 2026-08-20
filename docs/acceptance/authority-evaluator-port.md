@@ -3,7 +3,7 @@
 **Phase:** capability — in-process delegated authority, decision behind a port
 **Status:** landed, 2026-08-19 (defect-repair pass applied; see *Resolved defects*). Successor to the unmerged `review/authority-attenuation-reconciliation` branch.
 **Issue:** [stacklok/mecatl#371](https://github.com/stacklok/mecatl/issues/371) — *An agent cannot widen its own authority.*
-**ADR:** ADR-0232 — derived capability sets, decision behind a swappable evaluator port.
+**ADR:** ADR-0233 — derived capability sets, decision behind a swappable evaluator port.
 **Salvage source:** branch `review/authority-attenuation-reconciliation` (commits `d8966606..5dbef5f6`), worktree `.worktrees/sensitivity`. **Not merged, and not to be merged.**
 **Branch:** `feat/authority-evaluator-port`, off `origin/main`.
 
@@ -79,13 +79,13 @@ couple the surviving logic to the wire format being deleted.
 | `internal/app/root_authority.go` | port, **correct at mint** (see Scenario 6) |
 | `bindRootAuthority`, `copyAuthorityProvenance`, `team.go` direct-team authority | port as-is |
 | `AgentDef.AuthorityCeiling` + driver proto `authority_ceiling` | **drop**; the ceiling is `Tools` − `DisallowedTools` |
-| `docs/adr/0226-authority-attenuation-on-current-main.md` | **rewrite as ADR-0232** (0226 is taken on `main`) |
+| `docs/adr/0226-authority-attenuation-on-current-main.md` | **rewrite as ADR-0233** (0226 is taken on `main`) |
 | `docs/acceptance/authority-attenuation-reconciliation.md` | superseded by this plan |
 | Algebra tests | port; wire-format and catalog-filter tests are dropped with their subjects |
 
 ## Why these scope cuts
 
-- **ADR-0232 (this plan writes it)** — authority is local runtime attenuation of
+- **ADR-0233 (this plan writes it)** — authority is local runtime attenuation of
   a derived capability set, distinct from owner identity, credentials, and
   external authorization. The decision is a port; Cedar is one adapter.
 - [ADR-0214](../adr/0214-environment-persistence.md) — durable `EnvironmentRef`
@@ -111,13 +111,13 @@ serialization. There is no operation anywhere in the package that widens a set.
 **Acceptance:**
 
 - AC1.1: `Narrow` returns the set intersection of tool names, the lower of the two delegation depths, and the conjunction of each execution-posture flag; the result is never a superset of either input on any axis.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_NarrowIsIntersectionOnEveryAxis`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_NarrowIsIntersectionOnEveryAxis`
 - AC1.2: Every operation on a capability set is monotone downward — for any two valid inputs, each input contains the result. No union, widening, or additive operation exists.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_OperationsAreMonotone`, `FuzzAuthorityOperationsAreMonotone`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_OperationsAreMonotone`, `FuzzAuthorityOperationsAreMonotone`
 - AC1.3: Consuming a delegation hop at remaining depth zero is an error, not a silent pass or a clamp.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_DepthExhaustionIsAnError`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_DepthExhaustionIsAnError`
 - AC1.4: A capability set has exactly one in-tree representation and exactly one place that serializes it; no second parser, canonical form, or field-count check exists in any package.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario1_SingleRepresentationAndSerializer`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario1_SingleRepresentationAndSerializer`
 
 On AC1.2's two proofs: the pinned `Test…` name is the resolvable one — it runs
 the fuzz target's seed corpus under plain `go test`. The `Fuzz…` target is the
@@ -136,15 +136,15 @@ version negotiation, because nothing hand-parses it.
 **Acceptance:**
 
 - AC2.1: A bound session persists its capability set, its provenance, and any resolved definition identity before its first runnable state, and restores them byte-equivalently through the snapshot and the event fold.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold`
 - AC2.2: The persisted payload contains no path, credential, token, header, catalog pointer, runner, or raw identity claim.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData`
 - AC2.3: A record that claims a capability set but cannot be decoded fails closed before a run starts, with a diagnostic naming the failure; a genuinely pre-feature record with no set is classified legacy and behaves as documented.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly`
 - AC2.4: A decode failure is never silently swallowed into a bound-but-empty state; no code path sets "this run is bound" while discarding the error that produced an empty set.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState`
 - AC2.5: Completed, cancelled, and failed bound sessions retain the same persisted set through Reopen, Interrupt, Recover, and Abandon.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet`
 
 ---
 
@@ -168,21 +168,21 @@ dispatch boundary reconstructs the namespaced name and re-checks it.
 **Acceptance:**
 
 - AC3.1: Every tool execution passes the evaluator exactly once, from every dispatch path: sequential, read-parallel batch, awaiting-approval resume, cross-process resume, and guardrail approve-once.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvaluatorOnce`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_EveryDispatchPathConsultsTheEvaluatorOnce`
 - AC3.2: The request carries the derived set, the tool name, the delegation depth, and a principal comprising definition, instance, and owner; it carries no raw tool arguments, credentials, or Cedar-specific types.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_RequestShapeIsNeutralAndCarriesTheSet`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_RequestShapeIsNeutralAndCarriesTheSet`
 - AC3.3: A denial and an evaluator failure are distinguishable at the call site and produce different model-visible messages; an evaluator failure fails closed and emits an operator diagnostic.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFromDenial`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFromDenial`
 - AC3.4: An absent evaluator is a deliberate deployment mode selected by an explicit flag and reported in the build-once posture line; it is never a silent default.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_AbsentEvaluatorIsExplicitAndAnnounced`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_AbsentEvaluatorIsExplicitAndAnnounced`
 - AC3.5: The three adapters — noop, local, and Cedar — satisfy one shared conformance suite, including identical fail-closed behaviour on a malformed request.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_AdaptersSatisfyConformanceSuite`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_AdaptersSatisfyConformanceSuite`
 - AC3.6: Capability filtering at disclosure and at ToolSearch shapes the request only and is never relied on for enforcement. Dispatch refuses independently: a tool that is disclosed but absent from the derived set is still refused at `execute`, and no enforcement site survives between lookup and dispatch.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_DisclosureIsNotLoadBearing`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_DisclosureIsNotLoadBearing`
 - AC3.7: A call to `CallMcpWithQuery` is authorized against the remote tool it targets, not against the meta-tool's own name: the decorator reconstructs `mcp__<server>__<tool>` from the call arguments and applies the same predicate as `execute`, refusing with a message naming the reconstructed target. The meta-tool is a transport helper, not a second grant, and is disclosed only when a reachable target exists.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_MetaToolIsAuthorizedAgainstItsTarget`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_MetaToolIsAuthorizedAgainstItsTarget`
 - AC3.8: A bound run reaches MCP resources through a derived per-server resource capability carried in its set. Resource-only servers are reachable when their own capability is present; aggregate resource operations require a concrete server. The evaluator receives that capability separately from the resource operation action, and no separately authored grant exists.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario3_ResourceReachDerivesFromToolNames`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario3_ResourceReachDerivesFromToolNames`
 
 ---
 
@@ -200,15 +200,15 @@ capability ceiling.
 **Acceptance:**
 
 - AC4.1: A parent spawning a child that asks for more than the parent holds yields the intersection, on every seam and every Subagent variant including background, fork, structured-output, and per-call model override.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario4_ChildGetsIntersectionOnEverySeam`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario4_ChildGetsIntersectionOnEverySeam`
 - AC4.2: Derivation completes before any runtime resource is acquired; a refused delegation creates no worktree, engine, environment, runner, or child session.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario4_RefusalAcquiresNoRuntimeResource`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario4_RefusalAcquiresNoRuntimeResource`
 - AC4.3: The definition ceiling is the resolved `Tools` allowlist minus `DisallowedTools`, plus the expanded tool names of the definition's resolved `mcpServers:`, from an operator-managed definition tier only; a project-, user-, or driver-tier definition cannot establish a ceiling, and a lower-tier definition cannot occupy a higher-tier name.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario4_OnlyManagedTierSuppliesACeiling`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario4_OnlyManagedTierSuppliesACeiling`
 - AC4.4: A per-call request may only tighten; a call asking for a capability, delegate, or execution posture outside the derived set is refused with a reason naming which check refused it.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario4_CallTighteningCannotWiden`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario4_CallTighteningCannotWiden`
 - AC4.5: The child's owner and its capability set are stamped at the same seam and neither is inferred from the other.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario4_OwnerAndSetAreIndependentlyStamped`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario4_OwnerAndSetAreIndependentlyStamped`
 
 ---
 
@@ -220,11 +220,11 @@ caller's *current* set. A hop already spent is not spent again.
 **Acceptance:**
 
 - AC5.1: A resumed child whose persisted set is not contained by the caller's current set is refused; a child persisted before this feature is refused rather than upgraded.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario5_ResumedChildCannotExceedCurrentParent`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario5_ResumedChildCannotExceedCurrentParent`
 - AC5.2: A resume consumes no additional delegation hop and does not re-derive against the definition ceiling.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario5_ResumeSpendsNoAdditionalHop`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario5_ResumeSpendsNoAdditionalHop`
 - AC5.3: The property holds across a process restart, on both the snapshot path and the event-fold path.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario5_NoWideningAcrossRestart`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario5_NoWideningAcrossRestart`
 
 ---
 
@@ -245,13 +245,13 @@ well-formed.
 **Acceptance:**
 
 - AC6.1: A session created through the ordinary composition path can spawn a default read-only subagent, a named managed specialist, a Parallel branch, and a Team, and each child receives a non-empty derived set.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_ComposedRootCanDelegateOnEverySeam`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_ComposedRootCanDelegateOnEverySeam`
 - AC6.2: Every field of a minted root set is populated explicitly at the mint site, and the minted root can consume one delegation hop.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly`, `TestADR_0232_AuthorityEvaluator_Scenario6_MintedRootCanDescend`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly`, `TestADR_0233_AuthorityEvaluator_Scenario6_MintedRootCanDescend`
 - AC6.3: A server-created team, a peer fork, and a scheduled fire each receive a set whose provenance is recorded and whose derivation point is documented; a fork copies its source's set and safe provenance without re-deriving.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit`
 - AC6.4: The composition posture line reports which evaluator adapter is active and whether enforcement is on.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario6_PostureLineReportsEvaluator`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario6_PostureLineReportsEvaluator`
 
 ---
 
@@ -266,15 +266,15 @@ forwards raw tool arguments to the evaluator.
 **Acceptance:**
 
 - AC7.1: The shipped policy set is static and contains no generated text; per-call variation rides request-scoped entity attributes derived from the carried set, and nothing is registered or removed per subagent.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario7_PolicyIsStaticAndDataIsPerRequest`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario7_PolicyIsStaticAndDataIsPerRequest`
 - AC7.2: An operator rule can deny a capability the carried set permits — including confining a definition to a path subtree — and cannot grant one the carried set omits.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario7_OperatorRuleTightensButCannotGrant`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario7_OperatorRuleTightensButCannotGrant`
 - AC7.3: An entity hierarchy linking an instance to its definition is used only for tightening; a policy granting a capability to a definition group is rejected by a shipped lint or guarded test, because Cedar membership widens.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario7_DefinitionGroupGrantIsRejected`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario7_DefinitionGroupGrantIsRejected`
 - AC7.4: The Cedar dependency appears only in the adapter under `internal/`; the engine module's dependency closure is unchanged and its standalone build still passes.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario7_CedarStaysOutOfTheEngineModule`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario7_CedarStaysOutOfTheEngineModule`
 - AC7.5: The adapter is off by default and selected by an explicit flag; a policy set that fails to load is a startup failure, not a silent fallback to permit.
-  - verify: `TestADR_0232_AuthorityEvaluator_Scenario7_PolicyLoadFailureIsFatal`
+  - verify: `TestADR_0233_AuthorityEvaluator_Scenario7_PolicyLoadFailureIsFatal`
 
 ---
 
@@ -284,7 +284,7 @@ One offline test that exercises the whole stack in one run, with reference
 adapters and no network. It is the plan's single end-to-end proof and it must
 fail if any layer regresses.
 
-`TestADR_0232_AuthorityEvaluator_VerticalSlice`
+`TestADR_0233_AuthorityEvaluator_VerticalSlice`
 
 1. **Compose** a session through the ordinary `app.Build` path with a managed
    `.claude/agents` definition `code-reviewer` whose frontmatter declares
@@ -311,23 +311,23 @@ fail if any layer regresses.
    the persisted child set is no longer contained. There is deliberately no broad
    production evaluator or authority-mutation injection seam: the snapshot models an
    externally persisted narrowing, while evaluator-outage proof remains at the engine
-   adapter seam (`TestADR_0232_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFromDenial`).
+   adapter seam (`TestADR_0233_AuthorityEvaluator_Scenario3_UnavailableEvaluatorIsDistinctFromDenial`).
 9. **Swap the adapter** — rerun the composed policy case against Cedar in
-   `TestADR_0232_AuthorityEvaluator_VerticalSlice_Cedar`.
+   `TestADR_0233_AuthorityEvaluator_VerticalSlice_Cedar`.
 10. **Operator rule** — add an operator policy confining `code-reviewer` away from
     `/workspace/vendor`. Assert a `Read` the carried set permits is now refused, and
     that no policy can grant `Write` back.
 
 Steps 9 and 10 need the Cedar adapter, which Scenario 7 may land separately, so
-the policy proof is a **second test** — `TestADR_0232_AuthorityEvaluator_VerticalSlice_Cedar`.
+the policy proof is a **second test** — `TestADR_0233_AuthorityEvaluator_VerticalSlice_Cedar`.
 The evaluator-outage proof remains an engine-adapter test because `app.Build` selects
 only configured production adapters; it intentionally exposes no evaluator-injection
 seam solely for a vertical test. The two tests are:
 
-- `TestADR_0232_AuthorityEvaluator_VerticalSlice` — steps 1–8. Proves the ordinary
+- `TestADR_0233_AuthorityEvaluator_VerticalSlice` — steps 1–8. Proves the ordinary
   `app.Build` composition, execution, stale disclosure, meta-target, persistence, and
   narrowed-resume paths with no Cedar dependency.
-- `TestADR_0232_AuthorityEvaluator_VerticalSlice_Cedar` — steps 9 and 10, run
+- `TestADR_0233_AuthorityEvaluator_VerticalSlice_Cedar` — steps 9 and 10, run
   against the same composed session. Gates Scenario 7.
 
 Keeping them one test would make the #371 proof depend on an optional scenario.
@@ -431,7 +431,7 @@ implementer:
 - Nothing here fails `docs/lint`'s citation guard, because its corpus is
   `docs/design/*.md`, `docs/adr/*.md`, and the architecture guide — acceptance
   plans are outside it.
-- **ADR-0232 is inside that corpus.** When you write it, do not copy these
+- **ADR-0233 is inside that corpus.** When you write it, do not copy these
   citations unqualified: either re-point them at the paths the port actually
   creates, drop to bare symbol names (a slash-free span is treated as a prose
   back-reference and skipped), or mark the span `lint:not-a-citation`. A
@@ -473,13 +473,13 @@ implementer:
 
 ## Documentation work this plan owns
 
-1. **ADR-0232 records this decision.** It is not a port of the salvage branch's
+1. **ADR-0233 records this decision.** It is not a port of the salvage branch's
    ADR: `0226` is taken on `main` by the dream-consolidation ADR, and the salvage
    branch's `0226` never merged, so there was nothing to supersede.
 2. **Do not restate the salvage ADR's decision 4.** It required enforcement at
    advertised specs, lookup, hydration, and dispatch, and called that defence in
    depth. It was not: all four invoked the same predicate, so it was one layer
-   with four call sites. ADR-0232 names `execute` as the single enforcement
+   with four call sites. ADR-0233 names `execute` as the single enforcement
    boundary, and separately records that filtering advertised specs and ToolSearch
    survives as *request construction* — which is why the plan drops only
    `lookupToolContext`. Record the salvage filter's actual failure too: on an
@@ -498,7 +498,7 @@ implementer:
    that would pass a name-keyed gate; and it *permits* `CodeModeConfig` with
    `Authz` precisely because a script's inner calls are re-authorized by real name
    through the core admission seam. Same failure mode, same fix, arrived at
-   separately. Worth recording in ADR-0232 — it makes the decorator a converged
+   separately. Worth recording in ADR-0233 — it makes the decorator a converged
    design rather than a local invention.
 5. Update `docs/architecture.md` and `docs/design/IMPLEMENTATION-NOTES.md` for
    the port and the derivation seams.
@@ -518,7 +518,7 @@ implementer:
 6. The named scenario tests and the vertical slice pass offline with reference
    adapters; no test calls a live provider or network service.
 7. `go run ./cmd/mecademo` still prints a complete offline session.
-8. ADR-0232 exists, and the #371 AC1 amendment is recorded on the issue.
+8. ADR-0233 exists, and the #371 AC1 amendment is recorded on the issue.
 
 ## Deferred decisions and known risks
 

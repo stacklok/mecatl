@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-func TestADR_0232_AuthorityEvaluator_Scenario7_PolicyIsStaticAndDataIsPerRequest(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario7_PolicyIsStaticAndDataIsPerRequest(t *testing.T) {
 	t.Parallel()
 
 	evaluator, err := New(DefaultPolicy)
@@ -30,7 +30,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario7_PolicyIsStaticAndDataIsPerRequest
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario7_OperatorRuleTightensButCannotGrant(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario7_OperatorRuleTightensButCannotGrant(t *testing.T) {
 	t.Parallel()
 
 	evaluator, err := New([]byte(`
@@ -59,7 +59,7 @@ forbid(principal, action, resource) when { resource.path like "/workspace/vendor
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_PrincipalIdentityIsInjective(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_PrincipalIdentityIsInjective(t *testing.T) {
 	t.Parallel()
 
 	evaluator, err := New([]byte(`
@@ -96,7 +96,7 @@ forbid(principal, action, resource) when {
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario7_CedarReceivesResourceOperationAction(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario7_CedarReceivesResourceOperationAction(t *testing.T) {
 	t.Parallel()
 
 	evaluator, err := New([]byte(`
@@ -117,7 +117,7 @@ forbid(principal, action == Tool::"ReadMcpResource", resource);
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario7_DefinitionGroupGrantIsRejected(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario7_DefinitionGroupGrantIsRejected(t *testing.T) {
 	t.Parallel()
 
 	_, err := New([]byte(`permit(principal in Definition::"reviewer", action, resource);`))
@@ -126,7 +126,7 @@ func TestADR_0232_AuthorityEvaluator_Scenario7_DefinitionGroupGrantIsRejected(t 
 	}
 }
 
-func TestADR_0232_AuthorityEvaluator_Scenario7_CedarStaysOutOfTheEngineModule(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario7_CedarStaysOutOfTheEngineModule(t *testing.T) {
 	t.Parallel()
 
 	module, err := os.ReadFile("../../../engine/go.mod")

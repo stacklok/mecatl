@@ -8,7 +8,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-func TestADR_0232_AuthorityEvaluator_Scenario3_RequestShapeIsNeutralAndCarriesTheSet(t *testing.T) {
+func TestADR_0233_AuthorityEvaluator_Scenario3_RequestShapeIsNeutralAndCarriesTheSet(t *testing.T) {
 	t.Parallel()
 
 	request := port.AuthorityRequest{

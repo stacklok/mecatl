@@ -296,7 +296,7 @@ loosening policy.
 
 ## Delegated authority
 
-ADR 0232 adds a second, narrower decision to permission policy. `PermissionPolicy`
+ADR 0233 adds a second, narrower decision to permission policy. `PermissionPolicy`
 continues to resolve user/operator approval rules; authority answers whether this bound
 run carries a capability at all. A session's `Authority` persists one plain
 `governance.CapabilitySet` with provenance and definition identity. Delegation derives
@@ -313,12 +313,12 @@ raw arguments, credentials, catalog, runner, or Cedar type. A Cedar policy can t
 an allowed capability, including a path boundary, but the carried-set check runs first
 and prevents it from granting an omitted capability. `CallMcpWithQuery` is checked as
 its reconstructed remote tool name, and MCP resource access derives from the carried
-names. `TestADR_0232_AuthorityEvaluator_VerticalSlice` is the real `app.Build` offline
+names. `TestADR_0233_AuthorityEvaluator_VerticalSlice` is the real `app.Build` offline
 proof of composition, execution, stale disclosure, meta-target denial, restart, and
 narrowed resume; evaluator-outage injection remains the engine-adapter proof because
 composition selects only configured production adapters. The Cedar counterpart pins the
 policy path. See
-[ADR 0232](../adr/0232-authority-evaluator-port.md).
+[ADR 0233](../adr/0233-authority-evaluator-port.md).
 
 
 ## Domain — `engine/prompt/`

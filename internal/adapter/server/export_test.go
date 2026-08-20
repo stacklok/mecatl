@@ -95,7 +95,7 @@ func (s *Service) NeedsRehydrationForTest(sess *session.Session) bool {
 
 // TrackSteerMessageIDForTest appends one client-minted id to the session's
 // watermark FIFO — the test seam for the steer correlation invariant pin
-// (ADR-0232; assert positional, not textual, correlation).
+// (ADR-0233; assert positional, not textual, correlation).
 func (s *Service) TrackSteerMessageIDForTest(id session.SessionID, messageID string) {
 	s.trackSteerMessageID(id, messageID)
 }

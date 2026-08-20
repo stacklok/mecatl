@@ -86,15 +86,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   extractions of pre-existing, unchanged behavior — no on-disk or wire format changed.
   Added (minor).
 
-- **Physical authority resource identity (ADR 0232)** — `tool.AuthorityResourceResolver` is an optional Workspace extension that derives a physical, workspace-confined local resource identity for authority evaluation. New identifier: Added (minor).
+- **Physical authority resource identity (ADR 0233)** — `tool.AuthorityResourceResolver` is an optional Workspace extension that derives a physical, workspace-confined local resource identity for authority evaluation. New identifier: Added (minor).
 
-- **Optional authority-owner requirement (ADR 0232)** — `port.AuthorityOwnerRequirement` lets an authority evaluator explicitly require a verified owner identity while preserving ownerless operation for evaluators that do not need one. Added (minor).
+- **Optional authority-owner requirement (ADR 0233)** — `port.AuthorityOwnerRequirement` lets an authority evaluator explicitly require a verified owner identity while preserving ownerless operation for evaluators that do not need one. Added (minor).
 
-- **Delegation authority tightening (ADR 0232)** — `agent.DelegationTightening` and the additive `AgentMeta` authority-ceiling fields let composition supply an explicit specialist ceiling and callers request only narrower child authority. Added (minor).
+- **Delegation authority tightening (ADR 0233)** — `agent.DelegationTightening` and the additive `AgentMeta` authority-ceiling fields let composition supply an explicit specialist ceiling and callers request only narrower child authority. Added (minor).
 
-- **Direct-team authority root (ADR 0232)** — `agent.WithRootAuthority` lets composition stamp a pre-minted root capability set on members of a directly server-created team while intentionally leaving parent-driven child derivation to its dedicated seam. Added (minor).
+- **Direct-team authority root (ADR 0233)** — `agent.WithRootAuthority` lets composition stamp a pre-minted root capability set on members of a directly server-created team while intentionally leaving parent-driven child derivation to its dedicated seam. Added (minor).
 
-- **Authority evaluator port (ADR 0232)** — `governance.CapabilitySet` provides pure monotone narrowing and delegation-hop consumption, while `port.AuthorityEvaluator` carries a provider-neutral authority request and decision contract. `port.AuthorityResource` provides a normalized, workspace-bound local target derived at the execution boundary without forwarding raw arguments. The noop and local set-check reference adapters are available for explicit composition choices. New identifiers are Added (minor).
+- **Authority evaluator port (ADR 0233)** — `governance.CapabilitySet` provides pure monotone narrowing and delegation-hop consumption, while `port.AuthorityEvaluator` carries a provider-neutral authority request and decision contract. `port.AuthorityResource` provides a normalized, workspace-bound local target derived at the execution boundary without forwarding raw arguments. The noop and local set-check reference adapters are available for explicit composition choices. New identifiers are Added (minor).
 
 - **Validated automatic learned-skill activation ([ADR 0224](../docs/adr/0224-validated-automatic-skill-activation.md))** —
   `learning.SkillActivationPolicy` adds the closed validated/evaluated assurance vocabulary and
@@ -902,23 +902,23 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   field to an exported struct is source-breaking for unkeyed literals and is
   classified Changed (pre-v1 minor).
 
-- **Authority evaluator principal identity (ADR 0232)** — `port.AuthorityPrincipal`
+- **Authority evaluator principal identity (ADR 0233)** — `port.AuthorityPrincipal`
   replaces its ambiguous composite `Owner` field with exact `OwnerIssuer` and
   `OwnerSubject` fields. This changes an existing exported struct and is
   source-breaking, classified Changed (pre-v1 minor).
 
-- **Authority evaluator resource actions (ADR 0232)** — `port.AuthorityRequest`
+- **Authority evaluator resource actions (ADR 0233)** — `port.AuthorityRequest`
   adds `Action`, distinct from the capability-selected `ToolName`, so policy adapters
   receive the real resource meta-operation while retaining the carried capability
   precheck. Adding a field to an exported struct is source-breaking for unkeyed
   literals and is classified Changed (pre-v1 minor).
 
-- **Authority evaluator wiring (ADR 0232)** — `agent.Deps.AuthorityEvaluator`
+- **Authority evaluator wiring (ADR 0233)** — `agent.Deps.AuthorityEvaluator`
   adds the optional execution-time authority evaluator dependency. The added field
   is source-breaking for external unkeyed `Deps` literals and is therefore
   classified Changed (pre-v1 minor).
 
-- **Durable authority payload (ADR 0232)** — `session.Authority` replaces the
+- **Durable authority payload (ADR 0233)** — `session.Authority` replaces the
   inert string placeholder with the plain carried `governance.CapabilitySet`,
   provenance, and definition identity payload; `Session.BindAuthority` and
   `BoundAuthority` make binding explicit and preserve the legacy-unbound state.
