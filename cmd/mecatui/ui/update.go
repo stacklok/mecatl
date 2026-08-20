@@ -1821,12 +1821,13 @@ func (m Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	if !m.pasteGateOpen() {
 		return m, nil
 	}
+	content := normalizePastedNewlines(msg.Content)
 	// A bracketed paste whose payload is a single media FILE PATH (the common
 	// drag-an-image-onto-the-terminal flow) is staged as an attachment instead of
 	// inserted literally. On ANY miss (not a path, not media, cap-gated, oversize)
 	// it returns ok=false and we fall through to the literal-text insert below
 	// (iteration-1 behaviour) — so prose pastes are completely unaffected.
-	if mm, cmd, ok := m.tryPasteMediaPath(msg.Content); ok {
+	if mm, cmd, ok := m.tryPasteMediaPath(content); ok {
 		return mm, cmd
 	}
 	// A LARGE text paste (>= pasteCharThreshold runes or >= pasteLineThreshold
@@ -1836,12 +1837,21 @@ func (m Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	// huge buffered paste makes every subsequent keypress O(paste) (issue #45).
 	// The full text expands back in place at submit/enqueue. Below the thresholds
 	// the literal insert below is byte-identical to the pre-staging behaviour.
-	if pasteNeedsStaging(m.ta.Value(), msg.Content) {
-		return m.stageLargePaste(msg.Content)
+	if pasteNeedsStaging(m.ta.Value(), content) {
+		return m.stageLargePaste(content)
 	}
+	msg.Content = content
 	var cmd tea.Cmd
 	m.ta, cmd = m.ta.Update(msg)
 	return m.afterInputEdit(cmd)
+}
+
+const xtermModifyOtherKeysCtrlJ = "\x1b[27;5;106~"
+
+// normalizePastedNewlines restores newlines that xterm modifyOtherKeys encodes
+// as Ctrl-J while bracketed paste is active.
+func normalizePastedNewlines(content string) string {
+	return strings.ReplaceAll(content, xtermModifyOtherKeysCtrlJ, "\n")
 }
 
 // pasteGateOpen reports whether pasted text may reach the prompt input right now:

@@ -124,6 +124,17 @@ func TestPasteLandsInInputWhenIdle(t *testing.T) {
 	}
 }
 
+func TestPasteRestoresModifyOtherKeysNewlines(t *testing.T) {
+	m := zeroStateModel(t, embeddedCaps())
+
+	mm, _ := m.Update(pasteMsg("first" + xtermModifyOtherKeysCtrlJ + "second"))
+	m = mm.(Model)
+
+	if got := m.ta.Value(); got != "first\nsecond" {
+		t.Fatalf("input value = %q, want decoded newline", got)
+	}
+}
+
 // TestPasteLandsInInputWhileRunning: a paste mid-run lands in the textarea (the
 // input stays focused for compose/enqueue while running) WITHOUT enqueuing —
 // there is no enter, so the phase stays running and nothing is staged.
