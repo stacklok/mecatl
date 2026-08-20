@@ -38,7 +38,8 @@ func TestFireDelivery_Scenario6_RemoteTUIRendersDeliveryLive(t *testing.T) {
 	svc := newLiveSubscriptionService(t,
 		mockllm.TextTurn("ack: delivery received"),
 	)
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	origin := createLiveSubscriptionOrigin(t, svc)
 
 	cl, cleanup := dialLiveSubscriptionGRPC(t, svc)
@@ -72,23 +73,28 @@ func TestFireDelivery_Scenario6_RemoteTUIRendersDeliveryLive(t *testing.T) {
 			mu.Unlock()
 		}
 	}()
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
 
 	// Probe the subscription is registered BEFORE driving the delivery: the
 	// gRPC handler calls Subscribe asynchronously after the client opens the
 	// stream, so a delivery published before Subscribe returns is lost. Retry a
 	// probe event until it lands — confirming the subscription is live.
 	if !probeLiveSubscription(svc, origin, &mu, &evs, 3*time.Second) {
-		mu.Lock()
-		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", len(evs), liveEventTypes(evs))
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", count, types)
 	}
 
 	deliveryNote := "<<<UNTRUSTED\n[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text\n<<<UNTRUSTED\n"
-	driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
+	deliveryDone := driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
 
 	if !waitForLiveEvent(&mu, &evs, "user_prompt", "scheduled task nightly-sync", 3*time.Second) {
-		mu.Lock()
-		t.Fatalf("StreamSessionLive did NOT relay the delivery EvUserPrompt within 3s; got %d events: %v", len(evs), liveEventTypes(evs))
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("StreamSessionLive did NOT relay the delivery EvUserPrompt within 3s; got %d events: %v", count, types)
 	}
+	awaitLiveDeliveryPublisher(t, deliveryDone, &mu, &evs, 3*time.Second)
 
 	// AC6.1: the live stream relayed the delivery's EvUserPrompt (the note body)
 	// so a connected client renders the delivery card live.
@@ -115,7 +121,8 @@ func TestFireDelivery_Scenario6_LiveSubscriptionRelaysDeliveryNote(t *testing.T)
 	svc := newLiveSubscriptionService(t,
 		mockllm.TextTurn("ack: delivery received"),
 	)
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	origin := createLiveSubscriptionOrigin(t, svc)
 
 	cl, cleanup := dialLiveSubscriptionGRPC(t, svc)
@@ -132,9 +139,10 @@ func TestFireDelivery_Scenario6_LiveSubscriptionRelaysDeliveryNote(t *testing.T)
 	}
 
 	var (
-		mu  sync.Mutex
-		evs []*mecatlv1.Event
-		wg  sync.WaitGroup
+		mu       sync.Mutex
+		evs      []*mecatlv1.Event
+		received = make(chan struct{}, 1)
+		wg       sync.WaitGroup
 	)
 	wg.Add(1)
 	go func() {
@@ -147,7 +155,15 @@ func TestFireDelivery_Scenario6_LiveSubscriptionRelaysDeliveryNote(t *testing.T)
 			mu.Lock()
 			evs = append(evs, ev)
 			mu.Unlock()
+			select {
+			case received <- struct{}{}:
+			default:
+			}
 		}
+	}()
+	defer func() {
+		cancel()
+		wg.Wait()
 	}()
 
 	// Probe the subscription is registered BEFORE driving the delivery: the
@@ -155,20 +171,22 @@ func TestFireDelivery_Scenario6_LiveSubscriptionRelaysDeliveryNote(t *testing.T)
 	// stream, so a delivery published before Subscribe returns is lost. Retry a
 	// probe event until it lands — confirming the subscription is live.
 	if !probeLiveSubscription(svc, origin, &mu, &evs, 3*time.Second) {
-		mu.Lock()
-		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", len(evs), liveEventTypes(evs))
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", count, types)
 	}
 
 	deliveryNote := "<<<UNTRUSTED\n[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text\n<<<UNTRUSTED\n"
-	driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
+	deliveryDone := driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
 
 	if !waitForLiveEvent(&mu, &evs, "user_prompt", "scheduled task nightly-sync", 3*time.Second) {
-		mu.Lock()
-		t.Fatalf("live stream did NOT relay the delivery EvUserPrompt within 3s; got %d events: %v", len(evs), liveEventTypes(evs))
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("live stream did NOT relay the delivery EvUserPrompt within 3s; got %d events: %v", count, types)
 	}
-
-	// Wait a short tail so any late-arriving (non-delivery) events are captured.
-	time.Sleep(200 * time.Millisecond)
+	awaitLiveDeliveryPublisher(t, deliveryDone, &mu, &evs, 3*time.Second)
+	if !waitForLiveEventSignal(&mu, &evs, received, "result", "", 3*time.Second) {
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("live stream did NOT relay the delivery terminal result within 3s; got %d events: %v", count, types)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -212,7 +230,8 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 	svc := newLiveSubscriptionService(t,
 		mockllm.TextTurn("ack: delivery received"),
 	)
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	origin := createLiveSubscriptionOrigin(t, svc)
 
 	cl, cleanup := dialLiveSubscriptionGRPC(t, svc)
@@ -246,36 +265,28 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 			mu.Unlock()
 		}
 	}()
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
 
 	// Probe the subscription is registered BEFORE driving the delivery: the
 	// gRPC handler calls Subscribe asynchronously after the client opens the
 	// stream, so a delivery published before Subscribe returns is lost. Retry a
 	// probe event until it lands — confirming the subscription is live.
 	if !probeLiveSubscription(svc, origin, &mu, &evs, 3*time.Second) {
-		mu.Lock()
-		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", len(evs), liveEventTypes(evs))
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("StreamSessionLive probe did not arrive within 3s — the subscription is not live; got %d events: %v", count, types)
 	}
 
 	deliveryNote := "<<<UNTRUSTED\n[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text\n<<<UNTRUSTED\n"
-	driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
+	deliveryDone := driveLiveDeliveryRun(ctx, t, svc, origin, deliveryNote)
 
 	if !waitForLiveEvent(&mu, &evs, "user_prompt", "scheduled task nightly-sync", 3*time.Second) {
-		mu.Lock()
-		t.Fatalf("live stream did NOT relay the delivery note within 3s; got %d events: %v", len(evs), liveEventTypes(evs))
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("live stream did NOT relay the delivery note within 3s; got %d events: %v", count, types)
 	}
-
-	// Wait for the delivery run to settle so the session is persisted.
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		sess, lerr := svc.GetSession(ctx, origin)
-		if lerr == nil && sess.State == session.StateCompleted {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("delivery run did not reach completed within 3s")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	awaitLiveDeliveryPublisher(t, deliveryDone, &mu, &evs, 3*time.Second)
 
 	mu.Lock()
 	var liveText string
@@ -299,6 +310,9 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 	sess, err := svc.GetSession(ctx, origin)
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.State != session.StateCompleted {
+		t.Fatalf("delivery session state = %s, want %s", sess.State, session.StateCompleted)
 	}
 	var recordedText string
 	for _, m := range sess.Conversation.Messages {
@@ -347,7 +361,8 @@ func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerCheckedOverGRPC(t *te
 	}
 
 	// Alice's own stream succeeds and receives the probe event.
-	aliceStreamCtx := metadata.AppendToOutgoingContext(context.Background(), testSubjectMetadataKey, "alice")
+	aliceStreamBase := metadata.AppendToOutgoingContext(context.Background(), testSubjectMetadataKey, "alice")
+	aliceStreamCtx, cancelAliceStream := context.WithCancel(aliceStreamBase)
 	aliceStream, err := cl.StreamSessionLive(aliceStreamCtx, &mecatlv1.StreamSessionLiveRequest{SessionId: string(sess.ID)})
 	if err != nil {
 		t.Fatalf("StreamSessionLive (alice): %v", err)
@@ -370,9 +385,13 @@ func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerCheckedOverGRPC(t *te
 			mu.Unlock()
 		}
 	}()
+	defer func() {
+		cancelAliceStream()
+		wg.Wait()
+	}()
 	if !probeLiveSubscription(svc, sess.ID, &mu, &evs, 3*time.Second) {
-		mu.Lock()
-		t.Fatalf("alice's StreamSessionLive probe did not arrive within 3s; got %d events: %v", len(evs), liveEventTypes(evs))
+		count, types := liveEventSummary(&mu, &evs)
+		t.Fatalf("alice's StreamSessionLive probe did not arrive within 3s; got %d events: %v", count, types)
 	}
 }
 
@@ -503,8 +522,10 @@ func createLiveSubscriptionOrigin(t *testing.T, svc *server.Service) session.Ses
 }
 
 // driveLiveDeliveryRun drives a delivery run with the note and publishes its
-// events to the origin's live subscription (mirroring deliverFireResult).
-func driveLiveDeliveryRun(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, note string) {
+// events to the origin's live subscription (mirroring deliverFireResult). It
+// returns a channel that closes after the publisher has drained the run and
+// FinishRun has persisted its terminal state.
+func driveLiveDeliveryRun(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, note string) <-chan struct{} {
 	t.Helper()
 	run, err := svc.StartRunContent(ctx, id, note, nil)
 	if err != nil {
@@ -519,6 +540,7 @@ func driveLiveDeliveryRun(ctx context.Context, t *testing.T, svc *server.Service
 		svc.FinishRun(id, run)
 	}()
 	t.Cleanup(func() { <-done })
+	return done
 }
 
 // probeLiveSubscription publishes a probe event repeatedly until it arrives on
@@ -572,6 +594,62 @@ func waitForLiveEvent(mu *sync.Mutex, evs *[]*mecatlv1.Event, typ, substr string
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// awaitLiveDeliveryPublisher bounds the asynchronous delivery publisher while
+// preserving driveLiveDeliveryRun's cleanup fallback for assertion failures.
+func awaitLiveDeliveryPublisher(t *testing.T, done <-chan struct{}, mu *sync.Mutex, evs *[]*mecatlv1.Event, timeout time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		count, types := liveEventSummary(mu, evs)
+		t.Fatalf("delivery publisher did not drain and finish within %s; got %d live events: %v", timeout, count, types)
+	}
+}
+
+// waitForLiveEventSignal waits for an event receiver notification rather than
+// polling, so a terminal event establishes that all preceding wire events were
+// received in order.
+func waitForLiveEventSignal(mu *sync.Mutex, evs *[]*mecatlv1.Event, received <-chan struct{}, typ, substr string, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		mu.Lock()
+		for _, ev := range *evs {
+			if ev.GetType() != typ {
+				continue
+			}
+			if up := ev.GetUserPrompt(); up != nil {
+				if strings.Contains(up.GetText(), substr) {
+					mu.Unlock()
+					return true
+				}
+				continue
+			}
+			if strings.Contains(ev.GetText(), substr) {
+				mu.Unlock()
+				return true
+			}
+		}
+		mu.Unlock()
+
+		select {
+		case <-received:
+		case <-timer.C:
+			return false
+		}
+	}
+}
+
+// liveEventSummary snapshots the event diagnostics without leaving mu locked if
+// the caller reports a fatal assertion and receiver cleanup must join.
+func liveEventSummary(mu *sync.Mutex, evs *[]*mecatlv1.Event) (int, []string) {
+	mu.Lock()
+	defer mu.Unlock()
+	return len(*evs), liveEventTypes(*evs)
 }
 
 // liveEventTypes returns the type strings of the events for diagnostics.
