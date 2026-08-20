@@ -556,9 +556,14 @@ func TestStreamIdleDisabledSpawnsNoWatchdogGoroutine(t *testing.T) {
 		return sampled
 	}
 
-	// Settle so a prior test's teardown does not leave a stray goroutine in
-	// flight when the disabled sample is taken.
-	waitNoExtraGoroutines(t, runtime.NumGoroutine())
+	// Settle so a prior test's still-unwinding watchdog goroutine (async
+	// teardown after an idle timeout or an abandoned iterator) is not still on
+	// a stack when the disabled sample is taken. waitNoExtraGoroutines is the
+	// wrong tool here: its baseline is runtime.NumGoroutine() sampled at call
+	// time, so a stray watchdog already running gets baked into the baseline
+	// itself and the check passes trivially without ever waiting for it to
+	// exit. Poll the actual witness (the marker) instead.
+	waitNoWatchdogGoroutine(t, watchdogMarker)
 
 	if disabled := sampleRestChunkMarkerCount(0); disabled != 0 {
 		t.Fatalf("disabled config: found %d restSeqIdleBounded stack frame(s), want 0 (no watchdog goroutine when StreamIdleTimeout<=0)", disabled)
@@ -679,6 +684,24 @@ func TestStreamIdleCallerCancelMidStallUnwinds(t *testing.T) {
 		t.Fatalf("inner called %d times, want 1", f.Calls())
 	}
 	waitNoExtraGoroutines(t, runtime.NumGoroutine())
+}
+
+// waitNoWatchdogGoroutine polls goroutineStackMarkerCount(marker) until it
+// reads zero, so a caller never samples the stack while a prior test's
+// watchdog goroutine is still mid-teardown. Unlike waitNoExtraGoroutines, the
+// condition polled is the actual witness rather than a goroutine-count
+// baseline captured at call time (which a still-live watchdog would already
+// be part of).
+func waitNoWatchdogGoroutine(t *testing.T, marker string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if goroutineStackMarkerCount(marker) == 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("a prior test's %s watchdog goroutine did not exit within budget", marker)
 }
 
 // waitNoExtraGoroutines waits (with a short settle budget) until the live
