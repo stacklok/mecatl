@@ -189,7 +189,7 @@ lossy; nothing here forecloses it.
 
 - [Provider adapters](../architecture/providers.md) — the living description of
   the OpenAI request/stream mapping and the anthropic packing precedent.
-- `user-docs/extension-points/llm-provider.md` — the contract an out-of-tree
+- `user-docs/building/extension-points/llm-provider.md` — the contract an out-of-tree
   adapter author reads (outside the linked corpus; named, not linked).
 - [ADR 0203](./0203-permanent-provider-error-signal.md) — the permanent-error
   signal this rejection travels under, and why it is not retried generically.

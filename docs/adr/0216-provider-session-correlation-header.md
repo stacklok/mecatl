@@ -61,6 +61,6 @@ optional correlation signal rather than risking inference availability.
 ## See also
 
 - [Provider architecture](../architecture/providers.md)
-- [LLMProvider extension point](https://github.com/stacklok/mecatl/blob/main/user-docs/extension-points/llm-provider.md)
+- [LLMProvider extension point](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/llm-provider.md)
 - [ADR 0016](./0016-multi-provider.md)
 - [ADR 0093](./0093-provider-modules.md)
