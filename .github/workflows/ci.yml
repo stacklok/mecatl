@@ -726,6 +726,12 @@ jobs:
       - name: go test ./docs/lint
         run: go test ./docs/lint
 
+      # This command owns an executable contract for the session-storage
+      # operations guide under user-docs/. Keep it on the docs-only path: a
+      # documentation rename or edit must not leave a stale referenced runbook.
+      - name: go test documented mecated operations
+        run: go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_'
+
       # Freshness gate for the generated configuration reference + the embedded
       # config-init skeleton: regenerate both to a temp dir and fail if they differ
       # from what's committed (the same generate->commit->diff discipline as

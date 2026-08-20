@@ -39,7 +39,8 @@ every other change passes only when both parallel race shards succeed (failure,
 cancellation, or skipping either shard fails the gate). Manual dispatches use
 the distinct `Test (race experiment)` context with the same shard-outcome logic,
 so an experiment can never satisfy the stable required check. The Docs job also runs
-`go test ./docs/lint`. The classifier has offline NUL-delimited fixtures:
+`go test ./docs/lint` and the executable session-storage operations-guide contract
+in `cmd/mecated`. The classifier has offline NUL-delimited fixtures:
 `task test:docs-only-classifier`.
 
 The race partition is derived from `go list ./...`, never a maintained package
