@@ -83,7 +83,10 @@ jobs:
   test:
     name: Test (race)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Every recent successful run took 14m17s-14m51s -- the job was already
+    # hugging the 15m cap with no slack, so any load variance tips it over
+    # (as happened here). Bumped to give real headroom.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
