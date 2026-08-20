@@ -84,16 +84,26 @@ linters:
             - '**/mcp/oauthlogin/**.go'
           allow:
             - $gostd
-        # Domain leaves: pure, no mecatl-core dependencies. (session is the pure
-        # domain leaf; governance is the session-free leaf.)
+        # Governance is the session-free domain leaf; session carries its
+        # capability value without granting governance a reverse dependency.
         core-domain-leaf:
           list-mode: strict
           files:
-            - '**/engine/session/**.go'
             - '**/engine/governance/**.go'
             - '!$test'
           allow:
             - $gostd
+          deny:
+            - pkg: os
+              desc: 'core domain must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
+        core-session:
+          list-mode: strict
+          files:
+            - '**/engine/session/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/governance
           deny:
             - pkg: os
               desc: 'core domain must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
@@ -904,7 +914,7 @@ linters:
       # on the injected port.Diagnostics seam, not to police the mains.
       - linters:
           - forbidigo
-        path: ^cmd/
+        path: (^|.*/)cmd/
       # Test files may name the banned patterns in literals/messages (e.g. the guard
       # test asserting the rule bites, or doc-comments referencing slog.Warn).
       - linters:
