@@ -25,7 +25,7 @@ func TestRedisMetadataIndexAdoptionThroughAuthenticatedMaintenanceJob(t *testing
 	owner := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	for i, id := range []session.SessionID{"legacy-a", "legacy-b", "legacy-c"} {
 		sess := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Unix(1700000000, 0).UTC())
-		if err := sess.RestoreLabels(owner, ""); err != nil {
+		if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatal(err)
 		}
 		blob, err := sessnap.Marshal(sess)
@@ -72,7 +72,7 @@ func TestRedisMetadataIndexAdoptionThroughAuthenticatedMaintenanceJob(t *testing
 	// Current Save and Delete race safely with the rebuild: Save publishes its row
 	// atomically, while Delete removes a legacy candidate and advances generation.
 	current := session.New("current-save", session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
-	if err := current.RestoreLabels(owner, ""); err != nil {
+	if err := current.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(ctx, current); err != nil {

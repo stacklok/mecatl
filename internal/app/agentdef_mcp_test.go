@@ -13,6 +13,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
@@ -132,7 +133,7 @@ func toolNameSet(in []tool.Tool) map[string]struct{} {
 // TestDefMCPToolsReferencePullsFromMainManager asserts a REFERENCE entry adds the
 // named main server's tools to the def's set and opens NO new connection (nil close).
 func TestDefMCPToolsReferencePullsFromMainManager(t *testing.T) {
-	url := newMCPTestServer(t)
+	url := newMCPTestServerWithResource(t)
 
 	main := connectMainManager(t, "main", url)
 
@@ -141,12 +142,15 @@ func TestDefMCPToolsReferencePullsFromMainManager(t *testing.T) {
 		Description: "uses a referenced server",
 		MCPServers:  []agents.AgentMCPServer{{Name: "main"}}, // reference (no URL)
 	}
-	tools, names, closeFn := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
+	tools, names, resources, closeFn := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
 	if closeFn != nil {
 		t.Fatal("a reference entry must open no connection (nil close)")
 	}
 	if _, ok := toolNameSet(tools)["mcp__main__echo"]; !ok {
 		t.Fatalf("reference def should get mcp__main__echo, got %v", names)
+	}
+	if len(resources) != 1 || resources[0] != governance.MCPResourceCapability("main") {
+		t.Fatalf("reference def resource capabilities = %v, want %q", resources, governance.MCPResourceCapability("main"))
 	}
 }
 
@@ -162,7 +166,7 @@ func TestDefMCPToolsInlineConnectsAndTearsDown(t *testing.T) {
 		MCPServers:  []agents.AgentMCPServer{{Name: "inline", URL: url}},
 	}
 	// No main manager: an inline def must still connect on its own.
-	tools, names, closeFn := defMCPTools(context.Background(), port.NopDiagnostics{}, def, nil)
+	tools, names, _, closeFn := defMCPTools(context.Background(), port.NopDiagnostics{}, def, nil)
 	if closeFn == nil {
 		t.Fatal("an inline entry must return a non-nil close")
 	}
@@ -205,7 +209,7 @@ func TestDefMCPToolsUnknownReferenceSkipped(t *testing.T) {
 		Description: "references a server that does not exist",
 		MCPServers:  []agents.AgentMCPServer{{Name: "nope"}},
 	}
-	tools, _, closeFn := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
+	tools, _, _, closeFn := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
 	if len(tools) != 0 || closeFn != nil {
 		t.Fatalf("unknown reference must yield no tools and no close, got tools=%d close!=nil=%v", len(tools), closeFn != nil)
 	}

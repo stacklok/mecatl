@@ -189,7 +189,7 @@ func TestMaintenanceMutationCapabilityRequiresProvenExclusion(t *testing.T) {
 func saveCleanupSession(t *testing.T, store port.SessionStore, id session.SessionID, owner *session.Principal, kind session.SessionKind) {
 	t.Helper()
 	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
-	if err := s.RestoreLabels(owner, ""); err != nil {
+	if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RestoreSessionMetadata(kind, session.SessionRelationship{}); err != nil {

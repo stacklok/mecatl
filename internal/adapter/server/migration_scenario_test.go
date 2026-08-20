@@ -155,7 +155,7 @@ func newLegacySession(t *testing.T, id string, owner *session.Principal) *sessio
 	if err := sess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
-	if err := sess.RestoreLabels(owner, session.Authority("operator")); err != nil {
+	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	return sess

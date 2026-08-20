@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func TestStorageManagementAuthorityIsExplicit(t *testing.T) {
@@ -43,6 +44,31 @@ func TestStorageManagementAuthorityIsExplicit(t *testing.T) {
 	}
 	if local(session.WithPrincipal(context.Background(), tenant)) {
 		t.Fatal("local embedded authority accepted a request principal")
+	}
+}
+
+func TestBuildWiresStorageManagementAuthorityAndSingleWriter(t *testing.T) {
+	manager := &session.Principal{Issuer: "https://idp.example", Subject: "storage-admin", GrantType: session.GrantTypeUser}
+	built, err := Build(context.Background(), Config{
+		Workspace:                   t.TempDir(),
+		Model:                       "mock",
+		UseMock:                     true,
+		OwnershipEnforced:           true,
+		StorageManagementPrincipals: []session.Principal{*manager},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	if !built.Service.MaintenanceMutationAvailable() {
+		t.Fatal("Build did not wire the private-store single-writer capability")
+	}
+	if _, err := built.Service.StorageHealth(context.Background()); !errors.Is(err, server.ErrManagementUnauthorized) {
+		t.Fatalf("unauthenticated StorageHealth = %v, want ErrManagementUnauthorized", err)
+	}
+	if _, err := built.Service.StorageHealth(session.WithPrincipal(context.Background(), manager)); err != nil {
+		t.Fatalf("authorized StorageHealth = %v", err)
 	}
 }
 

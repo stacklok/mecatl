@@ -107,7 +107,7 @@ func saveLegacy(t *testing.T, store *memstore.Store, id session.SessionID, owner
 	if err := sess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RestoreLabels(owner, ""); err != nil {
+	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	sess.ProviderID, sess.ModelID = "provider-a", "model-a"
@@ -187,7 +187,7 @@ func TestSessionStorageContinuity_Scenario7_AdoptionEligibilityMatrix(t *testing
 	if err := invalid.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := invalid.RestoreLabels(adoptionPrincipal("alice"), ""); err != nil {
+	if err := invalid.RestoreLabels(adoptionPrincipal("alice"), session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	invalid.Conversation.Append(session.Message{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "dangling", Name: "Read"}}})
@@ -203,7 +203,7 @@ func TestSessionStorageContinuity_Scenario7_AdoptionEligibilityMatrix(t *testing
 	if err := awaiting.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := awaiting.RestoreLabels(adoptionPrincipal("alice"), ""); err != nil {
+	if err := awaiting.RestoreLabels(adoptionPrincipal("alice"), session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := awaiting.RecordUserPrompt("wait", nil); err != nil {
@@ -228,7 +228,7 @@ func TestSessionStorageContinuity_Scenario7_AdoptionEligibilityMatrix(t *testing
 	}
 
 	main := session.New("explicit-main", session.ModeDefault, "/legacy", session.Limits{}, time.Unix(1, 0))
-	if err := main.RestoreLabels(adoptionPrincipal("alice"), ""); err != nil {
+	if err := main.RestoreLabels(adoptionPrincipal("alice"), session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(ctx, main); err != nil {

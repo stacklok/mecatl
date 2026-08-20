@@ -162,6 +162,9 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 		agent.WithTeamGoal(goal),
 		agent.WithMemberSessionPrefix(agent.TeamSessionPrefix + id),
 	}
+	if s.cfg.RootAuthority != nil {
+		opts = append(opts, agent.WithRootAuthority(s.cfg.RootAuthority(session.SessionKindTeamMember)))
+	}
 	// The goal is the team's TRUSTED top-level instruction by default (the deployment
 	// owns the gRPC front door, so the goal's provenance is the operator/principal,
 	// not a peer). A multi-tenant / relay deployment that may interpolate untrusted

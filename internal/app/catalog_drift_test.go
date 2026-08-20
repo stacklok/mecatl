@@ -385,7 +385,7 @@ func TestBackgroundBashCatalogWiring(t *testing.T) {
 	// Bash keeps it as the agent tool and its catalog still gains NO BashStatus.
 	def := agents.AgentDef{Name: "scoped-explorer", Tools: []string{"Read", "Bash"}}
 	base := baseSubagentTools(cfg)
-	defEng, defClose, defNames, _ := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, "test",
+	defEng, defClose, defNames, _, _ := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, "test",
 		oa, cfg.Model, nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
 	if defClose != nil {
 		defer func() { _ = defClose() }()

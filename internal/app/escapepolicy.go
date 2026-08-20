@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
+	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
 // escapepolicy.go is the path-escape-posture Scenario 2+3+4 decision half
@@ -432,6 +433,37 @@ func (w *escapeWorkspace) ReplaceFile(ctx context.Context, path string, old tool
 		return tool.FileVersion{}, err
 	}
 	return w.Workspace.ReplaceFile(ctx, path, old, data)
+}
+
+// relaxedAuthorityResourceResolver is implemented only by the physical osfs
+// workspace. It keeps the deliberate relaxed-serving exception out of the
+// portable Workspace contract.
+type relaxedAuthorityResourceResolver interface {
+	RelaxedAuthorityResourcePath(path string) (target, workspace string, err error)
+}
+
+// AuthorityResourcePath applies the wrapper's pseudo-filesystem deny before
+// preserving the inner workspace's physical authority identity.
+func (w *escapeWorkspace) AuthorityResourcePath(path string) (target, workspace string, err error) {
+	if err := w.refusePseudoFS(path); err != nil {
+		return "", "", err
+	}
+	resolver, ok := w.Workspace.(tool.AuthorityResourceResolver)
+	if !ok {
+		return "", "", errors.New("workspace cannot derive an authority resource identity")
+	}
+	target, workspace, err = resolver.AuthorityResourcePath(path)
+	if err == nil {
+		return target, workspace, nil
+	}
+	if !errors.Is(err, osfs.ErrPathEscape) {
+		return "", "", err
+	}
+	relaxed, ok := w.Workspace.(relaxedAuthorityResourceResolver)
+	if !ok {
+		return "", "", err
+	}
+	return relaxed.RelaxedAuthorityResourcePath(path)
 }
 
 // RecordRead consults the SAME pseudo-fs guard before delegating to the inner

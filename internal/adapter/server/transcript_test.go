@@ -216,7 +216,7 @@ func TestSessionContinuityUX_TranscriptOwnershipIsCheckedOnSingleLoad(t *testing
 	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
 	sess := session.New("owned", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
-	if err := sess.RestoreLabels(alice, ""); err != nil {
+	if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	if err := base.Save(ctx, sess); err != nil {

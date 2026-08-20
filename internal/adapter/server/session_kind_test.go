@@ -201,12 +201,12 @@ func TestSessionContinuityUX_Scenario2_OwnershipOracleClosed(t *testing.T) {
 	aliceCtx := session.WithPrincipal(context.Background(), alice)
 
 	foreign := session.New("foreign", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	if err := foreign.RestoreLabels(bob, ""); err != nil {
+	if err := foreign.RestoreLabels(bob, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	ownerless := session.New("ownerless", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
 	pruned := session.New("pruned", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	if err := pruned.RestoreLabels(alice, ""); err != nil {
+	if err := pruned.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, sess := range []*session.Session{foreign, ownerless, pruned} {

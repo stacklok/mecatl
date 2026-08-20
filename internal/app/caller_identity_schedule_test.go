@@ -66,7 +66,7 @@ func newScheduleOwnerFixture(t *testing.T) (*memstore.Store, interface {
 func saveOwnedSession(t *testing.T, store *memstore.Store, id session.SessionID, owner *session.Principal) {
 	t.Helper()
 	sess := session.New(id, session.ModePlan, "/ws", session.Limits{}, time.Now())
-	if err := sess.RestoreLabels(owner, ""); err != nil {
+	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	if err := store.Save(context.Background(), sess); err != nil {

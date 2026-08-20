@@ -256,6 +256,18 @@ type readGateWorkspace struct {
 	checks   atomic.Int32
 }
 
+func (w *readGateWorkspace) AuthorityResourcePath(path string) (target, workspace string, err error) {
+	return wrappedAuthorityResourcePath(w.Workspace, path)
+}
+
+func wrappedAuthorityResourcePath(ws tool.Workspace, path string) (target, workspace string, err error) {
+	resolver, ok := ws.(tool.AuthorityResourceResolver)
+	if !ok {
+		return "", "", errors.New("wrapped workspace cannot derive an authority resource identity")
+	}
+	return resolver.AuthorityResourcePath(path)
+}
+
 // ReplaceFile is the Edit tool's conditional CAS — the call that fires AFTER the
 // Edit body re-read the file (ReadVersion) and recorded the pre-change version.
 // The FIRST gated replace is e1's (the cross-form edit — it must flow
@@ -463,6 +475,10 @@ type serialProbeWorkspace struct {
 	inflight *atomic.Int32
 	maxSeen  *atomic.Int32
 	pause    time.Duration
+}
+
+func (w *serialProbeWorkspace) AuthorityResourcePath(path string) (target, workspace string, err error) {
+	return wrappedAuthorityResourcePath(w.Workspace, path)
 }
 
 func newSerialProbeWorkspace(t *testing.T, root string, inflight, maxSeen *atomic.Int32, pause time.Duration) *serialProbeWorkspace {

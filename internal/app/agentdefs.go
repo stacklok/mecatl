@@ -609,9 +609,9 @@ func preloadedSkillBodies(def agents.AgentDef, idx skillIndex) (bodies []string,
 // It is forgiving end-to-end (the skills/teams philosophy): an unreachable inline
 // server or an unknown reference is logged and skipped, never fatal — the def is
 // still built with whatever MCP tools did resolve.
-func defMCPTools(ctx context.Context, d port.Diagnostics, def agents.AgentDef, mainMgr *mcp.Manager) (mcpTools []tool.Tool, names []string, closeFn func() error) {
+func defMCPTools(ctx context.Context, d port.Diagnostics, def agents.AgentDef, mainMgr *mcp.Manager) (mcpTools []tool.Tool, names []string, resourceCapabilities []string, closeFn func() error) {
 	if len(def.MCPServers) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	var inlineConfigs []mcp.ServerConfig
@@ -628,6 +628,9 @@ func defMCPTools(ctx context.Context, d port.Diagnostics, def agents.AgentDef, m
 				continue
 			}
 			mcpTools = append(mcpTools, refTools...)
+			if capability, ok := mainServerResourceCapability(mainMgr, name); ok {
+				resourceCapabilities = append(resourceCapabilities, capability)
+			}
 			d.Log(ctx, port.LevelInfo, "agent def scopes a referenced MCP server",
 				"agent", def.Name, "server", name, "tools", len(refTools), "origin", string(def.Origin))
 			continue
@@ -652,6 +655,7 @@ func defMCPTools(ctx context.Context, d port.Diagnostics, def agents.AgentDef, m
 		if mgr != nil {
 			inlineTools := mgr.Tools()
 			mcpTools = append(mcpTools, inlineTools...)
+			resourceCapabilities = append(resourceCapabilities, mcpResourceCapabilities(mgr)...)
 			closeFn = mgr.Close
 			d.Log(ctx, port.LevelInfo, "agent def scopes inline MCP servers",
 				"agent", def.Name, "servers", len(mgr.Servers()), "tools", len(inlineTools), "origin", string(def.Origin))
@@ -661,7 +665,7 @@ func defMCPTools(ctx context.Context, d port.Diagnostics, def agents.AgentDef, m
 	for _, t := range mcpTools {
 		names = append(names, t.Spec().Name)
 	}
-	return mcpTools, names, closeFn
+	return mcpTools, names, resourceCapabilities, closeFn
 }
 
 // mainServerTools returns the named main server's tools and true on a hit, or nil,
@@ -677,6 +681,18 @@ func mainServerTools(mainMgr *mcp.Manager, name string) ([]tool.Tool, bool) {
 		}
 	}
 	return nil, false
+}
+
+func mainServerResourceCapability(mainMgr *mcp.Manager, name string) (string, bool) {
+	if mainMgr == nil {
+		return "", false
+	}
+	for _, server := range mainMgr.Servers() {
+		if server.Name() == name && len(server.Resources()) != 0 {
+			return governance.MCPResourceCapability(name), true
+		}
+	}
+	return "", false
 }
 
 // defHookRunner builds the HookRunner scoped to a def's engine from its `hooks:`
@@ -771,7 +787,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// tuple to rebuild the SAME scoped engine on the override model.
 		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
 
-		eng, mcpClose, names, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, reg.Detail(def.Name), childProvider, model, windowFn, base, false /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr)
+		eng, mcpClose, names, resources, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, reg.Detail(def.Name), childProvider, model, windowFn, base, false /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr)
 		engines[def.Name] = eng
 		closeFn = composeCloseErr(mcpClose, closeFn)
 
@@ -779,9 +795,11 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// session by them (per-field falling back to the Subagent default child limits for
 		// any zero field). A def that sets neither yields the default, unchanged.
 		meta = append(meta, agent.AgentMeta{
-			Name:        def.Name,
-			Description: def.Description,
-			Limits:      defLimits(def, agent.DefaultChildLimits()),
+			Name:             def.Name,
+			Description:      def.Description,
+			Limits:           defLimits(def, agent.DefaultChildLimits()),
+			AuthorityCeiling: agentDefinitionAuthorityCeiling(def, names, resources),
+			Managed:          managedDefinitionAuthority(def),
 		})
 
 		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine built",
@@ -832,7 +850,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // inline server) + the scoped tool NAMES + the preloaded-skill COUNT, so callers can log
 // the "agent def engine built" INFO with the same fields the pre-extraction inline path
 // carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
-func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, int) {
+func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
 	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, bashScopeMissReason(cfg))
 	for _, d := range diags {
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def tool scoping",
@@ -858,12 +876,14 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// aggregated into the returned closeFn → Built.Close (process-lifetime engines, torn
 	// down on shutdown). MCP tool names are NOT relevant to a Subagent def's read-only
 	// backstop (Subagent defs are not team members), so the names return is ignored here.
-	mcpTools, _, mcpClose := defMCPTools(ctx, cfg.diag(), def, mainMgr)
+	mcpTools, _, resourceCapabilities, mcpClose := defMCPTools(ctx, cfg.diag(), def, mainMgr)
 	for _, mt := range mcpTools {
 		if err := cat.Register(mt); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def MCP tool registration failed; skipped",
 				"agent", def.Name, "tool", mt.Spec().Name, "err", err)
+			continue
 		}
+		names = append(names, mt.Spec().Name)
 	}
 
 	bodies, missing := preloadedSkillBodies(def, skillIdx)
@@ -882,7 +902,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// child's compactor/counter/window through the resolved provider+model
 	// (contamination fix).
 	eng := newChildEngineForProvider(cfg, role, childProvider, model, windowFn, cat, agentPromptConfig(cfg, def, model, memHead, bodies...), hooks)
-	return eng, mcpClose, names, len(bodies)
+	return eng, mcpClose, names, resourceCapabilities, len(bodies)
 }
 
 // composeCloseErr chains two optional error-returning close funcs into one (first

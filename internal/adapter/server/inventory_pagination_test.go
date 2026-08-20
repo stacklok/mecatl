@@ -43,7 +43,7 @@ func inventoryService(t *testing.T, store port.SessionStore, ownership bool) *se
 func saveInventorySession(t *testing.T, st port.SessionStore, id session.SessionID, owner *session.Principal, kind session.SessionKind, rel session.SessionRelationship) {
 	t.Helper()
 	s := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0))
-	if err := s.RestoreLabels(owner, session.Authority("")); err != nil {
+	if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(%q): %v", id, err)
 	}
 	if err := s.RestoreSessionMetadata(kind, rel); err != nil {

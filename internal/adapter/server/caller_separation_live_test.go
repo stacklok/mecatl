@@ -176,7 +176,7 @@ func TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked(t *testing.T) {
 func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing.T) {
 	store := memstore.New()
 	child := session.New("subagent-alice", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	if err := child.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, ""); err != nil {
+	if err := child.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := child.RecordUserPrompt("ALICE SECRET", nil); err != nil {
@@ -187,7 +187,7 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 	}
 	inspect := agent.NewInspectSubagentToolWithOwnership(store, true)
 	member := session.New(agent.MemberSessionID("team-alice", "researcher"), session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	if err := member.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, ""); err != nil {
+	if err := member.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := member.RecordUserPrompt("TEAM SECRET", nil); err != nil {

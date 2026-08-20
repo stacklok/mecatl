@@ -282,7 +282,7 @@ func TestCallerIdentity_Scenario4_EventActorLogOnly(t *testing.T) {
 	}
 	// The folded session keeps the owner its caller restores from the snapshot: the
 	// fold neither requires nor overwrites it.
-	if err := withActor.RestoreLabels(alice, ""); err != nil {
+	if err := withActor.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels on a folded session: %v", err)
 	}
 	if got := ownerOf(withActor.Owner); got != *alice {
