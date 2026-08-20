@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -1049,7 +1051,24 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 		}
 	}
 
-	res, dur := e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+	var authorityResult *session.ToolResult
+	if result, checked := e.authorizeExecution(ctx, r, sess, env, turnIdx, c); checked {
+		authorityResult = &result
+	}
+
+	var res session.ToolResult
+	var dur time.Duration
+	if authorityResult != nil {
+		res = *authorityResult
+	} else if _, ok := t.(*tool.Search); ok {
+		if authority, bound := sess.BoundAuthority(); bound {
+			res = authorityToolSearch(c, e.deps.Catalog, authority.CapabilitySet)
+		} else {
+			res, dur = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+		}
+	} else {
+		res, dur = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+	}
 
 	// PostToolUse may rewrite the result. The effective (possibly rewritten) result
 	// is what we log, emit, and return, so the audit log, the client event stream,
@@ -1074,6 +1093,177 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 
 	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 	return res
+}
+
+const callMcpWithQueryToolName = "CallMcpWithQuery"
+
+// authorizeExecution is the single authority-enforcement boundary. Permission
+// and hook gates decide whether a call may reach execution; a bound session's
+// carried authority independently decides which exact tool it may execute.
+func (e *Engine) authorizeExecution(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall) (session.ToolResult, bool) {
+	authority, bound := sess.BoundAuthority()
+	if !bound {
+		return session.ToolResult{}, false
+	}
+	if e.deps.AuthorityEvaluator == nil {
+		return session.NewToolError(call.ID, fmt.Sprintf("tool %q was not executed: authority evaluator is not configured", call.Name)), true
+	}
+
+	target, err := authorityTarget(call, authority.CapabilitySet)
+	if err != nil {
+		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: %v", call.Name, err)), true
+	}
+	resource, err := authorityResource(call, env)
+	if err != nil {
+		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: %v", target, err)), true
+	}
+	ownerIssuer := ""
+	ownerSubject := ""
+	if sess.Owner != nil {
+		ownerIssuer = sess.Owner.Issuer
+		ownerSubject = sess.Owner.Subject
+	}
+	if requirement, required := e.deps.AuthorityEvaluator.(port.AuthorityOwnerRequirement); required && requirement.RequiresOwnerIdentity() && (ownerIssuer == "" || ownerSubject == "") {
+		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: owner identity is unavailable", target)), true
+	}
+	request := port.AuthorityRequest{
+		CapabilitySet:   authority.CapabilitySet,
+		ToolName:        target,
+		Action:          call.Name,
+		DelegationDepth: authority.CapabilitySet.RemainingDelegationDepth,
+		Principal: port.AuthorityPrincipal{
+			Definition:   authorityDefinition(authority),
+			Instance:     string(sess.ID),
+			OwnerIssuer:  ownerIssuer,
+			OwnerSubject: ownerSubject,
+		},
+		Resource: resource,
+	}
+	decision, err := e.deps.AuthorityEvaluator.AuthorizeTool(ctx, request)
+	if err != nil {
+		r.diag.Log(ctx, port.LevelWarn, "authority evaluator unavailable", "tool", target, "turn", turnIdx, "err", err)
+		return session.NewToolError(call.ID, fmt.Sprintf("tool %q was not executed: authority evaluator unavailable", target)), true
+	}
+	if !decision.Allowed {
+		reason := decision.Reason
+		if reason == "" {
+			reason = "authorization denied"
+		}
+		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: %s", target, reason)), true
+	}
+	return session.ToolResult{}, false
+}
+
+func authorityDefinition(authority session.Authority) string {
+	if authority.DefinitionIdentity != "" {
+		return authority.DefinitionIdentity
+	}
+	return "root"
+}
+
+// authorityTarget translates meta-tools whose actual reach is named in their
+// arguments. Resource operations authorize the server's opaque derived capability,
+// while retaining their actual meta-tool name as the evaluator action.
+func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string, error) {
+	switch call.Name {
+	case callMcpWithQueryToolName:
+		var args struct {
+			Server string `json:"server"`
+			Tool   string `json:"tool"`
+		}
+		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" || strings.TrimSpace(args.Tool) == "" {
+			return "", errors.New("CallMcpWithQuery target is invalid")
+		}
+		return "mcp__" + strings.TrimSpace(args.Server) + "__" + strings.TrimSpace(args.Tool), nil
+	case "ListMcpResources", "ReadMcpResource":
+		var args struct {
+			Server string `json:"server"`
+		}
+		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" {
+			return "", errors.New("MCP resource target is invalid")
+		}
+		return governance.MCPResourceCapability(strings.TrimSpace(args.Server)), nil
+	default:
+		return call.Name, nil
+	}
+}
+
+func authorityResource(call session.ToolCall, env tool.Environment) (*port.AuthorityResource, error) {
+	switch call.Name {
+	case "Read", "Edit", "Write":
+		path, err := authorityPath(call.Args)
+		if err != nil {
+			return nil, err
+		}
+		return authorityWorkspaceResource(path, env)
+	default:
+		return nil, nil
+	}
+}
+
+// authorityPath reads only the path field from the known local-file tool shapes.
+// It refuses duplicate, missing, non-string, or trailing values so an evaluator
+// never receives a target selected from ambiguous JSON.
+func authorityPath(args json.RawMessage) (string, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(args)))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return "", errors.New("local resource arguments are invalid")
+	}
+
+	var path string
+	pathCount := 0
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return "", errors.New("local resource arguments are invalid")
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return "", errors.New("local resource arguments are invalid")
+		}
+		if key != "path" {
+			continue
+		}
+		pathCount++
+		if pathCount != 1 || json.Unmarshal(value, &path) != nil {
+			return "", errors.New("local resource path is ambiguous")
+		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return "", errors.New("local resource arguments are invalid")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return "", errors.New("local resource arguments are invalid")
+	}
+	if pathCount != 1 || path == "" || len(path) > 4096 || strings.IndexByte(path, 0) >= 0 {
+		return "", errors.New("local resource path is invalid")
+	}
+	return path, nil
+}
+
+// authorityWorkspaceResource delegates physical identity derivation to the live
+// workspace so the policy descriptor names the same confined target filesystem
+// access will use. A bound authority must not fall back to lexical normalization:
+// an unavailable or ambiguous resolver fails the call closed.
+func authorityWorkspaceResource(path string, env tool.Environment) (*port.AuthorityResource, error) {
+	resolver, ok := env.Workspace().(tool.AuthorityResourceResolver)
+	if !ok {
+		return nil, errors.New("session workspace cannot derive an authority resource identity")
+	}
+	target, workspace, err := resolver.AuthorityResourcePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("derive authority resource identity: %w", err)
+	}
+	if target == "" || workspace == "" || !filepath.IsAbs(target) || !filepath.IsAbs(workspace) {
+		return nil, errors.New("session workspace returned an invalid authority resource identity")
+	}
+	return &port.AuthorityResource{
+		Kind:      port.AuthorityResourceWorkspaceFile,
+		Path:      filepath.ToSlash(target),
+		Workspace: filepath.ToSlash(workspace),
+	}, nil
 }
 
 // timeExecute runs the tool and reports its elapsed wall time as (Clock.Now −
@@ -1171,6 +1361,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		// child session it spawns is attributed to the SAME principal. Read off
 		// the aggregate, never off the ambient context — see parentCaps.owner.
 		caps.owner = sess.Owner
+		caps.authority, caps.authorityBound = sess.BoundAuthority()
 		// The parent session's OWN id rides down too (review finding 2, issue
 		// #368) so every derived child/branch/member id is namespaced under a
 		// value that is already collision-safe across owners — see

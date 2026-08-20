@@ -162,6 +162,10 @@ type Deps struct {
 	Catalog *tool.Catalog
 	// Policy evaluates each tool call (deny → ask → allow).
 	Policy port.PermissionPolicy
+	// AuthorityEvaluator authorizes executions for sessions carrying a derived
+	// authority set. Bound sessions require an evaluator; composition selects either
+	// enforcement or the explicit noop evaluator when it mints bound sessions.
+	AuthorityEvaluator port.AuthorityEvaluator
 	// Hooks runs the PreToolUse / PostToolUse lifecycle hooks.
 	Hooks port.HookRunner
 	// Store persists session state (optional; nil disables persistence).
@@ -2006,26 +2010,15 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	} else {
 		cfg.Tools = e.deps.Catalog.Specs(sess.Mode)
 	}
+	authority, authorityBound := sess.BoundAuthority()
+	cfg.Tools = authoritySpecs(cfg.Tools, authority.CapabilitySet, authorityBound)
 	// Run-scoped extra tools (RunRequest.ExtraTools) are advertised this run only,
 	// after the catalog specs, so a structured-output SubmitResult (or any per-run
 	// tool) is visible to the model without being registered into the shared catalog.
 	// A name already present in cfg.Tools is REPLACED by the extra's spec (the overlay
 	// wins, matching lookupTool's overlay-first resolution) so the advertised set and
 	// the dispatch resolution never disagree.
-	for _, xt := range r.req.ExtraTools {
-		spec := xt.Spec()
-		replaced := false
-		for i := range cfg.Tools {
-			if cfg.Tools[i].Name == spec.Name {
-				cfg.Tools[i] = spec
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			cfg.Tools = append(cfg.Tools, spec)
-		}
-	}
+	cfg.Tools = authorityOverlaySpecs(cfg.Tools, r.req.ExtraTools)
 	// Shell-less Environment (issue #462 review): the CAPABILITY TRUTH for whether
 	// this turn has a shell is the LIVE tool.Environment handed to Run, NOT the
 	// shared Engine's catalog/prompt (which were built once from server config and

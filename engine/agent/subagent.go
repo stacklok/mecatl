@@ -176,6 +176,10 @@ type parentCaps struct {
 	// OWNERLESS parent (the no-auth path), which yields an ownerless child: never
 	// a fabricated one, and never a rejection.
 	owner *session.Principal
+	// authority is the PARENT aggregate's carried capability set. Delegation must
+	// attenuate this value before it creates child runtime resources.
+	authority      session.Authority
+	authorityBound bool
 	// parentSessionID is the PARENT session's own SessionID (review finding 2,
 	// issue #368), handed down so every derived child/branch/member session id
 	// is namespaced under it. A durable delegation id previously derived ONLY
