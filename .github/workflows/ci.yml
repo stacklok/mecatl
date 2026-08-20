@@ -102,29 +102,66 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
-      # `task test` == `go test -race ./...` (root) + the engine module + the
-      # standalone hygiene proof. We run the underlying commands directly rather
-      # than pulling in the Task binary; CI and local `task test` stay in lockstep
-      # because the go commands are identical. The standalone GOWORK=off proof
-      # lives in its own `engine-standalone` job below.
+      # `task test` runs the same package sets with `-race`; the standalone
+      # GOWORK=off proof lives in its own `engine-standalone` job below.
+      #
+      # Preserve package-level timing records for this run before splitting this
+      # serial job. `-count=1` avoids test-cache timings; `-json` records each
+      # package without changing the tests or race instrumentation.
+      - name: Prepare race-test timing capture
+        run: mkdir -p "$RUNNER_TEMP/go-test-race-json"
+
       - name: go test -race
-        run: go test -race ./...
+        run: |
+          if ! go test -race -count=1 -json ./... > "$RUNNER_TEMP/go-test-race-json/root.jsonl"; then
+            cat "$RUNNER_TEMP/go-test-race-json/root.jsonl"
+            exit 1
+          fi
 
       # engine/ is a separate module — `./...` from the root does NOT cross the
       # module boundary, so its tests are a second invocation.
       - name: go test -race (engine module)
-        run: cd engine && go test -race ./...
+        run: |
+          if ! (cd engine && go test -race -count=1 -json ./...) > "$RUNNER_TEMP/go-test-race-json/engine.jsonl"; then
+            cat "$RUNNER_TEMP/go-test-race-json/engine.jsonl"
+            exit 1
+          fi
 
       - name: go test -race (OIDC authn module)
-        run: cd authn/oidc && go test -race ./...
+        run: |
+          if ! (cd authn/oidc && go test -race -count=1 -json ./...) > "$RUNNER_TEMP/go-test-race-json/authn-oidc.jsonl"; then
+            cat "$RUNNER_TEMP/go-test-race-json/authn-oidc.jsonl"
+            exit 1
+          fi
 
       # provider/ submodules (ADR 0093) — each its own module under the workspace.
       - name: go test -race (provider modules)
         run: |
-          (cd provider/ssefilter && go test -race ./...)
-          (cd provider/anthropic && go test -race ./...)
-          (cd provider/openai && go test -race ./...)
-          (cd provider/openaichat && go test -race ./...)
+          if ! (cd provider/ssefilter && go test -race -count=1 -json ./...) > "$RUNNER_TEMP/go-test-race-json/provider-ssefilter.jsonl"; then
+            cat "$RUNNER_TEMP/go-test-race-json/provider-ssefilter.jsonl"
+            exit 1
+          fi
+          if ! (cd provider/anthropic && go test -race -count=1 -json ./...) > "$RUNNER_TEMP/go-test-race-json/provider-anthropic.jsonl"; then
+            cat "$RUNNER_TEMP/go-test-race-json/provider-anthropic.jsonl"
+            exit 1
+          fi
+          if ! (cd provider/openai && go test -race -count=1 -json ./...) > "$RUNNER_TEMP/go-test-race-json/provider-openai.jsonl"; then
+            cat "$RUNNER_TEMP/go-test-race-json/provider-openai.jsonl"
+            exit 1
+          fi
+          if ! (cd provider/openaichat && go test -race -count=1 -json ./...) > "$RUNNER_TEMP/go-test-race-json/provider-openaichat.jsonl"; then
+            cat "$RUNNER_TEMP/go-test-race-json/provider-openaichat.jsonl"
+            exit 1
+          fi
+
+      - name: Upload race-test timing records
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: go-test-race-json-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/go-test-race-json
+          retention-days: 14
+          if-no-files-found: warn
 
   lint:
     name: Lint
