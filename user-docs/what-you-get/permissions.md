@@ -16,6 +16,37 @@ run at all; Layer 2 inspects the data crossing the tool boundary once a call is
 permitted. Configure them independently. Layer 1 is always on (it ships with a
 safe default ruleset); Layer 2 is off until you give it a checker model.
 
+## Delegated authority
+
+Delegated children also carry an **authority set**. This is not another approval
+prompt or a replacement for permissions: it is the non-widening list of tools and
+execution posture a child inherited from its parent. A named managed specialist can
+narrow that set with its `tools:` allowlist. Every child tool execution is checked
+against the carried set, so a stale tool listing cannot turn an omitted tool into an
+allowed call. A resumed child keeps its persisted set and cannot resume under a
+parent that has become narrower.
+
+`mecated` selects the evaluator at startup:
+
+```sh
+mecated --authority-evaluator=local
+mecated --authority-evaluator=noop
+mecated --authority-evaluator=cedar --cedar-authority-policy=/etc/mecatl/authority.cedar
+```
+
+`local` is the default and checks exact carried tool names in process. `noop` is an
+explicit deployment choice that disables authority enforcement; it is not selected by
+an omitted configuration. `cedar` loads one static **operator-owned** Cedar policy at
+startup. A missing or invalid policy prevents startup rather than falling back to a
+less restrictive evaluator. Cedar can add a denial, such as prohibiting a managed
+specialist from reading `/workspace/vendor/**`, but cannot grant a tool absent from the
+child's carried set. Keep the policy outside project-controlled files.
+
+Authority failures are fail-closed. A denial tells the model that authority refused the
+call; an unavailable evaluator is reported separately to operators and is not treated
+as permission approval. See [ADR 0232](https://github.com/stacklok/mecatl/blob/main/docs/adr/0232-authority-evaluator-port.md)
+for the boundary and constraints.
+
 ---
 
 ## Layer 1 — the permission rule engine

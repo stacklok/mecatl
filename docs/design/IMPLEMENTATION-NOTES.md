@@ -93,7 +93,7 @@ missing, empty, or non-string identity claims and deriving only `user` or
 `client_credentials`; it never verifies a token and never mints `system`. An embedder
 puts that principal on the run context with `session.WithPrincipal`. If it constructs a
 session aggregate itself, it also seeds durable ownership through
-`Session.RestoreLabels(principal, "")`; children, forks, and resumed sessions inherit
+`Session.RestoreLabels(principal, session.Authority{})`; children, forks, and resumed sessions inherit
 that owner.
 
 OIDC/JWKS mechanics live in the opt-in `authn/oidc` module (ADR 0206), not engine and
@@ -292,6 +292,34 @@ caveat applies: an older binary that writes the file does not know the additive 
 and discards revision/undo history (not the active values). Lifecycle mutation tools are not
 added to the built-in allow floor; the existing permission fold therefore governs them without
 loosening policy.
+
+
+## Delegated authority
+
+ADR 0232 adds a second, narrower decision to permission policy. `PermissionPolicy`
+continues to resolve user/operator approval rules; authority answers whether this bound
+run carries a capability at all. A session's `Authority` persists one plain
+`governance.CapabilitySet` with provenance and definition identity. Delegation derives
+by intersection only, consumes a hop before any child resource is allocated, and stamps
+the derived set beside the independently-derived owner. A resumed child preserves its
+persisted set and is rejected if it no longer fits the caller's current set; it neither
+re-applies a specialist ceiling nor consumes another hop.
+
+The loop calls `port.AuthorityEvaluator` only at tool execution. Local exact-name
+checking is the default; explicit `noop` disables enforcement; optional Cedar loads a
+static operator policy at startup. The evaluator request holds the carried set, action,
+depth, non-secret principal, and an optional normalized filesystem resource. It has no
+raw arguments, credentials, catalog, runner, or Cedar type. A Cedar policy can tighten
+an allowed capability, including a path boundary, but the carried-set check runs first
+and prevents it from granting an omitted capability. `CallMcpWithQuery` is checked as
+its reconstructed remote tool name, and MCP resource access derives from the carried
+names. `TestADR_0232_AuthorityEvaluator_VerticalSlice` is the real `app.Build` offline
+proof of composition, execution, stale disclosure, meta-target denial, restart, and
+narrowed resume; evaluator-outage injection remains the engine-adapter proof because
+composition selects only configured production adapters. The Cedar counterpart pins the
+policy path. See
+[ADR 0232](../adr/0232-authority-evaluator-port.md).
+
 
 ## Domain — `engine/prompt/`
 

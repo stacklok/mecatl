@@ -75,16 +75,20 @@ when the code that satisfies the plan has landed.
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:
   draft.
+- [Session storage continuity](session-storage-continuity.md) — bounded current snapshots,
+  indexed metadata, maintenance jobs, and writable legacy-session adoption. Status:
+  landed.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
   and a final session-ID handoff for mecatui. Status: landed.
-- [Session storage continuity](session-storage-continuity.md) — bounded current
-  snapshots, indexed progressive inventory, resumable migration/cleanup, configurable
-  retention, and explicit legacy-chat adoption. Status: draft.
 - [Steer-while-running](steer-while-running.md) — inject a user message into an
   in-flight run (Claude Code's "steer"): an engine-side supersedable inbox drained
   at the turn boundary, a gRPC `Converse` frame, the authoritative drain echo, and
   the mecatui capability flip; gRPC-only v1 (HTTP deferred). Status: draft.
+- [Authority evaluator port](authority-evaluator-port.md) — derived capability sets
+  narrowed at every delegation seam, with the decision behind one swappable
+  evaluator port at the single dispatch chokepoint; Cedar is an opt-in adapter.
+  Status: draft.
 
 ## See also
 

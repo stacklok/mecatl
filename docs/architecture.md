@@ -186,6 +186,33 @@ limiting, the `permclassify` model-based risk classifier), **context management*
 **parallelism** (`forker` fork-join), and **extensibility** (the `mcp`
 streaming-HTTP client). Each is detailed below.
 
+
+## Authority evaluation
+
+A bound session carries a derived `governance.CapabilitySet`: exact tool names,
+remaining delegation depth, and execution-posture flags. A child derives only by
+intersection with its parent's carried set, an eligible managed specialist ceiling,
+and a per-call tightening, then spends one delegation hop before composition creates
+its runtime resources. The set and its provenance persist with the child. Resuming a
+child preserves its already-derived set and refuses it when that set no longer fits the
+current parent's set; a resume does not spend another hop.
+
+`port.AuthorityEvaluator` is separate from `PermissionPolicy` and caller ownership.
+The agent loop calls it once at the tool execution boundary with the carried set, the
+tool name, delegation depth, identity attribution, and, for recognized filesystem
+calls, a normalized non-secret resource descriptor. It never supplies raw arguments or
+credentials. The evaluator may deny but cannot grant a tool omitted by the carried set;
+an unavailable evaluator fails closed and is reported separately from a denial.
+
+Composition selects `local` by default for the in-process set check, `noop` only when
+an operator explicitly disables enforcement, or opt-in `cedar` for a static
+operator-owned policy loaded at startup. Cedar stays in `internal/adapter`, so the
+importable engine has no Cedar dependency. Its policy can add constraints such as a
+workspace path boundary but cannot add a capability. The `CallMcpWithQuery` meta-tool
+is checked against its reconstructed `mcp__<server>__<tool>` target, not as blanket
+access to a server. See [ADR 0232](adr/0232-authority-evaluator-port.md).
+
+
 ## 2. The big picture
 
 ```mermaid
@@ -879,7 +906,7 @@ if principal == nil {
     return errUnauthenticated
 }
 ctx = session.WithPrincipal(ctx, principal)      // context passed to Engine.Run
-if err := sess.RestoreLabels(principal, ""); err != nil {
+if err := sess.RestoreLabels(principal, session.Authority{}); err != nil {
     return err
 }
 run := eng.Run(ctx, sess, workspace, request)
