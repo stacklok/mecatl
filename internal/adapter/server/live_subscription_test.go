@@ -510,12 +510,15 @@ func driveLiveDeliveryRun(ctx context.Context, t *testing.T, svc *server.Service
 	if err != nil {
 		t.Fatalf("StartRunContent (delivery): %v", err)
 	}
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for ev := range run.Events() {
 			svc.PublishSessionEvent(id, ev)
 		}
 		svc.FinishRun(id, run)
 	}()
+	t.Cleanup(func() { <-done })
 }
 
 // probeLiveSubscription publishes a probe event repeatedly until it arrives on

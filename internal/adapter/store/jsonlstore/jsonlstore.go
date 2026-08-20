@@ -144,10 +144,6 @@ func normalizeStoreRoot(dir string) (string, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", fmt.Errorf("jsonlstore: create dir: %w", err)
 	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("jsonlstore: resolve dir: %w", err)
-	}
 	info, err := os.Stat(root)
 	if err != nil {
 		return "", fmt.Errorf("jsonlstore: stat dir: %w", err)
