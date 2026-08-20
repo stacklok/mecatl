@@ -68,15 +68,17 @@ type coreImportRule struct {
 	desc            string          // human rule cited on failure
 }
 
-// coreImportRules is the direction table covering ALL seven tiers. Domain leaves
-// (session, governance) assert ZERO internal imports (pure leaves). Every higher
-// tier names only the lower tiers it legitimately depends on — never sideways,
-// never upward.
+// coreImportRules is the direction table covering ALL seven tiers. Governance
+// remains session-free; session may carry governance capability values. Every
+// higher tier names only the lower tiers it legitimately depends on — never
+// sideways, never upward.
 var coreImportRules = []coreImportRule{
 	{
-		pkg:         modulePrefix + "engine/session",
-		allowedCore: map[string]bool{},
-		desc:        "session is the pure domain leaf: it may import only stdlib (zero internal imports)",
+		pkg: modulePrefix + "engine/session",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/governance": true,
+		},
+		desc: "session may import governance's capability value + stdlib; governance stays session-free",
 	},
 	{
 		pkg:         modulePrefix + "engine/governance",
