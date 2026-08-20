@@ -660,6 +660,7 @@ tasks:
     cmds:
       - bash .github/scripts/docs-only-changes_test.sh
       - bash .github/scripts/docs-only-workflow_test.sh
+      - bash .github/scripts/race-aggregate-workflow_test.sh
 
   lint:actions:
     desc: |

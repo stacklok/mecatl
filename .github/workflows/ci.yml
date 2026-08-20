@@ -95,9 +95,12 @@ jobs:
             && git fetch --no-tags origin "$base" "$head" \
             && git cat-file -e "$base^{commit}" \
             && git cat-file -e "$head^{commit}"; then
-            result="$(git diff --name-only --no-renames -z "$base" "$head" | bash .github/scripts/docs-only-changes.sh)" || result=false
-            if [[ "$result" == true ]]; then
-              docs_only=true
+            trusted_classifier="$RUNNER_TEMP/docs-only-changes.sh"
+            if git show "$base:.github/scripts/docs-only-changes.sh" > "$trusted_classifier"; then
+              result="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$trusted_classifier")" || result=false
+              if [[ "$result" == true ]]; then
+                docs_only=true
+              fi
             fi
           fi
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
@@ -181,6 +184,7 @@ jobs:
           bash .github/scripts/root-race-packages_test.sh
           bash .github/scripts/race-test_test.sh
           bash .github/scripts/race-vet-off-workflow_test.sh
+          bash .github/scripts/race-aggregate-workflow_test.sh
           bash .github/scripts/docs-only-changes_test.sh
           bash .github/scripts/docs-only-workflow_test.sh
 
@@ -267,10 +271,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-  # Stable required-check gate: docs-only runs pass without starting either
-  # expensive shard; full runs pass only when both shards completed successfully.
+  # One aggregate job keeps shard reporting identical for every trigger. Manual
+  # experiments use a distinct context so they can never satisfy the stable
+  # push/PR required check.
   test:
-    name: Test (race)
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Test (race experiment)' || 'Test (race)' }}
     needs: [changes, test-race-root, test-race-ui]
     if: always()
     runs-on: ubuntu-24.04

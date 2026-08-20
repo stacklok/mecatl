@@ -20,8 +20,11 @@ superseded runs cancelled via `concurrency`):
 `ci.yml` is intentionally triggered for **every** push/PR; it does not use
 workflow-level path filters, which can leave a required check absent. Its first
 `changes` job compares the event's exact base/head (PR) or before/SHA (push),
-then fails closed to full validation if a ref cannot be fetched, the range is
-invalid, or a changed path is outside the narrow docs-content allowlist. Only
+then extracts `.github/scripts/docs-only-changes.sh` from that validated base
+commit into `RUNNER_TEMP` and executes the trusted copy against the NUL-delimited
+diff. It fails closed to full validation if a ref cannot be fetched, the range is
+invalid, the trusted classifier cannot be extracted or run, or a changed path is
+outside the narrow docs-content allowlist. Only
 Markdown under `docs/` or `user-docs/`, `user-docs/**/_category_.json`, root
 `README.md`, and `llms.txt` qualify. Workflow/build/configuration files,
 `AGENTS.md`/`CLAUDE.md`, `docs/lint` code, domain-model YAML, website tooling,
@@ -30,10 +33,12 @@ disabled for the comparison so both sides of a rename are classified.
 
 Docs-only runs skip the expensive build/race-shard/lint/fuzz/standalone/API/vulnerability
 jobs via job-level conditions, while retaining the documentation-relevant Docs,
-User docs, and Domain model jobs. The stable required check `Test (race)` is an
-aggregate gate: it passes directly for docs-only changes, and for every other
-change passes only when both parallel race shards succeed (failure, cancellation,
-or skipping either shard fails the gate). The Docs job also runs
+User docs, and Domain model jobs. The aggregate gate is named `Test (race)` on
+push and pull-request runs: it passes directly for docs-only changes, and for
+every other change passes only when both parallel race shards succeed (failure,
+cancellation, or skipping either shard fails the gate). Manual dispatches use
+the distinct `Test (race experiment)` context with the same shard-outcome logic,
+so an experiment can never satisfy the stable required check. The Docs job also runs
 `go test ./docs/lint`. The classifier has offline NUL-delimited fixtures:
 `task test:docs-only-classifier`.
 
@@ -98,7 +103,7 @@ tests (including subtests). Sort the latter by elapsed time, for example, with
 | `build` | `go build ./...` |
 | `test-race-ui` | `go test -race -count=1 ./cmd/mecatui/ui` |
 | `test-race-root` | Dynamic root complement plus engine/OIDC/provider race sweeps |
-| `test` | Stable aggregate `Test (race)` required-check gate over both race shards |
+| `test` | Aggregate over both race shards: stable `Test (race)` on push/PR, isolated `Test (race experiment)` on dispatch |
 | `lint` | `golangci-lint` (v2) + `go vet ./...` + `actionlint` (workflow lint, pinned via `go run`) + the reusable-workflow pin check + the empty-expression (action-templates) check + the mecatequi composite-action shell tests |
 | `fuzz-smoke` | `task fuzz FUZZTIME=300000x` — short coverage-guided pass over the security-critical parsers (not the nightly deep fuzz); an iteration count, not a duration, so it can't race the fuzz coordinator's own deadline |
 
