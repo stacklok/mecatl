@@ -312,8 +312,9 @@ tasks:
 
   deploy:check:
     desc: |
-      Validate the deploy/helm/mecak8s chart WITHOUT a cluster: schema-check the
-      rendered manifests (default + oidc.enabled=true) and assert the
+      Validate the deploy/helm/mecak8s chart WITHOUT a cluster: `helm lint`
+      every deploy/helm/mecak8s/ci/*-values.yaml fixture, schema-check the
+      rendered manifests (default + oidc.enabled=true), and assert the
       caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
       cluster, so it runs in CI and on a laptop.
     vars:
@@ -325,11 +326,30 @@ tasks:
       - sh: command -v kubeconform >/dev/null 2>&1
         msg: "kubeconform is not installed (go install github.com/yannh/kubeconform/cmd/kubeconform@latest)"
     cmds:
+      # `helm template | kubeconform` against every
+      # deploy/helm/mecak8s/ci/*-values.yaml fixture — a discoverable,
+      # `-f`-based example of a full production install, checked the same way
+      # as the --set-based PROD_SET/OIDC_SET renders below. Deliberately NOT
+      # `helm lint`: it does not fail on a template execution error (a
+      # `fail`/`required` violation prints as an INFO line and still exits 0),
+      # so it wouldn't catch the class of error this exists to catch. This is
+      # chart-testing's (`ct lint`) fixture-directory convention without the
+      # `ct` binary itself: `ct` shells out to Python yamale/yamllint even with
+      # its other validations disabled, a real toolchain dependency this
+      # repo's otherwise-all-Go tool chain (kind/ko/kubeconform/kustomize)
+      # doesn't carry — not worth it for value `helm template`+kubeconform
+      # already cover.
+      - cmd: |
+          set -eu -o pipefail
+          for f in deploy/helm/mecak8s/ci/*-values.yaml; do
+            helm template deploy/helm/mecak8s -f "$f" | kubeconform -strict -summary -
+          done
+        silent: true
       # Schema validation is kubeconform, NOT `kubectl apply --dry-run=client`:
       # kubectl maps kinds against the API server even with --validate=false, so
       # it needs a reachable cluster and cannot run here.
       - cmd: |
-          set -eu
+          set -eu -o pipefail
           helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' | kubeconform -strict -summary -
           helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' --set '{{.OIDC_SET}}' | kubeconform -strict -summary -
         silent: true
@@ -337,7 +357,7 @@ tasks:
       # and the published example must keep deploying what operators already
       # expect.
       - cmd: |
-          set -eu
+          set -eu -o pipefail
           if helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' | grep -qi 'oidc'; then
             echo "the default chart render mentions oidc — caller identity must stay opt-in"; exit 1
           fi
@@ -348,7 +368,7 @@ tasks:
       # kubectl patch, never through the chart. (--oidc-jwks-uri is a URL, not
       # a relaxation.)
       - cmd: |
-          set -eu
+          set -eu -o pipefail
           for extra in '' '--set {{.OIDC_SET}}'; do
             if helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' $extra | grep -qiE 'insecure|allow-private'; then
               echo "chart render ships an SSRF relaxation flag — that belongs to the e2e fixtures only"; exit 1
@@ -361,7 +381,7 @@ tasks:
       # args" failure mode is structurally less likely here — kept anyway, it's
       # cheap and still guards a future refactor of the args block.
       - cmd: |
-          set -eu
+          set -eu -o pipefail
           missing=""
           rendered=$(helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' --set '{{.OIDC_SET}}')
           for arg in --grpc-addr --http-addr --redis-url --session-lease-k8s-namespace --headless --posture --oidc-issuer --oidc-audience --oidc-max-jwks-staleness=1h; do

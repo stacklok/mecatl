@@ -1,0 +1,13 @@
+# task deploy:check fixture: the production profile with caller identity
+# (oidc.*) enabled, so the render also exercises the raw-driver NetworkPolicy
+# and the oidc.* validation path (mirrors Taskfile.yml's deploy:check
+# OIDC_SET).
+image:
+  tag: v0.0.0
+redis:
+  endpoint: redis.example.internal:6379
+  credentialsSecret: redis-credentials
+oidc:
+  enabled: true
+  issuer: https://idp.example.com
+  audience: mecatl

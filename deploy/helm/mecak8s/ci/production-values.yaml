@@ -1,0 +1,10 @@
+# task deploy:check fixture: the minimum a production install must supply
+# (mirrors Taskfile.yml's deploy:check PROD_SET so both checks stay in
+# lockstep). Rendered with `helm template -f` + kubeconform — no cluster
+# needed — so real-looking placeholder values are fine here; they only need
+# to satisfy the chart's own required fields.
+image:
+  tag: v0.0.0
+redis:
+  endpoint: redis.example.internal:6379
+  credentialsSecret: redis-credentials
