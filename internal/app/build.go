@@ -1293,6 +1293,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if cfg.Diagnostics == nil {
 		cfg.Diagnostics = port.NopDiagnostics{}
 	}
+	var authorityMode string
+	var authorityErr error
+	cfg.authorityEvaluator, authorityMode, authorityErr = selectAuthorityEvaluator(cfg.AuthorityEvaluator, cfg.CedarAuthorityPolicy)
+	if authorityErr != nil {
+		return nil, authorityErr
+	}
+	cfg.diag().Log(ctx, port.LevelInfo, authorityEvaluatorPostureLine(authorityMode))
 
 	// Operator POSTURE ladder (strict < trusted < auto < yolo): resolved BEFORE the
 	// trust fold so applyPosture's raised TrustProject feeds resolveTrust + the
@@ -1692,7 +1699,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		StorageMaintenanceStatus: cfg.storageMaintenance.snapshot,
 		StorageMaintenanceUpdate: cfg.storageMaintenance.update,
 		Workspaces:               osfsWorkspaceFactory(cfg.diag()),
-		DefaultWorkspace:         cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
+		RootAuthority: func(kind session.SessionKind) session.Authority {
+			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
+		},
+		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		// CommandRunner (issue #462): the MAIN session's bound runner — the
 		// Environment seam hands it to Tool.Execute so Bash observes the session
 		// namespace. nil when Bash is disabled (the catalog omits Bash and the
@@ -3232,6 +3242,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		toolSchedClose()
 		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, err
 	}
+	assets.rootCatalog = cat
 	// Stash the resolved skill seam's command-bridge inputs onto cfg (the
 	// commandSource precedent): buildCommandExpander runs PER SESSION
 	// (engineDepsForProvider → baseEngineDeps below, and the per-session
@@ -3706,10 +3717,11 @@ func engineDepsForProvider(
 		compactorCounter = buildTokenCounter(compactorCfg)
 	}
 	return agent.Deps{
-		LLM:          provider,
-		Policy:       policy,
-		Hooks:        hooks,
-		Instructions: instructions,
+		LLM:                provider,
+		Policy:             policy,
+		AuthorityEvaluator: cfg.authorityEvaluator,
+		Hooks:              hooks,
+		Instructions:       instructions,
 		// Persist mid-run transitions (tool results, terminal state) so a durable
 		// store (StoreDir) holds current state. The Service additionally persists on
 		// entering awaiting and at run end; both share this store, so the latest
@@ -5701,10 +5713,11 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		// AudienceSubagent pin + the workspace-pinned config resolver (issue #32)
 		// so `subagent:`-block rules bind children; with no config it is the
 		// historical allow-all shape.
-		Policy:       childPermPolicy(cfg),
-		Hooks:        hooks,
-		PromptConfig: pc,
-		Model:        model,
+		Policy:             childPermPolicy(cfg),
+		AuthorityEvaluator: cfg.authorityEvaluator,
+		Hooks:              hooks,
+		PromptConfig:       pc,
+		Model:              model,
 		// Diagnostics is LIVE for child engines (correlated by session + the agent
 		// role below) so interleaved child diagnostics are readable on the operator
 		// channel — this is DISTINCT from Sink/ToolCallRecorder (telemetry/audit),
