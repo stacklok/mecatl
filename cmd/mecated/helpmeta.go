@@ -172,6 +172,8 @@ var flagMetaByFlag = map[string]flagMeta{
 	"permission-config":         {group: groupPermissions, common: false, acp: acpInclude},
 	"plan-mode-auto-approve":    {group: groupPermissions, common: false, acp: acpInclude},
 	"no-steer":                  {group: groupPermissions, common: false, acp: acpInclude},
+	"authority-evaluator":       {group: groupPermissions, common: false, acp: acpExclude},
+	"cedar-authority-policy":    {group: groupPermissions, common: false, acp: acpExclude},
 
 	// ── Guardrails (both) ────────────────────────────────────────────────
 	"guardrails-model": {group: groupGuardrails, common: false, acp: acpInclude},

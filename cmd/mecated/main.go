@@ -99,11 +99,13 @@ type config struct {
 	// toolhiveLLMFlags holds --toolhive-llm / --toolhive-llm-base-url (issue
 	// #262: auto-detecting the ToolHive LLM gateway proxy), applied onto
 	// app.Config in appConfig alongside providerFlags.
-	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
-	useMock          bool
-	storeDir         string
-	shell            string
-	noBash           bool
+	toolhiveLLMFlags     *cliconfig.ToolhiveLLMFlags
+	useMock              bool
+	storeDir             string
+	shell                string
+	noBash               bool
+	authorityEvaluator   string
+	cedarAuthorityPolicy string
 
 	// Context management: the compaction strategy and the token counter. Both
 	// default to the current behaviour exactly (heuristic compactor + heuristic
@@ -1027,6 +1029,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		StoreDir:                      cfg.storeDir,
 		Shell:                         cfg.shell,
 		NoBash:                        cfg.noBash,
+		AuthorityEvaluator:            cfg.authorityEvaluator,
+		CedarAuthorityPolicy:          cfg.cedarAuthorityPolicy,
 		OwnershipEnforced:             cfg.oidc.Enabled(),
 		Compaction:                    cfg.compaction,
 		Tokenizer:                     cfg.tokenizer,
@@ -1403,6 +1407,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&cfg.sessionStoreURL, "session-store-url", "", "host:port of a remote session-store gRPC driver (mecatl.driver.v1.SessionStoreService); replaces the local store, so it is mutually exclusive with --store-dir. Loopback may ride plaintext; pair a non-loopback target with --driver-tls (and --driver-auth-token as needed)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
+	fs.StringVar(&cfg.authorityEvaluator, "authority-evaluator", "local", "authority evaluator: local (default), noop, or cedar; cedar requires --cedar-authority-policy")
+	fs.StringVar(&cfg.cedarAuthorityPolicy, "cedar-authority-policy", "", "path to the static operator Cedar authority policy; read once at startup when --authority-evaluator=cedar")
 	fs.BoolVar(&cfg.noBash, "no-bash", false, "disable the Bash tool entirely (shell-less mode); overrides --shell")
 
 	fs.StringVar(&cfg.compaction, "compaction", "heuristic", "compaction strategy: \"heuristic\" (default, single-summary) or \"cascade\" (tiered snip→strip→collapse→summarize)")
