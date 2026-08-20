@@ -432,15 +432,21 @@ func TestSteer_ControlTargetsPromotedRun(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Send steer: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	// The test context is the sole timeout budget. Keep the original stalled until
+	// the replacement pointer is observable, proving the handoff registered the
+	// promoted run before it can be allowed to drive.
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for {
 		if promoted, ok := svc.LookupRun(session.SessionID(cs.GetSessionId())); ok && promoted != original {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("promoted run was not registered after steer")
+		select {
+		case <-ctx.Done():
+			current, registered := svc.LookupRun(session.SessionID(cs.GetSessionId()))
+			t.Fatalf("promoted run was not registered before test context expired: original=%p current=%p registered=%t: %v", original, current, registered, ctx.Err())
+		case <-poll.C:
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	close(stallRelease) // the stalled original run drains; the promoted run drives.
 
