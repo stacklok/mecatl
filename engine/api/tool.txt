@@ -1,4 +1,5 @@
     ifacemethod func (AgentDefSource).ListAgentDefs(ctx context.Context) ([]AgentDef, error)
+    ifacemethod func (AuthorityResourceResolver).AuthorityResourcePath(path string) (target string, workspace string, err error)
     ifacemethod func (CommandRunner).Run(ctx context.Context, command string) (CommandResult, error)
     ifacemethod func (CommandStreamer).RunStreaming(ctx context.Context, command string, out io.Writer) (exitCode int, err error)
     ifacemethod func (Disclosable).Advertised() ToolSpec
@@ -101,6 +102,7 @@ type AgentDef struct{Name string; Description string; Tools []string; Disallowed
 type AgentDefSource interface{ListAgentDefs(ctx context.Context) ([]AgentDef, error)}
 type AgentMCPServer struct{Name string; URL string; Headers map[string]string}
 type AgentOrigin string
+type AuthorityResourceResolver interface{AuthorityResourcePath(path string) (target string, workspace string, err error)}
 type Catalog struct{}
 type CommandResult struct{Stdout string; Stderr string; ExitCode int}
 type CommandRunner interface{Run(ctx context.Context, command string) (CommandResult, error)}

@@ -1,6 +1,7 @@
 package osfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,6 +56,38 @@ func TestCanonicalize_MatchesResolveInRoot(t *testing.T) {
 		if under != tc.wantUnder {
 			t.Fatalf("%s: Canonicalize(%q) = %q, under-root=%v, want %v", tc.label, tc.path, canon, under, tc.wantUnder)
 		}
+	}
+}
+
+func TestAuthorityResourcePath_UsesPhysicalConfinedTarget(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink fixtures require a POSIX filesystem")
+	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "vendor"), 0o755); err != nil {
+		t.Fatalf("create vendor directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vendor", "blocked.go"), []byte("package vendor\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink("vendor", filepath.Join(root, "review")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	ws, err := NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+
+	target, workspace, err := ws.AuthorityResourcePath("review/blocked.go")
+	if err != nil {
+		t.Fatalf("AuthorityResourcePath: %v", err)
+	}
+	if want := filepath.Join(ws.Root(), "vendor", "blocked.go"); target != want || workspace != ws.Root() {
+		t.Fatalf("AuthorityResourcePath = (%q, %q), want (%q, %q)", target, workspace, want, ws.Root())
+	}
+	if _, _, err := ws.AuthorityResourcePath("../outside"); !errors.Is(err, ErrPathEscape) {
+		t.Fatalf("AuthorityResourcePath relative escape error = %v, want ErrPathEscape", err)
 	}
 }
 

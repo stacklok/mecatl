@@ -12,7 +12,10 @@ func TestStoreNormalizesRootAndConfinesInventoryNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	wantRoot := filepath.Join(base, "store")
+	wantRoot, err := filepath.EvalSymlinks(filepath.Join(base, "store"))
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
 	if st.resolver.dir != wantRoot {
 		t.Fatalf("normalized store root = %q, want %q", st.resolver.dir, wantRoot)
 	}

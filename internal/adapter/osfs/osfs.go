@@ -735,11 +735,47 @@ func NewWorkspace(root string, opts ...Option) (*Workspace, error) {
 	return &Workspace{fs: fsys, ledger: make(map[string]tool.FileVersion)}, nil
 }
 
-// Compile-time assertion that Workspace satisfies the frozen port.
+// Compile-time assertions that Workspace satisfies the filesystem and authority seams.
 var _ tool.Workspace = (*Workspace)(nil)
+var _ tool.AuthorityResourceResolver = (*Workspace)(nil)
 
 // Root returns the absolute session root all paths are scoped to.
 func (w *Workspace) Root() string { return w.fs.Root() }
+
+// AuthorityResourcePath resolves path to the physical target identity used for
+// ordinary confined workspace access. A target outside the physical workspace root
+// is rejected; relaxed serving must opt in through RelaxedAuthorityResourcePath.
+func (w *Workspace) AuthorityResourcePath(path string) (target, workspace string, err error) {
+	target, workspace, err = w.authorityResourcePath(path)
+	if err != nil {
+		return "", "", err
+	}
+	if target != workspace && !strings.HasPrefix(target, workspace+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("%w: %q", ErrPathEscape, path)
+	}
+	return target, workspace, nil
+}
+
+// RelaxedAuthorityResourcePath resolves the physical target identity for the
+// explicitly relaxed serving path. It is adapter-specific: escapeWorkspace uses
+// it only after its ordinary escape policy has authorized the operation. The
+// relaxed filesystem seam serves absolute operands only; relative traversal is
+// never forwarded into the out-of-root carve-out.
+func (w *Workspace) RelaxedAuthorityResourcePath(path string) (target, workspace string, err error) {
+	if !filepath.IsAbs(path) {
+		return "", "", fmt.Errorf("%w: %q", ErrPathEscape, path)
+	}
+	return w.authorityResourcePath(path)
+}
+
+func (w *Workspace) authorityResourcePath(path string) (target, workspace string, err error) {
+	workspace = w.fs.Root()
+	target, err = Canonicalize(workspace, path)
+	if err != nil {
+		return "", "", err
+	}
+	return target, workspace, nil
+}
 
 // Read returns the contents of the file at the session-relative path.
 func (w *Workspace) Read(ctx context.Context, path string) ([]byte, error) {

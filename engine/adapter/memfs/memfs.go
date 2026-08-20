@@ -230,11 +230,26 @@ func NewWorkspace(root string) *Workspace {
 	}
 }
 
-// Compile-time assertion that Workspace satisfies the frozen port.
+// Compile-time assertions that Workspace satisfies the filesystem and authority seams.
 var _ tool.Workspace = (*Workspace)(nil)
+var _ tool.AuthorityResourceResolver = (*Workspace)(nil)
 
 // Root returns the absolute session root all paths are scoped to.
 func (w *Workspace) Root() string { return w.fs.Root() }
+
+// AuthorityResourcePath derives memfs's confined logical path identity. memfs has
+// no symlinks, so its cleaned key is already the physical identity it serves.
+func (w *Workspace) AuthorityResourcePath(p string) (target, workspace string, err error) {
+	workspace = w.Root()
+	if !path.IsAbs(workspace) {
+		return "", "", fmt.Errorf("%w: workspace root is not absolute", ErrPathEscape)
+	}
+	key, err := cleanPath(p)
+	if err != nil {
+		return "", "", err
+	}
+	return path.Join(workspace, key), workspace, nil
+}
 
 // Read returns the contents of the file at the session-relative path.
 func (w *Workspace) Read(ctx context.Context, p string) ([]byte, error) {

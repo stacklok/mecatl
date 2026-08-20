@@ -265,6 +265,19 @@ type WorkspaceReader interface {
 	Stat(ctx context.Context, path string) (FileInfo, error)
 }
 
+// AuthorityResourceResolver derives the physical, workspace-confined identity of a
+// local path for authority evaluation. Implementations must resolve symlinks using
+// the same rules as filesystem access and reject an escape or any ambiguous path.
+// The returned path and workspace are absolute paths; callers may project them into
+// a policy resource descriptor without forwarding raw tool arguments.
+//
+// It is an optional extension because authority evaluation is not a requirement of
+// ordinary Workspace consumers. An authority-bound execution fails closed if its
+// workspace does not implement it.
+type AuthorityResourceResolver interface {
+	AuthorityResourcePath(path string) (target, workspace string, err error)
+}
+
 // Workspace is the session-scoped seam every Tool executes against. It scopes
 // all paths to a single session root (rejecting escapes such as "../"), exposes
 // the read/search operations the 7 core tools need, and carries the per-session
