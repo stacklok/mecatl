@@ -183,6 +183,27 @@ tasks:
           --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml
           ./cmd/mecatui
 
+  test:root-race-partition:
+    desc: Test and validate the dynamic root-module race package partition
+    cmds:
+      - bash .github/scripts/root-race-packages_test.sh
+      - bash .github/scripts/root-race-packages.sh validate
+
+  test:race-timing-wrapper:
+    desc: Test normal and diagnostic race-test wrapper behavior
+    cmds:
+      - bash .github/scripts/race-test_test.sh
+
+  test:race-ui:
+    desc: Run the root-module UI race-test shard
+    cmds:
+      - go test -race -count=1 ./cmd/mecatui/ui
+
+  test:race-root-complement:
+    desc: Run the root-module race-test shard excluding only cmd/mecatui/ui
+    cmds:
+      - bash -c 'set -euo pipefail; output="$(bash .github/scripts/root-race-packages.sh complement)"; mapfile -t packages <<<"$output"; go test -race -count=1 "${packages[@]}"'
+
   test:
     desc: Run unit tests with the race detector (root + engine + authn/oidc + provider modules + standalone hygiene proofs)
     cmds:
@@ -633,6 +654,12 @@ tasks:
       - cd provider/anthropic && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
       - cd provider/openai && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
       - cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --fix ./...
+
+  test:docs-only-classifier:
+    desc: Run the offline docs-only CI classifier and workflow-wiring tests
+    cmds:
+      - bash .github/scripts/docs-only-changes_test.sh
+      - bash .github/scripts/docs-only-workflow_test.sh
 
   lint:actions:
     desc: |
