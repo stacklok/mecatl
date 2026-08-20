@@ -222,6 +222,42 @@ func TestForkConcurrentCopiesAreDistinct(t *testing.T) {
 	}
 }
 
+// TestForkForceCopySkipsTransientGitMaintenanceLock proves force-copy ignores only
+// Git's ephemeral objects maintenance lock. This uses a real tiny repository so the
+// regression covers the production .git copy path rather than a synthetic tree.
+func TestForkForceCopySkipsTransientGitMaintenanceLock(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "tracked.txt"), "from base\n")
+	gitCommit(t, base)
+
+	lock := filepath.Join(base, ".git", "objects", "maintenance.lock")
+	if err := os.WriteFile(lock, []byte("transient\n"), 0o600); err != nil {
+		t.Fatalf("write maintenance lock: %v", err)
+	}
+
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	f := forker.New(osfsWorkspace, forker.WithForceCopy())
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "maintenance-lock")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+
+	if _, err := os.Stat(filepath.Join(child.Root(), ".git", "objects", "maintenance.lock")); !os.IsNotExist(err) {
+		t.Fatalf("child copied transient maintenance lock (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(child.Root(), "tracked.txt")); err != nil {
+		t.Fatalf("child missing tracked file: %v", err)
+	}
+}
+
 // TestForkForceCopyIsFullyIsolatedRepo proves the WithForceCopy mode: forking a
 // git-repo base yields a SELF-CONTAINED repository (its own .git: HEAD/refs/objects)
 // so a branch that runs git commit / writes a ref / writes a file INSIDE the fork

@@ -650,35 +650,54 @@ func splitNUL(b []byte) []string {
 // with its own object DB/refs, so a child's git writes stay inside the fork.
 func copyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, rerr := filepath.Rel(src, p)
-		if rerr != nil {
-			return rerr
-		}
-		target := filepath.Join(dst, rel)
-		switch {
-		case d.Type()&fs.ModeSymlink != 0:
-			// Skip symlinks: they could point outside the base, and copying their
-			// target would break isolation.
-			return nil
-		case d.IsDir():
-			if rel == "." {
-				return nil // dst already exists
-			}
-			info, ierr := d.Info()
-			if ierr != nil {
-				return ierr
-			}
-			return os.MkdirAll(target, info.Mode().Perm()|0o700)
-		case d.Type().IsRegular():
-			return copyFile(p, target)
-		default:
-			// Skip irregular files (devices, sockets, pipes).
-			return nil
-		}
+		return copyTreeEntry(src, dst, p, d, err)
 	})
+}
+
+// copyTreeEntry copies one WalkDir entry. It is separate from the walk so the
+// transient maintenance-lock race is deterministic to test.
+func copyTreeEntry(src, dst, p string, d fs.DirEntry, err error) error {
+	rel, rerr := filepath.Rel(src, p)
+	if rerr != nil {
+		return rerr
+	}
+	if err != nil {
+		if isTransientGitMaintenanceLock(rel) && errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if isTransientGitMaintenanceLock(rel) {
+		return nil
+	}
+	target := filepath.Join(dst, rel)
+	switch {
+	case d.Type()&fs.ModeSymlink != 0:
+		// Skip symlinks: they could point outside the base, and copying their
+		// target would break isolation.
+		return nil
+	case d.IsDir():
+		if rel == "." {
+			return nil // dst already exists
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return ierr
+		}
+		return os.MkdirAll(target, info.Mode().Perm()|0o700)
+	case d.Type().IsRegular():
+		return copyFile(p, target)
+	default:
+		// Skip irregular files (devices, sockets, pipes).
+		return nil
+	}
+}
+
+// isTransientGitMaintenanceLock identifies Git's short-lived maintenance lock in
+// the object database. copyTree ignores it, including when WalkDir reports that it
+// vanished; unrelated paths and errors remain copy failures.
+func isTransientGitMaintenanceLock(rel string) bool {
+	return filepath.ToSlash(rel) == ".git/objects/maintenance.lock"
 }
 
 // copyFile copies a single regular file from src to dst, preserving its mode.
