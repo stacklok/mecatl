@@ -22,6 +22,8 @@ prose is completed.
 - [Capability and deployment matrix](./capability-matrix.md) is the availability
   inventory and the record of open classification decisions.
 
+- [Feature documentation roadmap](./documentation-roadmap.md) records the
+  inventory, review, writing, and validation sequence.
 - [Start and resume sessions](./start-and-resume-sessions.md) covers creating,
   selecting, and continuing sessions.
 - [Choose models and providers](./choose-models.md) covers provider, model, and
