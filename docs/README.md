@@ -13,7 +13,7 @@ not restate it.
 | --- | --- |
 | **Contributor / agent** | [`READING.md`](READING.md) → foundation spine (architecture → domain → ports → loop) → topic branches |
 | **Operator** | [`../README.md`](../README.md) → [usage & install](usage/install.md) → [quickstart](usage/quickstart.md) → [running `mecated`](usage/mecated.md) → [usage guide](usage.md) |
-| **Library consumer** | [User docs intro](https://github.com/stacklok/mecatl/blob/main/user-docs/intro.md) → [`engine/session`](../engine/session) → [extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
+| **Library consumer** | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) → [`engine/session`](../engine/session) → [extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
 
 ## Nearby
 

@@ -54,8 +54,11 @@ function Hero() {
             resilience so you can focus on the adapter that makes it yours.
           </p>
           <div className={styles.heroCtas}>
-            <Link className={styles.ctaPrimary} to="/docs/intro">
-              Read the docs
+            <Link className={styles.ctaPrimary} to="/docs/building">
+              Read the building docs
+            </Link>
+            <Link className={styles.ctaSecondary} to="/docs/mecatui">
+              Use mecatui
             </Link>
             <Link className={styles.ctaSecondary} to="https://github.com/stacklok/mecatl">
               View on GitHub
@@ -129,10 +132,10 @@ function Features() {
 
 function DeploymentShapes() {
   const shapes = [
-    {label: 'Embed', desc: 'Import engine/ directly into your Go binary', link: '/docs/deployment/embed-engine'},
-    {label: 'Serve', desc: 'Run mecated and drive it over gRPC or HTTP-SSE', link: '/docs/deployment/mecated'},
-    {label: 'Cloud-native', desc: 'mecak8s: stateless pods, Redis, k8s lease', link: '/docs/deployment/mecak8s'},
-    {label: 'CI', desc: 'mecatequi: one prompt → patch + exit code', link: '/docs/deployment/mecatequi'},
+    {label: 'Embed', desc: 'Import engine/ directly into your Go binary', link: '/docs/building/deployment/embed-engine'},
+    {label: 'Serve', desc: 'Run mecated and drive it over gRPC or HTTP-SSE', link: '/docs/building/deployment/mecated'},
+    {label: 'Cloud-native', desc: 'mecak8s: stateless pods, Redis, k8s lease', link: '/docs/building/deployment/mecak8s'},
+    {label: 'CI', desc: 'mecatequi: one prompt → patch + exit code', link: '/docs/building/deployment/mecatequi'},
   ];
 
   return (
@@ -163,7 +166,7 @@ function GetStarted() {
         </p>
         <pre className={styles.installBlock}>{`go run github.com/stacklok/mecatl/cmd/mecademo@latest`}</pre>
         <div className={styles.getStartedLinks}>
-          <Link className={styles.ctaPrimary} to="/docs/getting-started/demo">
+          <Link className={styles.ctaPrimary} to="/docs/building/getting-started/demo">
             Full walkthrough →
           </Link>
           <Link className={styles.ctaSecondary} to="/docs/intro">

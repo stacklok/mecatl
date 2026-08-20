@@ -39,9 +39,9 @@ slug renames, render correctly in GitHub's markdown preview, and are portable if
 ### Pattern
 
 ```markdown
-[The agent loop](/what-you-get/agent-loop.md)
-[Overview](/extension-points/index.md)
-[Cloud-native kit](/cloud-native-kit.md)
+[The agent loop](/building/what-you-get/agent-loop.md)
+[Overview](/building/extension-points/index.md)
+[Cloud-native kit](/building/cloud-native-kit.md)
 ```
 
 The leading `/` resolves from the docs content root (`user-docs/`), not the site root.
@@ -58,9 +58,9 @@ Docusaurus strips the `.md` extension when building URLs.
 
 | Pattern | Problem |
 |---------|---------|
-| `/docs/what-you-get/agent-loop` | Site-root absolute — breaks if `routeBasePath` changes; `.md` omitted so GitHub can't preview |
-| `../what-you-get/agent-loop.md` | Cross-section relative paths have a known Docusaurus v3 resolution bug with `index.md` files; use content-root-relative instead |
-| `what-you-get/agent-loop.md` (no leading `/`) | Resolves relative to current file — fine within a section, fragile across sections |
+| `/docs/building/what-you-get/agent-loop` | Site-root absolute — breaks if `routeBasePath` changes; `.md` omitted so GitHub can't preview |
+| `../building/what-you-get/agent-loop.md` | Cross-section relative paths have a known Docusaurus v3 resolution bug with `index.md` files; use content-root-relative instead |
+| `building/what-you-get/agent-loop.md` (no leading `/`) | Resolves relative to current file — fine within a section, fragile across sections |
 
 ### Why cross-section relative paths break
 
