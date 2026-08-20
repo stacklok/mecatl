@@ -18,15 +18,67 @@ safe default ruleset); Layer 2 is off until you give it a checker model.
 
 ## Delegated authority
 
-Delegated children also carry an **authority set**. This is not another approval
-prompt or a replacement for permissions: it is the non-widening list of tools and
-execution posture a child inherited from its parent. A named managed specialist can
-narrow that set with its `tools:` allowlist. Every child tool execution is checked
-against the carried set, so a stale tool listing cannot turn an omitted tool into an
-allowed call. A resumed child keeps its persisted set and cannot resume under a
-parent that has become narrower.
+Delegated children carry an **authority set**. Authority is neither an approval
+prompt nor an ownership check: it records which capabilities reached this run.
+Permission policy answers whether a call may run now; ownership answers who may
+access the session; authority answers whether the parent delegated the capability
+at all.
 
-`mecated` selects the evaluator at startup:
+A root session starts with the tools in its composed catalog. A child receives only
+what survives this calculation:
+
+```text
+parent authority
+∩ child runtime posture
+∩ managed specialist ceiling, when eligible
+∩ optional call-level narrowing
+− one delegation hop
+```
+
+For example, a root with `Read`, `Grep`, and `Write` can delegate a read-only
+reviewer that receives only `Read` and `Grep`. That reviewer can use those tools,
+but it cannot regain `Write` or delegate another child after its hop is spent.
+The child's set persists with its session. On resume, mecatl checks that its
+persisted set still fits the current parent set; a child created before the parent
+was narrowed is refused rather than regaining the removed capability.
+
+### Agent definitions and authority ceilings
+
+A definition's `tools:` allowlist scopes the specialist engine in every source,
+but only a definition loaded from an explicit operator directory establishes a
+durable authority ceiling. Start mecated with `--agents-dir` to use that managed
+tier:
+
+```sh
+mecated --agents-dir /etc/mecatl/agents
+```
+
+For example, `/etc/mecatl/agents/code-reviewer.md` can contain:
+
+```md
+---
+name: code-reviewer
+description: Reviews source code without changing it.
+tools: [Read, Grep]
+disallowedTools: [Write, Bash]
+---
+Review the requested code and return findings with file and line references.
+```
+
+When a parent delegates to this specialist, `tools: [Read, Grep]` is a ceiling:
+it can remove capabilities from the parent, but it can never grant either tool if
+the parent did not already hold it. Definitions discovered from conventional
+project or user locations, or from a driver, still scope their specialist engine,
+but do not establish an independent authority ceiling. This prevents a project
+repository or remote definition source from becoming a new authority grant.
+
+Derivation happens before mecatl creates the child engine, workspace, runner, or
+worktree. If the requested child would exceed the parent, the request is refused
+without acquiring those runtime resources.
+
+### Choosing an evaluator
+
+`mecated` selects the authority evaluator at startup:
 
 ```sh
 mecated --authority-evaluator=local
@@ -34,17 +86,67 @@ mecated --authority-evaluator=noop
 mecated --authority-evaluator=cedar --cedar-authority-policy=/etc/mecatl/authority.cedar
 ```
 
-`local` is the default and checks exact carried tool names in process. `noop` is an
-explicit deployment choice that disables authority enforcement; it is not selected by
-an omitted configuration. `cedar` loads one static **operator-owned** Cedar policy at
-startup. A missing or invalid policy prevents startup rather than falling back to a
-less restrictive evaluator. Cedar can add a denial, such as prohibiting a managed
-specialist from reading `/workspace/vendor/**`, but cannot grant a tool absent from the
-child's carried set. Keep the policy outside project-controlled files.
+| Evaluator | Use it when | Behavior |
+| --- | --- | --- |
+| `local` (default) | You want delegated authority enforced without an external policy language. | Allows only exact capabilities in the carried set. |
+| `noop` (explicit) | A local or demo deployment deliberately disables authority enforcement. | Accepts well-formed authority requests. It is never a fallback for a missing evaluator. |
+| `cedar` (opt-in) | You need operator-owned rules over an already-authorized capability, such as a workspace path boundary. | Checks the carried set first, then lets Cedar add a denial. It cannot grant an omitted capability. |
 
-Authority failures are fail-closed. A denial tells the model that authority refused the
-call; an unavailable evaluator is reported separately to operators and is not treated
-as permission approval. See [ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-authority-evaluator-port.md)
+A bound session with no configured evaluator fails its tool call closed. That is
+different from selecting `noop` deliberately.
+
+### Cedar policy boundaries
+
+Cedar loads one static policy file at startup. A missing or invalid policy prevents
+mecated from starting; it never falls back to a less restrictive evaluator. Keep the
+policy outside project-controlled directories.
+
+A minimal policy that prevents reads below a protected subtree is:
+
+```cedar
+permit(principal, action, resource);
+
+forbid(principal, action, resource)
+when {
+    resource.kind == "workspace_file" &&
+    resource.path like "/workspace/vendor/*"
+};
+```
+
+Cedar receives the carried capability, requested operation, delegation depth,
+non-secret session identity, and—for `Read`, `Edit`, and `Write`—the normalized
+physical workspace target. It does not receive raw tool arguments, file contents,
+credentials, or headers. A symlink inside the workspace cannot bypass a Cedar
+path boundary because the evaluator sees the resolved target that filesystem access
+will use.
+
+Cedar requires verified session owner identity. Deployments that intentionally run
+ownerless sessions should use `local`, or configure caller identity before selecting
+Cedar.
+
+### MCP capabilities
+
+MCP grants stay narrow. `CallMcpWithQuery` is evaluated against the concrete tool it
+addresses, such as `mcp__github__list_pull_requests`, rather than receiving blanket
+access to a server. MCP resource operations similarly spend a separate per-server
+resource capability while preserving their operation, such as `ReadMcpResource`, for
+policy evaluation. Granting one GitHub MCP tool therefore does not grant every GitHub
+MCP tool.
+
+### Deployment checklist
+
+Before enabling delegated authority:
+
+- Choose `local`, `noop`, or `cedar` intentionally.
+- Put authority-defining specialist definitions in an explicit `--agents-dir`.
+- Treat `tools:` as a ceiling, never a grant.
+- If using Cedar, keep its policy outside project-controlled paths and configure
+  verified caller identity.
+- Test the intended root → child → resume behavior in your deployment.
+
+Authority failures are fail-closed. A denial tells the model that authority refused
+the call; an unavailable evaluator is reported separately to operators and is not
+treated as permission approval. See [ADR 0233](https://github.com/stacklok/mecatl/blob/main/docs/adr/0233-authority-evaluator-port.md)
 for the boundary and constraints.
 
 ---

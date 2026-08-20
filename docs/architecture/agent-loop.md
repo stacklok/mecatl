@@ -165,11 +165,19 @@ spend a per-server resource capability and retain their operation as the action.
 The evaluator receives the carried set, the selected capability, action,
 delegation depth, non-secret identity attribution, and—for recognized local-file
 calls—a normalized physical workspace target. It never receives raw tool
-arguments or credentials. The default `local` evaluator checks exact set
-membership; explicit `noop` disables this enforcement; optional Cedar can add
-operator-owned restrictions such as a workspace path boundary but cannot grant a
-capability absent from the set. See [ADR 0233](../adr/0233-authority-evaluator-port.md)
-for the decision; operator configuration is documented in the public permissions guide.
+arguments or credentials. Composition chooses one evaluator at startup:
+
+| Evaluator | What it decides |
+| --- | --- |
+| `local` (default) | Permits an exact capability only when it appears in the carried set. |
+| `noop` (explicit) | Disables authority enforcement for deployments that deliberately choose that posture; it is never the fallback for a missing evaluator. |
+| `cedar` (opt-in) | First requires the carried set to allow the capability, then applies one static operator-owned policy that can add denials such as a workspace path boundary. A missing or invalid policy prevents startup. |
+
+A Cedar policy cannot grant a capability absent from the carried set. An
+unavailable evaluator is a distinct fail-closed execution error, not an implicit
+switch to `noop`. See [ADR 0233](../adr/0233-authority-evaluator-port.md) for
+the decision; operator configuration is documented in the public permissions
+guide.
 
 ## Permission pause / resume
 
