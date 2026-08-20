@@ -212,7 +212,7 @@ func (c parentCaps) inheritOwner(child *session.Session) {
 	// (issue #368) refuses a resume whose loaded owner differs from the caller
 	// before this is ever reached, so the DIFFERENT-owner error case above is
 	// unreachable via the resume path.
-	_ = child.RestoreLabels(c.owner, "")
+	_ = child.RestoreLabels(c.owner, session.Authority{})
 }
 
 // registerChildRun is the nil-safe registration wrapper a spawning tool calls: a

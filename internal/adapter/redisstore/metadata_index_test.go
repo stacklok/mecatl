@@ -68,7 +68,7 @@ func TestPageSessionMetadataSeparatesOwnerScopesAndRejectsCursorReuse(t *testing
 		{id: "alice-c", owner: alice},
 	} {
 		s := session.New(fixture.id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
-		if err := s.RestoreLabels(fixture.owner, ""); err != nil {
+		if err := s.RestoreLabels(fixture.owner, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels(%q): %v", fixture.id, err)
 		}
 		if err := st.Save(ctx, s); err != nil {
@@ -113,7 +113,7 @@ func TestPageSessionMetadataUsesOneBoundedMetadataRangePerPage(t *testing.T) {
 	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	for _, id := range []session.SessionID{"alice-a", "alice-b", "alice-c", "alice-d"} {
 		s := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
-		if err := s.RestoreLabels(alice, ""); err != nil {
+		if err := s.RestoreLabels(alice, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels(%q): %v", id, err)
 		}
 		if err := st.Save(ctx, s); err != nil {
@@ -161,7 +161,7 @@ func TestPageSessionMetadataWorkIsBoundedAndDoesNotLoadSnapshots(t *testing.T) {
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	for i := range 8 {
 		s := session.New(session.SessionID("session-"+string(rune('a'+i))), session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
-		if err := s.RestoreLabels(owner, ""); err != nil {
+		if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels: %v", err)
 		}
 		if err := st.Save(ctx, s); err != nil {
@@ -238,7 +238,7 @@ func TestSaveAndDeleteAdvanceGenerationAndInvalidateCursors(t *testing.T) {
 	sessions := make(map[session.SessionID]*session.Session)
 	for _, id := range []session.SessionID{"alice-a", "alice-b"} {
 		s := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
-		if err := s.RestoreLabels(alice, ""); err != nil {
+		if err := s.RestoreLabels(alice, session.Authority{}); err != nil {
 			t.Fatalf("RestoreLabels(%q): %v", id, err)
 		}
 		if err := st.Save(ctx, s); err != nil {

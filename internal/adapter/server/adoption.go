@@ -249,7 +249,8 @@ func (s *Service) newAdoptionTarget(source *session.Session, targetID session.Se
 	if err := target.SeedHistory(history); err != nil {
 		return nil, fmt.Errorf("%w: invalid authoritative transcript", ErrFailedPrecondition)
 	}
-	if err := setSessionLabels(target, ProviderSelector{ProviderID: bindings.ProviderID, ModelID: bindings.ModelID}, bindings.Profile, owner); err != nil {
+	authority, _ := source.BoundAuthority()
+	if err := setSessionLabels(target, ProviderSelector{ProviderID: bindings.ProviderID, ModelID: bindings.ModelID}, bindings.Profile, owner, authority); err != nil {
 		return nil, err
 	}
 	target.EnvironmentRef = bindings.EnvironmentRef

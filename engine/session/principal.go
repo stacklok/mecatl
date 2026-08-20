@@ -3,7 +3,10 @@ package session
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strings"
+
+	"github.com/stacklok/mecatl/engine/governance"
 )
 
 // GrantType names how a Principal was authenticated. It is a closed enum of
@@ -156,28 +159,48 @@ func PrincipalScopeHash(p *Principal) [32]byte {
 	return sha256.Sum256([]byte(p.Issuer + "\x00" + p.Subject))
 }
 
-// Authority is Track C's placeholder label on the Session aggregate. It is
-// INERT in the caller-identity plan: nothing reads or writes it beyond the
-// snapshot round-trip. It ships now so the contended engine/api/*.txt
-// regeneration and CHANGELOG note are paid once (ADR 0204 consequences).
-// The zero value ("") means "unset".
-type Authority string
+// Authority is the durable, plain authority payload carried by a bound session.
+// CapabilitySet is the one governance-domain representation; provenance and
+// definition identity are safe labels, not caller claims or runtime handles.
+type Authority struct {
+	CapabilitySet      governance.CapabilitySet `json:"capability_set"`
+	Provenance         string                   `json:"provenance"`
+	DefinitionIdentity string                   `json:"definition_identity,omitempty"`
+}
+
+// Clone returns an independent copy of a.
+func (a Authority) Clone() Authority {
+	a.CapabilitySet.Tools = append([]string(nil), a.CapabilitySet.Tools...)
+	return a
+}
+
+// validAuthorityLabel rejects path-shaped and control-bearing provenance labels.
+func validAuthorityLabel(label string) bool {
+	if label == "" || len(label) > 256 {
+		return false
+	}
+	for _, r := range label {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == ':' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Valid reports whether a has safe provenance labels. CapabilitySet is already
+// typed, so malformed serialized capability data fails during snapshot decoding
+// before this method can bind the aggregate.
+func (a Authority) Valid() bool {
+	return validAuthorityLabel(a.Provenance) && (a.DefinitionIdentity == "" || validAuthorityLabel(a.DefinitionIdentity))
+}
 
 // ErrOwnerAlreadySet is returned by RestoreLabels when the session already
 // carries a DIFFERENT owner. The owner is write-once (ADR 0204 decision 4).
 var ErrOwnerAlreadySet = errors.New("session: owner already set")
 
-// RestoreLabels stamps the write-once identity labels (Owner, Authority) on the
-// aggregate. It is the restore seam sessnap uses — Session is an aggregate, so
-// an adapter must not poke the exported fields.
-//
-// Write-once: a nil owner leaves the label unset (the ownerless / no-auth path,
-// and it does NOT burn the slot); re-stamping the SAME owner value is
-// idempotent; stamping a DIFFERENT owner over a set one returns
-// ErrOwnerAlreadySet rather than silently re-owning the session. The owner is
-// stored as a COPY, so the caller cannot mutate a stamped session's owner
-// through its own pointer. A zero Authority leaves that label untouched (the
-// same additive posture); it is otherwise inert in this plan.
+// RestoreLabels stamps the write-once owner label and, when present, restores a
+// bound authority payload before the first runnable state.
 func (s *Session) RestoreLabels(owner *Principal, authority Authority) error {
 	if owner != nil {
 		if s.Owner != nil && *s.Owner != *owner {
@@ -185,8 +208,35 @@ func (s *Session) RestoreLabels(owner *Principal, authority Authority) error {
 		}
 		s.Owner = owner.Clone()
 	}
-	if authority != "" {
-		s.Authority = authority
+	if authority.Provenance != "" {
+		return s.BindAuthority(authority)
 	}
 	return nil
+}
+
+// BindAuthority attaches a derived authority payload before the session becomes
+// runnable. It is write-once and copies its capability set so callers cannot mutate it.
+func (s *Session) BindAuthority(authority Authority) error {
+	if s.State != StateIdle {
+		return fmt.Errorf("%w: BindAuthority from %q", ErrIllegalTransition, s.State)
+	}
+	if s.authorityBound {
+		return errors.New("session: authority already bound")
+	}
+	if !authority.Valid() {
+		return errors.New("session: invalid authority payload")
+	}
+	s.Authority = authority.Clone()
+	s.authorityBound = true
+	return nil
+}
+
+// BoundAuthority returns the copied durable authority payload and whether this
+// session was explicitly bound. An absent payload is a documented pre-feature
+// legacy session, never an empty bound set.
+func (s *Session) BoundAuthority() (Authority, bool) {
+	if !s.authorityBound {
+		return Authority{}, false
+	}
+	return s.Authority.Clone(), true
 }

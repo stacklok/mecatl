@@ -248,6 +248,11 @@ type Config struct {
 	// persisted environment ref. The two are independent (a session may need
 	// either, both, or neither).
 	EnvironmentResolver func(context.Context, session.EnvironmentRef) (tool.Environment, error)
+	// RootAuthority mints a complete authority set for a newly composed root.
+	// A nil callback preserves host-managed legacy sessions; app.Build always wires
+	// this callback with its assembled catalog. Carryover forks copy their source
+	// authority instead of invoking it.
+	RootAuthority func(session.SessionKind) session.Authority
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
@@ -1411,17 +1416,23 @@ func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string
 // empty-selector default profile this writes the zero values, so a default
 // session's snapshot is byte-identical to a pre-Phase-1 one (the labels omitempty
 // out of the JSON).
-func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal) error {
+func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, authority session.Authority) error {
 	sess.Profile = string(profile)
 	sess.ProviderID = sel.ProviderID
 	sess.ModelID = sel.ModelID
 	sess.ReasoningEffort = sel.ReasoningEffort
-	// The owner is WRITE-ONCE and is stamped through the aggregate (Session is an
-	// aggregate — never poke the field). On a freshly-minted session the slot is
-	// empty, so this cannot collide; the error is propagated rather than dropped so
-	// a future caller that re-labels a LOADED session fails loudly instead of
-	// silently re-owning it. A nil owner leaves the session ownerless.
-	return sess.RestoreLabels(owner, "")
+	// Owner and authority are independently stamped at the same root seam.
+	return sess.RestoreLabels(owner, authority)
+}
+
+func (s *Service) rootAuthority(kind session.SessionKind, carried session.Authority, carriedBound bool) session.Authority {
+	if carriedBound {
+		return carried
+	}
+	if s.cfg.RootAuthority == nil {
+		return session.Authority{}
+	}
+	return s.cfg.RootAuthority(kind)
 }
 
 // seedCarryover seeds the freshly-created (idle) session with an optional
@@ -1589,12 +1600,15 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// A carryover fork replaces the context owner with the source's owner below.
 
 	var carrySnap []session.Message
+	var carriedAuthority session.Authority
+	carriedAuthorityBound := false
 	if opts.sourceSessionID != "" {
-		snap, srcOwner, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
+		snap, srcOwner, sourceAuthority, sourceAuthorityBound, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
 		if err != nil {
 			return nil, err
 		}
 		carrySnap = snap
+		carriedAuthority, carriedAuthorityBound = sourceAuthority, sourceAuthorityBound
 		// A fork inherits the SOURCE's owner, overriding the context principal
 		// (and any WithOwner) — see validateCarryover.
 		owner = srcOwner
@@ -1611,7 +1625,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if err != nil {
 			return nil, fmt.Errorf("server: create session metadata: %w", err)
 		}
-		if err := setSessionLabels(sess, sel, profile, owner); err != nil {
+		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
 			return nil, err
 		}
 		stampDefaultEnvironmentRef(sess)
@@ -1624,7 +1638,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		return sess, nil
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts.scheduled)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts.scheduled, carriedAuthority, carriedAuthorityBound)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -1635,7 +1649,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 // evicts the reservation and tears the freshly-built engine down so a failed
 // create leaks neither a slot nor a connection. See createSession for the
 // profile-aware workspace rule and the carryover snapshot semantics.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, scheduled *session.SessionRelationship) (*session.Session, error) {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, scheduled *session.SessionRelationship, carriedAuthority session.Authority, carriedAuthorityBound bool) (*session.Session, error) {
 	if s.cfg.SessionEngine == nil {
 		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 	}
@@ -1669,7 +1683,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the
 	// default-provider floor / inferring the profile from the empty-workspace pun.
-	if err := setSessionLabels(sess, sel, profile, owner); err != nil {
+	if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
 		}
@@ -2452,7 +2466,13 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 	// The fork inherits the SOURCE's owner (ADR 0204 decision 4), NOT the
 	// principal of whoever called ForkSession — otherwise fork is an
 	// ownership-laundering path. An ownerless source forks ownerless.
-	if err := setSessionLabels(forked, sel, profile, src.Owner); err != nil {
+	// A peer fork copies the source authority and provenance verbatim; it never
+	// re-mints from the current catalog.
+	authority, bound := src.BoundAuthority()
+	if !bound {
+		authority = session.Authority{}
+	}
+	if err := setSessionLabels(forked, sel, profile, src.Owner, authority); err != nil {
 		return "", err
 	}
 	if title != "" {
@@ -2515,13 +2535,13 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 // default). The model is intentionally NOT compared: a model mismatch within a
 // provider is the point of the /models picker switch, so a same-provider
 // model change is permitted; a cross-provider model change strips and replays.
-func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, *session.Principal, error) {
+func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, *session.Principal, session.Authority, bool, error) {
 	src, err := s.loadAndReopen(ctx, srcID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, session.Authority{}, false, err
 	}
 	if src.State == session.StateRunning || src.State == session.StateAwaiting {
-		return nil, nil, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
+		return nil, nil, session.Authority{}, false, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
 	}
 	// The SOURCE's owner travels with the carried history (ADR 0204 decision 4):
 	// a fork is attributed to whoever owned the session it copied, never to the
@@ -2529,6 +2549,7 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	// (copy someone else's session, become its owner). An ownerless source
 	// yields an ownerless fork, never a fabricated one.
 	srcOwner := src.Owner
+	srcAuthority, srcAuthorityBound := src.BoundAuthority()
 	// Canonicalise each side: empty => the server default provider, mirroring how
 	// createSession resolves the selector (a zero ProviderSelector rides the
 	// shared/default engine). DefaultResolvedModel.ProviderID is the composition-
@@ -2563,12 +2584,12 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 		// provider-id check, not an adapter-type check, because the server
 		// layer only has the resolved id, not the adapter.
 		if usesResponsesReplayIDs(newProv) {
-			return synthesizeOpenAIItemIDs(stripped), srcOwner, nil
+			return synthesizeOpenAIItemIDs(stripped), srcOwner, srcAuthority, srcAuthorityBound, nil
 		}
-		return stripped, srcOwner, nil
+		return stripped, srcOwner, srcAuthority, srcAuthorityBound, nil
 	}
 	// Same provider: replay the blobs verbatim (warm cache).
-	return snap, srcOwner, nil
+	return snap, srcOwner, srcAuthority, srcAuthorityBound, nil
 }
 
 // usesResponsesReplayIDs reports whether a resolved provider replays through

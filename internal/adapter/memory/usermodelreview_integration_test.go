@@ -91,7 +91,7 @@ func TestUserModelReviewerWritesFactAndNeverReopens(t *testing.T) {
 	userSessID := session.SessionID("user-session-1")
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	userSess := completedSessionWithTranscript(userSessID)
-	if err := userSess.RestoreLabels(owner, ""); err != nil {
+	if err := userSess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	fakeStore := &fakeReviewStore{sess: userSess}

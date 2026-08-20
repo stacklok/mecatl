@@ -105,8 +105,13 @@ type SessionMeta struct {
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
 	Relationship session.SessionRelationship
-	// AdoptionSourceID and AdoptionRequestDigest are inert adoption audit labels.
-	// They are not event-carried and must be supplied by an event-log store.
+	// Authority is the plain derived-capability payload supplied with creation
+	// metadata. Nil is a documented pre-feature legacy record; a present payload
+	// is validated and bound before reconstruction proceeds.
+	Authority *session.Authority
+	// AdoptionSourceID and AdoptionRequestDigest are the immutable legacy-session
+	// adoption proof. They mirror sessnap's flat AdoptionMetadata fields because
+	// events do not carry creation metadata.
 	AdoptionSourceID      session.SessionID
 	AdoptionRequestDigest string
 	// CreatedAt is the creation timestamp.
@@ -154,6 +159,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	if err := restoreAuthority(s, meta.Authority); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
 	// Inert creation labels — opaque to the domain, restored by direct assignment
 	// exactly as sessnap.Restore does (these are authoritative exported values, not
 	// state transitions).
@@ -198,6 +206,19 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// title survives compaction here (better than the snapshot lazy fallback).
 	s.SetTitle(f.firstGenuineText)
 	return s, nil
+}
+
+func restoreAuthority(s *session.Session, authority *session.Authority) error {
+	if authority == nil {
+		return nil
+	}
+	if err := sessnap.ValidatePersistedAuthority(authority); err != nil {
+		return fmt.Errorf("restore authority: %w", err)
+	}
+	if err := s.BindAuthority(*authority); err != nil {
+		return fmt.Errorf("restore authority: %w", err)
+	}
+	return nil
 }
 
 // reconstructAwaiting rebuilds a session parked on a permission ask. The fold left

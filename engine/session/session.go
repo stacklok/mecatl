@@ -432,10 +432,9 @@ type Session struct {
 	// (ADR 0204 decision 4). The aggregate STORES it and never interprets it: no
 	// enforcement, no filtering, display + audit only.
 	Owner *Principal
-	// Authority is Track C's label, shipped INERT here so the contended
-	// engine/api/*.txt + CHANGELOG regeneration is paid once (ADR 0204
-	// consequences). Nothing in this plan reads or writes it beyond the snapshot
-	// round-trip; the zero value means "unset". Stamped through RestoreLabels.
+	// Authority is the derived authority payload stamped through BindAuthority
+	// before the first runnable state. The private marker distinguishes a bound
+	// empty capability set from a genuinely pre-feature legacy session.
 	Authority Authority
 	// Kind classifies the trusted producer and continuation posture. New creates
 	// main sessions; delegated/scheduled producers use the validated constructors.
@@ -449,6 +448,10 @@ type Session struct {
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 
+	// authorityBound records that Authority was stamped through BindAuthority.
+	// A zero Authority with this marker is impossible: BindAuthority validates the
+	// payload before setting either field.
+	authorityBound bool
 	// pending is set iff State == StateAwaiting.
 	pending *PendingAsk
 	// stop holds the terminal stop reason once the session has stopped.

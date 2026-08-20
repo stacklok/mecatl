@@ -23,18 +23,18 @@ func TestRestoreLabelsIsWriteOnce(t *testing.T) {
 	bob := &session.Principal{Issuer: "https://idp", Subject: "bob", GrantType: session.GrantTypeUser}
 
 	s := newLabelSession(t)
-	if err := s.RestoreLabels(alice, session.Authority("a")); err != nil {
+	if err := s.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("first RestoreLabels: %v", err)
 	}
-	err := s.RestoreLabels(bob, session.Authority("b"))
+	err := s.RestoreLabels(bob, session.Authority{})
 	if !errors.Is(err, session.ErrOwnerAlreadySet) {
 		t.Fatalf("second RestoreLabels with a different owner: got %v, want ErrOwnerAlreadySet", err)
 	}
 	if s.Owner.Subject != "alice" {
 		t.Errorf("owner overwritten: got %q, want alice", s.Owner.Subject)
 	}
-	if s.Authority != session.Authority("a") {
-		t.Errorf("authority overwritten: got %q, want a", s.Authority)
+	if _, bound := s.BoundAuthority(); bound {
+		t.Error("owner restore unexpectedly bound authority")
 	}
 }
 
@@ -45,11 +45,11 @@ func TestRestoreLabelsIdempotentForSameOwner(t *testing.T) {
 
 	s := newLabelSession(t)
 	p := session.Principal{Issuer: "https://idp", Subject: "alice", GrantType: session.GrantTypeUser}
-	if err := s.RestoreLabels(&p, session.Authority("a")); err != nil {
+	if err := s.RestoreLabels(&p, session.Authority{}); err != nil {
 		t.Fatalf("first RestoreLabels: %v", err)
 	}
 	same := p // a distinct pointer with an equal value
-	if err := s.RestoreLabels(&same, session.Authority("a")); err != nil {
+	if err := s.RestoreLabels(&same, session.Authority{}); err != nil {
 		t.Fatalf("idempotent RestoreLabels: %v", err)
 	}
 }
@@ -61,14 +61,14 @@ func TestRestoreLabelsNilOwnerLeavesOwnerUnset(t *testing.T) {
 	t.Parallel()
 
 	s := newLabelSession(t)
-	if err := s.RestoreLabels(nil, ""); err != nil {
+	if err := s.RestoreLabels(nil, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(nil): %v", err)
 	}
 	if s.Owner != nil {
 		t.Errorf("owner set from a nil restore: %+v", *s.Owner)
 	}
 	// A nil restore does not burn the write-once slot.
-	if err := s.RestoreLabels(&session.Principal{Issuer: "i", Subject: "s", GrantType: session.GrantTypeSystem}, "a"); err != nil {
+	if err := s.RestoreLabels(&session.Principal{Issuer: "i", Subject: "s", GrantType: session.GrantTypeSystem}, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels after a nil restore: %v", err)
 	}
 	if s.Owner == nil || s.Owner.Subject != "s" {

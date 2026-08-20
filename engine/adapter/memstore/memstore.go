@@ -173,7 +173,14 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 	size := int64(256 + len(snap.ID) + len(snap.State) + len(snap.Mode) + len(snap.Workspace) +
 		len(snap.StopReason) + len(snap.Kind) + len(snap.Profile) + len(snap.ProviderID) +
 		len(snap.ModelID) + len(snap.ReasoningEffort) + len(snap.Title) + len(snap.TitleProvenance) +
-		len(snap.LastError) + len(snap.Authority) + len(snap.EnvironmentRef.Kind) + len(snap.EnvironmentRef.ID))
+		len(snap.LastError) + len(snap.EnvironmentRef.Kind) + len(snap.EnvironmentRef.ID))
+
+	if authority := snap.Authority; authority != nil {
+		size += int64(96 + len(authority.Provenance) + len(authority.DefinitionIdentity))
+		for _, tool := range authority.CapabilitySet.Tools {
+			size += int64(4 + len(tool))
+		}
+	}
 
 	rel := snap.Relationship
 	size += int64(len(rel.ScheduleName) + len(rel.OriginSessionID) + len(rel.ParentSessionID) +

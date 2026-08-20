@@ -5,6 +5,8 @@
     method func (*Principal).SameIdentity(other *Principal) bool
     method func (*Session).Abandon() error
     method func (*Session).BeginTurn() error
+    method func (*Session).BindAuthority(authority Authority) error
+    method func (*Session).BoundAuthority() (Authority, bool)
     method func (*Session).Cancel() error
     method func (*Session).Complete() error
     method func (*Session).Fail() error
@@ -36,6 +38,8 @@
     method func (*Session).SetTitle(text string)
     method func (*Session).Stop(reason StopReason) error
     method func (*Session).StopReason() (StopReason, bool)
+    method func (Authority).Clone() Authority
+    method func (Authority).Valid() bool
     method func (GrantType).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAsk).Origin() AskOrigin
@@ -207,7 +211,7 @@ type AdoptionMetadata struct{AdoptionSourceID SessionID "json:\"adoption_source_
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
 type ApprovalVerdict int
 type AskOrigin int
-type Authority string
+type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""}
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}

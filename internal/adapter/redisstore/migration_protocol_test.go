@@ -280,7 +280,7 @@ func TestFinalizeSessionMigrationUsesBoundedCoverageProofAndConstantWorkCAS(t *t
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "owner"}
 	for i := range 250 {
 		sess := session.New(session.SessionID("covered-"+strconv.Itoa(i)), session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
-		if err := sess.RestoreLabels(owner, ""); err != nil {
+		if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.Save(context.Background(), sess); err != nil {
@@ -354,7 +354,7 @@ func TestFinalizeRejectsUnmatchedOwnerMembershipsAndPublishesOnlyHealthyPaging(t
 				owner *session.Principal
 			}{{"alice", alice}, {"bob", bob}} {
 				sess := session.New(fixture.id, session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
-				if err := sess.RestoreLabels(fixture.owner, ""); err != nil {
+				if err := sess.RestoreLabels(fixture.owner, session.Authority{}); err != nil {
 					t.Fatal(err)
 				}
 				if err := st.Save(context.Background(), sess); err != nil {

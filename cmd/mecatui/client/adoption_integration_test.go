@@ -74,7 +74,7 @@ func saveAdoptionSeamLegacy(t *testing.T, store *memstore.Store, id string, stat
 	if err := sess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, ""); err != nil {
+	if err := sess.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
 	sess.ProviderID, sess.ModelID = "provider-a", "model-a"

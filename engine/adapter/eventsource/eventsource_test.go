@@ -34,17 +34,42 @@ func meta() eventsource.SessionMeta {
 	}
 }
 
-func TestFoldAdoptionAuditMetadata(t *testing.T) {
-	metadata := meta()
-	metadata.AdoptionSourceID = "legacy-source"
-	metadata.AdoptionRequestDigest = "request-digest"
-	folded, err := eventsource.Fold(metadata, seq(nil))
-	if err != nil {
-		t.Fatal(err)
+func TestADR_0232_AuthorityEvaluator_Scenario2_EventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
+	t.Parallel()
+	m := meta()
+	m.Authority = &session.Authority{Provenance: "derived"}
+
+	restored, err := eventsource.Fold(m, seq(nil))
+	if err == nil {
+		t.Fatal("empty authority claim folded successfully")
 	}
-	adoption := folded.Adoption
-	if adoption == nil || adoption.AdoptionSourceID != metadata.AdoptionSourceID || adoption.AdoptionRequestDigest != metadata.AdoptionRequestDigest {
-		t.Fatalf("adoption metadata = %+v, want %q/%q", adoption, metadata.AdoptionSourceID, metadata.AdoptionRequestDigest)
+	if restored != nil {
+		t.Fatal("empty authority claim returned a session")
+	}
+	if !errors.Is(err, eventsource.ErrReconstruct) {
+		t.Fatalf("error = %v, want ErrReconstruct", err)
+	}
+
+	legacy, err := eventsource.Fold(meta(), seq(nil))
+	if err != nil {
+		t.Fatalf("legacy authority-absent fold: %v", err)
+	}
+	if _, bound := legacy.BoundAuthority(); bound {
+		t.Fatal("authority-absent legacy fold restored as bound")
+	}
+}
+
+func TestFoldRestoresAdoptionMetadata(t *testing.T) {
+	m := meta()
+	m.AdoptionSourceID = "legacy-source"
+	m.AdoptionRequestDigest = "request-digest"
+
+	restored, err := eventsource.Fold(m, seq(nil))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if got := restored.Adoption; got == nil || got.AdoptionSourceID != m.AdoptionSourceID || got.AdoptionRequestDigest != m.AdoptionRequestDigest {
+		t.Fatalf("Adoption = %+v, want source %q and digest %q", got, m.AdoptionSourceID, m.AdoptionRequestDigest)
 	}
 }
 
