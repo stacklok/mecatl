@@ -49,16 +49,16 @@ function Hero() {
             <span className={styles.heroAccent}>built to be embedded.</span>
           </h1>
           <p className={styles.heroSubtitle}>
-            mecatl is a production-grade harness for building agentic systems.
-            It ships the agent loop, port model, permissions, hooks, and
-            resilience so you can focus on the adapter that makes it yours.
+            mecatl is for two paths: build an agentic system with the Go harness,
+            or use its interactive terminal client in a local checkout or against
+            an operator-run server. Choose the path that matches your work.
           </p>
           <div className={styles.heroCtas}>
             <Link className={styles.ctaPrimary} to="/docs/building">
-              Read the building docs
+              Build with mecatl
             </Link>
             <Link className={styles.ctaSecondary} to="/docs/mecatui">
-              Use mecatui
+              Use the terminal client
             </Link>
             <Link className={styles.ctaSecondary} to="https://github.com/stacklok/mecatl">
               View on GitHub

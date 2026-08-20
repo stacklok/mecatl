@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 5
 title: Use the TUI
 ---
 
@@ -23,19 +23,6 @@ When a tool needs permission, a modal shows what it wants to do. Read the reques
 - `/effort` forks the conversation onto the chosen reasoning-effort tier. Unsupported tiers are reported rather than silently applied.
 - `/clear` starts over; `/session` shows the active session details.
 
-## Default key reference
+## A short key reference
 
-Use `?` for the live, complete key map—especially after remapping. The useful defaults are:
-
-| Key | Action |
-| --- | --- |
-| `enter` | Send a prompt; while running, steer or queue a follow-up |
-| `shift+enter` | Insert a newline |
-| `esc` | Back out staged input, then cancel a running turn |
-| `ctrl+t` | Expand a tool card or approval details |
-| `pgup` / `pgdn` | Scroll the conversation |
-| `/` | Open slash commands |
-| `ctrl+c` twice on an empty prompt | Quit safely |
-| `ctrl+z` | Suspend to the shell; use `fg` to return |
-
-Suspending does **not** stop the embedded server or an active run. Cancel first if you want the work to stop. The full list, including overlays, mouse behavior, and accessibility-relevant focus controls, is in [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).
+Use `?` on an empty prompt for the live help overlay. The everyday defaults are `enter` to send—while work is running, steer when the server supports it or queue a follow-up otherwise—`shift+enter` to insert a newline, `ctrl+t` to inspect details, `pgup`/`pgdn` to scroll, and `/` to open commands. See [Keybindings](./keybindings.md) for approval controls, remapping, input-editing caveats, and the complete reference.

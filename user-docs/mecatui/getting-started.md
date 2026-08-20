@@ -42,10 +42,10 @@ Use `connect` only for a server that is already running:
 bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
 ```
 
-Remote mode does not use local provider keys or embedded-server flags. The workspace path is interpreted by the server, so it must name a workspace available **there**, not necessarily on your terminal host. Ask the server operator for its address, authentication, TLS, and workspace expectations; see [Run mecated standalone](/building/deployment/mecated.md) when you operate that server.
+Remote mode does not use local provider keys or embedded-server flags. The workspace path is interpreted by the server, so it must name a workspace available **there**, not necessarily on your terminal host. See [Connect to a server](./remote-servers.md) for ownership boundaries, authenticated and TLS connections, and operator next steps.
 
 ## Trust the workspace intentionally
 
 A workspace can contain instructions and files that influence the agent. Start in a repository you recognize, review permission requests before approving them, and treat prompts, tool output, and fetched content as untrusted input. In remote mode, the server's policy and trust configuration control what the agent can access; do not assume local settings apply.
 
-Next, learn how to [work while a run is streaming](./using-the-tui.md) and [resume the chat later](./sessions.md).
+Next, learn how to [work while a run is streaming](./using-the-tui.md), [use everyday keys](./keybindings.md), and [resume the chat later](./sessions.md).
