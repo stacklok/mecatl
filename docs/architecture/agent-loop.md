@@ -105,6 +105,7 @@ sequenceDiagram
   E->>D: dispatch([Read])
   D->>D: Policy.Evaluate → Allow
   D->>D: PreToolUse hook
+  D->>D: AuthorityEvaluator → Allow
   D-->>C: tool.call
   D->>T: Execute(call, ws)
   T-->>D: ToolResult
@@ -132,6 +133,43 @@ A `cancelled` flag propagates from `dispatch` so the loop terminates as
 `StopCancelled` if `ctx` was cancelled mid-await or mid-execution. A
 harness-level tool error becomes an error `ToolResult` (the loop never aborts on
 one tool failure); a genuinely unknown tool yields an error result too.
+
+### Authority evaluation at execution
+
+Permission policy, session ownership, and delegated authority are independent
+checks. Permission policy answers whether a call needs approval; ownership
+answers who may access a session; authority answers whether this particular run
+was delegated the capability at all. A bound root session starts with the tool
+capabilities assembled in its composed catalog. Its authority set also records
+whether it has a filesystem, whether it may write directly, and how many child
+delegations remain.
+
+Before creating a Subagent, Parallel branch, or Team member, the harness derives
+the child's set by intersecting the parent's set with the child's actual runtime
+posture, any eligible managed-specialist ceiling, and an optional per-call
+tightening. It then consumes one delegation hop. Derivation happens before the
+harness creates the child engine, workspace, runner, or worktree, so a refused
+request allocates no child runtime resource. The child persists its derived set;
+a later resume checks it is still contained by the current parent's set without
+spending another hop.
+
+Tool disclosure is only guidance for the model. The security boundary is the
+execution path: after the ordinary permission and pre-tool-hook gates clear, the
+loop asks the configured authority evaluator about the actual capability being
+spent. A denied capability, an unavailable evaluator, or an ambiguous target
+returns an error ToolResult and does not invoke the tool body. For normal tools
+the capability is the tool name. `CallMcpWithQuery` is instead checked against
+its addressed `mcp__<server>__<tool>` capability, while MCP resource operations
+spend a per-server resource capability and retain their operation as the action.
+
+The evaluator receives the carried set, the selected capability, action,
+delegation depth, non-secret identity attribution, and—for recognized local-file
+calls—a normalized physical workspace target. It never receives raw tool
+arguments or credentials. The default `local` evaluator checks exact set
+membership; explicit `noop` disables this enforcement; optional Cedar can add
+operator-owned restrictions such as a workspace path boundary but cannot grant a
+capability absent from the set. See [ADR 0233](../adr/0233-authority-evaluator-port.md)
+for the decision; operator configuration is documented in the public permissions guide.
 
 ## Permission pause / resume
 
