@@ -148,7 +148,7 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 			)
 			seedParent := agent.NewEngine(agent.Deps{LLM: seedParentLLM, Catalog: catalogWith(t, task), Policy: allowAll(), Model: "parent-model"})
 			seedSess := session.New("owner-parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-			if err := seedSess.RestoreLabels(resumeOwnerAlice, ""); err != nil {
+			if err := seedSess.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
 			r := seedParent.Run(context.Background(), seedSess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
@@ -214,7 +214,7 @@ func TestSubagentResumeRequiresPrincipalWhenOwnershipEnforced(t *testing.T) {
 	store := memstore.New()
 	childID := session.SessionID("subagent-alice")
 	child := session.New(childID, session.ModeDefault, "/ws", session.Limits{}, time.Now())
-	if err := child.RestoreLabels(resumeOwnerAlice, ""); err != nil {
+	if err := child.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	if err := store.Save(context.Background(), child); err != nil {
@@ -239,7 +239,7 @@ func TestCallerSeparation_SubagentResumeHidesForeignInFlightState(t *testing.T) 
 	store := memstore.New()
 	childID := session.SessionID("subagent-alice")
 	seed := session.New(childID, session.ModeDefault, "/ws", session.Limits{}, time.Now())
-	if err := seed.RestoreLabels(resumeOwnerAlice, ""); err != nil {
+	if err := seed.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	if err := seed.BeginTurn(); err != nil {

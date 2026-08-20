@@ -295,6 +295,10 @@ type Supervisor struct {
 	// is the sole writer.
 	sharedBaseWS func(root string) tool.Workspace
 	factory      MemberEngine
+	// rootAuthority is stamped only for a server-created team with no parent run.
+	// Parent-driven teams are child-derivation work and deliberately do not use it.
+	rootAuthority session.Authority
+	rootBound     bool
 
 	limits      session.Limits
 	mode        session.PermissionMode
@@ -510,6 +514,18 @@ func WithTeamSharedBaseWorkspace(f func(root string) tool.Workspace) SupervisorO
 	return func(s *Supervisor) { s.sharedBaseWS = f }
 }
 
+// WithRootAuthority supplies the composed root set for members of a directly
+// server-created team. It is ignored for a team created from a parent run; child
+// derivation remains outside this option.
+func WithRootAuthority(authority session.Authority) SupervisorOption {
+	return func(s *Supervisor) {
+		if authority.Provenance != "" {
+			s.rootAuthority = authority.Clone()
+			s.rootBound = true
+		}
+	}
+}
+
 // WithTeamLimits overrides the per-member, per-round stop conditions (default
 // defaultChildLimits). Reopen resets these counters each round, so they bound one
 // turn-loop, not the member's whole life.
@@ -719,6 +735,8 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 // force-copy fork for a Mutating one), constructs its session, and records it. It
 // must be called before Run. A Mutating member without s.forker, or a
 // read-only-isolated member without s.roForker, is an error.
+//
+//nolint:gocyclo // Enrolment ordering keeps authority derivation before runtime acquisition.
 func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	if strings.TrimSpace(spec.Name) == "" {
 		return ErrMemberNameRequired
@@ -731,6 +749,15 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		// ErrTooManyMembers) flow through unchanged so a caller can classify them
 		// with errors.Is.
 		return fmt.Errorf("agent: enrol member: %w", err)
+	}
+	var delegatedAuthority session.Authority
+	if s.caps.parentSessionID != "" && s.caps.authorityBound {
+		var authorityErr error
+		delegatedAuthority, authorityErr = deriveDelegatedAuthority(s.caps.authority, s.caps.authority.CapabilitySet, nil, nil)
+		if authorityErr != nil {
+			s.team.RemoveMember(spec.Name)
+			return fmt.Errorf("agent: derive team-member authority: %w", authorityErr)
+		}
 	}
 
 	// OPT-IN model router (ADR 0034): classify this member ONCE here, before the engine
@@ -824,8 +851,20 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("agent: stamp team-member relationship: %w", err)
 	}
-	// The member is attributed to the PARENT session's owner (ADR 0204 decision 4).
-	s.caps.inheritOwner(sess)
+	if s.caps.parentSessionID != "" && s.caps.authorityBound {
+		if authorityErr := stampDelegatedLabels(sess, s.caps.owner, delegatedAuthority); authorityErr != nil {
+			if cleanup != nil {
+				_ = cleanup()
+			}
+			s.team.RemoveMember(spec.Name)
+			return fmt.Errorf("agent: stamp team-member authority: %w", authorityErr)
+		}
+	} else {
+		s.caps.inheritOwner(sess)
+	}
+	if err := s.stampDirectTeamRoot(sess, cleanup, spec.Name); err != nil {
+		return err
+	}
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)
 
 	// Mint the per-member cancellation pair and register the member in the PARENT
@@ -862,6 +901,20 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// lead, but a caller may enrol leads in any order; the FIRST Lead member wins.
 	if spec.Lead && s.leadName == "" {
 		s.leadName = spec.Name
+	}
+	return nil
+}
+
+func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() error, member string) error {
+	if s.caps.parentSessionID != "" || !s.rootBound {
+		return nil
+	}
+	if err := sess.BindAuthority(s.rootAuthority); err != nil {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+		s.team.RemoveMember(member)
+		return fmt.Errorf("agent: stamp direct-team root authority: %w", err)
 	}
 	return nil
 }

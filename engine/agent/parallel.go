@@ -1006,6 +1006,18 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	// routeTask closure holds the per-run breaker mutex, so the concurrent branch
 	// classifications + the classifier-usage fold into the parent session are serialised.
 	prompt := composePrompt(shared, task)
+	var delegatedAuthority session.Authority
+	if caps.authorityBound {
+		var authorityErr error
+		candidate := caps.authority.CapabilitySet
+		candidate.DirectWrite = false
+		delegatedAuthority, authorityErr = deriveDelegatedAuthority(caps.authority, candidate, nil, nil)
+		if authorityErr != nil {
+			res.failed = true
+			res.failReason = "delegation authority refused: " + authorityErr.Error()
+			return res, session.StopError
+		}
+	}
 	routedCategory, routedModel, routingReason := t.maybeRouteBranchModel(ctx, caps, prompt)
 	branchEngine := t.childEngine
 	routedAccepted := false
@@ -1068,8 +1080,16 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
 		return res, session.StopError
 	}
-	// The branch is attributed to the PARENT session's owner (ADR 0204 decision 4).
-	caps.inheritOwner(childSess)
+	if caps.authorityBound {
+		if authorityErr := stampDelegatedLabels(childSess, caps.owner, delegatedAuthority); authorityErr != nil {
+			res.failed = true
+			res.failReason = "failed to stamp delegated authority: " + authorityErr.Error()
+			be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
+			return res, session.StopError
+		}
+	} else {
+		caps.inheritOwner(childSess)
+	}
 
 	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt})
 	// A Parallel branch always runs in its OWN isolated fork, so its Bash asks are eligible

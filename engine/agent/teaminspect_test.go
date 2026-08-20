@@ -85,7 +85,7 @@ func TestInspectMemberOwnershipPolicy(t *testing.T) {
 	store := memstore.New()
 	member := seedMemberSession(t, agent.MemberSessionID("team-a", "worker"), "task", "OWNER SECRET")
 	owner := &session.Principal{Issuer: "https://issuer-a.example", Subject: "same-subject", GrantType: session.GrantTypeUser}
-	if err := member.RestoreLabels(owner, ""); err != nil {
+	if err := member.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	if err := store.Save(context.Background(), member); err != nil {

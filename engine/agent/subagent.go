@@ -464,6 +464,10 @@ type subagentArgs struct {
 	// read-only behaviour, unchanged.
 	Mode string `json:"mode,omitempty"`
 
+	// Authority optionally tightens this child's carried authority. Every field is
+	// tighten-only: requests outside the derived child authority are refused.
+	Authority *DelegationTightening `json:"authority,omitempty"`
+
 	// Fork seeds this child from a DEEP COPY of the PARENT conversation (issue #34)
 	// instead of an empty context, so it "continues THIS exact investigation with my
 	// full context". The copied history is carried VERBATIM, not re-fenced — the fork
@@ -486,6 +490,15 @@ type subagentArgs struct {
 	Fork bool `json:"fork,omitempty"`
 }
 
+// DelegationTightening is the optional per-call capability reduction requested
+// for a Subagent. Nil fields inherit the already-derived value.
+type DelegationTightening struct {
+	Tools                    []string `json:"tools,omitempty"`
+	RemainingDelegationDepth *int     `json:"remaining_delegation_depth,omitempty"`
+	FileSystem               *bool    `json:"filesystem,omitempty"`
+	DirectWrite              *bool    `json:"direct_write,omitempty"`
+}
+
 // AgentMeta is the plain (name, description) summary of one registered agent
 // definition, surfaced in the Subagent tool's Spec().Description for progressive
 // disclosure. It is a layering-clean value type: the composition root translates
@@ -504,6 +517,10 @@ type AgentMeta struct {
 	// explorer. A zero Limits value is treated as "no per-def override" — Execute
 	// then uses the Subagent tool's default limits, exactly as the no-`agent` path does.
 	Limits session.Limits
+	// AuthorityCeiling is the resolved definition tool ceiling. It is honoured only
+	// when Managed is true; lower tiers can never establish a ceiling.
+	AuthorityCeiling governance.CapabilitySet
+	Managed          bool
 }
 
 // subagentSchema is the JSON schema the model sees for the Subagent tool's arguments. The
@@ -561,6 +578,16 @@ var subagentSchema = json.RawMessage(`{
     "background": {
       "type": "boolean",
       "description": "Run the subagent in the BACKGROUND: this call returns immediately with its agentId and the subagent keeps working while you continue (a note tells you when it finishes). Use it for long investigations whose result you do not need before your next steps. Collect the result with SubagentStatus (pass the agentId; use wait_ms to wait on it). A background subagent still running when this run ends is CANCELLED (its transcript persists and is resumable). Omit (default false) to wait for the result inline."
+    },
+    "authority": {
+      "type": "object",
+      "description": "Optional authority tightening for this child: tools, remaining_delegation_depth, filesystem, and direct_write may only reduce your derived authority. A request that would add a tool, hop, or execution posture is refused.",
+      "properties": {
+        "tools": {"type": "array", "items": {"type": "string"}},
+        "remaining_delegation_depth": {"type": "integer"},
+        "filesystem": {"type": "boolean"},
+        "direct_write": {"type": "boolean"}
+      }
     },
     "fork": {
       "type": "boolean",
@@ -633,6 +660,9 @@ type SubagentTool struct {
 	// name absent from the map (or a zero Limits) means "use t.limits" — the same
 	// default the no-`agent` explorer path uses.
 	agentLimits map[string]session.Limits
+	// agentCeilings is populated only from operator-managed definitions. A missing
+	// entry deliberately means no specialist ceiling.
+	agentCeilings map[string]governance.CapabilitySet
 
 	// limits bound a single child run. Defaults to defaultChildLimits.
 	limits session.Limits
@@ -1234,7 +1264,14 @@ func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOpti
 		// agent is selected. A zero Limits is skipped — the name then falls back to
 		// t.limits in Execute, identical to the no-`agent` path.
 		t.agentLimits = nil
+		t.agentCeilings = nil
 		for _, m := range meta {
+			if m.Managed {
+				if t.agentCeilings == nil {
+					t.agentCeilings = make(map[string]governance.CapabilitySet, len(meta))
+				}
+				t.agentCeilings[m.Name] = m.AuthorityCeiling
+			}
 			if m.Limits == (session.Limits{}) {
 				continue
 			}
@@ -1244,6 +1281,17 @@ func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOpti
 			t.agentLimits[m.Name] = m.Limits
 		}
 	}
+}
+
+func (t *SubagentTool) agentCeiling(name string) (*governance.CapabilitySet, bool) {
+	if name == "" || t.agentCeilings == nil {
+		return nil, false
+	}
+	ceiling, ok := t.agentCeilings[name]
+	if !ok {
+		return nil, false
+	}
+	return &ceiling, true
 }
 
 // WithRoutableAgents injects the composition-computed SET of agent-def names eligible for
@@ -2249,7 +2297,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	return child, runEnv, cleanupWS, advisory, editsSurvived, session.ToolResult{}, true
 }
 
-//nolint:gocyclo // lifecycle validation is intentionally linear; distributed lease admission adds one fail-safe branch.
+//nolint:gocyclo // Delegation validation order is security-significant and intentionally explicit.
 func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args subagentArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
@@ -2281,6 +2329,30 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	}
 
 	resuming := strings.TrimSpace(args.Resume) != ""
+	if resuming && caps.authorityBound {
+		persisted, resumeResult, loaded := t.loadOwnedResumeSession(ctx, call.ID, session.SessionID(args.Resume))
+		if !loaded {
+			return resumeResult, nil
+		}
+		persistedAuthority, bound := persisted.BoundAuthority()
+		if authorityErr := validateResumedAuthority(caps.authority, persistedAuthority, bound); authorityErr != nil {
+			return session.NewToolError(call.ID, "Subagent: resume authority refused: "+authorityErr.Error()), nil
+		}
+	}
+	var delegatedAuthority session.Authority
+	if !resuming && caps.authorityBound {
+		candidate := caps.authority.CapabilitySet
+		candidate.DirectWrite = writable
+		ceiling, managed := t.agentCeiling(args.Agent)
+		var authorityErr error
+		delegatedAuthority, authorityErr = deriveDelegatedAuthority(caps.authority, candidate, ceiling, args.Authority)
+		if authorityErr != nil {
+			return session.NewToolError(call.ID, "Subagent: delegation authority refused: "+authorityErr.Error()), nil
+		}
+		if managed {
+			delegatedAuthority.DefinitionIdentity = "explicit:" + args.Agent
+		}
+	}
 
 	// OPT-IN semantic model router (ADR 0031): for a PLAIN default delegation, classify
 	// the task and mint the child on the routed model via the per-call factory path. The
@@ -2366,7 +2438,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if args.Background {
 		return t.startBackground(ctx, backgroundChild{
 			call: call, env: env, emit: emit, caps: caps, args: args,
-			engine: engine, limits: limits, resuming: resuming, childID: childID,
+			engine: engine, limits: limits, resuming: resuming, childID: childID, authority: delegatedAuthority,
 			forkHistory:    forkHistory,
 			routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
 			timeoutCtx: timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
@@ -2421,8 +2493,23 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if !ok {
 		return errResult, nil
 	}
-	// The child is attributed to the PARENT session's owner (ADR 0204 decision 4).
-	caps.inheritOwner(child)
+	if resuming && caps.authorityBound {
+		persisted, bound := child.BoundAuthority()
+		if authorityErr := validateResumedAuthority(caps.authority, persisted, bound); authorityErr != nil {
+			_ = cleanupWS()
+			return session.NewToolError(call.ID, "Subagent: resume authority refused: "+authorityErr.Error()), nil
+		}
+		caps.inheritOwner(child)
+	} else if resuming {
+		caps.inheritOwner(child)
+	} else if caps.authorityBound {
+		if authorityErr := stampDelegatedLabels(child, caps.owner, delegatedAuthority); authorityErr != nil {
+			_ = cleanupWS()
+			return session.NewToolError(call.ID, "Subagent: failed to stamp delegated authority: "+authorityErr.Error()), nil
+		}
+	} else {
+		caps.inheritOwner(child)
+	}
 	// Tear down the run workspace after the child fully drains. For a writable
 	// (direct-write) child this is a no-op — cleanupWS is the no-op returned by
 	// forkChildEnvironment for a nil forker (the child ran against the parent ws, which
@@ -2628,6 +2715,7 @@ type backgroundChild struct {
 	routedModel    string
 	routingReason  string
 	childID        session.SessionID
+	authority      session.Authority
 	// timeoutCtx is non-nil iff a per-call timeout_ms deadline applies (the
 	// DeadlineExceeded disambiguation read, same as the foreground path).
 	timeoutCtx    context.Context //nolint:containedctx // deadline-disambiguation handle, mirrors run()'s timeoutCtx local
@@ -2675,6 +2763,14 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 			return errResult
 		}
 		b.resumed = loaded
+		if b.caps.authorityBound {
+			persisted, bound := loaded.BoundAuthority()
+			if authorityErr := validateResumedAuthority(b.caps.authority, persisted, bound); authorityErr != nil {
+				b.release()
+				abort()
+				return session.NewToolError(b.call.ID, "Subagent: resume authority refused: "+authorityErr.Error())
+			}
+		}
 	}
 	b.caps.startChildRun(b.childID)
 	// A5: the start event is emitted SYNCHRONOUSLY before the goroutine spawns, so
@@ -2757,8 +2853,12 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		endOnError(errResult)
 		return
 	}
-	// The child is attributed to the PARENT session's owner (ADR 0204 decision 4).
-	b.caps.inheritOwner(child)
+	if b.resuming || !b.caps.authorityBound {
+		b.caps.inheritOwner(child)
+	} else if authorityErr := stampDelegatedLabels(child, b.caps.owner, b.authority); authorityErr != nil {
+		endOnError(session.NewToolError(b.call.ID, "Subagent: failed to stamp delegated authority: "+authorityErr.Error()))
+		return
+	}
 	// RESUME-START persist, mirroring prepareChildSession: refresh the resumed
 	// snapshot's last-modified time so the child-session GC's age pass never
 	// deletes an in-flight resumed child (best-effort, failures swallowed).
