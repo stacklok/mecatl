@@ -411,6 +411,7 @@ tasks:
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzSplitCommands$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyBash$' -fuzztime={{.FUZZTIME}}
+      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzAuthorityOperationsAreMonotone$' -fuzztime={{.FUZZTIME}}
       - cd provider/openai && go test ./ -run='^$' -fuzz='^FuzzDecodeSSE$' -fuzztime={{.FUZZTIME}}
 
   bench:

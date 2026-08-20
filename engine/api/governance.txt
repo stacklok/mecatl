@@ -1,6 +1,8 @@
     method func (*Evaluator).Evaluate(tool string, args json.RawMessage, planMode bool) PermissionDecision
     method func (*Evaluator).EvaluateWith(tool string, args json.RawMessage, planMode bool, extra []Rule) PermissionDecision
     method func (*Evaluator).LearnableRule(tool string, args json.RawMessage) (Rule, bool)
+    method func (CapabilitySet).AllowsTool(name string) bool
+    method func (CapabilitySet).Contains(other CapabilitySet) bool
     method func (Scope).HasHigherPrecedenceThan(other Scope) bool
 const Allow Effect = "allow"
 const Ask Effect = "ask"
@@ -25,9 +27,12 @@ const ScopeSharedProject Scope = 3
 const ScopeUser Scope = 4
 func BashCommandFromArgs(args json.RawMessage) (string, bool)
 func Canonicalize(cmd string) string
+func ConsumeDelegationHop(set CapabilitySet) (CapabilitySet, error)
 func HasSubstitutionOrGrouping(seg string) bool
 func IsReadOnlyTool(tool string) bool
 func IsolationApprovable(cmd string) bool
+func MCPResourceCapability(server string) string
+func Narrow(left CapabilitySet, right CapabilitySet) CapabilitySet
 func NewEvaluator(rules []Rule, opts ...EvaluatorOption) *Evaluator
 func ReadOnlyBash(cmd string) bool
 func SplitCommands(cmd string) []string
@@ -35,6 +40,7 @@ func SubstitutionReadOnly(seg string) bool
 func WithAudience(a Audience) EvaluatorOption
 func WithLooseSubstitution(loose bool) EvaluatorOption
 type Audience int
+type CapabilitySet struct{Tools []string; RemainingDelegationDepth int; FileSystem bool; DirectWrite bool}
 type Effect string
 type Evaluator struct{}
 type EvaluatorOption func(*Evaluator)
@@ -44,3 +50,4 @@ type HookPhase string
 type PermissionDecision struct{Effect Effect; Reason string; ConfiguredAsk bool; FlooredConfiguredAllow bool}
 type Rule struct{Scope Scope; Tool string; Pattern string; Effect Effect; Exact bool; Audience Audience}
 type Scope int
+var ErrDelegationDepthExhausted error
