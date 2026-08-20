@@ -96,7 +96,7 @@ The chart's `oidc.*` values wire the same four flags the legacy kustomize overla
 used to append: `oidc.enabled` (default `false`), `oidc.issuer`, `oidc.audience`
 (required together with `oidc.enabled`), the optional `oidc.jwksURI`, and
 `oidc.maxJWKSStaleness` (default `1h`). See [`deploy/README.md`](https://github.com/stacklok/mecatl/blob/main/deploy/README.md#caller-identity-oidc--the-opt-in-chart-values)
-for the full walkthrough, and [multi-user caller identity](https://github.com/stacklok/mecatl/blob/main/user-docs/deployment/mecak8s.md#multi-user-caller-identity-and-ownership-isolation-opt-in)
+for the full walkthrough, and [multi-user caller identity](https://github.com/stacklok/mecatl/blob/main/user-docs/building/deployment/mecak8s.md#multi-user-caller-identity-and-ownership-isolation-opt-in)
 for the isolation semantics. When `oidc.enabled` is true the chart also renders
 a `raw-driver` NetworkPolicy scoping ingress on a `app.kubernetes.io/component:
 raw-driver`-labelled pod to the mecak8s agent pod only — trusted-infrastructure

@@ -17,10 +17,94 @@ must run without secrets. `pull_request_target` runs in the base repo's context
 Jobs (each least-privilege at `contents: read`, `timeout-minutes` set,
 superseded runs cancelled via `concurrency`):
 
+`ci.yml` is intentionally triggered for **every** push/PR; it does not use
+workflow-level path filters, which can leave a required check absent. Its first
+`changes` job compares the event's exact base/head (PR) or before/SHA (push),
+then extracts `.github/scripts/docs-only-changes.sh` from that validated base
+commit into `RUNNER_TEMP` and executes the trusted copy against the NUL-delimited
+diff. It fails closed to full validation if a ref cannot be fetched, the range is
+invalid, the trusted classifier cannot be extracted or run, or a changed path is
+outside the narrow docs-content allowlist. Only
+Markdown under `docs/` or `user-docs/`, `user-docs/**/_category_.json`, root
+`README.md`, and `llms.txt` qualify. Workflow/build/configuration files,
+`AGENTS.md`/`CLAUDE.md`, `docs/lint` code, domain-model YAML, website tooling,
+and every unknown path always receive full validation. Rename detection is
+disabled for the comparison so both sides of a rename are classified.
+
+Docs-only runs skip the expensive build/race-shard/lint/fuzz/standalone/API/vulnerability
+jobs via job-level conditions, while retaining the documentation-relevant Docs,
+User docs, and Domain model jobs. The aggregate gate is named `Test (race)` on
+push and pull-request runs: it passes directly for docs-only changes, and for
+every other change passes only when both parallel race shards succeed (failure,
+cancellation, or skipping either shard fails the gate). Manual dispatches use
+the distinct `Test (race experiment)` context with the same shard-outcome logic,
+so an experiment can never satisfy the stable required check. The Docs job also runs
+`go test ./docs/lint` and the executable session-storage operations-guide contract
+in `cmd/mecated`. The classifier has offline NUL-delimited fixtures:
+`task test:docs-only-classifier`.
+
+The race partition is derived from `go list ./...`, never a maintained package
+list. One shard runs exactly `./cmd/mecatui/ui`; the root-complement shard excludes
+that exact import path and also runs the engine, OIDC, and provider module race
+sweeps. `.github/scripts/root-race-packages.sh` validates that UI and complement
+are disjoint, nonempty where required, and their sorted union is the complete
+root-module package set. Run its fixtures and live partition check with
+`task test:root-race-partition`; the individual local shards are
+`task test:race-ui` and `task test:race-root-complement`. `task test` remains the
+full unsharded local suite.
+
+Normal push and pull-request runs execute those race commands directly: they do
+not add `-json`, redirect output, create timing files, or upload artifacts. To
+investigate CI duration, open **Actions → CI → Run workflow**, enable
+`race_timing`, and dispatch the desired ref. The two race jobs then keep their
+normal human-readable console output while also uploading `race-timing-root`
+and `race-timing-ui` JSONL artifacts for 3 days. Each file corresponds to one
+race command (`root-complement`, `engine`, `oidc`, each provider, or `ui`). Test
+failures still fail the command and job; the upload step runs afterward with
+`always()` so records produced before a failure remain available.
+
+### Experimental race vet A/B
+
+`race_vet_off` is a manual-only measurement switch: when true it appends
+`-vet=off` to every race command, but it does not change push or pull-request
+runs. Keep `race_timing` enabled for both sides of an experiment so the same
+per-command JSONL artifacts are available:
+
+1. Dispatch CI for a fixed ref with `race_timing=true` and `race_vet_off=false`
+   for the baseline.
+2. Dispatch CI again for that exact ref with `race_timing=true` and
+   `race_vet_off=true`.
+3. Download the `race-timing-root` and `race-timing-ui` artifacts from each run
+   and compare matching command/package totals, not just the overall job time.
+4. Repeat both configurations enough times to distinguish runner variance
+   (at least several paired runs) before drawing a conclusion.
+
+This is not a policy change: the required Lint job continues to run explicit
+`go vet`. Consider permanently adopting `-vet=off` for race shards only after
+it shows material, repeatable savings across those same-ref comparisons.
+
+A manual dispatch always performs full validation: it has no trusted comparison
+range and cannot take the docs-only shortcut. Use it for the timing A/B runs
+above without any comparison-SHA inputs.
+
+After downloading and unzipping either artifact, extract package and individual
+test elapsed records with:
+
+```sh
+jq -c 'select((.Action == "pass" or .Action == "fail") and (.Elapsed != null)) | {Package, Test, Action, Elapsed}' *.jsonl
+```
+
+Records without `Test` are package totals; records with `Test` are individual
+tests (including subtests). Sort the latter by elapsed time, for example, with
+`jq -s 'map(select(.Test != null)) | sort_by(.Elapsed) | reverse' *.jsonl`.
+
 | Job | What it runs |
 |-----|--------------|
+| `changes` | Fail-closed changed-path classification for docs-only optimization |
 | `build` | `go build ./...` |
-| `test` | `go test -race ./...` |
+| `test-race-ui` | `go test -race -count=1 ./cmd/mecatui/ui` |
+| `test-race-root` | Dynamic root complement plus engine/OIDC/provider race sweeps |
+| `test` | Aggregate over both race shards: stable `Test (race)` on push/PR, isolated `Test (race experiment)` on dispatch |
 | `lint` | `golangci-lint` (v2) + `go vet ./...` + `actionlint` (workflow lint, pinned via `go run`) + the reusable-workflow pin check + the empty-expression (action-templates) check + the mecatequi composite-action shell tests |
 | `fuzz-smoke` | `task fuzz FUZZTIME=300000x` — short coverage-guided pass over the security-critical parsers (not the nightly deep fuzz); an iteration count, not a duration, so it can't race the fuzz coordinator's own deadline |
 

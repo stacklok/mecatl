@@ -49,13 +49,16 @@ function Hero() {
             <span className={styles.heroAccent}>built to be embedded.</span>
           </h1>
           <p className={styles.heroSubtitle}>
-            mecatl is a production-grade harness for building agentic systems.
-            It ships the agent loop, port model, permissions, hooks, and
-            resilience so you can focus on the adapter that makes it yours.
+            mecatl is for two paths: build an agentic system with the Go harness,
+            or use its interactive terminal client in a local checkout or against
+            an operator-run server. Choose the path that matches your work.
           </p>
           <div className={styles.heroCtas}>
-            <Link className={styles.ctaPrimary} to="/docs/intro">
-              Read the docs
+            <Link className={styles.ctaPrimary} to="/docs/building">
+              Build with mecatl
+            </Link>
+            <Link className={styles.ctaSecondary} to="/docs/mecatui">
+              Use the terminal client
             </Link>
             <Link className={styles.ctaSecondary} to="https://github.com/stacklok/mecatl">
               View on GitHub
@@ -129,10 +132,10 @@ function Features() {
 
 function DeploymentShapes() {
   const shapes = [
-    {label: 'Embed', desc: 'Import engine/ directly into your Go binary', link: '/docs/deployment/embed-engine'},
-    {label: 'Serve', desc: 'Run mecated and drive it over gRPC or HTTP-SSE', link: '/docs/deployment/mecated'},
-    {label: 'Cloud-native', desc: 'mecak8s: stateless pods, Redis, k8s lease', link: '/docs/deployment/mecak8s'},
-    {label: 'CI', desc: 'mecatequi: one prompt → patch + exit code', link: '/docs/deployment/mecatequi'},
+    {label: 'Embed', desc: 'Import engine/ directly into your Go binary', link: '/docs/building/deployment/embed-engine'},
+    {label: 'Serve', desc: 'Run mecated and drive it over gRPC or HTTP-SSE', link: '/docs/building/deployment/mecated'},
+    {label: 'Cloud-native', desc: 'mecak8s: stateless pods, Redis, k8s lease', link: '/docs/building/deployment/mecak8s'},
+    {label: 'CI', desc: 'mecatequi: one prompt → patch + exit code', link: '/docs/building/deployment/mecatequi'},
   ];
 
   return (
@@ -163,7 +166,7 @@ function GetStarted() {
         </p>
         <pre className={styles.installBlock}>{`go run github.com/stacklok/mecatl/cmd/mecademo@latest`}</pre>
         <div className={styles.getStartedLinks}>
-          <Link className={styles.ctaPrimary} to="/docs/getting-started/demo">
+          <Link className={styles.ctaPrimary} to="/docs/building/getting-started/demo">
             Full walkthrough →
           </Link>
           <Link className={styles.ctaSecondary} to="/docs/intro">

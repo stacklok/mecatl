@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
-const scenario9OperationsDoc = "../../user-docs/deployment/session-storage-operations.md"
+const scenario9OperationsDoc = "../../user-docs/building/deployment/session-storage-operations.md"
 
 func TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs(t *testing.T) {
 	body := readScenario9OperationsDoc(t)

@@ -64,7 +64,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 | Step | Page |
 | --- | --- |
-| 1 | [User docs intro](https://github.com/stacklok/mecatl/blob/main/user-docs/intro.md) |
+| 1 | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) |
 | 2 | [`engine/session`](../engine/session) — the domain entry point |
-| 3 | [Extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/extension-points/index.md) |
+| 3 | [Extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |

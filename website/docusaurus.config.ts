@@ -76,10 +76,14 @@ const config: Config = {
       style: 'dark',
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'mainSidebar',
+          to: '/docs/mecatui',
           position: 'left',
-          label: 'Docs',
+          label: 'mecatui',
+        },
+        {
+          to: '/docs/building',
+          position: 'left',
+          label: 'Building',
         },
         {
           to: '/colophon',
@@ -97,11 +101,13 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Docs',
+          title: 'Guides',
           items: [
-            {label: 'Getting Started', to: '/docs/getting-started/demo'},
-            {label: 'Extension Points', to: '/docs/extension-points'},
-            {label: 'Deployment', to: '/docs/deployment'},
+            {label: 'Use mecatui', to: '/docs/mecatui'},
+            {label: 'Build on mecatl', to: '/docs/building'},
+            {label: 'Getting Started', to: '/docs/building/getting-started/demo'},
+            {label: 'Extension Points', to: '/docs/building/extension-points'},
+            {label: 'Deployment', to: '/docs/building/deployment'},
           ],
         },
         {

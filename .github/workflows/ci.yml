@@ -18,6 +18,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      race_timing:
+        description: Capture and upload per-command go test JSONL timing records
+        required: false
+        type: boolean
+        default: false
+      race_vet_off:
+        description: "Experimental: append -vet=off to race tests (manual dispatch only)"
+        required: false
+        type: boolean
+        default: false
 
 # Least-privilege default for the whole workflow. The CI jobs only read source.
 permissions:
@@ -36,8 +48,67 @@ env:
   GOFLAGS: -mod=readonly
 
 jobs:
+  # Do not use workflow-level path filters: required checks must exist on every
+  # push/PR. This job instead classifies the exact compare range and fail-closes
+  # to full validation whenever Git cannot prove a narrow docs-only change.
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docs_only=false
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE_SHA"
+              head="$PR_HEAD_SHA"
+              ;;
+            push)
+              base="$PUSH_BEFORE_SHA"
+              head="$PUSH_SHA"
+              ;;
+            *)
+              base=""
+              head=""
+              ;;
+          esac
+          if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]] \
+            && [[ "$base" != 0000000000000000000000000000000000000000 ]] \
+            && [[ "$head" != 0000000000000000000000000000000000000000 ]] \
+            && git fetch --no-tags origin "$base" "$head" \
+            && git cat-file -e "$base^{commit}" \
+            && git cat-file -e "$head^{commit}"; then
+            trusted_classifier="$RUNNER_TEMP/docs-only-changes.sh"
+            if git show "$base:.github/scripts/docs-only-changes.sh" > "$trusted_classifier"; then
+              result="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$trusted_classifier")" || result=false
+              if [[ "$result" == true ]]; then
+                docs_only=true
+              fi
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -80,13 +151,16 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
-  test:
-    name: Test (race)
+  test-race-root:
+    name: Test (race root complement)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
-    # Every recent successful run took 14m17s-14m51s -- the job was already
-    # hugging the 15m cap with no slack, so any load variance tips it over
-    # (as happened here). Bumped to give real headroom.
+    # The root race sweep previously hugged the 15m cap. Keep its 20m headroom
+    # while moving the UI package onto a parallel runner.
     timeout-minutes: 20
+    env:
+      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,32 +179,133 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
-      # `task test` == `go test -race ./...` (root) + the engine module + the
-      # standalone hygiene proof. We run the underlying commands directly rather
-      # than pulling in the Task binary; CI and local `task test` stay in lockstep
-      # because the go commands are identical. The standalone GOWORK=off proof
-      # lives in its own `engine-standalone` job below.
-      - name: go test -race
-        run: go test -race ./...
+      - name: Validate root race package partition and timing wrapper
+        run: |
+          bash .github/scripts/root-race-packages_test.sh
+          bash .github/scripts/race-test_test.sh
+          bash .github/scripts/race-vet-off-workflow_test.sh
+          bash .github/scripts/race-aggregate-workflow_test.sh
+          bash .github/scripts/docs-only-changes_test.sh
+          bash .github/scripts/docs-only-workflow_test.sh
+
+      - name: go test -race (root complement)
+        env:
+          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
+        run: |
+          set -euo pipefail
+          package_output="$(bash .github/scripts/root-race-packages.sh complement)"
+          mapfile -t packages <<<"$package_output"
+          bash .github/scripts/race-test.sh root-complement -count=1 "${packages[@]}"
 
       # engine/ is a separate module — `./...` from the root does NOT cross the
       # module boundary, so its tests are a second invocation.
       - name: go test -race (engine module)
-        run: cd engine && go test -race ./...
+        env:
+          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...
+        working-directory: engine
 
       - name: go test -race (OIDC authn module)
-        run: cd authn/oidc && go test -race ./...
+        env:
+          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...
+        working-directory: authn/oidc
 
       # provider/ submodules (ADR 0093) — each its own module under the workspace.
       - name: go test -race (provider modules)
+        env:
+          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
         run: |
-          (cd provider/ssefilter && go test -race ./...)
-          (cd provider/anthropic && go test -race ./...)
-          (cd provider/openai && go test -race ./...)
-          (cd provider/openaichat && go test -race ./...)
+          set -euo pipefail
+          (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
+          (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
+          (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
+          (cd provider/openaichat && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openaichat ./...)
+
+      - name: Upload root race timing records
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: race-timing-root
+          path: .scratch/race-timing/*.jsonl
+          if-no-files-found: warn
+          retention-days: 3
+
+  test-race-ui:
+    name: Test (race UI)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            authn/oidc/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
+
+      - name: go test -race (UI)
+        env:
+          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
+        run: bash .github/scripts/race-test.sh ui -count=1 ./cmd/mecatui/ui
+
+      - name: Upload UI race timing records
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: race-timing-ui
+          path: .scratch/race-timing/*.jsonl
+          if-no-files-found: warn
+          retention-days: 3
+
+  # One aggregate job keeps shard reporting identical for every trigger. Manual
+  # experiments use a distinct context so they can never satisfy the stable
+  # push/PR required check.
+  test:
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Test (race experiment)' || 'Test (race)' }}
+    needs: [changes, test-race-root, test-race-ui]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require successful race shards
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          ROOT_RESULT: ${{ needs.test-race-root.result }}
+          UI_RESULT: ${{ needs.test-race-ui.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGES_RESULT" != success ]]; then
+            echo "changes job did not succeed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$DOCS_ONLY" == true ]]; then
+            exit 0
+          fi
+          if [[ "$ROOT_RESULT" != success || "$UI_RESULT" != success ]]; then
+            echo "race shard failure: root=$ROOT_RESULT ui=$UI_RESULT" >&2
+            exit 1
+          fi
 
   lint:
     name: Lint
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -239,6 +414,8 @@ jobs:
 
   fuzz-smoke:
     name: Fuzz smoke
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -287,6 +464,8 @@ jobs:
 
   engine-standalone:
     name: Engine module (standalone, GOWORK=off)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Proves the importable-core module builds + tests with NO workspace and NO
@@ -319,6 +498,8 @@ jobs:
 
   provider-standalone:
     name: Provider modules (standalone, GOWORK=off)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Proves the opt-in provider/ submodules build + test with NO workspace
@@ -392,6 +573,8 @@ jobs:
 
   api-compat:
     name: API compat (engine public surface)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The engine module's public API surface (the seven core packages) is a
@@ -425,6 +608,8 @@ jobs:
 
   vuln:
     name: Vulnerabilities (govulncheck)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Supply-chain hygiene that travels with the engine library: govulncheck
@@ -511,6 +696,7 @@ jobs:
 
   docs:
     name: Docs (matlatl)
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -534,6 +720,17 @@ jobs:
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
+
+      # Documentation-only changes still run the repository's Go-backed document
+      # invariants (ADR numbering, citations, lifecycle, and reading-map checks).
+      - name: go test ./docs/lint
+        run: go test ./docs/lint
+
+      # This command owns an executable contract for the session-storage
+      # operations guide under user-docs/. Keep it on the docs-only path: a
+      # documentation rename or edit must not leave a stale referenced runbook.
+      - name: go test documented mecated operations
+        run: go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_'
 
       # Freshness gate for the generated configuration reference + the embedded
       # config-init skeleton: regenerate both to a temp dir and fail if they differ
@@ -587,6 +784,7 @@ jobs:
 
   user-docs:
     name: User docs (Docusaurus build)
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # `user-docs/` (the mecatl.dev site content) is excluded from the matlatl
@@ -616,6 +814,7 @@ jobs:
 
   domain-model:
     name: Domain model
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
