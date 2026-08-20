@@ -57,6 +57,54 @@ func TestPolicyPlanMode(t *testing.T) {
 	}
 }
 
+// TestPolicyAcceptEditsAutoAllowsEditWrite is the issue-#674 regression:
+// session.ModeAccept ("accept-edits") must auto-allow Edit/Write against the
+// built-in mutate-ask floor, without any per-call "allow always" or config
+// rule -- unlike the pre-fix behaviour where accept-edits mode was never
+// consulted by Evaluate at all and every Edit/Write kept asking.
+func TestPolicyAcceptEditsAutoAllowsEditWrite(t *testing.T) {
+	p := permpolicy.NewPolicy(nil, nil) // defaultRules-shaped: no rules -> default Ask floor.
+
+	if got := p.Evaluate(context.Background(), sid, session.ModeDefault, fileCall("Edit", "/x"), nil); got.Effect != governance.Ask {
+		t.Fatalf("default mode Edit: expected Ask (no rule matched), got %v", got.Effect)
+	}
+	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, fileCall("Edit", "/x"), nil); got.Effect != governance.Allow {
+		t.Fatalf("accept-edits mode Edit: expected Allow, got %v", got.Effect)
+	}
+	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, fileCall("Write", "/x"), nil); got.Effect != governance.Allow {
+		t.Fatalf("accept-edits mode Write: expected Allow, got %v", got.Effect)
+	}
+	// A second, differently-shaped Edit call in the SAME session must ALSO
+	// auto-allow -- accept-edits does not depend on the narrow per-call
+	// learned-rule pattern the "allow always" verdict derives.
+	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, fileCall("Edit", "/y"), nil); got.Effect != governance.Allow {
+		t.Fatalf("accept-edits mode second Edit: expected Allow, got %v", got.Effect)
+	}
+	// Bash is untouched: accept-edits auto-accepts file edits only.
+	if got := p.Evaluate(context.Background(), sid, session.ModeAccept, bashCall("rm x"), nil); got.Effect != governance.Ask {
+		t.Fatalf("accept-edits mode Bash: expected Ask (unaffected), got %v", got.Effect)
+	}
+}
+
+// TestPolicyAcceptEditsDefersToConfiguredAskAndDeny: accept-edits only loosens
+// the built-in floor -- a deliberately configured (above-floor) Ask or Deny for
+// Edit/Write still wins.
+func TestPolicyAcceptEditsDefersToConfiguredAskAndDeny(t *testing.T) {
+	pAsk := permpolicy.NewPolicy([]governance.Rule{
+		{Scope: governance.ScopeUser, Tool: "Edit", Pattern: "/secret", Effect: governance.Ask},
+	}, nil)
+	if got := pAsk.Evaluate(context.Background(), sid, session.ModeAccept, fileCall("Edit", "/secret"), nil); got.Effect != governance.Ask {
+		t.Fatalf("accept-edits must defer to a configured Ask, got %v", got.Effect)
+	}
+
+	pDeny := permpolicy.NewPolicy([]governance.Rule{
+		{Scope: governance.ScopeManaged, Tool: "Write", Pattern: "/etc/*", Effect: governance.Deny},
+	}, nil)
+	if got := pDeny.Evaluate(context.Background(), sid, session.ModeAccept, fileCall("Write", "/etc/passwd"), nil); got.Effect != governance.Deny {
+		t.Fatalf("accept-edits must defer to a configured Deny, got %v", got.Effect)
+	}
+}
+
 // Learn then Evaluate: an allow-always learned for `git status` makes the next
 // `git status` resolve Allow (it would otherwise be the default Ask).
 func TestPolicyLearnThenAllow(t *testing.T) {

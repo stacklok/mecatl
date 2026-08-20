@@ -105,18 +105,39 @@ func NewPolicyWithResolver(rules []governance.Rule, store port.PermissionStore, 
 	return &Policy{eval: governance.NewEvaluator(rules, evalOpts...), store: store, resolver: resolver}
 }
 
+// acceptEditsRules are the floor-loosening ALLOW rules session.ModeAccept
+// ("accept-edits") contributes: Edit and Write at ScopeCLI, the same scope the
+// --yolo allow-all posture rule uses (issue #32's childRules AllowAllTools
+// injection) for a runtime/session-level policy decision. Being scoped ABOVE
+// ScopeBuiltinDefault, it can only ever LOOSEN the built-in mutate-ask floor
+// (resolveSimpleRule's existing issue-#13 mechanic: a higher-precedence Allow
+// may loosen ONLY an Ask scoped at ScopeBuiltinDefault) — it can never suppress
+// a CONFIGURED deny/ask for Edit/Write from any scope above the floor, and Bash
+// is untouched (accept-edits auto-accepts file edits only, mirroring the
+// client-visible "accept edits" contract; it is not a broader auto-run mode).
+var acceptEditsRules = []governance.Rule{
+	{Scope: governance.ScopeCLI, Tool: "Edit", Effect: governance.Allow},
+	{Scope: governance.ScopeCLI, Tool: "Write", Effect: governance.Allow},
+}
+
 // Evaluate returns the permission decision for tool call c under mode, scoped to
 // sessionID and the session workspace ws. Plan mode (session.ModePlan) forces a
 // deny for mutating tools (Edit/Write and non read-only Bash) BEFORE any extra
-// rule is consulted; all other modes evaluate against the static rule set PLUS
-// this session's learned allows (when a store is configured) PLUS the file-based
-// config rules that apply to ws (when a resolver is configured). Because
-// resolution is deny-dominant across the whole merged set, an extra allow can
-// never override a static (or config) deny/ask.
+// rule is consulted. Accept-edits mode (session.ModeAccept) contributes the
+// floor-loosening acceptEditsRules into the extra set, so Edit/Write auto-allow
+// UNLESS a configured (above-floor) deny/ask says otherwise. All other modes
+// evaluate against the static rule set PLUS this session's learned allows (when
+// a store is configured) PLUS the file-based config rules that apply to ws (when
+// a resolver is configured). Because resolution is deny-dominant across the
+// whole merged set, an extra allow can never override a static (or config)
+// deny/ask.
 func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
 	var extra []governance.Rule
+	if mode == session.ModeAccept {
+		extra = append(extra, acceptEditsRules...)
+	}
 	if p.store != nil {
-		extra = p.store.Rules(sessionID)
+		extra = append(extra, p.store.Rules(sessionID)...)
 	}
 	if p.resolver != nil {
 		extra = append(extra, p.resolver.Resolve(ctx, ws)...)
