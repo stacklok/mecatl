@@ -6620,7 +6620,7 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 		}
 		windowFn := childWindowFor(cfg, provReg, pid, model)
 
-		eng, mcpClose, names, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":model="+model, reg.Detail(def.Name), childProvider, model, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":model="+model, reg.Detail(def.Name), childProvider, model, windowFn,
 			baseSubagentTools(cfg), false /*allowMutating*/, runner != nil, skillIdx, defaultHooks, runner, mainMgr)
 		// The def has no inline servers (rejected above), so mcpClose is nil; call it
 		// defensively in case a future reference-only path ever returns one (a reference
@@ -6698,7 +6698,7 @@ func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *p
 		// (or the parent's when the def pins none/unknown).
 		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
 
-		eng, mcpClose, names, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable", reg.Detail(def.Name), childProvider, model, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable", reg.Detail(def.Name), childProvider, model, windowFn,
 			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil /*allowShell*/, skillIdx, defaultHooks, mainRunner, mainMgr)
 		// The def has no inline servers (rejected above), so mcpClose is nil; call it
 		// defensively in case a future reference-only path ever returns one (a reference
@@ -7101,7 +7101,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// supervisor tears them down on member teardown; the MCP tool names are handed
 			// to the supervisor so the read-only-member backstop exempts them (they report
 			// ReadOnly()==false but never touch the workspace).
-			mcpTools, names2, cl := defMCPTools(context.Background(), cfg.diag(), def, mainMgr)
+			mcpTools, names2, _, cl := defMCPTools(context.Background(), cfg.diag(), def, mainMgr)
 			for _, mt := range mcpTools {
 				if err := cat.Register(mt); err != nil {
 					cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def MCP tool registration failed; skipped",
