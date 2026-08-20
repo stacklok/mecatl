@@ -175,7 +175,7 @@ arguments or credentials. Composition chooses one evaluator at startup:
 
 A Cedar policy cannot grant a capability absent from the carried set. An
 unavailable evaluator is a distinct fail-closed execution error, not an implicit
-switch to `noop`. See [ADR 0233](../adr/0233-authority-evaluator-port.md) for
+switch to `noop`. See [ADR 0234](../adr/0234-authority-evaluator-port.md) for
 the decision; operator configuration is documented in the public permissions
 guide.
 

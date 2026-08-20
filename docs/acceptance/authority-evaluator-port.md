@@ -3,7 +3,7 @@
 **Phase:** capability — in-process delegated authority, decision behind a port
 **Status:** landed, 2026-08-19 (defect-repair pass applied; see *Resolved defects*). Successor to the unmerged `review/authority-attenuation-reconciliation` branch.
 **Issue:** [stacklok/mecatl#371](https://github.com/stacklok/mecatl/issues/371) — *An agent cannot widen its own authority.*
-**ADR:** ADR-0233 — derived capability sets, decision behind a swappable evaluator port.
+**ADR:** ADR-0234 — derived capability sets, decision behind a swappable evaluator port.
 **Salvage source:** branch `review/authority-attenuation-reconciliation` (commits `d8966606..5dbef5f6`), worktree `.worktrees/sensitivity`. **Not merged, and not to be merged.**
 **Branch:** `feat/authority-evaluator-port`, off `origin/main`.
 
@@ -79,13 +79,13 @@ couple the surviving logic to the wire format being deleted.
 | `internal/app/root_authority.go` | port, **correct at mint** (see Scenario 6) |
 | `bindRootAuthority`, `copyAuthorityProvenance`, `team.go` direct-team authority | port as-is |
 | `AgentDef.AuthorityCeiling` + driver proto `authority_ceiling` | **drop**; the ceiling is `Tools` − `DisallowedTools` |
-| `docs/adr/0226-authority-attenuation-on-current-main.md` | **rewrite as ADR-0233** (0226 is taken on `main`) |
+| `docs/adr/0226-authority-attenuation-on-current-main.md` | **rewrite as ADR-0234** (0226 is taken on `main`) |
 | `docs/acceptance/authority-attenuation-reconciliation.md` | superseded by this plan |
 | Algebra tests | port; wire-format and catalog-filter tests are dropped with their subjects |
 
 ## Why these scope cuts
 
-- **ADR-0233 (this plan writes it)** — authority is local runtime attenuation of
+- **ADR-0234 (this plan writes it)** — authority is local runtime attenuation of
   a derived capability set, distinct from owner identity, credentials, and
   external authorization. The decision is a port; Cedar is one adapter.
 - [ADR-0214](../adr/0214-environment-persistence.md) — durable `EnvironmentRef`
@@ -431,7 +431,7 @@ implementer:
 - Nothing here fails `docs/lint`'s citation guard, because its corpus is
   `docs/design/*.md`, `docs/adr/*.md`, and the architecture guide — acceptance
   plans are outside it.
-- **ADR-0233 is inside that corpus.** When you write it, do not copy these
+- **ADR-0234 is inside that corpus.** When you write it, do not copy these
   citations unqualified: either re-point them at the paths the port actually
   creates, drop to bare symbol names (a slash-free span is treated as a prose
   back-reference and skipped), or mark the span `lint:not-a-citation`. A
@@ -473,13 +473,13 @@ implementer:
 
 ## Documentation work this plan owns
 
-1. **ADR-0233 records this decision.** It is not a port of the salvage branch's
+1. **ADR-0234 records this decision.** It is not a port of the salvage branch's
    ADR: `0226` is taken on `main` by the dream-consolidation ADR, and the salvage
    branch's `0226` never merged, so there was nothing to supersede.
 2. **Do not restate the salvage ADR's decision 4.** It required enforcement at
    advertised specs, lookup, hydration, and dispatch, and called that defence in
    depth. It was not: all four invoked the same predicate, so it was one layer
-   with four call sites. ADR-0233 names `execute` as the single enforcement
+   with four call sites. ADR-0234 names `execute` as the single enforcement
    boundary, and separately records that filtering advertised specs and ToolSearch
    survives as *request construction* — which is why the plan drops only
    `lookupToolContext`. Record the salvage filter's actual failure too: on an
@@ -498,7 +498,7 @@ implementer:
    that would pass a name-keyed gate; and it *permits* `CodeModeConfig` with
    `Authz` precisely because a script's inner calls are re-authorized by real name
    through the core admission seam. Same failure mode, same fix, arrived at
-   separately. Worth recording in ADR-0233 — it makes the decorator a converged
+   separately. Worth recording in ADR-0234 — it makes the decorator a converged
    design rather than a local invention.
 5. Update `docs/architecture.md` and `docs/design/IMPLEMENTATION-NOTES.md` for
    the port and the derivation seams.
@@ -518,7 +518,7 @@ implementer:
 6. The named scenario tests and the vertical slice pass offline with reference
    adapters; no test calls a live provider or network service.
 7. `go run ./cmd/mecademo` still prints a complete offline session.
-8. ADR-0233 exists, and the #371 AC1 amendment is recorded on the issue.
+8. ADR-0234 exists, and the #371 AC1 amendment is recorded on the issue.
 
 ## Deferred decisions and known risks
 

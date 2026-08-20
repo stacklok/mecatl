@@ -296,7 +296,7 @@ loosening policy.
 
 ## Delegated authority
 
-ADR 0233 adds a second, narrower decision to permission policy. `PermissionPolicy`
+ADR 0234 adds a second, narrower decision to permission policy. `PermissionPolicy`
 continues to resolve user/operator approval rules; authority answers whether this bound
 run carries a capability at all. A session's `Authority` persists one plain
 `governance.CapabilitySet` with provenance and definition identity. Delegation derives
@@ -318,7 +318,7 @@ proof of composition, execution, stale disclosure, meta-target denial, restart, 
 narrowed resume; evaluator-outage injection remains the engine-adapter proof because
 composition selects only configured production adapters. The Cedar counterpart pins the
 policy path. See
-[ADR 0233](../adr/0233-authority-evaluator-port.md).
+[ADR 0234](../adr/0234-authority-evaluator-port.md).
 
 
 ## Domain — `engine/prompt/`
