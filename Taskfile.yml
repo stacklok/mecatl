@@ -399,7 +399,10 @@ tasks:
       Each FuzzXxx also runs its seed corpus under plain `go test`, so the
       regression cases are already covered by `task test`; this task is the
       coverage-guided exploration pass. Override the per-target budget with
-      FUZZTIME, e.g. `FUZZTIME=2m task fuzz`.
+      FUZZTIME, e.g. `FUZZTIME=2m task fuzz`. FUZZTIME also accepts an
+      iteration count (`Nx`, e.g. `FUZZTIME=300000x`) instead of a duration —
+      CI's fuzz-smoke job uses that form so it can't race go test's own fuzz
+      coordinator deadline.
     vars:
       FUZZTIME: '{{.FUZZTIME | default "30s"}}'
     cmds:

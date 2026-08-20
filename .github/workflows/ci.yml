@@ -264,18 +264,23 @@ jobs:
       # A short coverage-guided pass over the security-critical parsers. This is
       # a smoke check (find shallow crashers fast), NOT the nightly deep fuzz —
       # the seed corpora already run under `go test` in the test job. The
-      # Taskfile `fuzz` task runs the 4 FuzzXxx targets sequentially; at
-      # 40s/target that is ~160s plus build, comfortably under the timeout.
-      # (Was 20s/target; FuzzCanonicalize intermittently hit "context deadline
-      # exceeded" right at that boundary on a loaded runner -- go test's fuzz
-      # driver has its own scheduling/coverage-merge overhead on top of
-      # -fuzztime, so a tight budget has no slack for that. Doubled rather than
-      # padded by a few seconds, since the failure was reproducing reliably.)
+      # Taskfile `fuzz` task runs the FuzzXxx targets sequentially.
+      #
+      # FUZZTIME is an ITERATION COUNT (`Nx`), not a wall-clock duration. A
+      # duration budget (e.g. `40s`) races go test's own fuzz coordinator: near
+      # the deadline the coordinator can kill an in-flight worker RPC and
+      # report the whole target as failed with "context deadline exceeded" —
+      # this reproduced reliably at 20s/target and intermittently even after
+      # doubling to 40s/target, on a loaded runner. An iteration count has no
+      # deadline to race: the coordinator stops after N executions regardless
+      # of how fast the runner is that day. 300000 execs/target is comfortably
+      # under a minute per target even on a slow runner (CI logs showed
+      # 10k-30k execs/sec), well inside the job timeout.
       # The governance fuzzers live in the engine module — `task fuzz` runs
       # them from engine/ (workspace-on, so it resolves against the same
       # checkout).
       - name: task fuzz (short)
-        run: task fuzz FUZZTIME=40s
+        run: task fuzz FUZZTIME=300000x
 
   engine-standalone:
     name: Engine module (standalone, GOWORK=off)
