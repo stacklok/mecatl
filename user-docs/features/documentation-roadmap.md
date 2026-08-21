@@ -120,7 +120,29 @@ feature-page template:
 Every availability statement should be checked against flags, composition,
 capability advertisement, driver interfaces, and current deployment behavior.
 
-## 7. Validate each page
+## 8. Add generated API references
+
+Add machine-generated references for both public wire surfaces without replacing the
+human guides:
+
+- generate a gRPC reference from `contracts/proto/mecatl/v1/*.proto` as part of
+  `task generate`;
+- introduce an OpenAPI source for the JSON HTTP endpoints and generate its
+  endpoint reference; and
+- document the SSE event stream and cross-surface lifecycle in the curated
+  guides, where behavior and examples are easier to explain.
+
+Keep the existing human guides as the user-oriented entry points:
+
+- [`docs/usage/grpc-api.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md)
+- [`docs/usage/http-sse-api.md`](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md)
+
+The generated references should be checked for drift in CI. The implementation
+must choose one source of truth for the HTTP route contract rather than
+maintaining an independently edited OpenAPI file and route table. Add links
+from the user-facing API flow page once the generated references exist.
+
+## 9. Validate each page
 
 Run these checks after each completed page or page group:
 

@@ -6,32 +6,198 @@ description: Select the provider, model, and reasoning effort for a mecatl sessi
 
 # Choose models and providers
 
-:::note[Documentation scaffold]
+A mecatl session runs with a provider and a base model selected by the server
+and, optionally, by the client. The server returns the effective selection and
+input capabilities when the session is created.
 
-This page will explain deployment defaults, per-session selection, live model
-catalogs, reasoning effort, and provider capability checks.
+The choice depends on how you use mecatl, so this page separates three
+journeys:
 
-:::
+- the **mecatui journey** for interactive selection;
+- the **CLI journey** for configuring a server or one-shot run; and
+- the **API journey** for clients that create sessions directly.
 
-## Availability
+For the rest of the terminal workflow, see [Use mecatui](./use-mecatui.md).
 
-_To be completed from the capability matrix._
+## Mecatui journey
 
-## Select a provider and model
+When the connected server advertises model selection, type `/models` in
+mecatui. Filter the server's inventory, select a model, and press `enter`.
+Mecatui keeps the visible conversation by creating a peer session seeded with
+its history; it does not change the provider or base model of the existing
+session in place.
 
-_To be filled with the current client controls, flags, and precedence rules._
+A switch across providers keeps the visible conversation but drops provider-
+private replay state, such as reasoning state that the new provider cannot
+understand. The new session's provider, model, and capabilities are reported by
+the server.
 
-## Configure reasoning effort
+Type `/effort` to choose a reasoning-effort tier. Mecatui applies a changed
+tier by creating a peer session with the same provider, model, and conversation.
+The picker is available only when the connected server advertises the relevant
+capability.
 
-_To be filled with the supported values and provider behavior._
+Mecatui's model choices are server-backed. In embedded mode, the local server's
+configuration and credentials determine the inventory. In `connect` mode, the
+remote server determines it; local embedded-server flags and credentials do not
+apply.
+
+See [Use mecatui](./use-mecatui.md) for the command-line startup, connection,
+and keybinding details.
+
+## CLI journey
+
+### Configure a server default
+
+Use deployment flags when every session on a server should start from the same
+provider and model:
+
+```sh
+mecated serve \
+  --default-provider openai \
+  --default-model gpt-5.6-terra
+```
+
+`gpt-5.6-terra` is an example model ID. Model IDs are provider-specific, so the
+same example is valid only when that server's OpenAI provider can use it. The
+server's built-in OpenAI default remains available when no explicit model is
+configured.
+
+For a zero-selector session, server-side resolution is separate for provider
+and model:
+
+- provider: `--default-provider`, otherwise the automatic available-provider
+  preference;
+- model: `--model`, then `--default-model`, then the selected provider's
+  built-in default.
+
+`--model` is a higher-priority deployment override. `--default-model` is the
+validated default for the configured default provider. An invalid deployment
+default fails startup rather than silently selecting a different provider or
+model.
+
+`mecatui` accepts these flags for its embedded server. They do not reconfigure a
+server used through `mecatui connect`. `mecak8s` exposes the corresponding server
+configuration. See the [operator provider and model reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#provider--model-selection)
+for credential sources and deployment options.
+
+### Run one shot with mecatequi
+
+`mecatequi` creates a new session for one prompt. It accepts model/provider
+defaults and reasoning-effort settings, but has no interactive model picker.
+Use it when the caller already knows the deployment and model configuration.
+
+### Configure reasoning effort
+
+The accepted reasoning-effort values are:
+
+```text
+auto, low, medium, high, xhigh, max
+```
+
+`reasoning-effort` may be set as a server default or supplied per session.
+The important distinction is:
+
+- omitted effort uses the server's configured default, or the provider default
+  when no server default exists;
+- explicit `auto` requests the provider's default effort; and
+- a valid non-empty per-session value overrides the server default.
+
+An invalid server value is ignored with a warning and becomes unset. An
+invalid per-session value is ignored with a warning and falls back to the
+server default. The server may normalize, clamp, or drop a value according to
+the selected provider and known model capabilities.
+
+The effective result is returned in `resolved_model.reasoning_effort`, so clients
+can display what the server actually applied. Provider-specific effort mapping
+belongs in the [operator reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#reasoning-effort),
+not in the selection workflow.
+
+## API journey
+
+API clients can either omit provider/model fields and use the server defaults,
+or name both fields when creating a session. The fields are available through
+gRPC `CreateSession` and HTTP `POST /v1/sessions`.
+
+### HTTP example
+
+The HTTP/SSE API accepts JSON. For example:
+
+```sh
+curl -sS -X POST http://127.0.0.1:8081/v1/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "workspace": "/absolute/repo",
+    "provider_id": "openai",
+    "model_id": "gpt-5.6-terra"
+  }'
+```
+
+The request requires a usable workspace and an available provider. The model ID
+is passed to the selected provider; it does not need to appear in the server's
+curated inventory to be accepted. A provider that is unknown or unavailable is
+rejected.
+
+### Selector rules
+
+| `provider_id` | `model_id` | Result |
+| --- | --- | --- |
+| omitted | omitted | Use the server-resolved provider and model. |
+| set | omitted | Use that provider's own default model. The server's `--default-model` does not carry across to a different explicitly selected provider. |
+| set | set | Use that provider and pass the model ID through to it. An uncatalogued model may be accepted and fail later at the provider. |
+| omitted | set | Reject the request: a bare model ID is ambiguous. |
+| unknown or unavailable | any | Reject the request; do not silently fall back to another provider. |
+
+A bare `model_id` returns HTTP 400 or gRPC `InvalidArgument`. The same applies
+to an unknown or unavailable provider. The API returns the new session ID and
+resolved model information after successful creation.
+
+See [Drive via gRPC / HTTP](../deployment/grpc-http.md) for the shared session
+lifecycle and [the HTTP/SSE API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md)
+for endpoint details.
+
+## Model inventory and capabilities
+
+`ListModels` and mecatui's `/models` inventory expose public metadata, including:
+
+- provider ID and opaque model ID;
+- display name when available;
+- image-input support;
+- reasoning support; and
+- context limit when known.
+
+They do not expose API keys or provider-private credentials. The inventory is
+server-specific and can differ according to the providers and credentials
+configured at startup. A provider's live model catalog may refresh while the
+server is running.
+
+For a known model, the session's effective capabilities combine the model's
+metadata with the selected adapter's transport capabilities. For an uncatalogued
+model ID accepted through an explicit provider, the server can report only what
+the adapter itself knows. Treat the capabilities returned for the created
+session as authoritative.
 
 ## Limitations
 
-_To be filled with provider, catalog, credential, and deployment limitations._
+- Provider credentials and model availability belong to the server host. A
+  connected mecatui cannot use credentials configured only on the TUI host.
+- Model IDs are provider- and deployment-specific opaque strings.
+- Listing a model does not guarantee that a later provider request will succeed.
+- In mecatui, changing the provider or base model creates a peer session with
+  carried-over visible history. API clients must implement history carryover
+  themselves when they create a new session.
+- Provider/model selection flags configure an embedded or server deployment;
+  they do not override a remote server reached with `connect`.
+- For related configuration, see [Context windows](./context-windows.md) and
+  [OpenRouter routing](./openrouter-routing.md).
 
 ## Next steps
 
-- [Context windows](./context-windows.md)
-- [OpenRouter routing](./openrouter-routing.md)
-- [Capability and deployment matrix](./capability-matrix.md)
-
+- [Use mecatui](./use-mecatui.md) for the interactive model and effort pickers.
+- [Start and resume sessions](./start-and-resume-sessions.md) for session
+  creation and continuation.
+- [Context windows](./context-windows.md) for context limits and fallback.
+- [OpenRouter routing](./openrouter-routing.md) for downstream provider
+  preferences.
+- [Capability and deployment matrix](./capability-matrix.md) for deployment
+  availability.
