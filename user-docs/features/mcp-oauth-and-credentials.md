@@ -6,32 +6,153 @@ description: Configure MCP OAuth profiles and protect the credentials they use.
 
 # MCP OAuth and credentials
 
-:::note[Documentation scaffold]
+Mecatl can authenticate configured MCP servers with no credential in the server
+URL or in model-visible tool arguments. The operator chooses one authentication
+profile per server: `none`, `static_bearer`, or `oauth`.
 
-This page will explain MCP OAuth profiles, login, refresh, local credential
-storage, and pre-provisioned environment credentials.
-
-:::
+MCP transport remains streaming HTTP only. mecatl never starts an MCP server as a
+stdio child process. If a server speaks stdio, place a trusted HTTP proxy in
+front of it.
 
 ## Availability
 
-_To be completed from the capability matrix._
+Global MCP authentication profiles are supported by `mecated`, `mecatequi`,
+`mecak8s`, and mecatui's embedded server. They are operator configuration, not
+project configuration. A project `.mecatl/settings.yaml` cannot install or
+weaken an MCP credential profile.
 
-## What this feature does
+A server configured with `--mcp-server name=URL` can also use the legacy
+`MCP_<NAME>_TOKEN` bearer-token convention. Operator `mcp.servers` profiles are
+the preferred path when OAuth, rotation, or deployment-managed credentials are
+needed.
 
-_To be written from the current MCP OAuth and credential-store behavior._
+## Configure a profile
 
-## Configuration
+Put the profile in the operator-tier `settings.yaml`. Secret-bearing fields are
+environment-variable names, not secret values. A minimal shape is:
 
-_To be filled with the exact profile fields, modes, and commands._
+```yaml
+mcp:
+  servers:
+    github:
+      url: https://mcp.example.com/github
+      auth:
+        mode: oauth
+        issuer: https://idp.example/realms/operators
+        client_id: mecatl
+        client_secret_env: MECATL_MCP_CLIENT_SECRET
+        scopes: [repo]
+        credentials:
+          local:
+            root: /home/operator/.local/state/mecatl/mcp-credentials
+            key_env: MECATL_MCP_CREDENTIAL_KEY
+```
 
-## Limitations
+Use the generated [configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md)
+for the complete strict schema and exact field names. Keep the settings file
+owner-only and validate it before serving:
 
-_To be filled with deployment, refresh, and remote-backend limitations._
+```console
+umask 077
+mecated config validate --file "$HOME/.config/mecatl/settings.yaml"
+```
+
+The local OAuth store requires an absolute root and a canonical base64-encoded
+32-byte encryption key. Generate the key outside YAML and provide it through the
+named environment variable:
+
+```console
+umask 077
+mkdir -p "$HOME/.local/state"
+chmod 700 "$HOME/.local/state"
+openssl rand -base64 32 > "$HOME/.local/state/mecatl-mcp.key"
+chmod 600 "$HOME/.local/state/mecatl-mcp.key"
+export MECATL_MCP_CREDENTIAL_KEY="$(cat "$HOME/.local/state/mecatl-mcp.key")"
+```
+
+Do not put the key, client secret, access token, or refresh token in source
+control, a command argument, `settings.yaml`, or a prompt.
+
+## Authorize a local OAuth profile
+
+A mutable local profile is authorized explicitly by the operator:
+
+```console
+mecated mcp login github
+mecated mcp login github --no-browser
+```
+
+The normal command opens the authorization flow. `--no-browser` prints the
+authorization URL for a separate browser or for a headless operator. Use
+`--permission-config` to select trusted operator settings files; it does not
+carry an OAuth value:
+
+```console
+mecated mcp login github \
+  --permission-config /etc/mecatl/settings.yaml
+```
+
+After login, start or restart the server and verify that the namespaced
+`mcp__github__*` tools appear. Serving restores the encrypted credential without
+another browser interaction. Access-token refresh is lazy, and refresh-token
+rotation is persisted by the local store so the next restart remains warm.
+
+If the profile's identity metadata changes — issuer, client, principal, scopes,
+or resource — run login again. To roll back, replace the whole profile with
+`static_bearer` or `none` and restart.
+
+## Environment-backed credentials
+
+For Kubernetes and other managed deployments, use an environment-backed OAuth
+record. Provision the opaque record and its secret outside mecatl, inject it
+into the process, and restart after rotation. The environment reader is
+read-only; `mecated mcp login` cannot populate or update it.
+
+`mecak8s` does not open a browser. Its OAuth credential is intended to come from
+a Kubernetes Secret, and agent-facing shells receive a scrubbed environment so
+MCP/provider credentials are not exposed through Bash. See the
+[Kubernetes deployment guide](../deployment/mecak8s.md) for the Secret wiring.
+
+The legacy bearer path is simpler for a server that does not need OAuth:
+
+```console
+export MCP_GITHUB_TOKEN='value-from-your-secret-manager'
+mecated serve --mcp-server github=https://mcp.example.com/github
+```
+
+The token is read at startup, sent as an Authorization bearer header, and never
+logged. Token-bearing URLs must use HTTPS, except for loopback HTTP endpoints.
+Server names are case-insensitively unique and must be safe for the derived
+environment-variable name.
+
+## Runtime behavior and limitations
+
+- Normal serving, ACP, `mecatequi`, and `mecak8s` never open a browser. Authorize
+  locally beforehand or provision an environment credential.
+- DCR and ACP cannot provide OAuth profiles or install/drive authorization. After
+  an operator authorizes a global profile, ACP sessions may invoke its shared
+  tools under ordinary permissions.
+- Per-session MCP, inline agent MCP servers, and discovered ToolHive servers do
+  not support OAuth profiles in the current deployment.
+- A configured profile that is unreachable or malformed is a deployment error;
+  it does not silently become an unauthenticated server.
+- OAuth credentials authenticate the MCP connection. They do not grant the
+  model permission to call a tool: every namespaced MCP tool still passes through
+  the ordinary permission policy and audit path.
+- A connection drop can trigger one bounded reconnect and retry. A server-declared
+  tool failure is not replayed automatically because the call may have mutated
+  remote state. The startup tool catalog is retained across reconnects; changed
+  remote tool lists take effect after the next mecatl process start.
+- Treat the local credential store and configuration backups as sensitive. Keep
+  roots owner-only and use your deployment's secret manager for rotation.
+
+For MCP tool discovery, namespacing, permissions, reconnect behavior, resources,
+and prompts, see [MCP client](../what-you-get/mcp-client.md). For the complete
+operator profile rules, see the [global MCP authentication reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md#global-mcp-authentication-profiles).
 
 ## Next steps
 
 - [Caller identity and OIDC](./caller-identity.md)
-- [Deployment decision](../getting-started/deployment-decision.md)
+- [Mecatl deployment choices](../getting-started/deployment-decision.md)
+- [MCP client](../what-you-get/mcp-client.md)
 - [Capability and deployment matrix](./capability-matrix.md)
-

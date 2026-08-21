@@ -101,7 +101,7 @@ and runner.
 
 ## Next steps
 
-- [Background Bash](./background-bash.md)
+- [Background Bash](../what-you-get/core-tools.md#background-commands)
 - [Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md)
 - [Workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md)
 - [Capability and deployment matrix](./capability-matrix.md)

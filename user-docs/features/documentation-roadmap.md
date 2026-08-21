@@ -92,8 +92,7 @@ After the first four pages, complete:
 
 1. [Permissions and posture](./permissions-and-posture.md)
 2. [Skills, commands, and soul](./skills-commands-and-soul.md)
-3. [Execution environments](./execution-environments.md) and
-   [Background Bash](./background-bash.md)
+3. [Execution environments](./execution-environments.md), including background Bash
 4. [Session continuity](./session-continuity.md) and storage maintenance
 5. [Scheduled tasks](./scheduled-tasks.md)
 6. [MCP OAuth and credentials](./mcp-oauth-and-credentials.md)

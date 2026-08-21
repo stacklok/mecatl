@@ -48,8 +48,8 @@ prose is completed.
 - [Caller identity and OIDC](./caller-identity.md) covers authenticated caller
   identity and ownership separation.
 - [Execution environments](./execution-environments.md) covers workspaces,
-  shells, forks, and environment persistence.
-- [Background Bash](./background-bash.md) covers detached shell work and status.
+  shells, forks, and environment persistence. Background Bash is documented in
+  [Core tools](../what-you-get/core-tools.md#background-commands).
 - [Session continuity](./session-continuity.md) covers persistence, recovery,
   retention, and maintenance.
 - [Context windows](./context-windows.md) covers model context-window
