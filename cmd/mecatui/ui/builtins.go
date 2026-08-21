@@ -549,6 +549,11 @@ func (m Model) interceptSlashCommand(text string) (tea.Model, tea.Cmd, bool) {
 	// without changing the downstream palette/completion paths.
 	name = strings.ToLower(name)
 	if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
+		// A successful bare-command dispatch consumes the command line, so close its
+		// derived palette state too. This path serves both idle and running input.
+		m.palette.open = false
+		m.palette.filtered = nil
+		m.palette.cursor = 0
 		m.ta.Reset()
 		mm, cmd := b.run(m)
 		return mm, cmd, true

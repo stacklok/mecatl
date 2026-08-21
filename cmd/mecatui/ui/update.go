@@ -2043,41 +2043,40 @@ func (m Model) pasteGateOpen() bool {
 }
 
 // onRunningKey handles keys while a run streams. Type-while-running: the textarea
-// stays focused so the user can compose and ENQUEUE a follow-up. It mirrors
+// stays focused so the user can compose a steer or queued follow-up. It mirrors
 // onIdleKey's precedence so the input behaves the same mid-run as at idle, with
-// two differences — enter ENQUEUES (instead of submitting), and esc has a layered
-// meaning before it falls through to cancel:
+// two differences — bare local built-ins still run locally, then enter steers or
+// enqueues ordinary input; esc has a layered meaning before it falls through to
+// cancel:
 //
 //	(1) an open palette claims its NAVIGATION keys (↑/↓/tab/esc) so /-typing shows
-//	    the dropdown while running — but NOT enter: mid-run enter must always ENQUEUE
-//	    uniformly (the locked decision). So a "/clear" line composed mid-run is staged
-//	    as the literal text "/clear" and dispatched as a built-in at DRAIN time (where
-//	    the phase is idle and /clear's idle-guard is satisfied) via submitPrompt's
-//	    existing intercept — never run immediately mid-run via the palette;
+//	    the dropdown while running — but NOT enter: a bare built-in must intercept
+//	    before an ordinary line is steered or queued;
 //	(2) esc/Cancel: non-empty input → clear the input (and resync the palette);
 //	    else non-empty queue → clear the queue (status "queue cleared"); else →
 //	    SendCancel (today's behaviour: the run ends with stop "cancelled");
 //	(3) shift+enter (Newline) → insert a newline;
-//	(4) enter (Submit) → enqueuePrompt (the locked decision: enter mid-run stages a
-//	    follow-up, it does not submit a second concurrent run);
+//	(4) enter (Submit) → run a bare local built-in, or enqueuePrompt for model-facing
+//	    input (which steers when supported);
 //	(5) pgup/pgdn → scroll the viewport;
 //	(6) anything else → feed the textarea (+ palette resync via afterInputEdit).
 //
 // ctrl+t (expand) and ctrl+c (quit) are handled globally in onKey before this.
 func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Let the palette claim its navigation keys while running, but NOT enter — enter
-	// mid-run always enqueues (uniform), so it must fall through to the Submit case
-	// below rather than completing/running a palette row. (esc is handled by the
-	// Cancel branch below, which layers clear-input/clear-queue/cancel — the palette's
-	// own esc-dismiss would shadow that, so it is excluded here too.)
+	// reaches the Submit case so a bare local built-in intercepts and other input
+	// steers or queues. (esc is handled by the Cancel branch below, which layers
+	// clear-input/clear-queue/cancel — the palette's own esc-dismiss would shadow
+	// that, so it is excluded here too.)
 	if m.palette.open && !key.Matches(msg, m.keys.Submit) && !key.Matches(msg, m.keys.Cancel) {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
 	}
 	// The @-mention menu, like the palette, claims its navigation/complete keys
-	// while running EXCEPT enter (which must enqueue uniformly) and esc (the
-	// Cancel branch layers clear-input/clear-queue/cancel below).
+	// while running EXCEPT enter (which reaches the same built-in intercept, then
+	// steers or queues) and esc (the Cancel branch layers clear-input/clear-queue/cancel
+	// below).
 	if m.mention.open && !key.Matches(msg, m.keys.Submit) && !key.Matches(msg, m.keys.Cancel) {
 		if mm, handled := m.onMentionKey(msg); handled {
 			return mm, nil
@@ -2101,6 +2100,9 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.ta.InsertRune('\n')
 		return m.afterInputEdit(nil)
 	case key.Matches(msg, m.keys.Submit):
+		if mm, cmd, handled := m.interceptSlashCommand(strings.TrimSpace(m.ta.Value())); handled {
+			return mm, cmd
+		}
 		return m.enqueuePrompt()
 	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.ScrollD),
 		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
@@ -2171,10 +2173,12 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 // "queued (N)" status, and re-syncs the palette (afterInputEdit) so the dropdown
 // closes now that the "/" line is gone.
 //
-// Crucially it does NOT open a stream or send anything — the queued text becomes a
-// real prompt only when drainQueue later hands it to submitPrompt (the existing
-// send path, which maps to the server-side StartRunContent reopen). There is no
-// second send path.
+// Crucially it does NOT open a stream or send anything in local-queue mode — the
+// queued text becomes a real prompt only when drainQueue later hands it to
+// submitPrompt (the existing send path, which maps to the server-side
+// StartRunContent reopen). In steer mode it sends only model-facing input; callers
+// intercept bare local built-ins before reaching this path. There is no second send
+// path.
 func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.ta.Value())
 	if text == "" {

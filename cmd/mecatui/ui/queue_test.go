@@ -619,32 +619,23 @@ func isQuitCmd(cmd tea.Cmd) bool {
 	}
 }
 
-// TestBuiltinQueuedThenRunsAtDrain: a "/clear" staged mid-run is dispatched as a
-// built-in at DRAIN time (phase is idle then, satisfying /clear's idle-guard) — the
-// conversation empties and NO prompt frame is sent for it.
-func TestBuiltinQueuedThenRunsAtDrain(t *testing.T) {
+// TestBuiltinRunsLocallyWhileRunning: a bare "/clear" runs locally rather than
+// entering the follow-up queue. Its running guard preserves the live conversation
+// and no prompt frame is sent.
+func TestBuiltinRunsLocallyWhileRunning(t *testing.T) {
 	m, conv := newQueueModel(t)
 	m = startRunning(t, m, "first")
-	// Seed some assistant content so /clear has something to wipe.
+	// Seed some assistant content so an accidental clear would be visible.
 	m = applyAll(m, client.AssistantDeltaMsg{Turn: 1, Text: "some assistant prose"})
 	m = enqueue(t, m, "/clear")
-	if len(m.queued) != 1 || m.queued[0] != "/clear" {
-		t.Fatalf("expected /clear staged, got %v", m.queued)
-	}
-
-	mm, cmd := m.Update(client.ResultMsg{Stop: "end_turn"})
-	m = mm.(Model)
-	ready := clearMsgFromCmd(t, cmd)
-	// The queued built-in has started its create-first handoff. Reduce its actual
-	// successful replacement message before checking the cleared state.
-	mm, _ = m.Update(ready)
-	m = mm.(Model)
-
-	if !m.conv.isEmpty() {
-		t.Error("queued /clear should have emptied the conversation at drain")
-	}
 	if len(m.queued) != 0 {
-		t.Errorf("queue should be empty after draining /clear, got %v", m.queued)
+		t.Fatalf("bare /clear must not enter the queue, got %v", m.queued)
+	}
+	if m.conv.isEmpty() {
+		t.Fatal("bare /clear must not clear a live conversation")
+	}
+	if !strings.Contains(stripANSIstr(m.statusMsg), "cannot clear while running") {
+		t.Fatalf("/clear status = %q, want running warning", m.statusMsg)
 	}
 	// Only the initial "first" prompt frame — /clear is a built-in, never a Prompt.
 	got := promptTexts(conv.send)

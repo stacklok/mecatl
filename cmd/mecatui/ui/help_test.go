@@ -98,6 +98,16 @@ func TestHelpAnnotationsTrackCaps(t *testing.T) {
 	if !strings.Contains(allOn, "Type / to browse") {
 		t.Errorf("all-on help SHOULD advertise the / palette:\n%s", allOn)
 	}
+	steer := stripANSIstr(m_helpBody(client.Capabilities{Steer: true}))
+	if !strings.Contains(steer, "steer the current run") {
+		t.Errorf("steer-capable help should describe mid-run steering:\n%s", steer)
+	}
+	if !strings.Contains(steer, "bare built-ins stay local") {
+		t.Errorf("steer-capable help should explain local built-ins:\n%s", steer)
+	}
+	if strings.Contains(steer, "queue a follow-up (sends when the turn ends)") {
+		t.Errorf("steer-capable help should not describe the fallback queue:\n%s", steer)
+	}
 	// The skills clarification is always present.
 	if !strings.Contains(embedded, "Skills run automatically") {
 		t.Errorf("help should always carry the skills clarification:\n%s", embedded)

@@ -495,8 +495,10 @@ the mode or sensitivity on the remote server host and restart that server.
 palette-only `ListAgents` snapshot, gated on `caps.agents`), while `/team` opens
 the **live overlay** of a team that has actually run (gated on `caps.teams`).
 These never reach the model — a bare built-in line is intercepted and run
-locally. Gated-off builtins are hidden from the palette and help overlay;
-typing one anyway blocks the send with a warning (it never reaches the model).
+locally, including while a run is streaming. Gated-off builtins are hidden from
+the palette and help overlay; typing one anyway blocks the send with a warning
+(it never reaches the model). Unknown slash commands and built-ins with arguments
+remain model-facing input, so workspace commands keep their server-side expansion.
 (`/compact` is a planned follow-up: it needs a server RPC that does not
 exist yet.)
 
@@ -1654,16 +1656,18 @@ When the server's engine arms the mid-run **steer inbox** (steer-while-running, 
 carries `steer: true` and the TUI **flips** mid-run input from the local terminal
 queue to the engine steer path:
 
-- `enter` mid-run **sends a `steer` frame** on the live Converse stream instead of
-  staging locally. Each `enter` mints a fresh client `message_id` and the frame
-  carries ONLY that line's text; the engine's single-slot inbox **appends** each
-  frame into the one pending bundle (merged with a blank-line separator) and
-  drains the bundle at the **next turn boundary**, recording it as an ordinary
-  user continuation — so the model is nudged *mid-flight*, no waiting for the
-  run to end. The TUI keeps an **ordered queue of sends** (id + text); the drain
-  echo carries the **watermark** (the latest contributing send's id) and the
-  queue splits on it: everything up to and including the watermark landed (it
-  renders in context), anything after stays pending.
+- `enter` mid-run sends a `steer` frame on the live Converse stream instead of
+  staging locally, **except that a bare recognized TUI built-in** (such as `/help`
+  or `/clear`) still runs locally. Unknown slash commands, workspace commands, and
+  built-ins with arguments remain model-facing input. Each steer mints a fresh client
+  `message_id` and the frame carries ONLY that line's text; the engine's single-slot
+  inbox **appends** each frame into the one pending bundle (merged with a blank-line
+  separator) and drains the bundle at the **next turn boundary**, recording it as an
+  ordinary user continuation — so the model is nudged *mid-flight*, no waiting for
+  the run to end. The TUI keeps an **ordered queue of sends** (id + text); the drain
+  echo carries the **watermark** (the latest contributing send's id) and the queue
+  splits on it: everything up to and including the watermark landed (it renders in
+  context), anything after stays pending.
 - The card above the input reflects the **authoritative** server-reported state —
   the engine is the sole authority on what happened to a steer (the client cannot
   observe the exact drain moment across stream latency), so the card shows what

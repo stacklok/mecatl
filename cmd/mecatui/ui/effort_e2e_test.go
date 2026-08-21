@@ -163,17 +163,13 @@ func TestEffortE2EForkFailureLeavesSourceOpen(t *testing.T) {
 	}
 }
 
-// TestEffortE2EQueuedMidRunForksOnRunEnd pins the in-flight-run ordering ADR 0068
-// promises ("switchEffort ends any in-flight run before forking"), at the teatest
-// level. /effort is idle-only (openEffort self-gates on phaseIdle), so typed
-// mid-run the command ENQUEUES — it does NOT open the picker or fork over a live
-// run. The fork fires only once the in-flight run has terminated and the queue
-// drains: the drain re-submits the bare "/effort" line (now idle), the built-in
-// intercept opens the picker, and enter forks — with the source run already ended
-// (switchEffort's endRun then finds nothing live to cancel). A GATED run that stays
-// streaming proves NO fork fires while the run is live; releasing the gate lets the
-// run end and the queued /effort fork proceed.
-func TestEffortE2EQueuedMidRunForksOnRunEnd(t *testing.T) {
+// TestEffortE2ELocalMidRunThenForksAfterRunEnd pins the in-flight-run ordering
+// ADR 0068 promises ("switchEffort ends any in-flight run before forking") at the
+// teatest level. /effort is a bare local built-in, so typed mid-run it reaches its
+// idle-only guard immediately: it does NOT open the picker, enqueue, or fork over
+// a live run. After the run ends, a fresh /effort opens the picker and enter forks.
+// A GATED run that stays streaming proves no fork fires while the run is live.
+func TestEffortE2ELocalMidRunThenForksAfterRunEnd(t *testing.T) {
 	models := []client.ModelInfo{
 		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true, ContextLimit: 200000},
 	}
@@ -185,7 +181,7 @@ func TestEffortE2EQueuedMidRunForksOnRunEnd(t *testing.T) {
 
 	// Gate the run at its delta so it is provably still streaming (phaseRunning) while
 	// the /effort command is typed: the result is physically held in the fake until the
-	// test releases it. While gated, the queued /effort must NOT fork.
+	// test releases it. While gated, the local /effort must NOT fork.
 	conv.recv.mu.Lock()
 	conv.recv.script = simpleRunScript("working")
 	conv.recv.gateType = "message.delta"
@@ -201,8 +197,8 @@ func TestEffortE2EQueuedMidRunForksOnRunEnd(t *testing.T) {
 	prog.wait(t, phaseRunning, 5*time.Second)
 	waitClosed(t, "run streamed its delta (result gated)", conv.recv.reachedGate, 5*time.Second)
 
-	// Type /effort mid-run: it enqueues (enter mid-run stages a follow-up; the
-	// idle-only picker does NOT open over the live run). No fork may fire yet.
+	// Type /effort mid-run: it runs locally but the idle-only picker guard keeps it
+	// closed. No fork may fire yet.
 	for _, r := range "/effort" {
 		tm.Send(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
@@ -213,22 +209,24 @@ func TestEffortE2EQueuedMidRunForksOnRunEnd(t *testing.T) {
 	case <-time.After(scaleWait(500 * time.Millisecond)):
 	}
 
-	// Release the gate: the in-flight run terminates, the queue drains the staged
-	// "/effort" line (now idle), and the built-in intercept opens the picker — the fork
-	// fires only AFTER the run ended (the ADR 0068 ordering, reached via the queue
-	// drain). The drained "/effort" opens the picker WITHOUT starting a run, so the
-	// reducer settles back to idle once the picker is open; wait for that before
-	// pressing keys (a Down/Enter sent before the picker opened would be misrouted).
+	// Release the gate and wait for the in-flight run to finish. The local mid-run
+	// /effort did not queue a follow-up, so submit it again now that the picker can
+	// open on an idle session.
 	conv.recv.release()
-	prog.waitRunComplete(t, 1, 5*time.Second) // the in-flight run finished (its end drains the queue)
-	prog.wait(t, phaseIdle, 5*time.Second)    // the drained /effort opened the picker (no run started)
+	prog.waitRunComplete(t, 1, 5*time.Second)
+	prog.wait(t, phaseIdle, 5*time.Second)
 
-	// The picker is open (the drained /effort intercept fired). Move to a real tier
-	// and apply — the fork fires now, AFTER the in-flight run ended.
+	for _, r := range "/effort" {
+		tm.Send(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	// The picker is open. Move to a real tier and apply — the source run is already
+	// ended.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown}) // picker: move to a real tier
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	waitClosed(t, "ForkSession after the queued /effort pick", conv.forked, 5*time.Second)
+	waitClosed(t, "ForkSession after the idle /effort pick", conv.forked, 5*time.Second)
 	if conv.forkedEffort == "" {
 		t.Fatalf("ForkSession carried an empty effort, want the picked tier")
 	}

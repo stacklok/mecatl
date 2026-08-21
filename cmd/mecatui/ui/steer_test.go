@@ -603,3 +603,90 @@ func TestSteer_CardGolden(t *testing.T) {
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "steer_card.golden", got)
 }
+
+// TestSteer_RunningSlashCommandsInterceptLocalBuiltins verifies that local bare
+// built-ins keep their local meaning while a steer-capable run streams. Unknown
+// slash commands remain model-facing so workspace commands still work.
+func TestSteer_RunningSlashCommandsInterceptLocalBuiltins(t *testing.T) {
+	t.Run("help stays local after a steer", func(t *testing.T) {
+		m, conv := newSteerModel(t, true)
+		m = startRunning(t, m, "first")
+
+		m = typeText(t, m, "normal steer")
+		mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		runBatchLeaves(cmd) // execute the actual returned send command
+		m = mm.(Model)
+		if got := steerTexts(conv.send); len(got) != 1 || got[0] != "normal steer" {
+			t.Fatalf("normal input must send one steer, got %v", got)
+		}
+
+		m = typeText(t, m, "  /help  ")
+		mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		runBatchLeaves(cmd) // execute the actual returned local-builtin command
+		m = mm.(Model)
+		if !m.showHelp {
+			t.Fatal("bare /help must open local help while the run remains active")
+		}
+		if m.phase != phaseRunning {
+			t.Fatalf("bare /help changed phase to %v, want running", m.phase)
+		}
+		if got := m.ta.Value(); got != "" {
+			t.Fatalf("bare /help must clear the input, got %q", got)
+		}
+		if got := steerTexts(conv.send); len(got) != 1 {
+			t.Fatalf("bare /help must not send another steer, got %v", got)
+		}
+		if len(m.queued) != 0 {
+			t.Fatalf("bare /help must not add a queued follow-up, got %v", m.queued)
+		}
+		if m.palette.open {
+			t.Fatal("bare /help must close the command palette after consuming its input")
+		}
+
+		// Close the local overlay, then prove the original run and its pending steer
+		// remain usable without cancelling either one.
+		mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		runBatchLeaves(cmd)
+		m = mm.(Model)
+		m = typeText(t, m, "second steer")
+		mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		runBatchLeaves(cmd)
+		m = mm.(Model)
+		if got := steerTexts(conv.send); len(got) != 2 || got[1] != "second steer" {
+			t.Fatalf("run must accept another steer after /help, got %v", got)
+		}
+		if got := steerCancelCount(conv.send); got != 0 {
+			t.Fatalf("bare /help must not cancel the pending steer, sent %d steer_cancel frames", got)
+		}
+		if m.phase != phaseRunning {
+			t.Fatalf("run stopped after /help and another steer: phase=%v", m.phase)
+		}
+	})
+
+	t.Run("clear is safe and unknown commands fall through", func(t *testing.T) {
+		m, conv := newSteerModel(t, true)
+		m = startRunning(t, m, "first")
+
+		m = typeText(t, m, "/clear")
+		mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		runBatchLeaves(cmd)
+		m = mm.(Model)
+		if m.phase != phaseRunning || m.conv.isEmpty() {
+			t.Fatal("/clear must not disrupt a running conversation")
+		}
+		if !strings.Contains(stripANSIstr(m.statusMsg), "cannot clear while running") {
+			t.Fatalf("/clear status = %q, want running warning", m.statusMsg)
+		}
+		if got := steerTexts(conv.send); len(got) != 0 || len(m.queued) != 0 {
+			t.Fatalf("/clear must not steer or queue, steers=%v queue=%v", got, m.queued)
+		}
+
+		m = typeText(t, m, "/workspace-command")
+		mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		runBatchLeaves(cmd)
+		m = mm.(Model)
+		if got := steerTexts(conv.send); len(got) != 1 || got[0] != "/workspace-command" {
+			t.Fatalf("unknown workspace command must fall through to steer, got %v", got)
+		}
+	})
+}
