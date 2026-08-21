@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -220,8 +221,15 @@ func TestSteer_AwaitingResumeDrains(t *testing.T) {
 	// Engine #2 (the "restarted process"): a FRESH steer-enabled engine over the
 	// restored awaiting session. Its mockllm serves only the CONTINUATION turn.
 	rec := &requestRecorder{}
+	writeStarted := make(chan struct{})
+	writeProceed := make(chan struct{})
+	var releaseWrite sync.Once
+	release := func() { releaseWrite.Do(func() { close(writeProceed) }) }
+	defer release()
 	write2 := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			close(writeStarted)
+			<-writeProceed
 			return session.NewToolResult(in.ID, "wrote"), nil
 		}}
 	e2 := newEngine(agent.Deps{
@@ -231,14 +239,15 @@ func TestSteer_AwaitingResumeDrains(t *testing.T) {
 		EnableSteer: true,
 	})
 
-	// The resumed run re-enters AT the parked ask. Enqueue the steer on the
-	// RESUMED run immediately — the resume's verdict resolution (execute the
-	// pending call, record results) runs BEFORE runLoop's first Step 2a, so the
-	// steer is held through the verdict and drains at the first boundary.
+	// ResumeApproval executes the pending Write before entering runLoop. Wait until
+	// that execution is parked, then enqueue so the steer is held through verdict
+	// resolution and drains at runLoop's first Step 2a boundary.
 	r2 := e2.ResumeApproval(context.Background(), restored, agent.EnvForWS(memfs.NewWorkspace("/ws"), nil), askID, session.VerdictAllowOnce)
+	<-writeStarted
 	if got := steerEnqueueOutcome(t, r2, steerText); got != agent.SteerAccepted {
 		t.Fatalf("enqueue on the resumed run outcome = %q, want %q", got, agent.SteerAccepted)
 	}
+	release()
 	evs := drainObserving(t, r2, nil)
 
 	if res := lastResult(t, evs); res.Stop != session.StopEndTurn {
