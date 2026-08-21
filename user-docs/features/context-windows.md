@@ -126,6 +126,5 @@ requirements, see [LLMProvider](../extension-points/llm-provider.md).
 
 - [Choose models and providers](./choose-models.md)
 - [Multimodal input](./multimodal-input.md)
-- [OpenRouter routing](./openrouter-routing.md)
 - [The agent loop](../what-you-get/agent-loop.md)
 - [Capability and deployment matrix](./capability-matrix.md)

@@ -54,8 +54,6 @@ prose is completed.
   retention, and maintenance.
 - [Context windows](./context-windows.md) covers model context-window
   resolution and overrides.
-- [OpenRouter routing](./openrouter-routing.md) covers downstream inference
-  provider preferences.
 - [Project instructions and rules](./project-instructions-and-rules.md) covers
   trusted project guidance and `.claude/rules`.
 

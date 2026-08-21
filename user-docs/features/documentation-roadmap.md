@@ -99,8 +99,7 @@ After the first four pages, complete:
 7. [Caller identity and OIDC](./caller-identity.md)
 8. [Learning](./learning.md) and [dreaming](./dreaming.md)
 9. [Multimodal input](./multimodal-input.md)
-10. [Context windows](./context-windows.md) and
-    [OpenRouter routing](./openrouter-routing.md)
+10. [Context windows](./context-windows.md)
 
 ## 6. Strengthen the authoring contract
 

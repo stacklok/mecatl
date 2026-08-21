@@ -81,6 +81,75 @@ server used through `mecatui connect`. `mecak8s` exposes the corresponding serve
 configuration. See the [operator provider and model reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#provider--model-selection)
 for credential sources and deployment options.
 
+### Configure aliases, slots, and task routing
+
+For a deployment with several kinds of work, use the operator-global
+`settings.yaml` to give models stable aliases and assign them to internal jobs
+or delegation categories:
+
+```yaml
+models:
+  default: gpt-5.6-terra
+  aliases:
+    planner: gpt-5.6-sol
+    heavy: gpt-5.6-terra
+    coder: gpt-5.6-luna
+    quick: gemini-3.5-flash
+    image: gpt-5.6-terra
+  slots:
+    compaction: heavy
+    ask-reviewer: quick
+    guardrail: coder
+    plan: planner
+    router: coder
+  router:
+    default-category: medium
+    categories:
+      - name: large
+        description: Deep reasoning, architecture, and subtle concurrency bugs.
+        model: heavy
+      - name: medium
+        description: Multi-file implementation, integration, and substantial tests.
+        model: coder
+      - name: small
+        description: Focused edits, known fixes, and quick lookups.
+        model: quick
+      - name: image
+        description: Work requiring visual input.
+        model: image
+```
+
+These mechanisms are independent:
+
+- **Aliases** map readable names to concrete provider-specific model IDs.
+- **Slots** select models for internal calls. `compaction`, `ask-reviewer`,
+  `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
+  slot can use a stronger model while a plan is being written; compaction and
+  checker slots can use cheaper models.
+- **Router categories** select a model for a plain delegated Subagent, Parallel
+  branch, or undefined team member from the task description. A taxonomy enables
+  the router; with no taxonomy, delegation keeps its inherited/default model.
+
+With the example above, routing resolves as:
+
+```text
+large  → heavy  → gpt-5.6-terra
+medium → coder  → gpt-5.6-luna
+small  → quick  → gemini-3.5-flash
+image  → image  → gpt-5.6-terra
+```
+
+Resolution is fail-soft: an invalid alias, slot, or route target warns and falls
+back to the session model. Explicit per-call models, named-agent models, fork or
+resume choices, and other higher-precedence selectors are not overridden by the
+router. Model slots and router taxonomies are operator decisions; project model
+settings are ignored unless the operator explicitly allows the relevant model
+set on a trusted project.
+
+This configuration belongs in the operator-global settings file, not a checked-in
+project file. For the complete precedence rules and CLI equivalents, see the
+[model-routing guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md).
+
 ### Run one shot with mecatequi
 
 `mecatequi` creates a new session for one prompt. It accepts model/provider
@@ -188,8 +257,6 @@ session as authoritative.
   themselves when they create a new session.
 - Provider/model selection flags configure an embedded or server deployment;
   they do not override a remote server reached with `connect`.
-- For related configuration, see [Context windows](./context-windows.md) and
-  [OpenRouter routing](./openrouter-routing.md).
 
 ## Next steps
 
@@ -197,7 +264,5 @@ session as authoritative.
 - [Start and resume sessions](./start-and-resume-sessions.md) for session
   creation and continuation.
 - [Context windows](./context-windows.md) for context limits and fallback.
-- [OpenRouter routing](./openrouter-routing.md) for downstream provider
-  preferences.
 - [Capability and deployment matrix](./capability-matrix.md) for deployment
   availability.
