@@ -3111,12 +3111,16 @@ flag; ACP help excludes it. See ADR 0088.
 
 ### CLI transport grammar (ADR 0089 — the clean break)
 
-One canonical spelling per action, no aliases/shims. **mecatui** (`cmd/mecatui/command.go`
-`resolveTransportMode`): bare `mecatui [flags]` (incl. a leading flag) ALWAYS hosts the
+One canonical spelling per transport action; the explicit `help` spellings are the
+exception. **mecatui** (`cmd/mecatui/command.go` `resolveInvocation`): bare `mecatui [flags]`
+(incl. a leading flag) ALWAYS hosts the
 embedded mecated (never probes loopback — the AUTO probe is deleted); `mecatui connect
 ADDRESS [flags]` ALWAYS dials (never embeds; ADDRESS must immediately follow `connect` — a
 missing/flag-first token fails closed, the one exception being the help meta-flags, so
-`connect --help` renders help with no ADDRESS). The ADR-0087 `local` subcommand and the
+`connect --help` renders help with no ADDRESS). Top-level `--help`/`-h`/`help` render the
+command index; `help <command>` aliases command-specific `--help`; `--help-flags` renders
+common embedded-mode flags and `--help-all` is the exhaustive reference. The ADR-0087 `local`
+subcommand and the
 `--server` flag are DELETED (unknown command / unknown-flag errors). Mode-keyed flag
 applicability (`flagApplicabilityByFlag`, `rejectInapplicableFlags`) rejects embedded-only
 flags in connect mode and remote-only flags (`--auth-token`/`--tls*`/`--insecure`) in the

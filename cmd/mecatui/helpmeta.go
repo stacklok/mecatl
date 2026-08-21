@@ -162,8 +162,9 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"perf-goroutine-warn-threshold": {group: groupObservability, common: false, local: true, connect: false},
 	"perf-mcp":                      {group: groupObservability, common: false, local: true, connect: false},
 
-	// ── Info (meta-flags, both modes) ─────────────────────────────────────
-	"help-all": {group: groupInfo, common: false, local: true, connect: true},
+	// ── Info (meta-flags) ───────────────────────────────────────────────────
+	"help-all":   {group: groupInfo, common: false, local: true, connect: true},
+	"help-flags": {group: groupInfo, common: false, local: true, connect: false},
 }
 
 // groupOrder is the stable presentation order for groups in common help.
@@ -274,14 +275,15 @@ func validateFlagApplicability(fs *flag.FlagSet) error {
 
 // ── Help renderers ────────────────────────────────────────────────────────
 
-// writeBareCommonHelp renders the task-oriented common flag list for the bare
-// `mecatui --help` (the embedded default).
+// writeBareCommonHelp renders the task-oriented common flag list for bare
+// `mecatui --help-flags`.
 func writeBareCommonHelp(out io.Writer, fs *flag.FlagSet) {
-	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\n")
-	_, _ = fmt.Fprintf(out, "Host an embedded mecated server in-process over a private UNIX socket. mecatui\n")
-	_, _ = fmt.Fprintf(out, "NEVER probes loopback — the bare invocation always embeds. Run 'mecatui\n")
-	_, _ = fmt.Fprintf(out, "--help-all' for the full exhaustive reference including every embedded-server\n")
-	_, _ = fmt.Fprintf(out, "tuning knob.\n\n")
+	_, _ = fmt.Fprintf(out, "Usage: mecatui --help-flags\n\n")
+	_, _ = fmt.Fprintf(out, "Common flags for the embedded mecated server. Bare mecatui NEVER probes loopback —\n")
+	_, _ = fmt.Fprintf(out, "it always embeds. Run 'mecatui --help-all' for the full exhaustive reference\n")
+	_, _ = fmt.Fprintf(out, "including every embedded-server tuning knob.\n\n")
+	writeCommandSummary(out)
+	_, _ = fmt.Fprintln(out)
 	renderGroupedCommon(out, fs, commonFlagNames(modeLocal))
 }
 
@@ -389,7 +391,9 @@ func writeSessionsHelpAll(out io.Writer, fs *flag.FlagSet, mode transportMode) {
 // --help-all` (the embedded default). It uses the single cliconfig formatter
 // (byte-identical to flag.PrintDefaults).
 func writeBareHelpAll(out io.Writer, fs *flag.FlagSet) {
-	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\nFlags:\n")
+	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\n")
+	writeCommandSummary(out)
+	_, _ = fmt.Fprintln(out, "\nFlags:")
 	cliconfig.PrintDefaultsExcluding(out, fs, nil)
 }
 

@@ -19,12 +19,12 @@ import (
 // config is the resolved CLI/env configuration for mecatui.
 type config struct {
 	// transportMode is the resolved canonical transport mode (local/connect)
-	// threaded explicitly from resolveTransportMode through parse and validate.
+	// threaded explicitly from resolveInvocation through parse and validate.
 	// It drives the transport path (no-probe/no-embed) and the
 	// trust/provider/posture validation gating (ADR 0087).
 	transportMode transportMode
 	// connectAddress is the dial target for `mecatui connect ADDRESS` ("" for the
-	// bare/local mode). Set by resolveTransportMode; consumed by resolveTransport.
+	// bare/local mode). Set by resolveInvocation; consumed by resolveTransport.
 	connectAddress string
 	// browseSessions selects the startup session-browser launch intent. Transport
 	// remains independent: both embedded and connect modes can browse first.
@@ -32,6 +32,7 @@ type config struct {
 	// helpAll is true when --help-all was passed; it requests the exhaustive
 	// flag listing and exits 0 before transport resolution.
 	helpAll    bool
+	helpFlags  bool
 	keymap     *cliconfig.KeyValueList
 	workspace  string
 	mode       string
@@ -319,7 +320,7 @@ type config struct {
 // name) as a bare (embedded/local) invocation. Existing tests that exercise the
 // flag-parsing logic (not the mode-specific transport/help behaviour) use this
 // entry point. Production goes through parseTransportFlags via
-// resolveTransportMode.
+// resolveInvocation.
 func parseFlags(args []string) (config, error) {
 	_, cfg, err := parseTransportFlags(modeLocal, os.Stderr, args)
 	return cfg, err
@@ -336,7 +337,7 @@ func parseFlags(args []string) (config, error) {
 // the registration block. Production calls it with os.Stderr and discards the
 // returned FlagSet. mode is the resolved canonical transport mode; out is where
 // --help / parse errors are written; args excludes the program name (and, for
-// local/connect, the command word / ADDRESS — resolveTransportMode strips them).
+// local/connect, the command word / ADDRESS — resolveInvocation strips them).
 func parseTransportFlags(mode transportMode, out io.Writer, args []string, browseSessions ...bool) (*flag.FlagSet, config, error) {
 	var cfg config
 	cfg.transportMode = mode
@@ -439,7 +440,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "embedded server only: loopback listen address for the --perf admin surface (empty = the fixed default 127.0.0.1:9099, predictable so an MCP-client config can hardcode the /mcp URL; distinct from mecated's :9090). Pass another host:port, or 127.0.0.1:0 for an ephemeral port. On a port clash, start FAILS with guidance. Only consulted with --perf")
 	fs.IntVar(&cfg.perfGoroutineWarnThreshold, "perf-goroutine-warn-threshold", 0, "embedded server only: arm the live goroutine-leak watchdog — log a Warn whenever runtime.NumGoroutine() exceeds this count (decision 10). 0 (default) disables the alarm; the /metrics goroutine-count series is exported regardless. Only consulted with --perf")
 	fs.BoolVar(&cfg.perfMCP, "perf-mcp", false, "embedded server only: mount the read-only perf MCP server at /mcp on the --perf admin surface, so an agent can introspect THIS process's runtime/latency/profile state over MCP (list_slow_turns, runtime/heap/CPU profiles, FlightRecorder). Only meaningful with --perf. SECURITY: loopback-bound, UNAUTHENTICATED (decision 6) — embed REFUSES a non-loopback --perf-addr with this set")
-	fs.BoolVar(&cfg.helpAll, "help-all", false, "print the exhaustive flag reference for this command and exit (the common --help lists only the task-oriented subset)")
+	fs.BoolVar(&cfg.helpAll, "help-all", false, "print the exhaustive flag reference for this command and exit")
+	fs.BoolVar(&cfg.helpFlags, "help-flags", false, "print the common embedded-mode flag reference and exit (bare invocation only)")
 
 	fs.Usage = transportUsage(fs, mode, cfg.browseSessions)
 
@@ -449,6 +451,15 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		// run over the full real registration path via the --help-triggered ErrHelp
 		// path.
 		return fs, config{}, err
+	}
+
+	// --help-flags is the bare/local common flag reference.
+	if cfg.helpFlags {
+		if mode != modeLocal || cfg.browseSessions {
+			return fs, config{}, errors.New("--help-flags is available only as bare 'mecatui --help-flags'")
+		}
+		writeBareCommonHelp(fs.Output(), fs)
+		return nil, config{}, flag.ErrHelp
 	}
 
 	// --help-all was parsed as a normal flag; render and return ErrHelp (exit 0).

@@ -1,17 +1,18 @@
 // Command resolution for the mecatui binary: a PURE, argv-accepting seam that
-// classifies the leading CLI word into one of {bare/flags (local), connect,
-// an error} WITHOUT touching os.Args or any package-level state. main() calls it
-// once, threads the result into the existing parse/run path explicitly, and owns
-// the one transport-resolution path.
+// classifies the leading CLI word into a complete invocation: bare/flags (local),
+// named commands, top-level help, or a usage error. It does not touch os.Args or
+// any package-level state. main() calls it once, threads the result into the
+// existing parse/run path explicitly, and owns the side-effecting run preparation.
 //
 // Final grammar (ADR 0089): bare `mecatui [flags]` is the canonical default — it
 // ALWAYS hosts an embedded server and NEVER probes loopback. `mecatui connect
-// ADDRESS` ALWAYS dials ADDRESS and NEVER probes/embeds; it is the ONLY
-// subcommand. There is no compatibility path: `mecatui local` is an unknown
+// ADDRESS` ALWAYS dials ADDRESS and NEVER probes/embeds. `sessions` opens the
+// embedded session browser, and `login` runs the ToolHive OIDC flow without a
+// transport. There is no compatibility path: `mecatui local` is an unknown
 // command (fail-closed, the error names `connect`) and `--server` is an unknown
 // flag.
 //
-// The pure shape (resolveTransportMode + writeTopLevelHelp) is what the tests
+// The pure shape (resolveInvocation + writeTopLevelHelp) is what the tests
 // exercise; main wires the io/os.Exit side effects around it. This mirrors the
 // repaired cmd/mecated/command.go seam.
 
@@ -39,91 +40,169 @@ const (
 	modeLogin transportMode = "login"
 )
 
-// transportResolution is the result of classifying argv[1:]. mode + remaining
-// (the flag tail) drive run()'s transport path; address is the connect target
-// ("" for the bare/local mode). When err is non-nil the leading word was a usage
-// error (unknown command, connect missing/flag-first ADDRESS); main prints it
-// and exits non-zero WITHOUT resolving a transport.
-type transportResolution struct {
+// topLevelCommand is the single catalog for named entry points. Resolution,
+// command discovery, and unknown-command output all derive from this list so a
+// newly registered command cannot be accepted but omitted from help.
+type topLevelCommand struct {
+	name     string
+	synopsis string
+	purpose  string
+	resolve  func([]string) invocationResolution // arguments after the command word
+}
+
+var topLevelCommands = []topLevelCommand{
+	{
+		name:     "sessions",
+		synopsis: "sessions",
+		purpose:  "browse stored sessions before creating or continuing a chat",
+		resolve: func(args []string) invocationResolution {
+			return invocationResolution{mode: modeLocal, browseSessions: true, remaining: args}
+		},
+	},
+	{
+		name:     "connect",
+		synopsis: "connect ADDRESS [sessions]",
+		purpose:  "dial a running mecated at ADDRESS (host:port); append sessions to browse stored sessions",
+		resolve:  resolveConnectCommand,
+	},
+	{
+		name:     "login",
+		synopsis: "login",
+		purpose:  "run the ToolHive LLM gateway OIDC browser flow (no session)",
+		resolve: func(args []string) invocationResolution {
+			return invocationResolution{mode: modeLogin, remaining: args}
+		},
+	},
+}
+
+// invocationResolution is the pure classification of a complete CLI invocation:
+// bare/default mode, a named command, top-level help, or a leading-word usage
+// error. mode + remaining drive run()'s transport path when applicable; address
+// is the connect target ("" for bare/local). run preparation handles the help
+// output and error wrapping after this resolver returns.
+type invocationResolution struct {
 	mode           transportMode
 	address        string // connect target; "" for the bare/local mode
 	browseSessions bool   // launch directly into the shared stored-session inventory
+	helpIndex      bool   // render the top-level command index
 	remaining      []string
 	err            error
 }
 
-// resolveTransportMode classifies argv (the FULL arg vector, argv[0] included as
-// the program name) into a transportResolution. It is PURE: it does not read or
-// mutate os.Args, does not call os.Exit, and does not perform I/O or any network
-// probe.
+// resolveInvocation classifies argv (the FULL arg vector, argv[0] included as
+// the program name) into an invocationResolution. It is PURE: it does not read
+// or mutate os.Args, does not call os.Exit, and does not perform I/O or any
+// network probe.
 //
 //   - bare `mecatui [flags]` / leading flag → modeLocal, embed, never probe (the
 //     canonical default).
-//   - `mecatui connect ADDRESS [flags]` → modeConnect, dial ADDRESS, never probe/embed.
-//   - anything else (incl. the retired `local` word) → err (fail closed before
-//     transport resolution).
+//   - named commands dispatch to their command-specific resolvers.
+//   - `help` and help meta-flags select top-level or command-specific help.
+//   - invalid forms return usage errors before run preparation has side effects.
 //
 // connect REQUIRES an ADDRESS immediately after the command word: a missing
 // ADDRESS or a flag-first token (--x) is a usage error. Unknown leading commands
 // fail closed.
-func resolveTransportMode(argv []string) transportResolution {
+func resolveInvocation(argv []string) invocationResolution {
 	args := argv
 	if len(args) < 2 {
 		// Bare `mecatui` with no args: the canonical embedded invocation.
-		return transportResolution{mode: modeLocal, remaining: args[1:]}
+		return invocationResolution{mode: modeLocal, remaining: args[1:]}
 	}
 	first := args[1]
 
-	if first == "connect" {
-		// ADDRESS must immediately follow the command word. A missing ADDRESS or a
-		// flag-first token (--x) is a usage error — connect NEVER probes/embeds, so
-		// there is no fallback target. The ONE exception is the help meta-flags
-		// (--help/-h/--help-all): `mecatui connect --help` renders the connect help
-		// rather than failing on the missing ADDRESS, matching the universal
-		// --help contract.
-		if len(args) < 3 {
-			return transportResolution{err: connectUsageError(args)}
-		}
-		if strings.HasPrefix(args[2], "-") && !isHelpMetaFlag(args[2]) {
-			return transportResolution{err: connectUsageError(args)}
-		}
-		if isHelpMetaFlag(args[2]) {
-			// Help request: pass the flag tail through to parseTransportFlags so the
-			// Usage hook renders the connect help (no ADDRESS required for --help).
-			return transportResolution{mode: modeConnect, remaining: args[2:]}
-		}
-		remaining := stripLeading(args, 3)
-		browseSessions := len(remaining) > 0 && remaining[0] == "sessions"
-		if browseSessions {
-			remaining = remaining[1:]
-		}
-		return transportResolution{
-			mode:           modeConnect,
-			address:        args[2],
-			browseSessions: browseSessions,
-			remaining:      remaining,
-		}
-	}
-
-	if first == "sessions" {
-		return transportResolution{mode: modeLocal, browseSessions: true, remaining: args[2:]}
-	}
-
-	// `mecatui login` (issue #265): CLI-only interactive ToolHive LLM OIDC login.
-	// No ADDRESS, no transport — run() branches it before any TUI/server. The
-	// flag tail (--skip-browser, --help) passes through to parseLoginFlags.
-	if first == "login" {
-		return transportResolution{mode: modeLogin, remaining: args[2:]}
-	}
-
-	// A leading flag (starts with '-') is the bare embedded invocation: `mecatui
-	// --workspace …`. Fall through to the embedded transport path.
 	if strings.HasPrefix(first, "-") {
-		return transportResolution{mode: modeLocal, remaining: args[1:]}
+		if first == "--help" || first == "-h" {
+			if len(args) != 2 {
+				return invocationResolution{err: helpUsageError("help does not accept additional operands")}
+			}
+			return invocationResolution{helpIndex: true}
+		}
+		if (first == "--help-all" || first == "--help-flags") && len(args) != 2 {
+			return invocationResolution{err: helpUsageError("help does not accept additional operands")}
+		}
+		for _, arg := range args[2:] {
+			if arg == "--help" || arg == "-h" {
+				return invocationResolution{helpIndex: true}
+			}
+		}
+		// A leading flag is the bare embedded invocation: `mecatui --workspace …`.
+		return invocationResolution{mode: modeLocal, remaining: args[1:]}
+	}
+
+	commandArgs := []string(nil)
+	if len(args) > 2 {
+		commandArgs = args[2:]
+	}
+	if first == "help" {
+		return resolveHelpCommand(commandArgs)
+	}
+	for _, command := range topLevelCommands {
+		if first == command.name {
+			if hasUnexpectedHelpOperands(command.name, commandArgs) {
+				return invocationResolution{err: helpUsageError("help does not accept additional operands")}
+			}
+			return command.resolve(commandArgs)
+		}
 	}
 
 	// Anything else is an unknown command — fail closed.
-	return transportResolution{err: unknownCommandError(first)}
+	return invocationResolution{err: unknownCommandError(first)}
+}
+
+// resolveHelpCommand maps the help meta-command to the catalogued command's own
+// resolver with the equivalent --help tail. Help itself is not executable, so it
+// has the one distinct top-level-index outcome.
+func resolveHelpCommand(args []string) invocationResolution {
+	if len(args) == 0 {
+		return invocationResolution{helpIndex: true}
+	}
+	if len(args) != 1 {
+		return invocationResolution{err: helpUsageError("help accepts at most one command")}
+	}
+	for _, command := range topLevelCommands {
+		if args[0] == command.name {
+			return command.resolve([]string{"--help"})
+		}
+	}
+	return invocationResolution{err: helpUsageError(fmt.Sprintf("unknown help target %q", args[0]))}
+}
+
+func helpUsageError(problem string) error {
+	return fmt.Errorf("%s; run 'mecatui help' for the command index", problem)
+}
+
+func hasUnexpectedHelpOperands(command string, args []string) bool {
+	if command == "connect" && len(args) > 2 && isHelpMetaFlag(args[1]) {
+		return true
+	}
+	return len(args) > 1 && isHelpMetaFlag(args[0])
+}
+
+// resolveConnectCommand preserves connect's special grammar: ADDRESS must
+// immediately follow the command, except that its help meta-flags may omit it.
+func resolveConnectCommand(args []string) invocationResolution {
+	if len(args) == 0 {
+		return invocationResolution{err: connectUsageError(args)}
+	}
+	if strings.HasPrefix(args[0], "-") && !isHelpMetaFlag(args[0]) {
+		return invocationResolution{err: connectUsageError(args)}
+	}
+	if isHelpMetaFlag(args[0]) {
+		// Help requests need no ADDRESS; parseTransportFlags renders connect help.
+		return invocationResolution{mode: modeConnect, remaining: args}
+	}
+	remaining := args[1:]
+	browseSessions := len(remaining) > 0 && remaining[0] == "sessions"
+	if browseSessions {
+		remaining = remaining[1:]
+	}
+	return invocationResolution{
+		mode:           modeConnect,
+		address:        args[0],
+		browseSessions: browseSessions,
+		remaining:      remaining,
+	}
 }
 
 // isHelpMetaFlag reports whether arg is one of the help meta-flags (--help/-h/
@@ -137,43 +216,66 @@ func isHelpMetaFlag(arg string) bool {
 	return false
 }
 
-// stripLeading returns argv[n:] (nil when argv is too short), dropping the first
-// n leading tokens. Used by resolveTransportMode to strip the command word + the
-// connect ADDRESS (connect: n=3) so run() receives the flag tail exactly as if
-// the leading positional tokens had not been typed.
-func stripLeading(argv []string, n int) []string {
-	if len(argv) <= n {
-		return nil
+// writeCommandSummary renders every named command from the catalog and its
+// concrete command-specific help route. Each synopsis is followed by a softly
+// wrapped, indented description to keep the command index readable at the usual
+// help width.
+func writeCommandSummary(out io.Writer) {
+	const descriptionIndent = "    "
+	const helpWidth = 80
+
+	_, _ = fmt.Fprintln(out, "Commands:")
+	for _, command := range topLevelCommands {
+		_, _ = fmt.Fprintf(out, "  %s\n", command.synopsis)
+		writeSoftWrapped(out, descriptionIndent, command.purpose, helpWidth)
 	}
-	return argv[n:]
+	_, _ = fmt.Fprintln(out, "\nCommand-specific help:")
+	for _, command := range topLevelCommands {
+		_, _ = fmt.Fprintf(out, "  mecatui %s --help\n", command.name)
+	}
 }
 
-// writeTopLevelHelp renders the concise command-oriented entry page shown by
-// `mecatui --help` (and bare `mecatui` when help is requested). It is the
-// production renderer used by parseFlags' Usage hook AND by the tests; do not
-// duplicate it in a test helper.
+func writeSoftWrapped(out io.Writer, indent, text string, width int) {
+	line := indent
+	for _, word := range strings.Fields(text) {
+		if len(line) > len(indent) && len(line)+1+len(word) > width {
+			_, _ = fmt.Fprintln(out, line)
+			line = indent
+		}
+		if len(line) > len(indent) {
+			line += " "
+		}
+		line += word
+	}
+	_, _ = fmt.Fprintln(out, line)
+}
+
+// writeTopLevelHelp renders the concise command index used by the top-level help
+// spellings and after a leading-word usage error.
 func writeTopLevelHelp(out io.Writer) {
-	_, _ = fmt.Fprintf(out, "Usage: mecatui <command> [flags]\n\n")
-	_, _ = fmt.Fprintf(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback\n")
-	_, _ = fmt.Fprintf(out, "probe) — the canonical default. The subcommands:\n\n")
-	_, _ = fmt.Fprintf(out, "Commands:\n")
-	_, _ = fmt.Fprintf(out, "  sessions          browse stored sessions before creating or continuing a chat\n")
-	_, _ = fmt.Fprintf(out, "  connect ADDRESS   dial a running mecated at ADDRESS (host:port); append 'sessions' to browse first\n")
-	_, _ = fmt.Fprintf(out, "  login             run the interactive ToolHive LLM OIDC browser flow (in-process, no session)\n")
-	_, _ = fmt.Fprintf(out, "\nRun 'mecatui --help' for the bare-mode common flags, 'mecatui <command> --help'\n")
-	_, _ = fmt.Fprintf(out, "for command-specific flags, and '--help-all' on either for the exhaustive reference.\n")
+	_, _ = fmt.Fprintln(out, "Usage: mecatui [flags]")
+	_, _ = fmt.Fprintln(out, "       mecatui <command> [flags]")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
+	_, _ = fmt.Fprintln(out)
+	writeCommandSummary(out)
+	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
+	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
+	_, _ = fmt.Fprintln(out, "\nRun 'mecatui --help-flags' for common embedded-mode flags or '--help-all' for the exhaustive bare reference.")
 }
 
 // unknownCommandError builds the error message for an unknown leading bare word.
 func unknownCommandError(arg string) error {
-	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n  sessions          browse stored sessions before creating or continuing a chat\n  connect ADDRESS   dial a running mecated at ADDRESS\n  login             run the interactive ToolHive LLM OIDC browser flow\n\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help' or 'mecatui connect --help'", arg)
+	var commands strings.Builder
+	writeCommandSummary(&commands)
+	return fmt.Errorf("unknown command %q\n\nAvailable commands:\n%s\nBare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).\nRun 'mecatui --help-flags' for bare-mode common flags", arg, strings.TrimPrefix(commands.String(), "Commands:\n"))
 }
 
 // connectUsageError builds the error message for a bare/flag-first `connect`
 // invocation. connect REQUIRES an ADDRESS immediately after the command word.
-func connectUsageError(argv []string) error {
-	if len(argv) >= 3 && strings.HasPrefix(argv[2], "-") {
-		return fmt.Errorf("connect: ADDRESS must immediately follow 'connect' (got flag %q); usage: mecatui connect ADDRESS [flags]", argv[2])
+func connectUsageError(args []string) error {
+	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("connect: ADDRESS must immediately follow 'connect' (got flag %q); usage: mecatui connect ADDRESS [flags]", args[0])
 	}
 	return errors.New("connect: missing ADDRESS; usage: mecatui connect ADDRESS [flags]")
 }

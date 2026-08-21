@@ -98,7 +98,7 @@ aliases — a stale invocation fails fast with an honest error.
 - [ADR 0087](./0087-mecatui-staged-transport-migration.md) — the staged framing this supersedes (its `connect` subcommand and applicability checks survive; its `local` subcommand, `--server` flag, and legacy warnings do not).
 - [ADR 0086](./0086-remove-output-economy-control.md) — the output-economy removal this follows up.
 - [ADR 0041](./0041-output-economy-default-prompt.md) — the original, twice-superseded output-economy decision.
-- `cmd/mecatui/command.go` (`resolveTransportMode`) — the pure transport resolver.
+- `cmd/mecatui/command.go` (`resolveInvocation`) — the pure invocation resolver.
 - `cmd/mecated/command.go` (`errBareInvocation`) — the bare-invocation usage error.
 - `internal/adapter/permconfig/permconfig.go` (`parseYAML`) — the targeted unknown-key rejection.
 - `docs/tui.md`, `docs/usage/mecated.md` — the user-facing transport/command docs.
