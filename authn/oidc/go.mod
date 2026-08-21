@@ -3,8 +3,8 @@ module github.com/stacklok/mecatl/authn/oidc
 go 1.26.6
 
 require (
-	github.com/stacklok/mecatl/engine v0.10.0
-	github.com/stacklok/toolhive-core v0.0.39
+	github.com/stacklok/mecatl/engine v0.11.0
+	github.com/stacklok/toolhive-core v0.0.40
 )
 
 require (
