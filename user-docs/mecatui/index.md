@@ -11,6 +11,9 @@ title: Use mecatui
 
 - Run **`mecatui`** for a private, embedded server. This is the quickest way to work in a local checkout: no separate daemon or port is needed.
 - Run **`mecatui connect ADDRESS`** when a `mecated` server is already running. The client does not start or discover a server in this mode; that server owns the workspace, credentials, storage, and policy.
+- Run **`mecatui sessions`** to open the stored-session browser before creating a chat, or **`mecatui login`** for the ToolHive LLM gateway OIDC browser flow. `login` does not authenticate to a remote `mecated` server.
+
+`mecatui --help`, `mecatui -h`, and `mecatui help` show this concise command index. `mecatui help sessions`, `mecatui help connect`, and `mecatui help login` alias the corresponding command-specific help; direct `sessions --help`, `connect --help`, and `login --help` remain available. Use bare `mecatui --help-flags` for common embedded-mode flags; `--help-all` is available with bare `mecatui`, `sessions`, and `connect`. `login` supports only standard help and `--skip-browser`.
 
 Read [Connect to a server](./remote-servers.md) before using a remote endpoint. If you need to run, secure, containerize, or configure a server, see the builder guides for [mecated](/building/deployment/mecated.md) and the [mecatui container image](/building/deployment/mecatui.md).
 

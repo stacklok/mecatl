@@ -54,6 +54,17 @@ an editor that spawned it.
 | 18. OpenAI Codex subscription | [OpenAI Codex subscription](#openai-codex-subscription-experimental) |
 | 19. ToolHive LLM gateway | [ToolHive LLM gateway](#toolhive-llm-gateway) |
 
+## mecatui command discovery
+
+`mecatui --help`, `mecatui -h`, and `mecatui help` render the concise command index.
+`mecatui help sessions`, `mecatui help connect`, and `mecatui help login` alias the
+corresponding command-specific help; direct `sessions --help`, `connect --help`, and
+`login --help` remain available. Use bare `mecatui --help-flags` for common embedded-mode
+flags, or `--help-all` with bare `mecatui`, `sessions`, or `connect` for every applicable
+flag. `mecatui login` supports only standard help and `--skip-browser`; it opens
+the ToolHive LLM gateway OIDC flow only—it does not authenticate to a remote
+`mecated`; use that server's credentials with `mecatui connect ADDRESS` instead.
+
 ## mecatui session identity
 
 The TUI header shows a compact `#<digest>` for the active session rather than a long

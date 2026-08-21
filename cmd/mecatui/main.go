@@ -46,7 +46,7 @@ import (
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
-// usageErrorTrailer wraps a resolveTransportMode usage error so main's error
+// usageErrorTrailer wraps a resolveInvocation usage error so main's error
 // printer appends the top-level command summary (writeTopLevelHelp) beneath the
 // error line — the operator who typo'd a command needs the grammar, not just the
 // error. It rides run()'s ordinary error return (the resolver is pure and prints
@@ -75,6 +75,27 @@ func main() {
 	}
 }
 
+// prepareRun performs the side-effecting run preparation that follows pure
+// invocation resolution: it renders top-level help and wraps leading-word usage
+// errors for main's printer. The resolver itself performs neither action.
+func prepareRun(argv []string) (invocationResolution, error) {
+	res := resolveInvocation(argv)
+	if res.err != nil {
+		// A leading-word usage error (unknown command, connect missing/flag-first
+		// ADDRESS): print the error AND the top-level command summary beneath it
+		// (mirroring mecated's errBareInvocation arm) — the operator needs the
+		// grammar, not just the error line. run() owns no streams, so main's error
+		// printer writes both to stderr; the trailer marks the error so main can
+		// recognize it without a string match.
+		return invocationResolution{}, &usageErrorTrailer{err: res.err}
+	}
+	if res.helpIndex {
+		writeTopLevelHelp(os.Stderr)
+		return invocationResolution{}, flag.ErrHelp
+	}
+	return res, nil
+}
+
 func run(argv []string) error {
 	// Test seam: MECATUI_TEST_SIGNAL_HANDLER makes run() enter a minimal
 	// signal-handler path with no TUI or server — used by the subprocess-signal
@@ -85,20 +106,13 @@ func run(argv []string) error {
 		return testSignalHandler(v)
 	}
 
-	// Resolve the leading CLI word into a transport mode (bare-local/connect)
-	// via the PURE resolveTransportMode seam (ADR 0087), then thread the mode +
-	// remaining flag tail into parseTransportFlags. main owns the os.Args read +
-	// the os.Exit side effects; the resolver is pure (no os.Args mutation, no
-	// I/O).
-	res := resolveTransportMode(argv)
-	if res.err != nil {
-		// A leading-word usage error (unknown command, connect missing/flag-first
-		// ADDRESS): print the error AND the top-level command summary beneath it
-		// (mirroring mecated's errBareInvocation arm) — the operator needs the
-		// grammar, not just the error line. run() owns no streams, so main's error
-		// printer writes both to stderr; the trailer marks the error so main can
-		// recognize it without a string match.
-		return &usageErrorTrailer{err: res.err}
+	// Resolve the full CLI invocation through the PURE resolveInvocation seam
+	// (ADR 0087). prepareRun owns only the help/error side effects; an executable
+	// invocation then threads its mode and remaining flag tail into
+	// parseTransportFlags. Neither step reads or mutates os.Args.
+	res, err := prepareRun(argv)
+	if err != nil {
+		return err
 	}
 
 	// `mecatui login` (issue #265) is CLI-only: it runs the interactive ToolHive
@@ -123,7 +137,7 @@ func run(argv []string) error {
 	_ = fs // returned for tests; production discards it.
 
 	// UNIVERSAL global-slog floor: redirect the stdlib default to io.Discard (or, under
-	// --quiet, still discard) BEFORE any transport resolution or the Bubble Tea program.
+	// --quiet, still discard) BEFORE transport setup or the Bubble Tea program.
 	// This covers EVERY transport path — the connect (client-only) mode returns early
 	// from resolveTransport and would otherwise leave the default at stderr, which the
 	// alt-screen (started below for ALL paths) would let a stray ambient/third-party

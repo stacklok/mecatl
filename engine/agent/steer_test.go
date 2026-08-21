@@ -143,7 +143,9 @@ func TestSteer_InjectedAtTurnBoundary(t *testing.T) {
 func TestSteer_RecordedAndRehydrated(t *testing.T) {
 	const steerText = "steer: use the eventsource fold"
 	eventLog := memstore.NewEventLog()
-	llm := mockllm.New(
+	gate := newFirstTurnGate()
+	llm := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(gate.observe)},
 		mockllm.ToolCallTurn(toolCall("c1", "Probe", `{}`)),
 		mockllm.TextTurn("done"),
 	)
@@ -156,7 +158,9 @@ func TestSteer_RecordedAndRehydrated(t *testing.T) {
 	ws := memfs.NewWorkspace("/ws")
 
 	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "go"})
+	gate.awaitEntered()
 	steerEnqueue(t, r, steerText)
+	gate.release()
 	evs := drainObserving(t, r, nil)
 	if res := lastResult(t, evs); res.Stop != session.StopEndTurn {
 		t.Fatalf("terminal stop = %q, want end_turn (err %q)", res.Stop, res.Error)
@@ -364,11 +368,12 @@ func TestSteer_EmptyInboxNoOp(t *testing.T) {
 // user message out of the summarized head.
 func TestSteer_SurvivesCompactionBoundary(t *testing.T) {
 	const steerText = "steer: survive compaction verbatim"
-	rec := &requestRecorder{}
+	gate := newFirstTurnGate()
+	rec := gate.rec
 	// Turn 1: a tool call (so history has a settled pair). Between turn 1 and
 	// turn 2 the steer drains AND compaction fires. Turn 2 must replay the steer.
 	llm := mockllm.NewWith(
-		[]mockllm.Option{mockllm.WithRequestObserver(rec.observe)},
+		[]mockllm.Option{mockllm.WithRequestObserver(gate.observe)},
 		mockllm.ToolCallTurn(toolCall("c1", "Probe", `{}`)),
 		mockllm.TextTurn("done after compaction"),
 	)
@@ -387,7 +392,9 @@ func TestSteer_SurvivesCompactionBoundary(t *testing.T) {
 	ws := memfs.NewWorkspace("/ws")
 
 	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "go"})
+	gate.awaitEntered()
 	steerEnqueue(t, r, steerText)
+	gate.release()
 	evs := drainObserving(t, r, nil)
 	if res := lastResult(t, evs); res.Stop != session.StopEndTurn {
 		t.Fatalf("terminal stop = %q (err %q)", res.Stop, res.Error)
@@ -418,7 +425,9 @@ func TestSteer_BrakeTerminalKeepsRecorded(t *testing.T) {
 	// continue). The steer drains at the boundary BEFORE BeginTurn for turn 2 —
 	// but preTurnTerminal trips the recorded MaxTurns limit first, terminating the
 	// run. The steer must STILL be on durable history.
-	llm := mockllm.New(
+	gate := newFirstTurnGate()
+	llm := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(gate.observe)},
 		mockllm.ToolCallTurn(toolCall("c1", "Probe", `{}`)),
 		// No further scripted turn needed: the limit trips before turn 2.
 	)
@@ -431,7 +440,9 @@ func TestSteer_BrakeTerminalKeepsRecorded(t *testing.T) {
 	ws := memfs.NewWorkspace("/ws")
 
 	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "go"})
+	gate.awaitEntered()
 	steerEnqueue(t, r, steerText)
+	gate.release()
 	evs := drainObserving(t, r, nil)
 
 	res := lastResult(t, evs)

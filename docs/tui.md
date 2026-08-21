@@ -83,6 +83,8 @@ absolute path (the server requires absolute).
 
 ### Transport commands
 
+Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level command index. `mecatui help sessions`, `mecatui help connect`, and `mecatui help login` alias their corresponding command-specific help; direct `sessions --help`, `connect --help`, and `login --help` also work. Use bare `mecatui --help-flags` for common embedded-mode flags and bare `mecatui --help-all` (or the corresponding `sessions` or `connect` form) for the exhaustive flag reference.
+
 The transport is exactly what the invocation says — there is no implicit probe
 or fallback:
 
@@ -112,6 +114,11 @@ or fallback:
   bin/mecatui connect 127.0.0.1:8080 sessions --workspace "$PWD"
   bin/mecatui connect mecated.internal:443 --tls --auth-token "$MECATL_AUTH_TOKEN"
   ```
+
+- **`mecatui login [flags]`** — runs the interactive ToolHive LLM gateway OIDC
+  browser flow in-process, then exits without starting a session or connecting to
+  `mecated`. This logs in to the ToolHive gateway; it is **not** authentication for
+  a remote `mecated` server. Use that server's token with `connect --auth-token`.
 
 ### OIDC-connected server
 
