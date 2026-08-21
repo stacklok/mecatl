@@ -6,32 +6,169 @@ description: Configure authenticated caller identity and ownership boundaries fo
 
 # Caller identity and OIDC
 
-:::note[Documentation scaffold]
-
-This page will explain caller authentication, persisted ownership, and the
-boundaries that apply to sessions, schedules, memory, and delegation.
-
-:::
+Mecatl can require an OIDC bearer token on every gRPC and HTTP request and use
+the verified identity to isolate application resources. This is more than
+request authentication: sessions, schedules, teams, memory entries, and
+persisted child sessions are owned by the caller that created them.
 
 ## Availability
 
-_To be completed from the capability matrix._
+Caller identity is an opt-in server feature for `mecated` and `mecak8s`. It
+protects both wire surfaces with the same validator and ownership rules. Clients
+such as mecatui connect to the authenticated server; they do not issue or
+refresh OIDC tokens themselves.
 
-## What this feature does
+With OIDC disabled, the server preserves the single-shared-deployment behavior:
+there is no caller subject and anyone who can reach the API is treated as the
+same caller. Do not expose that posture as a multi-user endpoint.
 
-_To be written from the current OIDC validator and ownership behavior._
+## What identity means
 
-## Configuration
+The durable owner is the verified `(issuer, subject)` pair from the token:
 
-_To be filled with the exact flags and identity-provider settings._
+```json
+{
+  "owner": {
+    "issuer": "https://idp.example.com",
+    "subject": "opaque-user-id",
+    "grant_type": "user",
+    "name": "Alice"
+  }
+}
+```
 
-## Limitations
+`issuer` and `subject` are the identity key. `name` is only a cosmetic snapshot
+of the token's name claim and can change later. The owner is written at resource
+creation from the verified request context, never from a request-body field.
 
-_To be filled with local, embedded, Kubernetes, and driver limitations._
+With ownership enforcement enabled:
+
+- callers list only their own sessions, schedules, teams, and fires;
+- a caller cannot prompt, resume, cancel, fork, or delete another caller's
+  session or persisted child;
+- live event streams and durable event-log reads enforce the same owner check;
+- identical logical keys, such as a memory key or schedule name, can exist for
+  different owners without collision; and
+- foreign or ownerless resources look like `not found`, preventing resource
+  enumeration.
+
+Subagents, Parallel branches, Team members, and scheduled fires inherit the
+appropriate owner. A fork inherits the source session's owner and still checks
+that the caller owns the source. Resources created before identity was enabled
+are ownerless and become unavailable once enforcement is turned on; there is no
+automatic first-reader adoption.
+
+Ownership is not the same as event actor attribution. A scheduled system action
+can act on a resource while the resource remains owned by its user. The actor
+stamp is durable event-log metadata, not a client-visible authorization field.
+
+## Configure OIDC
+
+The essential server settings are:
+
+| Flag | Purpose |
+| --- | --- |
+| `--oidc-issuer` | HTTPS issuer URL, compared byte-for-byte with the token's `iss`; setting it enables caller identity. |
+| `--oidc-audience` | Required accepted `aud` value; prevents accepting tokens minted for another service. |
+| `--oidc-jwks-uri` | Optional pinned JWKS endpoint; otherwise discovery obtains it from the issuer. |
+| `--oidc-max-jwks-staleness` | Maximum age of a last-good signing-key cache during an IdP outage. `0` deliberately removes the bound. |
+| `--auth-token` | Separate static bearer authentication option when OIDC identity is not needed. |
+
+A typical configuration uses the issuer and audience together:
+
+```console
+mecated serve \
+  --oidc-issuer https://idp.example.com/realms/operators \
+  --oidc-audience mecatl \
+  --workspace /srv/mecatl/workspace
+```
+
+`--oidc-jwks-uri` is useful for air-gapped or pinned-key deployments. Use a
+real HTTPS IdP in production. The validator rejects an HTTP issuer and refuses
+JWKS endpoints resolving to private, loopback, link-local, or metadata
+addresses. Initial configuration or key-fetch failure fails closed rather than
+starting an unauthenticated service.
+
+The production validator is a delegated, maintained OIDC/JWT library; mecatl
+does not hand-roll signature verification. A successful JWKS fetch is cached in
+process. During a short IdP outage, the last-good keys may continue to work
+until the staleness limit; after that the service returns `503` until it can
+refresh. A malformed, expired, wrong-issuer, or wrong-audience token returns
+`401`. The cache is not persisted, so a restarted process fetches keys again.
+
+## Use an authenticated client
+
+Obtain a token through your identity provider and pass it to mecatui or another
+client. Keep it out of shell history where possible:
+
+```console
+export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
+bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN" \
+  --workspace /srv/mecatl/workspace
+```
+
+For remote cleartext connections, mecatui refuses to send a bearer. Use TLS (and
+`--tls-ca` for a private CA). A gRPC dial can succeed before the first request
+is authenticated; verify that an unauthenticated first request fails before
+producing a model response.
+
+The workspace path belongs to the agent server or pod, not the machine running
+the client. In Kubernetes, isolate tenant workspaces separately: ownership does
+not make a shared pod filesystem a security boundary.
+
+## Management is separate from authentication
+
+A valid OIDC token does not automatically grant storage-management authority.
+Remote cleanup, migration, and retention management require an explicit
+operator-tier allowlist of exact issuer/subject pairs:
+
+```yaml
+storage_management:
+  version: 1
+  principals:
+    - issuer: https://idp.example.com/realms/operators
+      subject: storage-admin
+```
+
+An absent or empty list fails closed. Project settings, request owner claims,
+display names, grant types, and system-principal status cannot grant this
+authority. Destructive management also requires a working cross-process session
+lease; management permission alone is not a single-writer proof.
+
+This distinction is intentional:
+
+- **authentication** answers “who made this request?”;
+- **ownership** answers “whose resource is this?”;
+- **management authority** answers “may this operator perform storage-wide
+  maintenance?”; and
+- **session leases** answer “does this process exclusively own the mutation?”
+
+## Deployment limitations
+
+- OIDC configuration is supported on the server roots, not as an in-process
+  token issuer. An embedding must provide its own authenticated boundary and
+  owner propagation if it needs multi-user isolation.
+- mecatui obtains no token and performs no refresh. Use your IdP or a workload
+  identity mechanism, then pass the resulting bearer on each connection.
+- `mecatequi` and scheduled/headless jobs do not open a browser. Pre-provision a
+  short-lived identity or use the deployment's non-interactive credential path.
+- Raw remote store and memory drivers are trusted infrastructure; caller
+  ownership is enforced at the mecatl service edge, not by an unauthenticated
+  driver endpoint.
+- A workspace path is not an ownership boundary. Use separate namespaces,
+  containers, or operating-system permissions when tenants must not share files.
+- Turning identity on is an isolation cutover. Export or migrate resources from
+  an ownerless deployment before enabling it; there is no automatic adoption.
+- Bearer authentication and OIDC caller identity are different modes. A static
+  `--auth-token` authenticates possession of one shared secret but cannot provide
+  per-caller ownership.
+
+For the full Kubernetes overlay, JWKS cache behavior, and troubleshooting steps,
+see [Caller identity and ownership isolation](../deployment/mecak8s.md#multi-user-caller-identity-and-ownership-isolation-opt-in).
 
 ## Next steps
 
 - [MCP OAuth and credentials](./mcp-oauth-and-credentials.md)
 - [Session continuity](./session-continuity.md)
+- [Drive via gRPC / HTTP](../deployment/grpc-http.md)
 - [Capability and deployment matrix](./capability-matrix.md)
-
