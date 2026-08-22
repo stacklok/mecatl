@@ -5,6 +5,11 @@ title: Cloud-native kit properties
 
 # Cloud-native kit properties
 
+`mecak8s` is storage-free itself by design: its pods own no durable state.
+Session snapshots and the durable event log live in Redis, while Kubernetes
+Leases coordinate session ownership. That makes the pod disposable without
+making the session disposable.
+
 A mecatl deployment is "cloud-native" when it satisfies three properties: the process holds no irreplaceable state, all durable state lives outside the process, and the record of what happened survives process death. This page defines those three properties, maps each deployment shape against them, walks the four delivery phases that shipped them, and explains what the properties mean for operators.
 
 ---

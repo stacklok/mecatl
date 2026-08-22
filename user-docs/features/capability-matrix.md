@@ -1,179 +1,114 @@
 ---
 sidebar_position: 2
 title: Capability and deployment matrix
-description: Check which mecatl capabilities are available in each deployment shape.
+description: Choose the mecatl deployment surface that provides the capabilities you need.
 ---
 
 # Capability and deployment matrix
 
-This page answers a practical question: **where can I use a capability today?**
-It describes reachable product behavior, not every port or adapter in the
-repository.
+Most mecatl capabilities come from the shared engine and server composition.
+Choose a deployment based on the differences that affect your environment:
+where the workspace lives, how state is stored, whether a person can approve
+requests, and which client/API surface you need.
 
-## Legend
+## Shared server capabilities
 
-- **✓** — available
-- **Opt** — available when configured, enabled, or supported by the model
-- **Srv** — supplied by the connected server
-- **Host** — available when an embedding application supplies the adapter
-- **—** — not exposed by this surface
-- **Gap** — a portable capability with a missing implementation or client path
+When enabled and configured, both `mecated` and `mecak8s` provide the same core
+agent experience:
 
-A capability marked **Portable** has a shared engine, composition seam, or wire
-contract. Portable does not mean enabled by default everywhere.
+- the agent loop, core tools, permissions, approvals, posture, and model routing;
+- project instructions, rules, skills, commands, soul, memory, named agents, and
+  streaming-HTTP MCP sources;
+- durable sessions, event logs, scheduling, Subagents, Parallel, Teams, and
+  multimodal input; and
+- gRPC and HTTP/SSE session APIs.
 
-## At a glance
+Individual features can still require configuration, a capable model, a trusted
+workspace, or a storage backend. A connected client inherits the capabilities
+of its server.
 
-| Deployment | Best understood as | State and boundary |
-| --- | --- | --- |
-| `mecated` | Full server | gRPC + HTTP/SSE; optional storage, MCP, scheduling, and ACP. |
-| `mecak8s` | Cloud server | Redis-backed state, Kubernetes leases, gRPC + HTTP/SSE; headless by default. |
-| `mecatequi` | One-shot local runner | Text prompt → local Git patch/summary; optional store directory. |
-| `mecatui` embedded | Local terminal product | Builds a server over a private Unix gRPC socket. |
-| `mecatui connect` | Remote terminal client | Uses the external server’s capabilities; embedded-only settings do not apply. |
-| Embedded `engine` | Library | Loop only; the host supplies model, workspace, persistence, and adapters. |
+## Deployment differences
 
-## Product capabilities
+| Need | `mecated` | `mecak8s` | `mecatui` embedded |
+| --- | --- | --- | --- |
+| Run a general-purpose server | ✓ | ✓ | Starts one locally |
+| Workspace and Bash namespace | Host-local workspace | Harness pod workspace | Host-local workspace |
+| gRPC API | ✓ | ✓ | Private Unix socket |
+| HTTP/SSE API | ✓ | ✓ | — |
+| Durable state | Optional configured backend | Redis-backed | JSONL store by default |
+| Kubernetes leases and drain handling | — | ✓ | — |
+| Interactive permission approvals | Opt | Headless by default | ✓ |
+| ACP editor integration | ✓, `mecated acp` only | — | — |
 
-These tables intentionally use fewer columns than a single all-purpose matrix.
-Read the deployment-specific notes below when a row is `Opt` or `—`.
+## Choose a deployment
 
-### Execution and safety
+### Use `mecated` for a general client/server deployment
 
-| Capability | Classification | `mecated` | `mecak8s` | `mecatequi` | `mecatui` embedded | `mecatui connect` |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Agent loop and core tools | Portable | ✓ | ✓ | ✓ | ✓ | Srv |
-| Filesystem tools | Portable; harness namespace | ✓ | ✓ | ✓ | ✓ | Srv |
-| Bash / command execution | Portable runner; namespace-local today | Opt | Opt | Opt | Opt | Srv |
-| Permissions, approvals, posture | Portable | ✓ | ✓ | ✓ | ✓ | Srv |
-| `no-fs` session profile | Portable; TUI client gap | ✓ | ✓ | — | Gap | Gap |
-| Provider and model selection | Portable | ✓ | ✓ | Launch-time | ✓ | Srv |
-| Multimodal input | Portable; model-gated | Opt | Opt | — | Opt | Srv |
-| Mid-run steering | Portable; HTTP client gap | ✓ | ✓ | — | Opt | Srv |
+`mecated` is the general-purpose server for any environment outside the
+Kubernetes-native `mecak8s` shape. It serves gRPC and HTTP/SSE, can use local or
+configured storage, and supports optional server features such as MCP, schedules,
+and ACP.
 
-### Project and model context
+Use it when clients and the harness run as separate processes, when the harness
+should work in a host-local workspace, when an operator needs the local ACP/editor
+integration, or when you want to choose the storage and network configuration
+directly.
 
-| Capability | Classification | `mecated` | `mecak8s` | `mecatequi` | `mecatui` embedded | `mecatui connect` |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `AGENTS.md` / `CLAUDE.md` | Portable over `Workspace`; trust-gated | Opt | Opt | Opt | Opt | Srv |
-| Project and user rules | Portable source seam; remote-source gap | Opt | Opt | — | Opt | Srv |
-| Skills | Portable source seam | Opt | Opt | — | Opt | Srv |
-| Slash commands | Portable source seam | Opt | Opt | — | Opt | Srv |
-| Soul/persona | Portable source seam | Opt | Opt | ✓ user tier | Opt | Srv |
-| Project memory | Portable store seam | Opt | Opt | — | Opt | Srv |
-| User model | Portable source/store seam | Opt | Opt | ✓ | Opt | Srv |
-| Named agent definitions | Portable source seam | Opt | Opt | — | Opt | Srv |
-| Streaming-HTTP MCP | Portable host capability | Opt | Opt | Opt | Opt | Srv |
-| MCP OAuth login/provisioning | Local operator flow | ✓ local CLI | — | — | ✓ local/operator | — |
+### Use `mecak8s` for Kubernetes-native operation
 
-### State and delegation
+`mecak8s` serves the same agent and API surfaces with cloud-native defaults:
+Redis stores session state and durable events, Kubernetes leases coordinate
+ownership across replicas, and readiness/drain behavior suits a deployment
+controller.
 
-| Capability | Classification | `mecated` | `mecak8s` | `mecatequi` | `mecatui` embedded | `mecatui connect` |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Durable sessions, event log, resume | Portable; backend-dependent | Opt | ✓ Redis | Opt `--store-dir` | ✓ by default | Srv |
-| Schedule tools and APIs | Portable; backend-dependent | Opt | Opt | Opt `--store-dir` | Opt | Srv |
-| Automatic schedule firing | Portable; ticker-dependent | Opt | Opt | — | Opt | Srv |
-| Subagent | Portable | ✓ | ✓ | ✓ | ✓ | Srv |
-| Parallel delegation | Portable; optional composition | Opt | Opt | — | Opt | Srv |
-| Teams | Portable; optional composition | Opt | Opt | — | Opt | Srv |
+The workspace and any Bash command run in the harness pod namespace, not on a
+remote caller’s machine. `mecak8s` is headless by default, so unresolved
+permission asks need an explicit headless-reviewer strategy or are denied.
+ACP is intentionally not available in this deployment.
 
-### Interfaces and local integrations
+### Use embedded `mecatui` for local interactive work
 
-| Capability | Classification | `mecated` | `mecak8s` | `mecatequi` | `mecatui` embedded | `mecatui connect` |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Git patch and JSON summary | Local-only by design | — | — | ✓ | — | — |
-| ACP editor-buffer environment | Local-only by design | ACP only | — | — | — | — |
-| Terminal UI and attachment picker | Local-only by design | — | — | — | ✓ | ✓ |
-| Production remote Workspace/environment | Local-only gap | — | — | — | — | — |
+Running bare `mecatui` starts an in-process server behind a private Unix gRPC
+socket. It is an interactive local product: it can use local provider, posture,
+trust, storage, and resilience configuration, and it surfaces permission asks
+in the TUI.
 
-## Direct clients and embedded engine
+Its durable store defaults to a per-workspace JSONL location under XDG state.
+Use `--no-store` for in-memory state or `--store-dir` to choose another location.
 
-| Surface | Agent loop | Persistence | Delegation | Steering | Important boundary |
-| --- | ---: | ---: | ---: | ---: | --- |
-| gRPC client | Srv | Srv | Srv | ✓ | Typed server capabilities and approval/resume APIs. |
-| HTTP/SSE client | Srv | Srv | Srv | Gap | No equivalent HTTP route for mid-run steering. |
-| Embedded `engine` | Host | Host | Host | Host | No listener, credentials, filesystem, store, auth, or UI is supplied by the importable module. |
+### Use `mecatui connect` for a remote server
 
-## The important exceptions
+`mecatui connect ADDRESS` is only a gRPC client. It always dials the given server;
+it does not start or fall back to an embedded server. Provider, posture, trust,
+storage, and feature availability come from the connected server.
 
-### `mecatequi` is deliberately smaller than `mecated`
+## Workspace and Bash execution
 
-`mecatequi` projects a deliberately small configuration surface into
-`app.Build`. Its current one-shot behavior is:
+A **workspace** is the file tree the agent can inspect and change. Bash runs with
+that workspace as its working directory and sees that harness’s command
+environment. They belong together: a command that builds or tests a project must
+see the same files that Read, Edit, and Write use.
 
-| Capability | Current `mecatequi` behavior |
-| --- | --- |
-| Skills | Not configured; no conventional or remote skill source. |
-| Slash commands | Not configured; no file, skill, driver, or MCP command expansion. |
-| Soul | User-tier conventional soul is loaded when present; custom and remote soul sources are not exposed. |
-| Project memory | Not configured; `--trust-project` does not create a memory store. |
-| User model | Available through the conventional XDG/home location when available. |
-| Named agents | No named-agent discovery source; generic Subagent remains distinct. |
-| Scheduling | With `--store-dir`, schedule tools can be present for manual use; no scheduler tick loop runs. |
-| Persistence | `--store-dir` persists the session; `--out-events` is an event artifact, not a resume interface. |
-| Multimodal input | Not exposed; the command accepts a text prompt or prompt file. |
+Filesystem tools and Bash therefore act where the harness runs. For `mecak8s`,
+that normally means the pod’s workspace and command environment. A remote TUI or
+API client does not grant the agent access to the caller’s local files.
 
-These are current command boundaries, not claims that the shared composition
-layer cannot support the features.
+The engine has abstract `Workspace`, `Environment`, and `CommandRunner` ports,
+but no production remote Workspace/environment driver is currently shipped.
 
-### `mecak8s` is storage-free locally
+## ACP editor integration
 
-`mecak8s` has no local `--store-dir`. Session snapshots and the durable event log
-use Redis, while Kubernetes leases coordinate ownership. Source-backed content
-must still use the configured pod filesystem, mounted storage, or a configured
-remote source; it should not be assumed to survive pod replacement merely
-because the feature is available in the process.
+ACP is a local `mecated` integration. It creates a session using the editor
+client’s working directory. When the editor supports read/write access, ACP can
+install a shell-less editor-buffer environment for that session. ACP resume
+restores conversation state but does not yet restore the editor-buffer override.
 
-ACP is intentionally excluded from `mecak8s`; it is a `mecated`-only local
-stdio/editor integration.
+## Feature availability at runtime
 
-### `mecatui` has two different modes
-
-Bare `mecatui` embeds the server, uses a private Unix socket, and can apply local
-provider, posture, trust, storage, and resilience settings. `mecatui connect`
-dials an external gRPC server and relies on that server’s configuration and
-capability snapshot. It does not fall back to embedding.
-
-The server and wire API support `profile: "no-fs"`, including its empty-workspace
-validation. The shipped TUI session-creation wrapper does not expose that
-profile, so this is a concrete client gap rather than an unknown server
-capability.
-
-### ACP is separate from `no-fs`
-
-ACP `session/new` currently creates a default filesystem profile using the
-client’s validated working directory. With editor read/write capabilities, it
-can install a shell-less editor-buffer environment for that session. That is
-not the `no-fs` profile. ACP resume restores the conversation but does not yet
-restore the editor-buffer override.
-
-## What “local” means
-
-Filesystem and Bash run where the harness runs. In `mecak8s`, that normally means
-the pod’s workspace and command environment, not the client’s machine. The
-abstract `Workspace`, `Environment`, and `CommandRunner` ports permit remote
-implementations, but no production remote Workspace/environment driver is
-currently shipped. The `internal/adapter/remoteenv` implementation is a
-contract fake, not a deployment backend.
-
-MCP OAuth login/provisioning is a local operator/browser workflow. Clients that
-connect to a server use already-configured MCP tools; they do not perform the
-login flow through the HTTP/SSE or gRPC session API.
-
-## Current gaps
-
-1. **Production remote Workspace/environment** — portable ports exist, but no
-   production remote driver/service is wired.
-2. **Remote rules source** — filesystem rules exist, but there is no production
-   gRPC RulesSource driver.
-3. **HTTP/SSE steering** — steering exists on the gRPC surface, not HTTP/SSE.
-4. **TUI `no-fs` selection** — server and wire support exist; the TUI client does
-   not expose the selector.
-
-The remaining `Opt` cells are configuration or deployment questions, not claims
-that the feature is available in every installation. Runtime optional capability
-claims should be checked against `Service.capabilities` and the session-creation
-capability snapshot, rather than inferred from a constructor or proto alone.
+Optional feature availability is determined by the server’s configured seams and
+registered tools. Check the capability snapshot returned when you create a
+session rather than assuming a feature is enabled because a deployment can
+support it.
 
 ## Related information
 

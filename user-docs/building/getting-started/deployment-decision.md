@@ -5,7 +5,13 @@ title: Pick your deployment shape
 
 # Pick your deployment shape
 
-mecatl has four deployment shapes. They are not interchangeable — each one fits a different operational model. This doc walks you through the decision and gives you the trade-offs for each.
+Mecatl has one agent/server core and several delivery shapes. `mecated` and
+`mecak8s` expose the same core agent experience; they differ in how the service
+is operated and where durable state lives. `mecatui` is a terminal skin over an
+embedded or remote server, not a separate agent implementation. `mecatequi` and
+an engine embedding are purpose-built exceptions.
+
+Use this page to choose the operational boundary that fits your environment.
 
 ## Decision tree
 

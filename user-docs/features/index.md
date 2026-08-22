@@ -5,22 +5,15 @@ title: Features
 
 # Features
 
-This section documents mecatl capabilities by the task they help you
-complete. Each page will describe the current behavior, deployment
-availability, configuration, and limitations.
-
-:::note[Documentation scaffold]
-
-These pages are documentation starting points. The capability inventory is
-being verified against the source tree and Git history before the feature
-prose is completed.
-
-:::
+This section documents mecatl capabilities by the task they help you complete.
+Most features belong to the shared agent/server core; deployment pages explain
+how `mecated`, `mecak8s`, and mecatui expose that core in different operating
+environments.
 
 ## Feature pages
 
-- [Capability and deployment matrix](./capability-matrix.md) is the availability
-  inventory and the record of open classification decisions.
+- [Capability and deployment matrix](./capability-matrix.md) explains the
+  operational differences among the server and terminal deployment surfaces.
 
 - [Feature documentation roadmap](./documentation-roadmap.md) records the
   inventory, review, writing, and validation sequence.
