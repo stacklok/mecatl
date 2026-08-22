@@ -147,5 +147,5 @@ see [Scheduled tasks](../what-you-get/scheduled-tasks.md) and the
 
 - [Session continuity](./session-continuity.md)
 - [Mecatl deployment choices](../getting-started/deployment-decision.md)
-- [Scheduled task API](../deployment/grpc-http.md#scheduled-task-rpcs)
+- [Scheduled task API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md#scheduled-task-rpcs)
 - [Capability and deployment matrix](./capability-matrix.md)
