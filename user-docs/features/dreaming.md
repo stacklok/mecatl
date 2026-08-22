@@ -132,12 +132,12 @@ project memory. User-model operations use the configured user-model store.
   no-network maintenance operation.
 
 For the underlying memory tools, tiers, lifecycle versions, and learning
-boundary, see [Memory & knowledge](../what-you-get/memory.md). For the broader
-`/dream` UI and receipt behavior, see [mecatui memory maintenance](../what-you-get/mecatui.md#manual-memory-maintenance-dream).
+boundary, see [Memory & knowledge](/building/what-you-get/memory.md). For the broader
+`/dream` UI and receipt behavior, see [mecatui memory commands](/mecatui/commands-and-memory.md#review-and-maintain-memory).
 
 ## Next steps
 
 - [Learning](./learning.md)
-- [Memory and knowledge](../what-you-get/memory.md)
+- [Memory and knowledge](/building/what-you-get/memory.md)
 - [Session continuity](./session-continuity.md)
 - [Capability and deployment matrix](./capability-matrix.md)

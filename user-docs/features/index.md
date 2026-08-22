@@ -40,7 +40,7 @@ environments.
   identity and ownership separation.
 - [Execution environments](./execution-environments.md) covers workspaces,
   shells, forks, and environment persistence. Background Bash is documented in
-  [Core tools](../what-you-get/core-tools.md#background-commands).
+  [Core tools](/building/what-you-get/core-tools.md#background-commands).
 - [Session continuity](./session-continuity.md) covers persistence, recovery,
   retention, and maintenance.
 - [Context windows](./context-windows.md) covers model context-window

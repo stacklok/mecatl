@@ -52,7 +52,7 @@ web tools, memory, MCP tools, skills, `Subagent`, and `Team`; children use the
 same file-less surface and cannot create a shell or fork a workspace.
 
 The profile is fixed at session creation. The model cannot switch it during a
-run. See [Core tools](../what-you-get/core-tools.md) for the complete catalog.
+run. See [Core tools](/building/what-you-get/core-tools.md) for the complete catalog.
 
 ## Child environments
 
@@ -101,7 +101,7 @@ and runner.
 
 ## Next steps
 
-- [Background Bash](../what-you-get/core-tools.md#background-commands)
-- [Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md)
+- [Background Bash](/building/what-you-get/core-tools.md#background-commands)
+- [Subagents, teams, and parallel](/building/what-you-get/subagents-teams-parallel.md)
 - [Workspace trust](https://github.com/stacklok/mecatl/blob/main/docs/usage/workspace-trust.md)
 - [Capability and deployment matrix](./capability-matrix.md)

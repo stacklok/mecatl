@@ -128,12 +128,12 @@ or unresolved capability is fail-closed.
 - A no-filesystem session can still use provider-supported media; no local
   workspace is needed for the prompt itself.
 
-For the wire definitions and exact event flow, see [Drive via gRPC / HTTP](../deployment/grpc-http.md)
-and [the HTTP/SSE API guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md). For provider adapter capability requirements, see [LLM provider extension points](../extension-points/llm-provider.md).
+For the wire definitions and exact event flow, see [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
+and [the HTTP/SSE API guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md). For provider adapter capability requirements, see [LLM provider extension points](/building/extension-points/llm-provider.md).
 
 ## Next steps
 
 - [Choose models and providers](./choose-models.md)
 - [Context windows](./context-windows.md)
-- [Drive via gRPC / HTTP](../deployment/grpc-http.md)
+- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
 - [Capability and deployment matrix](./capability-matrix.md)

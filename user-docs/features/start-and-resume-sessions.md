@@ -137,7 +137,7 @@ The gRPC `HarnessService` provides the primary streaming interface:
   own picker.
 
 Use gRPC when you want generated protocol bindings and bidirectional streaming.
-The full request and event reference is in [Drive via gRPC / HTTP](../deployment/grpc-http.md).
+The full request and event reference is in [Drive via gRPC / HTTP](/building/deployment/grpc-http.md).
 
 ### HTTP/SSE
 
@@ -150,7 +150,7 @@ for streamed runs.
 Use HTTP/SSE when the client is a browser or another language with an HTTP
 library rather than generated gRPC bindings. The HTTP and gRPC surfaces share
 the same session lifecycle, authorization, approval behavior, and event model.
-See [Drive via gRPC / HTTP](../deployment/grpc-http.md) and the [HTTP/SSE API
+See [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) and the [HTTP/SSE API
 reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md)
 for endpoint details.
 
@@ -190,6 +190,6 @@ live run based only on a persisted snapshot.
 - [Session continuity](./session-continuity.md) for storage, recovery, and
   maintenance.
 - [Use mecatui](./use-mecatui.md) for the interactive terminal workflow.
-- [Drive via gRPC / HTTP](../deployment/grpc-http.md) for client integrations.
+- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md) for client integrations.
 - [Capability and deployment matrix](./capability-matrix.md) for deployment
   availability.

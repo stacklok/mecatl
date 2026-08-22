@@ -85,4 +85,4 @@ health endpoints.
 - [Run mecated standalone](./mecated.md)
 - [Cloud-native k8s with mecak8s](./mecak8s.md)
 - [Scheduled tasks](../what-you-get/scheduled-tasks.md)
-- [Start and resume sessions](../features/start-and-resume-sessions.md)
+- [Start and resume sessions](/features/start-and-resume-sessions.md)

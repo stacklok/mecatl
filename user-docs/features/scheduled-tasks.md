@@ -140,12 +140,12 @@ fail-closed, including when requested through the model-facing Schedule tool.
   explicitly.
 
 For the complete API, lifecycle events, shutdown behavior, and backend details,
-see [Scheduled tasks](../what-you-get/scheduled-tasks.md) and the
+see [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) and the
 [operator flag reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md).
 
 ## Next steps
 
 - [Session continuity](./session-continuity.md)
-- [Mecatl deployment choices](../getting-started/deployment-decision.md)
+- [Mecatl deployment choices](/building/getting-started/deployment-decision.md)
 - [Scheduled task API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md#scheduled-task-rpcs)
 - [Capability and deployment matrix](./capability-matrix.md)

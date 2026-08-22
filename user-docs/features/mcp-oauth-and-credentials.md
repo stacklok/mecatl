@@ -111,7 +111,7 @@ read-only; `mecated mcp login` cannot populate or update it.
 `mecak8s` does not open a browser. Its OAuth credential is intended to come from
 a Kubernetes Secret, and agent-facing shells receive a scrubbed environment so
 MCP/provider credentials are not exposed through Bash. See the
-[Kubernetes deployment guide](../deployment/mecak8s.md) for the Secret wiring.
+[Kubernetes deployment guide](/building/deployment/mecak8s.md) for the Secret wiring.
 
 The legacy bearer path is simpler for a server that does not need OAuth:
 
@@ -147,12 +147,12 @@ environment-variable name.
   roots owner-only and use your deployment's secret manager for rotation.
 
 For MCP tool discovery, namespacing, permissions, reconnect behavior, resources,
-and prompts, see [MCP client](../what-you-get/mcp-client.md). For the complete
+and prompts, see [MCP client](/building/what-you-get/mcp-client.md). For the complete
 operator profile rules, see the [global MCP authentication reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md#global-mcp-authentication-profiles).
 
 ## Next steps
 
 - [Caller identity and OIDC](./caller-identity.md)
-- [Mecatl deployment choices](../getting-started/deployment-decision.md)
-- [MCP client](../what-you-get/mcp-client.md)
+- [Mecatl deployment choices](/building/getting-started/deployment-decision.md)
+- [MCP client](/building/what-you-get/mcp-client.md)
 - [Capability and deployment matrix](./capability-matrix.md)

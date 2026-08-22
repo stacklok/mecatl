@@ -164,11 +164,11 @@ This distinction is intentional:
   per-caller ownership.
 
 For the full Kubernetes overlay, JWKS cache behavior, and troubleshooting steps,
-see [Caller identity and ownership isolation](../deployment/mecak8s.md#multi-user-caller-identity-and-ownership-isolation-opt-in).
+see [Caller identity and ownership isolation](/building/deployment/mecak8s.md#multi-user-caller-identity-and-ownership-isolation-opt-in).
 
 ## Next steps
 
 - [MCP OAuth and credentials](./mcp-oauth-and-credentials.md)
 - [Session continuity](./session-continuity.md)
-- [Drive via gRPC / HTTP](../deployment/grpc-http.md)
+- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
 - [Capability and deployment matrix](./capability-matrix.md)

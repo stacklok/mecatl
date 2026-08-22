@@ -186,9 +186,9 @@ subject to the server's permission and trust policy.
 
 ## Next steps
 
-- [Agent definitions extension point](../extension-points/agent-definitions.md)
+- [Agent definitions extension point](/building/extension-points/agent-definitions.md)
   for the complete field and source contract.
-- [Subagents, teams and parallel](../what-you-get/subagents-teams-parallel.md)
+- [Subagents, teams and parallel](/building/what-you-get/subagents-teams-parallel.md)
   for delegation behavior and child lifecycle.
 - [Project instructions and rules](./project-instructions-and-rules.md) for
   workspace trust and other project-provided steering.

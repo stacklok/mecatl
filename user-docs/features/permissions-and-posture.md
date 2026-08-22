@@ -201,7 +201,7 @@ for matchers, modes, and checker failure handling.
 
 ## Next steps
 
-- [Permissions and guardrails](../what-you-get/permissions.md) for the detailed
+- [Permissions and guardrails](/building/what-you-get/permissions.md) for the detailed
   rule-resolution and approval reference.
 - [Project instructions and rules](./project-instructions-and-rules.md) for
   project-ingestion behavior.

@@ -150,6 +150,6 @@ permissions or tools.
 ## Next steps
 
 - [Dreaming and memory consolidation](./dreaming.md)
-- [Memory and knowledge](../what-you-get/memory.md)
+- [Memory and knowledge](/building/what-you-get/memory.md)
 - [Skills, commands, and soul](./skills-commands-and-soul.md)
 - [Capability and deployment matrix](./capability-matrix.md)
