@@ -14,6 +14,7 @@ not restate it.
 | **Contributor / agent** | [`READING.md`](READING.md) → foundation spine (architecture → domain → ports → loop) → topic branches |
 | **Operator** | [`../README.md`](../README.md) → [usage & install](usage/install.md) → [quickstart](usage/quickstart.md) → [running `mecated`](usage/mecated.md) → [usage guide](usage.md) |
 | **Library consumer** | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) → [`engine/session`](../engine/session) → [extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) → [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) |
+| **API client developer** | [Drive via gRPC / HTTP](https://github.com/stacklok/mecatl/blob/main/user-docs/building/deployment/grpc-http.md) → [`contracts/proto/mecatl/v1/`](../contracts/proto/mecatl/v1) → [gRPC reference](usage/grpc-api.md) or [HTTP/SSE reference](usage/http-sse-api.md) |
 
 ## Nearby
 

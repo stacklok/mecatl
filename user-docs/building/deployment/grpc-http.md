@@ -7,6 +7,9 @@ title: Drive via gRPC / HTTP
 
 `mecated` and `mecak8s` expose two wire surfaces on the same server process: a gRPC bidirectional streaming API and an HTTP+SSE API. Both carry the same event taxonomy. Use whichever fits your client stack — the event shape, approval protocol, and session lifecycle are identical across both.
 
+This is the client-integration entry point. The checked-in protobuf files are the
+gRPC source contract; the detailed operator/wire references are [the gRPC API](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md) and [the HTTP/SSE API](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md).
+
 The gRPC surface is defined in `contracts/proto/mecatl/v1/harness.proto`. Generated Go bindings live in `contracts/gen/go/mecatl/v1` and are imported as `mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"`.
 
 ---

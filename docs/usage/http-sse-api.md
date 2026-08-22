@@ -1,5 +1,9 @@
 ## 10. The HTTP / SSE API
 
+This is the detailed operator and wire reference. For the client-integration
+entry point, shared event lifecycle, and gRPC comparison, start with [Drive via
+gRPC / HTTP](https://github.com/stacklok/mecatl/blob/main/user-docs/deployment/grpc-http.md).
+
 The HTTP adapter wraps the same service. Every event is emitted as one SSE
 `data:` line carrying the proto `Event` marshalled to JSON — so HTTP and gRPC
 share one event shape.

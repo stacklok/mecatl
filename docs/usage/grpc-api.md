@@ -1,5 +1,9 @@
 ## 9. The gRPC API
 
+This is the detailed operator and wire reference. For the client-integration
+entry point, event lifecycle, and HTTP/SSE comparison, start with [Drive via
+gRPC / HTTP](https://github.com/stacklok/mecatl/blob/main/user-docs/deployment/grpc-http.md).
+
 Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 
 **Sessions & runs:**
