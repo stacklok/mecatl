@@ -49,23 +49,15 @@ schedule. Zero disables the corresponding schedule.
 
 ## Manual `/dream` review
 
-In mecatui, `/dream` asks whether to inspect project memory or the user model,
-then requires acknowledgement that generation sends the selected bounded
-values/descriptions to the configured model and spends tokens. The review shows:
+In mecatui, `/dream` opens the reviewed maintenance flow when the server advertises it. The exact command behavior and TUI interaction live in [Commands and memory](/mecatui/commands-and-memory.md); the consolidation semantics, authorization, and storage limitations are documented here.
 
-- the proposed survivor and source entries;
-- exact-duplicate operations;
-- synthesized replacement operations;
-- bounded reasons and evidence; and
-- the complete canonical values needed for an informed decision.
+The review evaluates the proposed survivor and source entries, exact duplicates,
+synthesized replacements, bounded reasons and evidence, and the canonical values
+needed for an informed decision.
 
 The operator applies or dismisses the entire plan. The receipt reports planned,
 applied, conflicted, skipped, and failed source counts. There are no per-source
 toggles, grouped transactions, or grouped undo operations.
-
-```text
-/dream
-```
 
 Regeneration is explicit and makes another provider call. Applying an approved
 synthesis atomically rewrites the displayed survivor to the displayed

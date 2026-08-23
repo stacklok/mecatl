@@ -5,6 +5,11 @@ title: Memory & knowledge
 
 # Memory & knowledge
 
+This is the builder-facing map of mecatl's memory-adjacent systems and their
+ports. For user-facing configuration and workflows, see [Skills, commands, and
+soul](/features/skills-commands-and-soul.md), [Learning](/features/learning.md),
+and [Dreaming and memory consolidation](/features/dreaming.md).
+
 mecatl ships three distinct memory-adjacent systems out of the box. Each solves a different problem and they don't overlap:
 
 | System | Problem it solves |
