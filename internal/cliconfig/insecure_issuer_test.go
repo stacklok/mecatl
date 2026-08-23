@@ -104,6 +104,15 @@ func TestCallerIdentityE2E_Scenario3_InsecureIssuerFlagWarns(t *testing.T) {
 		}
 	}
 
+	t.Run("private HTTPS mode names retained protections", func(t *testing.T) {
+		privateHTTPS := OIDCConfig{Issuer: "https://idp.example.com", Audience: "mecatl", AllowPrivateHTTPSIssuer: true, TrustedCAFile: "/run/oidc/ca.pem"}
+		for _, want := range []string{"oidc-allow-private-https-issuer", "configured issuer/JWKS", "pinned private addresses", "HTTPS", "hostname", "redirect refusal", "DNS-pinned"} {
+			if !strings.Contains(privateHTTPS.InsecureIssuerWarning(), want) {
+				t.Fatalf("private HTTPS warning missing %q: %s", want, privateHTTPS.InsecureIssuerWarning())
+			}
+		}
+	})
+
 	t.Run("silent when the flag is off", func(t *testing.T) {
 		off := on
 		off.InsecureAllowPrivateIssuer = false

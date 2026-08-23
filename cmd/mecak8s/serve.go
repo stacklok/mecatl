@@ -203,8 +203,9 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 		return nil, err
 	}
 	return server.NewAuthenticator(server.SecurityConfig{
-		AuthToken: cfg.authToken,
-		Validator: validator,
+		AuthToken:   cfg.authToken,
+		Validator:   validator,
+		Diagnostics: cfg.diagnostics,
 		// No rate limiting on a pod: it is fronted by the Service/mesh, not a
 		// raw public port. RateBurst 0 leaves the authenticator's rate limiter
 		// disabled.

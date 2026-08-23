@@ -39,6 +39,7 @@ func run() error {
 	// port.Diagnostics (ban-guarded). Mirrors cmd/mecated.
 	slog.SetDefault(logger)
 	diag := slogdiag.NewFromLogger(logger)
+	cfg.diagnostics = diag
 
 	ctx, stop := signalCtx()
 	defer stop()

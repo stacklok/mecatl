@@ -18,6 +18,8 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -55,7 +57,125 @@ func bearerCtx(ctx context.Context, tok string) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
 }
 
-// --- gRPC auth ---------------------------------------------------------------
+func TestAuthenticationRejectionDiagnosticsAreCategorizedAndSafe(t *testing.T) {
+	t.Parallel()
+
+	const sensitive = "Bearer eyJ.secret.token issuer=https://private.example subject=alice kid=private-key"
+	for _, tc := range []struct {
+		name     string
+		category string
+	}{
+		{name: "wrong audience", category: "wrong_audience"},
+		{name: "wrong issuer", category: "wrong_issuer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diag := &authRecordingDiagnostics{}
+			auth := server.NewAuthenticator(server.SecurityConfig{
+				Validator:   diagnosticValidator{category: tc.category, err: sensitive},
+				Diagnostics: diag,
+			})
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", sensitive))
+			_, err := auth.UnaryInterceptor()(ctx, nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) {
+				t.Fatal("handler called after rejected identity")
+				return nil, nil
+			})
+			if got := status.Code(err); got != codes.Unauthenticated {
+				t.Fatalf("gRPC code = %v, want Unauthenticated", got)
+			}
+			if got := status.Convert(err).Message(); got != "missing or invalid bearer token" {
+				t.Fatalf("gRPC message = %q, want generic result", got)
+			}
+			if len(diag.records) != 1 {
+				t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
+			}
+			record := diag.records[0]
+			if record.message != "authentication rejected" || record.args["category"] != tc.category || record.args["transport"] != "grpc" || record.args["status"] != "Unauthenticated" {
+				t.Fatalf("unsafe or unexpected diagnostic: %#v", record)
+			}
+			if strings.Contains(record.render(), sensitive) || strings.Contains(record.render(), "private.example") || strings.Contains(record.render(), "alice") || strings.Contains(record.render(), "private-key") {
+				t.Fatalf("diagnostic leaked sensitive authentication data: %s", record.render())
+			}
+		})
+	}
+}
+
+func TestHTTPAuthenticationRejectionDiagnosticPreservesGenericClientResult(t *testing.T) {
+	t.Parallel()
+
+	const sensitive = "Bearer eyJ.secret.token issuer=https://private.example subject=alice kid=private-key"
+	diag := &authRecordingDiagnostics{}
+	auth := server.NewAuthenticator(server.SecurityConfig{
+		Validator:   diagnosticValidator{category: "wrong_issuer", err: sensitive},
+		Diagnostics: diag,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", sensitive)
+	response := httptest.NewRecorder()
+	auth.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler called after rejected identity")
+	})).ServeHTTP(response, req)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("HTTP status = %d, want 401", response.Code)
+	}
+	if got := response.Body.String(); !strings.Contains(got, "missing or invalid bearer token") {
+		t.Fatalf("HTTP response = %q, want generic result", got)
+	}
+	if len(diag.records) != 1 {
+		t.Fatalf("diagnostic records = %d, want 1", len(diag.records))
+	}
+	record := diag.records[0]
+	if record.message != "authentication rejected" || record.args["category"] != "wrong_issuer" || record.args["transport"] != "http" || record.args["status"] != "401" {
+		t.Fatalf("unsafe or unexpected diagnostic: %#v", record)
+	}
+	if strings.Contains(record.render(), sensitive) || strings.Contains(record.render(), "private.example") || strings.Contains(record.render(), "alice") || strings.Contains(record.render(), "private-key") {
+		t.Fatalf("diagnostic leaked sensitive authentication data: %s", record.render())
+	}
+}
+
+type diagnosticValidator struct {
+	category string
+	err      string
+}
+
+func (v diagnosticValidator) Validate(context.Context, string) (*session.Principal, error) {
+	return nil, diagnosticRejection(v)
+}
+
+type diagnosticRejection struct {
+	category string
+	err      string
+}
+
+func (e diagnosticRejection) Error() string                           { return e.err }
+func (diagnosticRejection) Unwrap() error                             { return server.ErrInvalidToken }
+func (e diagnosticRejection) AuthenticationRejectionCategory() string { return e.category }
+
+type diagnosticRecord struct {
+	message string
+	args    map[string]string
+}
+
+func (r diagnosticRecord) render() string {
+	return r.message + " " + r.args["category"] + " " + r.args["transport"] + " " + r.args["status"]
+}
+
+type authRecordingDiagnostics struct{ records []diagnosticRecord }
+
+func (d *authRecordingDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
+	record := diagnosticRecord{message: msg, args: make(map[string]string, len(args)/2)}
+	for i := 0; i+1 < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok {
+			continue
+		}
+		record.args[key], _ = args[i+1].(string)
+	}
+	d.records = append(d.records, record)
+}
+
+func (d *authRecordingDiagnostics) With(...any) port.Diagnostics { return d }
 
 func TestGRPCAuthBearer(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())

@@ -47,25 +47,16 @@ type OIDCConfig struct {
 	// Production flag parsing leaves it nil, preserving the hardened client.
 	httpClient *http.Client
 
-	// InsecureAllowPrivateIssuer relaxes TWO of the validator's SSRF defences at
-	// once: it permits an `http://` issuer/JWKS URL, and permits those URLs to
-	// resolve to a private, loopback or link-local address.
-	//
-	// BOTH are required together for its one consumer — the end-to-end suite,
-	// whose IdP is a plaintext JWKS pod at an in-cluster address. They are checks
-	// at different layers (a Config-level scheme check; an address check at dial
-	// time, re-applied per redirect hop), so relaxing one still refuses that pod.
-	//
-	// There is no test-only injection point for this case the way there is
-	// in-process: the agent binary constructs its own validator, so the relaxation
-	// has to be a real flag on a real deployment.
-	//
-	// It is OFF by default and must stay so. With it off, the default that blocks
-	// a jwks_uri resolving to cloud instance metadata (169.254.169.254) is intact.
-	// Turning it on is what makes an SSRF against the JWKS fetch possible — hence
-	// `insecure` in the flag's own name, the warning below, and `task
-	// deploy:check` failing if the string appears in any published manifest.
+	// InsecureAllowPrivateIssuer is the deprecated legacy escape hatch. It permits
+	// BOTH HTTP and private issuer/JWKS addresses; use AllowPrivateHTTPSIssuer
+	// with TrustedCAFile for a private HTTPS issuer.
 	InsecureAllowPrivateIssuer bool
+	// AllowPrivateHTTPSIssuer permits only private-address admission for an HTTPS
+	// issuer/JWKS endpoint. It requires TrustedCAFile and retains TLS, hostname,
+	// redirect, and DNS-pinned dialing protections.
+	AllowPrivateHTTPSIssuer bool
+	// TrustedCAFile is the PEM CA bundle required by AllowPrivateHTTPSIssuer.
+	TrustedCAFile string
 }
 
 // InsecureIssuerWarning returns the operator-facing warning for a configuration
@@ -80,14 +71,22 @@ type OIDCConfig struct {
 // who copy-pastes it out of a test fixture gets no other signal that they have
 // switched off an SSRF defence.
 func (c OIDCConfig) InsecureIssuerWarning() string {
-	if !c.Enabled() || !c.InsecureAllowPrivateIssuer {
+	if !c.Enabled() {
 		return ""
 	}
-	return "SECURITY: --oidc-insecure-allow-private-issuer is set. " +
-		"The token validator will accept an http:// issuer and a jwks_uri resolving to a " +
-		"private, loopback or link-local address, which disables the check that blocks a " +
-		"jwks_uri aimed at cloud instance metadata (169.254.169.254). This flag exists for " +
-		"end-to-end tests against an in-cluster IdP and must NOT be used in a real deployment."
+	if c.InsecureAllowPrivateIssuer {
+		return "SECURITY: --oidc-insecure-allow-private-issuer is deprecated and is set. " +
+			"It permits BOTH an http:// issuer/JWKS URL and private, loopback, or link-local " +
+			"addresses, disabling the guard against a jwks_uri aimed at cloud instance metadata " +
+			"(169.254.169.254). Use --oidc-allow-private-https-issuer with --oidc-ca-cert-file " +
+			"for a private HTTPS issuer; must NOT be used in a real deployment."
+	}
+	if c.AllowPrivateHTTPSIssuer {
+		return "SECURITY: --oidc-allow-private-https-issuer is set. Only the configured issuer/JWKS " +
+			"hosts' pinned private addresses are admitted; HTTPS, CA and hostname validation, redirect refusal, " +
+			"and per-dial DNS-pinned checks remain enforced."
+	}
+	return ""
 }
 
 // Enabled reports whether the operator asked for caller identity.
@@ -104,7 +103,11 @@ func RegisterOIDCFlags(fs *flag.FlagSet, c *OIDCConfig) {
 	fs.StringVar(&c.JWKSURI, "oidc-jwks-uri", "",
 		"STATIC JWKS endpoint for --oidc-issuer; short-circuits OIDC discovery (the air-gapped / pinned-key deployment). Empty derives it from the issuer's discovery document")
 	fs.BoolVar(&c.InsecureAllowPrivateIssuer, "oidc-insecure-allow-private-issuer", false,
-		"TEST ONLY. Permit an http:// OIDC issuer/JWKS URL and permit those URLs to resolve to a private, loopback or link-local address. It disables the check that blocks a jwks_uri aimed at cloud instance metadata (169.254.169.254), so it makes an SSRF against the key fetch possible. It exists for the end-to-end suite, whose IdP is a JWKS pod inside the cluster; enabling it logs a SECURITY warning. Never set it in a real deployment")
+		"DEPRECATED TEST-ONLY legacy escape hatch. Permits BOTH an http:// OIDC issuer/JWKS URL and private, loopback, or link-local addresses, disabling the cloud-metadata SSRF guard. Use --oidc-allow-private-https-issuer with --oidc-ca-cert-file for a private HTTPS issuer; never set this in production")
+	fs.BoolVar(&c.AllowPrivateHTTPSIssuer, "oidc-allow-private-https-issuer", false,
+		"Permit an HTTPS OIDC issuer/JWKS URL to resolve to a private, loopback, or link-local address. Requires --oidc-ca-cert-file; HTTPS, CA and hostname validation, redirect refusal, and DNS-pinned dialing remain enforced")
+	fs.StringVar(&c.TrustedCAFile, "oidc-ca-cert-file", "",
+		"PEM CA bundle for --oidc-allow-private-https-issuer; required when private HTTPS issuer admission is enabled")
 	fs.StringVar(&c.Audience, "oidc-audience", "",
 		"audience (`aud`) this deployment accepts, REQUIRED with --oidc-issuer: an audience-less verifier would accept tokens minted for a different service")
 	fs.DurationVar(&c.MaxJWKSStaleness, "oidc-max-jwks-staleness", DefaultMaxJWKSStaleness,
@@ -142,8 +145,8 @@ func OIDCValidator(ctx context.Context, c OIDCConfig) (server.PrincipalValidator
 	if !c.Enabled() {
 		return nil, nil
 	}
-	if c.Audience == "" {
-		return nil, fmt.Errorf("%w: --oidc-issuer is set but --oidc-audience is empty", ErrOIDCMisconfigured)
+	if c.AllowPrivateHTTPSIssuer && c.TrustedCAFile == "" {
+		return nil, fmt.Errorf("%w: --oidc-allow-private-https-issuer requires --oidc-ca-cert-file", ErrOIDCMisconfigured)
 	}
 	if c.NewValidator == nil {
 		// Default to the real adapter (authnvalidator.go). It is defaulted HERE, in

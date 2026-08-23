@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	oidcauthn "github.com/stacklok/mecatl/authn/oidc"
 	"github.com/stacklok/mecatl/engine/session"
@@ -40,12 +41,25 @@ func errToSentinel(err error) error {
 }
 
 func defaultNewValidator(ctx context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
+	// authn/oidc must not touch the host OS (ADR 0206): this layer reads the CA
+	// file and hands the parsed bytes down.
+	var caPEM []byte
+	if c.AllowPrivateHTTPSIssuer {
+		body, err := os.ReadFile(c.TrustedCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("%w: read --oidc-ca-cert-file: %w", ErrOIDCMisconfigured, err)
+		}
+		caPEM = body
+	}
 	validator, err := oidcauthn.NewValidator(ctx, oidcauthn.Config{
 		Issuer:                     c.Issuer,
 		JWKSURI:                    c.JWKSURI,
 		Audience:                   c.Audience,
 		MaxJWKSStaleness:           c.MaxJWKSStaleness,
 		InsecureAllowPrivateIssuer: c.InsecureAllowPrivateIssuer,
+		AllowPrivateHTTPSIssuer:    c.AllowPrivateHTTPSIssuer,
+		TrustedCAFile:              c.TrustedCAFile,
+		TrustedCAPEM:               caPEM,
 		HTTPClient:                 c.httpClient,
 	})
 	if err != nil {

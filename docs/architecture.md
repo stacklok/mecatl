@@ -844,8 +844,15 @@ is the opt-in `github.com/stacklok/mecatl/authn/oidc` module
 ([ADR 0206](adr/0206-oidc-authn-module.md)); it keeps ToolHive and JWT dependencies
 outside the engine and exposes no ToolHive types. The operator wires one
 through `--oidc-issuer` / `--oidc-jwks-uri` / `--oidc-audience` /
-`--oidc-max-jwks-staleness` (`internal/cliconfig/oidc.go` (`OIDCConfig`,
-`OIDCValidator`)), and a validator that cannot be constructed is a **fatal**
+`--oidc-max-jwks-staleness`. A private HTTPS issuer may additionally opt into
+`--oidc-allow-private-https-issuer` with a required `--oidc-ca-cert-file`; an
+internal scoped transport admits only the configured issuer/JWKS hosts' resolved
+private addresses, re-checks them on every dial with keep-alives disabled, and
+keeps HTTPS, CA and hostname validation, and redirect refusal. The legacy
+`--oidc-insecure-allow-private-issuer` remains deprecated compatibility-only and
+is the sole combined HTTP/private escape hatch ([ADR 0235](adr/0235-scoped-private-https-oidc-transport.md)).
+`internal/cliconfig/oidc.go` (`OIDCConfig`, `OIDCValidator`) makes a validator
+that cannot be constructed a **fatal**
 startup error, never a silent degrade to unauthenticated. The shipped
 `toolhive-core/authn` **v0.0.39** validator caches the last good JWKS during a
 brief IdP outage, but the 1h default bounds that cache: once stale, it refreshes

@@ -26,8 +26,27 @@ type Config struct {
 	// zero disables the upper bound.
 	MaxJWKSStaleness time.Duration
 	// InsecureAllowPrivateIssuer permits HTTP and private issuer/JWKS addresses.
-	// It is intended only for isolated tests and disables SSRF protections.
+	// Deprecated: use AllowPrivateHTTPSIssuer with TrustedCAFile for a private
+	// HTTPS issuer. This legacy escape hatch remains for isolated tests that need
+	// both HTTP and private-address access.
 	InsecureAllowPrivateIssuer bool
+	// AllowPrivateHTTPSIssuer permits only the configured issuer and optional
+	// JWKS host's resolved private addresses. Its internal scoped transport
+	// re-validates addresses on every dial, disables keep-alives, refuses redirects,
+	// and retains HTTPS and TLS hostname verification.
+	// TrustedCAFile is required when this mode is enabled.
+	AllowPrivateHTTPSIssuer bool
+	// TrustedCAFile is the PEM CA bundle path. It is required (non-empty) when
+	// AllowPrivateHTTPSIssuer is enabled, and is also passed through to the
+	// underlying validator's own default-client CA loading for the legacy
+	// InsecureAllowPrivateIssuer path. This package never reads it itself: see
+	// TrustedCAPEM.
+	TrustedCAFile string
+	// TrustedCAPEM is the CA bundle's PEM-encoded bytes, used by
+	// AllowPrivateHTTPSIssuer's scoped transport to validate the issuer
+	// certificate. The caller is responsible for reading TrustedCAFile from
+	// disk; this package must not touch the host filesystem (ADR 0206).
+	TrustedCAPEM []byte
 	// HTTPClient optionally supplies trusted roots and transport policy. Nil uses
 	// the validator's hardened client. When set, the caller is responsible for
 	// preserving equivalent redirect and private-address protections.
@@ -62,8 +81,22 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 	if cfg.Audience == "" {
 		return nil, fmt.Errorf("%w: audience is empty", ErrInvalidConfig)
 	}
+	if cfg.AllowPrivateHTTPSIssuer && cfg.TrustedCAFile == "" {
+		return nil, fmt.Errorf("%w: trusted CA file is empty when private HTTPS issuer mode is enabled", ErrInvalidConfig)
+	}
+	if cfg.AllowPrivateHTTPSIssuer && cfg.HTTPClient != nil {
+		return nil, fmt.Errorf("%w: custom HTTP client is not allowed with private HTTPS issuer mode", ErrInvalidConfig)
+	}
 	toolhiveConfig := authnConfig(cfg)
-	toolhiveConfig.HTTPClient = cfg.HTTPClient
+	if cfg.AllowPrivateHTTPSIssuer {
+		client, err := newPrivateHTTPSClient(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+		}
+		toolhiveConfig.HTTPClient = client
+	} else {
+		toolhiveConfig.HTTPClient = cfg.HTTPClient
+	}
 	validator, err := authn.NewValidator(ctx, toolhiveConfig)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
@@ -80,6 +113,7 @@ func authnConfig(cfg Config) authn.Config {
 		AllowAnyAudience:  false,
 		InsecureAllowHTTP: cfg.InsecureAllowPrivateIssuer,
 		AllowPrivateIP:    cfg.InsecureAllowPrivateIssuer,
+		CACertPath:        cfg.TrustedCAFile,
 	}
 }
 
@@ -111,12 +145,49 @@ func mapError(err error) error {
 	}
 	var authnErr *authn.Error
 	if errors.As(err, &authnErr) {
+		category := authnCategory(authnErr.Reason)
 		switch authnErr.Code {
 		case authn.CodeUnavailable:
-			return fmt.Errorf("%w: %s", ErrIdentityUnavailable, authnErr.Reason)
+			return authenticationRejection{category: category, err: fmt.Errorf("%w: %s", ErrIdentityUnavailable, authnErr.Reason)}
 		case authn.CodeInvalidToken, authn.CodeInvalidRequest:
-			return fmt.Errorf("%w: %s", ErrInvalidToken, authnErr.Reason)
+			return authenticationRejection{category: category, err: fmt.Errorf("%w: %s", ErrInvalidToken, authnErr.Reason)}
 		}
 	}
-	return fmt.Errorf("%w: unrecognised validator failure", ErrInvalidToken)
+	return authenticationRejection{category: "invalid_token", err: fmt.Errorf("%w: unrecognised validator failure", ErrInvalidToken)}
+}
+
+type authenticationRejection struct {
+	category string
+	err      error
+}
+
+func (e authenticationRejection) Error() string { return e.err.Error() }
+func (e authenticationRejection) Unwrap() error { return e.err }
+
+// AuthenticationRejectionCategory exposes only a closed, operator-safe label.
+func (e authenticationRejection) AuthenticationRejectionCategory() string { return e.category }
+
+func authnCategory(reason authn.Reason) string {
+	switch reason {
+	case authn.ReasonAudience:
+		return "wrong_audience"
+	case authn.ReasonIssuer:
+		return "wrong_issuer"
+	case authn.ReasonMalformed:
+		return "malformed"
+	case authn.ReasonSignature:
+		return "signature"
+	case authn.ReasonUnknownKID:
+		return "unknown_kid"
+	case authn.ReasonExpired:
+		return "expired"
+	case authn.ReasonNotYetValid:
+		return "not_yet_valid"
+	case authn.ReasonKeysUnavailable:
+		return "jwks_unavailable"
+	case authn.ReasonKeysStale:
+		return "jwks_stale"
+	default:
+		return "invalid_token"
+	}
 }

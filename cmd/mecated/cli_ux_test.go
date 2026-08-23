@@ -551,6 +551,8 @@ func TestAcpCommonHelpExcludesServerBoundary(t *testing.T) {
 		"scheduler-tick-interval",
 		"flight-recorder",
 		"headless",
+		"oidc-allow-private-https-issuer",
+		"oidc-ca-cert-file",
 	} {
 		if strings.Contains(out, sb) {
 			t.Errorf("acp common help leaked server-boundary flag %q", sb)

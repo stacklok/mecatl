@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
@@ -51,6 +52,27 @@ var (
 	errRejectedRateLimit = errors.New("rejected bearer rate limit exceeded")
 )
 
+// AuthenticationRejectionCategorizer supplies a safe, closed diagnostic category
+// for an authentication failure. Its value is never sent to clients.
+type AuthenticationRejectionCategorizer interface {
+	AuthenticationRejectionCategory() string
+}
+
+const (
+	authCategoryMissingBearer          = "missing_bearer"
+	authCategoryDuplicateAuthorization = "duplicate_authorization"
+	authCategoryWrongAudience          = "wrong_audience"
+	authCategoryWrongIssuer            = "wrong_issuer"
+	authCategoryMalformed              = "malformed"
+	authCategorySignature              = "signature"
+	authCategoryUnknownKID             = "unknown_kid"
+	authCategoryExpired                = "expired"
+	authCategoryNotYetValid            = "not_yet_valid"
+	authCategoryJWKSUnavailable        = "jwks_unavailable"
+	authCategoryJWKSStale              = "jwks_stale"
+	authCategoryInvalidToken           = "invalid_token"
+)
+
 // SecurityConfig configures the reusable authentication and rate-limiting
 // interceptors/middleware shared by the gRPC and HTTP surfaces. The zero value
 // is a valid, fully permissive (dev) configuration: no token is required and no
@@ -77,6 +99,9 @@ type SecurityConfig struct {
 	// leaves the path byte-identical to a mecatl without identity: no
 	// validation, no principal, no new failure mode.
 	Validator PrincipalValidator
+	// Diagnostics receives sanitized authentication-rejection records. Nil leaves
+	// diagnostics disabled; records never include credentials or validator errors.
+	Diagnostics port.Diagnostics
 }
 
 // authEnabled reports whether a STATIC shared bearer token is configured. It
@@ -439,17 +464,43 @@ func identityStatus(err error) error {
 	return status.Error(codes.Unauthenticated, "missing or invalid bearer token")
 }
 
+func rejectionCategory(err error) string {
+	var categorized AuthenticationRejectionCategorizer
+	if errors.As(err, &categorized) {
+		switch category := categorized.AuthenticationRejectionCategory(); category {
+		case authCategoryWrongAudience, authCategoryWrongIssuer, authCategoryMalformed,
+			authCategorySignature, authCategoryUnknownKID, authCategoryExpired,
+			authCategoryNotYetValid, authCategoryJWKSUnavailable, authCategoryJWKSStale:
+			return category
+		}
+	}
+	return authCategoryInvalidToken
+}
+
+func (a *Authenticator) logRejection(ctx context.Context, category, transport, statusText string) {
+	if a.cfg.Diagnostics == nil {
+		return
+	}
+	a.cfg.Diagnostics.Log(ctx, port.LevelWarn, "authentication rejected", "category", category, "transport", transport, "status", statusText)
+}
+
 // authGRPC verifies the static bearer token (when configured) and the caller
 // identity (when a verifier is wired), returning the token presented (empty when
 // static auth is off) and the verified principal (nil when identity is off).
 func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principal, error) {
 	bearer, present, duplicate := tokenFromMetadata(ctx)
 	if duplicate {
+		a.logRejection(ctx, authCategoryDuplicateAuthorization, "grpc", codes.Unauthenticated.String())
 		return "", nil, status.Error(codes.Unauthenticated, "duplicate authorization metadata")
 	}
 	staticTok := ""
 	if a.cfg.authEnabled() {
 		if !present || !constantTimeTokenMatch(bearer, a.cfg.AuthToken) {
+			category := authCategoryInvalidToken
+			if !present {
+				category = authCategoryMissingBearer
+			}
+			a.logRejection(ctx, category, "grpc", codes.Unauthenticated.String())
 			return "", nil, status.Error(codes.Unauthenticated, "missing or invalid bearer token")
 		}
 		staticTok = bearer
@@ -460,7 +511,18 @@ func (a *Authenticator) authGRPC(ctx context.Context) (string, *session.Principa
 	}
 	p, err := a.identify(ctx, bearer, present, peerKey)
 	if err != nil {
-		return "", nil, identityStatus(err)
+		identityErr := identityStatus(err)
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errRejectedRateLimit) {
+			category := rejectionCategory(err)
+			if !present {
+				category = authCategoryMissingBearer
+			}
+			if errors.Is(err, ErrIdentityUnavailable) && category == authCategoryInvalidToken {
+				category = authCategoryJWKSUnavailable
+			}
+			a.logRejection(ctx, category, "grpc", status.Code(identityErr).String())
+		}
+		return "", nil, identityErr
 	}
 	return staticTok, p, nil
 }
@@ -547,6 +609,11 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		token := ""
 		if a.cfg.authEnabled() {
 			if !present || !constantTimeTokenMatch(bearer, a.cfg.AuthToken) {
+				category := authCategoryInvalidToken
+				if !present {
+					category = authCategoryMissingBearer
+				}
+				a.logRejection(r.Context(), category, "http", "401")
 				w.Header().Set("WWW-Authenticate", "Bearer")
 				writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 				return
@@ -572,9 +639,19 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			if errors.Is(err, ErrIdentityUnavailable) {
 				// A transient IdP outage: the token's validity is UNKNOWN, so
 				// this is a 503 with no auth challenge — never a 401.
+				category := rejectionCategory(err)
+				if category == authCategoryInvalidToken {
+					category = authCategoryJWKSUnavailable
+				}
+				a.logRejection(r.Context(), category, "http", "503")
 				writeError(w, http.StatusServiceUnavailable, "identity provider unavailable")
 				return
 			}
+			category := rejectionCategory(err)
+			if !present {
+				category = authCategoryMissingBearer
+			}
+			a.logRejection(r.Context(), category, "http", "401")
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return

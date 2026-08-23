@@ -69,6 +69,9 @@ const gracefulStopTimeout = 30 * time.Second
 // knobs (listeners, TLS, auth, drain). It deliberately drops mecated's
 // telemetry/metrics/admin surface and its subcommands.
 type config struct {
+	// diagnostics is installed by run after the command root builds its operator
+	// sink; tests and alternate callers may leave it nil for a silent edge.
+	diagnostics            port.Diagnostics
 	grpcAddr               string
 	httpAddr               string
 	workspace              string
