@@ -1,0 +1,111 @@
+# OAuth is enforced at the vMCP protected-resource boundary. Yardstick is an
+# internal deterministic backend and deliberately receives no user credential.
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPGroup
+metadata:
+  name: vmcp
+spec:
+  description: Disposable OAuth-protected vMCP integration backend
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: yardstick
+spec:
+  groupRef: {name: vmcp}
+  image: ghcr.io/stackloklabs/yardstick/yardstick-server:1.1.1
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  env:
+    - {name: MCP_TRANSPORT, value: streamable-http}
+    - {name: PORT, value: "8080"}
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: vmcp-embedded-auth
+spec:
+  type: inline
+  inline:
+    issuer: http://127.0.0.1:18080
+    caBundleRef:
+      configMapRef:
+        name: dex-fixture-ca
+        key: ca.crt
+    insecureAllowHTTP: true
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPServer
+metadata:
+  name: vmcp
+spec:
+  groupRef: {name: vmcp}
+  replicas: 1
+  incomingAuth:
+    type: oidc
+    oidcConfigRef:
+      name: vmcp-embedded-auth
+      audience: http://127.0.0.1:18080/mcp
+      scopes: [openid, profile, email, offline_access]
+      resourceUrl: http://127.0.0.1:18080/mcp
+    authzConfig:
+      type: inline
+      inline:
+        policies:
+          - permit(principal, action, resource);
+  outgoingAuth:
+    source: discovered
+  config:
+    aggregation:
+      conflictResolution: prefix
+  authServerConfig:
+    issuer: http://127.0.0.1:18080
+    signingKeySecretRefs:
+      - {name: vmcp-signing-key, key: signing-key}
+    hmacSecretRefs:
+      - {name: vmcp-hmac, key: hmac}
+    tokenLifespans:
+      accessTokenLifespan: 15m
+      refreshTokenLifespan: 1h
+      authCodeLifespan: 5m
+    disableUpstreamTokenInjection: true
+    upstreamProviders:
+      - name: dex
+        type: oauth2
+        oauth2Config:
+          authorizationEndpoint: https://dex.mecatl-vmcp.svc.cluster.local:5556/auth
+          tokenEndpoint: https://dex.mecatl-vmcp.svc.cluster.local:5556/token
+          identityFromToken:
+            subjectPath: id_token|@upstreamjwt|sub
+            namePath: id_token|@upstreamjwt|name
+            emailPath: id_token|@upstreamjwt|email
+          clientId: vmcp-browser
+          redirectUri: http://127.0.0.1:18080/oauth/callback
+          scopes: [openid, profile, email, offline_access]
+          allowPrivateIPs: true
+    storage:
+      type: redis
+      redis:
+        addr: toolhive-redis:6379
+        aclUserConfig:
+          passwordSecretRef: {name: vmcp-redis-auth, key: password}
+  podTemplateSpec:
+    spec:
+      automountServiceAccountToken: true
+      containers:
+        - name: vmcp
+          # ToolHive's upstreamProviders (oauth2Config/oidcConfig) have no CA-bundle
+          # field, so the embedded auth server's outbound token exchange with Dex
+          # otherwise only trusts the system root store. SSL_CERT_FILE makes Go's
+          # x509.SystemCertPool() trust the fixture CA process-wide instead; the
+          # only outbound HTTPS target from this pod is Dex, so a full override
+          # (rather than an additive merge) is safe here.
+          env:
+            - {name: SSL_CERT_FILE, value: /config/certs/dex-fixture-ca/ca.crt}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}

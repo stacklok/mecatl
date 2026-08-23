@@ -1,41 +1,161 @@
 version: '3'
 
-# Phase-A disposable Kind profile. It is deliberately ToolHive-free: no task in
-# this file resolves a ToolHive release, installs ToolHive, or creates vMCP
-# resources.
+# Disposable Kind mecak8s + ToolHive vMCP integration profile.
 vars:
   CLUSTER: mecatl-dev
   CONTEXT: kind-mecatl-dev
   NAMESPACE: mecatl-vmcp
   RELEASE: mecak8s
   STATE: .scratch/kind/mecatl-dev
-  KUBECONFIG: .scratch/kind/mecatl-dev/kubeconfig
+  KUBECONFIG: deploy/mecak8s-vmcp/kconfig.yaml
   SETUP_LOCK: .scratch/kind/mecatl-dev.setup-lock
   IMAGE: ko.local/mecak8s:dev
 
 tasks:
   kind-setup:
-    desc: Recreate the named ToolHive-free mecak8s + Dex Kind fixture from the local Helm chart
+    desc: Recreate the named mecak8s + Dex Kind fixture from the local Helm chart
     cmds:
       - task: reset-state
       - task: cluster-create
+      - task: namespace-apply
+      - task: cert-manager-install
       - task: image-build-load
-      - task: chart-apply
+      - task: dex-certificate-apply
       - task: dex-apply
+      - task: chart-apply
 
   kind-status:
-    desc: Show the named ToolHive-free mecak8s + Dex Phase-A fixture
+    desc: Show the named mecak8s + Dex base fixture
     cmds:
       - task: cluster-ready
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods,services,statefulsets,networkpolicies -n {{.NAMESPACE}}
       - helm status {{.RELEASE}} --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}}
 
+  kind-hosts-show:
+    desc: Show the exact temporary loopback aliases for the Kind port mappings
+    cmds:
+      - cmd: |
+          printf '%s\n' '127.0.0.1 dex.mecatl-vmcp.svc.cluster.local' '127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local'
+
+  kind-hosts-add:
+    desc: Add the temporary Kind aliases to /etc/hosts (loopback only)
+    cmds:
+      - cmd: |
+          set -eu
+          for entry in \
+            '127.0.0.1 dex.mecatl-vmcp.svc.cluster.local' \
+            '127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local'; do
+            sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
+          done
+          echo 'Added (or already present):'
+          task mecak8s:kind-hosts-show
+
+  kind-hosts-remove:
+    desc: Remove only the exact temporary Kind aliases from /etc/hosts
+    cmds:
+      - cmd: |
+          set -eu
+          sudo sed -i.bak \
+            -e '\|^127\.0\.0\.1 dex\.mecatl-vmcp\.svc\.cluster\.local$|d' \
+            -e '\|^127\.0\.0\.1 mecak8s-mecak8s\.mecatl-vmcp\.svc\.cluster\.local$|d' /etc/hosts
+          echo 'Removed exact temporary entries (backup: /etc/hosts.bak).'
   kind-destroy:
     desc: Delete the named mecatl-dev Kind cluster
     cmds:
       - kind delete cluster --name={{.CLUSTER}}
       - rm -rf {{.STATE}}
-      - rm -f {{.SETUP_LOCK}}
+      - rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}
+
+  vmcp-check:
+    desc: Validate the pinned vMCP integration manifests without creating a cluster
+    cmds:
+      - go test ./internal/deploycheck -run 'Test(VMCPFixture|Mecak8sVMCPPOC_)'
+
+  vmcp-setup:
+    desc: Recreate Kind and install mecak8s, Dex, ToolHive, Redis, Yardstick, and vMCP
+    preconditions:
+      - sh: command -v openssl >/dev/null 2>&1
+        msg: openssl is required
+    cmds:
+      - task: kind-setup
+      - task: toolhive-install
+      - cmd: |
+          set -eu
+          k='kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} -n {{.NAMESPACE}}'
+          $k get secret vmcp-redis-auth >/dev/null 2>&1 || openssl rand -base64 48 | $k create secret generic vmcp-redis-auth --from-file=password=/dev/stdin >/dev/null
+          $k get secret vmcp-hmac >/dev/null 2>&1 || openssl rand -base64 48 | $k create secret generic vmcp-hmac --from-file=hmac=/dev/stdin >/dev/null
+          $k get secret vmcp-signing-key >/dev/null 2>&1 || openssl ecparam -name prime256v1 -genkey -noout | $k create secret generic vmcp-signing-key --from-file=signing-key=/dev/stdin >/dev/null
+      - task: vmcp-apply
+
+  vmcp-status:
+    desc: Show sanitized vMCP qualification topology and runtime image IDs
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods,services,statefulsets -n {{.NAMESPACE}}
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get mcpgroup,mcpserver,mcpoidcconfig,virtualmcpserver -n {{.NAMESPACE}}
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods -n {{.NAMESPACE}} -o custom-columns=NAME:.metadata.name,IMAGES:.spec.containers[*].image,IMAGE_IDS:.status.containerStatuses[*].imageID --no-headers
+      - cmd: "echo 'Secret names: vmcp-redis-auth vmcp-signing-key vmcp-hmac (values intentionally not inspected)'"
+
+  namespace-apply:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+
+  cert-manager-install:
+    internal: true
+    preconditions:
+      - sh: command -v helm >/dev/null 2>&1
+        msg: helm is required
+    cmds:
+      - task: cluster-ready
+      - helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager --version=v1.17.2 --namespace=cert-manager --create-namespace --set crds.enabled=true --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --wait --timeout=4m
+
+  dex-certificate-apply:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-vmcp/cleanup-on-failure.sh "$status"' EXIT
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/dex-tls.yaml
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/dex-tls --timeout=120s
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/mecak8s-tls --timeout=120s
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} get secret dex-fixture-ca -o jsonpath='{.data.tls\.crt}' | base64 --decode > {{.STATE}}/dex-ca.crt
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create configmap dex-fixture-ca --from-file=ca.crt={{.STATE}}/dex-ca.crt --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+
+  toolhive-install:
+    internal: true
+    preconditions:
+      - sh: command -v helm >/dev/null 2>&1
+        msg: helm is required
+    cmds:
+      - task: cluster-ready
+      - helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version=0.44.0 --namespace=toolhive-system --create-namespace --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --wait --timeout=4m
+      - helm upgrade --install toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator --version=0.44.0 --namespace=toolhive-system --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --reset-values --wait --timeout=4m
+
+  vmcp-apply:
+    internal: true
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/toolhive-redis.yaml
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/toolhive-redis -n {{.NAMESPACE}} --timeout=240s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/vmcp.yaml
+      # The controller creates the backend Deployment asynchronously. Wait for
+      # its readiness first so the VirtualMCPServer condition is not polled while
+      # it is necessarily reporting NoRoutableBackends during image startup.
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=create deployment/yardstick --timeout=240s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status deployment/yardstick --timeout=240s
+      # The controller creates this Deployment asynchronously. Wait for the
+      # VirtualMCPServer readiness condition before reading its Deployment.
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready virtualmcpserver/vmcp --timeout=240s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/vmcp -n {{.NAMESPACE}} --timeout=240s
 
   reset-state:
     internal: true
@@ -47,8 +167,8 @@ tasks:
           set -eu
           kind delete cluster --name={{.CLUSTER}} 2>/dev/null || true
           rm -rf {{.STATE}}
-          rm -f {{.SETUP_LOCK}}
-          mkdir -p .scratch/kind
+          rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}
+          mkdir -p .scratch/kind deploy/mecak8s-vmcp
           : > {{.SETUP_LOCK}}
 
   cluster-ready:
@@ -75,7 +195,8 @@ tasks:
           set -eu
           trap 'status=$?; deploy/mecak8s-vmcp/cleanup-on-failure.sh "$status"' EXIT
           mkdir -p {{.STATE}}
-          kind create cluster --name={{.CLUSTER}} --kubeconfig={{.KUBECONFIG}}
+          kind create cluster --name={{.CLUSTER}} --config=deploy/mecak8s-vmcp/kind-config.yaml
+          kind get kubeconfig --name={{.CLUSTER}} > {{.KUBECONFIG}}
   image-build-load:
     internal: true
     preconditions:

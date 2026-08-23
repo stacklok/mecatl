@@ -1,0 +1,60 @@
+# Fixture-local CA and leaf certificate for the shared Dex HTTPS issuer.
+# cert-manager generates both Secrets at runtime; no key or certificate value belongs in Git.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: dex-fixture-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dex-fixture-ca
+spec:
+  isCA: true
+  commonName: dex-fixture-ca
+  secretName: dex-fixture-ca
+  issuerRef:
+    name: dex-fixture-bootstrap
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: dex-fixture-ca
+spec:
+  ca:
+    secretName: dex-fixture-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dex-tls
+spec:
+  secretName: dex-tls
+  commonName: dex.mecatl-vmcp.svc.cluster.local
+  dnsNames:
+    - dex.mecatl-vmcp.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: dex-fixture-ca
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mecak8s-tls
+spec:
+  secretName: mecak8s-tls
+  commonName: mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local
+  dnsNames:
+    - mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: dex-fixture-ca
+    kind: Issuer

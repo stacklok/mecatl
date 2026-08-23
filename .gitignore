@@ -11,6 +11,9 @@ coverage.*
 # Local scratch
 /.scratch/
 
+# Disposable ToolHive Kind fixture kubeconfig
+/deploy/mecak8s-vmcp/kconfig.yaml
+
 # Task cache (root and per-Taskfile-include, e.g. website/.task/)
 .task/
 

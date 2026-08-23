@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"go.yaml.in/yaml/v3"
 )
 
 func readRepoFile(t *testing.T, path string) string {
@@ -18,150 +16,275 @@ func readRepoFile(t *testing.T, path string) string {
 	return string(body)
 }
 
-func between(t *testing.T, body, start, end string) string {
-	t.Helper()
-	from := strings.Index(body, start)
-	if from < 0 {
-		t.Fatalf("missing %q", start)
-	}
-	body = body[from:]
-	to := strings.Index(body, end)
-	if to < 0 {
-		t.Fatalf("missing %q after %q", end, start)
-	}
-	return body[:to]
-}
-
-func TestMecak8sTaskfileWiring(t *testing.T) {
-	root := readRepoFile(t, "Taskfile.yml")
-	body := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
-	var doc struct {
-		Tasks map[string]struct {
-			Internal bool `yaml:"internal"`
-		} `yaml:"tasks"`
-	}
-	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
-		t.Fatalf("parse Taskfile: %v", err)
-	}
-	if !strings.Contains(root, "mecak8s:\n    taskfile: deploy/mecak8s-vmcp/Taskfile.yml\n    dir: .") {
-		t.Fatal("root Taskfile does not include the mecak8s Taskfile unflattened")
-	}
-
-	wantPublic := map[string]bool{"kind-setup": true, "kind-status": true, "kind-destroy": true}
-	for name, task := range doc.Tasks {
-		if !task.Internal && !wantPublic[name] {
-			t.Errorf("unexpected public mecak8s task %q", name)
-		}
-		delete(wantPublic, name)
-	}
-	for name := range wantPublic {
-		t.Errorf("missing public mecak8s task %q", name)
-	}
-
-	setup := between(t, body, "  kind-setup:\n", "  kind-status:\n")
-	for _, step := range []string{"task: reset-state", "task: cluster-create", "task: image-build-load", "task: chart-apply", "task: dex-apply"} {
-		if !strings.Contains(setup, step) {
-			t.Errorf("setup missing %q", step)
+func TestVMCPFixturePinsAndTasks(t *testing.T) {
+	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
+	gitignore := readRepoFile(t, ".gitignore")
+	for _, required := range []string{"vmcp-check:", "vmcp-setup:", "vmcp-status:", "toolhive-operator-crds", "--version=0.44.0", "vmcp-redis-auth", "vmcp-signing-key", "vmcp-hmac", "wait --for=condition=Ready virtualmcpserver/vmcp", "rollout status deployment/vmcp", "kind get kubeconfig --name={{.CLUSTER}} > {{.KUBECONFIG}}"} {
+		if !strings.Contains(taskfile, required) {
+			t.Errorf("fixture Taskfile missing %q", required)
 		}
 	}
-	if strings.Index(setup, "task: cluster-create") > strings.Index(setup, "task: image-build-load") ||
-		strings.Index(setup, "task: image-build-load") > strings.Index(setup, "task: chart-apply") ||
-		strings.Index(setup, "task: chart-apply") > strings.Index(setup, "task: dex-apply") {
-		t.Error("setup must recreate the cluster, load the local image, apply the chart, then deploy Dex")
+	if !strings.Contains(taskfile, "KUBECONFIG: deploy/mecak8s-vmcp/kconfig.yaml") {
+		t.Error("fixture Taskfile must use the discoverable fixture-local kubeconfig")
 	}
-	for _, forbidden := range []string{"ownership-guard", "mecatl-vmcp-owner", "OWNER_FILE", "SETUP_CREATED", "release-resolve", "live-llm", "toolhive-install", "receipts-record", "github.com", "VirtualMCPServer"} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("Kind profile contains forbidden %q", forbidden)
-		}
+	if !strings.Contains(gitignore, "/deploy/mecak8s-vmcp/kconfig.yaml") {
+		t.Error("fixture-local kubeconfig must be gitignored")
 	}
-
-	reset := between(t, body, "  reset-state:\n", "  cluster-ready:\n")
-	if !strings.Contains(reset, "kind delete cluster --name={{.CLUSTER}}") {
-		t.Error("setup must reset the named Kind cluster")
-	}
-	destroy := between(t, body, "  kind-destroy:\n", "  reset-state:\n")
-	if !strings.Contains(destroy, "kind delete cluster --name={{.CLUSTER}}") {
-		t.Error("kind-destroy must delete the named Kind cluster")
-	}
-
-	for _, forbidden := range []string{"kind-toolhive", "kubectl config use-context", "kind load docker-image", "mktemp"} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("Taskfile contains forbidden operation %q", forbidden)
-		}
-	}
-	for _, line := range strings.Split(body, "\n") {
-		if !strings.Contains(line, "kubectl ") || strings.Contains(line, "command -v kubectl") || strings.Contains(line, "kubectl is required") {
-			continue
-		}
-		if strings.Contains(line, "kubectl --kubeconfig={{.KUBECONFIG}} config current-context") {
-			continue
-		}
-		if !strings.Contains(line, "--kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}}") {
-			t.Errorf("kubectl invocation is not bound to the dedicated kubeconfig/context: %q", line)
-		}
-	}
-	chartApply := body[strings.Index(body, "  chart-apply:\n"):]
-	for _, required := range []string{
-		"deploy/helm/mecak8s/values-kind.yaml",
-		"pod-security.kubernetes.io/enforce=restricted",
-		"rollout status statefulset/redis",
-		"rollout status deployment/{{.RELEASE}}-mecak8s",
-		"--kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}}",
-	} {
-		if !strings.Contains(chartApply, required) {
-			t.Errorf("chart application missing %q", required)
-		}
-	}
-
-	dexApply := body[strings.Index(body, "  dex-apply:\n"):]
-	for _, required := range []string{"deploy/mecak8s-vmcp/dex.yaml", "rollout status deployment/dex", "--namespace={{.NAMESPACE}}"} {
-		if !strings.Contains(dexApply, required) {
-			t.Errorf("Dex application missing %q", required)
+	for _, forbidden := range []string{"set -x", "kubectl get secret -o yaml", "kubectl get secret -o json"} {
+		if strings.Contains(taskfile, forbidden) {
+			t.Errorf("fixture Taskfile contains stale or unsafe reference %q", forbidden)
 		}
 	}
 }
 
-func TestMecak8sDexFixtureHasDistinctDisposableUsers(t *testing.T) {
-	body := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
-	for _, required := range []string{
-		"storage:\n      type: memory",
-		"issuer: http://dex.mecatl-vmcp.svc.cluster.local:5556",
-		"email: alice@example.com",
-		"email: bob@example.com",
-		"app.kubernetes.io/name: dex",
-		"readOnlyRootFilesystem: true",
-		"capabilities:\n              drop: [\"ALL\"]",
-		"name: dex-allow-mecak8s",
-		"name: mecak8s-allow-dex",
-	} {
-		if !strings.Contains(body, required) {
-			t.Errorf("Dex fixture missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"VirtualMCPServer", "toolhive.stacklok.dev"} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("Dex fixture must not introduce vMCP integration through %q", forbidden)
-		}
-	}
-}
-
-func TestVMCPFixtureDoesNotImplyVMCPIntegration(t *testing.T) {
+func TestVMCPFixturePinsBackendAndBoundary(t *testing.T) {
+	versions := readRepoFile(t, "deploy/mecak8s-vmcp/versions.yaml")
+	manifest := readRepoFile(t, "deploy/mecak8s-vmcp/vmcp.yaml")
+	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
 	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
-	body := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
-
-	for _, required := range []string{"ToolHive-free", "does **not** install ToolHive"} {
+	for _, required := range []string{"0.44.0", "b3df9689bdb7d55d0765565890ba9dc0c076dec0", "1.1.1", "e5b8908ed6f53c1171ac805d82cf858d2982fa19e"} {
+		if !strings.Contains(versions, required) {
+			t.Errorf("versions missing %q", required)
+		}
+	}
+	for _, required := range []string{"kind: MCPServer", "metadata:\n  name: yardstick", "groupRef: {name: vmcp}", "ghcr.io/stackloklabs/yardstick/yardstick-server:1.1.1", "transport: streamable-http", "kind: VirtualMCPServer\nmetadata:\n  name: vmcp", "disableUpstreamTokenInjection: true", "kind: MCPOIDCConfig", "caBundleRef:", "name: dex-fixture-ca", "kind: MCPGroup", "scopes: [openid, profile, email, offline_access]"} {
+		if !strings.Contains(manifest, required) {
+			t.Errorf("vMCP manifest missing %q", required)
+		}
+	}
+	for _, required := range []string{"id: vmcp-browser", "public: true", "https://dex.mecatl-vmcp.svc.cluster.local:5556/auth", "https://dex.mecatl-vmcp.svc.cluster.local:5556/token", "http://127.0.0.1:18080/oauth/callback"} {
+		if !strings.Contains(dex, required) && !strings.Contains(manifest, required) {
+			t.Errorf("Dex fixture missing vMCP upstream client setting %q", required)
+		}
+	}
+	if strings.Contains(manifest, "authorizationEndpoint: http://") {
+		t.Error("vMCP browser authorization endpoint must use the shared HTTPS Dex issuer")
+	}
+	for _, required := range []string{"not in the outbound vMCP path", "mecak8s outbound brokerage", "only in memory", "Secret123", "not Kubernetes Secret values", "provider credentials", "reusable user"} {
 		if !strings.Contains(readme, required) {
-			t.Errorf("README must state Phase-A boundary %q", required)
+			t.Errorf("README missing scope or custody statement %q", required)
 		}
 	}
-	for _, forbidden := range []string{"port-forward.sh", "connect-user.sh", "VirtualMCPServer", "toolhive"} {
-		if strings.Contains(body, forbidden) || strings.Contains(readme, forbidden) {
-			t.Errorf("Phase-A fixture must not imply vMCP integration through %q", forbidden)
+}
+
+func TestVMCPFixtureDoesNotCommitCredentialValues(t *testing.T) {
+	for _, path := range []string{"deploy/mecak8s-vmcp/Taskfile.yml", "deploy/mecak8s-vmcp/README.md", "deploy/mecak8s-vmcp/versions.yaml", "deploy/mecak8s-vmcp/toolhive-redis.yaml", "deploy/mecak8s-vmcp/vmcp.yaml"} {
+		body := readRepoFile(t, path)
+		for _, forbidden := range []string{"stringData:", "Authorization: Bearer", "refresh_token", "access_token", "clientSecret:"} {
+			if strings.Contains(body, forbidden) {
+				t.Errorf("%s contains prohibited credential-shaped literal %q", path, forbidden)
+			}
 		}
 	}
-	for _, removed := range []string{"port-forward.sh", "connect-user.sh", "kustomization.yaml", "agent-oidc-args.yaml"} {
-		if _, err := os.Stat(filepath.Join("..", "..", "deploy", "mecak8s-vmcp", removed)); !os.IsNotExist(err) {
-			t.Errorf("obsolete vMCP fixture artifact %q still exists or could not be checked: %v", removed, err)
+}
+
+func TestMecak8sVMCPPOC_Scenario1_NetworkPolicyScope(t *testing.T) {
+	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
+	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
+
+	if strings.Contains(dex, "kind: NetworkPolicy") {
+		t.Error("local fixture must not install a partial NetworkPolicy that blocks DNS or Redis")
+	}
+	for _, required := range []string{"deliberately installs no `NetworkPolicy`", "blocked DNS and Redis", "out of scope"} {
+		if !strings.Contains(readme, required) {
+			t.Errorf("README missing NetworkPolicy scope statement %q", required)
+		}
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario2_DexTLSFixture(t *testing.T) {
+	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
+	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
+	tls := readRepoFile(t, "deploy/mecak8s-vmcp/dex-tls.yaml")
+	versions := readRepoFile(t, "deploy/mecak8s-vmcp/versions.yaml")
+
+	for _, required := range []string{"cert-manager-install:", "jetstack/charts/cert-manager", "--version=v1.17.2", "--set crds.enabled=true", "dex-certificate-apply:", "wait --for=condition=Ready certificate/dex-tls"} {
+		if !strings.Contains(taskfile, required) {
+			t.Errorf("Taskfile missing cert-manager lifecycle step %q", required)
+		}
+	}
+	if strings.Index(taskfile, "cert-manager-install") >= strings.Index(taskfile, "dex-certificate-apply") ||
+		strings.Index(taskfile, "dex-certificate-apply") >= strings.Index(taskfile, "dex-apply") {
+		t.Error("Taskfile must install cert-manager and issue Dex TLS before starting Dex")
+	}
+	for _, required := range []string{"certManager:\n  chartVersion: \"v1.17.2\"", "kind: Issuer", "name: dex-fixture-ca", "kind: Certificate", "name: dex-tls", "secretName: dex-tls", "https: 0.0.0.0:5556", "tls.crt", "tls.key", "name: https", "targetPort: https"} {
+		if !strings.Contains(dex, required) && !strings.Contains(tls, required) && !strings.Contains(versions, required) {
+			t.Errorf("Dex TLS fixture missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"kind: Secret", "stringData:", "-----BEGIN"} {
+		if strings.Contains(tls, forbidden) {
+			t.Errorf("Dex TLS fixture commits credential material through %q", forbidden)
+		}
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario2_SharedDexIssuer(t *testing.T) {
+	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
+	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
+
+	const issuer = "https://dex.mecatl-vmcp.svc.cluster.local:5556"
+	for _, required := range []string{"issuer: " + issuer, "name: dex", "port: 5556", "nodePort: 30556", "127.0.0.1 dex.mecatl-vmcp.svc.cluster.local", issuer + "/.well-known/openid-configuration", issuer + "/keys"} {
+		if !strings.Contains(dex, required) && !strings.Contains(readme, required) {
+			t.Errorf("shared Dex issuer contract missing %q", required)
+		}
+	}
+	if !strings.Contains(readme, "same HTTPS issuer URL") {
+		t.Error("README must state that pod and host use the same HTTPS issuer URL")
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario3_Mecak8sTLSConnection(t *testing.T) {
+	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
+	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
+
+	for _, required := range []string{
+		"kind-hosts-add",
+		"kind-hosts-remove",
+		"127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local",
+		"18081",
+
+		"base64 --decode > .scratch/mecak8s-vmcp-ca.crt",
+		"plaintext and an untrusted CA",
+		"live client connection demonstration\nis deferred",
+	} {
+		if !strings.Contains(readme, required) {
+			t.Errorf("mecak8s TLS connection contract missing %q", required)
+		}
+	}
+	if !strings.Contains(taskfile, "--values=deploy/helm/mecak8s/values-kind.yaml") {
+		t.Error("Kind setup does not install the TLS-enabled Kind values")
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario3_OIDCNegativeCases(t *testing.T) {
+	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
+	values := readRepoFile(t, "deploy/helm/mecak8s/values-kind.yaml")
+	deployment := readRepoFile(t, "deploy/helm/mecak8s/templates/deployment.yaml")
+	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
+
+	for _, required := range []string{
+		"enabled: true",
+		"issuer: https://dex.mecatl-vmcp.svc.cluster.local:5556",
+		"audience: mecatui-kind",
+		"allowPrivateHTTPSIssuer: true",
+		"caSecret: dex-fixture-ca",
+		"caKey: tls.crt",
+	} {
+		if !strings.Contains(values, required) {
+			t.Errorf("Kind OIDC configuration missing %q", required)
+		}
+	}
+	for _, user := range []string{"username: alice", "username: bob"} {
+		if !strings.Contains(dex, user) {
+			t.Errorf("Dex fixture missing valid caller %q", user)
+		}
+	}
+	setupEnd := strings.Index(taskfile, "  kind-status:")
+	if setupEnd < 0 {
+		t.Fatal("Taskfile has no kind-status boundary")
+	}
+	setup := taskfile[:setupEnd]
+	if strings.Index(setup, "task: dex-certificate-apply") >= strings.Index(setup, "task: dex-apply") ||
+		strings.Index(setup, "task: dex-apply") >= strings.Index(setup, "task: chart-apply") {
+		t.Error("Kind setup must issue and start HTTPS Dex before mecak8s starts OIDC discovery")
+	}
+	for _, required := range []string{"--oidc-allow-private-https-issuer", "--oidc-ca-cert-file="} {
+		if !strings.Contains(deployment, required) {
+			t.Errorf("Kind OIDC fixture deployment wiring missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"oidc-insecure-allow-private-issuer", "issuer: http://", "--auth-token"} {
+		if strings.Contains(taskfile, forbidden) || strings.Contains(values, forbidden) {
+			t.Errorf("Kind OIDC fixture weakens or replaces caller identity with %q", forbidden)
+		}
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario3_SeparateDexClients(t *testing.T) {
+	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
+	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
+
+	for _, required := range []string{
+		"id: vmcp-browser",
+		"id: mecatui-kind",
+		"public: true",
+		"http://127.0.0.1:18080/oauth/callback",
+		"http://127.0.0.1:18473/oauth/callback",
+	} {
+		if !strings.Contains(dex, required) {
+			t.Errorf("Dex public-client registration missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"`vmcp-browser`", "`mecatui-kind`",
+		"http://127.0.0.1:18080/oauth/callback",
+		"http://127.0.0.1:18473/oauth/callback",
+		"Neither client has a secret",
+	} {
+		if !strings.Contains(readme, required) {
+			t.Errorf("README public-client contract missing %q", required)
+		}
+	}
+	if strings.Contains(dex, "clientSecret:") {
+		t.Error("Dex fixture commits a client secret")
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario3_NoScopeEnforcement(t *testing.T) {
+	values := readRepoFile(t, "deploy/helm/mecak8s/values-kind.yaml")
+	deployment := readRepoFile(t, "deploy/helm/mecak8s/templates/deployment.yaml")
+
+	for _, forbidden := range []string{"scope", "--auth-token", "--oidc-insecure-allow-private-issuer"} {
+		if strings.Contains(values, forbidden) || strings.Contains(deployment, forbidden) {
+			t.Errorf("mecak8s caller identity adds an out-of-scope authority mechanism %q", forbidden)
+		}
+	}
+	for _, required := range []string{"--oidc-issuer=", "--oidc-audience="} {
+		if !strings.Contains(deployment, required) {
+			t.Errorf("mecak8s caller identity is missing %q", required)
+		}
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario4_KindLoopbackNodePorts(t *testing.T) {
+	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
+	kindConfig := readRepoFile(t, "deploy/mecak8s-vmcp/kind-config.yaml")
+	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
+	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
+
+	for _, required := range []string{
+		"--config=deploy/mecak8s-vmcp/kind-config.yaml",
+		"containerPort: 30556", "hostPort: 5556", "listenAddress: 127.0.0.1",
+		"containerPort: 30081", "hostPort: 18081",
+		"type: NodePort", "nodePort: 30556",
+		"kind-hosts-add:", "kind-hosts-remove:",
+	} {
+		if !strings.Contains(taskfile, required) && !strings.Contains(kindConfig, required) && !strings.Contains(dex, required) {
+			t.Errorf("Kind local journey missing %q", required)
+		}
+	}
+	if !strings.Contains(readme, "127.0.0.1 dex.mecatl-vmcp.svc.cluster.local") ||
+		!strings.Contains(readme, "127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local") {
+		t.Error("README must document the exact temporary host aliases")
+	}
+	if strings.Contains(kindConfig, "listenAddress: 0.0.0.0") {
+		t.Error("Kind port mappings must not bind non-loopback addresses")
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario2_DexCertificateContract(t *testing.T) {
+	tls := readRepoFile(t, "deploy/mecak8s-vmcp/dex-tls.yaml")
+	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
+
+	for _, required := range []string{"dnsNames:", "dex.mecatl-vmcp.svc.cluster.local", "localhost", "ipAddresses:", "127.0.0.1", "issuerRef:", "name: dex-fixture-ca", "ca:\n    secretName: dex-fixture-ca", "secretName: dex-fixture-ca"} {
+		if !strings.Contains(tls, required) {
+			t.Errorf("Dex certificate contract missing %q", required)
+		}
+	}
+	for _, required := range []string{"dex-fixture-ca", "tls.crt", "without OIDC insecure relaxation"} {
+		if !strings.Contains(readme, required) {
+			t.Errorf("README missing CA trust guidance %q", required)
 		}
 	}
 }

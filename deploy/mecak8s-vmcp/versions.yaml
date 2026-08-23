@@ -1,0 +1,15 @@
+# Pinned external runtimes for the disposable vMCP integration fixture.
+# Runtime image IDs are captured from the running Pods; do not infer them from
+# mecatl's ToolHive Go-module dependency.
+certManager:
+  chartVersion: "v1.17.2"
+  chart: "oci://quay.io/jetstack/charts/cert-manager"
+toolhive:
+  chartVersion: "0.44.0"
+  sourceCommit: "b3df9689bdb7d55d0765565890ba9dc0c076dec0"
+  operatorImage: "ghcr.io/stacklok/toolhive/operator:v0.44.0"
+  vmcpImage: "ghcr.io/stacklok/toolhive/vmcp:v0.44.0"
+yardstick:
+  version: "1.1.1"
+  sourceCommit: "e5b8908ed6f53c1171ac805d82cf858d2982fa19e"
+  image: "ghcr.io/stackloklabs/yardstick/yardstick-server:1.1.1"
