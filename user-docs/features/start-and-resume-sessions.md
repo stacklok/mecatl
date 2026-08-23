@@ -35,84 +35,12 @@ restart. An in-memory store only lasts for the lifetime of that process.
 
 ## Mecatui flow
 
-### Start a new session
+Mecatui can create a local session, browse stored sessions, or resume one by
+exact ID or with `--resume-latest`. Its session browser also supports inspection,
+continuation, forking, and maintenance when the server advertises those
+capabilities.
 
-Run mecatui in the workspace you want to use:
-
-```sh
-mecatui
-```
-
-When `--workspace` is omitted, mecatui uses its current directory for a new
-session and resolves it to an absolute path. To use a running server instead,
-provide its address explicitly:
-
-```sh
-mecatui connect 127.0.0.1:8080
-```
-
-In connect mode, the workspace is a path on the server host. It does not upload
-or share a checkout from the TUI host. See [Use mecatui](./use-mecatui.md) for
-transport, prompt, model, and workspace examples.
-
-### Select a stored session
-
-Open the session browser before creating or continuing a chat:
-
-```sh
-mecatui sessions
-mecatui connect 127.0.0.1:8080 sessions
-```
-
-Select a row and press `enter`. Mecatui uses the capabilities advertised by the
-server to distinguish a chat that can be continued from a session that can only
-be inspected.
-
-### Resume by exact ID
-
-Use `--resume SESSION_ID` when you know the server-issued ID:
-
-```sh
-mecatui --resume SESSION_ID
-mecatui connect 127.0.0.1:8080 --resume SESSION_ID
-```
-
-Mecatui loads the authoritative stored transcript and adopts that session. It
-does not create a replacement session. If the session cannot be continued,
-for example because its transcript is incomplete, it reports the reason rather
-than silently creating a new chat.
-
-### Resume the newest eligible session
-
-Use `--resume-latest` to select the newest eligible owned main chat:
-
-```sh
-mecatui --resume-latest
-mecatui connect 127.0.0.1:8080 --resume-latest
-```
-
-Mecatui considers stored rows in modification-time order and chooses the first
-one with a complete authoritative transcript. It skips active, awaiting,
-child, scheduled, unknown, and inspect-only sessions. If a candidate's
-transcript cannot be loaded, it tries the next candidate. `--resume` and
-`--resume-latest` are mutually exclusive.
-
-The server still performs ownership, authorization, active-run, and lease
-checks when the resumed session receives its first new prompt. An exact ID is
-not a capability by itself.
-
-### Preserve the ID
-
-Inside mecatui, run `/session` and press `c` to copy the active session ID. On a
-normal exit, mecatui also prints the final active ID to stderr:
-
-```text
-mecatui: final-session-id="SESSION_ID"
-```
-
-Save the ID when you need deterministic continuation. The line is not emitted
-when no session was established or startup was interrupted before normal
-shutdown.
+For the terminal-specific startup and seed-prompt path, see [Mecatui getting started](/mecatui/getting-started.md). For session selectors, browser behavior, and controls, see [Mecatui sessions](/mecatui/sessions.md). For local versus remote connection ownership, see [Connect to a server](/mecatui/remote-servers.md).
 
 ## API flow
 
