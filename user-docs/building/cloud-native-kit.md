@@ -50,6 +50,7 @@ The loop stays storage-agnostic throughout. It only emits — it never imports `
 | **Embed the engine** | No — you wire it | You implement `port.SessionStore` and `port.EventLog` | You implement `port.EventLog` |
 | **mecated** | Yes, with `--store-dir` (single-host flock lease is automatic) or a remote store + `--session-lease-*` | JSONL on disk (`--store-dir`) or gRPC driver (`--session-store-url`); Redis not exposed; schedule registry via `--schedule-store-url` (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) | JSONL sidecar (`.events.jsonl`) or gRPC driver (`--event-log-url`) |
 | **mecak8s** | Yes, out of the box | Redis (`internal/adapter/redisstore`) | Redis via same adapter |
+| **mecatequi** | No — one-shot process | None — stateless per run | No durable record after the run |
 
 **Embed:** the engine exports the ports; the reference adapters under `engine/adapter/` — `memstore`, `memlease`, `sessnap` — give you a working in-process starting point. For real externalization, implement `port.SessionStore`, `port.EventLog`, and `port.SessionLease` against your own backing service and wire them in composition.
 
@@ -181,4 +182,4 @@ A cancelled run leaves the session in `cancelled` state. The successor pod calls
 - [mecak8s deployment](/building/deployment/mecak8s.md) — manifests, RBAC, Redis topology, and the kind-based e2e suite.
 - [Pick your deployment shape](/building/getting-started/deployment-decision.md) — compare all four shapes against your operational requirements.
 - [The agent loop](/building/what-you-get/agent-loop.md) — how the loop interacts with the session aggregate, permission pauses, and terminal states.
-- [Extension points](/building/deployment/embed-engine.md) — implement `port.SessionStore`, `port.EventLog`, and `port.SessionLease` to wire your own backing services.
+- [Extension points](/building/extension-points/index.md) — implement `port.SessionStore`, `port.EventLog`, and `port.SessionLease` to wire your own backing services.

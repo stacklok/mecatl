@@ -26,14 +26,14 @@ flowchart TD
     D -- no --> MECATED[mecated]
 ```
 
-If you landed on **mecated** but want multi-replica support without affinity routing, add a session lease backend and Redis — or just switch to **mecak8s**, which wires both for you.
+If you landed on **mecated** but want multi-replica support without affinity routing, add a session lease backend and an externalized store such as the gRPC driver — or switch to **mecak8s**, which wires Redis and Kubernetes Leases for you.
 
 ## Shape summary
 
 | Shape | When to choose | State model | Key dependency |
 |-------|---------------|-------------|----------------|
 | **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | `golang.org/x/sync` + `doublestar` + `robfig/cron/v3` at runtime |
-| **mecated** | Single server, interactive clients (TUI, IDE), or a controlled service deployment | In-memory or JSONL on disk; optional Redis or gRPC driver | A running process; PV for durable sessions |
+| **mecated** | Single server, interactive clients (TUI, IDE), or a controlled service deployment | In-memory, JSONL on disk, or gRPC driver | A running process; durable local sessions need a PV or shared storage |
 | **mecak8s** | Kubernetes, no persistent volumes, multi-replica | Redis + Kubernetes `coordination.k8s.io` lease | Redis StatefulSet + k8s RBAC for `leases` |
 | **mecatequi** | GitHub Actions (or any CI): label/comment → patch → PR | None — stateless per run | LLM provider key; GitHub Actions runner |
 

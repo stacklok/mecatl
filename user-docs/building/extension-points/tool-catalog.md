@@ -60,7 +60,7 @@ Every tool registered in the catalog implements `engine/tool.Tool`:
 type Tool interface {
     Spec() ToolSpec
     ReadOnly() bool
-    Execute(ctx context.Context, in session.ToolCall, ws Workspace) (session.ToolResult, error)
+    Execute(ctx context.Context, in session.ToolCall, env Environment) (session.ToolResult, error)
 }
 ```
 
@@ -95,7 +95,7 @@ MCP tools default to `ReadOnly() == false` unless the remote server advertises `
 
 ### `Execute`
 
-`Execute` receives the model's tool call (`session.ToolCall`, which carries the call ID and the raw JSON args), and a `Workspace` scoped to the session root. Return a `session.ToolResult` for success or a model-visible error result; return a non-nil Go error only for harness-level faults the model cannot recover from.
+`Execute` receives the model's tool call (`session.ToolCall`, which carries the call ID and the raw JSON args), and a session-scoped `Environment` containing the workspace and optional command runner. Return a `session.ToolResult` for success or a model-visible error result; return a non-nil Go error only for harness-level faults the model cannot recover from.
 
 Tool errors do not abort the run. A `ToolResult` with `IsError: true` is fed back to the model as the tool's result, and the model can retry or choose a different path.
 
@@ -141,7 +141,7 @@ func (PingTool) Spec() tool.ToolSpec {
 
 func (PingTool) ReadOnly() bool { return true }
 
-func (PingTool) Execute(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+func (PingTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
     return session.NewToolResult(in.ID, "pong"), nil
 }
 ```
@@ -295,7 +295,7 @@ Everything else is identical. The invariant is enforced by `TestPerSessionCatalo
 
 If you need a tool that carries **per-session state**, you have two options:
 
-- Make the tool stateless and inject dependencies through the `Workspace` or via closures captured at construction time in `assembleCatalog` (where the per-session context is available).
+- Make the tool stateless and inject dependencies through the session-scoped `Environment` or via closures captured at construction time in `assembleCatalog` (where the per-session context is available).
 - Wire a custom `sessionEngineFactory` that constructs the per-session catalog differently — but you take on maintaining parity with the shared catalog yourself.
 
 :::note[Global MCP manager lifecycle]

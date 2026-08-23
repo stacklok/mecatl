@@ -76,12 +76,6 @@ in the TUI.
 Its durable store defaults to a per-workspace JSONL location under XDG state.
 Use `--no-store` for in-memory state or `--store-dir` to choose another location.
 
-### Use `mecatui connect` for a remote server
-
-`mecatui connect ADDRESS` is only a gRPC client. It always dials the given server;
-it does not start or fall back to an embedded server. Provider, posture, trust,
-storage, and feature availability come from the connected server.
-
 ## Workspace and Bash execution
 
 A **workspace** is the file tree the agent can inspect and change. Bash runs with

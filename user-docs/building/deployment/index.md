@@ -5,28 +5,13 @@ title: Deployment overview
 
 # Deployment overview
 
-mecatl ships in four deployment shapes. Each shape is a different composition root over the same `engine/agent` loop — pick the one that matches your operational model and persistence requirements. They are not interchangeable; a mecak8s pod is not a mecated pod with a flag flipped.
+Mecatl ships several composition roots over the same `engine/agent` loop. Use
+[the deployment decision guide](/building/getting-started/deployment-decision.md)
+to choose a shape; this page is the directory of detailed deployment guides.
 
-:::note[Need help deciding?]
-
-The [Pick your deployment shape](/building/getting-started/deployment-decision.md) guide in Getting Started walks the full decision tree with trade-offs for each shape.
-
-:::
-
----
-
-## Quick reference
-
-| Shape | When to choose | Key dependency | Persistence model |
-|---|---|---|---|
-| **Embed** | You own the binary; want the loop in-process with fine-grained control over every port | `github.com/stacklok/mecatl/engine` (`golang.org/x/sync` + `doublestar` + `robfig/cron/v3` at runtime) | You implement `port.SessionStore` |
-| **mecated** | Standalone server with interactive clients (TUI, IDE), or a controlled service deployment | A running process; PV for durable sessions | In-memory (default), JSONL on disk (`--store-dir`), or gRPC driver |
-| **mecak8s** | Kubernetes with no persistent volumes, multi-replica, disposable pods | Redis StatefulSet + `coordination.k8s.io` RBAC | Redis — no local state; k8s `Lease` for single-writer enforcement |
-| **mecatequi** | Single-shot CI: one prompt → git-diff patch → exit | LLM provider key + a GitHub Actions runner | None — stateless per run |
-
----
-
-## Sub-pages
+The main operational distinction is simple: `mecated` is the general
+client/server deployment, `mecak8s` externalizes state for disposable Kubernetes
+pods, and mecatui provides an interactive terminal skin over an embedded server.
 
 - [**Embed the engine directly**](embed-engine.md) — import `github.com/stacklok/mecatl/engine`, wire the port interfaces yourself, and compose `app.Build` into your own binary without taking mecatl's heavy require cone.
 

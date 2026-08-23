@@ -6,215 +6,80 @@ description: Use the mecatl terminal UI to work with sessions, models, tools, an
 
 # Use mecatui
 
-`mecatui` is mecatl's interactive terminal client. It can host an embedded
-`mecated` server in the same process, or connect to a running external server.
-Use it to work with sessions, switch models, approve actions, inspect tool
-calls, and monitor delegated work.
+`mecatui` is mecatl's interactive terminal client. It is a skin over the shared
+agent/server core: bare `mecatui` hosts an embedded `mecated` server in the same
+process, while `mecatui connect ADDRESS` displays and controls a server that is
+already running.
 
-:::info[Availability]
+Use it to work with sessions, switch models, approve actions, inspect tool calls,
+and monitor delegated work. The detailed mecatui section owns the client
+workflow and controls; this page is the feature-level entry point.
 
-`mecatui` runs as a local terminal application on macOS, Linux, and Windows.
-Bare `mecatui` hosts an embedded server over a private local socket. The
-`connect` command dials an existing `mecated` or `mecak8s` endpoint. The server
-interprets the requested workspace path, checks its own available tools and
-capabilities, and applies its own trust, authentication, and authorization
-rules. The TUI host's local files and capabilities are not automatically
-available to the connected server.
+## Choose how to connect
 
-:::
+- **Local work:** run `mecatui` to start an embedded server over a private local
+  socket. The embedded server uses local credentials, workspace, storage, and
+  policy configuration.
+- **Client/server deployment:** run `mecatui connect ADDRESS` when an operator
+  has already started `mecated` or `mecak8s`. The remote server owns the
+  workspace, credentials, storage, capabilities, and policy; local embedded-server
+  settings do not apply.
 
-## Start mecatui
+The workspace path in connect mode is interpreted on the server host. It does not
+upload or share a checkout from the computer running the TUI.
 
-The bare invocation starts an embedded server. By default, a new session uses
-the current directory as its workspace, resolved to an absolute path. The
-provider is selected from configured credentials:
+Start here for connection ownership, TLS, bearer authentication, and remote
+workspace rules: [Connect to a server](../mecatui/remote-servers.md).
 
-```sh
-mecatui
-```
-
-For an offline smoke test, explicitly select the mock provider:
+## Common workflow
 
 ```sh
-mecatui --mock
-```
+# Start an embedded session in the current checkout.
+mecatui --workspace "$PWD"
 
-The mock provider is intended for offline testing and does not make network
-requests. It is not a production model backend.
-
-The embedded server does not probe for an already-running `mecated`. To connect
-to an existing server, provide the address explicitly:
-
-```sh
-mecatui connect 127.0.0.1:8080 --workspace "$PWD"
-```
-
-If `--workspace` is omitted, mecatui sends its current directory as the
-workspace for a new session and resolves it to an absolute path. In `connect`
-mode, the remote server interprets that path on its own host. Continuing an
-existing session keeps the workspace stored with that session.
-
-`connect` accepts a `host:port`, not a URL. Plaintext is the default; mecatui
-does not infer TLS from the address or automatically upgrade a connection. Use
-`--tls` for TLS, `--tls-ca FILE` for a private certificate authority, and
-`--insecure` only for testing when you need to skip certificate verification.
-A bearer token requires TLS for non-loopback targets. Loopback is the deliberate
-plaintext-bearer exception.
-
-```sh
-mecatui connect mecated.example.com:443 \
-  --tls \
-  --auth-token "$MECATL_AUTH_TOKEN"
-```
-
-Use `mecatui sessions` to open the stored-session browser before creating or
-continuing a chat. The same browser is available remotely:
-
-```sh
-mecatui sessions
-mecatui connect 127.0.0.1:8080 sessions
-```
-
-Press `n` to create a new chat, `enter` to continue or inspect the selected
-row, and `esc` to leave the startup browser without creating a session.
-
-## Start with a prompt or continue a chat
-
-Use `--prompt` or `--prompt-file` to submit one seed prompt after the first
-session becomes ready. The TUI remains interactive for follow-up messages:
-
-```sh
+# Or seed its first prompt while keeping the session interactive.
 mecatui --workspace "$PWD" \
   --prompt "Summarize the failing tests in this repository"
-
-mecatui --workspace "$PWD" --prompt-file task.md
 ```
 
-If you provide both flags, the literal `--prompt` text comes first and the
-file contents follow it. The seed is submitted once, even if you later switch
-models or clear the conversation.
+The TUI can browse and continue stored sessions, switch models without losing the
+visible conversation, approve permission requests, and steer a running session
+when the connected server supports it.
 
-Resume an exact owned main session with `--resume`, or let mecatui choose the
-newest eligible one with `--resume-latest`:
+Use the dedicated guides for those workflows:
 
-```sh
-mecatui --resume SESSION_ID
-mecatui connect 127.0.0.1:8080 --resume-latest
-```
+- [Getting started](../mecatui/getting-started.md) — launch a local session and
+  submit a first prompt.
+- [Sessions](../mecatui/sessions.md) — browse, inspect, continue, fork, and
+  maintain chats.
+- [Using the TUI](../mecatui/using-the-tui.md) — streaming, steering, approvals,
+  and model switching.
+- [Commands and memory](../mecatui/commands-and-memory.md) — learning,
+  reflections, and memory-maintenance commands.
 
-The two flags are mutually exclusive. An adopted session keeps its stored
-workspace, mode, model, and capabilities. `--resume-latest` skips active,
-awaiting, scheduled, child, unknown, and incomplete sessions. It does not create
-a throwaway session.
+## Configuration ownership
 
-Inside the TUI, use `/session` and press `c` to copy the exact active session
-ID. On a normal exit, mecatui also writes the final active ID to stderr:
+Client settings such as themes, keymaps, terminal rendering, and mouse behavior
+belong to mecatui. Provider selection, posture, workspace trust, tools, storage,
+and other agent behavior belong to the embedded or connected server.
 
-```text
-mecatui: final-session-id="SESSION_ID"
-```
-
-## Work in the interface
-
-The prompt accepts ordinary messages and slash commands. Common commands
-include:
-
-| Command | Action |
-| --- | --- |
-| `/models` | Choose a model and switch the conversation to it. |
-| `/effort` | Choose the reasoning-effort tier for a new conversation fork. |
-| `/sessions` | Search sessions, inspect transcripts, continue chats, or manage storage when supported. |
-| `/session` | Show metadata for the active session. |
-| `/clear` | Start a fresh conversation. |
-| `/help` | Open the current command and keybinding help. |
-
-Model switches preserve the conversation. Switching providers can discard
-provider-private reasoning state, while the visible conversation remains.
-The available models and capabilities come from the connected server.
-
-When a run is streaming, press `enter` to steer it with a new message. The
-message is added at the next turn boundary after in-flight tool calls settle.
-If the server has steering disabled, the message is queued for the next turn
-instead. `esc` is context-sensitive: it clears a draft, retracts pending input,
-cancels an active run, denies a permission prompt, or closes the active
-overlay. In the startup session browser it exits without creating a session.
-
-Useful controls include:
-
-- `ctrl+t` expands a focused tool or delegation card.
-- `ctrl+a` opens the agents overlay for Subagent and Parallel activity.
-- `ctrl+c` on an empty prompt, or `ctrl+d`, requires a second press to quit.
-- `?` opens help with the active key bindings.
-
-When the agent needs permission, the approval modal lets you allow the action
-once, always allow it for the session, or deny it. Plan reviews use the same
-modal interaction. Tool arguments can be expanded and scrolled before you
-approve them.
-
-## Configure the terminal experience
-
-These flags control the client itself:
-
-| Flag | Purpose |
-| --- | --- |
-| `--theme NAME` | Select a theme. |
-| `--theme-dir DIR` | Load additional JSON themes. |
-| `--list-themes` | List available themes and exit. |
-| `--inline` | Render in the normal terminal buffer instead of the alternate screen. |
-| `--no-mouse` | Leave mouse selection to the terminal instead of capturing it. |
-| `--no-banner` | Hide the welcome splash. |
-| `--terminal-title off` | Disable the dynamic terminal title. |
-| `--keymap ACTION=CHORD` | Rebind an action; repeat the flag for multiple actions. |
-
-Use `--help` for the common flags and `--help-all` for the exhaustive
-reference. The full TUI reference covers overlays, keymaps, themes, transport,
-and startup behavior in more detail:
-
-[Read the full mecatui reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md)
-
-## Configure the embedded server
-
-These options apply when mecatui hosts the embedded server. They do not apply
-to `mecatui connect`:
-
-| Flag | Purpose |
-| --- | --- |
-| `--model MODEL` | Select the embedded server's initial model. |
-| `--default-provider ID` | Set the deployment-wide default provider. |
-| `--default-model MODEL` | Set the deployment-wide default model. |
-| `--reasoning-effort LEVEL` | Set the default reasoning-effort tier. |
-| `--no-bash` | Disable the Bash tool. |
-| `--no-memory` | Disable cross-session memory. |
-| `--no-store` | Use an in-memory session store instead of persisting sessions. |
-| `--trust-project` | Admit trusted project instructions and project grants. |
-| `--posture LEVEL` | Set the operator posture, such as `strict`, `trusted`, `auto`, or `yolo`. |
-
-The embedded server stores sessions under a workspace-specific state directory
-by default. The durable store contains the raw conversation, model output, tool
-arguments, and tool results in plaintext. The directory is created for the
-owner only, but protect it as sensitive data.
+For embedded-server flags, see [Run mecated standalone](../building/deployment/mecated.md).
+For model selection, see [Choose models and providers](./choose-models.md). For
+permissions and trust, see [Permissions and posture](./permissions-and-posture.md).
 
 ## Limitations
 
-- `mecatui connect` does not use embedded-server provider flags or local
-  credentials. Configure those on the external server.
-- In connect mode, `--workspace` identifies a workspace on the server host; it
-  does not grant the server access to a local checkout on the TUI host.
-- `--resume` and `--resume-latest` continue eligible owned main sessions.
-  Active, awaiting, child, scheduled, unknown, and incomplete sessions require
-  inspection or a different workflow.
-- Image and other multimodal input depends on the connected provider's
-  advertised capabilities.
-- `--insecure` disables TLS certificate verification and is intended for
-  testing only.
+- `connect` never discovers or starts a server and does not fall back to embedded
+  mode.
+- A connected server may expose different tools, models, media capabilities, and
+  storage features than an embedded server.
+- Remote clients cannot use the TUI host's local files unless those files are
+  available in the server's workspace namespace.
+- TLS, authentication, and server-side policy are configured at the server
+  boundary; mecatui cannot override them locally.
 
 ## Next steps
 
-- [Start and resume sessions](./start-and-resume-sessions.md) for session
-  lifecycle details.
-- [Choose models and providers](./choose-models.md) for provider and model
-  selection.
-- [Define named agents](./named-agents.md) for specialist agent definitions.
-- [Session continuity](./session-continuity.md) for persistence and storage
-  maintenance.
-
+- [Mecatui guide](../mecatui/index.md)
+- [Capability and deployment matrix](./capability-matrix.md)
+- [Start and resume sessions](./start-and-resume-sessions.md)

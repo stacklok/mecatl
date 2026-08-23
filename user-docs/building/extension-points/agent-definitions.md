@@ -9,7 +9,7 @@ Agent definitions are named specialist profiles that give a subagent child a sco
 
 Named definitions are consumed by **two delegation paths**:
 
-- **Subagent tool** — the model passes `agent: "<name>"` to the Subagent tool; the harness routes to that specialist's engine, which still runs read-only (see below).
+- **Subagent tool** — the model passes `agent: "<name>"` to the Subagent tool; the harness routes to that specialist's engine. Read-only is the default, while supported writable calls can retain Edit/Write under the selected mode.
 - **Team members** — the team `MemberSpec.AgentType` field identifies which def to use for a member slot; a mutating member may retain Edit/Write.
 
 A single `<name>.md` file covers both paths without duplication.
