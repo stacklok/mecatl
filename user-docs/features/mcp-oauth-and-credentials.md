@@ -7,12 +7,14 @@ description: Configure MCP OAuth profiles and protect the credentials they use.
 # MCP OAuth and credentials
 
 Mecatl can authenticate configured MCP servers with no credential in the server
-URL or in model-visible tool arguments. The operator chooses one authentication
-profile per server: `none`, `static_bearer`, or `oauth`.
+URL or in model-visible tool arguments. This page covers operator authentication
+profiles, OAuth login, credential storage, and rotation. For MCP transport,
+tool discovery, namespacing, reconnects, resources, prompts, and typed results,
+see the [MCP client guide](/building/what-you-get/mcp-client.md).
 
-MCP transport remains streaming HTTP only. mecatl never starts an MCP server as a
-stdio child process. If a server speaks stdio, place a trusted HTTP proxy in
-front of it.
+MCP profiles are operator configuration, not project configuration. A project
+`.mecatl/settings.yaml` cannot install or weaken a credential profile. The
+available profile modes are `none`, `static_bearer`, and `oauth`.
 
 ## Availability
 

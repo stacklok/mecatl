@@ -223,37 +223,12 @@ the tool silently vanishing.
 
 ---
 
-## OAuth profiles and login
+## Authentication and credentials
 
-The same operator `settings.yaml` can define global servers using `none`, a referenced
-static bearer, or OAuth. `mecated`, `mecatequi`, and `mecak8s` resolve those profiles the
-same way; the legacy `--mcp-server` and `MCP_<NAME>_TOKEN` path remains available.
-An OAuth `private_origins` opt-in admits only RFC1918 IPv4 or ULA IPv6 DNS answers;
-loopback, link-local and cloud-metadata, unspecified, multicast, IPv4-mapped, public,
-and other special addresses remain blocked.
-
-For OAuth backed by a mutable local encrypted store, authorize once with:
-
-```sh
-mecated mcp login github
-# On a terminal without a browser:
-mecated mcp login github --no-browser
-# Select an explicit trusted operator settings file (repeatable):
-mecated mcp login github --permission-config /etc/mecatl/settings.yaml
-```
-
-Serving and batch commands never launch a browser. Kubernetes should normally use an
-externally provisioned, read-only environment credential and restart the pod after
-rotation; the login command deliberately cannot mutate it. ACP cannot provide OAuth profiles
-or install/drive authorization, but after operator authorization ACP sessions may invoke the
-shared global OAuth-backed tools under ordinary permissions. OAuth is not available for
-client-supplied/inline/discovered MCP, and dynamic client registration is not yet
-supported. OAuth remains constrained to RFC 9728 metadata with one exact
-resource/authorization server, S256, and Basic-authenticated confidential clients.
-Repeated authorization rejection is bounded; invalid grants are not automatically
-reauthorized; dynamic client registration is not durable; and the caller still owns
-redirect/destination policy. See the [configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md)
-and [ADR 0113](https://github.com/stacklok/mecatl/blob/main/docs/adr/0113-operator-mcp-auth-profiles.md).
+Authentication profiles, OAuth login, encrypted credential storage, rotation, and
+managed-deployment credential provisioning are documented in [MCP OAuth and
+credentials](/features/mcp-oauth-and-credentials.md). This page focuses on how
+an authenticated MCP connection behaves once it is configured.
 
 ---
 
