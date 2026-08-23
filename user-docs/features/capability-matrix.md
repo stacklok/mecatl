@@ -78,17 +78,11 @@ Use `--no-store` for in-memory state or `--store-dir` to choose another location
 
 ## Workspace and Bash execution
 
-A **workspace** is the file tree the agent can inspect and change. Bash runs with
-that workspace as its working directory and sees that harness’s command
-environment. They belong together: a command that builds or tests a project must
-see the same files that Read, Edit, and Write use.
-
-Filesystem tools and Bash therefore act where the harness runs. For `mecak8s`,
-that normally means the pod’s workspace and command environment. A remote TUI or
-API client does not grant the agent access to the caller’s local files.
-
-The engine has abstract `Workspace`, `Environment`, and `CommandRunner` ports,
-but no production remote Workspace/environment driver is currently shipped.
+Filesystem tools and Bash operate in the namespace where the harness runs. In
+`mecak8s`, that normally means the pod’s workspace and command environment, not
+the client’s machine. A remote client does not upload or share its local
+checkout. See [Execution environments](./execution-environments.md) for the
+workspace, runner, no-FS, child-environment, and reattachment model.
 
 ## ACP editor integration
 
