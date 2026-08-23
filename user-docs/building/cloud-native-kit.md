@@ -18,7 +18,14 @@ A mecatl deployment is "cloud-native" when it satisfies three properties: the pr
 
 ### 1. Disposable process
 
-The process can be killed at any moment without data loss. On restart, a new process picks up exactly where the old one left off. "Disposable" means restart — not host crash. There is no fsync or atomic-rename guarantee in the local JSONL store; the model is OS page-cache survival.
+The process can be restarted without losing state that was successfully persisted.
+A replacement process resumes from the last persisted turn boundary; it does not
+resume an in-flight goroutine or guarantee that work after the last save exists.
+Graceful shutdown cancels active runs after its bounded drain window, while a
+crash may leave a Kubernetes lease held until its TTL expires. Recovery occurs
+when a later prompt or approval re-enters the session. Local JSONL persistence is
+restart-safe, but it has no fsync or atomic-rename guarantee against host or
+process crashes; use an external durable backend when that guarantee matters.
 
 The harness was unusually close to this by construction: the LLM adapters keep no server-side state (`store:false`; full replay on every turn), and the session aggregate round-trips through a stable snapshot saved at every turn boundary. The remaining gaps were the snapshot missing three fields (session profile, provider/model selector, cumulative token usage), a process death while parked awaiting approval stranding the session, and the event stream being emitted and discarded rather than persisted.
 
@@ -32,7 +39,7 @@ Nothing load-bearing lives only in process memory. The three durable artifacts t
 
 ### 3. Durable record
 
-The append-only event log (`port.EventLog`) survives process death. Two consumers depend on it:
+With a durable backend, the append-only event log survives process death. Two consumers depend on it:
 
 - **Compaction archive** (`EvCompactionArchive`) — the pre-compaction conversation captured before `ReplaceHistory` rewrites it, so "what did the agent do in turn 12" stays answerable after compaction.
 - **Approval replay** (`EvApproval`) — allow-always verdicts (tool name + verdict string + askID, no raw args) replayed into a fresh permstore on load so a restarted process does not re-ask for every previously-granted tool.
@@ -56,7 +63,7 @@ The loop stays storage-agnostic throughout. It only emits — it never imports `
 
 **mecated:** the `--store-dir` flag selects JSONL persistence (`internal/adapter/store/jsonlstore`), which implements `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder` in one `Store` type. It automatically composes the single-host flock lease under `<store-dir>/.session-leases`. Remote or multi-host deployments must wire an appropriate session lease (`--session-lease-k8s-namespace` for Kubernetes or `--session-lease-url` for a gRPC driver); without one, session-affinity routing is the deployer's responsibility and destructive maintenance fails closed.
 
-**mecak8s:** wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup. The three properties hold out of the box; the Redis connection itself must be pointed somewhere and secured — `--redis-url` plus either verified TLS (`--redis-tls` or `--redis-tls-ca`) or, for a disposable local fixture only, the explicit `--redis-allow-plaintext` opt-in.
+**mecak8s:** wires Redis for session store and event log (`internal/adapter/redisstore`) and the Kubernetes `coordination.k8s.io/v1` lease adapter (`internal/adapter/k8slease`) at startup. The three properties hold when the external Redis and lease prerequisites are available; the Redis connection itself must be pointed somewhere and secured — `--redis-url` plus either verified TLS (`--redis-tls` or `--redis-tls-ca`) or, for a disposable local fixture only, the explicit `--redis-allow-plaintext` opt-in.
 
 ---
 
@@ -76,7 +83,9 @@ All three are additive `omitempty` fields — the snapshot format tag (`sessnap-
 
 ### Phase 2 — Awaiting-approval evict/rehydrate (SHIPPED)
 
-The process is now disposable even while a run is parked awaiting a human approval. Before this phase, killing the process while a run was in `StateAwaiting` stranded the session permanently — `Approve` returned `ErrNoActiveRun`.
+The process now supports rehydrating a session while it is parked awaiting a human
+approval. A later approval request can resume the persisted ask; this is not a
+claim that an in-flight goroutine survives process death.
 
 The key addition is `engine/agent/loop.go` (`ResumeApproval`) → `engine/agent/dispatch.go` (`driveFromAwaiting`), reached from `internal/adapter/server/service.go` (`resumeFromAwaiting`) on a `LookupRun` miss. The pending tool call is resolved through the same post-authorize tail the live loop uses — exactly once — with every other unanswered tool call on the trailing assistant message closed out as synthetic aborted results, so `session.ValidateToolPairing` holds. The loop continues through the shared `runLoop` as normal.
 
@@ -122,7 +131,7 @@ mecak8s (`cmd/mecak8s`) is the **reference cloud-native deployment**. It is a th
 - `--headless` on, `--posture auto` by default.
 - SIGTERM triggers `Service.Drain()` (an `atomic.Bool draining` flag checked at `acquireLease`, returning `ErrUnavailable` / HTTP 503), then a bounded `GracefulStop` (30s, then `grpcSrv.Stop()` fallback). In-flight runs are cancelled, not drained, and `Recover`-able on the successor.
 
-The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas, no PVC), Service, and PodDisruptionBudget. It creates no Redis and ships no NetworkPolicy — network isolation is left to the cluster's own policy layer.
+The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas, no PVC), Service, and PodDisruptionBudget. The production profile does not create Redis and does not ship a general workload NetworkPolicy; the Kind/local profile can create a disposable Redis fixture, and enabling OIDC can render a narrow raw-driver NetworkPolicy. General network isolation remains the cluster policy layer.
 
 For the full deployment guide, see [mecak8s deployment](/building/deployment/mecak8s.md).
 

@@ -78,7 +78,7 @@ model.
 
 `mecatui` accepts these flags for its embedded server. They do not reconfigure a
 server used through `mecatui connect`. `mecak8s` exposes the corresponding server
-configuration. See the [operator provider and model reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#provider--model-selection)
+configuration. See the [operator provider and model reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#provider-selection)
 for credential sources and deployment options.
 
 ### Configure aliases, slots, and task routing
@@ -179,7 +179,7 @@ the selected provider and known model capabilities.
 
 The effective result is returned in `resolved_model.reasoning_effort`, so clients
 can display what the server actually applied. Provider-specific effort mapping
-belongs in the [operator reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#reasoning-effort),
+belongs in the [operator reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/guardrails.md#the-operator-global-reasoning-effort-setting),
 not in the selection workflow.
 
 ## API journey

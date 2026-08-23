@@ -23,8 +23,8 @@ Named agent definitions are available to:
 - the `Subagent` tool; and
 - agent-team member roles.
 
-They are not an interactive feature of `mecatequi`, although a one-shot server
-can still be configured with an agent source.
+`mecatequi` does not expose an agent-source configuration path, so its shipped
+one-shot command cannot select a named agent definition.
 
 ## Define an agent
 

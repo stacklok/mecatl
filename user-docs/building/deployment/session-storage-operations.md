@@ -8,7 +8,7 @@ title: Operate local session storage
 This guide is for a single-user `mecated` daemon with the embedded JSONL store. It keeps the
 executable, operator policy, and plaintext session state at stable paths, and uses mecatl's
 management API rather than editing store files. For the storage-management API,
-see the [gRPC reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md#storage-maintenance-rpcs); for the interactive workflow,
+see the [gRPC reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md); for the interactive workflow,
 see [mecatui session maintenance](/mecatui/sessions.md#privacy-and-maintenance).
 
 :::warning[The store contains plaintext]
