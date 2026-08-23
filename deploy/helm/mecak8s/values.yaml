@@ -40,6 +40,21 @@ oidc:
   # from the issuer's discovery document.
   jwksURI: ""
   maxJWKSStaleness: 1h
+  # allowPrivateHTTPSIssuer admits a private issuer address while retaining HTTPS
+  # and hardened default-client protections. It requires an HTTPS issuer and CA.
+  allowPrivateHTTPSIssuer: false
+  # caSecret and caKey optionally project a private OIDC CA directly to the
+  # OIDC validator; they do not change process-wide TLS trust.
+  caSecret: ""
+  caKey: ""
+
+tls:
+  # Server TLS is opt-in for general deployments. Enabling it requires an exact
+  # Secret projection for both PEM inputs; it never falls back to plaintext.
+  enabled: false
+  secretName: ""
+  certKey: tls.crt
+  keyKey: tls.key
 
 resources:
   requests:
@@ -53,5 +68,6 @@ service:
   type: ClusterIP
   grpcPort: 8080
   httpPort: 8081
+  nodePorts: {}
 
 podAnnotations: {}

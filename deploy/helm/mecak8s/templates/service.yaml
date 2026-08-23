@@ -10,6 +10,9 @@ spec:
     - name: grpc
       port: {{ .Values.service.grpcPort }}
       targetPort: grpc
+      {{- with .Values.service.nodePorts.grpc }}
+      nodePort: {{ . }}
+      {{- end }}
     - name: http
       port: {{ .Values.service.httpPort }}
       targetPort: http

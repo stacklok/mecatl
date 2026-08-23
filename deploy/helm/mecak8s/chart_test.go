@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,6 +28,25 @@ func helm(t *testing.T, args ...string) (string, error) {
 
 func productionArgs() []string {
 	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+}
+
+func TestMecak8sHelmChart_KindNodePortAndProductionClusterIP(t *testing.T) {
+	kind, err := helm(t, "template", "kind", ".", "-f", "values-kind.yaml")
+	if err != nil {
+		t.Fatalf("render Kind profile: %v", err)
+	}
+	for _, want := range []string{"type: NodePort", "name: grpc", "nodePort: 30081"} {
+		if !strings.Contains(kind, want) {
+			t.Fatalf("Kind render missing %q", want)
+		}
+	}
+	production, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render production profile: %v", err)
+	}
+	if !strings.Contains(production, "type: ClusterIP") || strings.Contains(production, "nodePort:") {
+		t.Fatal("production Service must remain ClusterIP without fixed NodePorts")
+	}
 }
 
 func TestMecak8sHelmChart_Scenario1_ProductionValuesRequireExternalRedis(t *testing.T) {
@@ -183,7 +204,7 @@ func TestMecak8sHelmChart_LocalPlaintextIsExplicitAndExternalIsTLSOnly(t *testin
 	if !strings.Contains(local, "--redis-allow-plaintext") {
 		t.Fatal("local Kind profile does not explicitly opt in to plaintext Redis")
 	}
-	for _, forbidden := range []string{"--redis-tls-ca", "redis-credentials", "defaultMode: 0440"} {
+	for _, forbidden := range []string{"--redis-tls-ca", "redis-credentials"} {
 		if strings.Contains(local, forbidden) {
 			t.Fatalf("local Kind profile contains external Redis material %q", forbidden)
 		}
@@ -252,13 +273,74 @@ func TestMecak8sHelmChart_Scenario1_LeastPrivilegeLease(t *testing.T) {
 	}
 }
 
+// taskBlockRe matches a top-level Taskfile task header (2-space indent under
+// `tasks:`, e.g. "  kind-setup:"). Not a full YAML parser — this Taskfile only
+// nests task bodies one level deeper than their header.
+var taskBlockRe = regexp.MustCompile(`(?m)^  ([a-zA-Z][a-zA-Z0-9_-]*):\s*$`)
+
+// taskFileClosure splits a Taskfile's `tasks:` section into named blocks and
+// returns the concatenated text of `roots` plus every task transitively
+// reachable from them via `task: <name>` references.
+func taskFileClosure(t *testing.T, text string, roots ...string) string {
+	t.Helper()
+	tasksIdx := strings.Index(text, "\ntasks:\n")
+	if tasksIdx < 0 {
+		t.Fatal("Taskfile has no tasks: section")
+	}
+	body := text[tasksIdx:]
+	headers := taskBlockRe.FindAllStringSubmatchIndex(body, -1)
+	blocks := make(map[string]string, len(headers))
+	for i, h := range headers {
+		name := body[h[2]:h[3]]
+		end := len(body)
+		if i+1 < len(headers) {
+			end = headers[i+1][0]
+		}
+		blocks[name] = body[h[0]:end]
+	}
+	refRe := regexp.MustCompile(`task:\s*([a-zA-Z][a-zA-Z0-9_-]*)`)
+	visited := map[string]bool{}
+	var visit func(name string)
+	visit = func(name string) {
+		if visited[name] {
+			return
+		}
+		block, ok := blocks[name]
+		if !ok {
+			t.Fatalf("Taskfile references unknown task %q", name)
+		}
+		visited[name] = true
+		for _, m := range refRe.FindAllStringSubmatch(block, -1) {
+			visit(m[1])
+		}
+	}
+	for _, root := range roots {
+		visit(root)
+	}
+	var out strings.Builder
+	for _, name := range roots {
+		out.WriteString(blocks[name])
+	}
+	for name, block := range blocks {
+		if visited[name] && !slices.Contains(roots, name) {
+			out.WriteString(block)
+		}
+	}
+	return out.String()
+}
+
 func TestMecak8sHelmChart_Scenario1_KindLifecycleUsesNamedCluster(t *testing.T) {
 	path := filepath.Join("..", "..", "mecak8s-vmcp", "Taskfile.yml")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(body)
+	// Scope the guard to the base disposable Kind lifecycle (bootstrap +
+	// teardown) reachable from kind-setup/kind-destroy, not the whole file:
+	// the vMCP integration phase (vmcp-setup -> toolhive-install) legitimately
+	// installs ToolHive from an OCI registry, and lives in sibling tasks this
+	// guard was never meant to cover.
+	text := taskFileClosure(t, string(body), "kind-setup", "kind-destroy")
 	for _, want := range []string{"reset-state:", "cluster-ready:", "--kubeconfig={{.KUBECONFIG}}", "--context={{.CONTEXT}}", "kind delete cluster --name={{.CLUSTER}}", "kind-destroy"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("lifecycle guard missing %q", want)
@@ -276,7 +358,7 @@ func TestMecak8sHelmChart_OIDC_DisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render production values: %v", err)
 	}
-	for _, forbidden := range []string{"--oidc-issuer", "--oidc-audience", "--oidc-jwks-uri", "kind: NetworkPolicy", "raw-driver"} {
+	for _, forbidden := range []string{"--oidc-issuer", "--oidc-audience", "--oidc-jwks-uri", "--oidc-ca-cert-file", "--oidc-allow-private-https-issuer", "kind: NetworkPolicy", "raw-driver"} {
 		if strings.Contains(rendered, forbidden) {
 			t.Fatalf("default render (oidc disabled) unexpectedly contains %q", forbidden)
 		}
@@ -320,6 +402,63 @@ func TestMecak8sHelmChart_OIDC_EnabledWithoutIssuerFails(t *testing.T) {
 	args := append(productionArgs(), "--set", "oidc.enabled=true", "--set", "oidc.audience=mecatl")
 	if _, err := helm(t, args...); err == nil {
 		t.Fatal("render accepted oidc.enabled=true with no oidc.issuer")
+	}
+}
+func TestMecak8sHelmChart_OIDC_PrivateHTTPSIssuer(t *testing.T) {
+	base := append(productionArgs(), "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.internal", "--set", "oidc.audience=mecatl", "--set", "oidc.allowPrivateHTTPSIssuer=true", "--set", "oidc.caSecret=issuer-ca", "--set", "oidc.caKey=ca.pem")
+	rendered, err := helm(t, base...)
+	if err != nil {
+		t.Fatalf("render private HTTPS issuer: %v", err)
+	}
+	for _, want := range []string{"--oidc-allow-private-https-issuer", "--oidc-ca-cert-file=/var/run/secrets/oidc-ca/ca.pem", "secretName: issuer-ca"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("private HTTPS issuer render missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"--oidc-insecure-allow-private-issuer", "SSL_CERT_FILE"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("private HTTPS issuer render contains %q", forbidden)
+		}
+	}
+	for _, set := range []string{"oidc.issuer=http://idp.example.internal", "oidc.caSecret=", "oidc.caKey=", "oidc.enabled=false"} {
+		args := append(append([]string{}, base...), "--set", set)
+		if _, err := helm(t, args...); err == nil {
+			t.Fatalf("private HTTPS issuer render accepted %q", set)
+		}
+	}
+}
+
+func TestMecak8sVMCPPOC_Scenario3_ChartTLSContract(t *testing.T) {
+	args := []string{"template", "kind", ".", "-f", "values-kind.yaml"}
+	rendered, err := helm(t, args...)
+	if err != nil {
+		t.Fatalf("render Kind TLS profile: %v", err)
+	}
+	for _, want := range []string{
+		"--tls-cert=/var/run/secrets/tls/tls.crt",
+		"--tls-key=/var/run/secrets/tls/tls.key",
+		"name: tls",
+		"mountPath: /var/run/secrets/tls",
+		"readOnly: true",
+		"secretName: mecak8s-tls",
+		`- {key: "tls.crt", path: "tls.crt"}`,
+		`- {key: "tls.key", path: "tls.key"}`,
+		"name: oidc-ca",
+		"mountPath: /var/run/secrets/oidc-ca",
+		"secretName: dex-fixture-ca",
+		`- {key: "tls.crt", path: "tls.crt"}`,
+		"--oidc-ca-cert-file=/var/run/secrets/oidc-ca/tls.crt",
+		"--oidc-allow-private-https-issuer",
+		"scheme: HTTPS",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("Kind TLS render missing %q", want)
+		}
+	}
+	for _, missing := range []string{"tls.certKey=", "tls.keyKey=", "tls.secretName="} {
+		if _, err := helm(t, append(append([]string{}, args...), "--set", missing)...); err == nil {
+			t.Fatalf("render accepted incomplete TLS configuration %q", missing)
+		}
 	}
 }
 

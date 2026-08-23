@@ -63,4 +63,25 @@ mounted
 {{- $_ := required "oidc.issuer is required when oidc.enabled is true" .Values.oidc.issuer -}}
 {{- $_ := required "oidc.audience is required when oidc.enabled is true" .Values.oidc.audience -}}
 {{- end -}}
+{{- if .Values.oidc.allowPrivateHTTPSIssuer -}}
+{{- if not .Values.oidc.enabled -}}
+{{- fail "oidc.allowPrivateHTTPSIssuer requires oidc.enabled" -}}
+{{- end -}}
+{{- if not (hasPrefix "https://" .Values.oidc.issuer) -}}
+{{- fail "oidc.allowPrivateHTTPSIssuer requires an https:// oidc.issuer" -}}
+{{- end -}}
+{{- $_ := required "oidc.caSecret is required when oidc.allowPrivateHTTPSIssuer is true" .Values.oidc.caSecret -}}
+{{- $_ := required "oidc.caKey is required when oidc.allowPrivateHTTPSIssuer is true" .Values.oidc.caKey -}}
+{{- end -}}
+{{- if or .Values.oidc.caSecret .Values.oidc.caKey -}}
+{{- $_ := required "oidc.caSecret is required when oidc.caKey is set" .Values.oidc.caSecret -}}
+{{- $_ := required "oidc.caKey is required when oidc.caSecret is set" .Values.oidc.caKey -}}
+{{- end -}}
+{{- end -}}
+{{- define "mecak8s.validateTLS" -}}
+{{- if .Values.tls.enabled -}}
+{{- $_ := required "tls.secretName is required when tls.enabled is true" .Values.tls.secretName -}}
+{{- $_ := required "tls.certKey is required when tls.enabled is true" .Values.tls.certKey -}}
+{{- $_ := required "tls.keyKey is required when tls.enabled is true" .Values.tls.keyKey -}}
+{{- end -}}
 {{- end -}}

@@ -1,6 +1,7 @@
 {{- include "mecak8s.validateImage" . -}}
 {{- include "mecak8s.validateRedis" . -}}
 {{- include "mecak8s.validateOIDC" . -}}
+{{- include "mecak8s.validateTLS" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -62,7 +63,17 @@ spec:
             {{- if .Values.oidc.jwksURI }}
             - --oidc-jwks-uri={{ .Values.oidc.jwksURI }}
             {{- end }}
+            {{- if .Values.oidc.caSecret }}
+            - --oidc-ca-cert-file=/var/run/secrets/oidc-ca/{{ .Values.oidc.caKey }}
+            {{- end }}
+            {{- if .Values.oidc.allowPrivateHTTPSIssuer }}
+            - --oidc-allow-private-https-issuer
+            {{- end }}
             - --oidc-max-jwks-staleness={{ .Values.oidc.maxJWKSStaleness }}
+            {{- end }}
+            {{- if .Values.tls.enabled }}
+            - --tls-cert=/var/run/secrets/tls/{{ .Values.tls.certKey }}
+            - --tls-key=/var/run/secrets/tls/{{ .Values.tls.keyKey }}
             {{- end }}
           ports:
             - {name: grpc, containerPort: 8080}
@@ -74,23 +85,41 @@ spec:
             capabilities: {drop: ["ALL"]}
             seccompProfile: {type: RuntimeDefault}
           startupProbe:
-            httpGet: {path: /readyz, port: http}
+            httpGet:
+              scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
+              path: /readyz
+              port: http
             periodSeconds: 5
             failureThreshold: 30
           readinessProbe:
-            httpGet: {path: /readyz, port: http}
+            httpGet:
+              scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
+              path: /readyz
+              port: http
             periodSeconds: 5
           livenessProbe:
-            httpGet: {path: /healthz, port: http}
+            httpGet:
+              scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
+              path: /healthz
+              port: http
             periodSeconds: 20
           lifecycle:
             preStop:
-              httpGet: {path: /drain, port: http}
+              httpGet:
+                scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
+                path: /drain
+                port: http
           resources: {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
             {{- if include "mecak8s.redisSecretMounted" . }}
             - {name: redis-credentials, mountPath: /var/run/secrets/redis, readOnly: true}
+            {{- end }}
+            {{- if .Values.tls.enabled }}
+            - {name: tls, mountPath: /var/run/secrets/tls, readOnly: true}
+            {{- end }}
+            {{- if .Values.oidc.caSecret }}
+            - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
       volumes:
         - name: tmp
@@ -110,4 +139,21 @@ spec:
               {{- if .Values.redis.usernameKey }}
               - {key: {{ .Values.redis.usernameKey | quote }}, path: {{ .Values.redis.usernameKey | quote }}}
               {{- end }}
+        {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.secretName }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.tls.certKey | quote }}, path: {{ .Values.tls.certKey | quote }}}
+              - {key: {{ .Values.tls.keyKey | quote }}, path: {{ .Values.tls.keyKey | quote }}}
+        {{- end }}
+        {{- if .Values.oidc.caSecret }}
+        - name: oidc-ca
+          secret:
+            secretName: {{ .Values.oidc.caSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
         {{- end }}

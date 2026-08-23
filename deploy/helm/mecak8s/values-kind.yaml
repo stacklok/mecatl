@@ -13,3 +13,24 @@ redis:
   credentialsSecret: ""
   local:
     enabled: true
+
+oidc:
+  enabled: true
+  issuer: https://dex.mecatl-vmcp.svc.cluster.local:5556
+  audience: mecatui-kind
+  allowPrivateHTTPSIssuer: true
+  caSecret: dex-fixture-ca
+  caKey: tls.crt
+
+service:
+  type: NodePort
+  grpcPort: 8080
+  httpPort: 8081
+  nodePorts:
+    grpc: 30081
+
+tls:
+  enabled: true
+  secretName: mecak8s-tls
+  certKey: tls.crt
+  keyKey: tls.key
