@@ -5,6 +5,10 @@ title: Hook system
 
 # Hook system
 
+This is the builder-facing reference for lifecycle hooks and the `HookRunner`
+contract. For the operator-facing permission and guardrail behavior surrounding
+hooks, see [Permissions and posture](/features/permissions-and-posture.md).
+
 Hooks are lifecycle gates wired into the agent loop. They fire at fixed phases — before a tool runs, after it returns, when a session starts, when it ends — and they can block an action outright, rewrite what the model sees, or simply observe and notify. Hooks are operator-deployed: the model has no way to install, modify, or disable them. Every event starts as allowed; hooks only restrict or transform.
 
 ## Hook phases

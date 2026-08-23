@@ -5,6 +5,10 @@ title: Permissions & guardrails
 
 # Permissions & guardrails
 
+This is the builder-facing reference for permission evaluation, delegated authority,
+and custom policy integration. For operator choices, configuration, and posture
+selection, see [Permissions and posture](/features/permissions-and-posture.md).
+
 mecatl gates tool execution with **two independent layers**. Layer 1 is a
 rule-based permission engine that fires on **every** tool call before execution
 and resolves to allow / ask / deny. Layer 2 is an optional model-backed guardrail

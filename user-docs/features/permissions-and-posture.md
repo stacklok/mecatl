@@ -16,6 +16,9 @@ Mecatl has two separate safety controls:
 The permission rules are always present, including when no configuration file
 exists. Guardrails are disabled until an operator configures a checker model.
 
+This page is the user/operator guide. For the evaluator, authority-set, and
+custom-policy contracts, see [Permissions & guardrails for builders](/building/what-you-get/permissions.md).
+
 ## Availability
 
 Permissions and posture apply to `mecated`, `mecak8s`, `mecatequi`, and the

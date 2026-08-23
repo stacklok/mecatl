@@ -5,11 +5,13 @@ title: Project rules
 
 # Project rules
 
-Project rules are per-file markdown rules — a finer-grained companion to
-`AGENTS.md`/`CLAUDE.md` — discovered from `.claude/rules/` (and the mecatl-native
-`.mecatl/rules/`). Each rule is a `<name>.md` file with an optional `paths:`
-frontmatter glob that scopes it, injected as a **turn-0 user message** so the model
-sees it alongside the project instructions on every run.
+This is the builder reference for the `RulesSource` discovery seam. Project rules
+are per-file Markdown companions to `AGENTS.md`/`CLAUDE.md`, discovered from
+`.claude/rules/` and `.mecatl/rules/` and optionally scoped with `paths:`
+frontmatter.
+
+For the user-facing explanation of project content and trust admission, see
+[Project instructions and rules](/features/project-instructions-and-rules.md).
 
 Rules are the pattern-2 instance of scoped context assembly: the same trust class
 as `AGENTS.md`/`CLAUDE.md` and the soul/persona. See
