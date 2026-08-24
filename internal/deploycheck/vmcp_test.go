@@ -155,11 +155,14 @@ func TestMecak8sVMCPPOC_Scenario3_Mecak8sTLSConnection(t *testing.T) {
 	if !strings.Contains(taskfile, "--values=deploy/helm/mecak8s/values-kind.yaml") {
 		t.Error("Kind setup does not install the TLS-enabled Kind values")
 	}
+	if !strings.Contains(taskfile, "--values=deploy/helm/mecak8s/values-kind-vmcp.yaml") {
+		t.Error("Kind setup does not layer the vMCP OIDC/TLS overlay (values-kind.yaml alone must stay secret-free for e2e/k8s)")
+	}
 }
 
 func TestMecak8sVMCPPOC_Scenario3_OIDCNegativeCases(t *testing.T) {
 	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
-	values := readRepoFile(t, "deploy/helm/mecak8s/values-kind.yaml")
+	values := readRepoFile(t, "deploy/helm/mecak8s/values-kind.yaml") + readRepoFile(t, "deploy/helm/mecak8s/values-kind-vmcp.yaml")
 	deployment := readRepoFile(t, "deploy/helm/mecak8s/templates/deployment.yaml")
 	dex := readRepoFile(t, "deploy/mecak8s-vmcp/dex.yaml")
 
@@ -232,7 +235,7 @@ func TestMecak8sVMCPPOC_Scenario3_SeparateDexClients(t *testing.T) {
 }
 
 func TestMecak8sVMCPPOC_Scenario3_NoScopeEnforcement(t *testing.T) {
-	values := readRepoFile(t, "deploy/helm/mecak8s/values-kind.yaml")
+	values := readRepoFile(t, "deploy/helm/mecak8s/values-kind.yaml") + readRepoFile(t, "deploy/helm/mecak8s/values-kind-vmcp.yaml")
 	deployment := readRepoFile(t, "deploy/helm/mecak8s/templates/deployment.yaml")
 
 	for _, forbidden := range []string{"scope", "--auth-token", "--oidc-insecure-allow-private-issuer"} {
