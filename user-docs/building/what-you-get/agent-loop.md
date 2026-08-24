@@ -67,7 +67,7 @@ Each turn follows a fixed sequence:
 2. **Maybe compact.** If the conversation is approaching the model's context limit, the loop compresses it before making the next call (see [Context limits & compaction](#context-limits--compaction)).
 3. **Call the model.** The loop streams chunks from the LLM provider — text deltas, reasoning, tool calls, and usage metadata. Each text chunk emits a `message.delta` event.
 4. **Dispatch tools.** If the model emitted tool calls, they are dispatched (see below). The results are recorded, and the loop continues to the next turn.
-5. **End turn.** If the model returned no tool calls, the run is complete.
+5. **End or continue.** If the model returned no tool calls and meaningful text, the run completes. A benign empty or reasoning-only turn receives a bounded continuation nudge, up to `MaxNoProgressNudges`; each nudge emits `EvNoProgress`. Exhaustion ends cleanly with `StopNoProgress`. A real terminal stop such as cancellation, refusal, truncation, or failure is reported as-is and is never nudged.
 
 A tool error does not abort the run — it becomes an error result fed back to the model. The model can retry or choose a different path.
 
@@ -189,7 +189,19 @@ A session that ends in any terminal state can be re-entered:
 - **Cancelled** → `Interrupt` closes out orphaned tool calls, then moves to idle.
 - **Failed** → `Recover` repairs the conversation and moves to idle, so a retry is *possible* — not guaranteed. If the failure had a permanent cause (a bad prompt, a persistently misconfigured provider), the retried run just fails cleanly again. When the server knows the failure was permanent (a 4xx rejection other than 408/429, a context-window overflow), mecatui shows a one-line summary block that names the error and plainly says retrying won't help — start a new session or change the request. A recover-notice warning appears once before the first turn so you see it before burning another provider call.
 
-The service layer handles this automatically when you submit a new prompt to a session. You do not call these methods directly in normal operation.
+A persisted `running` snapshot is not a fourth terminal state. It can mean the
+process crashed or lost its host while driving. The service repairs a stale
+running session only after acquiring the real run-entry lock and any configured
+lease, then uses `Abandon` to close out unanswered tool calls with abandonment-
+accurate synthetic results. A genuinely live run is not reset from its snapshot.
+
+An `awaiting` session is also not eligible for an ordinary new prompt: it holds a
+pending approval. Resume it through the approval path so the pending call is
+resolved exactly once; do not reset it to idle and discard the ask.
+
+The service layer handles terminal and stale-running recovery automatically when
+clients re-enter a session. You do not call these methods directly in normal
+operation.
 
 ---
 
