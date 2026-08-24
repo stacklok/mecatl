@@ -160,23 +160,16 @@ the OpenAI Responses-compatible wire implementation and OpenRouter base URL;
 retry/watchdog policy, persistence, authentication, transport, and observability
 remain host responsibilities for a direct embedder.
 
-## Follow the steps
+## Where to go next
 
-- **Extensions:** choose a persistence backend, hook runner, or child delegation
-  from the relevant builder guide.
-
-For the complete embedding reference, including every `agent.Deps` field and
-host-versus-engine boundary, see [Embed the engine directly](../deployment/embed-engine.md).
-
-## Next steps
-
-- [Embed the engine directly](../deployment/embed-engine.md) — dependency
-  footprint, ports, and composition responsibilities.
-- [Engine and session model](../what-you-get/engine-and-session.md) — the
-  `Engine`, `Session`, `Run`, and `Environment` objects.
-- [Core tools](../what-you-get/core-tools.md) — the catalog and built-in tools.
-- [Permissions and guardrails](/features/permissions-and-posture.md) — approvals
-  and safety behavior.
-- [Extension points](../extension-points/index.md) — replace or add capabilities.
-- [Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md) —
-  delegated child work.
+| You want to… | Read next |
+| --- | --- |
+| Understand `Engine`, `Session`, `Run`, and `Environment` | [Engine and session model](../what-you-get/engine-and-session.md) |
+| Add a tool or inspect the catalog | [Tool catalog](../extension-points/tool-catalog.md) |
+| Configure approval and denial rules | [PermissionPolicy](../extension-points/permission-policy.md) and [Permissions and posture](/features/permissions-and-posture.md) |
+| Add lifecycle hooks | [HookRunner](../extension-points/hook-runner.md) and [Hook system](../what-you-get/hooks.md) |
+| Persist sessions and event logs | [SessionStore and EventLog](../extension-points/session-store.md) |
+| Use another model provider | [LLMProvider](../extension-points/llm-provider.md) |
+| Run delegated child work | [Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md) |
+| Serve clients over gRPC or HTTP/SSE | [Drive via gRPC / HTTP](../deployment/grpc-http.md) |
+| Understand the complete embedding boundary | [Embed the engine directly](../deployment/embed-engine.md) |
