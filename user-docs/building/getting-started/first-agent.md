@@ -107,10 +107,39 @@ step changes that rule to require approval.
 For the complete interface, catalog registration rules, MCP integration, and
 progressive disclosure, see [Tool catalog](/building/extension-points/tool-catalog.md).
 
+## Approval: let the host decide
+
+A tool can require approval by returning `Ask` from the permission policy. The
+[approval example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-approval/main.go)
+uses the same `Ping` shape, but the policy asks before executing it. The host
+consumes the event stream and resolves the ask:
+
+```go
+if event.Type == session.EvPermissionAsk && event.Ask != nil {
+    run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
+}
+```
+
+It produces this sequence:
+
+```text
+tool.call
+permission.ask
+approval
+tool.result
+result
+```
+
+`AllowOnce` executes only this call. `AllowAlways` learns a session-scoped rule
+for the matching call. `Deny` skips execution and sends a model-visible error
+result back to the loop. A headless host must supply its own policy or verdict
+strategy; an approval request is not an automatic grant.
+
+For rule evaluation, scopes, and deny-dominant behavior, see [PermissionPolicy](/building/extension-points/permission-policy.md)
+and [Permissions and posture](/features/permissions-and-posture.md).
+
 ## Follow the steps
 
-- **Approval:** change the policy to `Ask` and handle the `permission.ask` event
-  in your host.
 - **Extensions:** choose a provider, persistence backend, hook runner, or child
   delegation from the relevant builder guide.
 
