@@ -22,11 +22,7 @@ func TestSessionStorageContinuity_Scenario1_AtomicCrashRecovery(t *testing.T) {
 
 	t.Run("temporary replacement shares destination directory", func(t *testing.T) {
 		dir := t.TempDir()
-		root, err := filepath.EvalSymlinks(dir)
-		if err != nil {
-			t.Fatalf("EvalSymlinks: %v", err)
-		}
-		expected := filepath.Join(root, canonicalDirName)
+		expected := filepath.Join(dir, canonicalDirName)
 		ops := defaultSnapshotOps()
 		createTemp := ops.createTemp
 		ops.createTemp = func(gotDir, pattern string) (*os.File, error) {

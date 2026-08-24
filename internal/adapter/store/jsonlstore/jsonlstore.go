@@ -133,6 +133,12 @@ func New(dir string) (*Store, error) {
 	return newStoreWithSnapshotOps(dir, defaultSnapshotOps())
 }
 
+// normalizeStoreRoot makes dir absolute and lexically clean. It deliberately
+// does NOT resolve symlinks: the store root is the path the operator configured,
+// so a deployment that points the store at a symlinked volume keeps seeing that
+// path in its own paths, locks and diagnostics. Every path the resolver derives
+// is rooted here, so swapping in filepath.EvalSymlinks would silently rewrite
+// them all (on macOS, where /var is a symlink to /private/var, for every store).
 func normalizeStoreRoot(dir string) (string, error) {
 	if dir == "" {
 		return "", errors.New("jsonlstore: store dir is empty")

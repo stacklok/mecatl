@@ -12,10 +12,9 @@ func TestStoreNormalizesRootAndConfinesInventoryNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	wantRoot, err := filepath.EvalSymlinks(filepath.Join(base, "store"))
-	if err != nil {
-		t.Fatalf("EvalSymlinks: %v", err)
-	}
+	// Lexical normalization only — symlinks in the operator's path survive, so the
+	// expectation must not be run through filepath.EvalSymlinks.
+	wantRoot := filepath.Join(base, "store")
 	if st.resolver.dir != wantRoot {
 		t.Fatalf("normalized store root = %q, want %q", st.resolver.dir, wantRoot)
 	}
