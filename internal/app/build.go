@@ -2670,7 +2670,7 @@ func requireAtomicSessionCreate(cfg Config, store port.SessionStore) error {
 		return nil
 	}
 	if _, ok := store.(port.SessionCreator); !ok {
-		return fmt.Errorf("ownership enforcement requires a session store with atomic create capability")
+		return errors.New("ownership enforcement requires a session store with atomic create capability")
 	}
 	return nil
 }
@@ -2680,7 +2680,7 @@ func requireAtomicScheduleCreate(cfg Config, store port.ScheduleStore) error {
 		return nil
 	}
 	if _, ok := store.(port.ScheduleCreator); !ok {
-		return fmt.Errorf("ownership enforcement requires a schedule store with atomic create capability")
+		return errors.New("ownership enforcement requires a schedule store with atomic create capability")
 	}
 	return nil
 }
