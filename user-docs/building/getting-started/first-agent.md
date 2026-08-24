@@ -151,7 +151,7 @@ go run .
 
 Copy the [OpenRouter example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-openrouter/main.go)
 into the clean module first. It reads `OPENROUTER_API_KEY` from the environment and defaults to
-`openai/gpt-4o-mini`. Set `OPENROUTER_MODEL` to another OpenRouter model ID when
+`openai/gpt-5.6-luna`. Set `OPENROUTER_MODEL` to another OpenRouter model ID when
 needed. This path makes a real network request and may incur provider charges;
 never put the key in source, command arguments, or documentation.
 

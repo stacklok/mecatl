@@ -18,7 +18,7 @@ import (
 func main() {
 	model := os.Getenv("OPENROUTER_MODEL")
 	if model == "" {
-		model = "openai/gpt-4o-mini"
+		model = "openai/gpt-5.6-luna"
 	}
 	engine := agent.NewEngine(agent.Deps{
 		LLM:     openai.New(openai.WithAPIKey(os.Getenv("OPENROUTER_API_KEY")), openai.WithBaseURL("https://openrouter.ai/api/v1")),
