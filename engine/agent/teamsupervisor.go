@@ -851,6 +851,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("agent: stamp team-member relationship: %w", err)
 	}
+	// The member is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// or carries delegated authority when the parent run is authority-bound.
 	if s.caps.parentSessionID != "" && s.caps.authorityBound {
 		if authorityErr := stampDelegatedLabels(sess, s.caps.owner, delegatedAuthority); authorityErr != nil {
 			if cleanup != nil {
@@ -863,6 +865,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.caps.inheritOwner(sess)
 	}
 	if err := s.stampDirectTeamRoot(sess, cleanup, spec.Name); err != nil {
+		return err
+	}
+	if err := s.publishMemberSession(ctx, spec.Name, sess, cleanup); err != nil {
 		return err
 	}
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)
@@ -1649,6 +1654,17 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		}
 	}
 	return text, stop, usage
+}
+
+func (s *Supervisor) publishMemberSession(ctx context.Context, name string, sess *session.Session, cleanup func() error) error {
+	if err := createSessionIfSupported(ctx, s.store, sess); err != nil {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+		s.team.RemoveMember(name)
+		return fmt.Errorf("agent: create durable team-member session %q: %w", sess.ID, err)
+	}
+	return nil
 }
 
 // persistMember best-effort saves a member's session to the injected store so an

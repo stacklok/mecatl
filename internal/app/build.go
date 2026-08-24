@@ -1635,6 +1635,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, err
 	}
+	if err := requireAtomicSessionCreate(cfg, store); err != nil {
+		storeClose()
+		commandConnClose()
+		return nil, err
+	}
 	// Agent seam (Phase C2): resolve the agent-definition registry EXACTLY
 	// ONCE for the whole composition — the build-time catalog's Subagent/Team
 	// tools, the per-session engine factory, the ListAgents snapshot, and the
@@ -2651,6 +2656,16 @@ func buildProvider(ctx context.Context, cfg Config) (*providerRegistry, port.LLM
 		return nil, nil, errNoProvider
 	}
 	return reg, entry.provider, nil
+}
+
+func requireAtomicSessionCreate(cfg Config, store port.SessionStore) error {
+	if !cfg.OwnershipEnforced {
+		return nil
+	}
+	if _, ok := store.(port.SessionCreator); !ok {
+		return fmt.Errorf("ownership enforcement requires a session store with atomic create capability")
+	}
+	return nil
 }
 
 // buildStore constructs the SessionStore plus its durable EventLog (cloud-native

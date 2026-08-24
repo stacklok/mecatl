@@ -2493,6 +2493,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if !ok {
 		return errResult, nil
 	}
+	// The child is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// or carries delegated authority when the parent run is authority-bound.
 	if resuming && caps.authorityBound {
 		persisted, bound := child.BoundAuthority()
 		if authorityErr := validateResumedAuthority(caps.authority, persisted, bound); authorityErr != nil {
@@ -2509,6 +2511,15 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 		}
 	} else {
 		caps.inheritOwner(child)
+	}
+	// A FRESH child is published create-only: its id derives from a provider
+	// tool-call id, so an overwrite would clobber another owner's transcript. A
+	// resume loads an existing snapshot and must not be re-created.
+	if !resuming {
+		if err := createSessionIfSupported(ctx, t.store, child); err != nil {
+			_ = cleanupWS()
+			return session.NewToolError(call.ID, fmt.Sprintf("Subagent: durable child session could not be created: %v", err)), nil
+		}
 	}
 	// Tear down the run workspace after the child fully drains. For a writable
 	// (direct-write) child this is a no-op — cleanupWS is the no-op returned by
@@ -2858,6 +2869,14 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	} else if authorityErr := stampDelegatedLabels(child, b.caps.owner, b.authority); authorityErr != nil {
 		endOnError(session.NewToolError(b.call.ID, "Subagent: failed to stamp delegated authority: "+authorityErr.Error()))
 		return
+	}
+	// Create-only for a fresh background child, same reason as the foreground path.
+	if !b.resuming {
+		if err := createSessionIfSupported(ctx, t.store, child); err != nil {
+			endOnError(session.NewToolError(b.call.ID,
+				fmt.Sprintf("Subagent: durable child session could not be created: %v", err)))
+			return
+		}
 	}
 	// RESUME-START persist, mirroring prepareChildSession: refresh the resumed
 	// snapshot's last-modified time so the child-session GC's age pass never
@@ -4545,6 +4564,17 @@ func recordChildCauseOnSnapshot(child *session.Session, stop session.StopReason,
 	if stop == session.StopError && cause != "" {
 		_ = child.RecordLastError(cause)
 	}
+}
+
+func createSessionIfSupported(ctx context.Context, store port.SessionStore, sess *session.Session) error {
+	if store == nil {
+		return nil
+	}
+	creator, ok := store.(port.SessionCreator)
+	if !ok {
+		return nil
+	}
+	return creator.Create(ctx, sess)
 }
 
 func (t *SubagentTool) persistChild(ctx context.Context, child *session.Session) {

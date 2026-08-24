@@ -1080,6 +1080,8 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
 		return res, session.StopError
 	}
+	// The branch is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// or carries delegated authority when the parent run is authority-bound.
 	if caps.authorityBound {
 		if authorityErr := stampDelegatedLabels(childSess, caps.owner, delegatedAuthority); authorityErr != nil {
 			res.failed = true
@@ -1089,6 +1091,14 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		}
 	} else {
 		caps.inheritOwner(childSess)
+	}
+	// Publish create-only: a branch id derived from a provider tool-call id must
+	// never overwrite an existing owner's durable transcript.
+	if err := createSessionIfSupported(ctx, t.store, childSess); err != nil {
+		res.failed = true
+		res.failReason = neutraliseChildText(fmt.Sprintf("durable branch session could not be created: %v", err))
+		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
+		return res, session.StopError
 	}
 
 	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt})

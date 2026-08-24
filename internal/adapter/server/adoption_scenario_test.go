@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,6 +76,14 @@ func adoptionService(t *testing.T) (*server.Service, *memstore.Store) {
 func adoptionServiceWithLease(t *testing.T, lease port.SessionLease) (*server.Service, *memstore.Store) {
 	t.Helper()
 	store := memstore.New()
+	return adoptionServiceWithStore(t, store, lease), store
+}
+
+// adoptionServiceWithStore builds a Service over a CALLER-SUPPLIED store, so two
+// independent Services can share one backend — the cross-service create-collision
+// scenario. adoptionServiceWithLease is the single-service convenience over it.
+func adoptionServiceWithStore(t *testing.T, store port.SessionStore, lease port.SessionLease) *server.Service {
+	t.Helper()
 	factory := func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 		if sel.ProviderID == "missing" || sel.ModelID == "missing" {
 			return server.SessionEngineResult{}, server.ErrInvalidArgument
@@ -98,7 +107,7 @@ func adoptionServiceWithLease(t *testing.T, lease port.SessionLease) (*server.Se
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	return svc, store
+	return svc
 }
 
 func saveLegacy(t *testing.T, store *memstore.Store, id session.SessionID, owner *session.Principal, state session.State) *session.Session {
@@ -371,6 +380,36 @@ func TestSessionStorageContinuity_Scenario7_AdoptionIdempotency(t *testing.T) {
 	}
 	if first.ID != second.ID || len(second.Conversation.Messages) != len(first.Conversation.Messages) {
 		t.Fatalf("retry target = %q/%d, want %q/%d", second.ID, len(second.Conversation.Messages), first.ID, len(first.Conversation.Messages))
+	}
+}
+
+func TestSessionStorageContinuity_Scenario7_AdoptionCrossServiceRetryIsAtomic(t *testing.T) {
+	inner := memstore.New()
+	store := &barrierCreateStore{Store: inner, release: make(chan struct{})}
+	firstService := adoptionServiceWithStore(t, store, nil)
+	secondService := adoptionServiceWithStore(t, store, nil)
+	ctx := adoptionContext("alice")
+	saveLegacy(t, inner, "legacy-cross-service", adoptionPrincipal("alice"), session.StateCompleted)
+
+	var wg sync.WaitGroup
+	results := make([]*session.Session, 2)
+	errs := make([]error, 2)
+	services := []*server.Service{firstService, secondService}
+	wg.Add(2)
+	for i := range services {
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = services[i].AdoptSession(ctx, "legacy-cross-service", "retry-key", adoptionBindings())
+		}(i)
+	}
+	wg.Wait()
+	for i := range errs {
+		if errs[i] != nil || results[i] == nil {
+			t.Fatalf("adoption %d = (%+v, %v), want idempotent success", i, results[i], errs[i])
+		}
+	}
+	if results[0].ID != results[1].ID {
+		t.Fatalf("adoption targets differ: %q != %q", results[0].ID, results[1].ID)
 	}
 }
 

@@ -270,6 +270,24 @@ func adoptionSourceID(s *session.Session) session.SessionID {
 	return s.Adoption.AdoptionSourceID
 }
 
+func (s *Service) publishAdoption(ctx context.Context, target *session.Session, sourceID session.SessionID, owner *session.Principal, digest string) (*session.Session, bool, error) {
+	if err := s.persistNewSession(ctx, target); err != nil {
+		s.mu.Lock()
+		delete(s.sessionEngines, target.ID)
+		delete(s.sessionEnvironments, target.ID)
+		s.mu.Unlock()
+		if errors.Is(err, port.ErrSessionAlreadyExists) {
+			existing, collisionErr := s.existingAdoption(ctx, target.ID, sourceID, owner, digest)
+			if existing == nil && collisionErr == nil {
+				return nil, false, fmt.Errorf("%w: adoption target disappeared after create collision", ErrInternal)
+			}
+			return existing, false, collisionErr
+		}
+		return nil, false, fmt.Errorf("server: persist adopted session: %w", err)
+	}
+	return target, true, nil
+}
+
 // AdoptSession atomically publishes a new explicit-main copy of one eligible
 // legacy source. The source is never transitioned or saved. The target ID and
 // persisted request digest make retries durable and caller/source-bound.
@@ -340,13 +358,7 @@ func (s *Service) AdoptSession(ctx context.Context, sourceID session.SessionID, 
 		s.sessionEnvironments[targetID] = tool.MustEnvironment(bindings.EnvironmentRef, nofs.New(), nil)
 	}
 	s.mu.Unlock()
-	if err := s.cfg.Store.Save(ctx, target); err != nil {
-		s.mu.Lock()
-		delete(s.sessionEngines, targetID)
-		delete(s.sessionEnvironments, targetID)
-		s.mu.Unlock()
-		return nil, fmt.Errorf("server: persist adopted session: %w", err)
-	}
-	cleanup = false
-	return target, nil
+	published, ownsPublication, err := s.publishAdoption(ctx, target, sourceID, owner, digest)
+	cleanup = !ownsPublication
+	return published, err
 }

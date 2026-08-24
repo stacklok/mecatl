@@ -208,7 +208,8 @@ type Config struct {
 	// OwnershipEnforced is true only when the request edge has a verifier wired.
 	// Its zero value preserves the ownerless compatibility path. When enabled,
 	// create retries compare the verified issuer/subject pair before exposing an
-	// existing caller-selected ID.
+	// existing caller-selected ID, and the store must implement port.SessionCreator
+	// so no generated, forked, or scheduled session can overwrite an existing snapshot.
 	OwnershipEnforced bool
 	// Workspaces builds a Workspace for a session root. Required.
 	Workspaces WorkspaceFactory
@@ -1457,23 +1458,47 @@ func seedCarryover(sess *session.Session, snap []session.Message) error {
 // must match. It deliberately excludes the owner: that comes only from the
 // verified context and is checked separately.
 type createRequest struct {
-	workspace string
-	mode      session.PermissionMode
-	limits    session.Limits
-	selector  ProviderSelector
-	profile   SessionProfile
-	sourceID  session.SessionID
+	workspace    string
+	mode         session.PermissionMode
+	limits       session.Limits
+	selector     ProviderSelector
+	profile      SessionProfile
+	sourceID     session.SessionID
+	kind         session.SessionKind
+	relationship session.SessionRelationship
+}
+
+func newCreateRequest(workspace string, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, scheduled *session.SessionRelationship) createRequest {
+	request := createRequest{workspace: workspace, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain}
+	if scheduled != nil {
+		request.kind = session.SessionKindScheduled
+		request.relationship = *scheduled
+	}
+	return request
 }
 
 func (r createRequest) matches(sess *session.Session) bool {
 	return r.sourceID == "" && sess.Workspace == r.workspace && sess.Mode == r.mode &&
 		sess.Limits == r.limits && sess.ProviderID == r.selector.ProviderID &&
 		sess.ModelID == r.selector.ModelID && sess.ReasoningEffort == r.selector.ReasoningEffort &&
-		sess.Profile == string(r.profile)
+		sess.Profile == string(r.profile) && sess.Kind == r.kind && sess.Relationship == r.relationship
 }
 
 func sameCreateOwner(a, b *session.Principal) bool {
 	return (a == nil && b == nil) || a.SameIdentity(b)
+}
+
+func (s *Service) classifyCreateWinner(existing *session.Session, owner *session.Principal, request createRequest) (*session.Session, error) {
+	if !s.cfg.OwnershipEnforced {
+		return nil, fmt.Errorf("%w: session id %q already exists", ErrInvalidArgument, existing.ID)
+	}
+	if !sameCreateOwner(existing.Owner, owner) {
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, existing.ID)
+	}
+	if !request.matches(existing) {
+		return nil, fmt.Errorf("%w: session id %q was retried with a different request", ErrInvalidArgument, existing.ID)
+	}
+	return existing, nil
 }
 
 // reserveSessionID validates a caller-chosen session id (WithSessionID, ADR 0059
@@ -1515,21 +1540,45 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, ow
 	// silently pass, so it is propagated.
 	if existing, lerr := s.cfg.Store.Load(ctx, id); lerr == nil && existing != nil {
 		release()
-		if !s.cfg.OwnershipEnforced {
-			return nil, nil, fmt.Errorf("%w: session id %q already exists", ErrInvalidArgument, id)
-		}
-		if sameCreateOwner(existing.Owner, owner) {
-			if request.matches(existing) {
-				return existing, nil, nil
-			}
-			return nil, nil, fmt.Errorf("%w: session id %q was retried with a different request", ErrInvalidArgument, id)
-		}
-		return nil, nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+		winner, classifyErr := s.classifyCreateWinner(existing, owner, request)
+		return winner, nil, classifyErr
 	} else if lerr != nil && !errors.Is(lerr, port.ErrSessionNotFound) {
 		release()
 		return nil, nil, fmt.Errorf("server: probe session id %q: %w", id, lerr)
 	}
 	return nil, release, nil
+}
+
+func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) error {
+	if creator, ok := s.cfg.Store.(port.SessionCreator); ok {
+		return creator.Create(ctx, sess)
+	}
+	if s.cfg.OwnershipEnforced {
+		return fmt.Errorf("%w: ownership enforcement requires a session store with atomic create capability", ErrConfig)
+	}
+	return s.cfg.Store.Save(ctx, sess)
+}
+
+func (s *Service) persistCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest) (*session.Session, error) {
+	if err := s.persistNewSession(ctx, sess); err != nil {
+		if existing, ok, collisionErr := s.resolveCreateCollision(ctx, sess.ID, owner, request, err); ok || collisionErr != nil {
+			return existing, collisionErr
+		}
+		return nil, fmt.Errorf("server: persist session: %w", err)
+	}
+	return sess, nil
+}
+
+func (s *Service) resolveCreateCollision(ctx context.Context, id session.SessionID, owner *session.Principal, request *createRequest, createErr error) (*session.Session, bool, error) {
+	if !errors.Is(createErr, port.ErrSessionAlreadyExists) || request == nil {
+		return nil, false, nil
+	}
+	existing, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		return nil, false, fmt.Errorf("server: load session create winner: %w", err)
+	}
+	winner, err := s.classifyCreateWinner(existing, owner, *request)
+	return winner, err == nil, err
 }
 
 func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
@@ -1568,12 +1617,14 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// idSet. A caller-chosen id is validated + reserved by reserveSessionID (see
 	// its doc for the three collision sources); the reservation is released on
 	// EVERY exit path.
+	var retryRequest *createRequest
 	mintID := s.cfg.NewID
 	if opts.idSet {
 		if opts.id == "" {
 			return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
 		}
-		request := createRequest{workspace: workspace, mode: mode, limits: limits, selector: sel, profile: profile, sourceID: opts.sourceSessionID}
+		request := newCreateRequest(workspace, mode, limits, sel, profile, opts.sourceSessionID, opts.scheduled)
+		retryRequest = &request
 		existing, release, err := s.reserveSessionID(ctx, opts.id, owner, request)
 		if err != nil {
 			return nil, err
@@ -1632,13 +1683,10 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
-		if err := s.cfg.Store.Save(ctx, sess); err != nil {
-			return nil, fmt.Errorf("server: persist session: %w", err)
-		}
-		return sess, nil
+		return s.persistCreatedSession(ctx, sess, owner, retryRequest)
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts.scheduled, carriedAuthority, carriedAuthorityBound)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts.scheduled, carriedAuthority, carriedAuthorityBound, retryRequest)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -1649,7 +1697,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 // evicts the reservation and tears the freshly-built engine down so a failed
 // create leaks neither a slot nor a connection. See createSession for the
 // profile-aware workspace rule and the carryover snapshot semantics.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, scheduled *session.SessionRelationship, carriedAuthority session.Authority, carriedAuthorityBound bool) (*session.Session, error) {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, scheduled *session.SessionRelationship, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest) (*session.Session, error) {
 	if s.cfg.SessionEngine == nil {
 		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 	}
@@ -1733,11 +1781,11 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	}
 	s.mu.Unlock()
 
-	if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
-		// The engine was built and the slot reserved but the session could not be
-		// persisted: evict the reservation (engine slot AND any environment
-		// override) and tear the per-session MCP manager down so a failed create
-		// leaks neither a slot nor a connection.
+	persisted, perr := s.persistCreatedSession(ctx, sess, owner, retryRequest)
+	if perr != nil || persisted != sess {
+		// The engine was built and the slot reserved but this newly-built session
+		// was not published: evict the slot and environment. On an idempotent
+		// cross-service retry, persisted is the already-published winner.
 		s.mu.Lock()
 		delete(s.sessionEngines, sess.ID)
 		delete(s.sessionEnvironments, sess.ID)
@@ -1745,7 +1793,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		if closeFn != nil {
 			_ = closeFn()
 		}
-		return nil, fmt.Errorf("server: persist session: %w", serr)
+		return persisted, perr
 	}
 	return sess, nil
 }
@@ -2487,7 +2535,7 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 	// leaves a valid persisted session that self-heals at the next StartRunContent
 	// (needsRehydration re-runs rehydrateSession). Do NOT Store.Delete on failure —
 	// it would race a concurrent rehydrating StartRunContent on the same id.
-	if err := s.cfg.Store.Save(ctx, forked); err != nil {
+	if err := s.persistNewSession(ctx, forked); err != nil {
 		return "", fmt.Errorf("server: persist forked session: %w", err)
 	}
 	if s.sessionNeedsPerFactory(sel, nil, profile, forked.Workspace) {

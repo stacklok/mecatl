@@ -428,6 +428,19 @@ func TestBuildCatalogBaseOnlyMemoryDriverOmitsLifecycleTools(t *testing.T) {
 	}
 }
 
+func TestOwnershipRequiresAtomicSessionCreateCapability(t *testing.T) {
+	legacy := plainSessionStore{inner: memstore.New()}
+	if err := requireAtomicSessionCreate(Config{OwnershipEnforced: true}, legacy); err == nil || !strings.Contains(err.Error(), "atomic create") {
+		t.Fatalf("ownership guard error = %v, want atomic-create requirement", err)
+	}
+	if err := requireAtomicSessionCreate(Config{}, legacy); err != nil {
+		t.Fatalf("ownerless legacy store rejected: %v", err)
+	}
+	if err := requireAtomicSessionCreate(Config{OwnershipEnforced: true}, memstore.New()); err != nil {
+		t.Fatalf("atomic store rejected: %v", err)
+	}
+}
+
 // TestBuildRejectsExclusiveStoreConfig pins the Build()-level call site of
 // validateDriverConfig: an exclusivity misconfig fails the WHOLE build, not
 // just the helper in isolation.
