@@ -13,7 +13,7 @@ mecatl ships three distinct observability channels and a resilience decorator th
 
 | Channel | What it carries |
 |---|---|
-| **Prometheus metrics** (`/metrics`) | Domain counters, gauges, and latency histograms — always on |
+| **Prometheus metrics** (`/metrics`) | Domain counters, gauges, and latency histograms — composition-dependent |
 | **OTel traces** (OTLP) | Run/turn/tool spans — on when `--otlp-endpoint` is set |
 | **Structured diagnostics** (stderr/log file) | Lifecycle and degraded-mode warnings from the harness |
 | **Tool call audit** (`jsonlstore` sidecar) | One structured record per tool execution, with timing |
@@ -24,9 +24,11 @@ All four are injected at composition. Nothing reaches for a global logger or har
 
 ## Prometheus metrics
 
-The admin listener (`--metrics-addr`, default `127.0.0.1:9090`) serves `/metrics` via an OTel Prometheus exporter. It is **loopback-only and unauthenticated** — never bind it to a non-loopback address.
+The admin listener (`--metrics-addr`, default `127.0.0.1:9090` in `mecated`) serves `/metrics` via an OTel Prometheus exporter. It is **loopback-only and unauthenticated** — never bind it to a non-loopback address. `mecak8s` disables this endpoint by default; enable it explicitly with its metrics configuration when a local scrape endpoint is required.
 
-Metrics are always on. No flag is needed to enable them.
+Metrics are enabled when the deployment exposes the admin listener. They are not
+part of the importable engine by themselves; embedders must wire their own
+recorder and exporter.
 
 ### Series emitted
 
@@ -164,19 +166,18 @@ The harness routes operational logging through an injected `Diagnostics` port ra
 
 ### What the agent loop logs
 
-The agent loop emits exactly three run-scoped diagnostic lines:
+The loop sends a small set of operator-only facts through diagnostics, including
+compaction failures, policy or authority outcomes, persistence failures, delivery
+queue problems, instruction-fragment assembly failures, observer/profile refresh
+failures, and ask-ID fallback warnings. The exact set can grow when a fact has no
+corresponding `session.Event`; the invariant is that events own session facts and
+are not duplicated as log lines. Build-time composition facts are logged once by
+`app.Build`, while per-run diagnostics are session-correlated.
 
-1. **Compaction failure** (Warn) — when conversation compaction fails and the run continues uncompacted.
-2. **Policy deny** (Info, keys: `tool`, `reason`) — when the permission policy resolves a tool call to Deny.
-3. **Background drain abandon** (Warn, keys: `ids`) — at run end, if a background subagent is still alive after the two-phase cancel+join and must be abandoned. Rare by construction.
-
-Everything else is carried by the event stream (`session.Event` taxonomy): cancellation, tool errors, compaction success, permission asks and allows. Those are not duplicated in diagnostics.
-
-One event worth calling out for OpenRouter users: `provider.route`. When the serving provider is `openrouter`, each turn reports which **downstream** inference provider OpenRouter actually routed to (mecatl's "provider" stays the wire adapter). It rides the event stream as a `provider.route` event — rendered in mecatui as a transient `via <slug>` footer status — and is absent on a cache hit (OpenRouter strips the routing metadata from cached responses). You can steer the choice per model with the operator-tier `openrouter:` settings block; see the [model-routing guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md#5b-openrouter-downstream-provider-routing-openrouter-issue-480).
-
-Build-time composition facts (store kind, compaction strategy, feature flags) are logged once in `app.Build` and never re-emitted per session.
-
----
+`provider.route` is an event-stream fact rather than a diagnostic. When the
+serving provider is OpenRouter, it reports the downstream inference provider
+selected for a turn; it may be absent on a cache hit. Configure downstream routing
+in the operator-tier OpenRouter settings. See the [model-routing guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/model-routing.md#5b-openrouter-downstream-provider-routing-openrouter-issue-480).
 
 ## Tool call audit
 

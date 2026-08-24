@@ -5,7 +5,7 @@ title: Scheduled tasks
 
 # Scheduled tasks
 
-Scheduled tasks let an operator register a saved prompt to run on a cron cadence or once at a future time, and have mecatl drive that run **autonomously, durably, and exactly-once** across a multi-replica deployment — with no human present at fire time.
+Scheduled tasks let an operator register a saved prompt to run on a cron cadence or once at a future time, and have mecatl drive that run **autonomously, durably, and with at-most-once slot claiming** across a multi-replica deployment — with no human present at fire time.
 
 This exists because every other run in mecatl starts with a human (or a client) sending a prompt. Unattended deployments — a nightly digest, an hourly heartbeat, a one-shot reminder — need a way to fire a prompt on a schedule without a human to approve a tool call, re-issue a prompt, or recover a stalled turn. So a fire is bounded (subagent-grade limits), posture-pinned (an explicit mutating opt-in, never "the schedule runs in yolo"), and recoverable through the same run-entry seams a human-driven run uses.
 
@@ -26,7 +26,7 @@ The store is ground truth. An in-memory timer, if one exists, is only a derived 
 
 The core contract is `Claim`: it atomically advances `NextFireAt` **before** the fire runs, along with `LastFireAt`, `FireCount`, and a `LastFireSessionID` placeholder (`port.PendingFireSessionID`). Once a slot is claimed, a peer replica's `Due` no longer returns it, so a second `Claim` on the same slot is structurally impossible. There's no owner/claim-holder field the way `SessionLease` has one — the durable `NextFireAt` advance *is* the fence.
 
-The trade-off: a crash mid-fire skips the slot, because the advance already happened. A recurring schedule self-heals on the next tick via the misfire policy; a one-shot fire can be lost. This is the documented cost of exactly-once semantics without a distributed transaction.
+The trade-off: a crash mid-fire skips the slot, because the advance already happened. A recurring schedule self-heals on the next tick via the misfire policy; a one-shot fire can be lost. This is the documented cost of at-most-once slot claiming without a distributed transaction.
 
 `ClaimNow` is the manual-trigger sibling — the same atomic advance, but without the due-check, so an operator can force an immediate fire that still claims atomically.
 
