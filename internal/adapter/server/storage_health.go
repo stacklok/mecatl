@@ -128,7 +128,14 @@ func ownerlessSessionInventory(ctx context.Context, pager port.SessionMetadataPa
 				inventory.SessionIDsTruncated = inventory.SessionCount > len(inventory.SessionIDs)
 				return inventory, nil
 			}
-			if len(page.Sessions) == 0 || cursor != nil && *page.NextCursor == *cursor {
+			// No-progress is a cursor that did not ADVANCE. An empty page is not
+			// itself a stall: rows this walk already passed can be deleted under it
+			// — retention and the child GC run concurrently — leaving a legitimate
+			// empty page with an advancing cursor. Cursor KEY comparison, not struct
+			// equality: SessionMetadataCursor embeds a time.Time, whose == compares
+			// the monotonic reading and location pointer.
+			if cursor != nil &&
+				page.NextCursor.ModifiedAt.Equal(cursor.ModifiedAt) && page.NextCursor.ID == cursor.ID {
 				return OwnerlessCutoverInventory{}, ErrStorageHealthBackend
 			}
 			next := *page.NextCursor

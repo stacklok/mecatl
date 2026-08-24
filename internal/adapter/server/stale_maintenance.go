@@ -64,7 +64,13 @@ func (s *Service) StaleRunningCandidates(ctx context.Context) ([]port.SessionMet
 		if page.NextCursor == nil {
 			return out, nil
 		}
-		if len(page.Sessions) == 0 || cursor != nil && *page.NextCursor == *cursor {
+		// No-progress is a cursor that did not ADVANCE; an empty page is not itself
+		// a stall, since concurrent deletion can empty a page the walk has already
+		// passed. Cursor KEY comparison, not struct equality: SessionMetadataCursor
+		// embeds a time.Time, and == on it compares the monotonic reading and the
+		// location pointer, so the guard would never fire.
+		if cursor != nil &&
+			page.NextCursor.ModifiedAt.Equal(cursor.ModifiedAt) && page.NextCursor.ID == cursor.ID {
 			return nil, port.ErrSessionMetadataCursorRestart
 		}
 		next := *page.NextCursor

@@ -180,3 +180,71 @@ func TestStorageHealthUnsupportedBackendIsHonest(t *testing.T) {
 		t.Fatalf("unsupported backend status = %+v", status)
 	}
 }
+
+// TestOwnerlessInventoryToleratesAnEmptyPageThatAdvances pins that the cutover
+// inventory treats a NO-PROGRESS CURSOR as the backend fault, not an empty page.
+//
+// Rows the walk has already passed can be deleted under it — retention and the
+// child GC run concurrently with an operator's preflight — so a page can come
+// back empty while the cursor legitimately advances. Failing there turned a
+// normal race into "storage health unavailable", which is exactly the signal an
+// operator consults to decide whether an OIDC cutover is safe.
+func TestOwnerlessInventoryToleratesAnEmptyPageThatAdvances(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	call := 0
+	store := &pagingOverrideStore{
+		healthStore: &healthStore{},
+		page: func(_ context.Context, _ port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+			call++
+			switch call {
+			case 1:
+				next := port.SessionMetadataCursor{ModifiedAt: base, ID: "a"}
+				return port.SessionMetadataPage{
+					Sessions:   []port.SessionDiscoveryMeta{{ID: "a", ModifiedAt: base}},
+					NextCursor: &next,
+				}, nil
+			case 2:
+				// Emptied by a concurrent sweep, but the cursor MOVED.
+				next := port.SessionMetadataCursor{ModifiedAt: base.Add(time.Second), ID: "b"}
+				return port.SessionMetadataPage{NextCursor: &next}, nil
+			default:
+				return port.SessionMetadataPage{}, nil
+			}
+		},
+	}
+	svc := storageHealthService(t, store, func(context.Context) bool { return true })
+
+	health, err := svc.StorageHealth(context.Background())
+	if err != nil {
+		t.Fatalf("an empty page with an advancing cursor was reported as a backend failure: %v", err)
+	}
+	if !health.Ownerless.SessionsAvailable {
+		t.Fatal("inventory did not complete")
+	}
+	if health.Ownerless.SessionCount != 1 {
+		t.Fatalf("ownerless session count = %d, want the one ownerless row seen before the empty page", health.Ownerless.SessionCount)
+	}
+}
+
+// TestOwnerlessInventoryStillRefusesAStalledCursor is the negative control: a
+// pager that returns the SAME cursor is a genuine stall and must still fail,
+// so the fix above did not simply remove the bound.
+func TestOwnerlessInventoryStillRefusesAStalledCursor(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	stuck := port.SessionMetadataCursor{ModifiedAt: base, ID: "a"}
+	store := &pagingOverrideStore{
+		healthStore: &healthStore{},
+		page: func(_ context.Context, _ port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+			next := stuck
+			return port.SessionMetadataPage{
+				Sessions:   []port.SessionDiscoveryMeta{{ID: "a", ModifiedAt: base}},
+				NextCursor: &next,
+			}, nil
+		},
+	}
+	svc := storageHealthService(t, store, func(context.Context) bool { return true })
+
+	if _, err := svc.StorageHealth(context.Background()); err == nil {
+		t.Fatal("a pager whose cursor never advances was accepted; the walk would loop forever")
+	}
+}
