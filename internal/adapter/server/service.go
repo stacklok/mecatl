@@ -780,6 +780,11 @@ type Service struct {
 	mu    sync.Mutex
 	runs  map[session.SessionID]*runState
 	teams map[string]*teamState
+	// teamsReserving counts CreateTeam calls that have passed the MaxTeams check
+	// but have not yet registered. Enrolment acquires member leases and publishes
+	// durable member snapshots, so the cap must be claimed BEFORE that work: a
+	// capacity refusal afterwards would strand both. Guarded by mu, like teams.
+	teamsReserving int
 	// sessionEngines holds the per-session engines — built for a session that needs
 	// a non-default provider/model selector (gRPC/HTTP CreateSession) OR
 	// client-provided MCP servers (ACP session/new). The ACP surface drains them on

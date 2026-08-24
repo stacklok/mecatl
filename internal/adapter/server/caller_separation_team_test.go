@@ -80,6 +80,10 @@ func callerCtx(sub string) context.Context {
 // ownedTeamService is teamServiceWithStore's ownership-enforcing sibling: the
 // gRPC CreateTeam path with a verifier wired.
 func ownedTeamService(t *testing.T, llm *mockllm.Provider) (*server.Service, port.SessionStore) {
+	return ownedTeamServiceWithCap(t, llm, 0)
+}
+
+func ownedTeamServiceWithCap(t *testing.T, llm *mockllm.Provider, maxTeams int) (*server.Service, port.SessionStore) {
 	t.Helper()
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	store := memstore.New()
@@ -101,6 +105,7 @@ func ownedTeamService(t *testing.T, llm *mockllm.Provider) (*server.Service, por
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		MemberEngine:      memberEngine,
 		OwnershipEnforced: true,
+		MaxTeams:          maxTeams,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -147,4 +152,54 @@ func TestCallerSeparation_GRPCTeamMembersAreOwnerStamped(t *testing.T) {
 	if _, err := svc.GetSession(ctx, memberID); err != nil {
 		t.Fatalf("team owner cannot read its own member: %v", err)
 	}
+}
+
+// TestCreateTeamRefusedAtCapacityLeavesNothingBehind pins that a full registry
+// refuses BEFORE any lease or durable write.
+//
+// Enrolment acquires each member's cross-process lease and publishes a durable
+// member snapshot. Checking MaxTeams afterwards meant a capacity refusal stranded
+// both: leases no peer replica could take until expiry, and member records that —
+// once owner-stamped — count against the ownerless/retention picture forever. A
+// caller could drive that in a loop simply by creating teams against a full
+// registry.
+func TestCreateTeamRefusedAtCapacityLeavesNothingBehind(t *testing.T) {
+	svc, store := ownedTeamServiceWithCap(t, mockllm.New(mockllm.TextTurn("x")), 1)
+	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	ctx := session.WithPrincipal(context.Background(), alice)
+	roster := []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}}
+
+	// Fill the single slot.
+	if _, _, err := svc.CreateTeam(ctx, "/ws", "first", "goal", 0, roster); err != nil {
+		t.Fatalf("first CreateTeam: %v", err)
+	}
+
+	// The second must be refused, and must not have written anything.
+	before := storedSessionIDs(t, store)
+	id, _, err := svc.CreateTeam(ctx, "/ws", "second", "goal", 0, roster)
+	if !errors.Is(err, server.ErrTooManyTeams) {
+		t.Fatalf("second CreateTeam = (%q, %v), want ErrTooManyTeams", id, err)
+	}
+	after := storedSessionIDs(t, store)
+	if len(after) != len(before) {
+		t.Fatalf("a refused CreateTeam published %d durable session(s): before=%v after=%v",
+			len(after)-len(before), before, after)
+	}
+}
+
+func storedSessionIDs(t *testing.T, store port.SessionStore) []session.SessionID {
+	t.Helper()
+	lister, ok := store.(port.PrunableStore)
+	if !ok {
+		t.Skip("store does not enumerate sessions")
+	}
+	rows, err := lister.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	out := make([]session.SessionID, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.ID)
+	}
+	return out
 }
