@@ -2189,9 +2189,16 @@ func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*sessio
 // session. Authorization, kind/state/liveness checks, and lease acquisition are
 // serialized under the same per-session mutex used by prompt starts.
 func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title string) (*session.Session, error) {
+	absent, err := s.managementOwnershipPreflight(ctx, id, false)
+	if err != nil {
+		return nil, err
+	}
+	if absent {
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
-	sess, absent, err := s.managementTarget(ctx, id, false)
+	_, absent, err = s.managementTarget(ctx, id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -2203,6 +2210,13 @@ func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title
 		return nil, err
 	}
 	defer release()
+	sess, absent, err := s.managementTarget(ctx, id, false)
+	if err != nil {
+		return nil, err
+	}
+	if absent {
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
 	if err := sess.RenameTitle(title); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
@@ -2216,9 +2230,13 @@ func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title
 // sidecars. Absence and foreign ownership are both idempotent success, preventing
 // deletion from becoming an ownership oracle. Infrastructure failures remain loud.
 func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error {
+	absent, err := s.managementOwnershipPreflight(ctx, id, true)
+	if err != nil || absent {
+		return err
+	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
-	sess, absent, err := s.managementTarget(ctx, id, true)
+	_, absent, err = s.managementTarget(ctx, id, true)
 	if err != nil || absent {
 		return err
 	}
@@ -2231,6 +2249,10 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 		return err
 	}
 	defer release()
+	sess, absent, err := s.managementTarget(ctx, id, true)
+	if err != nil || absent {
+		return err
+	}
 	if err := prunable.Delete(ctx, sess.ID); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
 			return nil
@@ -2351,6 +2373,34 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	}
 	s.CloseSession(id)
 	return nil
+}
+
+// managementOwnershipPreflight keeps foreign callers out of caller-selected
+// per-session coordination. It deliberately checks ownership only and returns no
+// aggregate: managementTarget must reload and reauthorize under runEntryMu before
+// any mutation. The ownership-disabled compatibility path retains its historical
+// single authoritative load.
+func (s *Service) managementOwnershipPreflight(ctx context.Context, id session.SessionID, concealAbsence bool) (bool, error) {
+	if !s.cfg.OwnershipEnforced {
+		return false, nil
+	}
+	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			if concealAbsence {
+				return true, nil
+			}
+			return false, fmt.Errorf("%w: %q", ErrNotFound, id)
+		}
+		return false, fmt.Errorf("%w: load session: %v", ErrInternal, err)
+	}
+	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
+		if concealAbsence {
+			return true, nil
+		}
+		return false, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	return false, nil
 }
 
 // managementTarget performs the common management authorization and eligibility
@@ -2480,9 +2530,16 @@ func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*sessi
 // shared engine (zero overhead, no registry entry). The MaxSessionEngines cap is
 // enforced by the rehydrate path. Returns the new id.
 func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, title, effortOverride string) (session.SessionID, error) {
+	absent, err := s.managementOwnershipPreflight(ctx, srcID, false)
+	if err != nil {
+		return "", err
+	}
+	if absent {
+		return "", fmt.Errorf("%w: %q", ErrNotFound, srcID)
+	}
 	unlock := s.runEntryMu.lock(srcID)
 	defer unlock()
-	src, absent, err := s.managementTarget(ctx, srcID, false)
+	_, absent, err = s.managementTarget(ctx, srcID, false)
 	if err != nil {
 		return "", err
 	}
@@ -2494,6 +2551,13 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 		return "", err
 	}
 	defer release()
+	src, absent, err := s.managementTarget(ctx, srcID, false)
+	if err != nil {
+		return "", err
+	}
+	if absent {
+		return "", fmt.Errorf("%w: %q", ErrNotFound, srcID)
+	}
 	src, err = s.reopenLoadedSession(ctx, src)
 	if err != nil {
 		return "", err

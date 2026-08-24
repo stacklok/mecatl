@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +69,172 @@ type failingDeleteSessionStore struct {
 
 func (s *failingDeleteSessionStore) Delete(context.Context, session.SessionID) error { return s.err }
 
+type managementEffectStore struct {
+	*memstore.Store
+	mu      sync.Mutex
+	saves   int
+	deletes int
+}
+
+func (s *managementEffectStore) Save(ctx context.Context, sess *session.Session) error {
+	s.mu.Lock()
+	s.saves++
+	s.mu.Unlock()
+	return s.Store.Save(ctx, sess)
+}
+
+func (s *managementEffectStore) Delete(ctx context.Context, id session.SessionID) error {
+	s.mu.Lock()
+	s.deletes++
+	s.mu.Unlock()
+	return s.Store.Delete(ctx, id)
+}
+
+func (s *managementEffectStore) counts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves, s.deletes
+}
+
+type mutationLease struct {
+	mu       sync.Mutex
+	mutation func(context.Context) error
+	acquires int
+	releases int
+}
+
+func (l *mutationLease) Acquire(ctx context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	l.mu.Lock()
+	l.acquires++
+	mutation := l.mutation
+	l.mu.Unlock()
+	if mutation != nil {
+		if err := mutation(ctx); err != nil {
+			return port.Lease{}, err
+		}
+	}
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+func (*mutationLease) Renew(_ context.Context, lease port.Lease) (port.Lease, error) {
+	return lease, nil
+}
+
+func (l *mutationLease) Release(_ context.Context, _ port.Lease) error {
+	l.mu.Lock()
+	l.releases++
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *mutationLease) counts() (int, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.acquires, l.releases
+}
+
+var _ port.SessionLease = (*mutationLease)(nil)
+
+type managementBarrierStore struct {
+	*memstore.Store
+
+	mu         sync.Mutex
+	aliceLoads int
+	saves      int
+	deletes    int
+
+	authoritativeLoad chan struct{}
+	releaseLoad       chan struct{}
+	releaseOnce       sync.Once
+	mutation          func(context.Context) error
+}
+
+func (s *managementBarrierStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	principal := session.PrincipalFromContext(ctx)
+	if principal != nil && principal.Subject == "alice" {
+		s.mu.Lock()
+		s.aliceLoads++
+		load := s.aliceLoads
+		s.mu.Unlock()
+		if load == 2 {
+			if s.mutation != nil {
+				if err := s.mutation(ctx); err != nil {
+					return nil, err
+				}
+			}
+			close(s.authoritativeLoad)
+			select {
+			case <-s.releaseLoad:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	return s.Store.Load(ctx, id)
+}
+
+func (s *managementBarrierStore) Save(ctx context.Context, sess *session.Session) error {
+	s.mu.Lock()
+	s.saves++
+	s.mu.Unlock()
+	return s.Store.Save(ctx, sess)
+}
+
+func (s *managementBarrierStore) Delete(ctx context.Context, id session.SessionID) error {
+	s.mu.Lock()
+	s.deletes++
+	s.mu.Unlock()
+	return s.Store.Delete(ctx, id)
+}
+
+func (s *managementBarrierStore) release() {
+	s.releaseOnce.Do(func() { close(s.releaseLoad) })
+}
+
+func (s *managementBarrierStore) counts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves, s.deletes
+}
+
+func newManagementBarrierService(t *testing.T, store port.SessionStore, lease port.SessionLease) *server.Service {
+	t.Helper()
+	svc, err := server.NewService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
+		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now: time.Now, OwnershipEnforced: true,
+		SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	t.Cleanup(svc.Close)
+	return svc
+}
+
+func newManagementBarrierFixture(t *testing.T) (*managementBarrierStore, *session.Session, context.Context, context.Context) {
+	t.Helper()
+	base := memstore.New()
+	alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
+	sess := session.New("alice-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	if err := base.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save fixture: %v", err)
+	}
+	store := &managementBarrierStore{
+		Store:             base,
+		authoritativeLoad: make(chan struct{}),
+		releaseLoad:       make(chan struct{}),
+	}
+	t.Cleanup(store.release)
+	aliceCtx, cancel := context.WithCancel(session.WithPrincipal(context.Background(), alice))
+	t.Cleanup(cancel)
+	bobCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
+	return store, sess, aliceCtx, bobCtx
+}
+
 func newSessionManagementServiceWithStore(t *testing.T, store port.SessionStore, lease port.SessionLease) *server.Service {
 	t.Helper()
 	svc, err := server.NewService(server.Config{
@@ -80,6 +247,313 @@ func newSessionManagementServiceWithStore(t *testing.T, store port.SessionStore,
 	}
 	t.Cleanup(svc.Close)
 	return svc
+}
+
+func TestCallerSeparation_ForeignRenameDoesNotContendOnOwnerCoordination(t *testing.T) {
+	store, sess, aliceCtx, bobCtx := newManagementBarrierFixture(t)
+	lease := &fakeLease{}
+	svc := newManagementBarrierService(t, store, lease)
+
+	type result struct {
+		sess *session.Session
+		err  error
+	}
+	ownerResult := make(chan result, 1)
+	go func() {
+		renamed, err := svc.RenameSession(aliceCtx, sess.ID, "owner title")
+		ownerResult <- result{sess: renamed, err: err}
+	}()
+	select {
+	case <-store.authoritativeLoad:
+	case <-time.After(time.Second):
+		t.Fatal("owner rename did not reach the authoritative under-lock load")
+	}
+
+	foreignResult := make(chan error, 1)
+	go func() {
+		_, err := svc.RenameSession(bobCtx, sess.ID, "stolen")
+		foreignResult <- err
+	}()
+	select {
+	case err := <-foreignResult:
+		if !errors.Is(err, server.ErrNotFound) {
+			t.Fatalf("foreign RenameSession = %v, want ErrNotFound", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("foreign rename contended on the owner's coordination lock")
+	}
+	if _, err := svc.RenameSession(bobCtx, "missing", "stolen"); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("missing RenameSession = %v, want ErrNotFound", err)
+	}
+	if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+		t.Fatalf("foreign rename effects: saves=%d deletes=%d, want zero", saves, deletes)
+	}
+	if lease.acquires != 0 {
+		t.Fatalf("foreign rename lease acquires = %d, want 0", lease.acquires)
+	}
+	if _, ok := svc.LookupRun(sess.ID); ok {
+		t.Fatal("foreign rename registered a run")
+	}
+
+	store.release()
+	owner := <-ownerResult
+	if owner.err != nil {
+		t.Fatalf("owner RenameSession: %v", owner.err)
+	}
+	if owner.sess.Title != "owner title" {
+		t.Fatalf("owner title = %q, want owner title", owner.sess.Title)
+	}
+}
+
+func TestCallerSeparation_ForeignDeleteDoesNotContendOnOwnerCoordination(t *testing.T) {
+	store, sess, aliceCtx, bobCtx := newManagementBarrierFixture(t)
+	lease := &fakeLease{}
+	svc := newManagementBarrierService(t, store, lease)
+
+	ownerResult := make(chan error, 1)
+	go func() { ownerResult <- svc.DeleteSession(aliceCtx, sess.ID) }()
+	select {
+	case <-store.authoritativeLoad:
+	case <-time.After(time.Second):
+		t.Fatal("owner delete did not reach the authoritative under-lock load")
+	}
+
+	foreignResult := make(chan error, 1)
+	go func() { foreignResult <- svc.DeleteSession(bobCtx, sess.ID) }()
+	select {
+	case err := <-foreignResult:
+		if err != nil {
+			t.Fatalf("foreign DeleteSession = %v, want idempotent success", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("foreign delete contended on the owner's coordination lock")
+	}
+	if err := svc.DeleteSession(bobCtx, "missing"); err != nil {
+		t.Fatalf("missing DeleteSession = %v, want idempotent success", err)
+	}
+	if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+		t.Fatalf("foreign delete effects: saves=%d deletes=%d, want zero", saves, deletes)
+	}
+	if lease.acquires != 0 {
+		t.Fatalf("foreign delete lease acquires = %d, want 0", lease.acquires)
+	}
+	if _, ok := svc.LookupRun(sess.ID); ok {
+		t.Fatal("foreign delete registered a run")
+	}
+
+	store.release()
+	if err := <-ownerResult; err != nil {
+		t.Fatalf("owner DeleteSession: %v", err)
+	}
+	if _, err := store.Store.Load(context.Background(), sess.ID); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("owner delete load = %v, want session not found", err)
+	}
+}
+
+func TestCallerSeparation_ForeignForkDoesNotContendOnOwnerCoordination(t *testing.T) {
+	store, sess, aliceCtx, bobCtx := newManagementBarrierFixture(t)
+	lease := &fakeLease{}
+	svc := newManagementBarrierService(t, store, lease)
+
+	type result struct {
+		id  session.SessionID
+		err error
+	}
+	ownerResult := make(chan result, 1)
+	go func() {
+		id, err := svc.ForkSession(aliceCtx, sess.ID, "", "")
+		ownerResult <- result{id: id, err: err}
+	}()
+	select {
+	case <-store.authoritativeLoad:
+	case <-time.After(time.Second):
+		t.Fatal("owner fork did not reach the authoritative under-lock load")
+	}
+
+	foreignResult := make(chan error, 1)
+	go func() {
+		_, err := svc.ForkSession(bobCtx, sess.ID, "", "")
+		foreignResult <- err
+	}()
+	select {
+	case err := <-foreignResult:
+		if !errors.Is(err, server.ErrNotFound) {
+			t.Fatalf("foreign ForkSession = %v, want ErrNotFound", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("foreign fork contended on the owner's coordination lock")
+	}
+	if _, err := svc.ForkSession(bobCtx, "missing", "", ""); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("missing ForkSession = %v, want ErrNotFound", err)
+	}
+	if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+		t.Fatalf("foreign fork effects: saves=%d deletes=%d, want zero", saves, deletes)
+	}
+	if lease.acquires != 0 {
+		t.Fatalf("foreign fork lease acquires = %d, want 0", lease.acquires)
+	}
+
+	store.release()
+	owner := <-ownerResult
+	if owner.err != nil {
+		t.Fatalf("owner ForkSession: %v", owner.err)
+	}
+	if owner.id == "" {
+		t.Fatal("owner ForkSession returned an empty id")
+	}
+}
+
+func TestCallerSeparation_ManagementReloadReauthorizesAfterPreflight(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*server.Service, context.Context, session.SessionID) error
+	}{
+		{name: "rename", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.RenameSession(ctx, id, "renamed")
+			return err
+		}},
+		{name: "delete", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			return svc.DeleteSession(ctx, id)
+		}},
+		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.ForkSession(ctx, id, "", "")
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, sess, aliceCtx, _ := newManagementBarrierFixture(t)
+			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			if err := replacement.RestoreLabels(&session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
+				t.Fatalf("RestoreLabels replacement: %v", err)
+			}
+			store.mutation = func(ctx context.Context) error { return store.Store.Save(ctx, replacement) }
+			lease := &fakeLease{}
+			svc := newManagementBarrierService(t, store, lease)
+			result := make(chan error, 1)
+			go func() { result <- tt.run(svc, aliceCtx, sess.ID) }()
+			select {
+			case <-store.authoritativeLoad:
+			case <-time.After(time.Second):
+				t.Fatalf("%s did not reach the authoritative under-lock load", tt.name)
+			}
+			store.release()
+			err := <-result
+			if tt.name == "delete" {
+				if err != nil {
+					t.Fatalf("delete after owner replacement = %v, want concealed absence", err)
+				}
+			} else if !errors.Is(err, server.ErrNotFound) {
+				t.Fatalf("%s after owner replacement = %v, want ErrNotFound", tt.name, err)
+			}
+			if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+				t.Fatalf("%s after owner replacement effects: saves=%d deletes=%d, want zero", tt.name, saves, deletes)
+			}
+			if lease.acquires != 0 {
+				t.Fatalf("%s after owner replacement lease acquires = %d, want 0", tt.name, lease.acquires)
+			}
+		})
+	}
+}
+
+func TestCallerSeparation_ManagementReauthorizesAfterLeaseAcquisition(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*server.Service, context.Context, session.SessionID) error
+	}{
+		{name: "rename", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.RenameSession(ctx, id, "renamed")
+			return err
+		}},
+		{name: "delete", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			return svc.DeleteSession(ctx, id)
+		}},
+		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.ForkSession(ctx, id, "", "")
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := memstore.New()
+			alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
+			sess := session.New("alice-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+			if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
+				t.Fatalf("RestoreLabels: %v", err)
+			}
+			if err := base.Save(context.Background(), sess); err != nil {
+				t.Fatalf("Save fixture: %v", err)
+			}
+			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			if err := replacement.RestoreLabels(&session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
+				t.Fatalf("RestoreLabels replacement: %v", err)
+			}
+			store := &managementEffectStore{Store: base}
+			lease := &mutationLease{mutation: func(ctx context.Context) error { return base.Save(ctx, replacement) }}
+			svc := newManagementBarrierService(t, store, lease)
+			err := tt.run(svc, session.WithPrincipal(context.Background(), alice), sess.ID)
+			if tt.name == "delete" {
+				if err != nil {
+					t.Fatalf("delete after lease-time owner replacement = %v, want concealed absence", err)
+				}
+			} else if !errors.Is(err, server.ErrNotFound) {
+				t.Fatalf("%s after lease-time owner replacement = %v, want ErrNotFound", tt.name, err)
+			}
+			if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+				t.Fatalf("%s after lease-time owner replacement effects: saves=%d deletes=%d, want zero", tt.name, saves, deletes)
+			}
+			if acquires, releases := lease.counts(); acquires != 1 || releases != 1 {
+				t.Fatalf("%s lease counts = %d/%d, want 1/1", tt.name, acquires, releases)
+			}
+		})
+	}
+}
+
+func TestSessionManagementRevalidatesAfterLeaseWithoutOwnership(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*server.Service, context.Context, session.SessionID) error
+	}{
+		{name: "rename", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.RenameSession(ctx, id, "renamed")
+			return err
+		}},
+		{name: "delete", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			return svc.DeleteSession(ctx, id)
+		}},
+		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.ForkSession(ctx, id, "", "")
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := memstore.New()
+			sess := session.New("session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+			if err := base.Save(context.Background(), sess); err != nil {
+				t.Fatalf("Save fixture: %v", err)
+			}
+			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			if err := replacement.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
+				t.Fatalf("RestoreSessionMetadata replacement: %v", err)
+			}
+			store := &managementEffectStore{Store: base}
+			lease := &mutationLease{mutation: func(ctx context.Context) error { return base.Save(ctx, replacement) }}
+			svc := newSessionManagementServiceWithStore(t, store, lease)
+			if err := tt.run(svc, context.Background(), sess.ID); !errors.Is(err, server.ErrFailedPrecondition) {
+				t.Fatalf("%s after lease-time kind replacement = %v, want ErrFailedPrecondition", tt.name, err)
+			}
+			if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+				t.Fatalf("%s after lease-time kind replacement effects: saves=%d deletes=%d, want zero", tt.name, saves, deletes)
+			}
+			if acquires, releases := lease.counts(); acquires != 1 || releases != 1 {
+				t.Fatalf("%s lease counts = %d/%d, want 1/1", tt.name, acquires, releases)
+			}
+		})
+	}
 }
 
 func TestSessionManagementRenameDeleteAndOwnership(t *testing.T) {

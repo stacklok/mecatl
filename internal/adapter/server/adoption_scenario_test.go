@@ -249,6 +249,214 @@ func TestSessionStorageContinuity_Scenario7_AdoptionEligibilityMatrix(t *testing
 	}
 }
 
+func TestCallerSeparation_ForeignAdoptionPreflightDoesNotContendOnOwnerCoordination(t *testing.T) {
+	base := memstore.New()
+	source := saveLegacy(t, base, "legacy", adoptionPrincipal("alice"), session.StateCompleted)
+	store := &managementBarrierStore{Store: base, authoritativeLoad: make(chan struct{}), releaseLoad: make(chan struct{})}
+	t.Cleanup(store.release)
+	lease := &fakeLease{}
+	svc := adoptionServiceWithStore(t, store, lease)
+	aliceCtx, cancel := context.WithCancel(adoptionContext("alice"))
+	t.Cleanup(cancel)
+
+	type result struct {
+		preflight server.AdoptionPreflight
+		err       error
+	}
+	ownerResult := make(chan result, 1)
+	go func() {
+		preflight, err := svc.PreflightSessionAdoption(aliceCtx, source.ID, adoptionBindings())
+		ownerResult <- result{preflight: preflight, err: err}
+	}()
+	select {
+	case <-store.authoritativeLoad:
+	case <-time.After(time.Second):
+		t.Fatal("owner adoption preflight did not reach the authoritative under-lock load")
+	}
+
+	foreignResult := make(chan error, 1)
+	go func() {
+		_, err := svc.PreflightSessionAdoption(adoptionContext("bob"), source.ID, adoptionBindings())
+		foreignResult <- err
+	}()
+	select {
+	case err := <-foreignResult:
+		if !errors.Is(err, server.ErrNotFound) {
+			t.Fatalf("foreign adoption preflight = %v, want ErrNotFound", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("foreign adoption preflight contended on the owner's coordination lock")
+	}
+	if _, err := svc.PreflightSessionAdoption(adoptionContext("bob"), "missing", adoptionBindings()); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("missing adoption preflight = %v, want ErrNotFound", err)
+	}
+	if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+		t.Fatalf("foreign adoption preflight effects: saves=%d deletes=%d, want zero", saves, deletes)
+	}
+	if lease.acquires != 0 {
+		t.Fatalf("foreign adoption preflight lease acquires = %d, want 0", lease.acquires)
+	}
+
+	store.release()
+	owner := <-ownerResult
+	if owner.err != nil || !owner.preflight.Eligible {
+		t.Fatalf("owner adoption preflight = %+v, %v", owner.preflight, owner.err)
+	}
+}
+
+func TestCallerSeparation_ForeignAdoptDoesNotContendOnOwnerCoordination(t *testing.T) {
+	base := memstore.New()
+	source := saveLegacy(t, base, "legacy", adoptionPrincipal("alice"), session.StateCompleted)
+	store := &managementBarrierStore{Store: base, authoritativeLoad: make(chan struct{}), releaseLoad: make(chan struct{})}
+	t.Cleanup(store.release)
+	lease := &fakeLease{}
+	svc := adoptionServiceWithStore(t, store, lease)
+	aliceCtx, cancel := context.WithCancel(adoptionContext("alice"))
+	t.Cleanup(cancel)
+
+	type result struct {
+		sess *session.Session
+		err  error
+	}
+	ownerResult := make(chan result, 1)
+	go func() {
+		adopted, err := svc.AdoptSession(aliceCtx, source.ID, "owner-request", adoptionBindings())
+		ownerResult <- result{sess: adopted, err: err}
+	}()
+	select {
+	case <-store.authoritativeLoad:
+	case <-time.After(time.Second):
+		t.Fatal("owner adoption did not reach the authoritative under-lock load")
+	}
+
+	foreignResult := make(chan error, 1)
+	go func() {
+		_, err := svc.AdoptSession(adoptionContext("bob"), source.ID, "foreign-request", adoptionBindings())
+		foreignResult <- err
+	}()
+	select {
+	case err := <-foreignResult:
+		if !errors.Is(err, server.ErrNotFound) {
+			t.Fatalf("foreign AdoptSession = %v, want ErrNotFound", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("foreign adoption contended on the owner's coordination lock")
+	}
+	if _, err := svc.AdoptSession(adoptionContext("bob"), "missing", "foreign-request", adoptionBindings()); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("missing AdoptSession = %v, want ErrNotFound", err)
+	}
+	if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+		t.Fatalf("foreign adoption effects: saves=%d deletes=%d, want zero", saves, deletes)
+	}
+	if lease.acquires != 0 {
+		t.Fatalf("foreign adoption lease acquires = %d, want 0", lease.acquires)
+	}
+
+	store.release()
+	owner := <-ownerResult
+	if owner.err != nil || owner.sess == nil {
+		t.Fatalf("owner AdoptSession = %+v, %v", owner.sess, owner.err)
+	}
+}
+
+func TestCallerSeparation_AdoptionReloadReauthorizesAfterPreflight(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*server.Service, context.Context, session.SessionID) error
+	}{
+		{name: "preflight", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.PreflightSessionAdoption(ctx, id, adoptionBindings())
+			return err
+		}},
+		{name: "adopt", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.AdoptSession(ctx, id, "owner-request", adoptionBindings())
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := memstore.New()
+			source := saveLegacy(t, base, "legacy", adoptionPrincipal("alice"), session.StateCompleted)
+			replacement := session.New(source.ID, session.ModeDefault, "/legacy", session.Limits{}, time.Unix(2, 0))
+			if err := replacement.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
+				t.Fatalf("RestoreSessionMetadata replacement: %v", err)
+			}
+			if err := replacement.RestoreLabels(adoptionPrincipal("bob"), session.Authority{}); err != nil {
+				t.Fatalf("RestoreLabels replacement: %v", err)
+			}
+			store := &managementBarrierStore{Store: base, authoritativeLoad: make(chan struct{}), releaseLoad: make(chan struct{})}
+			store.mutation = func(ctx context.Context) error { return base.Save(ctx, replacement) }
+			t.Cleanup(store.release)
+			lease := &fakeLease{}
+			svc := adoptionServiceWithStore(t, store, lease)
+			ctx, cancel := context.WithCancel(adoptionContext("alice"))
+			t.Cleanup(cancel)
+
+			result := make(chan error, 1)
+			go func() { result <- tt.run(svc, ctx, source.ID) }()
+			select {
+			case <-store.authoritativeLoad:
+			case <-time.After(time.Second):
+				t.Fatalf("%s did not reach the authoritative under-lock load", tt.name)
+			}
+			store.release()
+			if err := <-result; !errors.Is(err, server.ErrNotFound) {
+				t.Fatalf("%s after owner replacement = %v, want ErrNotFound", tt.name, err)
+			}
+			if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+				t.Fatalf("%s after owner replacement effects: saves=%d deletes=%d, want zero", tt.name, saves, deletes)
+			}
+			if lease.acquires != 0 {
+				t.Fatalf("%s after owner replacement lease acquires = %d, want 0", tt.name, lease.acquires)
+			}
+		})
+	}
+}
+
+func TestCallerSeparation_AdoptionReauthorizesAfterLeaseAcquisition(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*server.Service, context.Context, session.SessionID) error
+	}{
+		{name: "preflight", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.PreflightSessionAdoption(ctx, id, adoptionBindings())
+			return err
+		}},
+		{name: "adopt", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
+			_, err := svc.AdoptSession(ctx, id, "owner-request", adoptionBindings())
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := memstore.New()
+			source := saveLegacy(t, base, "legacy", adoptionPrincipal("alice"), session.StateCompleted)
+			replacement := session.New(source.ID, session.ModeDefault, "/legacy", session.Limits{}, time.Unix(2, 0))
+			if err := replacement.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
+				t.Fatalf("RestoreSessionMetadata replacement: %v", err)
+			}
+			if err := replacement.RestoreLabels(adoptionPrincipal("bob"), session.Authority{}); err != nil {
+				t.Fatalf("RestoreLabels replacement: %v", err)
+			}
+			store := &managementEffectStore{Store: base}
+			lease := &mutationLease{mutation: func(ctx context.Context) error { return base.Save(ctx, replacement) }}
+			svc := adoptionServiceWithStore(t, store, lease)
+			err := tt.run(svc, adoptionContext("alice"), source.ID)
+			if !errors.Is(err, server.ErrNotFound) {
+				t.Fatalf("%s after lease-time owner replacement = %v, want ErrNotFound", tt.name, err)
+			}
+			if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
+				t.Fatalf("%s after lease-time owner replacement effects: saves=%d deletes=%d, want zero", tt.name, saves, deletes)
+			}
+			if acquires, releases := lease.counts(); acquires != 1 || releases != 1 {
+				t.Fatalf("%s lease counts = %d/%d, want 1/1", tt.name, acquires, releases)
+			}
+		})
+	}
+}
+
 func TestSessionStorageContinuity_Scenario7_OwnershipComesFromCallerContext(t *testing.T) {
 	svc, store := adoptionService(t)
 	saveLegacy(t, store, "owned", adoptionPrincipal("alice"), session.StateCompleted)

@@ -55,6 +55,23 @@ type AdoptionPreflight struct {
 	Bindings AdoptionBindings
 }
 
+func (s *Service) adoptionOwnershipPreflight(ctx context.Context, id session.SessionID) (AdoptionReason, error) {
+	if !s.cfg.OwnershipEnforced || session.PrincipalFromContext(ctx) == nil {
+		return "", fmt.Errorf("%w", ErrNotFound)
+	}
+	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			return "", fmt.Errorf("%w", ErrNotFound)
+		}
+		return AdoptionReasonInvalidTranscript, nil
+	}
+	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
+		return "", fmt.Errorf("%w", ErrNotFound)
+	}
+	return "", nil
+}
+
 func (s *Service) adoptionSource(ctx context.Context, id session.SessionID) (*session.Session, AdoptionReason, error) {
 	if !s.cfg.OwnershipEnforced || session.PrincipalFromContext(ctx) == nil {
 		return nil, "", fmt.Errorf("%w", ErrNotFound)
@@ -164,9 +181,17 @@ func (s *Service) resolveAdoptionBindings(ctx context.Context, bindings Adoption
 // again by AdoptSession under the mutation lease.
 func (s *Service) PreflightSessionAdoption(ctx context.Context, id session.SessionID, bindings AdoptionBindings) (AdoptionPreflight, error) {
 	result := AdoptionPreflight{Bindings: bindings}
+	reason, err := s.adoptionOwnershipPreflight(ctx, id)
+	if err != nil {
+		return result, err
+	}
+	if reason != "" {
+		result.Reason = reason
+		return result, nil
+	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
-	sess, reason, err := s.adoptionSource(ctx, id)
+	_, reason, err = s.adoptionSource(ctx, id)
 	if err != nil {
 		return result, err
 	}
@@ -182,7 +207,15 @@ func (s *Service) PreflightSessionAdoption(ctx context.Context, id session.Sessi
 		}
 		return result, err
 	}
+	sess, reason, err := s.adoptionSource(ctx, id)
 	release()
+	if err != nil {
+		return result, err
+	}
+	if reason != "" {
+		result.Reason = reason
+		return result, nil
+	}
 	resolved, err := s.resolveAdoptionBindings(ctx, bindings, sess.Mode)
 	if err != nil {
 		result.Reason = AdoptionReasonBindingUnresolved
@@ -295,9 +328,16 @@ func (s *Service) AdoptSession(ctx context.Context, sourceID session.SessionID, 
 	if strings.TrimSpace(idempotencyKey) == "" || len(idempotencyKey) > 256 {
 		return nil, fmt.Errorf("%w: idempotency_key is required and must be at most 256 bytes", ErrInvalidArgument)
 	}
+	reason, err := s.adoptionOwnershipPreflight(ctx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		return nil, fmt.Errorf("%w: adoption ineligible: %s", ErrFailedPrecondition, reason)
+	}
 	unlockSource := s.runEntryMu.lock(sourceID)
 	defer unlockSource()
-	_, reason, err := s.adoptionSource(ctx, sourceID)
+	_, reason, err = s.adoptionSource(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
