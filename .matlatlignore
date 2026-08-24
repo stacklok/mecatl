@@ -12,6 +12,7 @@
 
 # Root-level review and handoff artifacts are transient working notes, not product documentation.
 review-*.md
+report*.md
 handoff-*.md
 handover-*.md
 
