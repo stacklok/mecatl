@@ -1,10 +1,11 @@
 # Caller separation — acceptance plan
 
 **Phase:** capability — application caller isolation
-**Status:** in-progress, 2026-08-11. Synthesized from issue #368 and the caller-identity spike.
+**Status:** landed, 2026-08-22. Synthesized from issue #368 and the caller-identity spike.
 **Issue:** [stacklok/mecatl#368](https://github.com/stacklok/mecatl/issues/368).
 **ADR:** [ADR-0212](../adr/0212-caller-ownership-enforcement.md) — the shared application ownership decision and the trusted-driver boundary.
-**Accumulator branch:** `acc/caller-separation` (stacked from
+**Accumulator branch:** `one-choke-point` (follow-up audit; the original
+`acc/caller-separation` landed as `f25a4947` and is superseded) (stacked from
 `368-caller-separation`, currently #367; final PR base is
 `368-caller-separation`, not `main`).
 
@@ -57,7 +58,7 @@ invariant in [`AGENTS.md`](../../AGENTS.md).
 - AC1.4: Ownership compares the exact issuer and subject emitted by the verifier;
   equal subjects from different issuers, alternate issuer spellings, request headers,
   display names, and grant types cannot collide or select an owner.
-  - verify: `TestADR_0102_VerifiedIssuerSubjectPairIsOwnerIdentity`
+  - verify: `TestADR_0212_VerifiedIssuerSubjectPairIsOwnerIdentity`
 - AC1.5: Create and retry paths bind the verified owner atomically with visibility.
   A same-owner retry of the same immutable request is idempotent; a cross-owner ID
   collision returns absence and cannot overwrite, adopt, or expose the resource.
@@ -151,7 +152,7 @@ coverage required by issue #368 and [ADR-0212](../adr/0212-caller-ownership-enfo
 
 ### Scenario 4 — system work is explicit, narrow, and auditable
 
-The scheduler, child GC, and memory consolidators have no human caller, but ADR-0204
+The scheduler, child GC, stale-session reconciler, and memory consolidators have no human caller, but ADR-0204
 already gives them explicit system principals. This scenario limits them to the shared
 infrastructure operations named in the ownership table; system identity is not a
 universal bypass. The posture ladder remains unrelated to ownership
@@ -164,7 +165,7 @@ universal bypass. The posture ladder remains unrelated to ownership
   attribution remain system-owned; the created work retains Alice's durable schedule
   owner without exposing either attribution on the client wire.
   - verify: `TestMakeFireFuncUsesScheduleOwnerForRunEntry`
-- AC4.2: Child GC and each memory/dream consolidator complete their explicitly
+- AC4.2: Child GC, stale-session reconciliation, and each memory/dream consolidator complete their explicitly
   classified shared-infrastructure operation under their registered system principal.
   - verify: `TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess`
 - AC4.3: A system worker is denied when it attempts a caller-owned operation not
@@ -173,10 +174,14 @@ universal bypass. The posture ladder remains unrelated to ownership
 - AC4.4: Changing `strict`, `trusted`, `auto`, or `yolo` posture never disables caller
   ownership enforcement.
   - verify: `TestCallerSeparation_Scenario4_PostureCannotDisableOwnership`
-- AC4.5: An OIDC deployment selects one concrete raw-driver boundary—NetworkPolicy,
-  mTLS-pinned workload peer, or Unix socket—and proves the mecatl workload can use it
-  while a tenant peer cannot connect or authenticate to a raw driver.
-  - verify: `TestCallerSeparation_Scenario4_RawDriverIsTenantInaccessible`
+- AC4.5: Rendered with `oidc.enabled=true`, the mecak8s Helm chart produces a
+  NetworkPolicy restricting raw-driver ingress to the agent workload on a single port,
+  and the default render produces none. This is a deployment control asserted
+  at the MANIFEST level, not caller enforcement and not a runtime proof: effectiveness
+  depends on a policy-enforcing CNI, and a tenant holding a valid token is not a cluster
+  peer at all. It is required while ADR-0213 is outstanding so the control cannot be
+  dropped or loosened unnoticed; caller-level driver enforcement is issue #452.
+  - verify: `TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent`
 - AC4.6: Before OIDC isolation is enabled, an operator can inventory the ownerless
   records that will become inaccessible. After enablement, background workers neither
   adopt nor repeatedly mutate/retry those stranded records; disabling the verifier
@@ -289,14 +294,19 @@ concrete task split.
 5. Every acceptance proof above is present, green, and covers both a caller's own
    successful operation and another caller's denied operation where applicable.
 6. `go run ./cmd/mecademo` still completes a full offline session.
-7. Deployment documentation and the relevant deployment configuration/test prove that
-   raw driver listeners are tenant-inaccessible trusted infrastructure until issue #452
-   lands (NetworkPolicy, mTLS pinning, or a Unix socket).
+7. The mecak8s chart renders the raw-driver NetworkPolicy under `oidc.enabled=true`
+   (AC4.5), and the deployment docs describe it as a deployment control rather than
+   caller enforcement.
+   The runtime tenant-boundary proof is deferred to issue #452 / ADR-0213; this plan
+   makes no claim that a raw driver enforces caller ownership.
 
 ## Deferred decisions and known risks
 
-- **Raw remote drivers remain a trust boundary.** This plan does not claim they are
-  caller-enforced; deployment isolation is mandatory until ADR-0213 is delivered.
+- **Raw-driver tenant isolation is deferred to issue #452.** A pod-label NetworkPolicy
+  is a real but partial control: it restricts which workloads can reach a raw driver, and
+  it does nothing about a caller who reaches mecated with a token, because the driver
+  still trusts the owner identity on its own wire. Shipping it stays mandatory in the
+  interim (AC4.5); ADR-0213 owns the selected boundary and its live deployment proof.
 - **Ownerless historical data is unavailable in OIDC mode.** There is no adoption or
   migration path in this plan.
 - **Driver B-lite has no migration.** Enforced driver mode will treat records without
@@ -317,5 +327,6 @@ concrete task split.
 
 ## Exit criteria
 
-When every Definition-of-done item holds on the accumulator, this plan satisfies issue
-#368 and can move from `draft` to `landed` through `/plan-orchestrate`.
+When every non-deferred Definition-of-done item holds on the accumulator, this
+plan satisfies the application-isolation scope of issue #368. The raw-driver
+boundary remains owned by issue #452 / ADR-0213.

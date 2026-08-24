@@ -44,12 +44,19 @@ func helmTemplate(t *testing.T, extraSet ...string) []byte {
 	return out
 }
 
-// TestCallerSeparation_Scenario4_RawDriverIsTenantInaccessible pins AC4.5's
-// deployment boundary until ADR 0213 carries caller claims to remote drivers:
-// the mecak8s Helm chart, with oidc.enabled=true, admits only the mecak8s agent
-// workload to a raw driver and gives a tenant-labelled peer no matching ingress
-// rule. The default (oidc disabled) render must carry no such policy at all.
-func TestCallerSeparation_Scenario4_RawDriverIsTenantInaccessible(t *testing.T) {
+// TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent pins
+// AC4.5's deployment control until ADR 0213 carries caller claims to remote
+// drivers: rendered with oidc.enabled=true, the mecak8s Helm chart produces a
+// NetworkPolicy admitting only the agent workload to a raw driver, on one port,
+// and the default (oidc disabled) render carries no such policy at all.
+//
+// This asserts the rendered MANIFEST, not runtime behaviour. It cannot prove a
+// peer is blocked — that needs a live cluster with a policy-enforcing CNI — and
+// it is not caller enforcement: #368's tenant is an OIDC subject holding a
+// token, who is not a cluster peer at all. Caller-level driver enforcement is
+// issue #452 / ADR-0213. The test exists so the selector, the single agent-only
+// ingress rule, the port, and the chart wiring cannot drift unnoticed.
+func TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent(t *testing.T) {
 	defaultRendered := helmTemplate(t)
 	if bytesContainsNetworkPolicy(defaultRendered) {
 		t.Fatal("default (oidc disabled) chart render unexpectedly contains a raw-driver NetworkPolicy")

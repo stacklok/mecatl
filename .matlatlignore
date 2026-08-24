@@ -10,8 +10,10 @@
 # .claude/worktrees; .scratch is the same kind of thing.)
 .scratch/
 
-# Root-level review artifacts are transient working notes, not product documentation.
+# Root-level review and handoff artifacts are transient working notes, not product documentation.
 review-*.md
+handoff-*.md
+handover-*.md
 
 # Claude Code sub-agent definitions (reviewer/specialist agents). These are
 # isolated by nature — no inbound or outbound doc links — so there is nothing to

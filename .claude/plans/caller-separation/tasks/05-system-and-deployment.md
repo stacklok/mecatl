@@ -28,6 +28,6 @@ the ownerless cutover observable and safe.
 - AC4.4: Changing `strict`, `trusted`, `auto`, or `yolo` posture never disables caller ownership enforcement.
   - verify: `TestCallerSeparation_Scenario4_PostureCannotDisableOwnership`
 - AC4.5: An OIDC deployment selects one concrete raw-driver boundary—NetworkPolicy, mTLS-pinned workload peer, or Unix socket—and proves the mecatl workload can use it while a tenant peer cannot connect or authenticate to a raw driver.
-  - verify: `TestCallerSeparation_Scenario4_RawDriverIsTenantInaccessible`
+  - verify: `TestCallerSeparation_Scenario4_RawDriverIngressIsRestrictedToTheAgent`
 - AC4.6: Before OIDC isolation is enabled, an operator can inventory the ownerless records that will become inaccessible. After enablement, background workers neither adopt nor repeatedly mutate/retry those stranded records; disabling the verifier restores only the pre-existing ownerless compatibility path.
   - verify: `TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe`
