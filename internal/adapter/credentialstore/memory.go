@@ -72,13 +72,7 @@ func (s *memoryStore) Get(ctx context.Context, key []byte) (Record, error) {
 	if err := s.preflight(ctx, key); err != nil {
 		return Record{}, err
 	}
-	mapKey := string(key)
-	s.backend.mu.Lock()
-	defer s.backend.mu.Unlock()
-	if err := s.lockedCheck(ctx); err != nil {
-		return Record{}, err
-	}
-	record, ok := s.backend.namespaces[s.namespace][mapKey]
+	record, ok := s.backend.namespaces[s.namespace][string(key)]
 	if !ok {
 		return Record{}, ErrNotFound
 	}
