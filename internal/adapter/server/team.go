@@ -165,6 +165,12 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 	if s.cfg.RootAuthority != nil {
 		opts = append(opts, agent.WithRootAuthority(s.cfg.RootAuthority(session.SessionKindTeamMember)))
 	}
+	// Attribute members to the creating caller. CreateTeam runs with zero parent
+	// caps by design, so without this AddMember publishes durable member sessions
+	// with Owner == nil — unreadable by the team's own owner, and skipped by every
+	// retention path, so they can never be reaped. Appended unconditionally:
+	// WithTeamOwner no-ops on a nil principal, which is the ownerless path.
+	opts = append(opts, agent.WithTeamOwner(session.PrincipalFromContext(ctx)))
 	// The goal is the team's TRUSTED top-level instruction by default (the deployment
 	// owns the gRPC front door, so the goal's provenance is the operator/principal,
 	// not a peer). A multi-tenant / relay deployment that may interpolate untrusted

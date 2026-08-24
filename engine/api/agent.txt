@@ -176,6 +176,7 @@ func WithTeamGoal(goal string) SupervisorOption
 func WithTeamHooks(h port.HookRunner) SupervisorOption
 func WithTeamLimits(l session.Limits) SupervisorOption
 func WithTeamMode(m session.PermissionMode) SupervisorOption
+func WithTeamOwner(owner *session.Principal) SupervisorOption
 func WithTeamSharedBaseWorkspace(f func(root string) tool.Workspace) SupervisorOption
 func WithTeamTokenBudget(n int) SupervisorOption
 func WithTeamToolForker(f tool.EnvironmentForker) TeamOption

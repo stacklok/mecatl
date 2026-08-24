@@ -26,6 +26,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`agent.WithTeamOwner`** (issue #368, [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) —
+  a `SupervisorOption` attributing the members of a DIRECTLY server-created team
+  to the verified caller that created it. It is ignored for a team created from
+  a parent run, where `caps.owner` carries the authoritative inheritance — the
+  same split `WithRootAuthority` already documents.
+
+  It exists because the gRPC `CreateTeam` path deliberately runs with zero
+  parent caps (no ask surfacing, no child-ask adjudicator) and owner attribution
+  rode in that same struct, so member sessions were published with `Owner ==
+  nil`. The option supplies the OWNER ONLY and must not become a general caps
+  channel; the zero-caps posture is otherwise preserved.
+
 - **Atomic session first publication** (issue #368, [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) —
   `port.SessionCreator` is an optional backend capability for atomic create-once
   publication without widening `SessionStore`; collisions wrap
