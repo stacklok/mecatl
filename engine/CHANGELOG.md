@@ -26,6 +26,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`session.Principal.IdentityWellFramed`** (issue #368) — the EXPORTED form of
+  the owner-key delimiter-safety rule: reports whether a principal's
+  authority-bearing components are free of the reserved NUL separator. Owner
+  scope keys are derived as `hash(issuer + NUL + subject)`, so a NUL inside
+  either component makes distinct principals collide on one namespace. Exported
+  so the request edge re-states the rule instead of hand-rolling it; a nil
+  principal is not well framed.
+
 - **`agent.WithTeamOwner`** (issue #368, [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) —
   a `SupervisorOption` attributing the members of a DIRECTLY server-created team
   to the verified caller that created it. It is ignored for a team created from

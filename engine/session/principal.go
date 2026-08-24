@@ -108,6 +108,19 @@ func principalIdentityHasSafeFraming(p *Principal) bool {
 	return p != nil && !strings.ContainsRune(p.Issuer, '\x00') && !strings.ContainsRune(p.Subject, '\x00')
 }
 
+// IdentityWellFramed reports whether p's authority-bearing components are free
+// of the reserved owner-key separator. It is the EXPORTED form of the single
+// delimiter-safety rule, so a consumer outside this package — notably the
+// request edge's re-validation of an already-verified principal — enforces the
+// same rule the owner-key derivations depend on instead of hand-rolling it.
+//
+// A nil p is not well framed: absent identity is a nil *Principal, and callers
+// that admit ownerless operation test for nil themselves rather than routing it
+// through here.
+func (p *Principal) IdentityWellFramed() bool {
+	return principalIdentityHasSafeFraming(p)
+}
+
 // GrantTypeFromClaims derives the conservative attribution grant from an
 // already-verified token claim set. The first non-empty explicit claim wins
 // (`grant_type` before `gty`): a recognised user or client grant is decisive.

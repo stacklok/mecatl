@@ -427,6 +427,13 @@ func (a *Authenticator) identify(ctx context.Context, bearer string, present boo
 //     the front door.
 //   - GrantType must be inside the closed enum: an out-of-enum value would flow
 //     to every downstream consumer as an unrecognised, unhandled case.
+//   - Identity components must be free of the reserved owner-key separator
+//     (NUL). Owner scope keys are derived as hash(issuer + NUL + subject), so a
+//     NUL inside either component makes distinct principals collide on one
+//     namespace: ("a", "b\x00c") and ("a\x00b", "c") produce the same key.
+//     PrincipalFromClaims already refuses these, but that is the SHIPPED
+//     validator's guarantee, not the edge's — cfg.Validator is an injection
+//     seam, so the edge re-states the rule rather than inheriting it.
 //   - The INTERNAL namespace is off limits to an external caller. A token
 //     presenting mecatl:internal as its issuer, or the system grant, is
 //     byte-identical to a syscaller-stamped harness goroutine at every consumer
@@ -439,6 +446,8 @@ func admissiblePrincipal(p *session.Principal) bool {
 	case !p.GrantType.Valid(), p.GrantType == session.GrantTypeSystem:
 		return false
 	case p.Issuer == syscaller.Issuer:
+		return false
+	case !p.IdentityWellFramed():
 		return false
 	}
 	return true
