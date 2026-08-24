@@ -160,6 +160,22 @@ the OpenAI Responses-compatible wire implementation and OpenRouter base URL;
 retry/watchdog policy, persistence, authentication, transport, and observability
 remain host responsibilities for a direct embedder.
 
+## Compatibility for engine consumers
+
+The stable contract is the exported API of the eight core engine packages. Read
+[API stability](../api-stability.md) before upgrading or implementing an adapter.
+
+- `engine/COMPATIBILITY.md` defines the compatibility policy.
+- `engine/CHANGELOG.md` records intentional API additions and breaks.
+- `engine/api/*.txt` contains the committed public-surface snapshots checked by
+  `task api:check`.
+- `engine/adapter/*` reference adapters are useful, but are not stable API; rely
+  on the port interfaces in `engine/port` and `engine/tool` instead.
+
+The engine is versioned independently from the host repository. A direct embedder
+should pin the engine and provider module versions together and run the standalone
+engine checks when upgrading.
+
 ## Where to go next
 
 | You want to… | Read next |
