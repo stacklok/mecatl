@@ -86,10 +86,29 @@ The example uses the offline `mockllm` adapter, so it needs no API key or networ
 The `tool.Environment` binds the workspace and optional command runner that tools
 would use; this example passes no runner because it has no shell tool.
 
+## First tool: register a custom tool
+
+A tool is a small implementation of `tool.Tool` registered on the catalog passed
+to `agent.Deps`. The [first-agent-tool example](https://github.com/stacklok/mecatl/blob/main/examples/first-agent-tool/main.go)
+uses a scripted mock turn to call a `Ping` tool and prints:
+
+```text
+tool.call
+tool.result
+result
+```
+
+The tool receives the model's `session.ToolCall` and the session-scoped
+`tool.Environment`, then returns a model-visible `session.ToolResult`. Its
+`ReadOnly` value tells the dispatcher whether it may run alongside other
+read-only calls. The example allows `Ping` in its permission policy; the next
+step changes that rule to require approval.
+
+For the complete interface, catalog registration rules, MCP integration, and
+progressive disclosure, see [Tool catalog](/building/extension-points/tool-catalog.md).
+
 ## Follow the steps
 
-- **First tool:** add a `tool.Tool` implementation and register it on the catalog
-  passed through `agent.Deps`.
 - **Approval:** change the policy to `Ask` and handle the `permission.ask` event
   in your host.
 - **Extensions:** choose a provider, persistence backend, hook runner, or child
