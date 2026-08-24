@@ -1,5 +1,13 @@
 # Disposable Kind/offline qualification only. This is the sole profile allowed
 # to use a loaded ko.local image and an in-chart plaintext Redis fixture.
+#
+# Kept minimal and secret-free on purpose: e2e/k8s's Ginkgo suite installs the
+# chart with exactly this file and --wait, and creates no Secrets/ConfigMaps
+# beyond the namespace. Any override here that requires a Secret to exist
+# (oidc.caSecret, tls.secretName, ...) leaves that suite's pod stuck mounting a
+# missing volume until the --wait --timeout=4m install times out. The
+# mecak8s-vmcp fixture's own Dex/TLS overrides belong in values-kind-vmcp.yaml,
+# layered on top only by deploy/mecak8s-vmcp/Taskfile.yml.
 image:
   repository: ko.local/mecak8s
   digest: ""
@@ -13,24 +21,3 @@ redis:
   credentialsSecret: ""
   local:
     enabled: true
-
-oidc:
-  enabled: true
-  issuer: https://dex.mecatl-vmcp.svc.cluster.local:5556
-  audience: mecatui-kind
-  allowPrivateHTTPSIssuer: true
-  caSecret: dex-fixture-ca
-  caKey: tls.crt
-
-service:
-  type: NodePort
-  grpcPort: 8080
-  httpPort: 8081
-  nodePorts:
-    grpc: 30081
-
-tls:
-  enabled: true
-  secretName: mecak8s-tls
-  certKey: tls.crt
-  keyKey: tls.key

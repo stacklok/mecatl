@@ -1,0 +1,29 @@
+# Overlay for the deploy/mecak8s-vmcp disposable Kind fixture ONLY. Layer it on
+# top of values-kind.yaml (helm --values values-kind.yaml --values
+# values-kind-vmcp.yaml); never pass it alone or to e2e/k8s's suite.
+#
+# Every reference below (oidc.caSecret, tls.secretName) names a Secret/ConfigMap
+# that deploy/mecak8s-vmcp/Taskfile.yml's dex-certificate-apply step creates via
+# cert-manager before this chart is installed. e2e/k8s's Ginkgo suite creates no
+# such material, which is why this overlay must stay split out of
+# values-kind.yaml (see the comment there).
+oidc:
+  enabled: true
+  issuer: https://dex.mecatl-vmcp.svc.cluster.local:5556
+  audience: mecatui-kind
+  allowPrivateHTTPSIssuer: true
+  caSecret: dex-fixture-ca
+  caKey: tls.crt
+
+service:
+  type: NodePort
+  grpcPort: 8080
+  httpPort: 8081
+  nodePorts:
+    grpc: 30081
+
+tls:
+  enabled: true
+  secretName: mecak8s-tls
+  certKey: tls.crt
+  keyKey: tls.key

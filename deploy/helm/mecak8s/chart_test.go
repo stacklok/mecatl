@@ -30,8 +30,38 @@ func productionArgs() []string {
 	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
 }
 
+// kindVMCPArgs renders the Kind profile with the mecak8s-vmcp fixture's own
+// OIDC/TLS overlay layered on top — the shape deploy/mecak8s-vmcp/Taskfile.yml
+// actually installs. Never pass values-kind-vmcp.yaml alone or without
+// values-kind.yaml first: e2e/k8s's suite installs values-kind.yaml ALONE and
+// must stay free of secrets that overlay assumes exist (dex-fixture-ca,
+// mecak8s-tls) — see values-kind.yaml's own comment.
+func kindVMCPArgs() []string {
+	return []string{"template", "kind", ".", "-f", "values-kind.yaml", "-f", "values-kind-vmcp.yaml"}
+}
+
+// TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency pins the exact
+// shape e2e/k8s's Ginkgo suite installs: `helm ... --values values-kind.yaml
+// --wait`, with no other overrides and no Secrets/ConfigMaps created beyond
+// the namespace. values-kind.yaml alone must render with OIDC/TLS off and no
+// NodePort — any of those pull in a Secret (mecak8s-tls, dex-fixture-ca) that
+// only the mecak8s-vmcp fixture's own setup creates, and the e2e pod would
+// hang mounting a missing volume until the install times out (the regression
+// this test exists to catch).
+func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
+	rendered, err := helm(t, "template", "kind", ".", "-f", "values-kind.yaml")
+	if err != nil {
+		t.Fatalf("render Kind profile: %v", err)
+	}
+	for _, forbidden := range []string{"--oidc-issuer", "--tls-cert", "--tls-key", "mecak8s-tls", "dex-fixture-ca", "type: NodePort", "nodePort:"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("bare Kind render (no vmcp overlay) unexpectedly contains %q — e2e/k8s's suite creates no matching Secret and would hang", forbidden)
+		}
+	}
+}
+
 func TestMecak8sHelmChart_KindNodePortAndProductionClusterIP(t *testing.T) {
-	kind, err := helm(t, "template", "kind", ".", "-f", "values-kind.yaml")
+	kind, err := helm(t, kindVMCPArgs()...)
 	if err != nil {
 		t.Fatalf("render Kind profile: %v", err)
 	}
@@ -429,7 +459,7 @@ func TestMecak8sHelmChart_OIDC_PrivateHTTPSIssuer(t *testing.T) {
 }
 
 func TestMecak8sVMCPPOC_Scenario3_ChartTLSContract(t *testing.T) {
-	args := []string{"template", "kind", ".", "-f", "values-kind.yaml"}
+	args := kindVMCPArgs()
 	rendered, err := helm(t, args...)
 	if err != nil {
 		t.Fatalf("render Kind TLS profile: %v", err)
