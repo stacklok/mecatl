@@ -108,6 +108,11 @@ var blanketBypassPhrases = []string{
 // validate reports the entry's own defect, or nil if it is well-formed. It
 // does not know the boundary name (the caller adds that context).
 func (e ClassificationEntry) validate() error {
+	switch e.Kind {
+	case KindCallerOwned, KindDerived, KindSharedInfrastructure, KindExempt:
+	default:
+		return fmt.Errorf("unknown access kind %q", e.Kind)
+	}
 	r := strings.TrimSpace(e.Rationale)
 	if r == "" {
 		return errors.New("missing rationale")
@@ -146,6 +151,13 @@ func (r classificationReport) Errors() []error {
 		errs = append(errs, fmt.Errorf("%s: stale classification table entry %q — boundary no longer exists, remove it", r.Surface, name))
 	}
 	return errs
+}
+
+// ValidateClassifiedNames compares actual boundary names with their classification
+// entries. It is exported for composition-owned registries whose concrete
+// registrations are not visible to this package.
+func ValidateClassifiedNames(surface string, table map[string]ClassificationEntry, boundaries []string) []error {
+	return classifyNames(surface, table, boundaries).Errors()
 }
 
 // classifyNames is the guard's core comparison: every name in boundaries must
@@ -439,58 +451,6 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 	},
 }
 
-// modelToolAccessTable classifies the model-facing tool families that reach a
-// caller-owned or shared-infrastructure boundary directly rather than only
-// through *Service — ADR 0212 decision 2's "model-tool access boundary" and
-// Scenario 3's non-store coverage. Names are the literal tool.ToolSpec.Name
-// values (engine/agent keeps its own name constants unexported; these
-// literals are the single source the guard and the tests share — see
-// ADR 0212 and docs/architecture.md's caller-ownership section).
-var modelToolAccessTable = map[string]ClassificationEntry{
-	// Project memory tools (Remember/Recall/SearchMemory): backed by
-	// memory.CallerStore(project=true), classified caller-owned above.
-	// Forget is a CallerStore capability (classified in callerStoreAccessTable)
-	// with no registered model-facing tool today — there is nothing to list
-	// here until one is added.
-	"Remember":     {KindCallerOwned, "backed by memory.CallerStore(project=true); scoped by verified caller + workspace"},
-	"Recall":       {KindCallerOwned, "backed by memory.CallerStore(project=true); scoped by verified caller + workspace"},
-	"SearchMemory": {KindCallerOwned, "backed by memory.CallerStore(project=true); scoped by verified caller + workspace"},
-	// User-model memory (RememberUser/RecallUser/SearchUserModel): backed by
-	// memory.CallerStore(project=false), a DISTINCT kind (decision 2) from
-	// project memory even where logical keys match.
-	"RememberUser":    {KindCallerOwned, "backed by memory.CallerStore(project=false); scoped by verified caller only, a distinct kind from project memory"},
-	"RecallUser":      {KindCallerOwned, "backed by memory.CallerStore(project=false); scoped by verified caller only"},
-	"SearchUserModel": {KindCallerOwned, "backed by memory.CallerStore(project=false); scoped by verified caller only"},
-	// Child/team observability and delegation: these act on a caller-supplied
-	// handle (agentId / teamID) inside the SAME run, so the decision is the
-	// resuming child/team session's own owner check (engine/agent/teaminspect.go,
-	// subagentinspect.go, subagentstatus.go), which SameIdentity-matches the
-	// run's caller.
-	"InspectSubagent": {KindCallerOwned, "reads a persisted child session's transcript; teaminspect/subagentinspect authorize via sess.Owner.SameIdentity(caller) before returning it"},
-	"InspectMember":   {KindCallerOwned, "reads a persisted team-member session's transcript; authorizes via sess.Owner.SameIdentity(caller) before returning it"},
-	"SubagentStatus":  {KindCallerOwned, "reads the run-scoped background-child registry (parentCaps.children), which only ever holds children this SAME run's caller spawned"},
-	"Subagent":        {KindCallerOwned, "a resume: <agentId> load authorizes the persisted child via sess.Owner.SameIdentity(caller) before recovering or re-persisting it (issue #368 task 09)"},
-	"Team":            {KindCallerOwned, "the in-loop Team tool inherits the run's OWN authorized session; RunTeam's gRPC entry point is separately classified above via lookupTeam"},
-	"Schedule":        {KindCallerOwned, "every verb (create/list/inspect/pause/resume/delete/fire-now) uses the context-bound owner-namespaced schedule manager, which derives/enforces ownership per verb; GetFire's parent-owner check is a separate gRPC/REST-only boundary this tool never reaches"},
-	"ScheduleQuery":   {KindCallerOwned, "the context-bound schedule manager filters list results by owner before rendering model-visible metadata"},
-}
-
-// ModelToolBoundaries is the single registry of model-facing tool names ADR
-// 0102's "model-tool access boundary" covers — the tools that reach a
-// caller-owned or shared-infrastructure decision directly rather than only
-// through *Service. It mirrors internal/syscaller.Roots' registry discipline:
-// a new tool in this family is added HERE (and to modelToolAccessTable) or
-// TestInvariant_owned_access_is_classified fails, naming the gap. Tools
-// unrelated to caller ownership (Read, Bash, WebSearch, …) are deliberately
-// NOT enumerated — this is a narrow, reviewable boundary list, not the whole
-// catalog.
-var ModelToolBoundaries = []string{
-	"Remember", "Recall", "SearchMemory",
-	"RememberUser", "RecallUser", "SearchUserModel",
-	"InspectSubagent", "InspectMember", "SubagentStatus", "Subagent", "Team",
-	"Schedule", "ScheduleQuery",
-}
-
 // ClassifyServiceBoundaries walks every exported *Service method (the
 // application-facade, in-memory-registry, and event-relay boundary) and
 // reports one error per unclassified, misclassified, or stale entry.
@@ -527,13 +487,7 @@ func ClassifySystemBoundaries() []error {
 	return classifyNames("syscaller.Root", table, names).Errors()
 }
 
-// ClassifyModelToolBoundaries walks ModelToolBoundaries (the model-tool
-// access boundary registry).
-func ClassifyModelToolBoundaries() []error {
-	return classifyNames("model-tool", modelToolAccessTable, ModelToolBoundaries).Errors()
-}
-
-// ClassifyAllBoundaries runs every classified surface's guard and returns the
+// ClassifyAllBoundaries runs every server-owned classified surface's guard and returns the
 // concatenated findings — the single entry point
 // TestInvariant_owned_access_is_classified drives (AC5.1).
 func ClassifyAllBoundaries() []error {
@@ -541,6 +495,5 @@ func ClassifyAllBoundaries() []error {
 	errs = append(errs, ClassifyServiceBoundaries()...)
 	errs = append(errs, ClassifyCallerStoreBoundaries()...)
 	errs = append(errs, ClassifySystemBoundaries()...)
-	errs = append(errs, ClassifyModelToolBoundaries()...)
 	return errs
 }

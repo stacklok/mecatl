@@ -8,9 +8,9 @@ import (
 // TestInvariant_owned_access_is_classified pins ADR 0212 decision 2 (AC5.1):
 // the classification guard resolves EVERY current designated
 // application-facade (*Service), in-memory-registry/event-relay (also
-// *Service), cache/index (memory.CallerStore), shared-system (syscaller.Root),
-// and model-tool boundary to exactly one valid table entry, and names any
-// unclassified call site or stale table entry it finds.
+// *Service), cache/index (memory.CallerStore), and shared-system
+// (syscaller.Root) boundary to exactly one valid table entry. Model-facing
+// tools are guarded at their real composition registration sites in internal/app.
 func TestInvariant_owned_access_is_classified(t *testing.T) {
 	if errs := ClassifyAllBoundaries(); len(errs) > 0 {
 		for _, err := range errs {
@@ -62,6 +62,11 @@ func TestCallerSeparation_Scenario5_ExemptionsAreExplicitAndNarrow(t *testing.T)
 		wantErr bool
 	}{
 		{
+			name:    "unknown classification kind",
+			entry:   ClassificationEntry{Kind: AccessKind(99), Rationale: "authorizeSession"},
+			wantErr: true,
+		},
+		{
 			name:    "missing rationale",
 			entry:   ClassificationEntry{Kind: KindSharedInfrastructure, Rationale: ""},
 			wantErr: true,
@@ -105,7 +110,7 @@ func TestCallerSeparation_Scenario5_ExemptionsAreExplicitAndNarrow(t *testing.T)
 	// the PRODUCTION tables (not just the cases above) so a future edit that
 	// weakens a real entry's rationale fails here.
 	for _, table := range []map[string]ClassificationEntry{
-		serviceAccessTable, callerStoreAccessTable, modelToolAccessTable,
+		serviceAccessTable, callerStoreAccessTable,
 	} {
 		for name, entry := range table {
 			if err := entry.validate(); err != nil {

@@ -103,12 +103,15 @@ func TestSteer_EnabledByDefaultEndToEnd(t *testing.T) {
 	// dispatch auto-approves (Interactive is false; an ask would park the run
 	// headless instead of holding it mid-dispatch the way this test needs).
 	built, err := Build(ctx, Config{
-		Workspace:           t.TempDir(),
-		Model:               "mock",
-		NoSoul:              true,
-		MockProvider:        llm,
-		AllowAllTools:       true,
-		extraCoreTools:      []tool.Tool{block},
+		Workspace:      t.TempDir(),
+		Model:          "mock",
+		NoSoul:         true,
+		MockProvider:   llm,
+		AllowAllTools:  true,
+		extraCoreTools: []tool.Tool{block},
+		extraCoreToolClassifications: map[string]server.ClassificationEntry{
+			"SteerBlock": {Kind: server.KindDerived, Rationale: "test tool is contained within the current authorized run"},
+		},
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}),
 		liveModelHTTPClient: offlineHTTPClient(),
 	})

@@ -200,9 +200,12 @@ and model-facing path.
   application boundary to exactly one valid table entry and reports an unclassified call
   site or stale table entry.
   - verify: `TestInvariant_owned_access_is_classified`
+  - verify: `TestCallerSeparation_RealCatalogClassifiesAllMemoryLifecycleTools`
+  - verify: `TestCallerSeparation_ClassificationKindsMatchRealRegistrationContext`
 - AC5.2: A fixture that adds an unclassified owned access path causes the classification
-  guard to fail.
+  guard to fail, including a tool registered through the real composition path.
   - verify: `TestCallerSeparation_Scenario5_UnclassifiedAccessFailsGuard`
+  - verify: `TestCallerSeparation_RegisteredUnclassifiedToolFailsRealCatalogGuard`
 - AC5.3: Explicit shared-infrastructure/exempt entries state their rationale and do not
   become caller-owned bypasses.
   - verify: `TestCallerSeparation_Scenario5_ExemptionsAreExplicitAndNarrow`

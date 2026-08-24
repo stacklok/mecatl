@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/toolkit"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
@@ -687,8 +688,10 @@ func mainServerResourceCapability(mainMgr *mcp.Manager, name string) (string, bo
 	if mainMgr == nil {
 		return "", false
 	}
-	for _, server := range mainMgr.Servers() {
-		if server.Name() == name && len(server.Resources()) != 0 {
+	// srv, not server: this file now imports the server package (the caller-separation
+	// tool classification), so the old loop name shadowed it.
+	for _, srv := range mainMgr.Servers() {
+		if srv.Name() == name && len(srv.Resources()) != 0 {
 			return governance.MCPResourceCapability(name), true
 		}
 	}
@@ -857,18 +860,24 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 			"agent", def.Name, "tool", d.tool, "reason", d.reason, "source", source)
 	}
 
-	cat := tool.NewCatalog()
+	classified := newClassifiedCatalog()
+	cat := classified.catalog
 	for _, name := range names {
 		// Bash registers with the HARDENED runner (the base map's Bash is the
 		// unhardened one used only to compute the name set), since the Subagent child's
 		// shell runs over a worktree that shares the parent `.git`. Every other tool
 		// registers as-is. allowShell is true iff runner != nil, so this branch only
 		// fires with a non-nil runner.
+		registered := base[name]
 		if name == tools.BashToolName && runner != nil {
-			cat.MustRegister(agent.NewBashTool())
+			registered = agent.NewBashTool()
+		}
+		entry, ok := coreToolClassification(registered)
+		if !ok {
+			classified.mustRegister(registered, nil)
 			continue
 		}
-		cat.MustRegister(base[name])
+		classified.mustRegister(registered, &entry)
 	}
 
 	// Per-agent MCP: a def's mcpServers add the referenced/inline servers' tools to
@@ -877,14 +886,17 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// down on shutdown). MCP tool names are NOT relevant to a Subagent def's read-only
 	// backstop (Subagent defs are not team members), so the names return is ignored here.
 	mcpTools, _, resourceCapabilities, mcpClose := defMCPTools(ctx, cfg.diag(), def, mainMgr)
+	mcpEntry := classification(server.KindDerived,
+		"agent-definition MCP tools are scoped to this already authorized specialist child")
 	for _, mt := range mcpTools {
-		if err := cat.Register(mt); err != nil {
+		if err := classified.register(mt, mcpEntry); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def MCP tool registration failed; skipped",
 				"agent", def.Name, "tool", mt.Spec().Name, "err", err)
 			continue
 		}
 		names = append(names, mt.Spec().Name)
 	}
+	mustValidateClassifiedCatalog(classified, "specialist agent tool catalog", mcpClose)
 
 	bodies, missing := preloadedSkillBodies(def, skillIdx)
 	for _, name := range missing {

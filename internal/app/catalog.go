@@ -37,6 +37,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
@@ -197,8 +198,19 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	if profile, ok := a.userModelStore.(prompt.OperatorProfileSource); ok {
 		cfg.operatorProfileSource = profile
 	}
-	cat := tool.NewCatalog()
-	registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
+	classified := newClassifiedCatalog()
+	cat := classified.catalog
+	classified.captureEach(coreToolClassification, func() {
+		registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
+	})
+	for _, extra := range cfg.extraCoreTools {
+		entry, ok := cfg.extraCoreToolClassifications[extra.Spec().Name]
+		if !ok {
+			classified.mustRegister(extra, nil)
+			continue
+		}
+		classified.mustRegister(extra, &entry)
+	}
 
 	// PresentPlan (issue #206, Wave 3) — the plan-approval gate's signalling tool.
 	// Registered in EVERY catalog (shared AND per-session, both no-FS and default
@@ -208,10 +220,17 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	// The tool implements tool.PlanOnly, so the catalog's mode projection excludes
 	// it from every non-plan mode (Available/Specs/AdvertisedSpecs); the dispatcher's
 	// name+mode check is defense-in-depth on top of that projection gate.
-	cat.MustRegister(agent.NewPresentPlanTool())
+	classified.mustRegister(agent.NewPresentPlanTool(), classification(server.KindDerived,
+		"signals plan approval only within the current authorized run"))
 
-	mountGlobalMCP(ctx, cfg, cat, *a, s)
+	classified.capture(server.ClassificationEntry{Kind: server.KindSharedInfrastructure,
+		Rationale: "server-global MCP tools are process-wide configured infrastructure shared by every caller"}, func() {
+		mountGlobalMCP(ctx, cfg, cat, *a, s)
+	})
+	clientBefore := classified.names()
 	clientClose := mountClientMCP(ctx, cfg, cat, s)
+	classified.classifyAdded(clientBefore, server.ClassificationEntry{Kind: server.KindDerived,
+		Rationale: "client MCP tools are derived from the already authorized session and cannot select another session"})
 
 	// refMgr is the mainMgr for Subagent/member defs' MCP `reference:` resolution:
 	// prefer the SHARED global manager (parity with the build-time path), falling
@@ -220,18 +239,38 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	if refMgr == nil {
 		refMgr = s.clientMgr
 	}
-	subagentClose := registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
+	var subagentClose func() error
+	classified.captureEach(delegationToolClassification, func() {
+		subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
+	})
 	// Parallel is ABSENT under the no-FS profile (not merely disarmed): every
 	// branch is a force-copy filesystem fork and the deliverable is a preserved
 	// fork PATH — both meaningless without a filesystem.
 	if !s.noFS {
-		registerParallelTool(ctx, cfg, cat, reg, store, hooks, *a, s)
+		classified.captureEach(delegationToolClassification, func() {
+			registerParallelTool(ctx, cfg, cat, reg, store, hooks, *a, s)
+		})
 	}
-	registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
-	registerMemoryFamilies(ctx, cfg, cat, *a)
-	registerScheduleTool(ctx, cfg, cat, a, s)
-	registerSkillFamily(ctx, cfg, cat, *a, s)
+	classified.captureEach(delegationToolClassification, func() {
+		registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
+	})
+	classified.capture(server.ClassificationEntry{Kind: server.KindCallerOwned,
+		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
+		registerMemoryFamilies(ctx, cfg, cat, *a)
+	})
+	classified.captureEach(scheduleToolClassification, func() {
+		registerScheduleTool(ctx, cfg, cat, a, s)
+	})
+	classified.captureEach(func(t tool.Tool) (server.ClassificationEntry, bool) {
+		return skillToolClassification(t, *a, s)
+	}, func() {
+		registerSkillFamily(ctx, cfg, cat, *a, s)
+	})
 
+	if cfg.catalogClassificationObserver != nil {
+		cfg.catalogClassificationObserver(classified.snapshot())
+	}
+	mustValidateClassifiedCatalog(classified, "model tool catalog", subagentClose, clientClose)
 	closeFn := composeCloseErr(subagentClose, clientClose)
 	if closeFn == nil {
 		closeFn = func() error { return nil }
@@ -583,33 +622,48 @@ func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a c
 // Read/Grep/Glob, no Bash, no Edit/Write). A fresh
 // catalog per call (the readOnlyExplorerCatalog idiom: one catalog per engine).
 // The global MCP tools are REUSED from the shared manager, never reconnected.
+func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAssets) *classifiedCatalog {
+	classified := newClassifiedCatalog()
+	cat := classified.catalog
+	classified.captureEach(coreToolClassification, func() {
+		for _, t := range tools.NoFS() {
+			cat.MustRegister(t)
+		}
+		// WebSearch (issue #26) for read-only-discovery parity with WebFetch: a no-FS
+		// explorer's natural workflow is search-then-fetch, so it carries both. Built
+		// over the SAME process-wide provider as the main catalog (a.searchProvider).
+		cat.MustRegister(tools.NewWebSearchTool(a.searchProvider))
+	})
+	classified.capture(server.ClassificationEntry{Kind: server.KindSharedInfrastructure,
+		Rationale: "server-global MCP tools are process-wide configured infrastructure shared by every caller"}, func() {
+		if a.globalMgr != nil {
+			if skipped, rerr := mcp.Register(cat, a.globalMgr.Tools()); rerr != nil {
+				cfg.diag().Log(ctx, port.LevelWarn,
+					"no-FS child catalog: skipped duplicate MCP tool name(s): "+strings.Join(skipped, ", "),
+					"tools", strings.Join(skipped, ", "), "err", rerr)
+			}
+			// CallMcpWithQuery (issue #223): the fail-closed error an over-cap
+			// structured MCP result surfaces names CallMcpWithQuery as the escape
+			// hatch — a no-FS child that hits it MUST have the tool to recover, or
+			// the error is a dead end. Cloud-native portable (no disk), so it
+			// belongs in the file-less child surface alongside the mcp__* tools,
+			// mirroring mountGlobalMCP's registration.
+			if _, rerr := mcp.RegisterCallWithQuery(cat, a.globalMgr); rerr != nil {
+				cfg.diag().Log(ctx, port.LevelWarn, "no-FS child catalog: registering CallMcpWithQuery failed", "err", rerr)
+			}
+		}
+	})
+	classified.capture(server.ClassificationEntry{Kind: server.KindCallerOwned,
+		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
+		registerMemoryFamilies(ctx, cfg, cat, a)
+	})
+	return classified
+}
+
 func noFSChildCatalog(ctx context.Context, cfg Config, a catalogAssets) *tool.Catalog {
-	cat := tool.NewCatalog()
-	for _, t := range tools.NoFS() {
-		cat.MustRegister(t)
-	}
-	// WebSearch (issue #26) for read-only-discovery parity with WebFetch: a no-FS
-	// explorer's natural workflow is search-then-fetch, so it carries both. Built
-	// over the SAME process-wide provider as the main catalog (a.searchProvider).
-	cat.MustRegister(tools.NewWebSearchTool(a.searchProvider))
-	if a.globalMgr != nil {
-		if skipped, rerr := mcp.Register(cat, a.globalMgr.Tools()); rerr != nil {
-			cfg.diag().Log(ctx, port.LevelWarn,
-				"no-FS child catalog: skipped duplicate MCP tool name(s): "+strings.Join(skipped, ", "),
-				"tools", strings.Join(skipped, ", "), "err", rerr)
-		}
-		// CallMcpWithQuery (issue #223): the fail-closed error an over-cap
-		// structured MCP result surfaces names CallMcpWithQuery as the escape
-		// hatch — a no-FS child that hits it MUST have the tool to recover, or
-		// the error is a dead end. Cloud-native portable (no disk), so it
-		// belongs in the file-less child surface alongside the mcp__* tools,
-		// mirroring mountGlobalMCP's registration.
-		if _, rerr := mcp.RegisterCallWithQuery(cat, a.globalMgr); rerr != nil {
-			cfg.diag().Log(ctx, port.LevelWarn, "no-FS child catalog: registering CallMcpWithQuery failed", "err", rerr)
-		}
-	}
-	registerMemoryFamilies(ctx, cfg, cat, a)
-	return cat
+	classified := newNoFSClassifiedChildCatalog(ctx, cfg, a)
+	mustValidateClassifiedCatalog(classified, "no-FS child tool catalog")
+	return classified.catalog
 }
 
 // nonReadOnlyToolNames lists the catalog's tools reporting ReadOnly() == false.

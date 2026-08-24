@@ -4926,8 +4926,8 @@ pointer to an existing decision), or one containing a `blanketBypassPhrases`
 match ("always allow", "no check needed", …) — so an exemption cannot become
 a silent caller-owned bypass (AC5.3).
 
-Four classified surfaces, each with its own table and a `Classify*` driver,
-concatenated by `ClassifyAllBoundaries` (the single entry point
+Three server-owned classified surfaces are concatenated by
+`ClassifyAllBoundaries` (the single entry point
 `TestInvariant_owned_access_is_classified` drives, in
 `internal/adapter/server/classification_test.go`):
 
@@ -4957,17 +4957,28 @@ concatenated by `ClassifyAllBoundaries` (the single entry point
   (`TestCallerSeparation_Scenario4_SystemPrincipalIsNotUniversalBypass`); the
   guard's own exemption test additionally asserts no `systemAccessTable`
   entry claims `KindCallerOwned` (decision 5, no universal bypass).
-- **`modelToolAccessTable`** over the explicit `ModelToolBoundaries` registry
-  — the model-facing tool names that reach a caller-owned/shared decision
-  DIRECTLY rather than only through `*Service`: project memory
-  (`Remember`/`Recall`/`SearchMemory` — `Forget` is a `CallerStore`
-  capability with no registered model-facing tool today, so it is not
-  listed), user-model memory (`RememberUser`/`RecallUser`/
-  `SearchUserModel`), and child/team observability/delegation
-  (`InspectSubagent`/`InspectMember`/`SubagentStatus`/`Team`). This is a
-  deliberately NARROW, hand-maintained list (like `syscaller.Roots`), not a
-  reflection over the whole tool catalog — tools unrelated to caller
-  ownership (`Read`, `Bash`, `WebSearch`, …) are out of scope by design.
+
+Model-facing tools use a different structural guard because their concrete
+membership is assembled dynamically. `internal/app/catalog_classification.go`
+wraps each production catalog while it is built. Every successful direct or
+bulk registration records a contextual `ClassificationEntry`; bulk families
+(memory and MCP) derive names from the actual before/after `Catalog.Tools()`
+delta, including all twelve lifecycle-capable memory tools. Finalization feeds
+the actual catalog names and recorded entries through the same
+`ValidateClassifiedNames` comparison used above. Registering through the raw
+catalog during assembly therefore remains detectable: the real-catalog negative proof injects
+an extra core tool without metadata and assembly fails naming that tool. The
+guard runs for the full shared/per-session catalog, no-fs children, read-only
+and writable explorers, specialist definitions, and team-member catalogs.
+Classifications stay contextual: global MCP is shared infrastructure, client
+and definition MCP is derived from the authorized session/child, durable child
+inspection and resume are caller-owned, run-local status/team coordination is
+derived, learned Skill/SkillDraft views are caller-owned, static/project skill
+views and filesystem tools are narrowly exempt under their existing project-
+trust/workspace boundary. The optional engine-library `ToolSearch` path is not
+enabled by production composition; run-local `SubmitResult` is an `ExtraTools`
+overlay rather than a catalog registration and remains outside this catalog
+inventory.
 
 `classifyNames(surface, table, boundaries)` is the shared comparison every
 `Classify*` driver and the AC5.2 fixture test

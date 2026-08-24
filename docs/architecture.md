@@ -960,23 +960,25 @@ backing stores stay distinct even where logical keys collide.
 
 **The classification guard (ADR 0212 decision 2).**
 `internal/adapter/server/classification.go` inventories every designated
-application-facade, in-memory-registry/event-relay, cache/index, and
-model-tool access boundary and resolves each to exactly one
-`ClassificationEntry` — `caller-owned` (re-runs the decision itself),
-`derived` (resolves ownership by construction, through an id a caller can
-only obtain from an already-classified caller-owned call), `shared-
-infrastructure` (a classified, narrow, non-caller-identified operation — a
-system-principal root or a process-wide catalog read), or `exempt` (a
-structurally caller-free composition-time accessor). A shared-
-infrastructure/exempt entry MUST carry a concrete, reviewable rationale — a
-short or blanket-bypass-sounding one fails validation — so an exemption can
-never quietly become a caller-owned bypass. `TestInvariant_owned_access_is_
-classified` (`internal/adapter/server/classification_test.go`) drives the
-guard over the real `*server.Service` and `memory.CallerStore` method sets
-(via reflection — an exported method with no table entry fails the test by
-name), the registered `internal/syscaller.Roots`, and the fixed
-`ModelToolBoundaries` registry, so a new owned access path cannot ship
-unclassified.
+application-facade, in-memory-registry/event-relay, cache/index, and system-root
+boundary. Model-facing tools are inventoried separately at their real
+composition registration sites by `internal/app/catalog_classification.go`:
+each successful registration receives one `ClassificationEntry`, and catalog
+finalization compares those entries with `Catalog.Tools()`, so a raw or newly
+added registration during assembly cannot disappear from both sides of a
+hand-maintained list.
+Both guards use the same four classifications — `caller-owned` (re-runs the
+decision itself), `derived` (ownership follows from the current authorized
+run), `shared-infrastructure` (a narrow, non-caller-identified operation), or
+`exempt` (workspace/project-trust scoped or irrelevant to caller ownership).
+A shared-infrastructure/exempt entry MUST carry a concrete, reviewable
+rationale; a short or blanket-bypass-sounding one fails validation.
+`TestInvariant_owned_access_is_classified`
+(`internal/adapter/server/classification_test.go`) drives the server guard over
+the real `*server.Service` and `memory.CallerStore` method sets and registered
+`internal/syscaller.Roots`. The app guard runs during full-session, no-fs,
+explorer, specialist, and member catalog assembly; its negative proof registers
+a real extra tool and requires assembly to fail naming that tool.
 
 **System principals are scoped, not a universal bypass (decision 5).** Every
 `internal/syscaller.Root` (the childgc sweeper, both dream consolidators, the
