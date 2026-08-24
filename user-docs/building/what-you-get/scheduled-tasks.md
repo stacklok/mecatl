@@ -67,9 +67,15 @@ Each fire mints a brand-new top-level session (a `sched--`-prefixed id on the cr
 
 The fire's own conversation, tool calls, and usage live in the `SessionStore` under that session id. The `ScheduleFire` record the schedule store keeps is just the pointer to it — the fire id, the session id, the fired-at time, the terminal stop reason, and an error string if it failed. Result delivery is **pull-only in this release**: a caller polls `GetFire`/`ListFires` to see what happened, rather than the store pushing results out.
 
-## Managing schedules: in-chat, gRPC, and REST
+## Host composition surfaces: in-chat, gRPC, and REST
 
-Schedules can be created and managed **from inside the conversation** — the model-facing `Schedule` tool (verbs `create`/`list`/`inspect`/`pause`/`resume`/`delete`/`fire`, registered on every session whose store backs a `ScheduleStore`) rides the same validated create-seam as the wire API, so a schedule created in-chat is indistinguishable from an API-created one. The scheduler is also reachable on both wire surfaces the rest of mecatl uses, so schedules can be created and inspected out-of-band from the tick loop.
+The engine exposes the `ScheduleStore` and scheduler seams; it does not expose an
+HTTP server or gRPC service. The model-facing `Schedule` tool and the gRPC/REST
+surfaces below are supplied by host composition. They use the same validated
+The in-chat `Schedule` tool supports `create`, `list`, `inspect`, `pause`, `resume`,
+`delete`, and `fire`; it is registered only when the session's store provides a
+`ScheduleStore`.
+
 
 **gRPC** — `mecatl.v1.ScheduleService` (`contracts/proto/mecatl/v1/schedule.proto`): `CreateSchedule`, `GetSchedule`, `ListSchedules`, `UpdateSchedule`, `DeleteSchedule` (idempotent), `FireNow`, `PauseSchedule`, `ResumeSchedule`, `GetFire`, `ListFires`.
 

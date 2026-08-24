@@ -115,5 +115,5 @@ and shutdown details, see [Scheduled tasks for builders](/building/what-you-get/
 
 - [Session continuity](./session-continuity.md)
 - [Mecatl deployment choices](/building/getting-started/deployment-decision.md)
-- [Scheduled task API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md#scheduled-task-rpcs)
+- [Scheduled task API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md)
 - [Capability and deployment matrix](./capability-matrix.md)

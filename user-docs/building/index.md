@@ -35,7 +35,7 @@ _Everything here you do not have to build._
 | [MCP client](/building/what-you-get/mcp-client.md) | Streaming-HTTP MCP, namespaced tools, reconnect |
 | [Subagents, teams & parallel](/building/what-you-get/subagents-teams-parallel.md) | One-shot Subagent, Parallel fork-join, Team crew coordination |
 | [Observability & resilience](/building/what-you-get/observability.md) | OTel traces, LLM resilience decorator, slow-turn ring |
-| [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) | Autonomous cron/one-shot runs, exactly-once across replicas |
+| [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) | Autonomous cron/one-shot runs, at-most-once slot claiming across replicas |
 
 ### Extension points
 

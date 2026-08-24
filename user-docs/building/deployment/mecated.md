@@ -635,7 +635,7 @@ cannot perform the legacy promotion step — it does not have filesystem access 
 
 Schedules are managed **in-chat** via the model-facing `Schedule` tool or over the
 gRPC/REST `ScheduleService` API — there is no `mecated schedules` CLI (it was removed;
-see [Scheduled tasks](/building/what-you-get/scheduled-tasks.md#managing-schedules-in-chat-grpc-and-rest)).
+see [Scheduled tasks](/building/what-you-get/scheduled-tasks.md#host-composition-surfaces-in-chat-grpc-and-rest)).
 
 ---
 
