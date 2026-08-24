@@ -1,3 +1,4 @@
+// Package main demonstrates registering a custom mecatl tool.
 package main
 
 import (

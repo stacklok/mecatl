@@ -1,3 +1,4 @@
+// Package main demonstrates using the mecatl engine with OpenRouter.
 package main
 
 import (

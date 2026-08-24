@@ -1,3 +1,4 @@
+// Package main demonstrates resolving a mecatl permission request.
 package main
 
 import (

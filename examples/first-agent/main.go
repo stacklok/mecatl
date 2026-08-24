@@ -1,3 +1,4 @@
+// Package main demonstrates the minimal offline mecatl agent.
 package main
 
 import (
