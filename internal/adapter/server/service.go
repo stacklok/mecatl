@@ -2944,9 +2944,20 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if text == "" && len(parts) == 0 {
 		return nil, fmt.Errorf("%w: prompt text or parts is required", ErrInvalidArgument)
 	}
-	// Serialize the complete run-entry transaction, including the authoritative
-	// load, purpose authorization, and terminal-state recovery. Loading before this
-	// lock lets two same-id starts recover the same snapshot independently.
+	// With ownership enabled, prove ownership before entering caller-selected
+	// per-session coordination. This is only a preflight: the session may change
+	// before the lock is acquired, so the aggregate is deliberately discarded and
+	// loaded again under the lock. The compatibility path retains its historical
+	// single authoritative load.
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSession(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	// Serialize the authoritative run-entry transaction, including a fresh load,
+	// purpose authorization, and terminal-state recovery. When enabled, the
+	// preflight above keeps foreign callers out of this owner-correlated lock; this
+	// reload prevents the preflight from becoming a durable grant.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
 	// Authorize the exact id before revealing whether its metadata or legacy prefix
