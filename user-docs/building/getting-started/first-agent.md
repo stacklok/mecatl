@@ -32,14 +32,66 @@ You need Go 1.26 or newer. The first-agent example is designed to run from a
 clean external module and imports only the public `github.com/stacklok/mecatl/engine`
 module and its reference adapters.
 
+## First agent: offline and deterministic
+
+Create a clean Go module, add the engine dependency, and save this as `main.go`:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "github.com/stacklok/mecatl/engine/adapter/memfs"
+    "github.com/stacklok/mecatl/engine/adapter/mockllm"
+    "github.com/stacklok/mecatl/engine/adapter/permpolicy"
+    "github.com/stacklok/mecatl/engine/adapter/permstore"
+    "github.com/stacklok/mecatl/engine/agent"
+    "github.com/stacklok/mecatl/engine/session"
+    "github.com/stacklok/mecatl/engine/tool"
+)
+
+func main() {
+    ws := memfs.NewWorkspace("/workspace")
+    env := tool.MustEnvironment(session.EnvironmentRef{}, ws, nil)
+    eng := agent.NewEngine(agent.Deps{
+        LLM: mockllm.New(mockllm.TextTurn("Hello from your first agent.")),
+        Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "mock",
+    })
+    sess := session.New("first-agent", session.ModeDefault, "/workspace", session.Limits{}, time.Now())
+    run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "Say hello."})
+    for event := range run.Events() { if event.Type == session.EvResult { fmt.Println(event.Result.Text) } }
+}
+```
+
+The same source is available at [`examples/first-agent/main.go`](https://github.com/stacklok/mecatl/blob/main/examples/first-agent/main.go).
+Run it from a clean module rather than from the mecatl checkout:
+
+```sh
+mkdir first-agent && cd first-agent
+go mod init example.com/first-agent
+go get github.com/stacklok/mecatl/engine@latest
+go run .
+```
+
+It prints:
+
+```text
+Hello from your first agent.
+```
+
+The example uses the offline `mockllm` adapter, so it needs no API key or network.
+The `tool.Environment` binds the workspace and optional command runner that tools
+would use; this example passes no runner because it has no shell tool.
+
 ## Follow the steps
 
-- **First agent:** the next step adds the complete copyable program and a
-  clean-module verification command.
-- **First tool:** then add a `tool.Tool` implementation and register it on the
-  catalog passed through `agent.Deps`.
-- **Approval:** then change the policy to `Ask` and handle the `permission.ask`
-  event in your host.
+- **First tool:** add a `tool.Tool` implementation and register it on the catalog
+  passed through `agent.Deps`.
+- **Approval:** change the policy to `Ask` and handle the `permission.ask` event
+  in your host.
 - **Extensions:** choose a provider, persistence backend, hook runner, or child
   delegation from the relevant builder guide.
 
