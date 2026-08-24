@@ -26,14 +26,16 @@ Choose a pre-built binary (`mecated`, `mecak8s`, `mecatequi`) when you want the 
 
 ## Dependency footprint
 
-The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its `go.mod` requires three packages at runtime plus one test-only package:
+The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its runtime dependency closure includes `doublestar`, `robfig/cron/v3`, `go.yaml.in/yaml/v3`, `golang.org/x/net`, and `golang.org/x/sync`; `go.uber.org/goleak` is test-only:
 
 | Package | Role |
 |---|---|
 | `golang.org/x/sync` | `errgroup` for concurrent tool dispatch |
 | `github.com/bmatcuk/doublestar/v4` | Glob matching for permission patterns in `engine/adapter/memfs` |
-| `github.com/robfig/cron/v3` | Cron expression parsing in `engine/adapter/cronparse` (scheduled tasks); itself a dependency-free module |
-| `go.uber.org/goleak` | Test-only (leaked-goroutine detection); never enters a production build |
+| `go.yaml.in/yaml/v3` | YAML parsing used by core configuration/value handling |
+| `golang.org/x/net` | HTML parsing used by core web-content handling |
+| `github.com/robfig/cron/v3` | Cron expression parsing in `engine/adapter/cronparse` |
+| `go.uber.org/goleak` | Test-only leaked-goroutine detection; never enters a production build |
 
 Nothing from mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.
 
@@ -51,7 +53,7 @@ That's the only step. The engine module is self-contained; it does not require a
 
 ## Minimum wiring
 
-The engine is built from a `agent.Deps` struct — a bag of injected ports and configuration. Exactly three fields are required at startup; the rest are optional and have documented defaults.
+The engine is built from an `agent.Deps` struct — a bag of injected ports and configuration. A useful run supplies an LLM provider, tool catalog, permission policy, and model identifier; hooks, persistence, timing, and prompt helpers are optional and have documented defaults.
 
 Here is the minimum viable wiring, modelled after `cmd/mecademo/demo.go`:
 
@@ -79,7 +81,6 @@ func main() {
     ctx := context.Background()
 
     // 1. Build a tool catalog. Register the tools you want the model to use.
-    //    tools.All() (from internal/adapter/tools) is the full production set;
     //    for embedding, register only what you need.
     cat := tool.NewCatalog()
     // cat.MustRegister(myTool)
@@ -96,7 +97,7 @@ func main() {
         LLM:     mockllm.New(mockllm.TextTurn("Hello, world.")), // replace with your provider
         Catalog: cat,
         Policy:  policy,
-        Hooks:   noopHooks{}, // or hookexec.New(nil) for a no-op shell hook runner
+        // Hooks are optional; nil uses the engine's no-op behavior.
         Store:   memstore.New(),
         PromptConfig: prompt.Config{
             Env: prompt.Env{
@@ -138,16 +139,17 @@ The call to `eng.Run` returns a `*Run` immediately; the loop drives in a backgro
 
 ---
 
-## The ports you must satisfy
+## Ports and configuration
 
-`agent.Deps` has three required fields. The rest are optional — zero values or nil engage documented defaults.
+`agent.Deps` has a small set of required runtime seams for a meaningful run. The
+remaining fields are optional — zero values or nil engage documented defaults.
 
 | Field | Type | Required? | Reference adapter | Notes |
 |---|---|---|---|---|
 | `LLM` | `port.LLMProvider` | **yes** | `engine/adapter/mockllm` for tests; bring your own for production | Implement `Stream` + `Capabilities`. See `engine/port/llm.go`. |
 | `Catalog` | `*tool.Catalog` | **yes** | `tool.NewCatalog()` + `cat.MustRegister(...)` | Register only the tools your agent should use. |
 | `Policy` | `port.PermissionPolicy` | **yes** | `engine/adapter/permpolicy` + `engine/adapter/permstore` | `permpolicy.NewPolicy(rules, permstore.New())` is the standard wiring. |
-| `Hooks` | `port.HookRunner` | **yes (but no-op works)** | `hookexec.New(nil)` (from `internal/adapter/hookexec`) | A nil `Hooks` will panic; use the no-op constructor if you have no hooks. |
+| `Hooks` | `port.HookRunner` | no | — | Nil hooks are supported and use the engine's no-op behavior. |
 | `Store` | `port.SessionStore` | no | `engine/adapter/memstore` | nil disables persistence. `memstore.New()` is the in-process default. |
 | `Clock` | `port.Clock` | no | `engine/adapter/wallclock` | nil → no tool-call timing. |
 | `Model` | `string` | **yes** | — | Sent on every `LLMRequest`. Must match your provider's model identifier. |

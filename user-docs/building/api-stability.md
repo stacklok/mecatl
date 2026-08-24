@@ -5,18 +5,19 @@ title: API stability
 
 # API stability
 
-`github.com/stacklok/mecatl/engine` is the importable core of mecatl (ADR 0036). It ships as its own Go module with a tiny dependency closure (`doublestar` + `x/sync` + `robfig/cron/v3`, itself a zero-dependency module, used only by the scheduling-adjacent `engine/adapter/cronparse` + test-only `goleak`) so external consumers do not pull mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
+`github.com/stacklok/mecatl/engine` is the importable core of mecatl (ADR 0036). It ships as its own Go module with a small dependency closure (`doublestar`, `robfig/cron/v3`, `go.yaml.in/yaml/v3`, `x/net`, and `x/sync`; test-only `goleak`) so external consumers do not pull mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
 
 ---
 
 ## The stable surface
 
-The contract covers the **exported identifiers** of seven core packages:
+The contract covers the **exported identifiers** of eight core packages:
 
 | Package | Role |
 |---|---|
 | `engine/session` | the `Session` aggregate, value objects, the event taxonomy |
 | `engine/governance` | permission `Effect`/`Scope`/`Rule` + `Evaluator`, hook event types |
+| `engine/learning` | evidence-backed reflection and learned-skill lifecycle contracts |
 | `engine/tool` | `Tool`/`Catalog`, `FileSystem`/`Workspace`, source port interfaces |
 | `engine/prompt` | two-layer prompt assembly + discovery ports |
 | `engine/port` | the port interfaces the agent loop consumes |
@@ -90,7 +91,7 @@ flowchart LR
 
 ### 1. `api-compat` (`task api:check`)
 
-Loads the seven core packages with `go/packages`, renders each one's exported surface to the stable text format described above, and diffs against the committed baselines in `engine/api/*.txt`. Any drift — a new field, a renamed method, a changed const value, a removed type — fails with a human-readable diff. The check runs as a named `api-compat` CI job for a clear signal, and also as part of the normal `task test` sweep.
+Loads the eight core packages with `go/packages`, renders each one's exported surface to the stable text format described above, and diffs against the committed baselines in `engine/api/*.txt`. Any drift — a new field, a renamed method, a changed const value, a removed type — fails with a human-readable diff. The check runs as a named `api-compat` CI job for a clear signal, and also as part of the normal `task test` sweep.
 
 The dumper lives in the root module (`internal/apicheck`) so the engine `go.mod` stays free of `go/tools` — importing `go/packages` would bloat the engine's dependency closure for every consumer.
 
@@ -163,7 +164,7 @@ A session reconstructed by folding mecatl's own event stream is therefore **byte
 
 ## What's next
 
-- [Embed the engine](/building/deployment/embed-engine.md) — `go get github.com/stacklok/mecatl/engine`, its tiny dependency closure, and what's importable.
+- [Embed the engine](/building/deployment/embed-engine.md) — `go get github.com/stacklok/mecatl/engine`, its small dependency closure, and what's importable.
 - [The agent loop](/building/what-you-get/agent-loop.md) — how the engine runs turns, dispatches tools, and emits the event stream.
 - [Extension points](/building/extension-points/index.md) — implement a port interface (`port.LLMProvider`, `port.SessionStore`, `port.PermissionPolicy`, and others) to replace any capability.
 - [Deployment decision](/building/getting-started/deployment-decision.md) — choosing between `mecated` and the embedded engine library.
