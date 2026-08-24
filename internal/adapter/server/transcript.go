@@ -32,6 +32,18 @@ type SessionTranscript struct {
 // returns its current Conversation. It deliberately bypasses run entry: no
 // environment resolution, engine rehydration, lease, or persistence occurs.
 func (s *Service) GetTranscript(ctx context.Context, id session.SessionID) (*SessionTranscript, error) {
+	if s.cfg.OwnershipEnforced {
+		// Option 2: a transcript-load failure is absence-shaped for every caller.
+		// A failed decode leaves no trustworthy owner to compare, and returning an
+		// actionable storage error would disclose that a caller-selected id exists.
+		// This deliberately trades owner-visible diagnostics for non-disclosure.
+		sess, err := s.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return s.transcriptFromSession(sess)
+	}
+
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
@@ -43,11 +55,12 @@ func (s *Service) GetTranscript(ctx context.Context, id session.SessionID) (*Ses
 	if sess == nil {
 		return nil, fmt.Errorf("%w: load transcript returned nil session", ErrInternal)
 	}
+	return s.transcriptFromSession(sess)
+}
+
+func (s *Service) transcriptFromSession(sess *session.Session) (*SessionTranscript, error) {
 	if !validSessionIdentityMetadata(sess.ID, sess.Relationship) {
 		return nil, fmt.Errorf("%w: transcript contains invalid session identity metadata", ErrInternal)
-	}
-	if err := s.authorizeSession(ctx, sess); err != nil {
-		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	return &SessionTranscript{
 		SessionID:    sess.ID,

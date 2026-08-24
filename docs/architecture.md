@@ -937,7 +937,11 @@ Caller ownership ([ADR 0212](adr/0212-caller-ownership-enforcement.md), issue
 introduced into isolation: with an OIDC verifier wired, a caller reaches only
 its own sessions, schedules, teams, memory, event streams, and live runs. A
 refusal is indistinguishable from absence at every layer — no response ever
-reveals another caller's owner, existence, or policy reason.
+reveals another caller's owner, existence, policy reason, or transcript-load
+failure. Ownership-enabled transcript loads deliberately map every load/decode
+failure to not-found, including for the owner: without separately trusted owner
+metadata, that availability trade-off prevents a malformed snapshot from acting
+as an existence oracle.
 
 **One decision function, applied on every request.** `Service.ownsResource`
 (`internal/adapter/server/ownership.go`) is the sole comparison: `owner != nil

@@ -2180,8 +2180,27 @@ func (s *Service) StorageReady(ctx context.Context) bool {
 }
 
 // GetSession returns the persisted session under id, or ErrNotFound.
+//
+// Absence, foreign ownership, and a broken store are deliberately ONE
+// caller-visible answer, so a caller cannot probe for another owner's ids. That
+// concealment is owed to the CALLER only: an infrastructure failure is logged
+// for the operator, because otherwise a storage outage is indistinguishable from
+// mass deletion from both sides at once. A genuine not-found is the normal case
+// and stays silent.
 func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil && !errors.Is(err, port.ErrSessionNotFound) {
+		// Under enforcement the line carries NO target: neither the id nor the
+		// store's error, which routinely embeds the record path. An operator only
+		// needs the RATE of this line to see an outage, and withholding the target
+		// keeps a probing caller from correlating anything through the log.
+		if s.cfg.OwnershipEnforced {
+			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session load failed; reported to callers as absent (target withheld under ownership enforcement)")
+		} else {
+			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session load failed; reported to the caller as absent",
+				"session", string(id), "err", err.Error())
+		}
+	}
 	if err != nil || s.authorizeSession(ctx, sess) != nil {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
