@@ -271,10 +271,10 @@ concrete task split.
 
 ## Named tests landing in this plan
 
-- `TestADR_0102_IssuerSubjectPairIsOwnerIdentity`
+- `TestADR_0212_VerifiedIssuerSubjectPairIsOwnerIdentity`
 - `TestInvariant_owned_access_is_classified`
 - `TestCallerSeparation_Scenario1_OwnerCanAccessOwnedResources`
-- `TestCallerSeparation_Scenario1_CreationBindsVerifiedOwner`
+- `TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner`
 - `TestCallerSeparation_Scenario2_ListMetadataIsOwnerScoped`
 - `TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked`
 - `TestCallerSeparation_Scenario3_ModelFacingMemoryToolsAreOwnerChecked`
