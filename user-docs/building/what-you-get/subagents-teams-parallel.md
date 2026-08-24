@@ -61,7 +61,12 @@ If a subagent (or a Parallel branch, or a team member) is taking the wrong appro
 
 ## Parallel — fan out independent tasks
 
-`Parallel` runs up to 16 tasks concurrently, each in its own isolated forked workspace with its own fresh context. Use it when you want to explore several approaches at once, or split genuinely independent work — not for tasks that need to coordinate or share state as they go (that's what Team is for; Parallel branches never communicate with each other).
+`Parallel` accepts up to 16 branches per call, with up to 8 executing concurrently
+by default. Each branch runs in its own isolated forked workspace with a fresh
+context. Use it to explore several approaches at once or split genuinely
+independent work — not for tasks that need to coordinate or share state as they
+go (that's what Team is for; Parallel branches never communicate with each
+other).
 
 Each branch can implement, not just explore: it has the full read-write toolset (Edit, Write, Bash) because its changes land only in its own isolated fork, never in your shared workspace. Since a branch can't see your conversation or the other branches, describe every task as fully self-contained — use the call's `shared` field for context that applies to all of them.
 

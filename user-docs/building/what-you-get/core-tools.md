@@ -89,7 +89,14 @@ Three delegation tools are always registered in a default session. They let the 
 | `Parallel` | Fan out a set of tasks to isolated branches, then join all results or select a winner. Branches run concurrently; a single-branch winner is merged back into the parent by default, multi-branch runs never auto-merge. |
 | `Team` | Coordinate a named crew of specialist members under a lead. The lead synthesizes a consolidated report from member findings. |
 
-`Subagent` and `Parallel` are read-parallel — each isolates its child's writes in its own workspace, so the dispatcher can run them alongside your other read-only tool calls. `Team` is fully serialized (it never runs concurrently with anything else). None are available in plan mode. For depth on how delegation works — child permissions, session persistence, token budgets, structured output — see [Subagents, teams, and parallel](subagents-teams-parallel.md).
+`Subagent` and `Parallel` are read-parallel by default — each isolates its child's
+writes in its own workspace, so the dispatcher can run them alongside other
+read-only tool calls. `Team` is mutating and serialized. Plan mode still permits
+`Subagent` and `Parallel` where their calls are read-only; `Team` is unavailable
+because it mutates team state. Child policies and any call-level mutation rules
+still apply. For depth on how delegation works — child permissions, session
+persistence, token budgets, and structured output — see [Subagents, teams, and
+parallel](subagents-teams-parallel.md).
 
 ---
 

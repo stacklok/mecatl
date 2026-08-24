@@ -113,7 +113,10 @@ Deploy them in this order as you scale up:
 
 `memlease.New(clock port.Clock, ttl time.Duration) *memlease.Lease` constructs the in-process reference implementation. It keeps per-session records in a mutex-guarded map and derives expiry from an injected `port.Clock`, so tests advance a fake clock past the TTL to exercise expiry and takeover without real sleeps.
 
-This is the backend the conformance suite validates against. It is also the implementation the `engine/adapter/memstore` package exposes as `memstore.NewLease` — the same contract, slightly different constructor, wired by composition when a memstore deployment opts into leasing by flag.
+This is the backend the conformance suite validates against. The
+`memstore.NewLease` constructor exists for explicit in-process/test construction
+when exercising the lease seam; it is not a standard deployment backend selected
+by a flag.
 
 `memlease` is useful for tests and for single-replica deployments where you want the full lease lifecycle exercised. It is **not** a cross-process lock — two distinct OS processes each construct their own map and are invisible to each other.
 
