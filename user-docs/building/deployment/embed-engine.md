@@ -121,7 +121,8 @@ func main() {
     ws := memfs.NewWorkspace("/workspace")
 
     // 5. Start the run and drain events.
-    run := eng.Run(ctx, sess, ws, "Summarize the project.")
+    env := tool.MustEnvironment(session.EnvironmentRef{}, ws, nil)
+    run := eng.Run(ctx, sess, env, agent.RunRequest{Text: "Summarize the project."})
     for ev := range run.Events() {
         fmt.Printf("%s %v\n", ev.Type, ev.Text)
 

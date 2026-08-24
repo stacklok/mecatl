@@ -16,7 +16,8 @@ mecatl has no `Agent` type. The word *agent* describes the **behaviour** that em
 The engine is the **loop runner**. It is long-lived and reusable — one engine per `(provider, model)` pair, shared across as many sessions as you like. It wires together the LLM adapter, tool catalog, permission policy, and hooks at construction time and exposes a single entry point:
 
 ```go
-run := engine.Run(ctx, sess, workspace, "your prompt here")
+env := tool.MustEnvironment(session.EnvironmentRef{}, workspace, nil)
+run := eng.Run(ctx, sess, env, agent.RunRequest{Text: "your prompt here"})
 ```
 
 `Engine` is created once with `agent.NewEngine(agent.Deps{...})`. The `Deps` struct is the complete wiring surface — every capability the loop needs is injected there. The engine itself owns nothing stateful; state lives in the session.
@@ -68,11 +69,11 @@ for ev := range run.Events() {
 
 ---
 
-## The three things you pass in
+## The things you pass in
 
 | What | Type | What it does |
 |---|---|---|
-| **Workspace** | `tool.Workspace` | The filesystem view for this run. All tool I/O is scoped to one root directory; path escapes are rejected. Pass a real `osfs.Workspace` for production or `memfs.NewWorkspace` for tests. |
+| **Environment** | `tool.Environment` | Binds the non-nil filesystem workspace, optional command runner, and environment identity for this run. |
 | **Catalog** | `*tool.Catalog` (on `Deps`) | The tool registry. Holds `Read`, `Write`, `Edit`, `Bash`, MCP servers, and any custom tools you register. The engine reads `Specs(mode)` to tell the model what it can do. |
 | **LLMProvider** | `port.LLMProvider` (on `Deps`) | The model backend. The engine calls `Stream(ctx, LLMRequest)` and receives a neutral chunk stream. The OpenAI and Anthropic adapters ship out of the box; implement this interface to bring your own. |
 
@@ -92,7 +93,7 @@ agent.Deps{LLM, Catalog, Policy, Hooks, Store, ...}
           ▼
     *agent.Engine          ← long-lived, reusable per (provider, model)
           │
-          │  .Run(ctx, sess, workspace, prompt)
+          │  .Run(ctx, sess, env, req)
           ▼
       *agent.Run           ← live handle; one per active run
      /           \

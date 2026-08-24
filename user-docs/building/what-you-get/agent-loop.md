@@ -36,7 +36,7 @@ sequenceDiagram
   participant L as LLMProvider
   participant D as dispatch
   participant T as Tool
-  C->>E: Run(ctx, sess, ws, "fix the bug")
+  C->>E: Run(ctx, sess, env, RunRequest{Text: "fix the bug"})
   E->>E: BeginTurn → emit turn.start
   E->>L: Stream(LLMRequest)
   L-->>E: ChunkText / ChunkReasoning ...
@@ -48,7 +48,7 @@ sequenceDiagram
   D->>D: Policy.Evaluate → Allow
   D->>D: PreToolUse hook
   D-->>C: tool.call
-  D->>T: Execute(call, ws)
+  D->>T: Execute(call, env)
   T-->>D: ToolResult
   D-->>C: tool.result
   D->>D: PostToolUse hook
