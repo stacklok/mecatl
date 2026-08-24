@@ -327,3 +327,150 @@ func TestNamespacedReviewedSynthesisCapabilityAndKeyTranslation(t *testing.T) {
 		t.Fatal("wrapper advertised synthesis absent from backing store")
 	}
 }
+
+type recordingCallerBackingStore struct {
+	calls int
+}
+
+func (s *recordingCallerBackingStore) called() { s.calls++ }
+
+func (s *recordingCallerBackingStore) RememberEntry(context.Context, tool.MemoryEntry) error {
+	s.called()
+	return nil
+}
+
+func (s *recordingCallerBackingStore) Recall(context.Context, string) (tool.MemoryEntry, bool, error) {
+	s.called()
+	return tool.MemoryEntry{}, false, nil
+}
+
+func (s *recordingCallerBackingStore) List(context.Context, string) ([]tool.MemoryEntry, error) {
+	s.called()
+	return nil, nil
+}
+
+func (s *recordingCallerBackingStore) Forget(context.Context, string) error {
+	s.called()
+	return nil
+}
+
+func (s *recordingCallerBackingStore) Index(context.Context) ([]tool.MemoryEntry, error) {
+	s.called()
+	return nil, nil
+}
+
+func (s *recordingCallerBackingStore) Search(context.Context, string, int) ([]tool.MemoryEntry, error) {
+	s.called()
+	return nil, nil
+}
+
+func (s *recordingCallerBackingStore) RememberVersioned(context.Context, tool.MemoryEntry, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	s.called()
+	return tool.MemoryRecord{}, nil
+}
+
+func (s *recordingCallerBackingStore) Inspect(context.Context, string) (tool.MemoryRecord, bool, error) {
+	s.called()
+	return tool.MemoryRecord{}, false, nil
+}
+
+func (s *recordingCallerBackingStore) ForgetVersioned(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	s.called()
+	return tool.MemoryRecord{}, nil
+}
+
+func (s *recordingCallerBackingStore) UndoLatest(context.Context, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	s.called()
+	return tool.MemoryRecord{}, nil
+}
+
+func (s *recordingCallerBackingStore) RememberIfCurrent(context.Context, tool.MemoryEntry, tool.MemoryCurrent) (tool.MemoryRecord, error) {
+	s.called()
+	return tool.MemoryRecord{}, nil
+}
+
+func (s *recordingCallerBackingStore) RetireDuplicate(context.Context, string, tool.MemoryVersion, string, tool.MemoryVersion) (tool.MemoryRecord, error) {
+	s.called()
+	return tool.MemoryRecord{}, nil
+}
+
+func (s *recordingCallerBackingStore) SynthesizeReplacement(context.Context, tool.MemoryEntry, tool.MemoryVersion, []string, []tool.MemoryVersion) (tool.MemoryRecord, error) {
+	s.called()
+	return tool.MemoryRecord{}, nil
+}
+
+func TestCallerStoreRejectsSystemPrincipalBeforeBackingStoreAccess(t *testing.T) {
+	backing := &recordingCallerBackingStore{}
+	store := NewCallerStore(backing, false)
+	lifecycle := store.(tool.MemoryLifecycleStore)
+	convergence := store.(tool.MemoryConvergenceStore)
+	retirement := store.(duplicateRetirementStore)
+	synthesis := store.(synthesisStore)
+	ctx := session.WithPrincipal(context.Background(), &session.Principal{
+		Issuer:    "mecatl://system",
+		Subject:   "memory-consolidation",
+		GrantType: session.GrantTypeSystem,
+	})
+
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "RememberEntry", run: func() error { return store.RememberEntry(ctx, tool.MemoryEntry{Key: "key"}) }},
+		{name: "Recall", run: func() error { _, _, err := store.Recall(ctx, "key"); return err }},
+		{name: "List", run: func() error { _, err := store.List(ctx, ""); return err }},
+		{name: "Index", run: func() error { _, err := store.Index(ctx); return err }},
+		{name: "Search", run: func() error { _, err := store.Search(ctx, "query", 1); return err }},
+		{name: "Forget", run: func() error { return store.Forget(ctx, "key") }},
+		{name: "RememberVersioned", run: func() error { _, err := lifecycle.RememberVersioned(ctx, tool.MemoryEntry{Key: "key"}, ""); return err }},
+		{name: "Inspect", run: func() error { _, _, err := lifecycle.Inspect(ctx, "key"); return err }},
+		{name: "ForgetVersioned", run: func() error { _, err := lifecycle.ForgetVersioned(ctx, "key", "version"); return err }},
+		{name: "UndoLatest", run: func() error { _, err := lifecycle.UndoLatest(ctx, "key", "version"); return err }},
+		{name: "RememberIfCurrent", run: func() error {
+			_, err := convergence.RememberIfCurrent(ctx, tool.MemoryEntry{Key: "key"}, tool.MemoryCurrent{})
+			return err
+		}},
+		{name: "RetireDuplicate", run: func() error { _, err := retirement.RetireDuplicate(ctx, "a", "v1", "b", "v2"); return err }},
+		{name: "SynthesizeReplacement", run: func() error {
+			_, err := synthesis.SynthesizeReplacement(ctx, tool.MemoryEntry{Key: "a"}, "v1", []string{"b"}, []tool.MemoryVersion{"v2"})
+			return err
+		}},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			if err := operation.run(); !errors.Is(err, errCallerStoreIdentityRequired) {
+				t.Fatalf("error = %v, want %v", err, errCallerStoreIdentityRequired)
+			}
+			if backing.calls != 0 {
+				t.Fatalf("backing calls = %d, want 0", backing.calls)
+			}
+		})
+	}
+}
+
+func TestCallerStoreIdentityAdmission(t *testing.T) {
+	backing := &recordingCallerBackingStore{}
+	store := NewCallerStore(backing, false)
+
+	if err := store.RememberEntry(context.Background(), tool.MemoryEntry{Key: "key"}); !errors.Is(err, errCallerStoreIdentityRequired) {
+		t.Fatalf("nil principal error = %v, want %v", err, errCallerStoreIdentityRequired)
+	}
+	if backing.calls != 0 {
+		t.Fatalf("nil principal reached backing store: calls = %d", backing.calls)
+	}
+
+	for _, grantType := range []session.GrantType{session.GrantTypeUser, session.GrantTypeClientCredentials} {
+		ctx := session.WithPrincipal(context.Background(), &session.Principal{
+			Issuer:    "https://issuer.example",
+			Subject:   string(grantType),
+			GrantType: grantType,
+		})
+		if err := store.RememberEntry(ctx, tool.MemoryEntry{Key: "key"}); err != nil {
+			t.Errorf("grant type %q: RememberEntry: %v", grantType, err)
+		}
+	}
+	if backing.calls != 2 {
+		t.Fatalf("backing calls = %d, want 2 admitted callers", backing.calls)
+	}
+}

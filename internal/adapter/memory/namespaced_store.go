@@ -236,6 +236,8 @@ func WithWorkspace(ctx context.Context, workspace string) context.Context {
 	return context.WithValue(ctx, memoryWorkspaceKey{}, workspace)
 }
 
+var errCallerStoreIdentityRequired = errors.New("memory: verified caller is required")
+
 // CallerStore chooses a namespace from the verified caller on each operation.
 // Project stores additionally bind that namespace to the run's workspace.
 type CallerStore struct {
@@ -300,8 +302,8 @@ func NewCallerStore(store tool.MemoryStore, project bool) tool.MemoryStore {
 
 func (s *CallerStore) scoped(ctx context.Context) (tool.MemoryStore, error) {
 	principal := session.PrincipalFromContext(ctx)
-	if principal == nil {
-		return nil, fmt.Errorf("memory: verified caller is required")
+	if principal == nil || principal.GrantType == session.GrantTypeSystem {
+		return nil, errCallerStoreIdentityRequired
 	}
 	identity := principal.Issuer + "\x00" + principal.Subject
 	if s.project {
