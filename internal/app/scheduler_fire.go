@@ -46,12 +46,10 @@ const (
 func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
 		// The scheduler passes the physical store key so RecordFire* remains in the
-		// correct owner namespace. server.LiteralScheduleName is a total, self-
-		// guarding reverse mapping (identity on any non-namespaced/flat key), so it
-		// is safe to call unconditionally rather than gating on whether ownership is
-		// enforced — used only for values exposed in a session/fire id or
-		// model-facing prompt.
-		literalName := server.LiteralScheduleName(sched.Spec.Name)
+		// correct owner namespace. Presentation also receives the authoritative
+		// stored owner, so an ownerless physical-looking literal stays literal while
+		// an owned key is stripped only against its exact owner namespace.
+		literalName := server.PresentScheduleName(sched)
 		sel := server.ProviderSelector{
 			ProviderID: sched.Spec.Selector.ProviderID,
 			ModelID:    sched.Spec.Selector.ModelID,
@@ -348,7 +346,7 @@ func sanitizeFireIDName(name string) string {
 func fireFailed(sched port.Schedule, now time.Time, sessID string, err error) port.ScheduleFire {
 	id := sessID
 	if id == "" {
-		id = newFireID(server.LiteralScheduleName(sched.Spec.Name), now)
+		id = newFireID(server.PresentScheduleName(sched), now)
 	}
 	return port.ScheduleFire{
 		ID:           id,

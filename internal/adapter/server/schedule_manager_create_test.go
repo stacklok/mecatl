@@ -2,7 +2,9 @@ package server_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -102,6 +104,45 @@ func testSchedule(name string) port.ScheduleSpec {
 		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
 		Mutating:  true,
 		Workspace: "/tmp",
+	}
+}
+
+func TestOwnerlessPhysicalLookingScheduleNameRoundTrips(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	svc := newManagerBackedBy(t, memschedulestore.New(), now)
+	digest := sha256.Sum256([]byte("https://issuer.example\x00alice"))
+	name := fmt.Sprintf("schedule/%x\x00nightly", digest[:])
+	ctx := context.Background()
+
+	created, err := svc.CreateSchedule(ctx, testSchedule(name))
+	if err != nil || created.Spec.Name != name {
+		t.Fatalf("CreateSchedule = (%q, %v), want byte-exact name %q", created.Spec.Name, err, name)
+	}
+	loaded, err := svc.GetSchedule(ctx, name)
+	if err != nil || loaded.Spec.Name != name {
+		t.Fatalf("GetSchedule = (%q, %v), want byte-exact name %q", loaded.Spec.Name, err, name)
+	}
+	listed, err := svc.ListSchedules(ctx)
+	if err != nil || len(listed) != 1 || listed[0].Spec.Name != name {
+		t.Fatalf("ListSchedules = (%+v, %v), want byte-exact name %q", listed, err, name)
+	}
+	updatedSpec := testSchedule(name)
+	updatedSpec.Prompt = "updated"
+	updated, err := svc.UpdateSchedule(ctx, updatedSpec)
+	if err != nil || updated.Spec.Name != name || updated.Spec.Prompt != "updated" {
+		t.Fatalf("UpdateSchedule = (%+v, %v), want same literal name and updated prompt", updated, err)
+	}
+	if err := svc.PauseSchedule(ctx, name); err != nil {
+		t.Fatalf("PauseSchedule: %v", err)
+	}
+	if err := svc.ResumeSchedule(ctx, name); err != nil {
+		t.Fatalf("ResumeSchedule: %v", err)
+	}
+	if err := svc.DeleteSchedule(ctx, name); err != nil {
+		t.Fatalf("DeleteSchedule: %v", err)
+	}
+	if _, err := svc.GetSchedule(ctx, name); !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("GetSchedule after delete = %v, want schedule not found", err)
 	}
 }
 

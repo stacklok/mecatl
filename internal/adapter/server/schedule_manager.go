@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -318,27 +317,29 @@ func (m *scheduleManager) physicalScheduleName(ctx context.Context, name string)
 	return m.ownerScheduleNamespace(ctx) + name
 }
 
-// LiteralScheduleName removes the ownership namespace from a store-facing
-// schedule key. It is the sole physical-to-presentation translation: scheduler
-// callbacks retain physical keys for ScheduleStore operations but use this value
-// in model/client-facing IDs, lifecycle events, and metrics. Unnamespaced keys
-// preserve the ownership-disabled compatibility path unchanged.
-func LiteralScheduleName(name string) string {
-	if strings.HasPrefix(name, scheduleOwnerlessNamespace) {
-		return strings.TrimPrefix(name, scheduleOwnerlessNamespace)
-	}
-	const ownerPrefix = "schedule/"
-	if !strings.HasPrefix(name, ownerPrefix) {
+const invalidSchedulePresentation = "invalid-schedule"
+
+// PresentScheduleName projects the caller-visible name from an authoritative
+// stored schedule. Ownerless records carry literal names byte-for-byte. Owned
+// records carry an owner-qualified physical key, which is stripped only when it
+// matches the exact namespace derived from the stored owner. Arbitrary strings
+// never acquire physical-key provenance from their grammar alone.
+func PresentScheduleName(sched port.Schedule) string {
+	name := sched.Spec.Name
+	owner := sched.Spec.Owner
+	if owner == nil {
 		return name
 	}
-	rest := strings.TrimPrefix(name, ownerPrefix)
-	if len(rest) < sha256.Size*2+1 || rest[sha256.Size*2] != '\x00' {
-		return name
+	if owner.Issuer == "" || owner.Subject == "" || strings.ContainsRune(owner.Issuer, '\x00') || strings.ContainsRune(owner.Subject, '\x00') {
+		return invalidSchedulePresentation
 	}
-	if _, err := hex.DecodeString(rest[:sha256.Size*2]); err != nil {
-		return name
+	digest := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	prefix := fmt.Sprintf("schedule/%x\x00", digest[:])
+	literal, ok := strings.CutPrefix(name, prefix)
+	if !ok {
+		return invalidSchedulePresentation
 	}
-	return rest[sha256.Size*2+1:]
+	return literal
 }
 
 // scheduleNotFoundErr normalizes a ScheduleStore not-found error to name the

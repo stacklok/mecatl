@@ -2962,13 +2962,10 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	// is the package var (test-overridable); a future operator-tier Config knob
 	// would thread through here instead.
 	sched.SetFire(makeFireFunc(svc, fireStore, defaultFireTimeout, deliverFireStarted(svc, deliveryQueue)))
-	// Store keys are owner-namespaced only when caller ownership is enforced;
-	// server.LiteralScheduleName is a total, self-guarding reverse mapping
-	// (identity on any non-namespaced/flat key), so it is wired unconditionally
-	// rather than gated on cfg.OwnershipEnforced. Scheduler callbacks keep the
-	// physical keys for storage, while lifecycle events and metrics receive the
-	// literal name through this adapter-owned reverse mapping.
-	sched.SetPresentScheduleName(server.LiteralScheduleName)
+	// Scheduler callbacks keep physical keys for storage. Presentation receives
+	// the authoritative stored schedule so ownerless names remain literal and
+	// owned keys are stripped only against their stored owner provenance.
+	sched.SetPresentScheduleName(server.PresentScheduleName)
 	// Stale-fire reconciler (issue #386 Phase 4b, acceptance criterion #7): wire
 	// the composition-injected ReconcileStaleFire callback the scheduler invokes
 	// from the tick loop's reconcile scan when it DETECTS a stale in-flight fire

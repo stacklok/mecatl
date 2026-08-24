@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -213,12 +214,12 @@ func TestMakeFireFuncUsesScheduleOwnerForRunEntry(t *testing.T) {
 	}
 }
 
-// TestFireFailedUsesLiteralScheduleNameOnCreateFailure pins the fireFailed
+// TestFireFailedUsesPresentedScheduleNameOnCreateFailure pins the fireFailed
 // fallback (a create-time failure, before a session/fireID exists): its minted
 // fire id must use the LITERAL schedule name, never the owner-namespaced
 // physical key — the same invariant TestMakeFireFuncUsesScheduleOwnerForRunEntry
 // pins for the success path, here for the create-failure path fireFailed owns.
-func TestFireFailedUsesLiteralScheduleNameOnCreateFailure(t *testing.T) {
+func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 	store, err := jsonlstore.New(t.TempDir())
 	if err != nil {
 		t.Fatalf("jsonlstore.New: %v", err)
@@ -270,6 +271,20 @@ func TestFireFailedUsesLiteralScheduleNameOnCreateFailure(t *testing.T) {
 	}
 	if !strings.Contains(result.ID, literal) {
 		t.Fatalf("fireFailed's fire id = %q, want literal schedule name %q", result.ID, literal)
+	}
+}
+
+func TestFireFailedPreservesOwnerlessPhysicalLookingLiteral(t *testing.T) {
+	digest := sha256.Sum256([]byte("https://issuer.example\x00alice"))
+	literal := fmt.Sprintf("schedule/%x\x00nightly", digest[:])
+	sched := port.Schedule{Spec: port.ScheduleSpec{Name: literal}}
+
+	fire := fireFailed(sched, time.Unix(1_700_000_000, 0), "", errors.New("create failed"))
+	if !strings.Contains(fire.ID, fmt.Sprintf("%x", digest[:])) {
+		t.Fatalf("fire id = %q, want the complete ownerless literal provenance", fire.ID)
+	}
+	if fire.ScheduleName != literal {
+		t.Fatalf("stored fire schedule name = %q, want byte-exact literal %q", fire.ScheduleName, literal)
 	}
 }
 

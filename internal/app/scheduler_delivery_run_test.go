@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -1094,8 +1095,10 @@ func TestFireStarted_StartedNoticeEnqueuedWithIDs(t *testing.T) {
 	originID := env.createOrigin(t, "hello")
 
 	startDeliver := deliverFireStarted(env.svc, env.queue)
+	digest := sha256.Sum256([]byte("https://issuer.example\x00alice"))
+	literalName := fmt.Sprintf("schedule/%x\x00my-schedule", digest[:])
 	sched := port.Schedule{Spec: port.ScheduleSpec{
-		Name: "my-schedule", OriginSessionID: originID,
+		Name: literalName, OriginSessionID: originID,
 	}}
 	fire := port.ScheduleFire{
 		ID:           "sched--my-schedule-1-abc",
@@ -1104,9 +1107,11 @@ func TestFireStarted_StartedNoticeEnqueuedWithIDs(t *testing.T) {
 	}
 	startDeliver(context.Background(), sched, fire)
 
-	// The started note was delivered to the origin.
+	// The ownerless physical-looking literal is not reinterpreted as a physical
+	// key. The model-facing fence strips the NUL control character, but the owner
+	// digest remains as part of the literal provenance instead of disappearing.
 	after, _ := env.svc.GetSession(context.Background(), originID)
-	if !originHasNote(after, "my-schedule") || !originHasNote(after, "started") {
+	if !originHasNote(after, fmt.Sprintf("%x", digest[:])) || !originHasNote(after, "my-schedule") || !originHasNote(after, "started") {
 		t.Fatalf("origin conversation does not contain the started note: %+v", after.Conversation.Messages)
 	}
 	// Must be fenced.

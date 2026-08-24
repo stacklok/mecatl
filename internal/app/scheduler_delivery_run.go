@@ -38,7 +38,7 @@ func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx 
 		var enq port.DeliveryNote
 		var note string
 		ownerCtx, originSess, ok, err := authorizeScheduleDeliveryOrigin(ctx, svc, sched, diag, func(_ context.Context, _ *session.Session) error {
-			note = renderFireStarted(server.LiteralScheduleName(sched.Spec.Name), fire.ID)
+			note = renderFireStarted(server.PresentScheduleName(sched), fire.ID)
 			var enqueueErr error
 			enq, enqueueErr = queue.Enqueue(ctx, origin, note)
 			return enqueueErr
@@ -137,7 +137,7 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 		ownerCtx, originSess, ok, err := authorizeScheduleDeliveryOrigin(ctx, svc, sched, diag, func(ownerCtx context.Context, _ *session.Session) error {
 			// Render only after the origin's authoritative under-lock authorization.
 			finalText := fireFinalText(ownerCtx, svc, fire)
-			note = renderFireDelivery(server.LiteralScheduleName(sched.Spec.Name), fire.ID, fire.Stop, finalText)
+			note = renderFireDelivery(server.PresentScheduleName(sched), fire.ID, fire.Stop, finalText)
 			var enqueueErr error
 			enq, enqueueErr = queue.Enqueue(ctx, origin, note)
 			return enqueueErr

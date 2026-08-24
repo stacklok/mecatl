@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,13 +82,17 @@ func TestReconcileStaleFireAfterClaimSettles(t *testing.T) {
 	// internal; this composition test uses the real default).
 
 	store, schedStore, svc := newReconcileTestService(t)
-	const schedName = "crash-claim"
+	const literalName = "crash-claim"
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	digest := sha256.Sum256([]byte(owner.Issuer + "\x00" + owner.Subject))
+	schedName := fmt.Sprintf("schedule/%x\x00%s", digest[:], literalName)
 	now := time.Now()
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
 			Name:    schedName,
 			Prompt:  "x",
 			Trigger: port.TriggerSpec{Cron: "* * * * *"},
+			Owner:   owner,
 		},
 		State: port.ScheduleState{
 			NextFireAt:        now.Add(time.Hour), // already claimed
@@ -143,6 +150,12 @@ func TestReconcileStaleFireAfterClaimSettles(t *testing.T) {
 	}
 	if found.ID == "" {
 		t.Fatalf("no terminal StopError fire with Err=%q found (reconcile must RecordFire a terminal fire)", reconcileStaleFireMsgClaim)
+	}
+	if strings.Contains(found.ID, fmt.Sprintf("%x", digest[:])) || strings.ContainsRune(found.ID, '\x00') {
+		t.Fatalf("reconciled fire id leaked physical owner namespace: %q", found.ID)
+	}
+	if !strings.Contains(found.ID, literalName) {
+		t.Fatalf("reconciled fire id = %q, want literal schedule name %q", found.ID, literalName)
 	}
 	if found.SessionID != "" {
 		t.Errorf("reconciled fire SessionID = %q, want empty (no session was ever created for a crash-after-Claim fire)", found.SessionID)

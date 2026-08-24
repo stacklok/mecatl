@@ -108,10 +108,10 @@ type Config struct {
 	// excludes ownerless pre-cutover schedules before Claim, so a background worker
 	// cannot adopt, fire, or repeatedly mutate an inaccessible resource.
 	CanProcess func(port.Schedule) bool
-	// PresentScheduleName maps the opaque store key to the caller-visible schedule
-	// name for lifecycle events and metric labels. It must never be used for store
-	// operations; nil preserves identity.
-	PresentScheduleName func(string) string
+	// PresentScheduleName projects the authoritative stored schedule to its
+	// caller-visible name for lifecycle events and metric labels. It must never be
+	// used for store operations; nil preserves Spec.Name.
+	PresentScheduleName func(port.Schedule) string
 	// Clock supplies `now` for the tick loop and Claim. Required.
 	Clock port.Clock
 	// Diagnostics is the operational logging seam. A nil value is treated as
@@ -390,7 +390,7 @@ func (s *Scheduler) SetFire(f FireFunc) {
 
 // SetPresentScheduleName wires the optional physical-to-literal presentation
 // seam before Start. Nil preserves identity.
-func (s *Scheduler) SetPresentScheduleName(fn func(string) string) {
+func (s *Scheduler) SetPresentScheduleName(fn func(port.Schedule) string) {
 	if s.started.Load() {
 		panic("scheduler: SetPresentScheduleName after Start")
 	}
@@ -993,11 +993,11 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 			defer rel() // release the trial lease when fireOne returns
 		}
 		if overlap {
-			s.emitSchedule(ctx, session.SchedulePayload{
+			s.emitSchedule(ctx, sched, session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
 				Kind:         scheduleKindSkipped,
 			})
-			s.emitScheduleMetrics(session.SchedulePayload{
+			s.emitScheduleMetrics(sched, session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
 				Kind:         scheduleKindSkipped,
 			}, 0)
@@ -1038,12 +1038,12 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	}
 
 	if skipFire {
-		s.emitSchedule(ctx, session.SchedulePayload{
-			ScheduleName: sched.Spec.Name,
+		s.emitSchedule(ctx, claimed, session.SchedulePayload{
+			ScheduleName: claimed.Spec.Name,
 			Kind:         scheduleKindSkipped,
 		})
-		s.emitScheduleMetrics(session.SchedulePayload{
-			ScheduleName: sched.Spec.Name,
+		s.emitScheduleMetrics(claimed, session.SchedulePayload{
+			ScheduleName: claimed.Spec.Name,
 			Kind:         scheduleKindSkipped,
 		}, 0)
 		s.diag.Log(ctx, port.LevelInfo, "skipped misfire (MisfireSkip)",
@@ -1111,12 +1111,12 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 			Err:          fire.Err,
 		}
 	}
-	s.emitSchedule(ctx, payload)
+	s.emitSchedule(ctx, claimed, payload)
 	// Record the fire metrics (Claim→terminal duration). now is the Claim time
 	// fireClaimed was called with; the run is now terminal, so time.Since(now)
 	// is the end-to-end fire cost. Skipped fires (no run) record metrics with a
 	// zero duration at their own call sites in fireOne/FireNow.
-	s.emitScheduleMetrics(payload, s.cfg.Clock.Now().Sub(now))
+	s.emitScheduleMetrics(claimed, payload, s.cfg.Clock.Now().Sub(now))
 	// RecordFire is idempotent per fire id; a transient failure is best-effort
 	// (the fire already ran — we lose the outcome record, not the at-most-once
 	// guarantee).
@@ -1140,18 +1140,18 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 // the single chokepoint for emitting an EvSchedule* payload — fireClaimed calls
 // it for fired/failed, fireOne/FireNow call it for skipped. A nil callback is the
 // byte-identical no-emit path.
-func (s *Scheduler) emitSchedule(ctx context.Context, payload session.SchedulePayload) {
-	payload.ScheduleName = s.presentScheduleName(payload.ScheduleName)
+func (s *Scheduler) emitSchedule(ctx context.Context, sched port.Schedule, payload session.SchedulePayload) {
+	payload.ScheduleName = s.presentScheduleName(sched)
 	if s.cfg.EmitScheduleEvent != nil {
 		s.cfg.EmitScheduleEvent(ctx, payload)
 	}
 }
 
-func (s *Scheduler) presentScheduleName(name string) string {
+func (s *Scheduler) presentScheduleName(sched port.Schedule) string {
 	if s.cfg.PresentScheduleName == nil {
-		return name
+		return sched.Spec.Name
 	}
-	return s.cfg.PresentScheduleName(name)
+	return s.cfg.PresentScheduleName(sched)
 }
 
 // emitScheduleMetrics invokes the optional ScheduleMetrics callback (nil-safe).
@@ -1160,8 +1160,8 @@ func (s *Scheduler) presentScheduleName(name string) string {
 // fire, fireOne/FireNow call it with duration 0 for a skipped fire. A nil
 // callback is the byte-identical no-metrics path. duration is the fire's
 // wall-clock cost (time.Since(now)); a skipped fire passes 0 (no run).
-func (s *Scheduler) emitScheduleMetrics(payload session.SchedulePayload, duration time.Duration) {
-	payload.ScheduleName = s.presentScheduleName(payload.ScheduleName)
+func (s *Scheduler) emitScheduleMetrics(sched port.Schedule, payload session.SchedulePayload, duration time.Duration) {
+	payload.ScheduleName = s.presentScheduleName(sched)
 	if s.cfg.ScheduleMetrics != nil {
 		s.cfg.ScheduleMetrics(payload, duration)
 	}
@@ -1221,11 +1221,11 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 			defer rel()
 		}
 		if overlap {
-			s.emitSchedule(ctx, session.SchedulePayload{
+			s.emitSchedule(ctx, sched, session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
 				Kind:         scheduleKindSkipped,
 			})
-			s.emitScheduleMetrics(session.SchedulePayload{
+			s.emitScheduleMetrics(sched, session.SchedulePayload{
 				ScheduleName: sched.Spec.Name,
 				Kind:         scheduleKindSkipped,
 			}, 0)

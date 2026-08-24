@@ -81,6 +81,7 @@ func makeReconcileStaleFire(svc *server.Service, store port.ScheduleStore, sessi
 			diag = port.NopDiagnostics{}
 		}
 		name := sched.Spec.Name
+		presentedName := server.PresentScheduleName(sched)
 		now := time.Now()
 
 		// Crash sub-case 1: pending sentinel (crash after Claim, before session
@@ -96,7 +97,7 @@ func makeReconcileStaleFire(svc *server.Service, store port.ScheduleStore, sessi
 				// record has a sane FiredAt.
 				anchor = now
 			}
-			id := newFireID(name, anchor)
+			id := newFireID(presentedName, anchor)
 			fire := port.ScheduleFire{
 				ID:           id,
 				ScheduleName: name,
