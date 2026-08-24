@@ -5,6 +5,8 @@ title: Embed the engine directly
 
 # Embed the engine directly
 
+Start with [Build your first agent](/building/getting-started/first-agent.md) for
+the shortest copyable path. This page is the detailed reference for embedders:
 You own the binary. The agent loop runs in-process, wired alongside your existing service code. No gRPC server, no separate process, no TLS handshake — just a Go `import` and a constructor call.
 
 This is the right choice when mecatl needs to live inside a larger service you already operate, when you want fine-grained control over every dependency in your build graph, or when the overhead of standing up a `mecated` process is more than you want to carry.

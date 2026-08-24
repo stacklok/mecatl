@@ -17,6 +17,7 @@ This guide is for teams building **on** mecatl — embedding the engine, writing
 
 | Doc | What it covers |
 |-----|----------------|
+| [Build your first agent](/building/getting-started/first-agent.md) | Install the engine and build a working Go agent from a clean module |
 | [See it in 60 seconds](/building/getting-started/demo.md) | Run `mecademo` offline and watch a real engine turn |
 | [Pick your deployment shape](/building/getting-started/deployment-decision.md) | Decision guide: embed vs service vs CI runner |
 

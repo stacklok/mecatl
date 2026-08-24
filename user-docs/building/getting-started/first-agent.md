@@ -1,0 +1,60 @@
+---
+sidebar_position: 0
+title: Build your first agent
+description: Install the importable mecatl engine and build a working Go agent.
+---
+
+# Build your first agent
+
+This is the shortest path from a clean Go module to a working mecatl agent. You
+will create an `agent.Engine`, give it a session-scoped `tool.Environment`, run
+one prompt, and consume the resulting events.
+
+The engine is an importable Go module. It does not start a server or choose your
+provider, workspace, persistence, authentication, or observability for you. Your
+application supplies those pieces through `agent.Deps` and the engine ports.
+
+## What this path covers
+
+1. Run a deterministic offline agent with the reference `mockllm` provider.
+2. Add a custom tool through `tool.Catalog`.
+3. Require approval through `PermissionPolicy` and resolve it from the host.
+4. Choose the next extension point, including a real provider or child
+   delegation.
+
+The first example is deliberately offline and requires no API key. The richer
+[`mecademo` walkthrough](/building/getting-started/demo.md) remains useful when
+you want to see tools, approval, teams, and background Subagents together.
+
+## Before you start
+
+You need Go 1.26 or newer. The first-agent example is designed to run from a
+clean external module and imports only the public `github.com/stacklok/mecatl/engine`
+module and its reference adapters.
+
+## Follow the steps
+
+- **First agent:** the next step adds the complete copyable program and a
+  clean-module verification command.
+- **First tool:** then add a `tool.Tool` implementation and register it on the
+  catalog passed through `agent.Deps`.
+- **Approval:** then change the policy to `Ask` and handle the `permission.ask`
+  event in your host.
+- **Extensions:** choose a provider, persistence backend, hook runner, or child
+  delegation from the relevant builder guide.
+
+For the complete embedding reference, including every `agent.Deps` field and
+host-versus-engine boundary, see [Embed the engine directly](../deployment/embed-engine.md).
+
+## Next steps
+
+- [Embed the engine directly](../deployment/embed-engine.md) — dependency
+  footprint, ports, and composition responsibilities.
+- [Engine and session model](../what-you-get/engine-and-session.md) — the
+  `Engine`, `Session`, `Run`, and `Environment` objects.
+- [Core tools](../what-you-get/core-tools.md) — the catalog and built-in tools.
+- [Permissions and guardrails](/features/permissions-and-posture.md) — approvals
+  and safety behavior.
+- [Extension points](../extension-points/index.md) — replace or add capabilities.
+- [Subagents, teams, and parallel](../what-you-get/subagents-teams-parallel.md) —
+  delegated child work.
