@@ -266,17 +266,11 @@ StreamIdleTimeout  → bounds:  gap between any two consecutive chunks
 
 Both decorators are transparent to `Capabilities()` — the resilience wrapper forwards the inner provider's capabilities unchanged.
 
-**Consumer note.** If you use `mecated` or `mecak8s`, the resilience decorator is already wired for you at composition time. If you embed the engine directly (the `Embed the engine` deployment shape), you wire it yourself:
-
-```go
-import "github.com/stacklok/mecatl/internal/adapter/llmresilience"
-
-decorated := llmresilience.Wrap(myProvider, llmresilience.Config{
-    StreamIdleTimeout: 3 * time.Minute,
-    PerAttemptTimeout: 5 * time.Minute,
-})
-engine := agent.NewEngine(agent.Deps{LLM: decorated, ...})
-```
+**Consumer note.** If you use `mecated` or `mecak8s`, the resilience decorator is
+already wired for you at composition time. If you embed the engine directly, the
+engine module does not expose this host adapter; provide your own retry,
+breaker, and stream-watchdog wrapper around `port.LLMProvider` if you need those
+behaviors, then inject the wrapped provider through `agent.Deps`.
 
 ---
 

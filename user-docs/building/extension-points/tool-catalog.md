@@ -146,11 +146,13 @@ func (PingTool) Execute(_ context.Context, in session.ToolCall, _ tool.Environme
 }
 ```
 
-Register it before calling `app.Build`:
+For a direct engine embedding, register the tool on the catalog you pass through
+`agent.Deps`. In the repository's full host composition, register it through
+`internal/app` instead; external consumers cannot import that internal package.
 
 ```go
-// In your composition root, before or during app.Build.
 cat.MustRegister(mytool.PingTool{})
+eng := agent.NewEngine(agent.Deps{Catalog: cat /* other deps */})
 ```
 
 `session.NewToolResult(id, content)` and `session.NewToolError(id, msg)` are the two constructors for a plain text result. Use `NewToolError` when the tool failed in a way the model should know about and can recover from. A third constructor, `session.NewToolResultWithParts(id, content, parts)`, backs the typed-content-block results described in [MCP client](/building/what-you-get/mcp-client.md#typed-tool-results) — most custom tools only need the plain-text pair above.
