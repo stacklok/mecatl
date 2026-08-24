@@ -139,6 +139,12 @@ The management surface depends on where mecatui runs:
   management capability and the authenticated caller has authority. Missing capability means
   unavailable, not zero usage or zero reclaimable bytes.
 
+Storage health also reports bounded, content-free counts and identifier samples of the **ownerless**
+sessions and schedules still in the store, so an operator can assess an OIDC ownership cutover before
+admitting tenant traffic. Enabling caller identity makes every pre-existing ownerless record
+permanently unavailable to every caller, with no adoption path — see
+[Kubernetes deployment](./mecak8s.md) for the cutover procedure.
+
 For a remote OIDC daemon, authentication alone is not management authority. The operator must list
 exact verified issuer/subject pairs in the operator-tier settings file:
 

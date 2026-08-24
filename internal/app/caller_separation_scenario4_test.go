@@ -3,13 +3,21 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
+	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
@@ -111,6 +119,188 @@ func TestCallerSeparation_Scenario4_SchedulerActorAndOwnerRemainDistinct(t *test
 	}
 	if fireOwner.SameIdentity(actor) {
 		t.Fatalf("scheduler actor replaced durable resource owner: actor=%+v owner=%+v", actor, fireOwner)
+	}
+}
+
+func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	storeDir := filepath.Join(root, "store")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
+	admin := &session.Principal{Issuer: alice.Issuer, Subject: "storage-admin", GrantType: session.GrantTypeUser}
+	created := time.Now().Add(-2 * time.Hour)
+	legacy := session.New("legacy-ownerless", session.ModeDefault, workspace, session.Limits{}, created)
+	owned := session.New("alice-owned", session.ModeDefault, workspace, session.Limits{}, created)
+	if err := owned.RestoreLabels(alice, session.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sess := range []*session.Session{legacy, owned} {
+		if err := seed.Save(ctx, sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scheduleStore := seed.ScheduleStore()
+	legacySchedule := port.Schedule{
+		Spec:  port.ScheduleSpec{Name: "legacy-schedule", Prompt: "legacy", Trigger: port.TriggerSpec{Cron: "0 0 1 1 *"}},
+		State: port.ScheduleState{Enabled: true, NextFireAt: time.Now().Add(-time.Hour)},
+	}
+	ownedSchedule := legacySchedule
+	ownedSchedule.Spec.Name = "alice-schedule"
+	ownedSchedule.Spec.Owner = alice.Clone()
+	ownedSchedule.Spec.Workspace = workspace
+	for _, schedule := range []port.Schedule{legacySchedule, ownedSchedule} {
+		if err := scheduleStore.Save(ctx, schedule); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	waitForInventory := func() {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for {
+			_, pageErr := seed.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 256})
+			if pageErr == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("session inventory did not become ready: %v", pageErr)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	preflight, err := Build(ctx, Config{
+		Workspace: workspace, Model: "mock", StoreDir: storeDir, NoSoul: true,
+		MockProvider: mockllm.New(mockllm.TextTurn("done")), LocalStorageManagement: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForInventory()
+	preflightHealth, err := preflight.Service.StorageHealth(ctx)
+	if err != nil {
+		preflight.Close()
+		t.Fatalf("pre-cutover StorageHealth: %v", err)
+	}
+	if preflightHealth.Ownerless.SessionCount != 1 || preflightHealth.Ownerless.ScheduleCount != 1 {
+		preflight.Close()
+		t.Fatalf("pre-cutover ownerless inventory = %+v", preflightHealth.Ownerless)
+	}
+	preflight.Close()
+
+	cfg := Config{
+		Workspace: workspace, Model: "mock", StoreDir: storeDir, NoSoul: true,
+		MockProvider: mockllm.New(mockllm.TextTurn("done")), OwnershipEnforced: true,
+		StorageManagementPrincipals: []session.Principal{*admin},
+		MainRetention:               time.Nanosecond,
+		AcknowledgeMainRetention:    true,
+		ChildGCInterval:             5 * time.Millisecond,
+		SchedulerEnabled:            true,
+		SchedulerTickInterval:       5 * time.Millisecond,
+	}
+	built, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminCtx := session.WithPrincipal(ctx, admin)
+	waitForInventory()
+	health, err := built.Service.StorageHealth(adminCtx)
+	if err != nil {
+		built.Close()
+		t.Fatalf("StorageHealth: %v", err)
+	}
+	if health.Ownerless.SessionCount != 1 || len(health.Ownerless.SessionIDs) != 1 || health.Ownerless.SessionIDs[0] != "legacy-ownerless" {
+		built.Close()
+		t.Fatalf("ownerless session preflight = %+v", health.Ownerless)
+	}
+	if health.Ownerless.ScheduleCount != 1 || len(health.Ownerless.ScheduleNames) != 1 || health.Ownerless.ScheduleNames[0] != "legacy-schedule" {
+		built.Close()
+		t.Fatalf("ownerless schedule preflight = %+v", health.Ownerless)
+	}
+	for _, caller := range []*session.Principal{alice, bob} {
+		if _, err := built.Service.GetSession(session.WithPrincipal(ctx, caller), legacy.ID); !errors.Is(err, server.ErrNotFound) {
+			built.Close()
+			t.Fatalf("GetSession(ownerless) for %s = %v, want absence", caller.Subject, err)
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		claimed, loadErr := scheduleStore.Load(ctx, ownedSchedule.Spec.Name)
+		if loadErr != nil {
+			built.Close()
+			t.Fatalf("load owned schedule while waiting for worker: %v", loadErr)
+		}
+		if claimed.State.FireCount > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			built.Close()
+			t.Fatal("scheduler worker did not process the eligible owned schedule")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	for {
+		_, loadErr := seed.Load(ctx, owned.ID)
+		if errors.Is(loadErr, port.ErrSessionNotFound) {
+			break
+		}
+		if loadErr != nil {
+			built.Close()
+			t.Fatalf("load owned session while waiting for retention: %v", loadErr)
+		}
+		if time.Now().After(deadline) {
+			built.Close()
+			t.Fatal("retention worker did not process the eligible owned session")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	built.Close() // joins the retention and scheduler workers
+
+	after, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyAfter, err := after.Load(ctx, legacy.ID)
+	if err != nil {
+		t.Fatalf("ownerless session was mutated/deleted after cutover: %v", err)
+	}
+	if legacyAfter.Owner != nil || legacyAfter.State != legacy.State || legacyAfter.Workspace != legacy.Workspace {
+		t.Fatalf("ownerless session changed after cutover: %+v", legacyAfter)
+	}
+	if _, err := after.Load(ctx, owned.ID); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("eligible owned session maintenance result = %v, want deletion", err)
+	}
+	legacyScheduleAfter, err := after.ScheduleStore().Load(ctx, legacySchedule.Spec.Name)
+	if err != nil {
+		t.Fatalf("ownerless schedule was mutated/deleted after cutover: %v", err)
+	}
+	if legacyScheduleAfter.Spec.Owner != nil ||
+		!legacyScheduleAfter.State.NextFireAt.Equal(legacySchedule.State.NextFireAt) ||
+		legacyScheduleAfter.State.FireCount != legacySchedule.State.FireCount ||
+		legacyScheduleAfter.State.Enabled != legacySchedule.State.Enabled {
+		t.Fatalf("ownerless schedule changed after cutover: %+v", legacyScheduleAfter)
+	}
+
+	legacyBuild, err := Build(ctx, Config{
+		Workspace: workspace, Model: "mock", StoreDir: storeDir, NoSoul: true,
+		MockProvider: mockllm.New(mockllm.TextTurn("done")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacyBuild.Close()
+	loaded, err := legacyBuild.Service.GetSession(ctx, legacy.ID)
+	if err != nil || loaded.Owner != nil {
+		t.Fatalf("ownerless compatibility after disabling enforcement = (%+v, %v)", loaded, err)
 	}
 }
 

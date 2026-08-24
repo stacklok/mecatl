@@ -135,6 +135,10 @@ type childGC struct {
 	pager           port.SessionMetadataPager
 	deleteCandidate func(context.Context, port.SessionDiscoveryMeta) error
 	policy          childGCPolicy
+	// ownershipEnforced keeps pre-OIDC ownerless snapshots stranded and
+	// untouched after cutover. They are filtered before liveness checks,
+	// retention planning, lock acquisition, or deletion.
+	ownershipEnforced bool
 	// isLive reports whether a top-level or engine-owned child session is active
 	// in this process (Service.IsLive). A live id is never planned by age or cap,
 	// and deletion rechecks the same predicate under the run-entry lock.
@@ -276,6 +280,16 @@ func (g *childGC) sweep(ctx context.Context) (deleted, retained int) {
 		return 0, 0
 	}
 
+	if g.ownershipEnforced {
+		owned := entries[:0]
+		for _, meta := range entries {
+			if meta.Owner != nil {
+				owned = append(owned, meta)
+			}
+		}
+		entries = owned
+	}
+
 	live := make(map[session.SessionID]bool)
 	for _, meta := range entries {
 		if g.isLive(meta.ID) {
@@ -393,13 +407,14 @@ func startChildGC(parent context.Context, cfg Config, store port.SessionStore, i
 		deleteCandidate = deleters[0]
 	}
 	gc := &childGC{
-		store:           prunable,
-		pager:           pager,
-		deleteCandidate: deleteCandidate,
-		policy:          policy,
-		isLive:          isLive,
-		now:             time.Now,
-		diag:            cfg.diag(),
+		store:             prunable,
+		pager:             pager,
+		deleteCandidate:   deleteCandidate,
+		policy:            policy,
+		ownershipEnforced: cfg.OwnershipEnforced,
+		isLive:            isLive,
+		now:               time.Now,
+		diag:              cfg.diag(),
 	}
 	cfg.diag().Log(parent, port.LevelInfo, "session GC ENABLED",
 		"child_retention", cfg.ChildRetention, "child_max_per_family", cfg.ChildRetentionMaxPerFamily,

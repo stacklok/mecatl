@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -29,6 +31,15 @@ func (s *healthStore) SessionStorageHealth(context.Context) (port.SessionStorage
 		return port.SessionStorageHealth{}, s.err
 	}
 	return port.SessionStorageHealth{Available: true, CurrentBytesAvailable: true, CurrentBytes: 7, SessionCount: 2}, nil
+}
+
+type pagingOverrideStore struct {
+	*healthStore
+	page func(context.Context, port.SessionMetadataPageRequest) (port.SessionMetadataPage, error)
+}
+
+func (s *pagingOverrideStore) PageSessionMetadata(ctx context.Context, req port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	return s.page(ctx, req)
 }
 
 func storageHealthService(t *testing.T, store port.SessionStore, authorize func(context.Context) bool) *server.Service {
@@ -65,6 +76,81 @@ func TestStorageHealthManagementAuthorizationAndNoLeak(t *testing.T) {
 		if strings.Contains(strings.ToLower(err.Error()), forbidden) {
 			t.Fatalf("authorization error leaked %q: %v", forbidden, err)
 		}
+	}
+}
+
+func TestStorageHealthIncludesOwnerlessCutoverInventory(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	schedules := memschedulestore.New()
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+
+	legacy := session.New("legacy-session", session.ModeDefault, "/legacy", session.Limits{}, time.Now())
+	owned := session.New("owned-session", session.ModeDefault, "/owned", session.Limits{}, time.Now())
+	if err := owned.RestoreLabels(alice, session.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sess := range []*session.Session{legacy, owned} {
+		if err := sessions.Save(ctx, sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := schedules.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: "legacy-schedule"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := schedules.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: "owned-schedule", Owner: alice}}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc, err := server.NewService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:  sessions, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		ScheduleManager:             server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		StorageManagementAuthorized: func(context.Context) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := svc.StorageHealth(ctx)
+	if err != nil {
+		t.Fatalf("StorageHealth: %v", err)
+	}
+	inventory := status.Ownerless
+	if !inventory.SessionsAvailable || inventory.SessionCount != 1 || len(inventory.SessionIDs) != 1 || inventory.SessionIDs[0] != "legacy-session" {
+		t.Fatalf("ownerless session inventory = %+v", inventory)
+	}
+	if !inventory.SchedulesAvailable || inventory.ScheduleCount != 1 || len(inventory.ScheduleNames) != 1 || inventory.ScheduleNames[0] != "legacy-schedule" {
+		t.Fatalf("ownerless schedule inventory = %+v", inventory)
+	}
+}
+
+func TestStorageHealthReportsUnsupportedOwnerlessInventoryPerFamily(t *testing.T) {
+	store := &pagingOverrideStore{
+		healthStore: &healthStore{Store: memstore.New()},
+		page: func(context.Context, port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+			return port.SessionMetadataPage{}, port.ErrSessionMetadataPagingUnsupported
+		},
+	}
+	svc := storageHealthService(t, store, func(context.Context) bool { return true })
+	status, err := svc.StorageHealth(context.Background())
+	if err != nil {
+		t.Fatalf("StorageHealth: %v", err)
+	}
+	if !status.Available || status.Ownerless.SessionsAvailable || status.Ownerless.SessionsUnavailableReason != "backend_unsupported" {
+		t.Fatalf("storage health with unsupported ownerless session inventory = %+v", status)
+	}
+}
+
+func TestStorageHealthRejectsNonProgressingOwnerlessPager(t *testing.T) {
+	store := &pagingOverrideStore{
+		healthStore: &healthStore{Store: memstore.New()},
+		page: func(context.Context, port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+			return port.SessionMetadataPage{NextCursor: &port.SessionMetadataCursor{Generation: "stuck"}}, nil
+		},
+	}
+	svc := storageHealthService(t, store, func(context.Context) bool { return true })
+	if _, err := svc.StorageHealth(context.Background()); !errors.Is(err, server.ErrStorageHealthBackend) {
+		t.Fatalf("StorageHealth = %v, want ErrStorageHealthBackend", err)
 	}
 }
 

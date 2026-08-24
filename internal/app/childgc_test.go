@@ -80,6 +80,17 @@ func (f *gcFixture) save(t *testing.T, id session.SessionID) {
 	}
 }
 
+func (f *gcFixture) saveOwned(t *testing.T, id session.SessionID, owner *session.Principal) {
+	t.Helper()
+	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, f.now)
+	if err := s.RestoreLabels(owner, session.Authority{}); err != nil {
+		t.Fatalf("RestoreLabels(%q): %v", id, err)
+	}
+	if err := f.store.Save(context.Background(), s); err != nil {
+		t.Fatalf("Save(%q): %v", id, err)
+	}
+}
+
 func (f *gcFixture) saveUnknown(t *testing.T, id session.SessionID) {
 	t.Helper()
 	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, f.now)
@@ -127,6 +138,30 @@ func TestChildGCAgePass(t *testing.T) {
 	}
 	if !got["subagent-young"] {
 		t.Error("young child was deleted by the age pass")
+	}
+}
+
+func TestChildGCOwnershipCutoverSkipsOwnerlessBeforePlanning(t *testing.T) {
+	f := newGCFixture(t, childGCPolicy{mainRetention: time.Hour})
+	f.save(t, "legacy-ownerless")
+	f.saveOwned(t, "owned", &session.Principal{
+		Issuer:    "https://issuer.example",
+		Subject:   "alice",
+		GrantType: session.GrantTypeUser,
+	})
+	f.now = f.now.Add(2 * time.Hour)
+	f.gc.ownershipEnforced = true
+
+	deleted, retained := f.gc.sweep(context.Background())
+	if deleted != 1 || retained != 0 {
+		t.Fatalf("sweep = (deleted %d, retained %d), want only owned candidate deleted", deleted, retained)
+	}
+	got := f.ids(t)
+	if !got["legacy-ownerless"] {
+		t.Fatal("ownership-enabled GC deleted the stranded ownerless snapshot")
+	}
+	if got["owned"] {
+		t.Fatal("eligible owned snapshot survived GC")
 	}
 }
 

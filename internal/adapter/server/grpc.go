@@ -1263,6 +1263,14 @@ func (h *HarnessServer) GetStorageHealth(ctx context.Context, _ *mecatlv1.GetSto
 }
 
 func toProtoStorageHealth(h StorageHealth) *mecatlv1.GetStorageHealthResponse {
+	ownerlessSessionIDs := make([]string, len(h.Ownerless.SessionIDs))
+	for i, id := range h.Ownerless.SessionIDs {
+		ownerlessSessionIDs[i] = valid(id)
+	}
+	ownerlessScheduleNames := make([]string, len(h.Ownerless.ScheduleNames))
+	for i, name := range h.Ownerless.ScheduleNames {
+		ownerlessScheduleNames[i] = valid(name)
+	}
 	resp := &mecatlv1.GetStorageHealthResponse{
 		Available: h.Available, UnavailableReason: h.UnavailableReason,
 		CurrentBytes: h.CurrentBytes, CurrentBytesAvailable: h.CurrentBytesAvailable,
@@ -1279,6 +1287,16 @@ func toProtoStorageHealth(h StorageHealth) *mecatlv1.GetStorageHealthResponse {
 		LastSweepAvailable: h.LastSweepAvailable,
 		NextSweepAvailable: h.NextSweepAvailable,
 		ActiveJob:          h.ActiveJob, LastFailure: h.LastFailure,
+		OwnerlessSessionsAvailable:          h.Ownerless.SessionsAvailable,
+		OwnerlessSessionsUnavailableReason:  valid(h.Ownerless.SessionsUnavailableReason),
+		OwnerlessSessionCount:               int64(h.Ownerless.SessionCount),
+		OwnerlessSessionIds:                 ownerlessSessionIDs,
+		OwnerlessSessionIdsTruncated:        h.Ownerless.SessionIDsTruncated,
+		OwnerlessSchedulesAvailable:         h.Ownerless.SchedulesAvailable,
+		OwnerlessSchedulesUnavailableReason: valid(h.Ownerless.SchedulesUnavailableReason),
+		OwnerlessScheduleCount:              int64(h.Ownerless.ScheduleCount),
+		OwnerlessScheduleNames:              ownerlessScheduleNames,
+		OwnerlessScheduleNamesTruncated:     h.Ownerless.ScheduleNamesTruncated,
 	}
 	if h.LastSweepAvailable {
 		resp.LastSweepUnix = h.LastSweep.Unix()

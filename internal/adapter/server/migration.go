@@ -109,7 +109,7 @@ func (s *Service) PlanSessionMigration(ctx context.Context) (MigrationPlan, erro
 			return MigrationPlan{UnavailableReason: "maintenance_exclusion_unavailable"}, nil
 		}
 		if errors.Is(err, ErrMigrationUnsupported) {
-			return MigrationPlan{UnavailableReason: "backend_unsupported"}, nil
+			return MigrationPlan{UnavailableReason: storageBackendUnsupported}, nil
 		}
 		return MigrationPlan{}, err
 	}

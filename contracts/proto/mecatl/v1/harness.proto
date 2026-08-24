@@ -874,6 +874,18 @@ message GetStorageHealthResponse {
   bool next_sweep_available = 20;
   string active_job = 21;
   string last_failure = 22;
+
+  // Content-free ownerless-record preflight for enabling caller ownership.
+  bool ownerless_sessions_available = 23;
+  string ownerless_sessions_unavailable_reason = 24;
+  int64 ownerless_session_count = 25;
+  repeated string ownerless_session_ids = 26;
+  bool ownerless_session_ids_truncated = 27;
+  bool ownerless_schedules_available = 28;
+  string ownerless_schedules_unavailable_reason = 29;
+  int64 ownerless_schedule_count = 30;
+  repeated string ownerless_schedule_names = 31;
+  bool ownerless_schedule_names_truncated = 32;
 }
 
 message PlanSessionMigrationRequest {}

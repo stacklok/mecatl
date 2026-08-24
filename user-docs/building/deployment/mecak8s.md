@@ -370,6 +370,22 @@ record becomes permanently unavailable to every caller (never adopted by the
 first reader) — there is no migration path, so back up or export anything you
 need from an ownerless deployment before flipping this on.
 
+### Before admitting callers: inventory ownerless records
+
+Stage the OIDC deployment with tenant traffic blocked and configure one exact
+`storage_management.principals` issuer/subject pair for the operator. Call the authenticated
+`GetStorageHealth` RPC (or `GET /v1/storage/health`) as that principal and inspect the
+`ownerless_session_count` / `ownerless_session_ids` and
+`ownerless_schedule_count` / `ownerless_schedule_names` fields. The identifiers are bounded
+samples (the corresponding `*_truncated` bit says when the count is larger); no transcript,
+memory value, or schedule prompt is returned. If either `*_available` field is false, do not
+proceed until that backend exposes the required metadata inventory.
+
+After ownership is enabled, retention and scheduler workers skip ownerless records before a
+lease, claim, enqueue, or mutation. Authenticated callers see those records as absent. Turning
+enforcement back off restores only the historical ownerless access path: it does not assign an
+owner, replay skipped work, or adopt a record for the first caller.
+
 ### Validator and bounded signing-key cache
 
 The production OIDC/JWT validator is a delegated, actively-maintained library —

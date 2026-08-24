@@ -158,15 +158,24 @@ func (s *Service) PlanSessionCleanup(ctx context.Context, scope CleanupScope) (C
 	pager, pageOK := s.cfg.Store.(port.SessionMetadataPager)
 	_, pruneOK := s.cfg.Store.(port.ConditionalPrunableStore)
 	if !pageOK || !pruneOK || !supportsCleanupDelete(s.cfg.Store) {
-		return CleanupPlan{UnavailableReason: "backend_unsupported"}, nil
+		return CleanupPlan{UnavailableReason: storageBackendUnsupported}, nil
 	}
 	rows, err := cleanupMetadata(ctx, pager, nil)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionMetadataPagingUnsupported) || errors.Is(err, port.ErrPruneUnsupported) {
-			return CleanupPlan{UnavailableReason: "backend_unsupported"}, nil
+			return CleanupPlan{UnavailableReason: storageBackendUnsupported}, nil
 		}
 		s.storageMaintenanceUpdate(StorageMaintenanceEvent{Kind: cleanupKind, Key: "cleanup-plan", State: StorageMaintenanceFailed, Failure: "cleanup: storage metadata unavailable"})
 		return CleanupPlan{}, ErrCleanupBackend
+	}
+	if s.cfg.OwnershipEnforced {
+		owned := rows[:0]
+		for _, row := range rows {
+			if row.Owner != nil {
+				owned = append(owned, row)
+			}
+		}
+		rows = owned
 	}
 	rows = filterCleanupScope(rows, scope)
 	live, leased, err := s.cleanupRuntimeProtection(ctx, rows)

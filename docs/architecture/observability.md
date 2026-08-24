@@ -226,8 +226,10 @@
   disables a limit, invalid/negative/unknown config fails, and project-tier
   retention is ignored. Main deletion defaults off and requires an explicit
   acknowledgement after the planner summary is logged. Durable unknown/invalid
-  taxonomy, running/awaiting, live, and leased rows remain protected. The effective
-  secret-free `retention/v1` policy is projected by authenticated storage health.
+  taxonomy, running/awaiting, live, and leased rows remain protected. Under caller
+  ownership, ownerless rows are filtered before retention planning or mutation. The effective
+  secret-free `retention/v1` policy and bounded ownerless session/schedule cutover inventory
+  are projected by authenticated storage health.
 - **EventLog** (`port.EventLog`, cloud-native Phase 3) — a DURABLE per-session
   event timeline, SEPARATE from `EventSink` (the sink mirrors live; the log is
   storage a later consumer reads back). **The loop never calls it** — persistence
