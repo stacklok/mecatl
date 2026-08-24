@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // staleSessionSweepInterval is the ticker cadence for the sweep. A
@@ -54,7 +54,7 @@ var staleSessionSweepInterval = 5 * time.Minute
 // common test-fixture shape) still gets a clean teardown.
 func startStaleSessionReconcile(cfg Config, svc *server.Service) func() {
 	diag := cfg.diag()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile))
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -101,7 +101,7 @@ func sweepStaleSessions(ctx context.Context, svc *server.Service, diag port.Diag
 		// silent here rather than double-logging every tick.
 		return
 	}
-	rows, err := svc.ListSessions(ctx)
+	rows, err := svc.StaleRunningCandidates(ctx)
 	if err != nil {
 		diag.Log(ctx, port.LevelWarn, "stale-session sweep: list failed; skipping sweep", "err", err.Error())
 		return
@@ -111,23 +111,11 @@ func sweepStaleSessions(ctx context.Context, svc *server.Service, diag port.Diag
 	}
 	var settled, failed int
 	var firstErr string
-	for _, row := range rows {
-		if row.State != string(session.StateRunning) {
-			continue // StateAwaiting and everything else is never a candidate.
-		}
-		id := session.SessionID(row.SessionID)
-		if isScheduleFireSession(id) {
-			continue
-		}
-		meta := port.SessionMeta{
-			ID:         id,
-			ModifiedAt: time.Unix(row.ModifiedAtUnix, 0),
-			State:      session.State(row.State),
-		}
+	for _, meta := range rows {
 		if !svc.SessionStale(ctx, meta) {
 			continue
 		}
-		ok, settleErr := svc.SettleIfStale(ctx, id)
+		ok, settleErr := svc.SettleIfStale(ctx, meta.ID)
 		if settleErr != nil {
 			failed++
 			if firstErr == "" {

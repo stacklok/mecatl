@@ -403,6 +403,23 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	s.mu.Unlock()
 	ts.run.Unlock()
 
+	// Team members are durable sessions driven outside StartRunContent, so their
+	// cross-process ownership must be established here before Supervisor.Run
+	// starts their engines. acquireLease is idempotent for a session already held
+	// by this service and keeps the hold until CloseSession or service shutdown.
+	for _, member := range ts.team.Members() {
+		memberID := member.Session
+		if memberID == "" {
+			memberID = agent.MemberSessionID(teamID, member.Name)
+		}
+		if err := s.acquireLease(ctx, memberID); err != nil {
+			s.mu.Lock()
+			ts.phase = teamCreated
+			s.mu.Unlock()
+			return agent.TeamOutcome{}, err
+		}
+	}
+
 	defer func() {
 		s.mu.Lock()
 		ts.phase = teamDone

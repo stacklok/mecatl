@@ -6,10 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -61,6 +64,21 @@ func TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t *testing.T) {
 			app.StartChildGCForTest(ctx, app.Config{ChildRetention: time.Hour},
 				&probeSessionStore{Store: memstore.New(), seen: seen},
 				func(session.SessionID) bool { return false })
+		}},
+		syscaller.RootStaleSessionReconcile: {paths: []string{"store.List"}, run: func(_ context.Context, t *testing.T, seen observe) {
+			store := &probeSessionStore{Store: memstore.New(), seen: seen}
+			svc, err := server.NewService(server.Config{
+				Engine: agent.NewEngine(agent.Deps{
+					LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil),
+				}),
+				Store:      store,
+				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+			})
+			if err != nil {
+				t.Fatalf("NewService: %v", err)
+			}
+			closeFn := app.StartStaleSessionReconcileForTest(app.Config{}, svc)
+			t.Cleanup(closeFn)
 		}},
 		syscaller.RootMemoryConsolidation: {paths: []string{"memory.List"}, run: func(ctx context.Context, _ *testing.T, seen observe) {
 			app.StartMemoryConsolidationForTest(ctx,

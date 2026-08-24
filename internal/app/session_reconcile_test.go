@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // crashOrphanedSessionFixture builds a StateRunning session whose trailing
@@ -185,14 +186,8 @@ func TestStaleSessionReconcileSettlesChildCandidate(t *testing.T) {
 	f.save(t, crashOrphanedSessionFixture(t, id, f.now))
 	f.now = f.now.Add(2 * time.Hour) // past the staleness age window
 
-	sweepStaleSessions(context.Background(), f.svc, port.NopDiagnostics{})
+	sweepStaleSessions(syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile), f.svc, port.NopDiagnostics{})
 
-	// The sweep-level guard is OFF here (no lease configured), so the pass
-	// must actually reach ListSessions — the sibling disabled-guard test
-	// pins the contrasting zero count.
-	if got := f.lists.listCount(); got == 0 {
-		t.Fatal("ListSessions was never called during an enabled sweep pass")
-	}
 	if got := f.state(t, id); got != session.StateIdle {
 		t.Fatalf("state after sweep = %q, want idle", got)
 	}
@@ -215,7 +210,7 @@ func TestStaleSessionReconcileExcludesScheduleFireSessions(t *testing.T) {
 	f.save(t, crashOrphanedSessionFixture(t, id, f.now))
 	f.now = f.now.Add(2 * time.Hour)
 
-	sweepStaleSessions(context.Background(), f.svc, port.NopDiagnostics{})
+	sweepStaleSessions(syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile), f.svc, port.NopDiagnostics{})
 
 	if got := f.state(t, id); got != session.StateRunning {
 		t.Fatalf("state after sweep = %q, want running (sched-- must be excluded)", got)
@@ -230,7 +225,7 @@ func TestStaleSessionReconcileNeverTouchesAwaiting(t *testing.T) {
 	f.save(t, awaitingSessionFixture(t, id, f.now))
 	f.now = f.now.Add(2 * time.Hour)
 
-	sweepStaleSessions(context.Background(), f.svc, port.NopDiagnostics{})
+	sweepStaleSessions(syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile), f.svc, port.NopDiagnostics{})
 
 	if got := f.state(t, id); got != session.StateAwaiting {
 		t.Fatalf("state after sweep = %q, want awaiting (never a candidate)", got)
@@ -247,7 +242,7 @@ func TestStaleSessionReconcileLeavesFreshRunningAlone(t *testing.T) {
 	f.save(t, crashOrphanedSessionFixture(t, id, f.now))
 	// No clock advance: still well inside the age window.
 
-	sweepStaleSessions(context.Background(), f.svc, port.NopDiagnostics{})
+	sweepStaleSessions(syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile), f.svc, port.NopDiagnostics{})
 
 	if got := f.state(t, id); got != session.StateRunning {
 		t.Fatalf("state after sweep = %q, want running (fresh, inside the age window)", got)
@@ -289,7 +284,7 @@ func TestSweepStaleSessionsSkipsWhenLeaseSweepDisabled(t *testing.T) {
 	f.save(t, crashOrphanedSessionFixture(t, id, f.now))
 	f.now = f.now.Add(2 * time.Hour)
 
-	sweepStaleSessions(context.Background(), f.svc, port.NopDiagnostics{})
+	sweepStaleSessions(syscaller.Context(context.Background(), syscaller.RootStaleSessionReconcile), f.svc, port.NopDiagnostics{})
 
 	// This is the assertion that actually pins the sweep-level guard: with it
 	// removed, SessionStale still declines every candidate on its OWN

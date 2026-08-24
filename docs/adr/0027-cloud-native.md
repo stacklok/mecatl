@@ -590,9 +590,18 @@ nobody ever touches the orphan again:
   serializes run-ENTRY, not a run's whole lifetime, so a second
   `StartRunContent` for the same id can land here while an earlier run this
   process started is still mid-flight).
-- **`Service.SessionStale` / `Service.SettleIfStale`**
-  (`internal/adapter/server/service.go`): the shared staleness DECISION and
-  repair WRITE. `SessionStale` mirrors
+- **`Service.SessionStale` / `Service.StaleRunningCandidates` /
+  `Service.SettleIfStale`** (`internal/adapter/server/service.go`,
+  `internal/adapter/server/stale_maintenance.go`): the shared staleness DECISION,
+  root-authorized metadata-only enumeration, and repair WRITE. The only accepted
+  caller for enumeration and settlement is the explicit
+  `mecatl:internal / stale-session-reconcile` system root; ordinary callers and
+  other system roots receive `ErrManagementUnauthorized`. Enumeration reads the
+  optional metadata pager only (never a transcript), admits only valid,
+  non-scheduled `running` rows, and skips ownerless rows when ownership is
+  enforced. Settlement reloads and rechecks that same narrow predicate before
+  writing, so the root cannot turn an arbitrary session ID into a maintenance
+  capability. `SessionStale` mirrors
   `internal/adapter/scheduler/scheduler.go`'s own
   `shouldReconcileStaleFire`/`isPriorFireLive` ordering — an age horizon
   (`staleSessionWindow`, 30m) is a HARD PRECONDITION checked BEFORE any
@@ -617,9 +626,9 @@ nobody ever touches the orphan again:
 - **The composition-level sweep** (`internal/app/session_reconcile.go`
   (`startStaleSessionReconcile`)): a startup-sweep-then-ticker goroutine
   (mirroring the `startLiveModelRefresh` idiom; the child-GC worker now uses the
-  same Build-owned cancel-and-join lifecycle) that lists every stored session via
-  `Service.ListSessions`, narrows to `state=="running"` rows excluding
-  `sched--` fire ids (the scheduler owns its own stale-fire reconciler), and
+  same Build-owned cancel-and-join lifecycle) that runs under the dedicated
+  `stale-session-reconcile` system root, asks
+  `Service.StaleRunningCandidates` for content-free eligible metadata, and
   settles every candidate `SessionStale` judges stale via `SettleIfStale`.
   This is the ONLY repair path that reaches a
   `subagent-*`/`parallel-*`/`team-*` child crash-orphaned in `StateRunning`,

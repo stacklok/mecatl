@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
 // crashOrphanedSession builds a StateRunning session whose trailing assistant
@@ -56,7 +57,8 @@ func TestSettleIfStaleAbandonsRunningSessionThenNoOps(t *testing.T) {
 
 	svc := newSettleService(t, store)
 
-	settled, err := svc.SettleIfStale(ctx, id)
+	staleCtx := syscaller.Context(ctx, syscaller.RootStaleSessionReconcile)
+	settled, err := svc.SettleIfStale(staleCtx, id)
 	if err != nil {
 		t.Fatalf("SettleIfStale: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestSettleIfStaleAbandonsRunningSessionThenNoOps(t *testing.T) {
 	}
 
 	// Second call: already idle, nothing to settle, no error.
-	settled, err = svc.SettleIfStale(ctx, id)
+	settled, err = svc.SettleIfStale(staleCtx, id)
 	if err != nil {
 		t.Fatalf("second SettleIfStale: %v", err)
 	}
@@ -119,7 +121,7 @@ func TestSettleIfStaleSkipsGenuinelyLiveSession(t *testing.T) {
 		t.Fatalf("overwrite Save: %v", err)
 	}
 
-	settled, err := svc.SettleIfStale(ctx, sess.ID)
+	settled, err := svc.SettleIfStale(syscaller.Context(ctx, syscaller.RootStaleSessionReconcile), sess.ID)
 	if err != nil {
 		t.Fatalf("SettleIfStale: %v", err)
 	}

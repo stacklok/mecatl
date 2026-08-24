@@ -203,9 +203,9 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 		StorageManagementPrincipals: []session.Principal{*admin},
 		MainRetention:               time.Nanosecond,
 		AcknowledgeMainRetention:    true,
-		ChildGCInterval:             5 * time.Millisecond,
+		ChildGCInterval:             100 * time.Millisecond,
 		SchedulerEnabled:            true,
-		SchedulerTickInterval:       5 * time.Millisecond,
+		SchedulerTickInterval:       100 * time.Millisecond,
 	}
 	built, err := Build(ctx, cfg)
 	if err != nil {

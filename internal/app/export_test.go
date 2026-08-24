@@ -16,6 +16,7 @@ var (
 	StartChildGCForTest                = startChildGC
 	StartMemoryConsolidationForTest    = startMemoryConsolidation
 	StartUserModelConsolidationForTest = startUserModelConsolidation
+	StartStaleSessionReconcileForTest  = startStaleSessionReconcile
 )
 
 type modelRefreshProbe func(context.Context)

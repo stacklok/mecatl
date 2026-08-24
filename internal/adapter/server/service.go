@@ -5111,11 +5111,17 @@ func (s *Service) LeaseSweepDisabled() bool {
 // no-op result for a session that already moved on, e.g. a race with a
 // genuinely live re-entry or a peer's own settle).
 func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool, error) {
+	if !staleReconcileAuthorized(ctx) {
+		return false, ErrManagementUnauthorized
+	}
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("server: load session for stale settle: %w", err)
 	}
-	if sess.State != session.StateRunning {
+	if s.cfg.OwnershipEnforced && sess.Owner == nil {
+		return false, nil
+	}
+	if !staleMaintenanceSessionCandidate(sess) {
 		return false, nil
 	}
 	// ponytail: narrows, doesn't close, the TOCTOU window between the sweep's

@@ -43,6 +43,9 @@ const (
 	// RootModelCatalogRefresh is the one-shot startup live-model refresh. It does
 	// not cover request-driven stale-model refreshes, which retain their caller.
 	RootModelCatalogRefresh Root = "model-catalog-refresh"
+	// RootStaleSessionReconcile enumerates and settles only crash-orphaned
+	// running-session metadata through the narrow server maintenance seam.
+	RootStaleSessionReconcile Root = "stale-session-reconcile"
 	// RootJWKSRefresh is the token validator's background JWKS refresh, which
 	// owns the server-root context handed to the validator constructor.
 	RootJWKSRefresh Root = "jwks-refresh"
@@ -60,6 +63,7 @@ var Roots = []Root{
 	RootUserModelConsolidation,
 	RootScheduler,
 	RootModelCatalogRefresh,
+	RootStaleSessionReconcile,
 	RootJWKSRefresh,
 }
 

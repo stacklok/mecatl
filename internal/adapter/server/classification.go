@@ -385,10 +385,11 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"SetScheduleMinInterval": {KindExempt, "composition-time configuration of the scheduling frequency floor"},
 	"ScheduleManager":        {KindExempt, "composition-time accessor for the context-free manager handle; Schedule and ScheduleQuery are separately classified caller-owned consumers"},
 
-	// --- exempt: composition-owned session staleness sweep (issue #475), process-wide by design ---
-	"SessionStale":                       {KindExempt, "decides staleness for a metadata-scan candidate inside internal/app's composition-owned sweep, never a per-request caller-facing verb (mirrors IsLive)"},
+	// --- narrow shared-infrastructure stale-session maintenance (issue #475 / #368) ---
+	"SessionStale":                       {KindSharedInfrastructure, "decides staleness only for metadata returned by the stale-session reconciler's root-authorized narrow enumeration"},
 	"LeaseSweepDisabled":                 {KindExempt, "reads the process-wide sticky sweep-disabled flag SessionStale sets, consumed only by the composition-owned sweep"},
-	"SettleIfStale":                      {KindExempt, "repairs a stale session found by the composition-owned sweep's own metadata scan across every session, not a caller-supplied id from a caller-owned boundary"},
+	"StaleRunningCandidates":             {KindSharedInfrastructure, "root-authorized metadata-only enumeration of owned running, non-scheduled sessions; returns no transcript content"},
+	"SettleIfStale":                      {KindSharedInfrastructure, "root-authorized authoritative reload and settlement of a stale running candidate; ownerless records are rejected under ownership enforcement"},
 	"DeleteSessionForRetention":          {KindExempt, "legacy composition retention callback; revalidates durable taxonomy/state and acquires the session mutation lease before deletion"},
 	"DeleteSessionForRetentionCandidate": {KindExempt, "composition-owned retention callback over planner metadata; holds run-entry, lease, and backend family exclusions through conditional deletion"},
 }
@@ -448,6 +449,10 @@ var systemAccessTable = map[syscaller.Root]ClassificationEntry{
 	syscaller.RootModelCatalogRefresh: {
 		KindSharedInfrastructure,
 		"one-shot startup live-model-catalog fetch and swap; reads provider APIs and publishes a process-wide model registry snapshot, identical for every caller, touching no session/schedule/team/memory record at all",
+	},
+	syscaller.RootStaleSessionReconcile: {
+		KindSharedInfrastructure,
+		"stale-session repair: may enumerate metadata and settle only owned, running, non-scheduled crash orphans through the root-authorized narrow server seam; cannot read transcripts or use caller memory",
 	},
 }
 
