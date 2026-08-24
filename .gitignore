@@ -8,6 +8,9 @@
 *.out
 coverage.*
 
+# Local tool cache
+/.tools/
+
 # Local scratch
 /.scratch/
 

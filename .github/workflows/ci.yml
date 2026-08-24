@@ -326,17 +326,18 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
-      # golangci-lint-action manages its own cache and the linter binary. The
-      # Taskfile documents golangci-lint v2.x; pin to a concrete v2 release. It
-      # lints the ROOT module; the engine module is linted in a follow-on step
-      # using the binary this action installs onto PATH, sharing the ROOT config.
+      - id: golangci-version
+        run: echo "version=$(sh scripts/install-golangci-lint.sh --version)" >> "$GITHUB_OUTPUT"
+
+      # golangci-lint-action manages its own cache and installs the same pinned
+      # release local `task lint` installs into .tools/bin.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           # Must be a golangci-lint built with Go >= the go.mod toolchain
           # (1.26.x): older binaries refuse to load with "the Go language
           # version used to build golangci-lint is lower than the targeted Go
-          # version". v2.12.2 is the latest v2 release and is built with go1.26.x.
-          version: v2.12.2
+          # version". The version is declared by scripts/install-golangci-lint.sh.
+          version: ${{ steps.golangci-version.outputs.version }}
           # 10m, not 5m: the repo outgrew the old budget on the 2-core runners —
           # at 5m the run died with exit code 4 ("Timeout exceeded") and the
           # interrupted staticcheck pass reported spurious SA5011s (partial
