@@ -38,7 +38,7 @@ The trade-off: a crash mid-fire skips the slot, because the advance already happ
 | Single-host durable | `internal/adapter/store/jsonlstore` | One `mecated` replica with a local store directory |
 | Multi-replica durable | `internal/adapter/redisstore` | `mecak8s` or any multi-replica deployment sharing a Redis backend, using a Lua script for the atomic `Claim` |
 
-All three pass the shared `engine/adapter/scheduleconformance` test suite, so they behave identically from a caller's perspective. A deployment gets scheduling over its configured durable store via type assertion; `mecated` can alternatively select a remote schedule store with `--schedule-store-url`.
+All three pass the shared `engine/adapter/scheduleconformance` test suite, so they behave identically from a caller's perspective. A deployment gets scheduling over its configured durable store via type assertion; `mecated` can alternatively select a remote schedule store with `--schedule-store-url`. When OIDC caller ownership is enabled, the selected schedule store must also provide atomic create-only publication (`port.ScheduleCreator`); current remote schedule-store drivers do not, so that combination is rejected at startup rather than falling back to a racy check-then-upsert.
 
 Cron expressions themselves are parsed by `engine/adapter/cronparse`, a thin wrapper over `robfig/cron/v3`'s standard parser. The store never interprets the expression it's given — it stores the raw string verbatim; the caller (composition) computes the next fire time and hands it to `Claim`.
 

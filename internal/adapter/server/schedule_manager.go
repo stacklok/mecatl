@@ -431,10 +431,9 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	// ScheduleCreator seam (review finding 5, issue #368), the check-and-write
 	// is ONE atomic backend operation: two concurrent creates of the same name
 	// yield exactly one success and one ErrScheduleAlreadyExists, never a
-	// silent overwrite. A store that does not implement the seam falls back to
-	// the pre-fix check-then-Save (a tiny TOCTOU window across two separate
-	// calls — Create is a low-frequency human action, so the residual race is
-	// accepted on that path only).
+	// silent overwrite. Ownership enforcement REQUIRES that capability; only
+	// the ownerless compatibility path retains the historical check-then-Save
+	// fallback.
 	if creator, ok := m.schedStore.(port.ScheduleCreator); ok {
 		if err := creator.Create(ctx, sched); err != nil {
 			if errors.Is(err, port.ErrScheduleAlreadyExists) {
@@ -443,6 +442,12 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 			return port.Schedule{}, err
 		}
 	} else {
+		// ScheduleCreator is optional for ownerless compatibility, but ownership
+		// enforcement may never fall back to check-then-upsert: a concurrent
+		// creator could otherwise overwrite another caller's schedule.
+		if m.ownershipEnforced {
+			return port.Schedule{}, fmt.Errorf("%w: ownership enforcement requires a schedule store with atomic create capability", ErrFailedPrecondition)
+		}
 		if _, lerr := m.schedStore.Load(ctx, physicalName); lerr == nil {
 			return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName)
 		} else if !errors.Is(lerr, port.ErrScheduleNotFound) {

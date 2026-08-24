@@ -2675,6 +2675,16 @@ func requireAtomicSessionCreate(cfg Config, store port.SessionStore) error {
 	return nil
 }
 
+func requireAtomicScheduleCreate(cfg Config, store port.ScheduleStore) error {
+	if !cfg.OwnershipEnforced || store == nil {
+		return nil
+	}
+	if _, ok := store.(port.ScheduleCreator); !ok {
+		return fmt.Errorf("ownership enforcement requires a schedule store with atomic create capability")
+	}
+	return nil
+}
+
 // buildStore constructs the SessionStore plus its durable EventLog (cloud-native
 // Phase 3a): a gRPC driver client when SessionStoreURL is set
 // (validateDriverConfig has already rejected the URL+dir combination), a JSONL
@@ -3238,6 +3248,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	toolSchedStore, toolSchedClose, err := resolveScheduleStore(cfg, store)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, fmt.Errorf("resolve schedule store for tool: %w", err)
+	}
+	if err := requireAtomicScheduleCreate(cfg, toolSchedStore); err != nil {
+		toolSchedClose()
+		return nil, nil, nil, nil, nil, nil, nil, catalogAssets{}, nil, func() {}, err
 	}
 	scheduleMgr := server.NewScheduleManager(server.ScheduleManagerConfig{
 		Store:             store,
