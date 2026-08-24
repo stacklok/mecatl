@@ -43,7 +43,9 @@ The key constraint: **`engine/agent` imports only `engine/port`, the domain pack
 
 ## The port interfaces
 
-Every seam the loop can be extended through is defined in `engine/port`. The table below lists each interface, what it abstracts, and where the adapters that satisfy it live.
+Most seams the loop can be extended through are defined in `engine/port`. The table
+also includes service-owned persistence seams such as `EventLog`, which the relay
+uses but the agent loop does not consume directly.
 
 | Interface | File | Abstracts | Reference adapters |
 |---|---|---|---|
@@ -53,7 +55,7 @@ Every seam the loop can be extended through is defined in `engine/port`. The tab
 | `PermissionPolicy` | `port/permission.go` | Evaluate a tool call → allow / ask / deny; learn per-session allow rules | `engine/adapter/permpolicy` (wraps the session-free `governance.Evaluator`) |
 | `PermissionStore` | `port/permission.go` | Hold per-session learned rules | `engine/adapter/permstore` |
 | `HookRunner` | `port/hookrunner.go` | Execute lifecycle hooks (`PreToolUse`, `PostToolUse`, etc.) | `internal/adapter/hookexec` (shell-exec); `engine/adapter/mockllm` test stubs |
-| `EventLog` | `port/eventlog.go` | Durable append-only per-session event record | `engine/adapter/memstore` (in-memory); `internal/adapter/store/jsonlstore` (`.events.jsonl` sidecar); `internal/adapter/redisstore` |
+| `EventLog` | `port/eventlog.go` | Durable append-only per-session event record; owned by the service relay rather than consumed by the agent loop | `engine/adapter/memstore` (in-memory); `internal/adapter/store/jsonlstore` (`.events.jsonl` sidecar); `internal/adapter/redisstore` |
 | `EventSink` | `port/log.go` | Live mirror of the event stream (telemetry, ACP relay) | `internal/adapter/server` (gRPC/HTTP relay); `internal/adapter/telemetry` |
 | `ToolCallRecorder` | `port/log.go` | Per-tool audit record (timing, call, result) | `internal/adapter/store/jsonlstore`; `internal/adapter/redisstore`; `internal/adapter/telemetry` |
 | `Diagnostics` | `port/diagnostics.go` | Operator-facing log lines (structured key/value, slog-shaped) | `internal/adapter/slogdiag` (the only slog bridge); `port.NopDiagnostics` (zero-value default) |
