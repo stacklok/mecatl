@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +18,344 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
+	"github.com/stacklok/mecatl/internal/syscaller"
 )
+
+type recordingDeliveryQueue struct {
+	enqueues int
+	marks    int
+}
+
+func (q *recordingDeliveryQueue) Enqueue(_ context.Context, origin session.SessionID, text string) (port.DeliveryNote, error) {
+	q.enqueues++
+	return port.DeliveryNote{SessionID: origin, Seq: uint64(q.enqueues), Text: text}, nil
+}
+
+func (*recordingDeliveryQueue) Pending(context.Context, session.SessionID) ([]port.DeliveryNote, error) {
+	return nil, nil
+}
+
+func (q *recordingDeliveryQueue) MarkDelivered(context.Context, session.SessionID, uint64) error {
+	q.marks++
+	return nil
+}
+
+func TestScheduleDeliveryAuthorizesOriginBeforeEnqueue(t *testing.T) {
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
+
+	for _, deliver := range []struct {
+		name string
+		make func(*server.Service, port.DeliveryQueue) func(context.Context, port.Schedule, port.ScheduleFire)
+	}{
+		{name: "started", make: deliverFireStarted},
+		{name: "result", make: deliverFireResult},
+	} {
+		t.Run(deliver.name, func(t *testing.T) {
+			for _, origin := range []struct {
+				name   string
+				exists bool
+				owner  *session.Principal
+			}{
+				{name: "missing"},
+				{name: "ownerless", exists: true},
+				{name: "foreign", exists: true, owner: bob},
+				{name: "owned", exists: true, owner: alice},
+			} {
+				t.Run(origin.name, func(t *testing.T) {
+					store, err := jsonlstore.New(t.TempDir())
+					if err != nil {
+						t.Fatalf("jsonlstore.New: %v", err)
+					}
+					diag := &captureDiag{}
+					queue := &recordingDeliveryQueue{}
+					provider := mockllm.New(mockllm.TextTurn("delivery acknowledged"))
+					engine := agent.NewEngine(agent.Deps{
+						LLM:     provider,
+						Catalog: tool.NewCatalog(),
+						Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+						Model:   "m",
+						Store:   store,
+					})
+					svc, err := server.NewService(server.Config{
+						Engine:              engine,
+						Store:               store,
+						Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+						Now:                 time.Now,
+						DefaultCapabilities: mockllm.New().Capabilities(),
+						EventLog:            store,
+						Diagnostics:         diag,
+						OwnershipEnforced:   true,
+					})
+					if err != nil {
+						t.Fatalf("NewService: %v", err)
+					}
+
+					originID := session.SessionID("origin-" + origin.name)
+					if origin.exists {
+						sess := session.New(originID, session.ModeDefault, t.TempDir(), session.Limits{}, time.Unix(0, 0))
+						sess.Owner = origin.owner.Clone()
+						if err := store.Save(context.Background(), sess); err != nil {
+							t.Fatalf("Save origin: %v", err)
+						}
+					}
+					sched := port.Schedule{Spec: port.ScheduleSpec{
+						Name: "schedule/alice/test", OriginSessionID: originID, Owner: alice,
+					}}
+					var events <-chan session.Event
+					if origin.name == "foreign" {
+						var unsubscribe func()
+						events, unsubscribe, err = svc.Subscribe(session.WithPrincipal(context.Background(), bob), originID)
+						if err != nil {
+							t.Fatalf("Subscribe as origin owner: %v", err)
+						}
+						defer unsubscribe()
+					}
+					deliver.make(svc, queue)(context.Background(), sched, fireRecord("sched--fire1", session.StopEndTurn))
+
+					if origin.owner != nil && origin.owner.SameIdentity(alice) {
+						if queue.enqueues != 1 {
+							t.Fatalf("authorized enqueue calls = %d, want 1", queue.enqueues)
+						}
+						if provider.Calls() != 1 {
+							t.Fatalf("authorized delivery runs = %d, want 1", provider.Calls())
+						}
+						return
+					}
+					if queue.enqueues != 0 || queue.marks != 0 {
+						t.Fatalf("unauthorized queue effects = enqueues %d, marks %d; want zero", queue.enqueues, queue.marks)
+					}
+					if provider.Calls() != 0 {
+						t.Fatalf("unauthorized delivery runs = %d, want zero", provider.Calls())
+					}
+					// The stated property is NON-CORRELATION, not silence: delivery must
+					// stay observable to the operator (a stranded origin otherwise looks
+					// exactly like a healthy schedule that never fired) while naming
+					// neither the schedule nor the origin nor a foreign owner.
+					for _, entry := range diag.entries {
+						rendered := fmt.Sprint(append([]any{entry.msg}, entry.args...)...)
+						for _, secret := range []string{string(originID), sched.Spec.Name, bob.Subject} {
+							if secret != "" && strings.Contains(rendered, secret) {
+								t.Fatalf("target-correlated diagnostic %q leaked %q", rendered, secret)
+							}
+						}
+					}
+					if len(diag.entries) == 0 {
+						t.Fatal("delivery stopped with no operator diagnostic at all")
+					}
+					if events != nil {
+						select {
+						case ev := <-events:
+							t.Fatalf("unauthorized target event = %+v, want none", ev)
+						default:
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestScheduleDeliveryMissingOriginPreservesNoVerifierCompatibility(t *testing.T) {
+	for _, deliver := range []struct {
+		name string
+		make func(*server.Service, port.DeliveryQueue) func(context.Context, port.Schedule, port.ScheduleFire)
+	}{
+		{name: "started", make: deliverFireStarted},
+		{name: "result", make: deliverFireResult},
+	} {
+		t.Run(deliver.name, func(t *testing.T) {
+			store, err := jsonlstore.New(t.TempDir())
+			if err != nil {
+				t.Fatalf("jsonlstore.New: %v", err)
+			}
+			provider := mockllm.New(mockllm.TextTurn("must not run"))
+			engine := agent.NewEngine(agent.Deps{
+				LLM: provider, Catalog: tool.NewCatalog(),
+				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
+			})
+			diag := &captureDiag{}
+			svc, err := server.NewService(server.Config{
+				Engine: engine, Store: store,
+				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				Now:                 time.Now,
+				DefaultCapabilities: provider.Capabilities(),
+				Diagnostics:         diag,
+			})
+			if err != nil {
+				t.Fatalf("NewService: %v", err)
+			}
+			queue := &recordingDeliveryQueue{}
+			sched := port.Schedule{Spec: port.ScheduleSpec{Name: "legacy", OriginSessionID: "missing-origin"}}
+			deliver.make(svc, queue)(context.Background(), sched, fireRecord("sched--fire1", session.StopEndTurn))
+
+			if queue.enqueues != 1 {
+				t.Fatalf("legacy enqueue calls = %d, want 1", queue.enqueues)
+			}
+			if provider.Calls() != 0 {
+				t.Fatalf("legacy delivery runs = %d, want zero", provider.Calls())
+			}
+			if diag.warnCount("origin session not found") != 1 {
+				t.Fatalf("legacy missing-origin diagnostics = %+v, want one warning", diag.entries)
+			}
+		})
+	}
+}
+
+func TestScheduleDeliveryRejectsOwnerlessScheduleUnderSystemContext(t *testing.T) {
+	for _, deliver := range []struct {
+		name string
+		make func(*server.Service, port.DeliveryQueue) func(context.Context, port.Schedule, port.ScheduleFire)
+	}{
+		{name: "started", make: deliverFireStarted},
+		{name: "result", make: deliverFireResult},
+	} {
+		t.Run(deliver.name, func(t *testing.T) {
+			store, err := jsonlstore.New(t.TempDir())
+			if err != nil {
+				t.Fatalf("jsonlstore.New: %v", err)
+			}
+			provider := mockllm.New(mockllm.TextTurn("must not run"))
+			engine := agent.NewEngine(agent.Deps{
+				LLM: provider, Catalog: tool.NewCatalog(),
+				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
+			})
+			diag := &captureDiag{}
+			svc, err := server.NewService(server.Config{
+				Engine: engine, Store: store,
+				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				Now:                 time.Now,
+				DefaultCapabilities: provider.Capabilities(),
+				Diagnostics:         diag,
+				OwnershipEnforced:   true,
+			})
+			if err != nil {
+				t.Fatalf("NewService: %v", err)
+			}
+			origin := session.New("system-origin", session.ModeDefault, t.TempDir(), session.Limits{}, time.Unix(0, 0))
+			origin.Owner = session.PrincipalFromContext(syscaller.Context(context.Background(), syscaller.RootScheduler))
+			if err := store.Save(context.Background(), origin); err != nil {
+				t.Fatalf("Save origin: %v", err)
+			}
+			queue := &recordingDeliveryQueue{}
+			sched := port.Schedule{Spec: port.ScheduleSpec{Name: "legacy", OriginSessionID: origin.ID}}
+			deliver.make(svc, queue)(syscaller.Context(context.Background(), syscaller.RootScheduler), sched, fireRecord("sched--fire1", session.StopEndTurn))
+
+			// The property under test is that an ownerless schedule never inherits the
+			// outer scheduler system identity: no enqueue, no mark, no run. The
+			// operator line is not an effect — an ownerless schedule stops delivering
+			// PERMANENTLY at OIDC cutover, so silence would make a legacy record's
+			// death indistinguishable from a healthy one that never fired.
+			if queue.enqueues != 0 || queue.marks != 0 || provider.Calls() != 0 {
+				t.Fatalf("ownerless schedule effects: enqueues=%d marks=%d runs=%d", queue.enqueues, queue.marks, provider.Calls())
+			}
+			for _, entry := range diag.entries {
+				rendered := fmt.Sprint(append([]any{entry.msg}, entry.args...)...)
+				for _, secret := range []string{string(origin.ID), sched.Spec.Name} {
+					if strings.Contains(rendered, secret) {
+						t.Fatalf("target-correlated diagnostic %q leaked %q", rendered, secret)
+					}
+				}
+			}
+			if len(diag.entries) == 0 {
+				t.Fatal("an ownerless schedule silently stopped delivering with no operator diagnostic")
+			}
+		})
+	}
+}
+
+type ownerSwapStore struct {
+	port.SessionStore
+	id     session.SessionID
+	loads  int
+	before *session.Principal
+	after  *session.Principal
+}
+
+func (s *ownerSwapStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	sess, err := s.SessionStore.Load(ctx, id)
+	if err != nil || id != s.id {
+		return sess, err
+	}
+	s.loads++
+	if s.loads == 1 {
+		sess.Owner = s.before.Clone()
+	} else {
+		sess.Owner = s.after.Clone()
+	}
+	return sess, nil
+}
+
+func TestScheduleDeliveryReauthorizesImmediatelyBeforeEnqueue(t *testing.T) {
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
+
+	for _, deliver := range []struct {
+		name string
+		make func(*server.Service, port.DeliveryQueue) func(context.Context, port.Schedule, port.ScheduleFire)
+	}{
+		{name: "started", make: deliverFireStarted},
+		{name: "result", make: deliverFireResult},
+	} {
+		t.Run(deliver.name, func(t *testing.T) {
+			base, err := jsonlstore.New(t.TempDir())
+			if err != nil {
+				t.Fatalf("jsonlstore.New: %v", err)
+			}
+			origin := session.New("replaced-origin", session.ModeDefault, t.TempDir(), session.Limits{}, time.Unix(0, 0))
+			origin.Owner = alice.Clone()
+			if err := base.Save(context.Background(), origin); err != nil {
+				t.Fatalf("Save origin: %v", err)
+			}
+			store := &ownerSwapStore{SessionStore: base, id: origin.ID, before: alice, after: bob}
+			provider := mockllm.New(mockllm.TextTurn("must not run"))
+			engine := agent.NewEngine(agent.Deps{
+				LLM: provider, Catalog: tool.NewCatalog(),
+				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
+			})
+			diag := &captureDiag{}
+			svc, err := server.NewService(server.Config{
+				Engine: engine, Store: store,
+				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				Now:                 time.Now,
+				DefaultCapabilities: provider.Capabilities(),
+				Diagnostics:         diag,
+				OwnershipEnforced:   true,
+			})
+			if err != nil {
+				t.Fatalf("NewService: %v", err)
+			}
+			queue := &recordingDeliveryQueue{}
+			sched := port.Schedule{Spec: port.ScheduleSpec{Name: "alice", OriginSessionID: origin.ID, Owner: alice}}
+			deliver.make(svc, queue)(context.Background(), sched, fireRecord("sched--fire1", session.StopEndTurn))
+
+			if store.loads != 2 {
+				t.Fatalf("origin loads = %d, want preflight + authoritative reload", store.loads)
+			}
+			// The property under test is that the preflight never becomes a durable
+			// grant: a foreign replacement between preflight and the authoritative
+			// reload must produce NO effect. Effects are the enqueue, the queue mark,
+			// and the run — an operator log line is not one of them, and delivery is
+			// deliberately observable (see authorizeScheduleDeliveryOrigin). What the
+			// line must not do is leak the replacement OWNER, whose identity the
+			// schedule owner never had a right to learn.
+			if queue.enqueues != 0 || queue.marks != 0 || provider.Calls() != 0 {
+				t.Fatalf("replacement effects: enqueues=%d marks=%d runs=%d", queue.enqueues, queue.marks, provider.Calls())
+			}
+			for _, entry := range diag.entries {
+				rendered := fmt.Sprint(append([]any{entry.msg}, entry.args...)...)
+				for _, secret := range []string{bob.Subject, string(origin.ID), sched.Spec.Name} {
+					if strings.Contains(rendered, secret) {
+						t.Fatalf("target-correlated diagnostic %q leaked %q", rendered, secret)
+					}
+				}
+			}
+			if len(diag.entries) == 0 {
+				t.Fatal("a foreign replacement silently stopped delivery with no operator diagnostic")
+			}
+		})
+	}
+}
 
 // deliveryTestEnv is the shared scaffolding for the fire-result-delivery
 // Scenario 3+4 tests: a Service over a real on-disk jsonlstore (so the origin
@@ -290,15 +628,20 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	// Origin does NOT exist — the delivery drive will fail (GetSession not found).
+	// The origin exists and is authorized; fail the queue operation itself so
+	// this test continues to cover an actionable delivery failure rather than an
+	// absent target (absence is deliberately silent at the ownership boundary).
+	origin, err := svc.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
 	sched := port.Schedule{Spec: port.ScheduleSpec{
-		Name: "test-sched", OriginSessionID: "nonexistent-origin",
+		Name: "test-sched", OriginSessionID: origin.ID,
 	}}
 	fire := fireRecord("sched--fire1", session.StopEndTurn)
-	// deliverFireResult should WARN (origin not found) and NOT panic / error.
-	deliverFireResult(svc, queue)(context.Background(), sched, fire)
+	deliverFireResult(svc, &errQueue{})(context.Background(), sched, fire)
 
-	// A WARN was emitted (the delivery failure is visible).
+	// The queue failure remains visible.
 	if n := diag.warnCount("delivery"); n == 0 {
 		t.Fatalf("expected a delivery WARN, got 0 (the failure must be visible)")
 	}
@@ -664,16 +1007,16 @@ func TestFireDelivery_Scenario4_MultiplePendingAllDrainedAtLoop(t *testing.T) {
 	}
 }
 
-// --- AC4.4: a fire whose origin is deleted / a collected child / a `sched--`
-// session drops the delivery with a WARN, never fails the fire, never delivers
-// into another fire's chat; result stays pull-able. ---
+// --- AC4.4: a collected child / a `sched--` session drops the delivery with
+// a WARN, never fails the fire, and never delivers into another fire's chat;
+// result stays pull-able. A missing origin is handled earlier and silently so
+// it remains indistinguishable from a foreign origin under ownership. ---
 
-func TestFireDelivery_Scenario4_NonDeliverableOriginDropsWithWarn(t *testing.T) {
+func TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		origin string
 	}{
-		{"deleted", "nonexistent-origin"},
 		{"child subagent", "subagent-call1"},
 		{"child parallel", "parallel-call1-0"},
 		{"child team", "team-team1-lead"},
@@ -701,13 +1044,11 @@ func TestFireDelivery_Scenario4_NonDeliverableOriginDropsWithWarn(t *testing.T) 
 			if err != nil {
 				t.Fatalf("NewService: %v", err)
 			}
-			// For the child/sched-- cases, the origin session exists (so
-			// GetSession succeeds and the prefix check fires the WARN). Create it.
-			if tc.origin != "nonexistent-origin" {
-				exist := session.New(session.SessionID(tc.origin), session.ModeDefault, "", session.Limits{}, time.Unix(0, 0))
-				if err := store.Save(context.Background(), exist); err != nil {
-					t.Fatalf("Save existing origin: %v", err)
-				}
+			// The child/sched-- origin exists so authorization succeeds before
+			// the prefix check fires the WARN.
+			exist := session.New(session.SessionID(tc.origin), session.ModeDefault, "", session.Limits{}, time.Unix(0, 0))
+			if err := store.Save(context.Background(), exist); err != nil {
+				t.Fatalf("Save existing origin: %v", err)
 			}
 			sched := port.Schedule{Spec: port.ScheduleSpec{
 				Name: "test-sched", OriginSessionID: session.SessionID(tc.origin),

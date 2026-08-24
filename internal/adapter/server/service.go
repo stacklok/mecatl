@@ -2127,6 +2127,14 @@ func (s *Service) Diagnostics() port.Diagnostics {
 	return s.cfg.Diagnostics
 }
 
+// OwnershipEnforced reports whether caller ownership is active. Composition
+// uses it only where ownerless persisted metadata must fail closed before
+// reconstructing a caller context; resource decisions still flow through
+// ownsResource/authorizeSession.
+func (s *Service) OwnershipEnforced() bool {
+	return s.cfg.OwnershipEnforced
+}
+
 // IsDraining reports whether the drain gate is armed. It is the read-side
 // companion to Drain: a cmd binary's dynamic ReadyFunc (mecak8s /readyz)
 // closes over it so readiness flips to not-ready the moment Drain is armed,
@@ -2181,6 +2189,27 @@ func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*sessio
 	// silently turn one persisted identity into another before protobuf mapping.
 	if !utf8.ValidString(string(sess.ID)) {
 		return nil, fmt.Errorf("%w: persisted session has an invalid UTF-8 id", ErrInternal)
+	}
+	return sess, nil
+}
+
+// WithAuthorizedSession serializes a caller-owned side effect with session run
+// entry. It performs an ownership-only preflight before taking caller-selected
+// coordination, then reloads and reauthorizes under runEntryMu immediately
+// before effect. The callback must not call another operation that locks the
+// same session id.
+func (s *Service) WithAuthorizedSession(ctx context.Context, id session.SessionID, effect func(*session.Session) error) (*session.Session, error) {
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := effect(sess); err != nil {
+		return nil, err
 	}
 	return sess, nil
 }

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/agent"
@@ -25,32 +26,39 @@ func deliverFireStarted(svc *server.Service, queue port.DeliveryQueue) func(ctx 
 		if origin == "" {
 			return // no origin → no start notice (mirrors deliverFireResult)
 		}
+		// A nil queue is the byte-identical no-start-notice path and needs no
+		// owner lookup.
+		if queue == nil {
+			return
+		}
 		diag := svc.Diagnostics()
 		if diag == nil {
 			diag = port.NopDiagnostics{}
 		}
-		note := renderFireStarted(server.LiteralScheduleName(sched.Spec.Name), fire.ID)
-
-		// Enqueue to the durable per-session queue (the session-scoped exactly-once
-		// ledger). A nil queue (the no-delivery posture) is a no-op drop.
-		if queue == nil {
+		var enq port.DeliveryNote
+		var note string
+		ownerCtx, originSess, ok, err := authorizeScheduleDeliveryOrigin(ctx, svc, sched, diag, func(_ context.Context, _ *session.Session) error {
+			note = renderFireStarted(server.LiteralScheduleName(sched.Spec.Name), fire.ID)
+			var enqueueErr error
+			enq, enqueueErr = queue.Enqueue(ctx, origin, note)
+			return enqueueErr
+		})
+		if !ok {
 			return
 		}
-		enq, err := queue.Enqueue(ctx, origin, note)
+		if errors.Is(err, errScheduleDeliveryOriginMissing) {
+			diag.Log(ctx, port.LevelWarn, "delivery: origin session not found (degrading to pull-only)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
+			return
+		}
 		if err != nil {
 			diag.Log(ctx, port.LevelWarn, "delivery: enqueue failed (start notice stays pull-able)",
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
 			return
 		}
 
-		// State-aware delivery. Determine the origin's state via GetSession.
-		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
-		originSess, err := svc.GetSession(ownerCtx, origin)
-		if err != nil {
-			diag.Log(ctx, port.LevelWarn, "delivery: origin session not found (degrading to pull-only)",
-				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started", "err", err.Error())
-			return
-		}
+		// State-aware delivery. The origin was loaded and authorized before the
+		// enqueue; use that snapshot only to select enqueue-only versus drive.
 		if isNonDeliverableOrigin(origin) {
 			diag.Log(ctx, port.LevelWarn, "delivery: origin is a child/sched-- session (degrading to pull-only)",
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "kind", "fire started")
@@ -115,45 +123,42 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 		if origin == "" {
 			return // no delivery — the pre-ADR-0075 pull-only posture
 		}
+		// A nil queue is the byte-identical no-delivery path and needs no owner
+		// lookup.
+		if queue == nil {
+			return
+		}
 		diag := svc.Diagnostics()
 		if diag == nil {
 			diag = port.NopDiagnostics{}
 		}
-		// Render the note. The final text is extracted from the fire session's
-		// conversation (the last assistant text); a fire with no assistant text
-		// (an empty terminal) still renders a note carrying the stop reason.
-		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
-		finalText := fireFinalText(ownerCtx, svc, fire)
-		note := renderFireDelivery(server.LiteralScheduleName(sched.Spec.Name), fire.ID, fire.Stop, finalText)
-
-		// Enqueue to the durable per-session queue (the session-scoped exactly-once
-		// ledger). A nil queue (the no-delivery posture) is a no-op drop — the
-		// fire path treats a nil-error Enqueue as "recorded" and proceeds.
-		if queue == nil {
-			return // no delivery queue wired — the byte-identical no-delivery path
+		var enq port.DeliveryNote
+		var note string
+		ownerCtx, originSess, ok, err := authorizeScheduleDeliveryOrigin(ctx, svc, sched, diag, func(ownerCtx context.Context, _ *session.Session) error {
+			// Render only after the origin's authoritative under-lock authorization.
+			finalText := fireFinalText(ownerCtx, svc, fire)
+			note = renderFireDelivery(server.LiteralScheduleName(sched.Spec.Name), fire.ID, fire.Stop, finalText)
+			var enqueueErr error
+			enq, enqueueErr = queue.Enqueue(ctx, origin, note)
+			return enqueueErr
+		})
+		if !ok {
+			return
 		}
-		enq, err := queue.Enqueue(ctx, origin, note)
+		if errors.Is(err, errScheduleDeliveryOriginMissing) {
+			diag.Log(ctx, port.LevelWarn, "delivery: origin session not found (degrading to pull-only)",
+				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "err", err.Error())
+			return
+		}
 		if err != nil {
-			// Enqueue is best-effort: a failure WARNs and never fails the fire.
-			// The note is not recorded; the fire result stays pull-able.
 			diag.Log(ctx, port.LevelWarn, "delivery: enqueue failed (fire result stays pull-able)",
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "err", err.Error())
 			return
 		}
 
-		// State-aware delivery. Determine the origin's state via GetSession
-		// (read-only snapshot load — NOT loadAndReopen, which would drive a
-		// terminal state to idle prematurely for the awaiting/busy cases).
-		originSess, err := svc.GetSession(ownerCtx, origin)
-		if err != nil {
-			// Origin not found (deleted) — degrade to pull-only with a WARN. The
-			// note stays pending in the queue (it will drain if the origin is ever
-			// re-created with the same id, which is rare; otherwise it is bounded by
-			// the backlog cap). The fire result stays pull-able.
-			diag.Log(ctx, port.LevelWarn, "delivery: origin session not found (degrading to pull-only)",
-				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "err", err.Error())
-			return
-		}
+		// State-aware delivery uses the snapshot loaded and authorized before the
+		// enqueue (read-only load — NOT loadAndReopen, which would drive a terminal
+		// state to idle prematurely for the awaiting/busy cases).
 		// A child/`sched--` origin is short-lived and reaped by GC, OR is another
 		// fire's session. Delivering into it would be a delivery loop (a fire
 		// delivering into another fire's chat). Degrade to pull-only with a WARN.
@@ -218,6 +223,71 @@ func deliverFireResult(svc *server.Service, queue port.DeliveryQueue) func(ctx c
 				"schedule", sched.Spec.Name, "fire", fire.ID, "origin", string(origin), "seq", enq.Seq, "err", err.Error())
 		}
 	}
+}
+
+var errScheduleDeliveryOriginMissing = errors.New("schedule delivery origin missing")
+
+// authorizeScheduleDeliveryOrigin reconstructs the schedule owner's caller
+// context and proves that the stored origin belongs to that owner immediately
+// before effect runs under the origin's run-entry lock. Failure is deliberately
+// silent: missing, ownerless, and foreign origins are indistinguishable at this
+// asynchronous boundary. The outer scheduler context remains in use for queue
+// bookkeeping and diagnostics; ownerCtx is used only for caller-owned session
+// operations.
+func authorizeScheduleDeliveryOrigin(
+	ctx context.Context,
+	svc *server.Service,
+	sched port.Schedule,
+	diag port.Diagnostics,
+	effect func(context.Context, *session.Session) error,
+) (context.Context, *session.Session, bool, error) {
+	// Preserve the no-verifier path byte-for-byte: render and enqueue first, then
+	// inspect the origin for state-aware delivery. The stronger ordering below is
+	// required only when ownership is active.
+	if !svc.OwnershipEnforced() {
+		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
+		if err := effect(ownerCtx, nil); err != nil {
+			return ownerCtx, nil, true, err
+		}
+		originSess, err := svc.GetSession(ownerCtx, sched.Spec.OriginSessionID)
+		if err != nil {
+			return ownerCtx, nil, true, errors.Join(errScheduleDeliveryOriginMissing, err)
+		}
+		return ownerCtx, originSess, true, nil
+	}
+	// An ownerless persisted schedule must not inherit the outer scheduler system
+	// identity when ownership is active. That is an OIDC-cutover casualty rather
+	// than an attack, and it is permanent for that schedule, so the operator is
+	// told why it stopped delivering.
+	if sched.Spec.Owner == nil {
+		// Target withheld: naming the schedule or origin would correlate a record a
+		// caller may not know exists. An operator enumerates ownerless schedules by
+		// name through GetStorageHealth's cutover inventory (AC4.6), which is
+		// management-authorized; this line only has to make the RATE visible.
+		diag.Log(ctx, port.LevelWarn, "delivery: ownerless schedule cannot deliver under ownership enforcement (target withheld; see the ownerless cutover inventory)")
+		return nil, nil, false, nil
+	}
+	ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
+	authorized := false
+	var originSess *session.Session
+	_, err := svc.WithAuthorizedSession(ownerCtx, sched.Spec.OriginSessionID, func(sess *session.Session) error {
+		authorized = true
+		originSess = sess
+		return effect(ownerCtx, sess)
+	})
+	if !authorized {
+		// Missing, ownerless, and foreign origins stay ONE answer to the caller.
+		// The operator still gets a line: unlike GetSession there is no untrusted
+		// caller at this boundary — the scheduler is the caller, and the origin id
+		// came from the schedule's own spec, which validateScheduleOrigin
+		// owner-checked at create time. Silence here made a deleted origin
+		// indistinguishable from a healthy schedule that simply never fired.
+		// Target withheld for the same reason: a foreign origin would correlate one
+		// owner's schedule with another owner's session id.
+		diag.Log(ctx, port.LevelWarn, "delivery: origin not resolvable for the schedule owner (degrading to pull-only; target withheld)")
+		return nil, nil, false, nil
+	}
+	return ownerCtx, originSess, true, err
 }
 
 // fireFinalText extracts the fire's last meaningful assistant text from its
