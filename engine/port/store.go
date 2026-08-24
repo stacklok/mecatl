@@ -12,14 +12,21 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// ErrSessionNotFound is the port-level sentinel a SessionStore.Load wraps (with %w)
-// when no session is stored under the requested id — distinct from a genuine
-// infrastructure failure (I/O error, decode failure). It lets a consumer in a layer
-// that may NOT import the store adapters (e.g. engine/agent's InspectMemberTool)
-// distinguish "no such session" from "the store is broken" via errors.Is, without
-// reaching for an adapter's own not-found sentinel. Every SessionStore adapter MUST
-// wrap this for the not-found case.
-var ErrSessionNotFound = errors.New("port: session not found")
+var (
+	// ErrSessionNotFound is the port-level sentinel a SessionStore.Load wraps
+	// (with %w) when no session is stored under the requested id — distinct
+	// from a genuine infrastructure failure (I/O error, decode failure). It lets
+	// a consumer in a layer that may NOT import the store adapters (e.g.
+	// engine/agent's InspectMemberTool) distinguish "no such session" from "the
+	// store is broken" via errors.Is, without reaching for an adapter's own
+	// not-found sentinel. Every SessionStore adapter MUST wrap this for the
+	// not-found case.
+	ErrSessionNotFound = errors.New("port: session not found")
+
+	// ErrSessionAlreadyExists is wrapped by SessionCreator.Create when an
+	// authoritative snapshot already exists under the requested session id.
+	ErrSessionAlreadyExists = errors.New("port: session already exists")
+)
 
 // SessionStore persists and retrieves server-side session state, enabling
 // pause/resume and reload. Adapters provide an in-memory store (default) and an
@@ -59,6 +66,21 @@ type SessionStore interface {
 	// Load retrieves the session with the given id. The not-found case MUST wrap
 	// port.ErrSessionNotFound; any other error is an infrastructure failure.
 	Load(ctx context.Context, id session.SessionID) (*session.Session, error)
+}
+
+// SessionCreator is the OPTIONAL atomic first-publication capability of a
+// SessionStore. Create publishes s only when no authoritative snapshot exists
+// under s.ID. The existence check and publication MUST be one backend-atomic
+// operation across all handles sharing that backend; a Load-then-Save sequence
+// does not satisfy this contract.
+//
+// Any existing snapshot, including one with the same owner and content, causes
+// Create to return an error wrapping ErrSessionAlreadyExists. That collision
+// MUST NOT mutate the existing snapshot, derivative metadata or generations,
+// event log, or tool-call sidecar. Save remains the update/upsert operation for
+// a snapshot whose initial Create succeeded.
+type SessionCreator interface {
+	Create(ctx context.Context, s *session.Session) error
 }
 
 // StoredSession is one stored session's retention-relevant identity: its id

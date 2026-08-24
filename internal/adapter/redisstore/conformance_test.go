@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -39,6 +40,27 @@ func newTestStore(t *testing.T) port.SessionStore {
 // against the Redis-backed store over an in-process miniredis (fully offline).
 func TestRedisStoreConformance(t *testing.T) {
 	storeconformance.Run(t, newTestStore)
+}
+
+func TestRedisStoreSessionCreatorConformance(t *testing.T) {
+	storeconformance.RunSessionCreator(t, func(t *testing.T) (port.SessionStore, port.SessionStore) {
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("miniredis: %v", err)
+		}
+		t.Cleanup(mr.Close)
+		first, err := redisstore.New(mr.Addr())
+		if err != nil {
+			t.Fatalf("redisstore.New(first): %v", err)
+		}
+		t.Cleanup(func() { _ = first.Close() })
+		second, err := redisstore.New(mr.Addr())
+		if err != nil {
+			t.Fatalf("redisstore.New(second): %v", err)
+		}
+		t.Cleanup(func() { _ = second.Close() })
+		return first, second
+	})
 }
 
 // TestRedisStorePrunableConformance runs the shared PrunableStore (retention
@@ -101,6 +123,68 @@ func TestRedisStoreDeleteRemovesEventsAndTools(t *testing.T) {
 	}
 	if ranged {
 		t.Fatal("Read(deleted) ranged, want an empty sequence")
+	}
+}
+
+func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	first, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatalf("redisstore.New(first): %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatalf("redisstore.New(second): %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+
+	ctx := context.Background()
+	const id session.SessionID = "redis-create-collision"
+	winner := newTestSession(t, id)
+	if err := first.Save(ctx, winner); err != nil {
+		t.Fatalf("Save(winner): %v", err)
+	}
+	if err := first.Append(ctx, id, mustEvent()); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	first.ToolCall(id, session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a"}`)), session.NewToolResult("call-1", "ok"), 0, 0)
+
+	sessionKey := "mecatl:session:" + string(id)
+	fields := []string{"blob", "mtime", "metadata_entry", "metadata_owner"}
+	beforeFields := make(map[string]string, len(fields))
+	for _, field := range fields {
+		beforeFields[field] = mr.HGet(sessionKey, field)
+	}
+	beforeEvents, err := mr.List("mecatl:events:" + string(id))
+	if err != nil {
+		t.Fatalf("List(events): %v", err)
+	}
+	beforeTools, err := mr.List("mecatl:tools:" + string(id))
+	if err != nil {
+		t.Fatalf("List(tools): %v", err)
+	}
+
+	loser := session.New(id, session.ModeDefault, "/loser", session.Limits{MaxTurns: 9}, time.Unix(2, 0).UTC())
+	if err := second.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
+		t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
+	}
+	for field, want := range beforeFields {
+		if got := mr.HGet(sessionKey, field); got != want {
+			t.Errorf("field %s changed: got %q; want %q", field, got, want)
+		}
+	}
+	afterEvents, err := mr.List("mecatl:events:" + string(id))
+	if err != nil || !reflect.DeepEqual(afterEvents, beforeEvents) {
+		t.Errorf("events changed: got %v, %v; want %v", afterEvents, err, beforeEvents)
+	}
+	afterTools, err := mr.List("mecatl:tools:" + string(id))
+	if err != nil || !reflect.DeepEqual(afterTools, beforeTools) {
+		t.Errorf("tools changed: got %v, %v; want %v", afterTools, err, beforeTools)
 	}
 }
 

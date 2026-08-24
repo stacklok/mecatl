@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
@@ -67,6 +68,62 @@ func canonicalFamilyPath(dir string, id session.SessionID, suffix string) string
 
 func canonicalSnapshotPath(dir string, id session.SessionID) string {
 	return canonicalFamilyPath(dir, id, ".session.json")
+}
+
+func TestCreateCollisionLeavesCurrentFamilyUntouched(t *testing.T) {
+	ctx := context.Background()
+	first, dir := newStore(t)
+	second, err := jsonlstore.New(dir)
+	if err != nil {
+		t.Fatalf("New(second): %v", err)
+	}
+	winner := session.New("create-collision", session.ModeDefault, "/winner", session.Limits{}, time.Unix(1, 0).UTC())
+	if err := first.Save(ctx, winner); err != nil {
+		t.Fatalf("Save(winner): %v", err)
+	}
+	if err := first.Append(ctx, winner.ID, session.Event{Type: session.EvResult, Seq: 7}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	first.ToolCall(winner.ID, session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a"}`)), session.NewToolResult("call-1", "ok"), 0, 0)
+
+	paths := []string{
+		canonicalSnapshotPath(dir, winner.ID),
+		canonicalFamilyPath(dir, winner.ID, ".events.jsonl"),
+		canonicalFamilyPath(dir, winner.ID, ".tools.jsonl"),
+	}
+	before := make([][]byte, len(paths))
+	beforeInfo := make([]os.FileInfo, len(paths))
+	for i, path := range paths {
+		before[i], err = os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", filepath.Base(path), err)
+		}
+		beforeInfo[i], err = os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat(%s): %v", filepath.Base(path), err)
+		}
+	}
+
+	loser := session.New(winner.ID, session.ModeAccept, "/loser", session.Limits{MaxTurns: 9}, time.Unix(2, 0).UTC())
+	if err := second.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
+		t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
+	}
+	for i, path := range paths {
+		after, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("ReadFile after collision (%s): %v", filepath.Base(path), readErr)
+		}
+		if !reflect.DeepEqual(after, before[i]) {
+			t.Errorf("%s changed on collision", filepath.Base(path))
+		}
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Fatalf("Stat after collision (%s): %v", filepath.Base(path), statErr)
+		}
+		if !info.ModTime().Equal(beforeInfo[i].ModTime()) || info.Size() != beforeInfo[i].Size() {
+			t.Errorf("%s metadata changed on collision", filepath.Base(path))
+		}
+	}
 }
 
 func TestNewCreatesDirAt0700(t *testing.T) {

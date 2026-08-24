@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -956,6 +957,34 @@ func collectEvents(t *testing.T, st *Store, id session.SessionID) []session.Even
 		events = append(events, ev)
 	}
 	return events
+}
+
+func TestCreateCollisionDoesNotMigrateLegacyFamily(t *testing.T) {
+	ctx := context.Background()
+	first := newInternalStore(t)
+	second, err := New(first.resolver.dir)
+	if err != nil {
+		t.Fatalf("New(second): %v", err)
+	}
+	id := session.SessionID("legacy-create-collision")
+	legacy := map[sessionKind][]byte{
+		kindSnapshot: append(snapshotLine(t, id, "legacy winner"), '\n'),
+		kindTools:    []byte("legacy tool\n"),
+		kindEvents:   []byte("legacy event\n"),
+	}
+	for kind, content := range legacy {
+		writeBytes(t, first.resolver.legacyPath(id, kind), content)
+	}
+
+	loser := session.New(id, session.ModeAccept, "/loser", session.Limits{}, time.Unix(2, 0).UTC())
+	if err := second.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
+		t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
+	}
+	for kind, content := range legacy {
+		assertBytes(t, first.resolver.legacyPath(id, kind), content)
+		assertMissing(t, first.resolver.canonicalPath(id, kind))
+	}
+	assertMissing(t, first.resolver.currentSnapshotPath(id))
 }
 
 func newInternalStore(t *testing.T) *Store {

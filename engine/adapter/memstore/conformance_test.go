@@ -21,6 +21,13 @@ func TestMemstoreConformance(t *testing.T) {
 	})
 }
 
+func TestMemstoreSessionCreatorConformance(t *testing.T) {
+	storeconformance.RunSessionCreator(t, func(*testing.T) (port.SessionStore, port.SessionStore) {
+		st := memstore.New()
+		return st, st
+	})
+}
+
 // TestMemstorePrunableConformance runs the shared PrunableStore (retention
 // seam) table against the in-memory reference store.
 func TestMemstorePrunableConformance(t *testing.T) {

@@ -22,6 +22,21 @@ func TestJSONLStoreConformance(t *testing.T) {
 	})
 }
 
+func TestJSONLStoreSessionCreatorConformance(t *testing.T) {
+	storeconformance.RunSessionCreator(t, func(t *testing.T) (port.SessionStore, port.SessionStore) {
+		dir := t.TempDir()
+		first, err := jsonlstore.New(dir)
+		if err != nil {
+			t.Fatalf("jsonlstore.New(first): %v", err)
+		}
+		second, err := jsonlstore.New(dir)
+		if err != nil {
+			t.Fatalf("jsonlstore.New(second): %v", err)
+		}
+		return first, second
+	})
+}
+
 // TestJSONLStorePrunableConformance runs the shared PrunableStore (retention
 // seam) table against the JSONL replay store.
 func TestJSONLStorePrunableConformance(t *testing.T) {

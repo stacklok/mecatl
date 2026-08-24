@@ -26,6 +26,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Atomic session first publication** (issue #368, [ADR 0212](../docs/adr/0212-caller-ownership-enforcement.md)) —
+  `port.SessionCreator` is an optional backend capability for atomic create-once
+  publication without widening `SessionStore`; collisions wrap
+  `port.ErrSessionAlreadyExists` and leave the existing session family unchanged.
+  Added (minor).
+
 - **Engine-child lifecycle exclusion** ([ADR 0027](../docs/adr/0027-cloud-native.md)) —
   `port.SessionLiveness`, `agent.Deps.SessionLiveness`, and
   `agent.WithMemberLiveness` let a host protect engine-owned Subagent, Parallel,

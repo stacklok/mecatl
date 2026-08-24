@@ -107,6 +107,27 @@ func (st *Store) initializeMetadataIndex(ctx context.Context) error {
 	return nil
 }
 
+var createMetadataScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) ~= 0 then
+  return 0
+end
+redis.call('HSET', KEYS[1],
+  'blob', ARGV[1],
+  'mtime', ARGV[2],
+  'metadata_entry', ARGV[3],
+  'metadata_owner', ARGV[5])
+redis.call('ZADD', KEYS[2], 0, ARGV[3])
+if ARGV[5] ~= '' then
+  redis.call('ZADD', ARGV[7] .. ARGV[5], 0, ARGV[3])
+end
+redis.call('HINCRBY', KEYS[3], ARGV[4], 1)
+if ARGV[5] ~= '' then
+  redis.call('HINCRBY', KEYS[3], ARGV[5], 1)
+end
+redis.call('INCR', KEYS[4])
+return 1
+`)
+
 var saveMetadataScript = redis.NewScript(`
 local old_member = redis.call('HGET', KEYS[1], 'metadata_entry')
 local old_scope = redis.call('HGET', KEYS[1], 'metadata_owner') or ''
@@ -160,6 +181,24 @@ func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
 		metadataOwnerIndexBase,
 	).Err()
+}
+
+func (st *Store) createSnapshotAndMetadata(ctx context.Context, s *session.Session, blob []byte, modifiedAt time.Time) (bool, error) {
+	row := sessionMetadata(s, modifiedAt, int64(len(blob)))
+	member, err := encodeMetadataMember(row)
+	if err != nil {
+		return false, err
+	}
+	ownerScope := ""
+	if s.Owner != nil {
+		ownerScope = metadataOwnerScope(s.Owner)
+	}
+	created, err := createMetadataScript.Run(ctx, st.client,
+		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey},
+		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
+		metadataOwnerIndexBase,
+	).Int()
+	return created == 1, err
 }
 
 var deleteMetadataScript = redis.NewScript(`

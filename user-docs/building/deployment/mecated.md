@@ -468,8 +468,11 @@ advertised management capability. Follow [Operate local session storage](session
 for tested systemd/launchd service definitions and the backup, migration, and restore runbook.
 The `--session-store-url` flag replaces the JSONL store with a remote gRPC driver
 (`mecatl.driver.v1.SessionStoreService`). This is the path for a managed Redis backend
-(`mecak8s` uses it internally) or a custom store behind the driver protocol. It is
-mutually exclusive with `--store-dir`.
+or a custom store behind the driver protocol, and is mutually exclusive with
+`--store-dir`. The current driver protocol has no atomic create-only session RPC, so
+an OIDC/ownership-enforced server rejects `--session-store-url`; use the local JSONL
+backend (or mecak8s's directly wired Redis store) for multi-user deployments until
+the driver adds `port.SessionCreator` parity.
 
 ### Import from Codex or Claude Code
 

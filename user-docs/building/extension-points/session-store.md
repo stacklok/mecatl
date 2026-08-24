@@ -33,6 +33,27 @@ if errors.Is(err, port.ErrSessionNotFound) {
 }
 ```
 
+### SessionCreator — atomic first publication
+
+Stores used with caller ownership enforcement must also implement the additive
+`port.SessionCreator` capability:
+
+```go
+type SessionCreator interface {
+    Create(ctx context.Context, s *session.Session) error
+}
+```
+
+`Create` publishes the first authoritative snapshot only when the session ID is
+absent. The check and publication must be backend-atomic across processes; a
+collision wraps `port.ErrSessionAlreadyExists` and leaves the existing snapshot,
+metadata, event log, and tool-call sidecar unchanged. `Save` remains the update
+operation after a successful create. Mecatl refuses ownership-enforced composition
+with a store that lacks this capability. The current gRPC session-store driver does
+not advertise atomic create, so `--session-store-url` cannot be combined with OIDC
+ownership enforcement; use an in-tree atomic backend until the driver protocol adds
+that operation.
+
 ### PrunableStore — the optional retention seam
 
 `SessionStore` is intentionally minimal. The retention seam is a **separate, optional** interface discovered by type assertion:

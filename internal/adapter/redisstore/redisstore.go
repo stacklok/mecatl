@@ -83,6 +83,7 @@ type eventLogRecord struct {
 // compile-time assertions that Store satisfies all four ports it meets.
 var (
 	_ port.SessionStore         = (*Store)(nil)
+	_ port.SessionCreator       = (*Store)(nil)
 	_ port.ToolCallRecorder     = (*Store)(nil)
 	_ port.PrunableStore        = (*Store)(nil)
 	_ port.SessionMetadataPager = (*Store)(nil)
@@ -262,6 +263,26 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 	modifiedAt := time.Now().UTC()
 	if err := st.saveSnapshotAndMetadata(ctx, s, blob, modifiedAt); err != nil {
 		return fmt.Errorf("redisstore: save %q: %w", s.ID, err)
+	}
+	return nil
+}
+
+// Create atomically publishes a snapshot and its derivative metadata only when
+// no authoritative Redis session key exists for s.ID.
+func (st *Store) Create(ctx context.Context, s *session.Session) error {
+	if s == nil {
+		return sessnap.ErrNilSession
+	}
+	blob, err := sessnap.Marshal(s)
+	if err != nil {
+		return err
+	}
+	created, err := st.createSnapshotAndMetadata(ctx, s, blob, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("redisstore: create %q: %w", s.ID, err)
+	}
+	if !created {
+		return fmt.Errorf("redisstore: create %q: %w", s.ID, port.ErrSessionAlreadyExists)
 	}
 	return nil
 }

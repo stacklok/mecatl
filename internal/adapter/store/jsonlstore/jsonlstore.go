@@ -120,6 +120,7 @@ type Store struct {
 // retention seam and the durable event log.
 var (
 	_ port.SessionStore     = (*Store)(nil)
+	_ port.SessionCreator   = (*Store)(nil)
 	_ port.ToolCallRecorder = (*Store)(nil)
 	_ port.PrunableStore    = (*Store)(nil)
 	_ port.EventLog         = (*Store)(nil)
@@ -411,6 +412,53 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 		})
 		if err != nil {
 			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
+		}
+		generation := st.tempGeneration.Add(1)
+		pattern := snapshotTempPattern(path, st.tempOwner, generation)
+		return replaceCurrentSnapshot(path, data, modifiedAt, pattern, st.snapshot, st.durability, nil)
+	})
+}
+
+// Create atomically publishes the adapter-private v2 snapshot only when no
+// authoritative current, canonical-v1, or matching legacy snapshot exists.
+// Every supported writer takes the same stable family lock, so the presence
+// check and final rename form one cross-process create-once operation.
+func (st *Store) Create(ctx context.Context, s *session.Session) error {
+	if s == nil {
+		return sessnap.ErrNilSession
+	}
+	if err := validateSessionID(s.ID); err != nil {
+		return err
+	}
+	payload, err := sessnap.Marshal(s)
+	if err != nil {
+		return err
+	}
+	path := st.resolver.currentSnapshotPath(s.ID)
+	return st.withSnapshotFamilyLock(ctx, path, func() error {
+		present, err := st.resolver.canonicalOwnership(s.ID)
+		if err != nil {
+			return err
+		}
+		if !present {
+			_, present, err = st.resolver.legacySnapshot(s.ID)
+			if err != nil {
+				return err
+			}
+		}
+		if present {
+			return fmt.Errorf("jsonlstore: create %q: %w", s.ID, port.ErrSessionAlreadyExists)
+		}
+
+		modifiedAt := time.Now().UTC()
+		data, err := json.Marshal(currentSnapshot{
+			Format: currentSnapshotFormat, ModifiedAt: modifiedAt, Metadata: metaSnapshotFromSession(s), Snapshot: payload,
+		})
+		if err != nil {
+			return fmt.Errorf("jsonlstore: marshal current snapshot: %w", err)
+		}
+		if err := st.advanceInventoryGeneration(); err != nil {
+			return err
 		}
 		generation := st.tempGeneration.Add(1)
 		pattern := snapshotTempPattern(path, st.tempOwner, generation)

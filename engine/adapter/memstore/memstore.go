@@ -53,6 +53,7 @@ type Store struct {
 // retention seam.
 var (
 	_ port.SessionStore         = (*Store)(nil)
+	_ port.SessionCreator       = (*Store)(nil)
 	_ port.PrunableStore        = (*Store)(nil)
 	_ port.SessionMetadataPager = (*Store)(nil)
 )
@@ -115,6 +116,29 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	st.estimatedBytes[s.ID] = estimatedBytes
 	st.generation++
 	st.mu.Unlock()
+	return nil
+}
+
+// Create atomically publishes a deep copy of s only when its ID is absent.
+func (st *Store) Create(_ context.Context, s *session.Session) error {
+	if s == nil {
+		return sessnap.ErrNilSession
+	}
+	snap, err := sessnap.Of(s)
+	if err != nil {
+		return err
+	}
+	estimatedBytes := estimateSnapshotBytes(snap)
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, exists := st.sessions[s.ID]; exists {
+		return fmt.Errorf("memstore: create %q: %w", s.ID, port.ErrSessionAlreadyExists)
+	}
+	st.sessions[s.ID] = snap
+	st.savedAt[s.ID] = st.now()
+	st.estimatedBytes[s.ID] = estimatedBytes
+	st.generation++
 	return nil
 }
 
