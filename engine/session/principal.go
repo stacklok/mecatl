@@ -77,21 +77,35 @@ func (p *Principal) Clone() *Principal {
 
 // PrincipalFromClaims projects an already-verified token claim set into the
 // narrow caller identity used by the engine. It does not verify claims or
-// credentials; callers must do that before calling it. Missing, empty, or
-// non-string iss/sub claims yield nil. Claim strings are preserved byte-exactly.
+// credentials; callers must do that before calling it. Missing, empty,
+// non-string, or NUL-bearing iss/sub claims yield nil. Claim strings are
+// otherwise preserved byte-exactly.
 func PrincipalFromClaims(claims map[string]any) *Principal {
 	issuer, issuerOK := claims["iss"].(string)
 	subject, subjectOK := claims["sub"].(string)
-	if !issuerOK || issuer == "" || !subjectOK || subject == "" {
+	if !issuerOK || !subjectOK {
 		return nil
 	}
 	name, _ := claims["name"].(string)
-	return &Principal{
+	principal := &Principal{
 		Issuer:    issuer,
 		Subject:   subject,
 		GrantType: GrantTypeFromClaims(claims),
 		Name:      name,
 	}
+	if issuer == "" || subject == "" || !principalIdentityHasSafeFraming(principal) {
+		return nil
+	}
+	return principal
+}
+
+// principalIdentityHasSafeFraming is the single delimiter-safety rule for
+// authority-bearing identity components. NUL is reserved as the legacy
+// persisted-key separator, so admitting it would make distinct
+// (Issuer, Subject) pairs alias. Empty components retain their existing
+// non-claims behavior; authenticated claims reject them separately above.
+func principalIdentityHasSafeFraming(p *Principal) bool {
+	return p != nil && !strings.ContainsRune(p.Issuer, '\x00') && !strings.ContainsRune(p.Subject, '\x00')
 }
 
 // GrantTypeFromClaims derives the conservative attribution grant from an
@@ -145,16 +159,34 @@ func (p *Principal) SameIdentity(other *Principal) bool {
 	return p != nil && other != nil && p.Issuer == other.Issuer && p.Subject == other.Subject
 }
 
+// invalidPrincipalScope is the domain-separated digest every identity with
+// unsafe owner-key framing collapses to. It is hashed from a NUL-free constant,
+// and an admissible pair always hashes a string containing exactly one NUL, so
+// no valid principal can ever produce this digest.
+var invalidPrincipalScope = sha256.Sum256([]byte("mecatl:invalid-principal-scope"))
+
 // PrincipalScopeHash returns the SHA-256 digest of p's (Issuer, Subject)
-// identity pair, joined by a NUL separator — the raw hash core several
-// owner-scope-keying call sites build on top of with their own nil-handling,
-// prefix, and truncation conventions (which are load-bearing for their
-// on-disk/wire formats and must NOT be changed here). A nil p hashes the
-// empty string; callers that need a distinct nil representation apply that
-// before calling this.
+// identity pair, joined by a NUL separator. NUL is reserved from both
+// components, making the legacy framing unambiguous for every admissible
+// principal while preserving its byte-for-byte storage contract. The reservation
+// is enforced HERE rather than only at the construction seams
+// (PrincipalFromClaims, WithPrincipal, RestoreLabels), because a Principal built
+// directly from a struct literal — notably internal/adapter/grpcdriver's
+// wire-supplied owner, which ADR-0213/#452 still leaves unverified — reaches this
+// function without passing any of them. An identity whose framing is unsafe
+// returns invalidPrincipalScope, so it cannot alias a valid owner's scope.
+//
+// The raw hash core has several owner-scope-keying call sites that build on top
+// of it with their own nil-handling, prefix, and truncation conventions (which
+// are load-bearing for their on-disk/wire formats and must NOT be changed here).
+// A nil p hashes the empty string; callers that need a distinct nil
+// representation apply that before calling this.
 func PrincipalScopeHash(p *Principal) [32]byte {
 	if p == nil {
 		return sha256.Sum256(nil)
+	}
+	if !principalIdentityHasSafeFraming(p) {
+		return invalidPrincipalScope
 	}
 	return sha256.Sum256([]byte(p.Issuer + "\x00" + p.Subject))
 }
@@ -195,14 +227,21 @@ func (a Authority) Valid() bool {
 	return validAuthorityLabel(a.Provenance) && (a.DefinitionIdentity == "" || validAuthorityLabel(a.DefinitionIdentity))
 }
 
-// ErrOwnerAlreadySet is returned by RestoreLabels when the session already
-// carries a DIFFERENT owner. The owner is write-once (ADR 0204 decision 4).
-var ErrOwnerAlreadySet = errors.New("session: owner already set")
+var (
+	// ErrOwnerAlreadySet is returned by RestoreLabels when the session already
+	// carries a DIFFERENT owner. The owner is write-once (ADR 0204 decision 4).
+	ErrOwnerAlreadySet = errors.New("session: owner already set")
+
+	errInvalidPrincipalIdentity = errors.New("session: invalid principal identity")
+)
 
 // RestoreLabels stamps the write-once owner label and, when present, restores a
 // bound authority payload before the first runnable state.
 func (s *Session) RestoreLabels(owner *Principal, authority Authority) error {
 	if owner != nil {
+		if !principalIdentityHasSafeFraming(owner) {
+			return errInvalidPrincipalIdentity
+		}
 		if s.Owner != nil && *s.Owner != *owner {
 			return ErrOwnerAlreadySet
 		}

@@ -21,8 +21,8 @@ func TestCallerIdentity_Scenario0_OwnerSnapshotRoundTrip(t *testing.T) {
 
 	s := session.New("s1", session.ModeDefault, "/w", session.Limits{}, time.Unix(0, 0).UTC())
 	owner := &session.Principal{
-		Issuer:    "https://idp.example.com",
-		Subject:   "user-42",
+		Issuer:    " https://例.example.com/領域 ",
+		Subject:   " álïçé\n",
 		GrantType: session.GrantTypeUser,
 		Name:      "Alice",
 	}
@@ -65,6 +65,22 @@ func TestCallerIdentity_Scenario0_OwnerSnapshotRoundTrip(t *testing.T) {
 	other.Issuer = "https://other.example.com"
 	if other == *got.Owner {
 		t.Error("principals from different issuers compared equal; identity must be the (iss, sub) pair")
+	}
+}
+
+func TestOwnerSnapshotRejectsNULDelimitedIdentity(t *testing.T) {
+	t.Parallel()
+
+	for _, owner := range []string{
+		`{"issuer":"a\u0000b","subject":"c","grant_type":"user"}`,
+		`{"issuer":"a","subject":"b\u0000c","grant_type":"user"}`,
+	} {
+		line := []byte(`{"id":"s1","state":"idle","mode":"default","limits":{},` +
+			`"counters":{},"workspace":"/w","created_at":"1970-01-01T00:00:00Z",` +
+			`"owner":` + owner + `,"authority":"must-not-apply","messages":[]}`)
+		if _, err := sessnap.Unmarshal(line); err == nil {
+			t.Fatalf("Unmarshal accepted unsafe owner %s", owner)
+		}
 	}
 }
 

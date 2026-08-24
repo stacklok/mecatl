@@ -33,6 +33,34 @@ func TestInvariant_no_fabricated_principal(t *testing.T) {
 		}
 	})
 
+	for _, tc := range []struct {
+		name      string
+		principal *session.Principal
+	}{
+		{name: "NUL in issuer", principal: &session.Principal{Issuer: "https://idp.example\x00other", Subject: "alice", GrantType: session.GrantTypeUser}},
+		{name: "NUL in subject", principal: &session.Principal{Issuer: "https://idp.example", Subject: "alice\x00other", GrantType: session.GrantTypeUser}},
+	} {
+		t.Run("invalid principal is absent/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := session.PrincipalFromContext(session.WithPrincipal(context.Background(), tc.principal)); got != nil {
+				t.Fatalf("invalid principal became effective: %+v", *got)
+			}
+		})
+	}
+
+	t.Run("invalid principal shadows outer authority", func(t *testing.T) {
+		t.Parallel()
+		outer := session.WithPrincipal(context.Background(), &session.Principal{
+			Issuer: "https://idp.example", Subject: "system", GrantType: session.GrantTypeSystem,
+		})
+		ctx := session.WithPrincipal(outer, &session.Principal{
+			Issuer: "https://idp.example", Subject: "alice\x00other", GrantType: session.GrantTypeUser,
+		})
+		if got := session.PrincipalFromContext(ctx); got != nil {
+			t.Fatalf("invalid principal retained outer authority: %+v", *got)
+		}
+	})
+
 	t.Run("absent is nil", func(t *testing.T) {
 		t.Parallel()
 		if got := session.PrincipalFromContext(context.Background()); got != nil {

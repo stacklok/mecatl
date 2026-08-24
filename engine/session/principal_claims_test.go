@@ -22,6 +22,13 @@ func TestPrincipalFromClaims(t *testing.T) {
 		{name: "missing subject", claims: map[string]any{"iss": "https://idp.example"}},
 		{name: "empty subject", claims: map[string]any{"iss": "https://idp.example", "sub": ""}},
 		{name: "non-string subject", claims: map[string]any{"iss": "https://idp.example", "sub": 42}},
+		{name: "NUL in issuer", claims: map[string]any{"iss": "https://idp.example\x00other", "sub": "alice"}},
+		{name: "NUL in subject", claims: map[string]any{"iss": "https://idp.example", "sub": "alice\x00other"}},
+		{
+			name:   "preserves ordinary Unicode identity",
+			claims: map[string]any{"iss": "https://例.example/領域", "sub": "álïçé"},
+			want:   &session.Principal{Issuer: "https://例.example/領域", Subject: "álïçé", GrantType: session.GrantTypeUser},
+		},
 		{
 			name:   "projects byte-exact user identity",
 			claims: map[string]any{"iss": " https://IDP.example/ ", "sub": " alice\n", "name": " Ada ", "azp": "client"},
