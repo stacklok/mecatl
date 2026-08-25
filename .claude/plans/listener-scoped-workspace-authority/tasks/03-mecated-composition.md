@@ -2,8 +2,8 @@
 id: 03-mecated-composition
 title: Wire mecated listener topology and authority configuration
 blocked_by: [01-service-authority]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-listener-scoped-workspace-authority/03-mecated-composition"
 worktree: ""
 issue: ""
 retries: 0
