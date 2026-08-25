@@ -44,7 +44,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
 - [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md)
 - [0232 — Steer-while-running: inject a user message into an in-flight run](./0232-steer-while-running.md)
-- [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
+- [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md) *(workspace checksum tracking superseded by 0237)*
+- [0237 — Treat `go.work.sum` as generated workspace metadata](./0237-generated-go-work-sum.md) *(supersedes ADR 0036's workspace checksum tracking decision)*
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
 - [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)

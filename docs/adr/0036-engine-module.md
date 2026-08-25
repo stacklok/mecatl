@@ -4,7 +4,7 @@
 - Date: 2026-06-19
 - Scope: Repository module structure — the importable core (`engine/`) and its dependency closure; build/lint/test tooling and CI.
 - Supersedes: —
-- Superseded by: —
+- Superseded by: ADR 0237
 
 ## Context
 

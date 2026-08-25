@@ -8,6 +8,9 @@
 *.out
 coverage.*
 
+# Go workspace integrity metadata (generated locally)
+/go.work.sum
+
 # Local tool cache
 /.tools/
 
