@@ -2,8 +2,8 @@
 id: 01-service-authority
 title: Service workspace-authority policy and persisted-root enforcement
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-listener-scoped-workspace-authority/01-service-authority"
 worktree: ""
 issue: ""
 retries: 0
