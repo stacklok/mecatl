@@ -2,9 +2,9 @@ package ui
 
 // surface_arch_test.go is the structural gate for the issue #555 Phase-2
 // surface interface (soul proof-of-pattern): it fails CI if any surface/soul
-// /skills/mcp vocabulary declaration is added OUTSIDE surface.go/soul.go/
-// skills.go/mcp.go, or if Model acquires a second `surface` field or any
-// soulState/skillsState/mcpState field back. It imitates
+// /skills/mcp/sessions vocabulary declaration is added OUTSIDE surface.go/soul.go/
+// skills.go/mcp.go/sessions.go, or if Model acquires a second `surface` field or any
+// soulState/skillsState/mcpState/sessionsState field back. It imitates
 // approval_arch_test.go — placement-only, additive; it never touches rendered
 // output (the soul goldens own that).
 
@@ -20,29 +20,31 @@ import (
 )
 
 // surfaceFileHomes is the set of files a declaration carrying the surface/soul
-// /skills/mcp vocabulary may live in. view.go's m.modal.Render(...) and
+// /skills/mcp/sessions vocabulary may live in. view.go's m.modal.Render(...) and
 // update.go's m.modal.HandleKey/HandleMsg(...) routing are vocabulary-free call
 // sites and need no exception.
 var surfaceFileHomes = map[string]bool{
-	"surface.go": true,
-	"soul.go":    true,
-	"skills.go":  true,
-	"mcp.go":     true,
+	"surface.go":          true,
+	"soul.go":             true,
+	"skills.go":           true,
+	"mcp.go":              true,
+	"sessions.go":         true,
+	"sessions_surface.go": true,
 }
 
-// surfaceFileCount is the four homes the gate counts — a fifth surface file is
-// an explicit decision here, not a silent drift.
-const surfaceFileCount = 4
+// surfaceFileCount is the explicit homes the gate counts — another surface file
+// is an explicit decision here, not a silent drift.
+const surfaceFileCount = 6
 
 // surfaceToken identifies declarations governed by the surface placement gate.
-var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderSkillsPanel|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay|mcpView|mcpNone|mcpPanel|mcpResources|mcpResourcePrev|mcpPrompts|mcpPromptArgs|mcpState|argField|renderMCPOverlay|renderMCPPanel|renderResourceList|renderResourcePreview|renderPromptList|renderPromptArgs|mcpStatusLine|mcpPanelFooter|renderGroupsLine|renderRow|hasRequiredArgs|mcpEmptyCopy|mcpDisabledNote|runMCP|runMCPResources|runMCPPrompts|openMCP|closeMCP|onMCPKey|updateMCPMsg|insertIntoInput|joinContents|joinPromptMessages|handlePanelKey|handleResourceKey|handlePromptListKey|handlePromptArgsKey|focusArg|selectPrompt|submitPromptArgs|refreshPanel|mcpInsertResourceMsg)$`)
+var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|session[A-Za-z0-9]*|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderSkillsPanel|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay|mcpView|mcpNone|mcpPanel|mcpResources|mcpResourcePrev|mcpPrompts|mcpPromptArgs|mcpState|argField|renderMCPOverlay|renderMCPPanel|renderResourceList|renderResourcePreview|renderPromptList|renderPromptArgs|mcpStatusLine|mcpPanelFooter|renderGroupsLine|renderRow|hasRequiredArgs|mcpEmptyCopy|mcpDisabledNote|runMCP|runMCPResources|runMCPPrompts|openMCP|closeMCP|onMCPKey|updateMCPMsg|insertIntoInput|joinContents|joinPromptMessages|handlePanelKey|handleResourceKey|handlePromptListKey|handlePromptArgsKey|focusArg|selectPrompt|submitPromptArgs|refreshPanel|mcpInsertResourceMsg)$`)
 
 // TestSurfaceSymbolsLiveInSurfaceFiles walks every non-test ui package file and
 // asserts each declaration whose name (decl name or a method's name) carries
-// the surface/soul/skills/mcp vocabulary lives in one of the homes.
+// the surface/soul/skills/mcp/sessions vocabulary lives in one of the homes.
 func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 	if len(surfaceFileHomes) != surfaceFileCount {
-		t.Fatalf("surfaceFileHomes has %d entries, want surfaceFileCount=%d (a fifth surface file must be an explicit decision here)",
+		t.Fatalf("surfaceFileHomes has %d entries, want surfaceFileCount=%d (an additional surface file must be an explicit decision here)",
 			len(surfaceFileHomes), surfaceFileCount)
 	}
 	fset := token.NewFileSet()
@@ -80,7 +82,7 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 					continue
 				}
 				if !surfaceFileHomes[file] {
-					t.Errorf("surface/soul/skills/mcp-vocabulary declaration %q in non-surface file %s (want surface.go, soul.go, skills.go, or mcp.go)", n, file)
+					t.Errorf("surface/soul/skills/mcp/sessions-vocabulary declaration %q in non-surface file %s (want surface.go, soul.go, skills.go, mcp.go, or sessions.go)", n, file)
 				}
 			}
 		}
@@ -167,6 +169,24 @@ func TestModelHasNoMCPStateField(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("Model has %d mcpState fields, want exactly 0 (MCP state lives only in m.modal)", count)
+	}
+}
+
+// TestModelHasNoSessionsStateField asserts Model holds NO sessionsState field —
+// the picker and transcript views live only in m.modal. A pre-declared
+// m.sessions field would split the /sessions surface state from its dynamic
+// Open lifetime and is tombstone drift.
+func TestModelHasNoSessionsStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	var count int
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		if f.Type.Name() == "sessionsState" {
+			count++
+		}
+	}
+	if count != 0 {
+		t.Errorf("Model has %d sessionsState fields, want exactly 0 (/sessions state lives only in m.modal)", count)
 	}
 }
 

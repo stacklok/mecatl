@@ -1,9 +1,9 @@
 # Surface migration — the general template (issue #555 Phase 2)
 
-**Status:** plan (no production code). **Scope:** the GENERAL migration template
+**Status:** active migration template. **Scope:** the GENERAL migration template
 for moving a `cmd/mecatui/ui` overlay onto the `surface` interface. Soul is the
-FIRST migrator (the proof-of-pattern that pins the interface); section 6 is the
-checklist for the rest.
+FIRST migrator (the proof-of-pattern that pins the interface); mcp, skills, and
+/sessions are shipped migrations; section 6 is the checklist for the rest.
 
 Issue #555 describes "ADR 0108" as the surface-migration ADR; that is a stale
 reference. [`0108-on-demand-logical-skill-assets`](../adr/0108-on-demand-logical-skill-assets.md)
@@ -461,9 +461,10 @@ register the overlay:
 1. **mcp** ✓ — multi-view enum inside one state struct (mcpPanel/resources/
    prompts/args). Pattern: the surface's own view enum routes internally; the
    interface stays unchanged. Shipped — see the Migration note below.
-2. **sessions** — picker + transcript view + a phase (replay) coupling. Pattern:
-   the surface may RETURN a phase hint via Closed (see `updateSessionsMsg`); do
-   NOT widen the interface — the phase transition stays Model-side on close.
+2. **sessions** ✓ — picker + transcript view + a phase (replay) coupling. The
+   surface routes its picker/transcript internals through `sessionsView`; the
+   Model remains the sole owner of phase transitions. Shipped — see the
+   Migration note below.
 3. **skills** ✓ — type-to-filter text input + detail view + epochs. Pattern: the
    surface owns a bubbles component (textinput); deps must include whatever the
    component uses. Shipped.
@@ -501,6 +502,30 @@ the msg after close. Everything else the old `updateMCPMsg` did
 reducer returns handled=false for all of it. The after-close race (a PromptGot
 arriving after esc) reaches the same remnant, where the close is idempotent
 (`m.modal` already nil).
+
+### Migration note: /sessions
+
+/sessions is split by ownership: `cmd/mecatui/ui/sessions.go` owns root construction
+and registration (`newSessionsSurface`, `sessionsSurface`, `openSessions`), active
+session details/copy, parent binding and adoption preflight/selection entry, and the
+root's authoritative transcript adoption. `cmd/mecatui/ui/sessions_surface.go` owns
+the sessions modal state, typed intents/messages, RPC command builders, pagination,
+maintenance, transcript/replay, and panel/transcript rendering. Render helpers remain
+pure functions; `sessionsState.Render` is the only stateful rendering method.
+
+The surface routes picker and transcript behavior internally, including transcript
+teardown and reload. `surfaceIntent` is the sealed, one-shot transport for every
+Model-owned effect: a surface emits one typed intent, clears it while taking it, and
+the Model applies it before generic close handling. `modalPlacementSource` remains an
+optional placement trait; sessions uses it to request fill placement while the parent
+retains placement ownership.
+
+Async work uses request tokens minted on the owning state and checked when results
+arrive; replacement and close invalidate or cancel the relevant request. This is the
+convention retained pending the allocator cleanup tracked in #713. Pagination
+cancellation is surface-owned (`sessionsState` cancels its page work when replaced or
+closed). The base `surface` interface and ambient-only `surfaceDeps` remain unchanged;
+no sessions-specific collaborator widens them.
 
 ## 7. Explicitly OUT of scope (banked)
 

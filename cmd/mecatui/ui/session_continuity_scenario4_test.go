@@ -69,11 +69,11 @@ func TestADR_0108_DisplayDigestIsNotAnID(t *testing.T) {
 	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "opaque-real-id", Complete: true}}
 	m := newScenario4Model(t, loader)
 	row := client.SessionListItem{ID: "opaque-real-id", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
-	m.sessions.sessions = []client.SessionListItem{row}
-	m.sessions.filtered = []client.SessionListItem{row}
-	m.sessions.handles = sessionDisplayHandles(m.sessions.filtered)
-	if strings.Contains(m.sessions.handles[row.ID], row.ID) {
-		t.Fatalf("display handle %q unexpectedly embeds full id", m.sessions.handles[row.ID])
+	ensureActiveSessions(&m).sessions = []client.SessionListItem{row}
+	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
+	ensureActiveSessions(&m).handles = sessionDisplayHandles(ensureActiveSessions(&m).filtered)
+	if strings.Contains(ensureActiveSessions(&m).handles[row.ID], row.ID) {
+		t.Fatalf("display handle %q unexpectedly embeds full id", ensureActiveSessions(&m).handles[row.ID])
 	}
 	mm, cmd, handled := m.chooseSession()
 	if !handled || cmd == nil {
@@ -118,14 +118,14 @@ func TestSessionContinuityUX_Scenario4_InspectionPreservesActiveChat(t *testing.
 			m.conv.addUser("active conversation")
 			m.liveArmed = "active-chat"
 			before := m
-			m.sessions.filtered = []client.SessionListItem{tc.row}
+			ensureActiveSessions(&m).filtered = []client.SessionListItem{tc.row}
 			mm, cmd, _ := m.chooseSession()
 			m = mm.(Model)
 			m = applyAll(m, cmd())
 			if m.sessionID != before.sessionID || m.sessionTitle != before.sessionTitle || m.effectiveModel != before.effectiveModel || m.caps != before.caps || m.liveArmed != before.liveArmed || len(m.conv.blocks) != len(before.conv.blocks) {
 				t.Fatal("inspection changed active chat identity, subscription, capabilities, model, or conversation")
 			}
-			mm, _ = m.onReplayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+			mm, _, _ = m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 			m = mm.(Model)
 			if m.sessionID != "active-chat" || m.phase != phaseIdle {
 				t.Fatalf("escape did not restore active chat: id=%q phase=%v", m.sessionID, m.phase)
@@ -139,7 +139,7 @@ func TestInvariant_transcript_failure_never_enables_hidden_context(t *testing.T)
 	m := newScenario4Model(t, loader)
 	m.sessionID = "active-chat"
 	row := client.SessionListItem{ID: "target-chat", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
-	m.sessions.filtered = []client.SessionListItem{row}
+	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
 	mm, cmd, _ := m.chooseSession()
 	m = mm.(Model)
 	m = applyAll(m, cmd())
@@ -158,7 +158,7 @@ func TestInvariant_transcript_failure_never_enables_hidden_context(t *testing.T)
 func TestSessionContinuityUX_Scenario4_ReasonCodes(t *testing.T) {
 	m := newScenario4Model(t, &fakeSessionTranscriptLoader{})
 	row := client.SessionListItem{ID: "opaque", Kind: client.SessionKindMain, ReasonCode: client.CapabilityReasonActiveElsewhere}
-	m.sessions.filtered = []client.SessionListItem{row}
+	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
 	mm, cmd, handled := m.chooseSession()
 	m = mm.(Model)
 	if !handled || cmd != nil {

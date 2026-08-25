@@ -186,16 +186,15 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 	// Build a fresh transcript conversation and drive applyReplayEvent with
 	// the SAME DeliveryNoteMsg (the msg EventToMsg returns is what the replay
 	// ReadLoop pushes).
-	rm := Model{}
-	rm.sessions.transcript = conversation{}
-	rm.applyReplayEvent(liveDN)
+	rs := sessionsState{}
+	rs.applyReplayEvent(liveDN)
 
 	// ── Assertions ─────────────────────────────────────────────────────
 	liveBlocks := lm.conv.blocks
 	if len(liveBlocks) != 1 {
 		t.Fatalf("live path: expected 1 block, got %d", len(liveBlocks))
 	}
-	replayBlocks := rm.sessions.transcript.blocks
+	replayBlocks := rs.transcript.blocks
 	if len(replayBlocks) != 1 {
 		t.Fatalf("replay path: expected 1 block, got %d", len(replayBlocks))
 	}

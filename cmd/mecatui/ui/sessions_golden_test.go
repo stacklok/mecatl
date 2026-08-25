@@ -57,12 +57,12 @@ func TestSessionsAdoptionGoldens(t *testing.T) {
 	m.activeWorkspace = "/workspace"
 	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	m = openAndLoad(t, m, []client.SessionListItem{legacy})
-	m.sessions.tab = tabOtherRuns
-	m = m.syncSessionsFilter()
+	ensureActiveSessions(&m).tab = tabOtherRuns
+	ensureActiveSessions(&m).syncFilter()
 	m = applyAll(m, client.SessionAdoptionPreflightMsg{SourceID: legacy.ID, Preflight: adopter.preflight})
 	compareGolden(t, "sessions_legacy_adoption.golden", stripANSI([]byte(m.View().Content)))
 
-	mm, _, _ := m.onSessionsKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	mm, _, _ := m.onOverlayKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m = mm.(Model)
 	compareGolden(t, "sessions_adoption_review.golden", stripANSI([]byte(m.View().Content)))
 }
@@ -86,24 +86,24 @@ func TestSessionsMaintenanceGoldens(t *testing.T) {
 
 func TestSessionsTranscriptLoadingGolden(t *testing.T) {
 	m := newSessionsGoldenModel(t, nil)
-	m.sessions = sessionsState{view: sessionsTranscript, loading: true, selected: client.SessionListItem{ID: "sched-1", Title: "Nightly checks"}, inspect: true}
+	setActiveSessions(&m, sessionsState{view: sessionsTranscript, loading: true, selected: client.SessionListItem{ID: "sched-1", Title: "Nightly checks"}, inspect: true})
 	m.phase = phaseReplay
 	compareGolden(t, "sessions_transcript_loading.golden", stripANSI([]byte(m.View().Content)))
 }
 
 func TestSessionsTranscriptErrorGolden(t *testing.T) {
 	m := newSessionsGoldenModel(t, nil)
-	m.sessions = sessionsState{view: sessionsTranscript, selected: client.SessionListItem{ID: "sched-1", Title: "Nightly checks"}, inspect: true, loadErr: errGolden}
+	setActiveSessions(&m, sessionsState{view: sessionsTranscript, selected: client.SessionListItem{ID: "sched-1", Title: "Nightly checks"}, inspect: true, loadErr: errGolden})
 	m.phase = phaseReplay
 	compareGolden(t, "sessions_transcript_error.golden", stripANSI([]byte(m.View().Content)))
 }
 
 func TestSessionsTranscriptRenderedGolden(t *testing.T) {
 	m := newSessionsGoldenModel(t, nil)
-	m.sessions = sessionsState{
+	setActiveSessions(&m, sessionsState{
 		view: sessionsTranscript, selected: client.SessionListItem{ID: "sched-1", Title: "Nightly checks"}, inspect: true,
 		transcript: conversationFromTranscript([]client.ConversationMessage{{Role: "user", Text: "run checks"}, {Role: "assistant", Text: "All checks passed."}}),
-	}
+	})
 	m.phase = phaseReplay
 	m.refreshView()
 	compareGolden(t, "sessions_transcript_rendered.golden", stripANSI([]byte(m.View().Content)))

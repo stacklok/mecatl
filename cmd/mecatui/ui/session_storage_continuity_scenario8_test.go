@@ -37,8 +37,8 @@ func scenario8Model(adopter client.SessionAdopter, row client.SessionListItem) M
 	})
 	m.activeWorkspace = "/target"
 	m.effectiveModel = client.ResolvedModel{ProviderID: "provider-b", ModelID: "model-b"}
-	m.sessions = sessionsState{view: sessionsPanel, tab: tabOtherRuns, loadState: sessionsComplete, sessions: []client.SessionListItem{row}}
-	m = m.syncSessionsFilter()
+	setActiveSessions(&m, sessionsState{view: sessionsPanel, tab: tabOtherRuns, loadState: sessionsComplete, sessions: []client.SessionListItem{row}})
+	ensureActiveSessions(&m).syncFilter()
 	return m
 }
 
@@ -97,11 +97,29 @@ func maintenanceScenarioModel(fake *scenario8Maintenance) Model {
 		Migration: fake, Cleanup: fake, Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true,
 	})
 	m.caps = client.Capabilities{StorageHealth: true, StorageMigration: true, StorageCleanup: true}
-	m.sessions = newSessionsPanelState()
-	m.sessions.loading = false
-	m.sessions.loadState = sessionsComplete
-	m.sessions.tab = tabStorageHealth
+	setActiveSessions(&m, newSessionsPanelState())
+	ensureActiveSessions(&m).loading = false
+	ensureActiveSessions(&m).loadState = sessionsComplete
+	ensureActiveSessions(&m).tab = tabStorageHealth
 	return m
+}
+
+func TestMaintenanceMenuRequiresAdvertisedCapabilitiesThroughRoutes(t *testing.T) {
+	fake := &scenario8Maintenance{}
+	m := maintenanceScenarioModel(fake)
+	ensureActiveSessions(&m).deps.caps.StorageMigration = false
+	ensureActiveSessions(&m).deps.caps.StorageCleanup = false
+
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	m = mm.(Model)
+	if cmd != nil || ensureActiveSessions(&m).actionLoading {
+		t.Fatal("Model.Update started migration without the advertised capability")
+	}
+	mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m = mm.(Model)
+	if !handled || cmd != nil || ensureActiveSessions(&m).actionLoading || len(fake.calls) != 0 {
+		t.Fatalf("overlay route started cleanup without capability: handled=%v cmd=%v calls=%v", handled, cmd != nil, fake.calls)
+	}
 }
 
 func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
@@ -110,7 +128,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 		migrationJob:  client.SessionMigrationJob{ID: "migration-job", State: "paused", V1Families: 7, Processed: 4, Migrated: 2, SkippedFamilies: 1, Failed: 1, Errors: []client.SessionMigrationItemError{{ItemHandle: "item-7", ReasonCode: "write_failed", Message: "sanitized failure"}}},
 	}
 	m := maintenanceScenarioModel(fake)
-	mm, cmd, handled := m.onSessionsKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = mm.(Model)
 	if !handled || cmd == nil {
 		t.Fatal("optimize affordance did not start a dry-run")
@@ -122,7 +140,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 			t.Fatalf("optimize dry-run missing %q:\n%s", want, dryRun)
 		}
 	}
-	mm, cmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyAll(mm.(Model), cmd())
 	progress := stripANSIstr(m.View().Content)
 	for _, want := range []string{"migration-job", "paused", "Processed: 4/7", "Migrated: 2", "sanitized failure", "r: resume", "c: cancel"} {
@@ -130,7 +148,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 			t.Fatalf("optimize progress missing %q:\n%s", want, progress)
 		}
 	}
-	mm, cmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	_ = applyAll(mm.(Model), cmd())
 	if !slices.Contains(fake.calls, "resume-migration:migration-job") {
 		t.Fatalf("resume did not use durable job: %v", fake.calls)
@@ -138,7 +156,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 
 	unavailable := &scenario8Maintenance{migrationPlan: client.SessionMigrationPlan{Available: false, UnavailableReason: "backend_unsupported"}}
 	m = maintenanceScenarioModel(unavailable)
-	mm, cmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = applyAll(mm.(Model), cmd())
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "unavailable on this backend") || strings.Contains(got, "Reclaimable: 0 B") {
 		t.Fatalf("unsupported backend was presented as zero impact:\n%s", got)
@@ -148,7 +166,7 @@ func TestSessionStorageContinuity_Scenario8_OptimizeStorageFlow(t *testing.T) {
 	// render only its stable generic failure, never the producer string.
 	raw := &scenario8Maintenance{planErr: errors.New("/private/secret/session.jsonl: transcript body")}
 	m = maintenanceScenarioModel(raw)
-	mm, cmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = applyAll(mm.(Model), cmd())
 	if got := stripANSIstr(m.View().Content); strings.Contains(got, "/private/") || strings.Contains(got, "transcript body") || !strings.Contains(got, "maintenance request failed") {
 		t.Fatalf("raw maintenance error crossed the UI boundary:\n%s", got)
@@ -163,7 +181,7 @@ func TestSessionStorageContinuity_Scenario8_CleanupFlow(t *testing.T) {
 		cleanupJob: client.CleanupJob{ID: "cleanup-job", State: "partial", Processed: 6, Deleted: 3, Skipped: 2, Stale: 1, Failed: 1, Errors: []client.CleanupItemError{{ItemHandle: "item-2", ReasonCode: "changed", Message: "sanitized skip"}}},
 	}
 	m := maintenanceScenarioModel(fake)
-	mm, cmd, handled := m.onSessionsKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	m = mm.(Model)
 	if !handled || cmd == nil {
 		t.Fatal("cleanup affordance did not start a dry-run")
@@ -179,16 +197,16 @@ func TestSessionStorageContinuity_Scenario8_CleanupFlow(t *testing.T) {
 		t.Fatalf("unknown entered default cleanup scope: %v", fake.calls)
 	}
 	// Single-row delete consent (y/enter) must not authorize this bulk operation.
-	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	m = mm.(Model)
 	if slices.ContainsFunc(fake.calls, func(s string) bool { return strings.HasPrefix(s, "apply-cleanup:") }) {
 		t.Fatal("single-row delete consent authorized bulk cleanup")
 	}
 	for _, r := range "CLEAN UP" {
-		mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: r, Text: string(r)})
 		m = mm.(Model)
 	}
-	mm, cmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyAll(mm.(Model), cmd())
 	result := stripANSIstr(m.View().Content)
 	for _, want := range []string{"partial", "Deleted: 3", "Skipped: 2", "Stale: 1", "Failed: 1", "sanitized skip", "r: new dry run"} {
@@ -196,7 +214,7 @@ func TestSessionStorageContinuity_Scenario8_CleanupFlow(t *testing.T) {
 			t.Fatalf("cleanup result missing %q:\n%s", want, result)
 		}
 	}
-	mm, cmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	_ = applyAll(mm.(Model), cmd())
 	count := 0
 	for _, call := range fake.calls {
@@ -213,7 +231,9 @@ func TestSessionStorageContinuity_Scenario8_MaintenanceProgressReattach(t *testi
 	fake := &scenario8Maintenance{migrationJob: client.SessionMigrationJob{ID: "durable-job", State: "running", V1Families: 5, Processed: 2, Migrated: 2}}
 	m := maintenanceScenarioModel(fake)
 	m.maintenanceMigrationJobID = "durable-job"
-	mm, _ := m.closeSessions()
+	mm, _, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
 	m.phase = phaseIdle
 	m.deps.Sessions = &fakeSessionLister{}
@@ -227,12 +247,12 @@ func TestSessionStorageContinuity_Scenario8_MaintenanceProgressReattach(t *testi
 	if !slices.Contains(fake.calls, "get-migration:durable-job") {
 		t.Fatalf("reopen did not reattach: %v", fake.calls)
 	}
-	m.sessions.tab = tabStorageHealth
+	ensureActiveSessions(&m).tab = tabStorageHealth
 	view := stripANSIstr(m.View().Content)
 	if !strings.Contains(view, "durable-job") || !strings.Contains(view, "Processed: 2/5") {
 		t.Fatalf("reattached progress absent:\n%s", view)
 	}
-	mm, cmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
 	m = applyAll(mm.(Model), cmd())
 	cancelled := stripANSIstr(m.View().Content)
 	if !strings.Contains(cancelled, "Cancellation stops future items") || strings.Contains(strings.ToLower(cancelled), "roll back") {
@@ -254,7 +274,7 @@ func TestSessionStorageContinuity_Scenario8_AdoptAffordanceTruth(t *testing.T) {
 	unresolved := scenario8Model(&scenario8Adopter{}, legacy)
 	unresolved.effectiveModel = client.ResolvedModel{}
 	unresolved.deps.InitialModel = client.ModelSelection{}
-	if unresolved.adoptionPreflightCmd() != nil || !strings.Contains(stripANSIstr(unresolved.View().Content), "select an explicit workspace, environment, provider, and model") {
+	if unresolved.adoptionPreflightCmd(legacy) != nil || !strings.Contains(stripANSIstr(unresolved.View().Content), "select an explicit workspace, environment, provider, and model") {
 		t.Fatal("unresolved target silently fell back instead of requiring explicit selection")
 	}
 
@@ -273,10 +293,10 @@ func TestSessionStorageContinuity_Scenario8_AdoptAffordanceTruth(t *testing.T) {
 
 	// Opaque ID spelling never grants eligibility: changing selection invalidates
 	// the correlated preflight even when the new ID resembles a main chat.
-	m.sessions.sessions = append(m.sessions.sessions, client.SessionListItem{ID: "session-main-looking", Kind: client.SessionKindUnknown})
-	m = m.syncSessionsFilter()
-	m.sessions.cursor = 1
-	m = m.invalidateAdoptionPreflight()
+	ensureActiveSessions(&m).sessions = append(ensureActiveSessions(&m).sessions, client.SessionListItem{ID: "session-main-looking", Kind: client.SessionKindUnknown})
+	ensureActiveSessions(&m).syncFilter()
+	ensureActiveSessions(&m).cursor = 1
+	ensureActiveSessions(&m).requestAdoptionPreflight()
 	if got := stripANSIstr(m.View().Content); strings.Contains(got, "a: adopt as chat") {
 		t.Fatalf("stale preflight leaked across rows:\n%s", got)
 	}
@@ -287,13 +307,13 @@ func TestSessionStorageContinuity_Scenario8_AdoptionTUIFlow(t *testing.T) {
 	binding := client.AdoptionBindings{Workspace: "/target", EnvironmentKind: "local", EnvironmentID: "/target", ProviderID: "provider-b", ModelID: "model-b"}
 	adopter := &scenario8Adopter{preflight: client.AdoptionPreflight{Eligible: true, Bindings: binding}}
 	m := scenario8Model(adopter, legacy)
-	preflightCmd := m.adoptionPreflightCmd()
+	preflightCmd := m.adoptionPreflightCmd(legacy)
 	if preflightCmd == nil {
 		t.Fatal("complete explicit binding did not request server preflight")
 	}
 	m = applyAll(m, preflightCmd())
 
-	mm, _, handled := m.onSessionsKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	mm, _, handled := m.onOverlayKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("eligible adoption key was not handled")
@@ -306,20 +326,20 @@ func TestSessionStorageContinuity_Scenario8_AdoptionTUIFlow(t *testing.T) {
 	}
 
 	// Cancel returns to the same progressive inventory and preserves selection.
-	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
-	if m.sessions.view != sessionsPanel || m.sessions.cursor != 0 || len(m.sessions.sessions) != 1 {
-		t.Fatalf("cancel destabilized panel: %+v", m.sessions)
+	if ensureActiveSessions(&m).view != sessionsPanel || ensureActiveSessions(&m).cursor != 0 || len(ensureActiveSessions(&m).sessions) != 1 {
+		t.Fatalf("cancel destabilized panel: %+v", ensureActiveSessions(&m))
 	}
 
 	// A stale preflight is revalidated by AdoptSession. Its error leaves the
 	// review stable and never mutates/deletes the source row.
-	preflightCmd = m.adoptionPreflightCmd()
+	preflightCmd = m.adoptionPreflightCmd(legacy)
 	m = applyAll(m, preflightCmd())
-	mm, _, _ = m.onSessionsKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m = mm.(Model)
 	adopter.adoptErr = errors.New("failed precondition: source changed")
-	mm, adoptCmd, _ := m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, adoptCmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if adoptCmd == nil {
 		t.Fatal("confirmed review did not call adoption seam")
@@ -328,8 +348,8 @@ func TestSessionStorageContinuity_Scenario8_AdoptionTUIFlow(t *testing.T) {
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "source changed") || !strings.Contains(got, "Adopt as new chat") {
 		t.Fatalf("stale-preflight error did not leave stable review:\n%s", got)
 	}
-	if len(m.sessions.sessions) != 1 || m.sessions.sessions[0].ID != legacy.ID {
-		t.Fatalf("error changed source inventory: %+v", m.sessions.sessions)
+	if len(ensureActiveSessions(&m).sessions) != 1 || ensureActiveSessions(&m).sessions[0].ID != legacy.ID {
+		t.Fatalf("error changed source inventory: %+v", ensureActiveSessions(&m).sessions)
 	}
 
 	// Success trusts neither the mutation response nor local transcript: it opens
@@ -343,11 +363,13 @@ func TestSessionStorageContinuity_Scenario8_AdoptionTUIFlow(t *testing.T) {
 	conv.resolvedModel = client.ResolvedModel{ProviderID: "provider-b", ModelID: "model-b"}
 	m.deps.Session = conv
 	m.deps.Transcript = &fakeSessionTranscriptLoader{transcript: transcript}
-	mm, adoptCmd, _ = m.onSessionsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	ensureActiveSessions(&m).forker = conv
+	ensureActiveSessions(&m).transcripter = m.deps.Transcript
+	mm, adoptCmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	m = applyAll(m, adoptCmd())
-	if m.sessionID != adopted.ID || m.phase != phaseIdle || !m.ta.Focused() || m.sessions.view != sessionsNone {
-		t.Fatalf("success did not open writable authoritative target: id=%q phase=%v focused=%v view=%v", m.sessionID, m.phase, m.ta.Focused(), m.sessions.view)
+	if m.sessionID != adopted.ID || m.phase != phaseIdle || !m.ta.Focused() || m.modal != nil {
+		t.Fatalf("success did not open writable authoritative target: id=%q phase=%v focused=%v modal=%v", m.sessionID, m.phase, m.ta.Focused(), m.modal)
 	}
 	if m.sessionID == legacy.ID {
 		t.Fatalf("success rebound the inspect-only source instead of the new target")

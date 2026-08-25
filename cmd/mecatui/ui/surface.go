@@ -70,6 +70,35 @@ type surface interface {
 	Close()
 }
 
+// modalPlacement controls how the Model places a modal body. Surfaces that do
+// not implement modalPlacementSource use the card default.
+type modalPlacement uint8
+
+const (
+	modalPlacementCard modalPlacement = iota
+	modalPlacementFill
+)
+
+// modalPlacementSource is an optional surface capability for modal bodies that
+// fill the conversation region instead of appearing in a centered card.
+type modalPlacementSource interface {
+	modalPlacement() modalPlacement
+}
+
+// surfaceIntent is a sealed, one-shot request from a surface to the Model.
+// A surface clears its intent while taking it. After a handled surface event,
+// the Model applies the intent immediately and before generic close handling;
+// applying it never re-enters the Tea loop.
+type surfaceIntent interface {
+	isSurfaceIntent()
+}
+
+// surfaceIntentSource is implemented by surfaces that need to request a
+// Model-owned effect after handling an event.
+type surfaceIntentSource interface {
+	takeSurfaceIntent() surfaceIntent
+}
+
 // surfaceDeps is the SHARED ambient base every surface may reach, built once at
 // Open by (m *Model).surfaceDeps() and held on the surface state as its deps
 // field. Fields are ambient collaborators only: ctx is ambient (any modal that

@@ -99,6 +99,13 @@ func (m Model) renderBody() string {
 		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.modal != nil:
 		body, _ := m.modal.Render(m.width, m.vp.Height())
+		placement := modalPlacementCard
+		if source, ok := m.modal.(modalPlacementSource); ok {
+			placement = source.modalPlacement()
+		}
+		if placement == modalPlacementFill {
+			return body
+		}
 		return centerCard(m.deps.Theme, body, m.width, m.vp.Height())
 	case m.userModel.view != userModelNone:
 		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
@@ -114,8 +121,6 @@ func (m Model) renderBody() string {
 		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.schedule.view != scheduleNone:
 		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Transcript != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.sessions.view != sessionsNone:
-		return renderSessionsOverlay(m.deps.Theme, m.sessions, m.caps, m.sessionID, m.rend.vpView(m.vp), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:
 		return m.renderZeroState()
 	default:

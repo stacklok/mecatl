@@ -801,7 +801,7 @@ func TestSessionsOverlayHintsReflectKeyOverride(t *testing.T) {
 		}
 	})
 	t.Run("transcript", func(t *testing.T) {
-		st := sessionsState{view: sessionsTranscript, replayClosed: true}
+		st := sessionsState{view: sessionsTranscript}
 		got := stripANSIstr(renderSessionsOverlay(th, st, client.Capabilities{}, "sess", "content", hk, 100, 30))
 		if !strings.Contains(got, "ctrl+f16: Back") {
 			t.Errorf("transcript hint should carry live close/back: %q", got)

@@ -110,7 +110,7 @@ func driveSessionRebindJourney(t *testing.T, journey string, cb client.Clipboard
 		const id = "continued-id"
 		loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: id, Complete: true, Kind: client.SessionKindMain}}
 		m.deps.Transcript = loader
-		m.sessions.filtered = []client.SessionListItem{{ID: id, Title: "Stored chat", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}}
+		ensureActiveSessions(&m).filtered = []client.SessionListItem{{ID: id, Title: "Stored chat", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}}
 		mm, cmd, handled := m.chooseSession()
 		if !handled || cmd == nil {
 			t.Fatal("stored continuation did not request its authoritative transcript")

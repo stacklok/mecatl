@@ -69,10 +69,10 @@ func TestSessionStorageContinuity_Scenario3_FirstPageRendersImmediately(t *testi
 		"page-2": {{page: client.SessionInventoryPage{Sessions: []client.SessionListItem{{ID: "second", Title: "second chat", Kind: client.SessionKindMain}}}}},
 	}}
 	m := progressiveSessionsModel(pager)
-	if m.sessions.loadState != sessionsInitialLoading {
-		t.Fatalf("initial state = %v, want initial loading", m.sessions.loadState)
+	if ensureActiveSessions(&m).loadState != sessionsInitialLoading {
+		t.Fatalf("initial state = %v, want initial loading", ensureActiveSessions(&m).loadState)
 	}
-	firstCmd := m.sessionPageCmd()
+	firstCmd := ensureActiveSessions(&m).pageCmd()
 	first := firstCmd()
 	if pager.callCount() != 1 {
 		t.Fatalf("requests before first render = %d, want 1", pager.callCount())
@@ -94,42 +94,42 @@ func TestSessionStorageContinuity_Scenario3_FirstPageRendersImmediately(t *testi
 	}
 	mm, _ = m.Update(second)
 	m = mm.(Model)
-	if m.sessions.loadState != sessionsComplete || len(m.sessions.sessions) != 2 {
-		t.Fatalf("completed state=%v rows=%d", m.sessions.loadState, len(m.sessions.sessions))
+	if ensureActiveSessions(&m).loadState != sessionsComplete || len(ensureActiveSessions(&m).sessions) != 2 {
+		t.Fatalf("completed state=%v rows=%d", ensureActiveSessions(&m).loadState, len(ensureActiveSessions(&m).sessions))
 	}
 }
 
 func TestSessionStorageContinuity_Scenario3_IncrementalStateStable(t *testing.T) {
 	m := progressiveSessionsModel(&progressiveSessionPager{})
-	m.sessions.tab = tabChildRuns
-	m.sessions.filter.SetValue("needle")
-	m.sessions.sessions = make([]client.SessionListItem, 14)
-	for i := range m.sessions.sessions {
-		m.sessions.sessions[i] = client.SessionListItem{
+	ensureActiveSessions(&m).tab = tabChildRuns
+	ensureActiveSessions(&m).filter.SetValue("needle")
+	ensureActiveSessions(&m).sessions = make([]client.SessionListItem, 14)
+	for i := range ensureActiveSessions(&m).sessions {
+		ensureActiveSessions(&m).sessions[i] = client.SessionListItem{
 			ID: "child-" + string(rune('a'+i)), Title: "needle original", Kind: client.SessionKindSubagent,
 			ModifiedAt: int64(100 - i),
 		}
 	}
-	m = m.syncSessionsFilter()
-	m.sessions.cursor = 12
-	selectedID := m.sessions.filtered[m.sessions.cursor].ID
+	ensureActiveSessions(&m).syncFilter()
+	ensureActiveSessions(&m).cursor = 12
+	selectedID := ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID
 
 	msg := client.SessionInventoryPageMsg{Cursor: "page-2", Page: client.SessionInventoryPage{Sessions: []client.SessionListItem{
 		{ID: selectedID, Title: "duplicate must not win", Kind: client.SessionKindSubagent, ModifiedAt: 88},
 		{ID: "child-z", Title: "needle C", Kind: client.SessionKindSubagent, ModifiedAt: 1},
 	}}}
-	mm, _, _ := m.updateSessionsMsg(msg)
+	mm, _ := m.Update(msg)
 	m = mm.(Model)
-	if m.sessions.tab != tabChildRuns || m.sessions.filter.Value() != "needle" {
-		t.Fatalf("tab/query drifted: tab=%v query=%q", m.sessions.tab, m.sessions.filter.Value())
+	if ensureActiveSessions(&m).tab != tabChildRuns || ensureActiveSessions(&m).filter.Value() != "needle" {
+		t.Fatalf("tab/query drifted: tab=%v query=%q", ensureActiveSessions(&m).tab, ensureActiveSessions(&m).filter.Value())
 	}
-	if len(m.sessions.sessions) != 15 {
-		t.Fatalf("deduplicated rows = %d, want 15: %+v", len(m.sessions.sessions), m.sessions.sessions)
+	if len(ensureActiveSessions(&m).sessions) != 15 {
+		t.Fatalf("deduplicated rows = %d, want 15: %+v", len(ensureActiveSessions(&m).sessions), ensureActiveSessions(&m).sessions)
 	}
-	if m.sessions.filtered[m.sessions.cursor].ID != selectedID {
-		t.Fatalf("selection drifted to %q", m.sessions.filtered[m.sessions.cursor].ID)
+	if ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID != selectedID {
+		t.Fatalf("selection drifted to %q", ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID)
 	}
-	for _, row := range m.sessions.sessions {
+	for _, row := range ensureActiveSessions(&m).sessions {
 		if row.ID == selectedID && row.Title != "needle original" {
 			t.Fatalf("duplicate changed deterministic first row: %+v", row)
 		}
@@ -143,48 +143,50 @@ func TestSessionStorageContinuity_Scenario3_PartialFailureAndRetry(t *testing.T)
 		"":       {{page: client.SessionInventoryPage{Sessions: []client.SessionListItem{{ID: "fresh"}}}}},
 	}}
 	m := progressiveSessionsModel(pager)
-	m.sessions.sessions = []client.SessionListItem{{ID: "one"}}
-	m.sessions.nextCursor = "page-2"
-	m.sessions.loadState = sessionsLoadingMore
+	ensureActiveSessions(&m).sessions = []client.SessionListItem{{ID: "one"}}
+	ensureActiveSessions(&m).nextCursor = "page-2"
+	ensureActiveSessions(&m).loadState = sessionsLoadingMore
 
-	mm, _, _ := m.updateSessionsMsg(client.SessionInventoryPageMsg{Cursor: "page-2", Err: laterErr})
+	mm, _ := m.Update(client.SessionInventoryPageMsg{Cursor: "page-2", Err: laterErr})
 	m = mm.(Model)
-	if m.sessions.loadState != sessionsLaterPageError || len(m.sessions.sessions) != 1 {
-		t.Fatalf("later failure state=%v rows=%v", m.sessions.loadState, m.sessions.sessions)
+	if ensureActiveSessions(&m).loadState != sessionsLaterPageError || len(ensureActiveSessions(&m).sessions) != 1 {
+		t.Fatalf("later failure state=%v rows=%v", ensureActiveSessions(&m).loadState, ensureActiveSessions(&m).sessions)
 	}
-	mm, retry, handled := m.onSessionsKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	mm, retry, handled := m.onOverlayKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	m = mm.(Model)
-	if !handled || retry == nil || m.sessions.loadState != sessionsLoadingMore {
-		t.Fatalf("retry handled=%v cmd=%v state=%v", handled, retry != nil, m.sessions.loadState)
+	if !handled || retry == nil || ensureActiveSessions(&m).loadState != sessionsLoadingMore {
+		t.Fatalf("retry handled=%v cmd=%v state=%v", handled, retry != nil, ensureActiveSessions(&m).loadState)
 	}
-	mm, _, _ = m.updateSessionsMsg(retry())
+	mm, _ = m.Update(retry())
 	m = mm.(Model)
-	if m.sessions.loadState != sessionsComplete || len(m.sessions.sessions) != 2 {
-		t.Fatalf("retry state=%v rows=%v", m.sessions.loadState, m.sessions.sessions)
+	if ensureActiveSessions(&m).loadState != sessionsComplete || len(ensureActiveSessions(&m).sessions) != 2 {
+		t.Fatalf("retry state=%v rows=%v", ensureActiveSessions(&m).loadState, ensureActiveSessions(&m).sessions)
 	}
 
-	m.sessions.nextCursor = "stale"
-	m.sessions.loadState = sessionsLoadingMore
-	mm, restart, _ := m.updateSessionsMsg(client.SessionInventoryPageMsg{Cursor: "stale", Err: client.ErrSessionInventoryRestart})
+	ensureActiveSessions(&m).nextCursor = "stale"
+	ensureActiveSessions(&m).loadState = sessionsLoadingMore
+	mm, restart := m.Update(client.SessionInventoryPageMsg{Cursor: "stale", Err: client.ErrSessionInventoryRestart})
 	m = mm.(Model)
-	if m.sessions.loadState != sessionsStaleRestart || len(m.sessions.sessions) != 2 || restart == nil {
-		t.Fatalf("stale restart state=%v rows=%v cmd=%v", m.sessions.loadState, m.sessions.sessions, restart != nil)
+	if ensureActiveSessions(&m).loadState != sessionsStaleRestart || len(ensureActiveSessions(&m).sessions) != 2 || restart == nil {
+		t.Fatalf("stale restart state=%v rows=%v cmd=%v", ensureActiveSessions(&m).loadState, ensureActiveSessions(&m).sessions, restart != nil)
 	}
-	mm, _, _ = m.updateSessionsMsg(restart())
+	mm, _ = m.Update(restart())
 	m = mm.(Model)
-	if m.sessions.loadState != sessionsComplete || len(m.sessions.sessions) != 1 || m.sessions.sessions[0].ID != "fresh" {
-		t.Fatalf("restart result state=%v rows=%v", m.sessions.loadState, m.sessions.sessions)
+	if ensureActiveSessions(&m).loadState != sessionsComplete || len(ensureActiveSessions(&m).sessions) != 1 || ensureActiveSessions(&m).sessions[0].ID != "fresh" {
+		t.Fatalf("restart result state=%v rows=%v", ensureActiveSessions(&m).loadState, ensureActiveSessions(&m).sessions)
 	}
 }
 
 func TestSessionStorageContinuity_Scenario3_CancelStopsPagination(t *testing.T) {
 	pager := &progressiveSessionPager{block: map[string]bool{"page-2": true}, called: make(chan struct{}, 1)}
 	m := progressiveSessionsModel(pager)
-	m.sessions.sessions = []client.SessionListItem{{ID: "visible"}}
-	m.sessions.nextCursor = "page-2"
-	m.sessions.loadState = sessionsLoadingMore
-	m = m.ensureSessionPagination()
-	cmd := m.sessionPageCmd()
+	ensureActiveSessions(&m).sessions = []client.SessionListItem{{ID: "visible"}}
+	ensureActiveSessions(&m).nextCursor = "page-2"
+	ensureActiveSessions(&m).loadState = sessionsLoadingMore
+	if ensureActiveSessions(&m).pageCtx == nil {
+		_ = ensureActiveSessions(&m).beginPage("")
+	}
+	cmd := ensureActiveSessions(&m).pageCmd()
 	done := make(chan tea.Msg, 1)
 	go func() { done <- cmd() }()
 
@@ -193,10 +195,10 @@ func TestSessionStorageContinuity_Scenario3_CancelStopsPagination(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("page request did not start")
 	}
-	mm, _, handled := m.onSessionsKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	mm, _, handled := m.onOverlayKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
 	m = mm.(Model)
-	if !handled || m.sessions.loadState != sessionsCancelled {
-		t.Fatalf("cancel handled=%v state=%v", handled, m.sessions.loadState)
+	if !handled || ensureActiveSessions(&m).loadState != sessionsCancelled {
+		t.Fatalf("cancel handled=%v state=%v", handled, ensureActiveSessions(&m).loadState)
 	}
 	select {
 	case <-done:
@@ -206,11 +208,11 @@ func TestSessionStorageContinuity_Scenario3_CancelStopsPagination(t *testing.T) 
 	if m.sessionID != "" {
 		t.Fatalf("cancel rebound session %q", m.sessionID)
 	}
-	if got := len(m.sessions.sessions); got != 1 {
+	if got := len(ensureActiveSessions(&m).sessions); got != 1 {
 		t.Fatalf("cancel removed visible rows: %d", got)
 	}
 	calls := pager.callCount()
-	mm, _ = m.closeSessions()
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
 	if pager.callCount() != calls || m.sessionID != "" {
 		t.Fatalf("close requested/rebound: calls %d->%d id=%q", calls, pager.callCount(), m.sessionID)

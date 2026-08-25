@@ -287,7 +287,7 @@ func TestWindowTitleContinueSessionAdoptsTitle(t *testing.T) {
 	}
 	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: row.ID, Complete: true}}
 	m := newSessionsModel(t, newSessionsConv(), &fakeSessionLister{sessions: []client.SessionListItem{row}}, loader)
-	m.sessions.filtered = []client.SessionListItem{row}
+	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
 	mm, cmd, _ := m.chooseSession()
 	m = applyAll(mm.(Model), cmd())
 	if m.sessionTitle != longTitle {

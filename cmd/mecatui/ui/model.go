@@ -397,19 +397,10 @@ const (
 // current phase (renderFooter's phaseRunning/phaseConnecting arms — keep in sync).
 // It gates the spinner.TickMsg handler: a tick in any other phase is dropped,
 // which terminates the self-perpetuating tick chain; every transition INTO a
-// visible phase must re-arm m.sp.Tick.
+// visible phase must re-arm m.sp.Tick. Session transcript loading is owned and
+// rendered by sessionsState; it does not depend on the Model spinner.
 func (m Model) spinnerVisible() bool {
-	if m.phase == phaseRunning || m.phase == phaseConnecting {
-		return true
-	}
-	// In phaseReplay the spinner shows while the replay is still loading (the first
-	// replay msg is pending or the stream has not yet closed). Once the transcript
-	// is loaded the spinner idles to zero. Slice 3a's loading card is the visible
-	// affordance; Slice 3b's transcript render will key off the same loading flag.
-	if m.phase == phaseReplay {
-		return m.sessions.loading || (!m.sessions.replayClosed && m.sessions.receivedMsgs == 0)
-	}
-	return false
+	return m.phase == phaseRunning || m.phase == phaseConnecting
 }
 
 // Model is the root Elm model. It owns the conversation, the bubbles widgets, the
@@ -426,7 +417,12 @@ type Model struct {
 	// selection cannot race the startup ListModels result.
 	browsingStartupSessions bool
 	modelsReconciled        bool
-	sessionsPageSeq         uint64
+	// sessionsTranscriptRequestToken identifies a transcript request across the entire
+	// modal lifecycle. Unlike the surface-local request token, it never resets when
+	// a fresh sessionsState is created after closing the modal.
+	sessionsTranscriptRequestToken uint64
+	sessionsPageRequestToken       uint64
+	sessionsActionRequestToken     uint64
 	// Maintenance job handles outlive the Sessions overlay. Reopening uses them
 	// only to refetch server-owned durable progress; the UI owns no job state.
 	maintenanceMigrationJobID string
@@ -529,7 +525,6 @@ type Model struct {
 	effort    effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
 	worktrees worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
 	schedule  scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
-	sessions  sessionsState  // /sessions overlay state (view==sessionsNone when closed) — issue #245
 	// modal is the ONE open modal overlay (nil = none). Stack/tiling/focus-tree
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
@@ -931,14 +926,13 @@ func New(deps Deps) Model {
 		m.phase = phaseIdle
 		m.browsingStartupSessions = true
 		m.modelsReconciled = deps.Models == nil
-		m.sessions = newSessionsPanelState()
-		m.sessions.startup = true
-		m = m.beginSessionPagination()
+		state := m.newSessionsSurface(true)
+		_ = state.beginPage("")
 		m.ta.Blur()
 		if deps.Sessions == nil {
-			m.sessions.loading = false
-			m.sessions.loadState = sessionsInitialPageError
-			m.sessions.err = errors.New("session inventory unavailable")
+			state.loading = false
+			state.loadState = sessionsInitialPageError
+			state.err = errors.New("session inventory unavailable")
 		}
 	}
 	if resume := deps.Resume; resume != nil {
@@ -1003,13 +997,10 @@ func (m *Model) recordFileChange(path string) {
 // It deliberately does NOT clear the picker/inventory overlay state (models/
 // worktrees/schedule/sessions) — those are transport/compose state like
 // activeModel/caps, NOT session-derived transcript state, so a /clear or a
-// session switch must not dismiss an open picker. The /sessions replay-derived
-// fields (replayCh/replayStop/transcript) are cleared by closeSessionsTranscript
-// on the esc-teardown path from phaseReplay, NOT here — resetSession is called on
-// the switchToSession handoff BEFORE those are set, and closeSessionsTranscript
-// owns their teardown. Only the transcript conversation (m.conv) is session-
-// derived; the sessionsState's replay-transcript field (sessions.transcript) is a
-// SEPARATE conversation the replay projects into, cleared by closeSessionsTranscript.
+// session switch must not dismiss an open picker. Transcript and replay state
+// belong to the dynamically-owned sessionsState and are torn down by its Close
+// or transcript-to-picker transition; m.conv remains the authoritative live
+// conversation adopted by Model.
 func (m Model) resetSession() Model {
 	m.conv = conversation{}
 	// Drop the renderer's per-block caches (blockCache AND blockMD) alongside the
@@ -1107,7 +1098,7 @@ func (m Model) Init() tea.Cmd {
 			cmds = append(cmds, client.ListModelsCmd(m.deps.Ctx, m.deps.Models))
 		}
 		if m.deps.Sessions != nil {
-			cmds = append(cmds, m.sessionPageCmd(), textinput.Blink)
+			cmds = append(cmds, sessionsSurface(&m).pageCmd(), textinput.Blink)
 		}
 		return tea.Batch(cmds...)
 	}

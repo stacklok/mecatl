@@ -122,10 +122,10 @@ type SessionInventoryPage struct {
 
 // SessionInventoryPageMsg carries one progressive page result to Bubble Tea.
 type SessionInventoryPageMsg struct {
-	Page       SessionInventoryPage
-	Cursor     string
-	Generation uint64
-	Err        error
+	Page         SessionInventoryPage
+	Cursor       string
+	RequestToken uint64
+	Err          error
 }
 
 // ListSessionPage fetches one bounded page. An ABORTED response is the public
@@ -228,10 +228,10 @@ var _ SessionReplayer = (*Client)(nil)
 var _ LiveStreamer = (*Client)(nil)
 
 // ListSessionsPageCmd returns a command that fetches exactly one inventory page.
-func ListSessionsPageCmd(ctx context.Context, s SessionPager, cursor string, generation uint64) tea.Cmd {
+func ListSessionsPageCmd(ctx context.Context, s SessionPager, cursor string, requestToken uint64) tea.Cmd {
 	return func() tea.Msg {
 		page, err := s.ListSessionPage(ctx, cursor)
-		return SessionInventoryPageMsg{Page: page, Cursor: cursor, Generation: generation, Err: err}
+		return SessionInventoryPageMsg{Page: page, Cursor: cursor, RequestToken: requestToken, Err: err}
 	}
 }
 

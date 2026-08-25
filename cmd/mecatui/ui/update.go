@@ -138,23 +138,6 @@ func (m Model) markDirty() (Model, tea.Cmd) {
 	return m, tea.Batch(m.waitCmd(), m.renderTickCmd())
 }
 
-// markDirtyReplay is the replay-path analogue of markDirty: it records a streamed
-// replay event mutated m.sessions.transcript and drives the coalesced flush. It
-// arms a one-shot renderTickMsg ONLY when none is already pending (tickArmed), and
-// re-arms the REPLAY reader (waitReplayCmd, not waitCmd). onRenderTick's phase gate
-// allows phaseReplay so the flush engages during a replay. The coalescing makes a
-// burst of replay events O(N) not O(N²) (the live delta path's discipline applied
-// to the child-inspection transcript). The StreamClosed/StreamErr terminal arms
-// force-flush via refreshView (boundaries).
-func (m Model) markDirtyReplay() (Model, tea.Cmd) {
-	m.viewDirty = true
-	if m.tickArmed {
-		return m, m.waitReplayCmd()
-	}
-	m.tickArmed = true
-	return m, tea.Batch(m.waitReplayCmd(), m.renderTickCmd())
-}
-
 // Update is the Elm reducer. It is split by message type; all model mutation and
 // all glamour rendering happen here on the single update goroutine (the stream
 // reader never touches the model). After most state changes it calls refreshView
@@ -262,9 +245,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamMsg:
 		return m.onStreamMsg(msg)
 
-	case replayMsg:
-		return m.updateReplayMsg(msg)
-
 	case liveMsg:
 		return m.updateLiveMsg(msg)
 
@@ -357,9 +337,9 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, userModel, reflections, dream, worktrees, schedule,
-// sessions): each per-overlay helper returns handled=false for a non-matching
-// msg, so at most one consumes. Most carry no follow-up command; /schedule's
+// overlays (agentsInv, userModel, reflections, dream, worktrees, schedule):
+// each per-overlay helper returns handled=false for a non-matching msg, so at
+// most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
 // migrated onto the modal no longer ride this chain — HandleMsg owns their
 // routing.
@@ -380,9 +360,6 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return mm, nil, true
 	}
 	if mm, cmd, handled := m.updateScheduleMsg(msg); handled {
-		return mm, cmd, true
-	}
-	if mm, cmd, handled := m.updateSessionsMsg(msg); handled {
 		return mm, cmd, true
 	}
 	return m, nil, false
@@ -409,7 +386,7 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
 	m = m.bindSessionID(msg.SessionID)
 	m.browsingStartupSessions = false
-	m.sessions = sessionsState{}
+	m.modal = nil
 	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,
@@ -509,6 +486,13 @@ func (m Model) updateSkillChangesMsg(msg tea.Msg) (tea.Model, bool) {
 //nolint:gocyclo // one flat lifecycle message classifier; splitting it would duplicate the handled contract.
 func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
+	case inventorySessionIDCopiedMsg:
+		if msg.err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + sanitizeTerminal(msg.err.Error()))
+			return m, nil, true
+		}
+		m.statusMsg = m.deps.Theme.Style("success").Render("copied exact session ID " + safeSessionID(msg.id))
+		return m, tea.SetClipboard(msg.id), true
 	case startupResumeReadyMsg:
 		mm, cmd := m.finishStartupResume()
 		return mm, cmd, true
@@ -1599,8 +1583,6 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.onApprovalKey(msg)
 	case phaseRunning:
 		return m.onRunningKey(msg)
-	case phaseReplay:
-		return m.onReplayKey(msg)
 	case phaseIdle:
 		return m.onIdleKey(msg)
 	default:
@@ -1615,6 +1597,10 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // /models picker is the only SELECTING one (cursor + enter); the rest are read-only
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.startupRunEntryFailed {
+		mm, cmd := m.onStartupRunEntryKey(msg)
+		return mm, cmd, true
+	}
 	// The open modal surface routes through m.modal BEFORE the legacy per-overlay
 	// route list; the closed path nils the field and refocuses via the surface's
 	// Close cmd.
@@ -1632,7 +1618,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onEffortKey,
 		m.onWorktreesKey,
 		m.onScheduleKey,
-		m.onSessionsKey,
 	}
 	for _, route := range overlays {
 		if mm, cmd, handled := route(msg); handled {
@@ -1655,7 +1640,20 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if !handled {
 		return m, nil, false
 	}
+	var intentCmd tea.Cmd
+	if source, ok := m.modal.(surfaceIntentSource); ok {
+		mm, intentCmd, done := m.applySurfaceIntent(source.takeSurfaceIntent())
+		if done {
+			return mm, tea.Batch(cmd, intentCmd), true
+		}
+		m = mm.(Model)
+	}
+	cmd = tea.Batch(cmd, intentCmd)
 	if closed {
+		if sessions, ok := m.modal.(*sessionsState); ok {
+			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, sessions.transcriptSurfaceRequestToken)
+			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, sessions.pageRequestToken)
+		}
 		m.modal.Close()
 		m.modal = nil
 		return m, tea.Batch(cmd, m.ta.Focus()), true
@@ -1676,12 +1674,88 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if !handled {
 		return m, nil, false
 	}
+	var intentCmd tea.Cmd
+	if source, ok := m.modal.(surfaceIntentSource); ok {
+		mm, intentCmd, done := m.applySurfaceIntent(source.takeSurfaceIntent())
+		if done {
+			return mm, tea.Batch(cmd, intentCmd), true
+		}
+		m = mm.(Model)
+	}
+	cmd = tea.Batch(cmd, intentCmd)
 	if closed {
+		if sessions, ok := m.modal.(*sessionsState); ok {
+			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, sessions.transcriptSurfaceRequestToken)
+			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, sessions.pageRequestToken)
+		}
 		m.modal.Close()
 		m.modal = nil
 		return m, tea.Batch(cmd, m.ta.Focus()), true
 	}
 	return m, cmd, true
+}
+
+// applySurfaceIntent applies a drained surface intent synchronously. The router
+// knows only the sealed protocol; Model owns the concrete intent effects.
+func (m Model) applySurfaceIntent(intent surfaceIntent) (tea.Model, tea.Cmd, bool) {
+	switch intent := intent.(type) {
+	case nil:
+		return m, nil, false
+	case sessionsPhaseIntent:
+		switch intent.phase {
+		case sessionsIntentPhaseIdle:
+			m.phase = phaseIdle
+		case sessionsIntentPhaseReplay:
+			m.phase = phaseReplay
+			m.ta.Blur()
+		}
+		return m, nil, false
+	case sessionsAdoptionPreflightIntent:
+		return m, m.adoptionPreflightCmd(intent.row), false
+	case sessionsMigrationJobIntent:
+		m.maintenanceMigrationJobID = intent.jobID
+		return m, nil, false
+	case sessionsCleanupJobIntent:
+		m.maintenanceCleanupJobID = intent.jobID
+		return m, nil, false
+	case sessionsTranscriptAdoptionIntent:
+		m.caps = intent.capabilities
+		m.effectiveModel = intent.model
+		m.activeMode = intent.mode
+		return m.adoptAuthoritativeTranscript(intent.row, intent.transcript)
+	case sessionsStartupQuitIntent:
+		if sessions, ok := m.modal.(*sessionsState); ok && sessions.pageCancel != nil {
+			sessions.pageCancel()
+		}
+		m.sessionsPageRequestToken++
+		return m, tea.Quit, true
+	case sessionsStartupNewIntent:
+		if !m.modelsReconciled {
+			m.statusMsg = m.deps.Theme.Style("muted").Render("loading model defaults…")
+			return m, nil, false
+		}
+		if sessions, ok := m.modal.(*sessionsState); ok && sessions.pageCancel != nil {
+			sessions.pageCancel()
+		}
+		m.sessionsPageRequestToken++
+		m.modal, m.phase = nil, phaseConnecting
+		return m, m.createSessionCmd(), true
+	case sessionsActiveTitleIntent:
+		if intent.id == m.sessionID {
+			m.sessionTitle = intent.title
+		}
+		m.statusMsg = m.deps.Theme.Style("success").Render(intent.successNotice)
+		return m, nil, false
+	case sessionsStatusNoticeIntent:
+		style := "warning"
+		if intent.style == sessionsStatusNoticeSuccess {
+			style = "success"
+		}
+		m.statusMsg = m.deps.Theme.Style(style).Render(intent.text)
+		return m, nil, false
+	default:
+		return m, nil, false
+	}
 }
 
 func (m Model) desiredMode() string {
@@ -2499,12 +2573,16 @@ var errStartupRunEntry = &sessionTranscriptError{"the chat could not be attached
 func (m Model) failStartupRunEntry() Model {
 	m = m.endRun("")
 	m.conv = conversationFromTranscript(m.deps.Resume.Transcript.Messages)
-	m.sessions = sessionsState{
-		selected:   m.deps.Resume.Row,
-		inspect:    true,
-		loadErr:    errStartupRunEntry,
-		transcript: conversationFromTranscript(m.deps.Resume.Transcript.Messages),
-		view:       sessionsTranscript,
+	m.modal = &sessionsState{
+		selected:        m.deps.Resume.Row,
+		inspect:         true,
+		loadErr:         errStartupRunEntry,
+		view:            sessionsTranscript,
+		deps:            (&m).surfaceDeps(),
+		activeSessionID: m.sessionID,
+		transcript:      conversationFromTranscript(m.deps.Resume.Transcript.Messages),
+		transcriptStuck: true,
+		transcripter:    m.deps.Transcript,
 	}
 	m.phase = phaseReplay
 	m.startupFirstPromptPending = false
@@ -2790,32 +2868,6 @@ func (m Model) waitCmd() tea.Cmd {
 	return func() tea.Msg { return streamMsg{gen: gen, msg: read()} }
 }
 
-// replayMsg wraps one message pulled from a stored-session replay's reader
-// channel with the replay GENERATION that channel belonged to when the reader was
-// armed. It is the replay-stream analogue of streamMsg: the reducer drops any
-// replayMsg whose gen no longer matches m.sessions.replayGen (see updateReplayMsg),
-// so a reader left bound to an abandoned replay (a prior transcript view torn down
-// by esc, or any future double-arm) cannot route its messages into the current
-// replay view. It is the structural backstop behind the "exactly one reader per
-// replay" fan-in invariant — parallel to streamGen/streamMsg for the live run.
-type replayMsg struct {
-	gen uint64
-	msg tea.Msg
-}
-
-// waitReplayCmd re-arms the fan-in command on the current replay channel, tagging
-// whatever it delivers with the current replay generation so a stale reader's
-// output is dropped rather than misrouted (see replayMsg + updateReplayMsg's gen
-// check). Returns nil when no replay is active (defensive). Parallel to waitCmd.
-func (m Model) waitReplayCmd() tea.Cmd {
-	if m.sessions.replayCh == nil {
-		return nil
-	}
-	gen := m.sessions.replayGen
-	read := client.WaitForMsg(m.sessions.replayCh)
-	return func() tea.Msg { return replayMsg{gen: gen, msg: read()} }
-}
-
 // liveMsg wraps one message pulled from the LIVE session event feed (LiveStreamCmd
 // / LiveReplayStreamCmd) with the generation that channel belonged to when the
 // reader was armed. It is the live-delivery analogue of streamMsg (live Converse
@@ -3084,264 +3136,6 @@ func (m *Model) disarmLiveFeed() {
 	m.disarmReconnect()
 }
 
-// updateReplayMsg applies the generation guard for the replay fan-in, then reduces
-// the inner msg. A message produced by a replay's reader (waitReplayCmd) carries
-// the generation of the channel it was read from; if that no longer matches the
-// current replay, the reader is bound to an ABANDONED channel (a reader left over
-// after esc tore down a transcript view), so the message is dropped and NOT
-// re-armed — the stale reader dies with it. Parallel to onStreamMsg.
-//
-// Slice 3b: the inner msg is PROJECTED into m.sessions.transcript via
-// applyReplayEvent (the SAME conversation mutators the live updateStreamEvent
-// path calls — conv.addUser/addTool/appendAssistant/addNotice/… — over a SEPARATE
-// conversation so the read-only replay transcript and the live m.conv never
-// collide). The replay never mutates the live model's run-derived state
-// (activeTool/usage/ask-queue/footer-heal): those are live-run concerns; a replay
-// is a bounded, read-only batch. StreamClosedMsg / StreamErrMsg flip the transcript
-// to its terminal arm (loaded / error line) and stay in phaseReplay.
-func (m Model) updateReplayMsg(sm replayMsg) (tea.Model, tea.Cmd) {
-	if sm.gen != m.sessions.replayGen {
-		return m, nil // stale reader — drop, do not re-arm
-	}
-	switch msg := sm.msg.(type) {
-	case client.StreamClosedMsg:
-		// Clean replay EOF: the transcript is loaded. No re-arm (the channel
-		// closed). Force-flush the final state (a boundary, like the live path's
-		// afterEvent/endRun).
-		m.sessions.replayClosed = true
-		m.sessions.loading = false
-		if m.sessions.continueOnLoad {
-			// TOP-LEVEL continue: carry the projected transcript into m.conv and
-			// transition to phaseIdle (live/interactive). The user sees the prior
-			// conversation and can type immediately. An empty transcript (a clean
-			// EOF over zero events) still continues — the conversation view is
-			// empty and the user can type.
-			return m.continueLoadedSession()
-		}
-		// CHILD read-only: stay in phaseReplay; the transcript renders fully.
-		m.refreshView()
-		return m, nil
-	case client.StreamErrMsg:
-		// A replay error. No re-arm. Force-flush the final state (a boundary).
-		m.sessions.replayClosed = true
-		m.sessions.replayErr = msg.Err
-		m.sessions.loading = false
-		// Render the error line IN the transcript so any partial projection
-		// before the error survives (the read-only child arm shows it; the
-		// top-level arm carries the partial transcript and shows the error in
-		// the status).
-		m.sessions.transcript.addError("replay error: " + msg.Err.Error())
-		if m.sessions.continueOnLoad {
-			// TOP-LEVEL continue on error: still go to phaseIdle with whatever
-			// partial transcript loaded (or empty). The server holds the history
-			// regardless, so the user can type. The error surfaces in the status.
-			return m.continueLoadedSession()
-		}
-		// CHILD read-only: stay in phaseReplay and render the error line.
-		m.refreshView()
-		return m, nil
-	default:
-		// A replay event msg: project it into the transcript via the SAME
-		// conversation mutators the live path uses (projection equivalence), count
-		// it, and re-arm the reader. loading clears on the first projected msg.
-		// Coalesce the re-render via markDirty (NOT refreshView per event) so a
-		// burst of replay events is O(N) not O(N²): the per-event arm mirrors the
-		// live delta path's discipline — deltas mark the view dirty, a 16ms
-		// renderTickMsg flushes at most once per frame. onRenderTick's phase gate
-		// also allows phaseReplay so the coalesced flush engages during a replay.
-		// The StreamClosed/StreamErr terminal arms above still force-flush.
-		(&m).applyReplayEvent(msg)
-		m.sessions.receivedMsgs++
-		m.sessions.loading = false
-		return m.markDirtyReplay()
-	}
-}
-
-// continueLoadedSession is the TOP-LEVEL terminal handoff: called from
-// updateReplayMsg's StreamClosedMsg / StreamErrMsg arms when continueOnLoad is
-// set (a top-level session opened from the Sessions tab). It carries the
-// projected replay transcript (m.sessions.transcript) into the live conversation
-// (m.conv), clears the replay-derived state, transitions to phaseIdle
-// (live/interactive), focuses the textarea, and sets a "continuing session <id>"
-// status. The renderer's per-block caches were reset on the switchToSession
-// handoff (resetSession), so the transcript's blocks (which become m.conv's
-// blocks at the same indices) populate the caches fresh — no aliasing. If a
-// replay error occurred (m.sessions.replayErr set), the partial transcript is
-// carried and the error surfaces in the status; the user can still type (the
-// server holds the history regardless).
-func (m Model) continueLoadedSession() (tea.Model, tea.Cmd) {
-	id := m.sessionID
-	hadErr := m.sessions.replayErr != nil
-	// Carry the projected transcript into the live conversation. resetSession
-	// (called at switchToSession) already zeroed m.conv and reset the block
-	// caches, so assigning the transcript's blocks here is safe: the transcript's
-	// blocks at indices 0..n become m.conv's blocks at indices 0..n, and the
-	// caches (index-keyed) populate fresh on the next render. Move the whole
-	// conversation value so the subagentFleet/parallelGroups maps travel too.
-	m.conv = m.sessions.transcript
-	// Clear the replay-derived state (the transcript now lives in m.conv).
-	m.sessions.replayCh = nil
-	m.sessions.replayStop = nil
-	m.sessions.replayGen++ // invalidate any stale reader
-	m.sessions.transcript = conversation{}
-	m.sessions.receivedMsgs = 0
-	m.sessions.replayClosed = false
-	m.sessions.replayErr = nil
-	m.sessions.continueOnLoad = false
-	m.sessions.view = sessionsNone
-	// The picker/confirm overlay state (filter/filtered/confirm) was already
-	// cleared in switchToSession before entering phaseReplay; nothing to clear
-	// here.
-	// Transition to live/interactive.
-	m.phase = phaseIdle
-	m.stuck = true // arm auto-follow so the live tail sticks once a new turn starts
-	if hadErr {
-		m.statusMsg = m.deps.Theme.Style("warning").Render(
-			"continuing session " + sanitizeTerminal(id) + " — history partially loaded (replay error) — type to add a turn",
-		)
-	} else if m.conv.isEmpty() {
-		m.statusMsg = "continuing session " + sanitizeTerminal(id) + " — no prior history — type to add a turn"
-	} else {
-		m.statusMsg = "continuing session " + sanitizeTerminal(id) + " — type to add a turn"
-	}
-	cmd := m.ta.Focus()
-	m.refreshView()
-	// Fire a GetSession refetch to heal caps + resolved model + mode + title in one
-	// round-trip (issue #348). The adopted session may have been created on a
-	// different server, so the current caps (inherited from the prior session on
-	// switchToSession) may be wrong. The onResolvedModelMsg reducer adopts the new
-	// caps when non-zero (newer server), else keeps the current ones (fail-conservative).
-	// Batched with the textarea-focus cmd so both run.
-	if m.deps.Session != nil {
-		heal := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, id)
-		cmd = tea.Batch(cmd, heal)
-	}
-	return m, cmd
-}
-
-// applyReplayEvent projects ONE replayed stream event into m.sessions.transcript
-// via the SAME conversation mutators the live updateStreamEvent path calls
-// (conv.addUser / addTool / appendAssistant / addNotice / addHook / addError /
-// resolveTool / startAssistant / …). It is the read-only-replay analogue of
-// updateStreamEvent's conversation-mutating arms, targeting a SEPARATE
-// conversation (&m.sessions.transcript) so the replay transcript and the live
-// m.conv never collide.
-//
-// It deliberately does NOT reproduce the live path's Model side-effects
-// (m.activeTool / m.toolProgress / m.usage / m.approval.queue / m.contextTokens / the
-// footer context-meter self-heal / recordFileChange): those are live-run
-// concerns, and a replay is a bounded, read-only inspection. The three log-only
-// replay msgs (UserPromptMsg / ApprovalMsg / CompactionArchiveMsg) — which the
-// live Converse wire NEVER relays — render here: UserPromptMsg → addUser (the
-// user's prompt text); ApprovalMsg → a muted verdict notice (the replay has no
-// live ask modal, so a one-line "✓ allowed: Bash" / "✗ denied: Bash" annotation
-// is the honest transcript record); CompactionArchiveMsg → a notice ("history
-// compacted — N turns archived") rather than the verbatim archived message slice
-// (which is huge and already represented by the compacted tail that follows).
-func (m *Model) applyReplayEvent(msg tea.Msg) {
-	c := &m.sessions.transcript
-	switch msg := msg.(type) {
-	case client.UserPromptMsg:
-		// The recorded user message (EvUserPrompt). Text is the flattened prompt
-		// body; Parts carries any image/audio media. Mirror the live submit path's
-		// addUser/addUserWithMedia so a multimodal prompt renders its 📎 placeholders.
-		if descs := mediaDescriptors(msg.Parts); len(descs) > 0 {
-			c.addUserWithMedia(msg.Text, descs)
-		} else {
-			c.addUser(msg.Text)
-		}
-	case client.DeliveryNoteMsg:
-		// A delivery note renders as a distinct delivery card, not a user prompt.
-		c.addDelivery(msg.ScheduleName, msg.FireID, msg.Text)
-	case client.TurnStartMsg:
-		c.startAssistant()
-	case client.AssistantDeltaMsg:
-		c.appendAssistant(msg.Text)
-	case client.ReasoningDeltaMsg:
-		c.appendReasoning(msg.Text)
-	case client.TurnEndMsg:
-		c.endReasoningStream()
-		if !trivialTurn(msg) {
-			c.addTurnStat(turnStatLine(msg))
-		}
-	case client.ToolCallMsg:
-		c.addTool(msg.ID, msg.Name, msg.Args)
-	case client.ToolResultMsg:
-		if !c.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
-			c.addNotice("orphan tool result for " + msg.CallID)
-		}
-	case client.HookMsg:
-		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
-	case client.ResultMsg:
-		// The terminal event. A stop=error with an Error string renders as an
-		// error notice (mirroring applyResult's addError); any other stop is a
-		// silent terminal (the footer would carry it live, but the replay footer
-		// is read-only chrome — the transcript's tool/result blocks already show
-		// the run's outcome).
-		if msg.Stop == stopError && msg.Error != "" {
-			c.addError(msg.Error)
-		}
-	default:
-		// The log-only msgs (UserPrompt/Approval/CompactionArchive are NOT here —
-		// they are primary transcript content), the delegation projections, the
-		// transient notices, and the no-projection msgs are reduced by
-		// applyReplayEventSecondary (a second switch) to keep this dispatcher
-		// under the cyclomatic-complexity bound — the same split the live path's
-		// updateStreamEvent/updateStreamSecondary carries. Together the two
-		// switches are total over the replay msg taxonomy.
-		m.applyReplayEventSecondary(msg)
-	}
-}
-
-// applyReplayEventSecondary is the back half of applyReplayEvent: the log-only
-// replay msgs (Approval/CompactionArchive — UserPrompt is primary, handled
-// above), the delegation projections, the transient notices, and the
-// no-projection msgs. Split out only so neither dispatcher grows past the
-// cyclomatic-complexity bound, mirroring the live updateStreamSecondary split.
-func (m *Model) applyReplayEventSecondary(msg tea.Msg) {
-	c := &m.sessions.transcript
-	switch msg := msg.(type) {
-	case client.ApprovalMsg:
-		// The verdict half of a permission ask (EvApproval). The replay has no
-		// live ask modal, so render a one-line verdict notice adjacent to the
-		// tool call's result. Metadata-only (gauntlet #7): tool NAME + verdict,
-		// never the raw args.
-		c.addNotice(approvalNotice(msg))
-	case client.CompactionArchiveMsg:
-		// The pre-compaction conversation (EvCompactionArchive). It is HUGE (a
-		// full message slice) and already represented by the compacted tail the
-		// following events replay, so render a bounded notice rather than the
-		// verbatim archive.
-		c.addNotice(compactionArchiveNotice(msg))
-	case client.CompactionMsg:
-		c.addNotice(noticeLine(msg))
-	case client.NoProgressMsg:
-		// Transient in the live path; in a replay it is a durable record of the
-		// run's no-progress boundary, so render it as a muted notice.
-		c.addNotice(noticeLine(msg))
-	case client.ProviderRouteMsg:
-		// Transient in the live path; in a replay render the routed downstream as a
-		// muted notice (issue #480).
-		c.addNotice("via " + msg.Text)
-	case client.SubagentMsg:
-		// The delegation projections route into the transcript's Subagent card /
-		// fleet via the SAME mutators the live applySubagent path uses.
-		applySubagentTo(c, msg)
-	case client.ParallelMsg:
-		applyParallelTo(c, msg)
-	case client.TeamMsg:
-		applyTeamTo(c, msg)
-	case client.PermissionAskMsg, client.PermissionRetractMsg, client.ToolProgressMsg,
-		client.SessionInitMsg:
-		// No transcript projection: PermissionAskMsg opens the live modal (the
-		// replay surfaces the verdict via ApprovalMsg instead), PermissionRetractMsg
-		// withdraws a live modal, ToolProgressMsg is a transient live status line,
-		// and SessionInitMsg is a transport handshake. None enters the transcript.
-	default:
-		// Unknown msg: no projection (mirrors updateStreamSecondary's no-op default).
-	}
-}
-
 // mediaDescriptors builds one human-readable descriptor per non-text media part of
 // a replayed user prompt (UserPromptMsg.Parts), mirroring the live submit path's
 // media.Descriptors so addUserWithMedia renders the same "📎 …" placeholder lines.
@@ -3374,35 +3168,25 @@ func compactionArchiveNotice(msg client.CompactionArchiveMsg) string {
 	return "history compacted — " + plural(n, "turn") + " archived"
 }
 
-// onReplayKey routes keys while an authoritative transcript is loading or being
-// inspected. Escape returns to the inventory without changing the active chat;
-// retry reloads the same opaque session id after a failed request.
-func (m Model) onReplayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.startupRunEntryFailed {
-		if key.Matches(msg, m.keys.Close) {
-			m.sessions = sessionsState{}
-			m.startupRunEntryFailed = false
-			m.phase = phaseIdle
-			cmd := m.ta.Focus()
-			m.refreshView()
-			return m, cmd
-		}
-		if msg.String() == "r" {
-			m.sessions = sessionsState{}
-			m.startupRunEntryFailed = false
-			m.phase = phaseIdle
-			m.ta.SetValue(m.startupRetryPrompt)
-			return m.submitPrompt()
-		}
-		return m, nil
-	}
+// onStartupRunEntryKey preserves the retry/back controls for a failed startup
+// continuation. Ordinary transcript navigation is owned by sessionsState.
+func (m Model) onStartupRunEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Close) {
-		return m.closeSessionsTranscript()
+		m.modal.Close()
+		m.modal = nil
+		m.startupRunEntryFailed = false
+		m.phase = phaseIdle
+		cmd := m.ta.Focus()
+		m.refreshView()
+		return m, cmd
 	}
-	if msg.String() == "r" && m.sessions.loadErr != nil && m.deps.Transcript != nil {
-		m.sessions.loading = true
-		m.sessions.loadErr = nil
-		return m, client.GetSessionTranscriptCmd(m.deps.Ctx, m.deps.Transcript, m.sessions.selected.ID)
+	if msg.String() == "r" {
+		m.modal.Close()
+		m.modal = nil
+		m.startupRunEntryFailed = false
+		m.phase = phaseIdle
+		m.ta.SetValue(m.startupRetryPrompt)
+		return m.submitPrompt()
 	}
 	return m, nil
 }
@@ -4060,19 +3844,6 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
-	// phaseReplay renders the read-only transcript conversation (m.sessions.transcript)
-	// instead of the live m.conv. The transcript is a bounded, read-only batch: no
-	// selection, no expand-tools, no changed-files footer. The renderer's per-block
-	// caches were reset on the switchToSession handoff (resetSession) and are reset
-	// again on closeSessionsTranscript, so the two conversations never alias a cache
-	// entry. Stuck stays true (auto-follow the bottom as the batch drains).
-	if m.phase == phaseReplay {
-		m.vp.SetContentLines(m.rend.renderConversationLines(&m.sessions.transcript, false))
-		if m.stuck {
-			m.vp.GotoBottom()
-		}
-		return
-	}
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
 	// changed-files footer is not in play (it renders only under the global expand
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line

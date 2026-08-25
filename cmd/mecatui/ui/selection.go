@@ -122,8 +122,7 @@ func selectable(m Model) bool {
 		m.dream.view == dreamClosed &&
 		m.models.view == modelsNone &&
 		m.effort.view == effortNone &&
-		m.worktrees.view == worktreesNone &&
-		m.sessions.view == sessionsNone
+		m.worktrees.view == worktreesNone
 }
 
 // screenToContent maps a screen cell (x, y) to a LOGICAL content position (line

@@ -674,8 +674,8 @@ func TestScheduleInspectJumpToFireTranscript(t *testing.T) {
 	if len(loader.calls) != 1 || loader.calls[0] != "sess-fire-2" {
 		t.Fatalf("transcript calls=%q, want [sess-fire-2]", loader.calls)
 	}
-	if m.phase != phaseReplay || m.sessions.loading || m.sessions.loadErr != nil {
-		t.Fatalf("loaded inspection state: phase=%v loading=%v err=%v", m.phase, m.sessions.loading, m.sessions.loadErr)
+	if m.phase != phaseReplay || ensureActiveSessions(&m).loading || ensureActiveSessions(&m).loadErr != nil {
+		t.Fatalf("loaded inspection state: phase=%v loading=%v err=%v", m.phase, ensureActiveSessions(&m).loading, ensureActiveSessions(&m).loadErr)
 	}
 	if m.sessionID != activeSessionID {
 		t.Fatalf("loaded inspection rebound sessionID = %q, want %q", m.sessionID, activeSessionID)
