@@ -15,7 +15,7 @@ vars:
 tasks:
   kind-setup:
     desc: |
-      Recreate the named mecak8s + Dex Kind fixture from the local Helm chart.
+      Recreate the named mecak8s + Keycloak Kind fixture from the local Helm chart.
       Export OPENROUTER_API_KEY first to wire a real provider via extraEnv
       instead of the mock provider (same convention as `task e2e:k8s`).
     cmds:
@@ -24,12 +24,12 @@ tasks:
       - task: namespace-apply
       - task: cert-manager-install
       - task: image-build-load
-      - task: dex-certificate-apply
-      - task: dex-apply
+      - task: certificate-apply
+      - task: keycloak-apply
       - task: chart-apply
 
   kind-status:
-    desc: Show the named mecak8s + Dex base fixture
+    desc: Show the named mecak8s + Keycloak base fixture
     cmds:
       - task: cluster-ready
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods,services,statefulsets,networkpolicies -n {{.NAMESPACE}}
@@ -39,7 +39,7 @@ tasks:
     desc: Show the exact temporary loopback aliases for the Kind port mappings
     cmds:
       - cmd: |
-          printf '%s\n' '127.0.0.1 dex.mecatl-vmcp.svc.cluster.local' '127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local'
+          printf '%s\n' '127.0.0.1 keycloak.mecatl-vmcp.svc.cluster.local' '127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local'
 
   kind-hosts-add:
     desc: Add the temporary Kind aliases to /etc/hosts (loopback only)
@@ -47,7 +47,8 @@ tasks:
       - cmd: |
           set -eu
           for entry in \
-            '127.0.0.1 dex.mecatl-vmcp.svc.cluster.local' \
+            \
+            '127.0.0.1 keycloak.mecatl-vmcp.svc.cluster.local' \
             '127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local'; do
             sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
           done
@@ -60,7 +61,7 @@ tasks:
       - cmd: |
           set -eu
           sudo sed -i.bak \
-            -e '\|^127\.0\.0\.1 dex\.mecatl-vmcp\.svc\.cluster\.local$|d' \
+            -e '\|^127\.0\.0\.1 keycloak\.mecatl-vmcp\.svc\.cluster\.local$|d' \
             -e '\|^127\.0\.0\.1 mecak8s-mecak8s\.mecatl-vmcp\.svc\.cluster\.local$|d' /etc/hosts
           echo 'Removed exact temporary entries (backup: /etc/hosts.bak).'
   kind-destroy:
@@ -76,7 +77,7 @@ tasks:
       - go test ./internal/deploycheck -run 'Test(VMCPFixture|Mecak8sVMCPPOC_)'
 
   vmcp-setup:
-    desc: Recreate Kind and install mecak8s, Dex, ToolHive, Redis, Yardstick, and vMCP
+    desc: Recreate Kind and install mecak8s, Keycloak, ToolHive, Redis, Yardstick, and vMCP
     preconditions:
       - sh: command -v openssl >/dev/null 2>&1
         msg: openssl is required
@@ -89,7 +90,10 @@ tasks:
           $k get secret vmcp-redis-auth >/dev/null 2>&1 || openssl rand -base64 48 | $k create secret generic vmcp-redis-auth --from-file=password=/dev/stdin >/dev/null
           $k get secret vmcp-hmac >/dev/null 2>&1 || openssl rand -base64 48 | $k create secret generic vmcp-hmac --from-file=hmac=/dev/stdin >/dev/null
           $k get secret vmcp-signing-key >/dev/null 2>&1 || openssl ecparam -name prime256v1 -genkey -noout | $k create secret generic vmcp-signing-key --from-file=signing-key=/dev/stdin >/dev/null
+          $k get secret vmcp-delegate-auth >/dev/null 2>&1 || openssl rand -base64 48 | $k create secret generic vmcp-delegate-auth --from-file=client-secret=/dev/stdin >/dev/null
       - task: vmcp-apply
+
+
 
   vmcp-status:
     desc: Show sanitized vMCP qualification topology and runtime image IDs
@@ -98,7 +102,7 @@ tasks:
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods,services,statefulsets -n {{.NAMESPACE}}
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get mcpgroup,mcpserver,mcpoidcconfig,virtualmcpserver -n {{.NAMESPACE}}
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods -n {{.NAMESPACE}} -o custom-columns=NAME:.metadata.name,IMAGES:.spec.containers[*].image,IMAGE_IDS:.status.containerStatuses[*].imageID --no-headers
-      - cmd: "echo 'Secret names: vmcp-redis-auth vmcp-signing-key vmcp-hmac (values intentionally not inspected)'"
+      - cmd: "echo 'Secret names: vmcp-redis-auth vmcp-signing-key vmcp-hmac vmcp-delegate-auth (values intentionally not inspected)'"
 
   namespace-apply:
     internal: true
@@ -118,7 +122,7 @@ tasks:
       - task: cluster-ready
       - helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager --version=v1.17.2 --namespace=cert-manager --create-namespace --set crds.enabled=true --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --wait --timeout=4m
 
-  dex-certificate-apply:
+  certificate-apply:
     internal: true
     preconditions:
       - sh: command -v kubectl >/dev/null 2>&1
@@ -128,11 +132,21 @@ tasks:
       - cmd: |
           set -eu
           trap 'status=$?; deploy/mecak8s-vmcp/cleanup-on-failure.sh "$status"' EXIT
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/dex-tls.yaml
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/dex-tls --timeout=120s
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/fixture-tls.yaml
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/mecak8s-tls --timeout=120s
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} get secret dex-fixture-ca -o jsonpath='{.data.tls\.crt}' | base64 --decode > {{.STATE}}/dex-ca.crt
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create configmap dex-fixture-ca --from-file=ca.crt={{.STATE}}/dex-ca.crt --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/keycloak-tls --timeout=120s
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} get secret fixture-ca -o jsonpath='{.data.tls\.crt}' | base64 --decode > {{.STATE}}/fixture-ca.crt
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create configmap fixture-ca --from-file=ca.crt={{.STATE}}/fixture-ca.crt --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+
+  keycloak-apply:
+    internal: true
+    # Phase 1 of the Keycloak fixture: Keycloak runs ALONGSIDE Dex so nothing that
+    # already works breaks. Dex is retired only once the external-issuer exchange
+    # path is proven end to end.
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/keycloak.yaml
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status deploy/keycloak --timeout=300s
 
   toolhive-install:
     internal: true
@@ -248,15 +262,3 @@ tasks:
           "$@"
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
-  dex-apply:
-    internal: true
-    preconditions:
-      - sh: command -v kubectl >/dev/null 2>&1
-        msg: kubectl is required
-    cmds:
-      - task: cluster-ready
-      - cmd: |
-          set -eu
-          trap 'status=$?; deploy/mecak8s-vmcp/cleanup-on-failure.sh "$status"' EXIT
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-vmcp/dex.yaml
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/dex -n {{.NAMESPACE}} --timeout=240s

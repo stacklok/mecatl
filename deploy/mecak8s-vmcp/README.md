@@ -68,7 +68,7 @@ Bind the Kind node-port mappings to loopback only. `kind-setup` creates these ma
 
 | Host address | Kind node port | Service |
 | --- | --- | --- |
-| `https://dex.mecatl-vmcp.svc.cluster.local:5556` | `30556` | Dex |
+| `https://keycloak.mecatl-vmcp.svc.cluster.local:8443` | `30843` | Keycloak |
 | `https://mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local:18081` | `30081` | mecak8s gRPC/HTTP |
 
 The Dex and mecak8s host mappings need no `kubectl port-forward`. The vMCP
@@ -89,7 +89,7 @@ task mecak8s:kind-hosts-remove
 The exact entries managed by these tasks are:
 
 ```text
-127.0.0.1 dex.mecatl-vmcp.svc.cluster.local
+127.0.0.1 keycloak.mecatl-vmcp.svc.cluster.local
 127.0.0.1 mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local
 ```
 ## mecak8s TLS and caller identity
@@ -98,15 +98,15 @@ The Kind chart mounts the cert-manager-issued `mecak8s-tls` Secret as exact,
 read-only `tls.crt` and `tls.key` items and starts both gRPC and HTTP with the
 paired TLS flags. Its `/readyz`, `/healthz`, and `/drain` management endpoints
 remain explicit and are probed over HTTPS; they are not authenticated API
-requests. The chart mounts the public `tls.crt` item from `dex-fixture-ca` and
+requests. The chart mounts the public `tls.crt` item from `fixture-ca` and
 passes its exact path through `--oidc-ca-cert-file`; it does not set the
 process-wide `SSL_CERT_FILE`. The Kind profile enables
-`--oidc-allow-private-https-issuer` only for the in-cluster Dex Service. The
-scoped OIDC transport admits only the configured Dex host and its pinned private
-addresses; HTTPS, CA and hostname validation, redirect refusal, and per-dial
-DNS-pinned checks remain enforced. It validates the HTTPS Dex issuer and
-`mecatui-kind` audience without the deprecated combined
-HTTP/private `--oidc-insecure-allow-private-issuer` escape hatch.
+`--oidc-allow-private-https-issuer` only for the in-cluster Keycloak Service. The
+scoped OIDC transport admits only the configured Keycloak host and its pinned
+private addresses; HTTPS, CA and hostname validation, redirect refusal, and
+per-dial DNS-pinned checks remain enforced. It validates the HTTPS Keycloak realm
+issuer and the shared `http://127.0.0.1:18080/mcp` audience without the deprecated
+combined HTTP/private `--oidc-insecure-allow-private-issuer` escape hatch.
 
 For a host-only TLS check, use the loopback-only mecak8s NodePort and export
 the public fixture CA to `.scratch/` (the CA is public, but do not export or
@@ -116,7 +116,7 @@ print any private-key Secret item):
 task mecak8s:kind-hosts-add
 # connect to mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local:18081
 kubectl --kubeconfig=deploy/mecak8s-vmcp/kconfig.yaml --context=kind-mecatl-dev \
-  --namespace=mecatl-vmcp get secret dex-fixture-ca -o jsonpath='{.data.tls\.crt}' | base64 --decode > .scratch/mecak8s-vmcp-ca.crt
+  --namespace=mecatl-vmcp get secret fixture-ca -o jsonpath='{.data.tls\.crt}' | base64 --decode > .scratch/mecak8s-vmcp-ca.crt
 ```
 
 A normal-terminal `mecatui connect` flow with custom-CA TLS and OIDC PKCE is
@@ -138,30 +138,105 @@ credential storage.
 ## Shared Dex HTTPS issuer
 
 `kind-setup` installs the pinned cert-manager chart before it requests the
-fixture-local CA and the `dex-tls` Certificate. cert-manager generates the CA
+fixture-local CA and the `keycloak-tls` Certificate. cert-manager generates the CA
 and leaf Secret values in the cluster; this repository contains neither a
 private key nor a certificate value.
 
 The sole shared issuer is
-`https://dex.mecatl-vmcp.svc.cluster.local:5556`. Dex publishes discovery at
-`https://dex.mecatl-vmcp.svc.cluster.local:5556/.well-known/openid-configuration`
-and JWKS at `https://dex.mecatl-vmcp.svc.cluster.local:5556/keys`; tokens issued
+`https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl`. Keycloak publishes discovery at
+`https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl/.well-known/openid-configuration`
+and JWKS at `https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl/protocol/openid-connect/certs`; tokens issued
 there use that HTTPS URL as `iss`.
 
 Pods use that Service-DNS name directly. For temporary host access, run
 `task mecak8s:kind-hosts-add`; remove the exact aliases with
 `task mecak8s:kind-hosts-remove` when finished. The host and pod therefore use
-the same HTTPS issuer URL, with the Kind mapping bound to loopback only. The `dex-tls` certificate covers the Service DNS name, `localhost`, and `127.0.0.1`.
+the same HTTPS issuer URL, with the Kind mapping bound to loopback only. The `keycloak-tls` certificate covers the Service DNS name, `localhost`, and `127.0.0.1`.
 Mecak8s trusts the fixture CA through its direct `--oidc-ca-cert-file` flag and
 admits only this private HTTPS Service issuer; it does not use the deprecated
 HTTP/private issuer escape hatch; this is without OIDC insecure relaxation.
 
 | Endpoint | Role |
 | --- | --- |
-| `https://dex.mecatl-vmcp.svc.cluster.local:5556` | Shared HTTPS Dex issuer for pod OIDC and host alias access. |
+| `https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl` | Shared HTTPS Keycloak realm issuer for pod OIDC and host alias access. |
 | `http://127.0.0.1:18080` | Separate loopback vMCP embedded authorization-server and browser callback baseline; it is not the Dex issuer. |
 
 The fixture deliberately installs no `NetworkPolicy`: the prior Dex-only egress
 policy blocked DNS and Redis, so it could not support the storage-free mecak8s
 runtime. NetworkPolicy design and enforcement evidence are out of scope for this
 local qualification; the default Kind CNI is not an enforcement proof.
+
+## RFC 8693 delegation
+
+The fixture proves **external-issuer** token exchange: a caller authenticates at
+Keycloak, and a confidential delegate client exchanges that Keycloak token for a
+short-lived, scope-attenuated vMCP token.
+
+```text
+alice -> Keycloak -> access token (scope: mcp:read, aud: vMCP resource)
+      -> RFC 8693 exchange at ToolHive's embedded AS as mecak8s-delegate
+      -> T2 (act.sub=mecak8s-delegate, act.act.sub=mecatui-kind, scp=[mcp:read])
+      -> vMCP -> Yardstick
+```
+
+Keycloak replaced Dex because Dex cannot issue a usable subject token: its JWT
+carries no `scope`/`scp` claim, and its id_token carries `at_hash`, which ToolHive
+rejects outright. See [the delegation contract report](../../docs/design/mecak8s-vmcp-delegation-contract.md) for the
+contract, and `keycloak-realm-generate.sh` for how the realm JSON is produced
+(do not hand-edit it -- a hand-written `clientScopes` array silently replaces
+Keycloak's built-ins and drops the `sub` claim).
+
+### Known gaps
+
+- `incomingAuth.authzConfig` is absent. A Cedar authorizer alongside an embedded
+  auth server makes the operator derive `primaryUpstreamProvider`, after which
+  Cedar resolves claims from the upstream IdP token -- which a delegated token
+  never has. Every tool is then filtered before policy evaluation. See
+  [stacklok/toolhive#6424](https://github.com/stacklok/toolhive/issues/6424).
+  The fixture therefore demonstrates authentication only, not authorization.
+- `SSL_CERT_FILE` is still set on the vMCP pod because `TrustedIssuerConfig` has
+  no CA-bundle field ([#6429](https://github.com/stacklok/toolhive/issues/6429)).
+- mecak8s is not yet in the token path, so `values-kind-vmcp.yaml`'s `audience`
+  is an unexercised placeholder.
+
+### Getting a delegated token
+
+Requires the loopback aliases from `task mecak8s:kind-hosts-add` (Keycloak is
+reached by its in-cluster name, so one URL works from host and pod alike), plus a
+port-forward for vMCP:
+
+```sh
+kubectl -n mecatl-vmcp port-forward svc/vmcp-vmcp 18080:4483
+```
+
+Then two calls. First, the caller authenticates at Keycloak:
+
+```sh
+KC=https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl
+curl -s --cacert .scratch/kind/mecatl-dev/fixture-ca.crt \
+  -X POST "$KC/protocol/openid-connect/token" \
+  -d grant_type=password -d client_id=mecatui-kind \
+  -d username=alice -d password=Secret123 \
+  -d 'scope=openid email mcp:read' | jq -r .access_token
+```
+
+Then exchange it. Read the delegate secret as RAW BYTES -- `$(...)` strips the
+trailing newline the Secret actually stores, which fails as `invalid_client`:
+
+```sh
+SEC=$(kubectl -n mecatl-vmcp get secret vmcp-delegate-auth \
+       -o jsonpath='{.data.client-secret}' | base64 -d | jq -sRr @uri)
+curl -s -X POST http://127.0.0.1:18080/oauth/token \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-binary "grant_type=urn:ietf:params:oauth:grant-type:token-exchange\
+&subject_token=$T1&subject_token_type=urn:ietf:params:oauth:token-type:access_token\
+&scope=mcp%3Aread&resource=http%3A%2F%2F127.0.0.1%3A18080%2Fmcp\
+&client_id=mecak8s-delegate&client_secret=$SEC"
+```
+
+The result is the delegated token: `act.sub=mecak8s-delegate`,
+`act.act.sub=mecatui-kind`, `scp=[mcp:read]`, audience bound to the vMCP
+resource, expiry clamped to the subject token's.
+
+The upstream browser leg (`upstreamProviders`) is configured because the CRD
+requires at least one, but nothing in this flow exercises it.

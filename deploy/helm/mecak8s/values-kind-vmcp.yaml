@@ -3,16 +3,32 @@
 # values-kind-vmcp.yaml); never pass it alone or to e2e/k8s's suite.
 #
 # Every reference below (oidc.caSecret, tls.secretName) names a Secret/ConfigMap
-# that deploy/mecak8s-vmcp/Taskfile.yml's dex-certificate-apply step creates via
+# that deploy/mecak8s-vmcp/Taskfile.yml's certificate-apply step creates via
 # cert-manager before this chart is installed. e2e/k8s's Ginkgo suite creates no
 # such material, which is why this overlay must stay split out of
 # values-kind.yaml (see the comment there).
 oidc:
   enabled: true
-  issuer: https://dex.mecatl-vmcp.svc.cluster.local:5556
-  audience: mecatui-kind
+  # mecak8s and vMCP share ONE audience, deliberately. The two hops are separated
+  # by ISSUER, not audience: the caller's token is Keycloak-issued, the delegated
+  # token is embedded-AS-issued, and each service accepts only its own issuer. A
+  # leaked caller token replayed directly at vMCP fails on `iss`, not on `aud`.
+  #
+  # INVARIANT: mecak8s must never also trust the embedded auth server. Issuer
+  # separation is the entire boundary here; trusting both issuers would turn the
+  # shared audience into real audience confusion.
+  #
+  # Per-hop audiences would need a multi-valued `aud` (ToolHive requires the
+  # delegated token's audience to be a subset of the subject token's), which is a
+  # Keycloak-ism -- Entra issues one resource per access token and Okta ties `aud`
+  # to the authorization server. A single shared audience is what transfers.
+  #
+  # The value must equal vmcp.yaml's incomingAuth.resourceUrl: the operator derives
+  # the auth server's allowed_audiences from resourceUrl alone, so it is not free.
+  issuer: https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl
+  audience: http://127.0.0.1:18080/mcp
   allowPrivateHTTPSIssuer: true
-  caSecret: dex-fixture-ca
+  caSecret: fixture-ca
   caKey: tls.crt
 
 service:

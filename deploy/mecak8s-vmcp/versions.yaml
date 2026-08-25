@@ -9,6 +9,11 @@ toolhive:
   sourceCommit: "b3df9689bdb7d55d0765565890ba9dc0c076dec0"
   operatorImage: "ghcr.io/stacklok/toolhive/operator:v0.44.0"
   vmcpImage: "ghcr.io/stacklok/toolhive/vmcp:v0.44.0"
+keycloak:
+  # Fixture IdP for the external-issuer token-exchange path. Unlike Dex, Keycloak
+  # emits `scope` on access tokens and can shape `aud` via an audience mapper.
+  version: "26.7.2"
+  image: "quay.io/keycloak/keycloak:26.7.2"
 yardstick:
   version: "1.1.1"
   sourceCommit: "e5b8908ed6f53c1171ac805d82cf858d2982fa19e"

@@ -34,7 +34,7 @@ spec:
     issuer: http://127.0.0.1:18080
     caBundleRef:
       configMapRef:
-        name: dex-fixture-ca
+        name: fixture-ca
         key: ca.crt
     insecureAllowHTTP: true
 ---
@@ -50,13 +50,33 @@ spec:
     oidcConfigRef:
       name: vmcp-embedded-auth
       audience: http://127.0.0.1:18080/mcp
-      scopes: [openid, profile, email, offline_access]
+      # This list IS the embedded AS's advertised scopes_supported -- the operator
+      # copies it verbatim (vmcpconfig/converter.go deriveScopesSupported). It is NOT
+      # derived from the upstream IdP's discovery document, so an application-semantic
+      # scope has to be declared here to be requestable through the AS at all.
+      scopes: [openid, profile, email, offline_access, "mcp:read"]
       resourceUrl: http://127.0.0.1:18080/mcp
-    authzConfig:
-      type: inline
-      inline:
-        policies:
-          - permit(principal, action, resource);
+    # authzConfig is deliberately ABSENT. It previously held a permit-all Cedar
+    # policy (`permit(principal, action, resource);`), which enforced nothing --
+    # but merely HAVING a Cedar authorizer alongside an embedded auth server with
+    # upstream providers makes the operator auto-derive
+    # `authz.primaryUpstreamProvider` from the sole upstream (we never set it). Cedar then takes the
+    # UPSTREAM IdP token as its primary claim source
+    # (pkg/authz/authorizers/cedar/core.go:607-623), and an RFC 8693 delegated
+    # token has no UpstreamTokens[<provider>] -- that binding only exists for a
+    # browser-flow session. resolveClaims fails closed, every tool is filtered,
+    # and the permit-all policy is never even evaluated:
+    #
+    #   admission: tool authorization check failed, skipping
+    #   tool=yardstick_echo error="upstream token for provider \"<upstream>\" not found in identity"
+    #
+    # So delegation and upstream-claims Cedar authz are mutually exclusive. This is
+    # NOT specific to the fixture IdP: upstreamProviders is Required MinItems=1, so
+    # primaryUpstreamProvider is always derived, and an EXTERNAL-issuer T2 has no
+    # upstream token either. Dropping a permit-all policy costs no security and isolates the
+    # delegation contract A2 is qualifying. Authentication (incomingAuth OIDC) is
+    # unaffected. See the ToolHive issue linked from the A2 report before adding
+    # any real policy back.
   outgoingAuth:
     source: discovered
   config:
@@ -64,6 +84,44 @@ spec:
       conflictResolution: prefix
   authServerConfig:
     issuer: http://127.0.0.1:18080
+    # A loopback http:// issuer with delegateClients is an EXPLICIT opt-in, not a
+    # workaround: CEL admits the pair only when this flag is set, and the runtime
+    # then enforces that the issuer really is loopback (net.ParseIP, so a host like
+    # http://127.0.0.1.evil.com is rejected at reconcile). Do not promote this to a
+    # non-loopback issuer -- the runtime rejects it, and vMCP serves plaintext only
+    # and cannot terminate TLS, so a real HTTPS edge would be required first.
+    insecureAllowConfidentialOverLoopbackHTTP: true
+    # The EXTERNAL-issuer path: a token minted by Keycloak (not by this AS) is accepted
+    # as an RFC 8693 subject token. This is the topology the A2 handover actually
+    # sketched -- caller authenticates at the enterprise IdP, a broker exchanges that
+    # token -- and it is the half A2 could not test, because Dex emits no scope/scp and
+    # stamps at_hash on its id_token.
+    trustedIssuers:
+      - issuerUrl: https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl
+        # jwksUrl is explicit because allowPrivateIPs requires it (CRD CEL rule).
+        jwksUrl: https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl/protocol/openid-connect/certs
+        # MUST be a resource identifier, not a client id -- an id_token's `aud` is the
+        # requesting client's own id, so a client-id value here would weaken the
+        # id-token-vs-access-token discrimination. Keycloak stamps this via the
+        # mcp:read scope's audience mapper.
+        expectedAudience: http://127.0.0.1:18080/mcp
+        allowedDelegateClients: [mecak8s-delegate]
+        # REQUIRED, and default-deny: without allowedActors (or actorMatcher) the AS
+        # logs "no subject tokens from it will be accepted" at startup and rejects
+        # every exchange with an opaque "subject token is invalid or could not be
+        # verified". The actor is the client the external token was issued TO.
+        # Keycloak names that `azp`; it emits no `client_id` claim, which is the
+        # default actorClaim.
+        actorClaim: azp
+        allowedActors: [mecatui-kind]
+        allowPrivateIPs: true
+    delegateClients:
+      - clientId: mecak8s-delegate
+        clientSecretRef: {name: vmcp-delegate-auth, key: client-secret}
+        # mcp:read is the application-semantic scope this fixture attenuates on;
+        # a requested scope must be in BOTH this ceiling and the subject token's grant.
+        scopes: [openid, email, "mcp:read"]
+        audiences: ["http://127.0.0.1:18080/mcp"]
     signingKeySecretRefs:
       - {name: vmcp-signing-key, key: signing-key}
     hmacSecretRefs:
@@ -74,19 +132,36 @@ spec:
       authCodeLifespan: 5m
     disableUpstreamTokenInjection: true
     upstreamProviders:
-      - name: dex
+      - name: keycloak
         type: oauth2
         oauth2Config:
-          authorizationEndpoint: https://dex.mecatl-vmcp.svc.cluster.local:5556/auth
-          tokenEndpoint: https://dex.mecatl-vmcp.svc.cluster.local:5556/token
+          authorizationEndpoint: https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl/protocol/openid-connect/auth
+          tokenEndpoint: https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl/protocol/openid-connect/token
           identityFromToken:
             subjectPath: id_token|@upstreamjwt|sub
             namePath: id_token|@upstreamjwt|name
             emailPath: id_token|@upstreamjwt|email
           clientId: vmcp-browser
           redirectUri: http://127.0.0.1:18080/oauth/callback
-          scopes: [openid, profile, email, offline_access]
+          # No offline_access on the UPSTREAM leg: Keycloak refuses it unless the
+          # user holds the offline_access realm role ("Offline tokens not allowed for
+          # the user or client"), and the embedded AS does not need it -- this leg
+          # only establishes identity, and disableUpstreamTokenInjection stops the
+          # upstream token propagating anyway. The AS still issues its own refresh
+          # tokens to its own clients via incomingAuth's scope list.
+          scopes: [openid, profile, email, "mcp:read"]
           allowPrivateIPs: true
+          # Scopes trust for the embedded AS's OUTBOUND calls to Keycloak to this CA
+          # only, replacing the process-wide SSL_CERT_FILE override the pod used to
+          # carry (stacklok/toolhive#6417). Keycloak uses the same fixture CA as Dex,
+          # so the exported fixture-ca ConfigMap still applies.
+          caBundleRef:
+            configMapRef:
+              name: fixture-ca
+              # NOTE: key is REQUIRED despite the CRD field doc claiming it
+              # defaults to ca.crt -- corev1.ConfigMapKeySelector marks Key
+              # required, so omitting it fails admission.
+              key: ca.crt
     storage:
       type: redis
       redis:
@@ -98,14 +173,6 @@ spec:
       automountServiceAccountToken: true
       containers:
         - name: vmcp
-          # ToolHive's upstreamProviders (oauth2Config/oidcConfig) have no CA-bundle
-          # field, so the embedded auth server's outbound token exchange with Dex
-          # otherwise only trusts the system root store. SSL_CERT_FILE makes Go's
-          # x509.SystemCertPool() trust the fixture CA process-wide instead; the
-          # only outbound HTTPS target from this pod is Dex, so a full override
-          # (rather than an additive merge) is safe here.
-          env:
-            - {name: SSL_CERT_FILE, value: /config/certs/dex-fixture-ca/ca.crt}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}

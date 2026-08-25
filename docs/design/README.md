@@ -111,3 +111,10 @@ now. To widen it, add a glob to the `patterns` slice in `TestRealDesignDocsCitat
 ## The records
 
 The per-feature design records are now ADRs — see the **[ADR index](../adr/README.md)**.
+
+Qualification reports — point-in-time findings about an external system's contract,
+kept because the invariants they pin are expensive to rediscover:
+
+- [mecak8s vMCP delegation contract](mecak8s-vmcp-delegation-contract.md) — what
+  ToolHive's RFC 8693 token exchange accepts and emits, qualified against a pinned
+  runtime. Its fixture is [deploy/mecak8s-vmcp](../../deploy/mecak8s-vmcp/README.md).
