@@ -1,34 +1,34 @@
 # Disposable Kind mecak8s + ToolHive vMCP integration fixture
 
 This integration fixture exercises an OAuth-protected ToolHive vMCP endpoint in a disposable
-Kind cluster. It deploys the local mecak8s chart, Dex, ToolHive operator, a
+Kind cluster. It deploys the local mecak8s chart, Keycloak, ToolHive operator, a
 dedicated ToolHive Redis, Yardstick, and one `VirtualMCPServer`. Mecak8s is
 present, but mecak8s is not in the outbound vMCP path: this does not implement a
 credential broker, SPIFFE, sidecars, or mecatui remote login.
 
 ## Pinned runtimes
 
-- ToolHive `v0.44.0`, commit `b3df9689bdb7d55d0765565890ba9dc0c076dec0`
+- ToolHive `v0.45.0`, commit `cc922a8b47652988ae4d057a957942385fc59270`
 - Yardstick `v1.1.1`, commit `e5b8908ed6f53c1171ac805d82cf858d2982fa19e`,
   image `ghcr.io/stackloklabs/yardstick/yardstick-server:1.1.1`
 
-`versions.yaml` records the pins. `task mecak8s:vmcp-status` captures the
-actual Pod image IDs; the mecatl ToolHive Go-module version is not runtime proof.
+`versions.yaml` records the pins. `task mecak8s:vmcp-status` captures the actual
+Pod image IDs; the mecatl ToolHive Go-module version is not runtime proof.
 
 ## Scope
 
 ```text
 browser PKCE client -> loopback vMCP + embedded AS -> Yardstick /mcp
                                   |
-                                  +-> Dex Alice or Bob
+                                  +-> Keycloak Alice or Bob
 ```
 
 OAuth protects the vMCP resource. Yardstick is an internal deterministic,
-read-only backend and receives no Dex credential. This proves ToolHive OAuth
+read-only backend and receives no Keycloak credential. This proves ToolHive OAuth
 sessions and fail-closed protected-resource handling, not external provider
 grants or mecak8s outbound brokerage.
 
-### Local-only Dex logins
+### Local-only Keycloak logins
 
 The disposable fixture deliberately uses public test credentials so an operator
 can complete the browser journeys without recovering a password hash:
@@ -38,7 +38,7 @@ can complete the browser journeys without recovering a password hash:
 | `alice@example.com` | `Secret123` |
 | `bob@example.com` | `Secret123` |
 
-They are valid only for the in-memory Dex deployment created by this fixture;
+They are valid only for the ephemeral Keycloak realm imported by this fixture;
 they are not Kubernetes Secret values, provider credentials, or reusable user
 passwords.
 
@@ -71,7 +71,7 @@ Bind the Kind node-port mappings to loopback only. `kind-setup` creates these ma
 | `https://keycloak.mecatl-vmcp.svc.cluster.local:8443` | `30843` | Keycloak |
 | `https://mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local:18081` | `30081` | mecak8s gRPC/HTTP |
 
-The Dex and mecak8s host mappings need no `kubectl port-forward`. The vMCP
+The Keycloak and mecak8s host mappings need no `kubectl port-forward`. The vMCP
 Service remains ClusterIP and still needs a loopback-only port-forward for the
 browser resource endpoint.
 
@@ -122,11 +122,11 @@ kubectl --kubeconfig=deploy/mecak8s-vmcp/kconfig.yaml --context=kind-mecatl-dev 
 A normal-terminal `mecatui connect` flow with custom-CA TLS and OIDC PKCE is
 not implemented in this fixture, so the live client connection demonstration
 is deferred. When that client support lands, it must use this loopback mapping,
-the exported fixture CA, and a Dex-issued token; plaintext and an untrusted CA
+the exported fixture CA, and a Keycloak-issued token; plaintext and an untrusted CA
 must fail before an authenticated RPC is served. No token or credential is
 stored by this fixture.
 
-## Separate Dex public clients
+## Separate Keycloak public clients
 
 `vmcp-browser` remains the embedded-vMCP browser client and uses
 `http://127.0.0.1:18080/oauth/callback`. `mecatui-kind` is a separate public
@@ -135,7 +135,7 @@ client reserved for a normal-terminal loopback PKCE journey at
 fixture does not implement mecatui login, device flow, headless login, or
 credential storage.
 
-## Shared Dex HTTPS issuer
+## Shared Keycloak HTTPS issuer
 
 `kind-setup` installs the pinned cert-manager chart before it requests the
 fixture-local CA and the `keycloak-tls` Certificate. cert-manager generates the CA
@@ -159,9 +159,9 @@ HTTP/private issuer escape hatch; this is without OIDC insecure relaxation.
 | Endpoint | Role |
 | --- | --- |
 | `https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl` | Shared HTTPS Keycloak realm issuer for pod OIDC and host alias access. |
-| `http://127.0.0.1:18080` | Separate loopback vMCP embedded authorization-server and browser callback baseline; it is not the Dex issuer. |
+| `http://127.0.0.1:18080` | Separate loopback vMCP embedded authorization-server and browser callback baseline; it is not the Keycloak issuer. |
 
-The fixture deliberately installs no `NetworkPolicy`: the prior Dex-only egress
+The fixture deliberately installs no `NetworkPolicy`: an earlier fixture egress
 policy blocked DNS and Redis, so it could not support the storage-free mecak8s
 runtime. NetworkPolicy design and enforcement evidence are out of scope for this
 local qualification; the default Kind CNI is not an enforcement proof.

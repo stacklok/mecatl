@@ -150,13 +150,25 @@ tasks:
 
   toolhive-install:
     internal: true
+    # Defaults install the pinned OCI charts. To test an unreleased ToolHive
+    # branch, build images with ko, `kind load` them, and override:
+    #   THV_CRDS_CHART=<path>/deploy/charts/operator-crds \
+    #   THV_OPERATOR_CHART=<path>/deploy/charts/operator \
+    #   THV_VERSION_FLAG= \
+    #   THV_IMAGE_SETS='--set operator.image=... --set operator.vmcpImage=...' \
+    #   task mecak8s:vmcp-setup
+    vars:
+      THV_CRDS_CHART: '{{.THV_CRDS_CHART | default "oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds"}}'
+      THV_OPERATOR_CHART: '{{.THV_OPERATOR_CHART | default "oci://ghcr.io/stacklok/toolhive/toolhive-operator"}}'
+      THV_VERSION_FLAG: '{{.THV_VERSION_FLAG | default "--version=0.45.0"}}'
+      THV_IMAGE_SETS: '{{.THV_IMAGE_SETS | default ""}}'
     preconditions:
       - sh: command -v helm >/dev/null 2>&1
         msg: helm is required
     cmds:
       - task: cluster-ready
-      - helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version=0.44.0 --namespace=toolhive-system --create-namespace --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --wait --timeout=4m
-      - helm upgrade --install toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator --version=0.44.0 --namespace=toolhive-system --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --reset-values --wait --timeout=4m
+      - helm upgrade --install toolhive-operator-crds {{.THV_CRDS_CHART}} {{.THV_VERSION_FLAG}} --namespace=toolhive-system --create-namespace --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --wait --timeout=4m
+      - helm upgrade --install toolhive-operator {{.THV_OPERATOR_CHART}} {{.THV_VERSION_FLAG}} {{.THV_IMAGE_SETS}} --namespace=toolhive-system --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --reset-values --wait --timeout=4m
 
   vmcp-apply:
     internal: true

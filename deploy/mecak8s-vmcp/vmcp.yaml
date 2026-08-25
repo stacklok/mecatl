@@ -173,6 +173,15 @@ spec:
       automountServiceAccountToken: true
       containers:
         - name: vmcp
+          # SSL_CERT_FILE is back, and only for the trustedIssuers leg. #6417 gave
+          # upstreamProviders a scoped caBundleRef (used above), but TrustedIssuerConfig
+          # has no CA-bundle field at all (stacklok/toolhive#6429), so the JWKS fetch
+          # against a private-CA Keycloak has no other way to trust it.
+          # insecureAllowHTTP does not help: issuerUrl is an exact match against the
+          # token's `iss`, so an HTTPS realm issuer forces an HTTPS issuerUrl.
+          # Remove this once #6429 ships and move the CA onto the trusted issuer.
+          env:
+            - {name: SSL_CERT_FILE, value: /config/certs/fixture-ca/ca.crt}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}

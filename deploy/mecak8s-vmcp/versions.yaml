@@ -5,10 +5,10 @@ certManager:
   chartVersion: "v1.17.2"
   chart: "oci://quay.io/jetstack/charts/cert-manager"
 toolhive:
-  chartVersion: "0.44.0"
-  sourceCommit: "b3df9689bdb7d55d0765565890ba9dc0c076dec0"
-  operatorImage: "ghcr.io/stacklok/toolhive/operator:v0.44.0"
-  vmcpImage: "ghcr.io/stacklok/toolhive/vmcp:v0.44.0"
+  chartVersion: "0.45.0"
+  sourceCommit: "cc922a8b47652988ae4d057a957942385fc59270"
+  operatorImage: "ghcr.io/stacklok/toolhive/operator:v0.45.0"
+  vmcpImage: "ghcr.io/stacklok/toolhive/vmcp:v0.45.0"
 keycloak:
   # Fixture IdP for the external-issuer token-exchange path. Unlike Dex, Keycloak
   # emits `scope` on access tokens and can shape `aud` via an audience mapper.

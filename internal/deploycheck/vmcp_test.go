@@ -19,7 +19,7 @@ func readRepoFile(t *testing.T, path string) string {
 func TestVMCPFixturePinsAndTasks(t *testing.T) {
 	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
 	gitignore := readRepoFile(t, ".gitignore")
-	for _, required := range []string{"vmcp-check:", "vmcp-setup:", "vmcp-status:", "toolhive-operator-crds", "--version=0.44.0", "vmcp-redis-auth", "vmcp-signing-key", "vmcp-hmac", "wait --for=condition=Ready virtualmcpserver/vmcp", "rollout status deployment/vmcp", "kind get kubeconfig --name={{.CLUSTER}} > {{.KUBECONFIG}}"} {
+	for _, required := range []string{"vmcp-check:", "vmcp-setup:", "vmcp-status:", "toolhive-operator-crds", "--version=0.45.0", "vmcp-redis-auth", "vmcp-signing-key", "vmcp-hmac", "wait --for=condition=Ready virtualmcpserver/vmcp", "rollout status deployment/vmcp", "kind get kubeconfig --name={{.CLUSTER}} > {{.KUBECONFIG}}"} {
 		if !strings.Contains(taskfile, required) {
 			t.Errorf("fixture Taskfile missing %q", required)
 		}
@@ -42,7 +42,7 @@ func TestVMCPFixturePinsBackendAndBoundary(t *testing.T) {
 	manifest := readRepoFile(t, "deploy/mecak8s-vmcp/vmcp.yaml")
 	kc := readRepoFile(t, "deploy/mecak8s-vmcp/keycloak.yaml")
 	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
-	for _, required := range []string{"0.44.0", "b3df9689bdb7d55d0765565890ba9dc0c076dec0", "1.1.1", "e5b8908ed6f53c1171ac805d82cf858d2982fa19e"} {
+	for _, required := range []string{"0.45.0", "cc922a8b47652988ae4d057a957942385fc59270", "1.1.1", "e5b8908ed6f53c1171ac805d82cf858d2982fa19e"} {
 		if !strings.Contains(versions, required) {
 			t.Errorf("versions missing %q", required)
 		}
