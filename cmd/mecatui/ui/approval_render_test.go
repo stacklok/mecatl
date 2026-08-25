@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -14,8 +15,29 @@ import (
 // details toggle) and strips ANSI so we can assert on substrings, matching the
 // existing diff_test.go style.
 func modalPlain(ask pendingAsk, expand bool) string {
+	return stripANSIstr(renderApprovalModal(ask, expand, 80, 24))
+}
+
+func renderApprovalModal(ask pendingAsk, expand bool, width, height int) string {
 	r := newTestRenderer()
-	return stripANSIstr(r.renderPermissionModal(ask, expand, 0, 80, 24, 0))
+	s := approvalSurfaceForRender(r, ask, expand, 0, 0)
+	return s.renderPermissionModal(width, height)
+}
+
+func renderApprovalModalWithRenderer(r *renderer, ask pendingAsk, expand bool, width, height int) string {
+	s := approvalSurfaceForRender(r, ask, expand, 0, 0)
+	return s.renderPermissionModal(width, height)
+}
+
+func approvalSurfaceForRender(r *renderer, ask pendingAsk, expand bool, queued, argsOffset int) approvalSurface {
+	return approvalSurface{
+		ask:         ask,
+		queue:       make([]pendingAsk, queued),
+		askVPOffset: argsOffset,
+		expandTools: expand,
+		deps:        surfaceDeps{theme: r.th, marks: r.marks},
+		render:      newApprovalRender(r),
+	}
 }
 
 // TestPermissionModalEditDiff: an Edit ask shows the -/+ diff, not raw JSON.
@@ -176,6 +198,45 @@ func TestPermissionModalNoAlwaysForChild(t *testing.T) {
 	}
 }
 
+func TestPermissionModalChildReasonsWrapToWidth(t *testing.T) {
+	reason := strings.Repeat("child approval reason needs a readable wrapped line ", 8)
+	for _, ask := range []pendingAsk{
+		{Tool: "Bash", Args: `{"command":"printf child"}`, Reason: reason},
+		{Tool: "WebFetch", Args: `{"url":"https://example.com/child"}`, Reason: reason},
+	} {
+		rendered := renderApprovalModal(ask, false, 52, 24)
+		for _, line := range strings.Split(stripANSIstr(rendered), "\n") {
+			if w := lipgloss.Width(line); w > 52 {
+				t.Fatalf("%s child reason overflows (%d > 52): %q", ask.Tool, w, line)
+			}
+		}
+	}
+}
+
+func TestApprovalReasonWrapsInFullArgsAndPlanViews(t *testing.T) {
+	reason := strings.Repeat("childreason ", 30)
+
+	args := approvalModel(t, pendingAsk{AskID: "child:1:a", Tool: "Bash", Args: `{"command":"printf child"}`, Reason: reason})
+	args = applyAll(args, tea.WindowSizeMsg{Width: 52, Height: 30})
+	approvalSurfaceOf(t, args).argsViewOpen = true
+	assertApprovalViewFits(t, args, 52)
+
+	plan := planAskModel(t, false)
+	plan = applyAll(plan, tea.WindowSizeMsg{Width: 52, Height: 30})
+	approvalSurfaceOf(t, plan).ask.Reason = reason
+	approvalSurfaceOf(t, plan).ask.Args = ""
+	assertApprovalViewFits(t, plan, 52)
+}
+
+func assertApprovalViewFits(t *testing.T, m Model, width int) {
+	t.Helper()
+	for _, line := range strings.Split(stripANSIstr(m.View().Content), "\n") {
+		if strings.Contains(line, "childreason") && lipgloss.Width(line) > width {
+			t.Fatalf("approval reason overflows (%d > %d): %q", lipgloss.Width(line), width, line)
+		}
+	}
+}
+
 // countLines counts newline-separated lines for the taller-than assertion.
 func countLines(s string) int { return strings.Count(s, "\n") + 1 }
 
@@ -186,8 +247,7 @@ func TestPermissionModalArgsWrapLongBash(t *testing.T) {
 	longCmd := "find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' | awk -F: '{print $1}' | sort | uniq -c | sort -rn | head -40"
 	args := `{"command":"` + longCmd + `"}`
 	ask := pendingAsk{Tool: "Bash", Args: args, Reason: "Bash requires approval"}
-	r := newTestRenderer()
-	rendered := r.renderPermissionModal(ask, false, 0, 80, 24, 0)
+	rendered := renderApprovalModal(ask, false, 80, 24)
 	// The card renders inside an 80-col region; every visible line must fit.
 	for _, line := range strings.Split(stripANSIstr(rendered), "\n") {
 		if w := lipgloss.Width(line); w > 80 {
@@ -198,6 +258,42 @@ func TestPermissionModalArgsWrapLongBash(t *testing.T) {
 	plain := stripANSIstr(rendered)
 	if !strings.Contains(plain, "find . -name") || !strings.Contains(plain, "uniq -c") {
 		t.Errorf("wrapped modal must still carry the command, got %q", plain)
+	}
+}
+
+// TestAskArgsCardContentWidthUsesOfferedContentWidth pins the approval-surface
+// geometry contract: Render receives askCard CONTENT width, so the askCard frame
+// is subtracted only once by the parent. The outer-card cap converts once to a
+// content cap before limiting the supplied width.
+func TestAskArgsCardContentWidthUsesOfferedContentWidth(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	frame := th.Style("askCard").GetHorizontalFrameSize()
+	maxContentWidth := permissionModalMaxWidth - frame
+
+	if got := askArgsCardContentWidth(th, 80); got != 80 {
+		t.Errorf("content width = %d, want full offered 80 (must not subtract frame %d again)", got, frame)
+	}
+	if got := askArgsCardContentWidth(th, maxContentWidth+20); got != maxContentWidth {
+		t.Errorf("capped content width = %d, want outer cap's content width %d", got, maxContentWidth)
+	}
+}
+
+// TestAskArgsMiniViewportUsesFullOfferedContentArea verifies that card args wrap
+// across the full content area offered by the parent while the resulting outer
+// card still cannot exceed permissionModalMaxWidth.
+func TestAskArgsMiniViewportUsesFullOfferedContentArea(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	argsFrame := th.Style("askArgs").GetHorizontalFrameSize()
+	cardFrame := th.Style("askCard").GetHorizontalFrameSize()
+
+	for _, contentWidth := range []int{80, permissionModalMaxWidth} {
+		t.Run(strconv.Itoa(contentWidth), func(t *testing.T) {
+			region := askArgsMiniViewport(th, strings.Repeat("x", contentWidth*2), contentWidth, 24)
+			want := min(contentWidth, permissionModalMaxWidth-cardFrame) - argsFrame
+			if region.blockWidth != want {
+				t.Errorf("args block width = %d, want %d", region.blockWidth, want)
+			}
+		})
 	}
 }
 
@@ -214,7 +310,8 @@ func TestPermissionModalArgsMiniViewportCapsHeight(t *testing.T) {
 	args := `{"command":"` + strings.Join(cmdLines, `\n`) + `"}`
 	ask := pendingAsk{Tool: "Bash", Args: args, offerAlways: true}
 	r := newTestRenderer()
-	body, buttonsRow := r.permissionModalBodyParts(ask, false, 0, 80, 24, 0)
+	s := approvalSurfaceForRender(r, ask, false, 0, 0)
+	body, buttonsRow := s.permissionModalBodyParts(80, 24)
 	plain := stripANSIstr(body)
 	lines := strings.Split(plain, "\n")
 
@@ -241,7 +338,8 @@ func TestPermissionModalArgsMiniViewportCapsHeight(t *testing.T) {
 		t.Errorf("buttonsRow %d does not land on the button box: %q / %q", buttonsRow, lines[buttonsRow], lines[buttonsRow+1])
 	}
 	// Scrolling the mini-viewport reveals later content without moving buttonsRow.
-	body2, buttonsRow2 := r.permissionModalBodyParts(ask, false, 0, 80, 24, 4)
+	s.askVPOffset = 4
+	body2, buttonsRow2 := s.permissionModalBodyParts(80, 24)
 	if buttonsRow2 != buttonsRow {
 		t.Errorf("scrolling the mini-viewport must not move buttonsRow (%d → %d)", buttonsRow, buttonsRow2)
 	}

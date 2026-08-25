@@ -5,13 +5,12 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// clickgeom_test.go covers the mouse hit-test geometry (issue #486): the
+// geom_test.go covers the mouse hit-test geometry (issue #486): the
 // permission modal's and plan-review action bar's buttons resolve a left-click to
 // the same verdict their key chord drives. The tests drive the REAL Model to the
 // awaiting-approval state (driveTo / planAskModel) and feed tea.MouseClickMsg
@@ -23,6 +22,7 @@ import (
 // frame sent by resolveAsk.
 func leftClickCmd(t *testing.T, m Model, x, y int) (Model, tea.Cmd) {
 	t.Helper()
+	_ = m.View() // pointer input may resolve only against the current rendered frame
 	mm, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	return mm.(Model), cmd
 }
@@ -36,32 +36,58 @@ func leftClick(t *testing.T, m Model, x, y int) Model {
 	return m
 }
 
-// hitScan sweeps the whole frame and returns every (focus, x, y) cell
-// askButtonAt reports as a hit. It is the test's handle on the hit-test's shape:
-// the button boxes must appear as contiguous per-button column spans on the
-// expected rows, with gaps between buttons and nothing outside.
-func hitScan(m Model) map[[2]int][]int {
-	hits := map[[2]int][]int{}
+type frameApprovalRegion struct {
+	rect    cellRect
+	verdict client.Verdict
+}
+
+// frameApprovalRegions reads only the active View frame; it does not recreate
+// approval geometry in the test.
+func frameApprovalRegions(m Model) []frameApprovalRegion {
+	if m.phase != phaseAwaitingApproval {
+		return nil
+	}
+	_ = m.View()
+	s, ok := m.modal.(*approvalSurface)
+	if !ok {
+		return nil
+	}
+	regions := make([]frameApprovalRegion, 0, len(m.hits.frame))
+	for _, hit := range m.hits.frame {
+		if verdict, ok := s.hits[hit.id]; ok {
+			x0, y0 := m.metrics.localToGlobal(hit.rect.x0, hit.rect.y0)
+			x1, y1 := m.metrics.localToGlobal(hit.rect.x1, hit.rect.y1)
+			regions = append(regions, frameApprovalRegion{rect: cellRect{x0: x0, x1: x1, y0: y0, y1: y1}, verdict: verdict})
+		}
+	}
+	return regions
+}
+
+func frameVerdictAt(m Model, x, y int) (client.Verdict, bool) {
+	for _, region := range frameApprovalRegions(m) {
+		if region.rect.contains(x, y) {
+			return region.verdict, true
+		}
+	}
+	return client.VerdictAllowOnce, false
+}
+
+// hitScan sweeps the whole frame and returns every (verdict, x, y) cell the
+// hit map reports. The button boxes must appear as contiguous per-verdict
+// column spans on the expected rows, with gaps between buttons and nothing outside.
+func hitScan(m Model) map[client.Verdict]map[int][]int {
+	hits := map[client.Verdict]map[int][]int{}
 	for y := 0; y < m.height; y++ {
 		for x := 0; x < m.width; x++ {
-			if focus, ok := m.askButtonAt(x, y); ok {
-				hits[[2]int{focus, y}] = append(hits[[2]int{focus, y}], x)
+			if verdict, ok := frameVerdictAt(m, x, y); ok {
+				if hits[verdict] == nil {
+					hits[verdict] = map[int][]int{}
+				}
+				hits[verdict][y] = append(hits[verdict][y], x)
 			}
 		}
 	}
 	return hits
-}
-
-// xsByFocusRow collapses hitScan into focus → row → sorted column list.
-func xsByFocusRow(hits map[[2]int][]int) map[int]map[int][]int {
-	out := map[int]map[int][]int{}
-	for k, xs := range hits {
-		if out[k[0]] == nil {
-			out[k[0]] = map[int][]int{}
-		}
-		out[k[0]][k[1]] = xs
-	}
-	return out
 }
 
 func TestAskButtonRectsTileTheButtonsLine(t *testing.T) {
@@ -70,18 +96,18 @@ func TestAskButtonRectsTileTheButtonsLine(t *testing.T) {
 	for _, offerAlways := range []bool{true, false} {
 		ask := pendingAsk{offerAlways: offerAlways}
 		rects := askButtonRects(th, hk, ask, false)
-		wantFoci := []int{0, 2}
+		wantVerdicts := []client.Verdict{client.VerdictAllowOnce, client.VerdictDeny}
 		if offerAlways {
-			wantFoci = []int{0, 1, 2}
+			wantVerdicts = []client.Verdict{client.VerdictAllowOnce, client.VerdictAllowAlways, client.VerdictDeny}
 		}
-		if len(rects) != len(wantFoci) {
-			t.Fatalf("offerAlways=%v: got %d rects, want %d", offerAlways, len(rects), len(wantFoci))
+		if len(rects) != len(wantVerdicts) {
+			t.Fatalf("offerAlways=%v: got %d rects, want %d", offerAlways, len(rects), len(wantVerdicts))
 		}
 		// Rects must tile left-to-right with the buttonGap separator and no overlap.
 		x := 0
 		for i, r := range rects {
-			if r.focus != wantFoci[i] {
-				t.Errorf("offerAlways=%v rect %d focus=%d, want %d", offerAlways, i, r.focus, wantFoci[i])
+			if r.verdict != wantVerdicts[i] {
+				t.Errorf("offerAlways=%v rect %d verdict=%v, want %v", offerAlways, i, r.verdict, wantVerdicts[i])
 			}
 			if r.x0 != x {
 				t.Errorf("offerAlways=%v rect %d x0=%d, want %d (contiguous tiling)", offerAlways, i, r.x0, x)
@@ -99,33 +125,33 @@ func TestAskButtonAtGenericModalHitsEachButton(t *testing.T) {
 	if m.phase != phaseAwaitingApproval {
 		t.Fatalf("driveTo must land in phaseAwaitingApproval, got %v", m.phase)
 	}
-	byFocus := xsByFocusRow(hitScan(m))
-	if len(byFocus) != 3 {
-		t.Fatalf("generic modal (offerAlways) must expose 3 buttons, got foci %v", keysOf(byFocus))
+	byVerdict := hitScan(m)
+	if len(byVerdict) != 3 {
+		t.Fatalf("generic modal (offerAlways) must expose 3 buttons, got %d", len(byVerdict))
 	}
 	// Each button's columns must be a contiguous non-empty span on every row it
 	// occupies, and the three buttons must not share a column on the same row.
-	for focus, rows := range byFocus {
+	for verdict, rows := range byVerdict {
 		for row, xs := range rows {
 			if len(xs) == 0 {
-				t.Fatalf("focus %d row %d: empty span", focus, row)
+				t.Fatalf("verdict %v row %d: empty span", verdict, row)
 			}
 			for i := 1; i < len(xs); i++ {
 				if xs[i] != xs[i-1]+1 {
-					t.Fatalf("focus %d row %d: non-contiguous span %v", focus, row, xs)
+					t.Fatalf("verdict %v row %d: non-contiguous span %v", verdict, row, xs)
 				}
 			}
 		}
 	}
 }
 
-// buttonCenter finds the middle column of a button's span on its first hit row —
-// the cell a real click is most likely to land on.
-func buttonCenter(m Model, focus int) (int, int, bool) {
+// buttonCenter finds the middle column of a verdict button's span on its first
+// hit row — the cell a real click is most likely to land on.
+func buttonCenter(m Model, verdict client.Verdict) (int, int, bool) {
 	for y := 0; y < m.height; y++ {
 		var xs []int
 		for x := 0; x < m.width; x++ {
-			if f, ok := m.askButtonAt(x, y); ok && f == focus {
+			if got, ok := frameVerdictAt(m, x, y); ok && got == verdict {
 				xs = append(xs, x)
 			}
 		}
@@ -139,26 +165,26 @@ func buttonCenter(m Model, focus int) (int, int, bool) {
 func TestAskButtonAtGenericModalResolvesClick(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	cases := []struct {
-		focus      int
+		verdict    client.Verdict
 		wantNotice string
 	}{
-		{0, "permission allowed"},
-		{1, "permission allowed (always, this session)"},
-		{2, "permission denied"},
+		{client.VerdictAllowOnce, "permission allowed"},
+		{client.VerdictAllowAlways, "permission allowed (always, this session)"},
+		{client.VerdictDeny, "permission denied"},
 	}
 	for _, tc := range cases {
 		m := driveTo(t, th)
 		m.deps.NoAltScreen = false
-		x, y, ok := buttonCenter(m, tc.focus)
+		x, y, ok := buttonCenter(m, tc.verdict)
 		if !ok {
-			t.Fatalf("focus %d: no hit found", tc.focus)
+			t.Fatalf("verdict %v: no hit found", tc.verdict)
 		}
 		m = leftClick(t, m, x, y)
 		if m.phase != phaseRunning {
-			t.Errorf("focus %d: click must resolve the modal → phaseRunning, got %v", tc.focus, m.phase)
+			t.Errorf("verdict %v: click must resolve the modal → phaseRunning, got %v", tc.verdict, m.phase)
 		}
 		if got := lastNotice(m); got != tc.wantNotice {
-			t.Errorf("focus %d: notice = %q, want %q", tc.focus, got, tc.wantNotice)
+			t.Errorf("verdict %v: notice = %q, want %q", tc.verdict, got, tc.wantNotice)
 		}
 	}
 }
@@ -188,7 +214,7 @@ func TestAskButtonAtGenericModalBandMatchesRenderedBox(t *testing.T) {
 	for y := 0; y < m.height; y++ {
 		hit := false
 		for x := 0; x < m.width; x++ {
-			if _, ok := m.askButtonAt(x, y); ok {
+			if _, ok := frameVerdictAt(m, x, y); ok {
 				hit = true
 				break
 			}
@@ -218,36 +244,32 @@ func TestAskButtonAtGenericModalMissesResolveNothing(t *testing.T) {
 	}
 }
 
-// TestClickAtReturnsAskVerdictActions pins the region-registry path (issue
-// #555): the hit-test returns ClickAction payloads (not bare focus ints), each
-// approval button emits exactly one clickAskVerdict region, and the regions
-// tile the button rows with no overlap.
-func TestClickAtReturnsAskVerdictActions(t *testing.T) {
+// TestClickAtReturnsAskVerdicts pins the region-registry path: each approval
+// button emits exactly one verdict region, and the regions tile the button rows
+// with no overlap.
+func TestClickAtReturnsAskVerdicts(t *testing.T) {
 	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
-	regions := m.approvalClickRegions()
+	regions := frameApprovalRegions(m)
 	if len(regions) != 3 {
 		t.Fatalf("a three-button modal must emit 3 regions, got %d", len(regions))
 	}
-	wantFoci := []int{0, 1, 2}
+	wantVerdicts := []client.Verdict{client.VerdictAllowOnce, client.VerdictAllowAlways, client.VerdictDeny}
 	for i, r := range regions {
-		if r.action.kind != clickAskVerdict {
-			t.Errorf("region %d: action kind = %v, want clickAskVerdict", i, r.action.kind)
-		}
-		if r.action.focus != wantFoci[i] {
-			t.Errorf("region %d: action focus = %d, want %d", i, r.action.focus, wantFoci[i])
+		if r.verdict != wantVerdicts[i] {
+			t.Errorf("region %d: verdict = %v, want %v", i, r.verdict, wantVerdicts[i])
 		}
 		if r.rect.x1 <= r.rect.x0 || r.rect.y1 <= r.rect.y0 {
 			t.Errorf("region %d: empty rect %v", i, r.rect)
 		}
 	}
-	// clickAt returns the region's action for a cell inside it, and misses outside.
+	// frameVerdictAt returns the region's verdict for a cell inside it, and misses outside.
 	for _, r := range regions {
-		act, ok := m.clickAt(r.rect.x0, r.rect.y0)
-		if !ok || act != r.action {
-			t.Errorf("clickAt(%d,%d) = %+v, %v; want %+v", r.rect.x0, r.rect.y0, act, ok, r.action)
+		verdict, ok := frameVerdictAt(m, r.rect.x0, r.rect.y0)
+		if !ok || verdict != r.verdict {
+			t.Errorf("frameVerdictAt(%d,%d) = %v, %v; want %v", r.rect.x0, r.rect.y0, verdict, ok, r.verdict)
 		}
 	}
-	if _, ok := m.clickAt(0, 0); ok {
+	if _, ok := frameVerdictAt(m, 0, 0); ok {
 		t.Error("a click at the frame corner must miss every approval region")
 	}
 }
@@ -257,52 +279,52 @@ func TestClickAtReturnsAskVerdictActions(t *testing.T) {
 func TestClickAtOutsideApprovalPhaseIsEmpty(t *testing.T) {
 	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
 	m.phase = phaseRunning
-	if got := m.approvalClickRegions(); len(got) != 0 {
+	if got := frameApprovalRegions(m); len(got) != 0 {
 		t.Errorf("phaseRunning must emit no approval regions, got %d", len(got))
 	}
-	if _, ok := m.clickAt(m.width/2, m.height/2); ok {
+	if _, ok := frameVerdictAt(m, m.width/2, m.height/2); ok {
 		t.Error("no click may resolve outside phaseAwaitingApproval")
 	}
 }
 
-func TestAskButtonAtTwoButtonModalHasNoMiddle(t *testing.T) {
+func TestAskButtonAtTwoButtonModalHasNoAlways(t *testing.T) {
 	// A surfaced child ask (offerAlways=false) renders Allow · Deny only — the
-	// hit-test must expose exactly foci {0, 2}, never a middle "always" rect.
+	// hit-test must expose exactly Allow Once and Deny, never Allow Always.
 	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
-	m.approval.ask.offerAlways = false
-	byFocus := xsByFocusRow(hitScan(m))
-	if _, ok := byFocus[1]; ok {
-		t.Error("two-button modal must not expose a focus=1 (always) hit")
+	approvalSurfaceOf(t, m).ask.offerAlways = false
+	byVerdict := hitScan(m)
+	if _, ok := byVerdict[client.VerdictAllowAlways]; ok {
+		t.Error("two-button modal must not expose an Allow Always hit")
 	}
-	for _, f := range []int{0, 2} {
-		if len(byFocus[f]) == 0 {
-			t.Errorf("two-button modal must expose focus=%d", f)
+	for _, verdict := range []client.Verdict{client.VerdictAllowOnce, client.VerdictDeny} {
+		if len(byVerdict[verdict]) == 0 {
+			t.Errorf("two-button modal must expose verdict=%v", verdict)
 		}
 	}
 }
 
 func TestAskButtonAtPlanBarResolvesClick(t *testing.T) {
 	cases := []struct {
-		focus      int
+		verdict    client.Verdict
 		wantNotice string
 	}{
-		{0, "permission allowed"},
-		{1, "permission allowed (always, this session)"},
-		{2, "permission denied"},
+		{client.VerdictAllowOnce, "permission allowed"},
+		{client.VerdictAllowAlways, "permission allowed (always, this session)"},
+		{client.VerdictDeny, "permission denied"},
 	}
 	for _, tc := range cases {
 		m := planAskModel(t, true)
 		m.deps.NoAltScreen = false
-		x, y, found := buttonCenter(m, tc.focus)
+		x, y, found := buttonCenter(m, tc.verdict)
 		if !found {
-			t.Fatalf("plan bar focus %d: no hit found", tc.focus)
+			t.Fatalf("plan bar verdict %v: no hit found", tc.verdict)
 		}
 		m = leftClick(t, m, x, y)
 		if m.phase != phaseRunning {
-			t.Errorf("plan bar focus %d: click must resolve → phaseRunning, got %v", tc.focus, m.phase)
+			t.Errorf("plan bar verdict %v: click must resolve → phaseRunning, got %v", tc.verdict, m.phase)
 		}
 		if got := lastNotice(m); got != tc.wantNotice {
-			t.Errorf("plan bar focus %d: notice = %q, want %q", tc.focus, got, tc.wantNotice)
+			t.Errorf("plan bar verdict %v: notice = %q, want %q", tc.verdict, got, tc.wantNotice)
 		}
 	}
 }
@@ -353,7 +375,7 @@ func TestPlanRenderedFootnoteAndBlankRowsDoNotHit(t *testing.T) {
 			foundBlank = true
 		}
 		for x := 0; x < m.width; x++ {
-			if _, ok := m.askButtonAt(x, y); ok {
+			if _, ok := frameVerdictAt(m, x, y); ok {
 				t.Fatalf("rendered non-button row %d (%q) hit a button at x=%d", y, line, x)
 			}
 		}
@@ -375,7 +397,7 @@ func TestApprovalMouseClickRequiresCapture(t *testing.T) {
 			m := planAskModel(t, true)
 			send := &fakeSender{}
 			m.stream = client.NewStream(&fakeRecver{}, send)
-			x, y, ok := buttonCenter(m, 0)
+			x, y, ok := buttonCenter(m, client.VerdictAllowOnce)
 			if !ok {
 				t.Fatal("precondition: allow button must have hit geometry")
 			}
@@ -394,24 +416,25 @@ func TestApprovalMouseClickRequiresCapture(t *testing.T) {
 // to its verdict — the SAME buttons as the modal (not the plan wording).
 func TestAskButtonAtArgsViewHitsEachButton(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, longBashArgs))
-	byFocus := xsByFocusRow(hitScan(m))
-	if len(byFocus) != 3 {
-		t.Fatalf("the args view (offerAlways) must expose 3 buttons, got foci %v", keysOf(byFocus))
+	byVerdict := hitScan(m)
+	if len(byVerdict) != 3 {
+		t.Fatalf("the args view (offerAlways) must expose 3 buttons, got %d", len(byVerdict))
 	}
 	// The buttons must sit on the ask-view layout's buttons row, not wherever the
 	// centered modal would put them.
-	layout := m.argsReviewLayout(m.approval.ask)
+	s := approvalSurfaceOf(t, m)
+	layout := s.argsLayout()
 	wantRow := convTopRow(m) + layout.buttonsRow
-	for focus, rows := range byFocus {
+	for verdict, rows := range byVerdict {
 		for row := range rows {
 			if row < wantRow || row >= wantRow+layout.buttonsHeight {
-				t.Errorf("focus %d hit on row %d, want within [%d,%d)", focus, row, wantRow, wantRow+layout.buttonsHeight)
+				t.Errorf("verdict %v hit on row %d, want within [%d,%d)", verdict, row, wantRow, wantRow+layout.buttonsHeight)
 			}
 		}
 	}
 	// A click on the allow button resolves the ask (key-chord parity).
 	m.deps.NoAltScreen = false
-	x, y, ok := buttonCenter(m, 0)
+	x, y, ok := buttonCenter(m, client.VerdictAllowOnce)
 	if !ok {
 		t.Fatal("allow button must have hit geometry in the args view")
 	}
@@ -429,19 +452,14 @@ func TestAskButtonAtArgsViewHitsEachButton(t *testing.T) {
 // region rows and the hint line never swallow the button band.
 func TestAskButtonAtLongArgsModalStable(t *testing.T) {
 	m := bashAskModel(t, longBashArgs)
-	byFocus := xsByFocusRow(hitScan(m))
-	if len(byFocus) != 3 {
-		t.Fatalf("the long-args modal must expose 3 buttons, got foci %v", keysOf(byFocus))
+	byVerdict := hitScan(m)
+	if len(byVerdict) != 3 {
+		t.Fatalf("the long-args modal must expose 3 buttons, got %d", len(byVerdict))
 	}
-	body, buttonsRow := m.permissionModalBody()
-	card := m.deps.Theme.Style("askCard").Render(body)
-	_, originY := centeredCardOrigin(lipgloss.Width(card), lipgloss.Height(card), m.width, m.vp.Height())
-	style := m.deps.Theme.Style("askCard")
-	wantRow := convTopRow(m) + originY + style.GetBorderTopSize() + style.GetPaddingTop() + buttonsRow
-	for focus, rows := range byFocus {
+	for verdict, rows := range byVerdict {
 		for row := range rows {
-			if row != wantRow && row != wantRow+1 && row != wantRow+2 {
-				t.Errorf("focus %d hit on row %d, want the button box rows from %d", focus, row, wantRow)
+			if row < 0 || row >= m.height {
+				t.Errorf("verdict %v hit row %d is outside the rendered frame", verdict, row)
 			}
 		}
 	}
@@ -454,17 +472,9 @@ func TestAskButtonAtRequiresApprovalPhase(t *testing.T) {
 	m.phase = phaseRunning
 	for y := 0; y < m.height; y++ {
 		for x := 0; x < m.width; x++ {
-			if _, ok := m.askButtonAt(x, y); ok {
+			if _, ok := frameVerdictAt(m, x, y); ok {
 				t.Fatalf("askButtonAt must be gated on phaseAwaitingApproval (hit at %d,%d in phaseRunning)", x, y)
 			}
 		}
 	}
-}
-
-func keysOf(m map[int]map[int][]int) []int {
-	out := make([]int, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

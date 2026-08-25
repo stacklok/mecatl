@@ -1,17 +1,15 @@
 package ui
 
-// approval_arch_test.go is the structural gate for the Phase-1 approval
-// consolidation (issue #555, decision 5 "loud"): it fails CI if any
-// approval-vocabulary declaration is added OUTSIDE the four approval_*.go
-// files, or if Model acquires a second approval-owned field, so the
-// one-file-owns-it invariant the milestone targets stays machine-enforced
-// rather than convention-enforced. It is additive — placement-only; it never
-// touches rendered output (the frame goldens own that).
+// approval_arch_test.go is the structural gate for the approval surface migration
+// (issue #555): it fails CI if approval-vocabulary declarations leave the two
+// approval files, if Model acquires a second approval-owned field, or if the
+// surface regains a broad renderer.
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -19,35 +17,77 @@ import (
 	"testing"
 )
 
-// approvalFileHomes is the set of files a declaration carrying the approval
-// vocabulary may live in. renderBody's one-line shim (`m.renderApprovalBody()`
-// guard) lives in view.go by delegation — it contains NO approval-vocabulary
-// identifier, only the single call the delegation pattern names.
+// approvalFileHomes is the two production homes for approval behavior: Model-side
+// integration remains in approval.go; approval-local state, rendering, layout,
+// and hit behavior live in approval_surface.go. Generic geometry is deliberately
+// excluded from this approval-specific structural gate.
 var approvalFileHomes = map[string]bool{
-	"approval_state.go":   true,
+	"approval.go":         true,
 	"approval_surface.go": true,
-	"approval_render.go":  true,
-	"approval_regions.go": true,
 }
 
-// approvalFileSet is the four homes the gate counts — kept in one place so a
-// fifth file added later forces an explicit decision here, not a silent drift.
-const approvalFileCount = 4
+// approvalFileCount makes a third production home an explicit decision.
+const approvalFileCount = 2
 
 // approvalToken matches the identifier vocabulary the gate guards — the
-// MODAL's state and behavior. It is deliberately NARROW (anchored, modal-named
-// stems) so shared render vocabulary (clickRegionsForAsk/clickAskVerdict in
-// clickgeom.go) and unrelated domains (team.go's task*/team*, the /debug-ask
-// builtin) are NOT false-positives. Widening it to catch a new approval-adjacent
-// symbol is the visible decision the loud gate is for.
-var approvalToken = regexp.MustCompile(`^(?:pendingAsk|approvalState|approvalDeps|approvalAction\w*|approvalAdvance|askQueueIndex|focusVerdict|isChildAsk|isPlanAsk|isDiffCapableAskTool|bashAskArgs|applyPermissionAsk|applyPermissionRetract|onApprovalKey|dispatchClick|advance|markAskResolved|askKnown|resolveAsk|approvalWheel|approvalExpandToggle|openPlanReviewView|clearPlanReview|planAskFingerprint|planReviewLayout|renderPlanReviewView|planButtonsLine|planScrollHint|openAskArgsView|clearAskArgsView|argsAskFingerprint|argsReviewLayout|renderAskArgsView|argsScrollHint|askArgsContent|askArgsTiersDiffer|wrapAskArgs\w*|askArgsMiniViewport|askArgsCardContentWidth|askArgsMiniScrollRange|onAskArgs\w*|onPlanScrollKey|askArgsWheelOverCard|permissionModalBody\w*|renderPermissionModal\w*|approvalButtons\w*|permissionButtonsLine|renderApprovalBody|renderApprovalButtons|approvalButton\w*|buttonRect|askButtonRects|approvalClickRegions|approvalCardRect|clickAt|askButtonAt|buttonGap|planBodyFromArgs|planApprovedProceedText|approvalNotice|planReviewFooterHeight|argsReviewFooterHeight)$`)
+// modal's state and behavior. It deliberately excludes shared generic geometry
+// (for example cellRect in geom.go and ClickableRegion in hit_regions.go) and unrelated
+// domains. Widening it to catch a new approval-adjacent symbol is the visible
+// decision the loud gate is for.
+var approvalToken = regexp.MustCompile(`^(?:approvalRender|newApprovalRender|pendingAsk|approvalResolvedIntent|approvalRetractedIntent|setExpandToolsIntent|approvalQueueOutcome|approvalAdvance|approvalFooterProjection|askQueueIndex|visibleApprovalVerdicts|isChildAsk|isPlanAsk|isDiffCapableAskTool|bashAskArgs|applyPermissionAsk|applyPermissionRetract|onApprovalKey|dispatchClick|advance|markAskResolved|askKnown|resolveAsk|approvalExpandToggle|openPlan|clearPlanReview|planAskFingerprint|planReviewLayout|planLayout|planButtonsLine|planScrollHint|openArgs|clearAskArgsView|argsAskFingerprint|argsReviewLayout|argsLayout|argsScrollHint|askArgsContent|askArgsTiersDiffer|wrapAskArgs\w*|wrapApprovalReason|askArgsMiniViewport|askArgsCardContentWidth|askArgsMiniScrollRange|onAskArgs\w*|onPlanScrollKey|permissionModalBody\w*|renderPermissionModal\w*|approvalButtons\w*|permissionButtonsLine|renderApprovalBody|renderApprovalButtons|approvalButton\w*|askButtonRects|buttonGap|planBodyFromArgs|planApprovedProceedText|approvalNotice|planReviewFooterHeight|argsReviewFooterHeight)$`)
 
 // TestApprovalSymbolsLiveInApprovalFiles walks every non-test ui package file
 // and asserts each declaration whose name (decl name or a method's receiver
-// type) carries the approval vocabulary lives in one of the four homes.
+// type) carries the approval vocabulary lives in one of the two homes.
 func TestApprovalSymbolsLiveInApprovalFiles(t *testing.T) {
+	assertApprovalDeclarationsLiveInApprovalFiles(t)
+}
+
+// TestApprovalSurfaceHasNoModelIntegration ensures that Model-side construction,
+// lifecycle, effects, and phase policy stay in approval.go. The surface receives
+// surfaceDeps plus its own inputs, so its state and rendering remain independent of Model.
+func TestApprovalSurfaceHasNoModelIntegration(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "approval_surface.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		// viewport.Model is approval-local view state, not the UI Model. Skip its
+		// selector before visiting Model so the unqualified-Model guard remains
+		// precise.
+		if selector, ok := n.(*ast.SelectorExpr); ok && selector.Sel.Name == "Model" {
+			return false
+		}
+		ident, ok := n.(*ast.Ident)
+		if ok && ident.Name == "Model" {
+			t.Error("approval_surface.go references Model; Model-side approval integration belongs in approval.go")
+		}
+		return true
+	})
+}
+
+func TestApprovalIntentUsesSealedSurfaceProtocol(t *testing.T) {
+	for _, file := range []string{"approval.go", "approval_surface.go", "update.go"} {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "approvalSurfaceIntent") {
+			t.Fatalf("%s retains the approval-only intent marker", file)
+		}
+	}
+	body, err := os.ReadFile("approval.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "applyApprovalSurfaceIntent(intent surfaceIntent)") {
+		t.Fatal("approval intent handler must accept the sealed surfaceIntent protocol")
+	}
+}
+
+func assertApprovalDeclarationsLiveInApprovalFiles(t *testing.T) {
 	if len(approvalFileHomes) != approvalFileCount {
-		t.Fatalf("approvalFileHomes has %d entries, want approvalFileCount=%d (a fifth approval file must be an explicit decision here)",
+		t.Fatalf("approvalFileHomes has %d entries, want approvalFileCount=%d (a sixth approval file must be an explicit decision here)",
 			len(approvalFileHomes), approvalFileCount)
 	}
 	fset := token.NewFileSet()
@@ -98,30 +138,45 @@ func TestApprovalSymbolsLiveInApprovalFiles(t *testing.T) {
 					continue
 				}
 				if !approvalFileHomes[file] {
-					t.Errorf("approval-vocabulary declaration %q in non-approval file %s (want one of approval_state/surface/render/regions.go)", n, file)
+					t.Errorf("approval-vocabulary declaration %q in non-approval file %s (want approval.go or approval_surface.go)", n, file)
 				}
 			}
 		}
 	}
 }
 
-// TestModelHasExactlyOneApprovalField asserts Model holds approval state in
-// exactly ONE field of type approvalState — the state-consolidation half of
-// the milestone. A second approval-owned Model field is the drift the struct
-// was created to kill.
-func TestModelHasExactlyOneApprovalField(t *testing.T) {
+// TestModelHasNoApprovalStateField keeps approval ephemeral: its state belongs
+// only to a dynamically-open approvalSurface, never to Model.
+func TestModelHasNoApprovalStateField(t *testing.T) {
 	st := reflect.TypeOf(Model{})
-	// Model is a struct; count fields whose TYPE is approvalState by name
-	// (reflect can't name the unexported type portably, so compare the reflect
-	// Name()).
-	var count int
 	for i := 0; i < st.NumField(); i++ {
 		f := st.Field(i)
-		if f.Type.Name() == "approvalState" {
-			count++
+		if f.Type.Name() == "approvalState" || f.Name == "approval" {
+			t.Errorf("Model owns approval state through %q; want dynamic surface only", f.Name)
 		}
 	}
-	if count != 1 {
-		t.Errorf("Model has %d approvalState fields, want exactly 1", count)
+}
+
+// TestApprovalSurfaceUsesNarrowRenderPrimitive prevents a broad *renderer from
+// leaking back into approval state. The two callbacks are the only shared render
+// behavior approval needs: Edit/Write diffs and plan Markdown.
+func TestApprovalSurfaceUsesNarrowRenderPrimitive(t *testing.T) {
+	surface := reflect.TypeOf(approvalSurface{})
+	field, ok := surface.FieldByName("render")
+	if !ok {
+		t.Fatal("approvalSurface has no approval render primitive")
+	}
+	if got := field.Type.Name(); got != "approvalRender" {
+		t.Fatalf("approvalSurface render field = %q, want approvalRender", got)
+	}
+	primitive := reflect.TypeOf(approvalRender{})
+	if primitive.NumField() != 2 {
+		t.Fatalf("approvalRender has %d fields, want only diff and markdown", primitive.NumField())
+	}
+	for _, name := range []string{"diff", "markdown"} {
+		f, ok := primitive.FieldByName(name)
+		if !ok || f.Type.Kind() != reflect.Func {
+			t.Errorf("approvalRender.%s = %v, want function", name, f.Type)
+		}
 	}
 }

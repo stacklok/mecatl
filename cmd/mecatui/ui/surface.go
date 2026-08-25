@@ -15,6 +15,7 @@ import (
 	"context"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -34,14 +35,15 @@ import (
 // its own output. Geometry-dependent view state is re-derived at the TOP of
 // Render from the fresh args (marked `// view cache:` on the struct), so it
 // can never be stale and needs no event. Parents place, surfaces size. Region
-// coordinates are frame-relative; the parent offsets them.
+// coordinates are frame-relative; the parent maps input through the rendered
+// content origin before hit-testing them.
 type surface interface {
 	// Render is the size QUERY: returns the center-ready body and the regions
 	// it built in the SAME layout pass, given the offered geometry. The surface
 	// sizes itself from the width/height inline on EVERY call and MUST NOT
-	// center its own output. Regions are frame-relative; the parent offsets
-	// them to screen coordinates if it ever hit-tests them. nil regions = not
-	// clickable.
+	// center its own output. Regions are frame-relative; the parent maps
+	// pointer input through its rendered content origin before hit-testing
+	// them. nil regions = not clickable.
 	Render(width, height int) (body string, regions []ClickableRegion)
 
 	// HandleKey consumes or passes a key press. handled=true means the surface
@@ -59,11 +61,9 @@ type surface interface {
 	// surface down, exactly as the HandleKey closed path.
 	HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool)
 
-	// HandleWheel returns handled=true to CONSUME the event (the default: a
-	// modal captures input and the wheel behind it is DEAD while the modal is
-	// open), handled=false ONLY if the surface deliberately delegates to the
-	// conversation viewport. The boolean preserves delegation; the default
-	// moved (the surface CONSUMES unless it says otherwise).
+	// HandleWheel returns handled=true when the surface handled the event. The
+	// parent consumes every wheel event while a modal is open, including an
+	// unhandled surface response, so the conversation never receives it.
 	HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled bool)
 
 	// Close tears the surface down; teardown is surface-authored. RPC results
@@ -104,22 +104,20 @@ type surfaceIntentSource interface {
 // surfaceDeps is the SHARED ambient base every surface may reach, built once at
 // Open by (m *Model).surfaceDeps() and held on the surface state as its deps
 // field. Fields are ambient collaborators only: ctx is ambient (any modal that
-// talks to the server needs the parent context). Surface-SPECIFIC deps
-// (lifecycle clients, epoch mints) are fields on the surface's own state
-// struct, set next to deps in the same Open literal. Mirrors approvalDeps
-// (approval_surface.go).
+// talks to the server needs the parent context). Surface-specific immutable
+// inputs (lifecycle clients, epoch mints) live beside deps on the surface state.
 type surfaceDeps struct {
 	theme theme.Theme
 	keys  keyMap              // for key.Matches
 	marks helpKeys            // render hints (helpKeyMarkings)
 	caps  client.Capabilities // capability-gated copy
 	ctx   context.Context     // the parent context for the surface's RPC cmd builders
+	hits  hitIDAllocator      // Model-owned frame-scoped opaque hit IDs
 }
 
 // surfaceDeps builds the surface's shared ambient base from the live Model. It
-// is a POINTER receiver so a future deps field that bluffs past the Elm
-// value-Model copies (the approvalDeps / &m.sendApproval idiom) works the same
-// way; callers take &m at the Open transition.
+// is a POINTER receiver so it can safely seed a surface held through Model's
+// value copies; callers take &m at the Open transition.
 func (m *Model) surfaceDeps() surfaceDeps {
 	return surfaceDeps{
 		theme: m.deps.Theme,
@@ -127,5 +125,105 @@ func (m *Model) surfaceDeps() surfaceDeps {
 		marks: m.helpKeyMarkings(),
 		caps:  m.caps,
 		ctx:   m.deps.Ctx,
+		hits:  m.hits,
 	}
+}
+
+// closeModal tears down the currently open surface and its frame-owned interaction
+// state. Lifecycle callers remain responsible for phase, focus, spinner, and status.
+func (m *Model) closeModal() {
+	if m.modal != nil {
+		switch s := m.modal.(type) {
+		case *sessionsState:
+			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, s.transcriptSurfaceRequestToken)
+			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, s.pageRequestToken)
+		case *modelsState:
+			m.modelCatalogRequestToken = max(m.modelCatalogRequestToken, s.requestToken)
+		}
+		m.modal.Close()
+		m.modal = nil
+	}
+	m.hits.clear()
+	m.metrics.clear()
+}
+
+// setEffectiveModel applies server-authoritative model information. A model-ID
+// change replaces the complete identity and updates an open plan review; a
+// same-model update may only raise the known context window.
+func (m *Model) setEffectiveModel(resolved client.ResolvedModel) (changed bool) {
+	if resolved.ModelID != "" && resolved.ModelID != m.effectiveModel.ModelID {
+		m.effectiveModel = resolved
+		if s := approvalSurfaceFor(m); s != nil && isPlanAsk(s.ask.Tool) {
+			s.modelID = resolved.ModelID
+		}
+		return true
+	}
+	if resolved.ContextWindow > m.effectiveModel.ContextWindow {
+		m.effectiveModel.ContextWindow = resolved.ContextWindow
+		return true
+	}
+	return false
+}
+
+func (m *Model) renderModalSurface() string {
+	placement := modalPlacementCard
+	if source, ok := m.modal.(modalPlacementSource); ok {
+		placement = source.modalPlacement()
+	}
+	top := convTopRow(*m)
+	bodyW, bodyH := m.width, m.vp.Height()
+	if placement == modalPlacementFill {
+		body, regions := m.modal.Render(bodyW, bodyH)
+		if top >= 0 {
+			bounds := cellRect{x0: 0, x1: bodyW, y0: top, y1: top + bodyH}
+			m.hits.replace(regions)
+			*m.metrics = renderedSurfaceMetrics{
+				outerBounds: bounds, contentBounds: bounds, contentOrigin: cellPoint{x: 0, y: top},
+			}
+		}
+		return body
+	}
+
+	style := m.deps.Theme.Style("askCard")
+	contentW := max(0, bodyW-style.GetBorderLeftSize()-style.GetBorderRightSize()-style.GetPaddingLeft()-style.GetPaddingRight())
+	contentH := max(0, bodyH-style.GetBorderTopSize()-style.GetBorderBottomSize()-style.GetPaddingTop()-style.GetPaddingBottom())
+	body, regions := m.modal.Render(contentW, contentH)
+	card := style.Render(body)
+	if bodyW <= 0 || bodyH <= 0 {
+		return card
+	}
+	if top < 0 {
+		return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, card)
+	}
+	cardX, cardY := centeredCardOrigin(lipgloss.Width(card), lipgloss.Height(card), bodyW, bodyH)
+	origin := cellPoint{
+		x: cardX + style.GetBorderLeftSize() + style.GetPaddingLeft(),
+		y: top + cardY + style.GetBorderTopSize() + style.GetPaddingTop(),
+	}
+	m.hits.replace(regions)
+	*m.metrics = renderedSurfaceMetrics{
+		outerBounds:   cellRect{x0: cardX, x1: cardX + lipgloss.Width(card), y0: top + cardY, y1: top + cardY + lipgloss.Height(card)},
+		contentBounds: cellRect{x0: origin.x, x1: origin.x + contentW, y0: origin.y, y1: origin.y + contentH},
+		contentOrigin: origin,
+	}
+	return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, card)
+}
+
+// dispatchSurfaceHit converts global mouse coordinates through the current
+// parent-owned surface metrics, then routes only a current local region.
+func (m Model) dispatchSurfaceHit(x, y int) (tea.Model, tea.Cmd, bool) {
+	if m.modal == nil {
+		return m, nil, false
+	}
+	localX, localY := m.metrics.globalToLocal(x, y)
+	hit, ok := m.hits.at(localX, localY)
+	if !ok {
+		return m, nil, false
+	}
+	mm, cmd, _ := m.dispatchSurfaceMsg(surfaceHitMsg{
+		ID: hit.id,
+		X:  localX - hit.rect.x0,
+		Y:  localY - hit.rect.y0,
+	})
+	return mm, cmd, true
 }

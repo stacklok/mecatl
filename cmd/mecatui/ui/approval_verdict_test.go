@@ -19,9 +19,8 @@ func approvalModel(t *testing.T, ask pendingAsk) Model {
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
-	m.phase = phaseAwaitingApproval
-	m.approval.ask = ask
-	return m
+	m.phase = phaseRunning
+	return applyAll(m, client.PermissionAskMsg{AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason})
 }
 
 // lastNotice returns the raw text of the last notice block, or "".
@@ -69,11 +68,11 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 	m.sessionID = "sess-abc"
 
 	m1 := applyAll(m, client.PermissionAskMsg{AskID: "sess-abc:1:c1", Tool: "Bash"})
-	if !m1.approval.ask.offerAlways {
+	if !approvalSurfaceOf(t, m1).ask.offerAlways {
 		t.Error("a main-agent ask should offer always-allow")
 	}
 	m2 := applyAll(m, client.PermissionAskMsg{AskID: "subagent-c1:1:k1", Tool: "Bash"})
-	if m2.approval.ask.offerAlways {
+	if approvalSurfaceOf(t, m2).ask.offerAlways {
 		t.Error("a surfaced child ask must NOT offer always-allow")
 	}
 }
@@ -84,17 +83,11 @@ func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 // never inherits a stale scroll position or an open view.
 func TestResolveAskResetsArgsViewState(t *testing.T) {
 	m := openArgsView(t, bashAskModel(t, longBashArgs))
-	m.approval.argsViewRaw = true
-	m.approval.askVPOffset = 3
+	approvalSurfaceOf(t, m).argsViewRaw = true
+	approvalSurfaceOf(t, m).askVPOffset = 3
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
-	if m.approval.argsViewOpen || m.approval.argsVPReady {
-		t.Error("resolve must close the full-screen args view")
-	}
-	if m.approval.argsViewRaw {
-		t.Error("resolve must reset the raw toggle")
-	}
-	if m.approval.askVPOffset != 0 {
-		t.Errorf("resolve must reset the mini-viewport offset, got %d", m.approval.askVPOffset)
+	if m.modal != nil {
+		t.Error("resolving the final ask must tear down the args surface and its state")
 	}
 }
 
@@ -138,47 +131,46 @@ func TestApprovalAllowAndDenyNotices(t *testing.T) {
 	}
 }
 
-// TestApprovalCycleThreeButtons: tab/right cycles focus over {0,1,2}; left retreats;
-// enter resolves the focused button.
+// TestApprovalCycleThreeButtons: tab/right cycles focus over the visible verdict
+// set; left retreats; enter resolves the focused verdict.
 func TestApprovalCycleThreeButtons(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", offerAlways: true})
-	if m.approval.ask.focus != 0 {
-		t.Fatalf("initial focus = %d, want 0", m.approval.ask.focus)
+	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictAllowOnce {
+		t.Fatalf("initial focused verdict = %v, want allow once", got)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.approval.ask.focus != 1 {
-		t.Fatalf("after tab focus = %d, want 1 (always)", m.approval.ask.focus)
+	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictAllowAlways {
+		t.Fatalf("after tab focused verdict = %v, want allow always", got)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyRight})
-	if m.approval.ask.focus != 2 {
-		t.Fatalf("after right focus = %d, want 2 (deny)", m.approval.ask.focus)
+	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictDeny {
+		t.Fatalf("after right focused verdict = %v, want deny", got)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyRight})
-	if m.approval.ask.focus != 0 {
-		t.Fatalf("after wrap focus = %d, want 0 (allow)", m.approval.ask.focus)
+	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictAllowOnce {
+		t.Fatalf("after wrap focused verdict = %v, want allow once", got)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyLeft})
-	if m.approval.ask.focus != 2 {
-		t.Fatalf("after left-wrap focus = %d, want 2 (deny)", m.approval.ask.focus)
+	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictDeny {
+		t.Fatalf("after left-wrap focused verdict = %v, want deny", got)
 	}
-	// enter on deny resolves as deny.
+	// Enter on deny resolves as deny.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := lastNotice(m); got != "permission denied" {
 		t.Errorf("enter on deny notice = %q", got)
 	}
 }
 
-// TestApprovalCycleTwoButtons: with no always offered, the focus ring is {0,2} —
-// tab skips the (absent) always button.
+// TestApprovalCycleTwoButtons: with no always offered, tab skips Allow Always.
 func TestApprovalCycleTwoButtons(t *testing.T) {
 	m := approvalModel(t, pendingAsk{AskID: "subagent-c1:1:k1", Tool: "Bash", offerAlways: false})
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.approval.ask.focus != 2 {
-		t.Fatalf("after tab focus = %d, want 2 (deny) — always is skipped", m.approval.ask.focus)
+	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictDeny {
+		t.Fatalf("after tab focused verdict = %v, want deny — always is skipped", got)
 	}
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.approval.ask.focus != 0 {
-		t.Fatalf("after wrap focus = %d, want 0 (allow)", m.approval.ask.focus)
+	if got := approvalSurfaceOf(t, m).ask.focusedVerdict; got != client.VerdictAllowOnce {
+		t.Fatalf("after wrap focused verdict = %v, want allow once", got)
 	}
 	// enter on allow resolves allow-once.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -187,5 +179,30 @@ func TestApprovalCycleTwoButtons(t *testing.T) {
 	}
 	if !strings.HasPrefix(lastNotice(m), "permission allowed") {
 		t.Errorf("two-button enter must not be always-allow")
+	}
+}
+
+func TestApprovalClickResolvesMappedVerdict(t *testing.T) {
+	m := approvalModel(t, pendingAsk{AskID: "sess-test-0001:1:c1", Tool: "Bash", offerAlways: true})
+	s := approvalSurfaceOf(t, m)
+	s.ask.focusedVerdict = client.VerdictDeny
+	_, _ = s.Render(100, 30)
+
+	var allowHit HitID
+	for id, verdict := range s.hits {
+		if verdict == client.VerdictAllowOnce {
+			allowHit = id
+			break
+		}
+	}
+	if allowHit == 0 {
+		t.Fatal("render did not map an Allow Once button hit")
+	}
+	if _, handled, _ := s.HandleMsg(surfaceHitMsg{ID: allowHit}); !handled {
+		t.Fatal("allow button hit was not handled")
+	}
+	intent, ok := s.takeSurfaceIntent().(approvalResolvedIntent)
+	if !ok || intent.verdict != client.VerdictAllowOnce {
+		t.Fatalf("click intent = %#v, want Allow Once resolution", intent)
 	}
 }

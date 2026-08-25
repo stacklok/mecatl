@@ -220,6 +220,48 @@ session the pick falls back to a plain `CreateSession` (no source to carry from)
 
 ---
 
+## mecatui dynamic approval surface and frame hit dispatch
+
+The approval modal is a dynamic `approvalSurface`, not a Model field:
+`cmd/mecatui/ui/approval_surface.go` (`approvalSurface`) owns approval vocabulary,
+the visible ask and FIFO queue, deduplication, focus, plan/argument viewport state,
+rendering, and keyboard, wheel, and hit-message behavior. It is created for the
+first ask and discarded after the final resolution, retraction, run teardown, or
+session reset. A surface decision is a one-shot semantic intent; `Model` consumes
+it synchronously and alone performs the stream correlation/send, transcript notice,
+phase/spinner/textarea transitions, and terminal plan continuation. This split
+keeps approval's ephemeral interaction state out of the root Model while preserving
+the root's durable run responsibilities.
+
+Every `Render` is a new input frame. `approvalSurface.Render` is the sole
+materializer of the plan/argument viewport caches and the surface's opaque
+ID-to-local-action map. The parent owns both frame-local collections:
+`cmd/mecatui/ui/hit_regions.go` (`hitRegions`) holds only local regions and
+opaque IDs, while `cmd/mecatui/ui/geom.go` (`renderedSurfaceMetrics`) records
+concrete outer/content bounds and the content origin. `contentBounds` is the
+full effective area the parent offered to `Render`: for cards it spans from the
+content origin through the offered dimensions, even when the rendered body is
+smaller; fill surfaces use their outer bounds as content bounds. The parent
+chooses card or fill placement before calling `Render`: fill surfaces receive the
+conversation
+body dimensions, while cards receive those dimensions less the `askCard` border
+and padding (clamped at zero), then the parent renders the decoration. Generic
+routing maps global pointer coordinates through the content origin, hit-tests
+local regions, and forwards a `surfaceHitMsg` through `HandleMsg`. Generic-card
+mini-args wheel gating uses the parent-owned outer bounds, never hit regions or
+reconstructed approval geometry. An unknown, old-frame, or closed-surface ID is
+ignored, so stale clicks fail closed. Tests render before inspecting
+geometry-dependent cache state.
+
+This is intentionally not a multi-window manager. The current one-modal parent
+owns placement and z-order; a future manager may choose a rendered window and use
+the same local hit dispatch, while each surface remains responsible for its own
+subdispatch. There are no permanent region identities and no cross-frame ID reuse
+unless a demonstrated Bubble Tea scheduling constraint needs a compatibility
+fallback.
+
+---
+
 ## Domain — `engine/governance/`
 
 Permission `Effect`/`Scope`/`Rule` + `Evaluator`, bash splitting/canonicalization, hook

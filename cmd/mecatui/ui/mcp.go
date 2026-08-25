@@ -36,7 +36,7 @@ func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 	case mcpPrompts:
 		return m, client.ListMcpPromptsCmd(m.deps.Ctx, m.deps.MCP, "")
 	default:
-		m.modal = nil
+		m.closeModal()
 		_ = m.ta.Focus()
 		return m, nil
 	}
@@ -441,7 +441,7 @@ func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 
 // insertIntoInput inserts text, closes the modal, and updates the status hint.
 func (m Model) insertIntoInput(text, label string) (tea.Model, tea.Cmd) {
-	m.modal = nil // the surface that armed this is closing; nil + refocus here (dispatchSurfaceMsg's handled=false fall-through never reached its own closed path)
+	m.closeModal()
 	m.ta.SetValue(text)
 	m.statusMsg = label + " — press " + firstKey(m.keys.Submit, "enter") + " to send"
 	m.refreshView()

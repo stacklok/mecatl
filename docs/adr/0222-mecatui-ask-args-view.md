@@ -100,5 +100,5 @@ spinner-running phase no run owns.
 ## See also
 
 - [docs/tui.md](../tui.md) — the keys table + the long-args paragraph.
-- The plan-review pattern this mirrors: `cmd/mecatui/ui/approval_render.go`
-  (`openPlanReviewView`).
+- The plan-review pattern this mirrors: `cmd/mecatui/ui/approval_surface.go`
+  (`openPlan`).

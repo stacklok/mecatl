@@ -65,11 +65,15 @@ func TestResolveAskArmsNoExtraStreamReader(t *testing.T) {
 			ch := make(chan tea.Msg, 1)
 			m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 			m.streamCh = ch
-			m.phase = phaseAwaitingApproval
-			m.approval.ask = pendingAsk{AskID: "ask-1", Tool: "Write", focus: 0}
+			m.phase = phaseRunning
+			m = applyAll(m, client.PermissionAskMsg{AskID: "ask-1", Tool: "Write"})
 			ch <- client.StreamClosedMsg{} // the message the in-flight reader will eventually take
 
-			_, cmd := m.resolveAsk(tc.verdict)
+			key := tea.KeyPressMsg{Code: 'a', Text: "a"}
+			if tc.verdict == client.VerdictDeny {
+				key = tea.KeyPressMsg{Code: 'd', Text: "d"}
+			}
+			_, cmd := pressKey(m, key)
 			runBatchLeaves(cmd) // execute the send + any (wrongly) batched reader
 
 			// The parked message must still be on the channel. If resolveAsk armed a second

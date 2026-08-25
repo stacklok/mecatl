@@ -236,7 +236,7 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 
 	t.Run("plan-approval mnemonics", func(t *testing.T) {
 		m.phase = phaseAwaitingApproval
-		m.approval.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"x"}`}
+		openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"x"}`}
 		got := stripANSIstr(m.renderFooter())
 		// approvalMnemonic upper-cases the bare rune: y→Y, q→Q, n→N.
 		if !strings.Contains(got, "Y approve & run") {
@@ -346,9 +346,9 @@ func TestPlanReviewActionBarReflectsKeyOverride(t *testing.T) {
 		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
 	)
 	m.phase = phaseAwaitingApproval
-	m.approval.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
-	m.openPlanReviewView(m.approval.ask, 0, "")
-	got := stripANSIstr(m.renderPlanReviewView(m.approval.ask))
+	openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
+	_ = m.View()
+	got := stripANSIstr(m.View().Content)
 	// A bare-rune override degrades to the honest standalone form ("[Y] approve
 	// & run"), not the wordplay stem ("[Y]pprove & run") — approvalMnemonic
 	// upper-cases the bare rune: y→Y, q→Q, n→N.
@@ -390,9 +390,9 @@ func TestPlanReviewActionBarModifiedChordDegrades(t *testing.T) {
 		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
 	)
 	m.phase = phaseAwaitingApproval
-	m.approval.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
-	m.openPlanReviewView(m.approval.ask, 0, "")
-	got := stripANSIstr(m.renderPlanReviewView(m.approval.ask))
+	openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
+	_ = m.View()
+	got := stripANSIstr(m.View().Content)
 	for _, want := range []string{"[ctrl+y] approve & run", "[ctrl+q] auto-accept edits", "[ctrl+n] iterate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan-review button should carry the standalone modified-chord form %q: %q", want, got)
@@ -415,9 +415,9 @@ func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
 		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
 	)
 	m.phase = phaseAwaitingApproval
-	m.approval.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
-	m.openPlanReviewView(m.approval.ask, 0, "")
-	got := stripANSIstr(m.renderPlanReviewView(m.approval.ask))
+	openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"do the thing"}`}
+	_ = m.View()
+	got := stripANSIstr(m.View().Content)
 	for _, want := range []string{"[A]pprove & run", "[W] auto-accept edits", "[D] iterate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan-review default button should render %q byte-for-byte: %q", want, got)
@@ -439,7 +439,7 @@ func TestPermissionModalButtonsReflectKeyOverride(t *testing.T) {
 	r := newRenderer(theme.New("aztec", theme.AztecPalette()), keyMarkings(km))
 	r.setWidth(100)
 	ask := pendingAsk{Tool: "Edit", offerAlways: true, Args: `{"path":"a","old_string":"x","new_string":"y"}`}
-	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30, 0))
+	got := stripANSIstr(renderApprovalModalWithRenderer(r, ask, false, 100, 30))
 	for _, want := range []string{"[Y] allow", "[Q] always allow", "[N] deny"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("modal buttons should carry the overridden standalone form %q: %q", want, got)
@@ -465,7 +465,7 @@ func TestPermissionModalButtonsDefaultBytesUnchanged(t *testing.T) {
 	r := newRenderer(theme.New("aztec", theme.AztecPalette()), defaultHelpKeys())
 	r.setWidth(100)
 	ask := pendingAsk{Tool: "Edit", offerAlways: true, Args: `{"path":"a","old_string":"x","new_string":"y"}`}
-	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30, 0))
+	got := stripANSIstr(renderApprovalModalWithRenderer(r, ask, false, 100, 30))
 	for _, want := range []string{"[A]llow", "Al[w]ays", "[D]eny", "al[w]ays allows this exact command for the rest of this session"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("default modal buttons should stay the historical word-embedded form %q: %q", want, got)
@@ -486,7 +486,7 @@ func TestPermissionModalButtonsModifiedChordStandalone(t *testing.T) {
 	r := newRenderer(theme.New("aztec", theme.AztecPalette()), keyMarkings(km))
 	r.setWidth(100)
 	ask := pendingAsk{Tool: "Edit", offerAlways: true, Args: `{"path":"a","old_string":"x","new_string":"y"}`}
-	got := stripANSIstr(r.renderPermissionModal(ask, false, 0, 100, 30, 0))
+	got := stripANSIstr(renderApprovalModalWithRenderer(r, ask, false, 100, 30))
 	for _, want := range []string{"[ctrl+y] allow", "[ctrl+q] always allow", "[ctrl+n] deny"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("modal buttons should carry the modified-chord standalone form %q: %q", want, got)
@@ -536,7 +536,7 @@ func TestDefaultFooterBytesUnchanged(t *testing.T) {
 	}
 
 	m.phase = phaseAwaitingApproval
-	m.approval.ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"x"}`}
+	openApprovalSurface(&m).ask = pendingAsk{Tool: "PresentPlan", offerAlways: true, Args: `{"plan":"x"}`}
 	got = stripANSIstr(m.renderFooter())
 	if !strings.Contains(got, "A approve & run · W auto-accept · D iterate") {
 		t.Errorf("default plan-approval line should be the historical literal, got %q", got)

@@ -78,16 +78,13 @@ func (m Model) View() tea.View {
 	return v
 }
 
-// renderBody picks the viewport body: a help/picker/panel overlay, the modal
-// surface (soul today, the first migrator) centered by the PARENT via centerCard, the
-// permission-modal card (generic) or the full-screen scrollable plan-review
-// view (a plan ask), or the conversation. "Parents place, surfaces size":
-// a modal returns its UNSCENTERED body sized from the offered geometry; view.go
-// then centers it here with the conversation geometry.
+// renderBody picks the viewport body: a help/picker/panel overlay, an open modal
+// surface centered by the PARENT via centerCard, or the conversation. "Parents
+// place, surfaces size": a modal returns its UNSCENTERED body sized from the
+// offered geometry; view.go then centers it here with the conversation geometry.
 func (m Model) renderBody() string {
-	if m.phase == phaseAwaitingApproval {
-		return m.renderApprovalBody()
-	}
+	m.hits.clear()
+	m.metrics.clear()
 	switch {
 	case m.sessionDetailsOpen:
 		return renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())
@@ -98,15 +95,7 @@ func (m Model) renderBody() string {
 	case m.agentsInv.view != agentsInvNone:
 		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.modal != nil:
-		body, _ := m.modal.Render(m.width, m.vp.Height())
-		placement := modalPlacementCard
-		if source, ok := m.modal.(modalPlacementSource); ok {
-			placement = source.modalPlacement()
-		}
-		if placement == modalPlacementFill {
-			return body
-		}
-		return centerCard(m.deps.Theme, body, m.width, m.vp.Height())
+		return (&m).renderModalSurface()
 	case m.userModel.view != userModelNone:
 		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.reflections.view != reflectionsNone:
@@ -124,28 +113,6 @@ func (m Model) renderBody() string {
 	default:
 		return m.rend.vpView(m.vp)
 	}
-}
-
-// renderApprovalBody owns the phaseAwaitingApproval arm of renderBody (extracted
-// to keep renderBody under the cyclomatic bound). The full-screen ask-args view
-// (issue #488) owns the body while open — discriminated BEFORE the plan/generic
-// modal arms (the phase stays phaseAwaitingApproval; argsViewOpen is Model state
-// alongside it).
-func (m Model) renderApprovalBody() string {
-	if m.approval.argsViewOpen {
-		return m.renderAskArgsView(m.approval.ask)
-	}
-	if isPlanAsk(m.approval.ask.Tool) {
-		// A plan ask fills the conversation region with a dedicated SCROLLABLE
-		// viewport (planVP) instead of the small centered card — the plan is
-		// read in full, no collapse, no ctrl+t gate. planVP is populated at the
-		// reducer seams (openPlanReviewView: the PermissionAskMsg reducer, the
-		// queued-successor advance path, relayout/onResize geometry changes)
-		// so the render path is a pure read of m.approval.planVP.View(). See
-		// renderPlanReviewView / openPlanReviewView.
-		return m.renderPlanReviewView(m.approval.ask)
-	}
-	return m.rend.renderPermissionModal(m.approval.ask, m.expandTools, len(m.approval.queue), m.width, m.vp.Height(), m.approval.askVPOffset)
 }
 
 // renderHeader is the top bar: session id · model · mode · server.
@@ -533,6 +500,10 @@ func (m Model) fitHeader(line, badge string, badgeW int, tail string, width int)
 
 // renderFooter is the status bar: spinner + active tool + status + usage.
 func (m Model) renderFooter() string {
+	approval := approvalFooterProjection{}
+	if m.phase == phaseAwaitingApproval {
+		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
+	}
 	var left string
 	switch m.phase {
 	case phaseRunning:
@@ -549,15 +520,12 @@ func (m Model) renderFooter() string {
 			left = spin + " thinking…"
 		}
 	case phaseAwaitingApproval:
-		// With asks queued behind the visible modal, the footer carries the same
-		// "(1 of N)" badge as the modal title; the single-ask frame stays
-		// byte-identical.
 		label := "⚠ awaiting approval"
-		if isPlanAsk(m.approval.ask.Tool) {
+		if approval.plan {
 			label = "⚙ plan review"
 		}
-		if n := len(m.approval.queue); n > 0 {
-			label = fmt.Sprintf("%s (1 of %d)", label, 1+n)
+		if approval.queued > 0 {
+			label = fmt.Sprintf("%s (1 of %d)", label, 1+approval.queued)
 		}
 		left = m.deps.Theme.Style("askTitle").Render(label)
 	case phaseConnecting:
@@ -590,16 +558,9 @@ func (m Model) renderFooter() string {
 	if m.phase == phaseRunning {
 		help = hk.submit + " queue · " + hk.cancel + " cancel/clear · " + help
 	}
-	if m.phase == phaseAwaitingApproval && isPlanAsk(m.approval.ask.Tool) {
-		// Gate the "W auto-accept" hint on offerAlways — the SAME condition the
-		// action bar (permission.go renderPlanReviewView) uses to show/hide the
-		// [W] button. Without this a surfaced child plan ask (offerAlways=false)
-		// would advertise a key that silently no-ops (onApprovalKey ignores W).
-		// The mnemonics are the LIVE Allow/AllowAlways/Deny chords with the first
-		// rune upper-cased (the footer idiom: "A", "W", "D" by default) so an
-		// override propagates (issue #457).
+	if m.phase == phaseAwaitingApproval && approval.plan {
 		allow, always, deny := approvalMnemonic(hk.allow), approvalMnemonic(hk.allowAlways), approvalMnemonic(hk.deny)
-		if m.approval.ask.offerAlways {
+		if approval.offerAlways {
 			help = allow + " approve & run · " + always + " auto-accept · " + deny + " iterate · " + help
 		} else {
 			help = allow + " approve & run · " + deny + " iterate · " + help

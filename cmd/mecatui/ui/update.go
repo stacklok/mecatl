@@ -392,12 +392,12 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
 	m = m.bindSessionID(msg.SessionID)
 	m.browsingStartupSessions = false
-	m.modal = nil
+	m.closeModal()
 	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,
 	// so this is set once here. An older server yields the zero value → no segment.
-	m.effectiveModel = msg.ResolvedModel
+	(&m).setEffectiveModel(msg.ResolvedModel)
 	if msg.Mode != "" {
 		m.activeMode = client.ModeString(client.ModeFromString(msg.Mode))
 	}
@@ -677,16 +677,7 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	m.sessionState = msg.State
 	m.sessionCreatedAt = msg.CreatedAt
 	m.activeWorkspace = msg.Workspace
-	// Model identity changed (e.g. plan model → execute model): full replace.
-	// The model is normally fixed per session, so this only fires on a
-	// server-driven mode transition (plan approval). When identity is unchanged
-	// (the footer-heal path), fall through to the RAISE-ONLY ContextWindow path
-	// so the denominator self-corrects without touching ProviderID/ModelID.
-	if msg.Resolved.ModelID != "" && msg.Resolved.ModelID != m.effectiveModel.ModelID {
-		m.effectiveModel = msg.Resolved
-		m.refreshView()
-	} else if msg.Resolved.ContextWindow > m.effectiveModel.ContextWindow {
-		m.effectiveModel.ContextWindow = msg.Resolved.ContextWindow
+	if (&m).setEffectiveModel(msg.Resolved) {
 		m.refreshView()
 	}
 	return m, nil, true
@@ -859,40 +850,8 @@ func (m Model) applyDeliveryNote(msg client.DeliveryNoteMsg) (tea.Model, tea.Cmd
 func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case client.PermissionRetractMsg:
-		// The harness WITHDREW a surfaced ask (its owning subagent was cancelled while
-		// parked). Three cases against the FIFO ask queue (m.approval.ask is the head): a match
-		// on the VISIBLE ask dismisses the modal and advances the queue; a match on a
-		// QUEUED ask removes it in place; an unknown/stale id is idempotently dropped.
-		// The pure surface half (approvalState.applyPermissionRetract) mutates the
-		// approval state + returns the notice/plan-review actions; the Model disposes —
-		// the phase transition, the spinner re-arm, the afterEvent flush.
-		open := m.phase == phaseAwaitingApproval
-		visibleMatch := open && m.approval.ask.AskID == msg.AskID
-		actions, adv := (&m.approval).applyPermissionRetract(msg, open)
-		(&m).dispatchApprovalActions((&m).approvalDeps(), actions)
-		if !visibleMatch {
-			// A QUEUED (not-yet-visible) ask was withdrawn (removed in place) or an
-			// unknown/stale id was idempotently dropped: the visible modal is untouched.
-			return m.afterEvent()
-		}
-		// Visible match: the modal dismissed and the queue advanced. A queued
-		// successor took the head → phase STAYS awaitingApproval, spinner off-screen,
-		// no re-arm (re-arm fires only when leaving awaitingApproval INTO running; see
-		// resolveAsk). The queue drained → resume the interrupted phase, re-arming the
-		// spinner for the awaitingApproval→running transition (the phase-gated TickMsg
-		// handler dropped the chain while the modal was open). Two-step form, never
-		// mixing the old m with the helper's returned model in one expression (the
-		// unspecified-evaluation-order trap — see markDirty).
-		if adv.hasNext {
-			return m.afterEvent()
-		}
-		// adv.resume is pre-clamped to idle|running by approvalState.advance() —
-		// the single source of truth for the resume rule; do NOT re-clamp here.
-		m.phase = adv.resume
-		if adv.resume == phaseRunning {
-			mm2, cmd := m.afterEvent()
-			return mm2, tea.Batch(cmd, mm2.sp.Tick)
-		}
+		// An active approval surface consumes retractions through HandleMsg. A
+		// stale retraction after close is transport-only and needs no approval state.
 		return m.afterEvent()
 	case client.SubagentMsg:
 		m.applySubagent(msg)
@@ -1419,24 +1378,6 @@ func (m *Model) relayout() {
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
-	// A plan-ask is the front ask: keep the dedicated plan-review viewport sized
-	// to the CURRENT body region (its height is the body minus the pinned action
-	// bar) so a resize / transient toggle re-flows the scrollable plan. The plan
-	// content itself is re-wrapped by openPlanReviewView (width-keyed glamour),
-	// so re-populate on any geometry change (height OR width). Done BEFORE the
-	// m.vp height-equality early-return below so a plan-ask resize still re-flows
-	// even when the conversation viewport's height happens to match.
-	if m.phase == phaseAwaitingApproval && isPlanAsk(m.approval.ask.Tool) {
-		m.openPlanReviewView(m.approval.ask, len(m.approval.queue), m.effectiveModel.ModelID)
-	}
-	// The full-screen ask-args view, when open, is re-populated at the SAME
-	// position as the plan-review view above (BEFORE the bodyHeight early-return)
-	// so a resize/transient toggle re-wraps the args at the new geometry with the
-	// operator's YOffset preserved (openAskArgsView's fingerprint short-circuits
-	// a no-op).
-	if m.phase == phaseAwaitingApproval && m.approval.argsViewOpen {
-		m.openAskArgsView(m.approval.ask, len(m.approval.queue))
-	}
 	if bodyHeight == m.vp.Height() {
 		return
 	}
@@ -1560,17 +1501,9 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // tool output); inside the permission modal it ROUTES by ask type (issue #488):
 // a non-diff, non-plan ask opens/closes the full-screen ask-args view INSTEAD
 // of toggling expandTools; a plan ask or an Edit/Write (diff-capable) ask keeps
-// the in-modal expand behaviour byte-for-byte. The approval arm delegates to the
-// pure approvalState.approvalExpandToggle (the surface proposes the view
-// open/close + re-population; the Model disposes via dispatchApprovalActions).
+// the in-modal expand behavior byte-for-byte. Approval emits a semantic toggle
+// intent for the latter; Model owns the global expandTools effect.
 func (m Model) onExpandToolsKey() (tea.Model, tea.Cmd) {
-	if m.phase == phaseAwaitingApproval {
-		actions, approval := (&m.approval).approvalExpandToggle()
-		if approval {
-			(&m).dispatchApprovalActions((&m).approvalDeps(), actions)
-			return m, nil
-		}
-	}
 	m.expandTools = !m.expandTools
 	m.refreshView()
 	return m, nil
@@ -1583,7 +1516,7 @@ func (m Model) onExpandToolsKey() (tea.Model, tea.Cmd) {
 func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.phase {
 	case phaseAwaitingApproval:
-		return m.onApprovalKey(msg)
+		return m, nil
 	case phaseRunning:
 		return m.onRunningKey(msg)
 	case phaseIdle:
@@ -1604,9 +1537,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		mm, cmd := m.onStartupRunEntryKey(msg)
 		return mm, cmd, true
 	}
-	// The open modal surface routes through m.modal BEFORE the legacy per-overlay
-	// route list; the closed path nils the field and refocuses via the surface's
-	// Close cmd.
 	if mm, cmd, handled := m.dispatchSurfaceKey(msg); handled {
 		return mm, cmd, true
 	}
@@ -1651,15 +1581,7 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 		cmd = tea.Batch(cmd, intentCmd)
 	}
 	if closed {
-		if sessions, ok := m.modal.(*sessionsState); ok {
-			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, sessions.transcriptSurfaceRequestToken)
-			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, sessions.pageRequestToken)
-		}
-		if models, ok := m.modal.(*modelsState); ok {
-			m.modelCatalogRequestToken = max(m.modelCatalogRequestToken, models.requestToken)
-		}
-		m.modal.Close()
-		m.modal = nil
+		m.closeModal()
 		return m, tea.Batch(cmd, m.ta.Focus()), true
 	}
 	return m, cmd, true
@@ -1671,6 +1593,9 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 // batches the textarea refocus (same parent-refocuses path as
 // dispatchSurfaceKey). Extracted so update() stays under the cyclomatic cap.
 func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if hit, ok := msg.(surfaceHitMsg); ok && !m.hits.contains(hit.ID) {
+		return m, nil, true
+	}
 	if m.modal == nil {
 		return m, nil, false
 	}
@@ -1687,15 +1612,7 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		cmd = tea.Batch(cmd, intentCmd)
 	}
 	if closed {
-		if sessions, ok := m.modal.(*sessionsState); ok {
-			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, sessions.transcriptSurfaceRequestToken)
-			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, sessions.pageRequestToken)
-		}
-		if models, ok := m.modal.(*modelsState); ok {
-			m.modelCatalogRequestToken = max(m.modelCatalogRequestToken, models.requestToken)
-		}
-		m.modal.Close()
-		m.modal = nil
+		m.closeModal()
 		return m, tea.Batch(cmd, m.ta.Focus()), true
 	}
 	return m, cmd, true
@@ -1748,7 +1665,7 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 		return m, nil, true, false
 	case sessionsTranscriptAdoptionIntent:
 		m.caps = intent.capabilities
-		m.effectiveModel = intent.model
+		(&m).setEffectiveModel(intent.model)
 		m.activeMode = intent.mode
 		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript)
 		return mm, cmd, true, stopSurfaceDispatch
@@ -1767,7 +1684,8 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 			sessions.pageCancel()
 		}
 		m.sessionsPageRequestToken++
-		m.modal, m.phase = nil, phaseConnecting
+		m.closeModal()
+		m.phase = phaseConnecting
 		return m, m.createSessionCmd(), true, true
 	case sessionsActiveTitleIntent:
 		if intent.id == m.sessionID {
@@ -1792,6 +1710,9 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if model, cmd, handled, stopSurfaceDispatch := m.applyApprovalSurfaceIntent(intent); handled {
+		return model, cmd, stopSurfaceDispatch
+	}
 	if model, cmd, handled, stopSurfaceDispatch := m.applyModelsSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
 	}
@@ -3215,8 +3136,7 @@ func compactionArchiveNotice(msg client.CompactionArchiveMsg) string {
 // continuation. Ordinary transcript navigation is owned by sessionsState.
 func (m Model) onStartupRunEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Close) {
-		m.modal.Close()
-		m.modal = nil
+		m.closeModal()
 		m.startupRunEntryFailed = false
 		m.phase = phaseIdle
 		cmd := m.ta.Focus()
@@ -3224,8 +3144,7 @@ func (m Model) onStartupRunEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if msg.String() == "r" {
-		m.modal.Close()
-		m.modal = nil
+		m.closeModal()
 		m.startupRunEntryFailed = false
 		m.phase = phaseIdle
 		m.ta.SetValue(m.startupRetryPrompt)
@@ -3258,16 +3177,7 @@ func (m Model) endRun(stop string) Model {
 	m.streamCh = nil
 	m.streamGen++ // invalidate any reader still bound to the torn-down run's channel
 	m.activeTool = ""
-	// A dead run's asks must not survive into idle: drop the visible modal, the FIFO
-	// queue behind it, and the answered-set dedupe (covers every endRun caller —
-	// ResultMsg, StreamErrMsg, StreamClosedMsg, cancel). The plan-review viewport
-	// and the ask-args view are cleared alongside (the closing ask may have been a
-	// plan ask, or had its full-screen args view open).
-	m.approval.clearPlanReview()
-	m.approval.clearAskArgsView()
-	m.approval.ask = pendingAsk{}
-	m.approval.queue = nil
-	m.approval.resolvedAsks = nil
+	m.closeModal()
 	// The run is terminal: its steer inbox is closed, so any in-flight steer state is
 	// over. A pending/sent (un-drained, un-acked) steer simply clears — it is lost
 	// with the run (the honest best-effort contract); a promoted/retracted terminal
@@ -3289,33 +3199,12 @@ func (m Model) endRun(stop string) Model {
 	return m
 }
 
-// onMouseWheel routes a wheel event to the conversation viewport and re-derives
-// auto-follow. Mouse capture is enabled only on the alt screen (View sets
-// MouseModeCellMotion there); the viewport's own Update handles tea.MouseWheelMsg
-// (gated on MouseWheelEnabled, default true), so a wheel-up unsticks and a wheel
-// back to the bottom re-sticks — same as the nav keys.
-//
-// While the approval modal owns the body, the wheel routes to the modal's
-// scrollable surfaces (full-screen args view, plan-review viewport, or the in-card
-// args mini-viewport over the card) via the pure approvalState.approvalToggle
-// half; a wheel the modal does not claim falls through to the conversation
-// viewport behind it (so a wheel elsewhere keeps scrolling the transcript).
-//
-// The open modal surface gets the wheel before the viewport and CONSUMES it by
-// default (handled=true: a modal captures input, so the wheel behind it is
-// DEAD); handled=false is allowed only when the surface deliberately delegates
-// (approval's plateau-only claim below is its own seam, pre-migration).
+// onMouseWheel lets an open modal handle the wheel, then always consumes it.
+// The conversation viewport receives wheel events only while no modal is open.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
-	if m.phase == phaseAwaitingApproval {
-		if cmd, approval := (&m.approval).approvalWheel(msg, (&m).approvalDeps()); approval {
-			return m, cmd
-		}
-	}
-	// Open modal surface gets the wheel BEFORE the conversation viewport.
 	if m.modal != nil {
-		if cmd, handled := m.modal.HandleWheel(msg); handled {
-			return m, cmd
-		}
+		cmd, _ := m.modal.HandleWheel(msg)
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
@@ -3357,6 +3246,21 @@ func (m Model) mouseDebugLine(mo tea.Mouse) string {
 		mo.X, mo.Y, convTopRow(m), m.vp.YOffset(), m.vp.Height(), ok, line, col)
 }
 
+// onModalMousePress handles generic rendered-frame hits before the legacy
+// approval branch. A modal owns misses as well, so clicks never reach selection.
+func (m Model) onModalMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
+	if m.modal == nil {
+		return m, nil, false
+	}
+	if !mouseCaptureEnabled(m) {
+		return m, nil, true
+	}
+	if mm, cmd, handled := m.dispatchSurfaceHit(mo.X, mo.Y); handled {
+		return mm, cmd, true
+	}
+	return m, nil, true
+}
+
 // onMousePress handles a mouse button press. A LEFT press in the conversation
 // region anchors a new selection (when selectable — no overlay owns the body, alt
 // screen on); a RIGHT press copies the current selection if one exists (a
@@ -3387,25 +3291,8 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		}
 		return m, m.primaryPasteCmd()
 	case tea.MouseLeft:
-		// Clickable approval buttons (issue #486): while a permission/plan ask owns
-		// the body, a left-click on a button resolves it to that button's verdict,
-		// exactly like pressing its key chord (set focus, then resolveAsk — the same
-		// path the enter key drives). A click elsewhere in the modal is swallowed
-		// (the modal is a gate, not a form). This branch sits BEFORE the selectable
-		// gate: the approval phase is one of the states selectable() excludes, so
-		// without it a button click would fall through to "not selectable" and start
-		// nothing. It deliberately does NOT advance the multi-click count (clicking a
-		// button is not a word/line-select gesture).
-		if m.phase == phaseAwaitingApproval {
-			// Approval buttons are live only while View has captured the mouse.
-			// Inline and --no-mouse modes deliberately leave clicks to the terminal.
-			if !mouseCaptureEnabled(m) {
-				return m, nil
-			}
-			if act, ok := m.clickAt(mo.X, mo.Y); ok {
-				return m.dispatchClick(act)
-			}
-			return m, nil
+		if mm, cmd, handled := m.onModalMousePress(mo); handled {
+			return mm, cmd
 		}
 		// The selectable gate AND the count logic sit here, AFTER the gate: a press
 		// while an overlay owns the body (or under --no-mouse/--inline) starts nothing

@@ -25,12 +25,6 @@ type sessionStateProjection struct {
 	contextTokens int64
 	activeTool    string
 	toolProgress  string
-	// The ask-args surfaces (issue #488): the full-screen view is session-derived
-	// (its ask rides the OLD session's askIDs), so resetSession must close it and
-	// reset the modal's mini-viewport offset.
-	argsViewOpen bool
-	argsVPReady  bool
-	askVPOffset  int
 }
 
 // sessionState projects a Model onto its session-derived fields for comparison.
@@ -45,9 +39,6 @@ func sessionState(m Model) sessionStateProjection {
 		contextTokens: m.contextTokens,
 		activeTool:    m.activeTool,
 		toolProgress:  m.toolProgress,
-		argsViewOpen:  m.approval.argsViewOpen,
-		argsVPReady:   m.approval.argsVPReady,
-		askVPOffset:   m.approval.askVPOffset,
 	}
 }
 
@@ -226,10 +217,10 @@ func TestDebugAskInjectsFakeAsk(t *testing.T) {
 		if m.phase != phaseAwaitingApproval {
 			t.Fatalf("invocation %d: /debug-ask must open the modal (even at idle), got phase %v", i, m.phase)
 		}
-		if m.approval.ask.Tool != "Bash" {
-			t.Errorf("invocation %d: the fake ask must be a Bash ask, got %q", i, m.approval.ask.Tool)
+		if approvalSurfaceOf(t, m).ask.Tool != "Bash" {
+			t.Errorf("invocation %d: the fake ask must be a Bash ask, got %q", i, approvalSurfaceOf(t, m).ask.Tool)
 		}
-		seenArgs[m.approval.ask.Args] = true
+		seenArgs[approvalSurfaceOf(t, m).ask.Args] = true
 		// Resolve it (allow once) so the next invocation's ask opens fresh.
 		m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
 		if got := lastNotice(m); got != "permission allowed" {
@@ -238,6 +229,9 @@ func TestDebugAskInjectsFakeAsk(t *testing.T) {
 	}
 	if len(seenArgs) != 3 {
 		t.Errorf("three invocations must cycle through three DISTINCT payloads, got %d", len(seenArgs))
+	}
+	if m.modal != nil {
+		t.Error("/clear should close the approval surface")
 	}
 	if m.phase != phaseIdle {
 		t.Errorf("a /debug-ask opened at idle must RESUME to idle on resolve, got %v", m.phase)
@@ -359,11 +353,6 @@ func TestClearBuiltinResetsState(t *testing.T) {
 	m.contextTokens = 1200
 	m.activeTool = "Write"
 	m.toolProgress = "writing"
-	// args-view residue: resetSession (via /clear) must close the args view and
-	// zero the mini-viewport offset.
-	m.approval.argsViewOpen = true
-	m.approval.argsVPReady = true
-	m.approval.askVPOffset = 2
 	// Scrolled up (auto-follow off): /clear must re-arm it, since an empty
 	// conversation is at-bottom and the next run must tail its streaming deltas.
 	m.stuck = false

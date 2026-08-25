@@ -145,7 +145,7 @@ func TestModelHasOneModalSurfaceField(t *testing.T) {
 // dynamic-Open decision means the soul state lives ONLY in m.modal; a
 // pre-declared m.soul field is the tombstone drift this kills. Matches by
 // reflect Type.Name() (the same idiom approval_arch_test.go uses for
-// approvalState).
+// approval surface's ephemeral state).
 func TestModelHasNoSoulStateField(t *testing.T) {
 	st := reflect.TypeOf(Model{})
 	var count int
@@ -234,7 +234,7 @@ func TestModelHasNoModelsStateField(t *testing.T) {
 
 // TestSurfaceDepsIsAmbientOnly reflects over the SHARED surfaceDeps struct and
 // asserts it carries ONLY the ambient base fields (theme/keys/marks/caps/ctx)
-// and NONE of the archived deps-per-call wideners (width/lifecycle/nextEpoch/
+// plus the Model-owned reference hit allocator, and NONE of the archived deps-per-call wideners (width/lifecycle/nextEpoch/
 // focusInput — surface-SPECIFIC collaborators live as fields on the surface's
 // own state struct, set next to deps in the same Open literal, per
 // docs/design/surface-migration-plan.md §4 decision 8). ctx is ambient: any
@@ -244,9 +244,9 @@ func TestModelHasNoModelsStateField(t *testing.T) {
 // non-ambient field lands.
 func TestSurfaceDepsIsAmbientOnly(t *testing.T) {
 	st := reflect.TypeOf(surfaceDeps{})
-	want := []string{"theme", "keys", "marks", "caps", "ctx"}
+	want := []string{"theme", "keys", "marks", "caps", "ctx", "hits"}
 	if st.NumField() != len(want) {
-		t.Errorf("surfaceDeps has %d fields, want exactly %d (theme/keys/marks/caps/ctx only)", st.NumField(), len(want))
+		t.Errorf("surfaceDeps has %d fields, want exactly %d (theme/keys/marks/caps/ctx/hits only)", st.NumField(), len(want))
 	}
 	banned := []string{"width", "lifecycle", "nextEpoch", "focusInput"}
 	for i := 0; i < st.NumField(); i++ {

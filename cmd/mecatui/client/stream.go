@@ -46,6 +46,11 @@ type Stream struct {
 	send Sender
 
 	mu sync.Mutex // serialises Send (Recv is single-goroutine in the reader)
+	// resolvedApprovals is run-scoped transport correlation. It is intentionally
+	// owned by the stream rather than the UI Model, so closing a dynamic approval
+	// surface does not leave a Model approval-state tombstone merely to reject a
+	// late duplicate event.
+	resolvedApprovals map[string]struct{}
 }
 
 // NewStream binds a receive and send side into a Stream. Pass the same
@@ -53,6 +58,32 @@ type Stream struct {
 // no-op or recording Sender) in tests.
 func NewStream(recv Recver, send Sender) *Stream {
 	return &Stream{recv: recv, send: send}
+}
+
+// MarkApprovalResolved records an ask id as resolved for this stream. It is
+// called before the deferred send command runs, so a re-delivered ask cannot
+// reopen a just-closed UI surface in that scheduling window.
+func (s *Stream) MarkApprovalResolved(askID string) {
+	if s == nil || askID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.resolvedApprovals == nil {
+		s.resolvedApprovals = make(map[string]struct{})
+	}
+	s.resolvedApprovals[askID] = struct{}{}
+}
+
+// ApprovalResolved reports whether askID was already resolved on this stream.
+func (s *Stream) ApprovalResolved(askID string) bool {
+	if s == nil || askID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.resolvedApprovals[askID]
+	return ok
 }
 
 // ReadLoop runs the receive loop on its OWN goroutine over the live Converse

@@ -1,16 +1,15 @@
  mecatui  ·  session #b9ba2286  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                  ┃
 ┃  Permission required                                                                             ┃
 ┃                                                                                                  ┃
 ┃  Bash                                                                                            ┃
 ┃  │ find . -name '*.go' -not -path './vendor/*' -print0 | xargs -0 grep -nH 'func Test' | awk  ↩  ┃
-┃  │ -F: '{print $1}' | sort | uniq -c | sort -rn | head -40 | while read -r count file; do ↩      ┃
-┃  │ printf '%5d  %s\n' "$count" "$file"; done | tee /tmp/test-counts.txt | column -t -s' '        ┃
-┃  │ timeout_ms: 60000                                                                             ┃
 ┃                                                                                                  ┃
-┃  ctrl+t full args                                                                                ┃
+┃  … pgup/pgdn scroll · ctrl+t full args                                                           ┃
 ┃  Bash requires approval                                                                          ┃
 ┃                                                                                                  ┃
 ┃  ╭───────────╮  ╭────────────╮  ╭──────────╮                                                     ┃
@@ -19,6 +18,7 @@
 ┃  al[w]ays allows this exact command for the rest of this session                                 ┃
 ┃                                                                                                  ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 
 │

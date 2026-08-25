@@ -67,11 +67,9 @@ These rules record the working conventions refined through `/sessions` and
    idiom) so `HandleKey`/`HandleMsg` can mutate it, but no `*soulState` is ever a
    Model field. Mutations happen through the per-call pointer; there is no copy-back
    ceremony (the interface already holds the one instance).
-3. **Explicit deps struct, not a host interface.** Mirror `approvalDeps`
-   (`cmd/mecatui/ui/approval_surface.go:32-83`): ONE shared `surfaceDeps` is built
-   fresh per call by a Model method and holds ONLY what surfaces may touch. No
-   `surfaceHost` interface. (Section 1 below names it `surfaceDeps`, not a
-   per-surface `soulDeps`.)
+3. **Explicit deps struct, not a host interface.** Use shared `surfaceDeps`
+   (`cmd/mecatui/ui/surface.go`): it holds ambient collaborators only; each
+   surface keeps its own immutable inputs beside it. No `surfaceHost` interface.
 4. **"Surfaces size, parents place."** The surface sizes itself from the geometry
    (width/height) offered to `Render` on EVERY call — pure-function geometry, no
    stored size state and no `Resize` method — but never knows its screen position.
@@ -124,9 +122,12 @@ These rules record the working conventions refined through `/sessions` and
     surface-authored (no Model-authored cmd rides a return). The parent
     `dispatchSurfaceKey`/`dispatchSurfaceMsg` handle `closed` by running the
     surface's `Close()` and batching `m.ta.Focus()` itself.
-12. **Wheel is default-consume.** `HandleWheel` returns `handled=true` (consume,
-    the wheel behind the modal is DEAD while it is open) unless a surface
-    deliberately delegates (handled=false).
+12. **Wheel is modal-wide capture.** The parent routes every wheel event to
+    `modal.HandleWheel` first, then consumes it even when the surface returns
+    `handled=false`. The conversation viewport receives wheels only when no
+    modal is open. Approval scrolls its fill args/plan view when ready, its
+    generic mini-scroll regardless of pointer coordinates, and otherwise
+    consumes the event.
 
 ### Shipped: `/models`
 
@@ -220,11 +221,9 @@ type surface interface {
     // HandleKey closed path.
     HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool)
 
-    // HandleWheel returns handled=true to CONSUME the event (the default: a
-    // modal captures input and the wheel behind it is DEAD while the modal is
-    // open), handled=false ONLY if the surface deliberately delegates to the
-    // conversation viewport. The boolean preserves delegation; the default
-    // moved (the surface CONSUMES unless it says otherwise).
+    // HandleWheel lets the modal handle a wheel event. The parent consumes every
+    // wheel while a modal is open, including an unhandled response, so the
+    // conversation viewport never receives it.
     HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled bool)
 
     // Close tears the surface down and returns NOTHING: teardown is
@@ -248,9 +247,9 @@ Justification per method:
 - **HandleKey:** consume-or-pass is how `onOverlayKey` works today. `closed` as
   a third return makes Close self-driven from keys (esc) without a Model check
   for which key closed it.
-- **HandleWheel:** default-consume (decision 11). Soul returns `true`; a surface
-  that deliberately delegates (approval's plateau-only claim at its migration)
-  returns `false` and the wheel falls through.
+- **HandleWheel:** a modal receives the wheel first; the parent consumes it
+  whether or not the surface handles it. The conversation viewport receives a
+  wheel only with no modal.
 - **Close:** returns nothing (decision 10). The parent's closed-path in
   `dispatchSurfaceKey`/`dispatchSurfaceMsg` does the `m.ta.Focus()` refocus
   itself; a surface with nothing to release implements an empty body.
@@ -267,9 +266,8 @@ The deps struct, defined next to the interface — the SHARED ambient base only
 // surfaceDeps is the SHARED ambient base every surface may reach, built once
 // at Open by (m *Model).surfaceDeps() and held on the surface state as its
 // deps field (deps-per-call is archived). Fields are ambient collaborators
-// only; surface-SPECIFIC deps are fields on the surface's own state struct,
-// set next to deps in the same Open literal. Mirrors approvalDeps
-// (approval_surface.go).
+// only; surface-SPECIFIC immutable inputs are fields on the surface's own state
+// struct, set next to deps in the same Open literal.
 type surfaceDeps struct {
     theme theme.Theme
     keys  keyMap              // for key.Matches
@@ -292,10 +290,9 @@ func (m *Model) surfaceDeps() surfaceDeps {
 ```
 
 `soulDeps` is deliberately NOT introduced: one shared struct with per-surface
-read-only fields is the Phase-1 lesson (approvalDeps is already the shared
-collaborator struct). Adding a `soulDeps` now would be a parallel channel the
-interface forbids; when a surface needs an RPC func (like approval's
-`sendApproval`), it's a func field on this ONE deps struct.
+read-only fields is the Phase-1 lesson. A surface's semantic intent keeps
+Model-owned effects (for example approval's stream send) out of `surfaceDeps` and
+out of surface callbacks.
 
 **HandleMsg decision (the RPC-reducer wrinkle) — RESOLVED: surface-owned.**
 `updateSoulMsg` MOVES onto the surface as `HandleMsg`. RPC/stream results are
@@ -306,8 +303,8 @@ the open modal passes on (`handled=false`). This is the OO-style consume/kill/
 defer routing; the alternative (a per-overlay `switch msg.(type)` in update.go) is
 the spaghetti issue #555 is killing. `client.SoulMsg` therefore mutates the
 `soulState` the interface already holds — the same pointer-receiver idiom as
-`HandleKey`. Approval is unaffected: it owns its RPC-shaped path through
-`approvalDeps.sendApproval`, a different seam.
+`HandleKey`. Approval instead emits semantic intents that Model consumes for its
+stream send and other root-owned effects.
 
 ## 2. How the Model routes through it
 
@@ -411,10 +408,9 @@ After: replace that one conjunct with `m.modal == nil &&`. The OTHER conjuncts
 (unmigrated overlays) remain until their phase. The semantic is unchanged: no
 selection may start while a surface owns the body.
 
-**Mouse wheel.** The modal CONSUMES the wheel by default (decision 11):
-soul's `HandleWheel` returns `handled=true`, so the wheel behind the open modal
-is DEAD. `handled=false` is reserved for a surface that deliberately delegates;
-the fall-through routing stays in `onMouseWheel`'s `m.modal` arm either way.
+**Mouse wheel.** The parent gives an open modal the wheel first, then consumes it
+regardless of `HandleWheel`'s response. The conversation viewport receives a
+wheel only when no modal is open.
 
 **Close.** `closeSoul` becomes the interface's `Close()` (no return; decision
 10). The parent `dispatchSurfaceKey`/`dispatchSurfaceMsg` closed-path runs the
@@ -538,14 +534,60 @@ register the overlay:
 3. **skills** ✓ — type-to-filter text input + detail view + epochs. Pattern: the
    surface owns a bubbles component (textinput); deps must include whatever the
    component uses. Shipped.
-4. **models** — selecting picker (cursor + enter pick + provenance). Pattern:
-   the surfaces may RETURN an action the Model executes (mirror
-   `approvalAction`'s propose/dispose) — DO NOT widen the interface; a returned
-   semantic value (not a func) rides HandleKey's cmd.
-5. **approval** — the big one: ask queue, click regions, wheel claim, phase.
-   Pattern: it migrates LAST because it must displace the phase coupling and own
-   regions and a queue. Its migration proves the interface can carry approval's
-   `approvalDeps` superset.
+4. **models** ✓ — selecting picker (cursor + enter pick + provenance). Its
+   surface returns semantic intents which Model executes; the interface stays
+   unchanged.
+5. **approval** ✓ — the final Phase-2 migrator. The dynamically-created
+   `approvalSurface` owns the head ask, FIFO queue, dedupe set, focus, plan/args
+   viewports, in-card scroll state, rendering, and keyboard/wheel/hit input. It
+   emits only sealed `surfaceIntent` values; there is no approval-only intent
+   marker. Queue advancement reports unchanged, successor, or drained explicitly.
+   Model applies every ambient effect: stream verdict send, transcript notice,
+   phase restoration, focus, spinner, modal teardown, and terminal plan
+   continuation. A successor remains `awaiting approval`; a drained queue restores
+   the saved phase/focus and ticks the spinner only when that phase is running.
+   There is no `approvalState` tombstone on Model.
+
+### Shipped: approval render-frame hit dispatch
+
+Approval proves the first render-frame click-dispatch seam without widening
+`surface`. `cmd/mecatui/ui/approval_surface.go` (`approvalSurface.Render`) mints
+an opaque `HitID` for each `ClickableRegion` on every render, retains only that
+frame's ID-to-local-action map, and returns the regions with the rendered body.
+The parent owns two concrete frame caches. `cmd/mecatui/ui/hit_regions.go`
+(`hitRegions`) retains only body-local `ClickableRegion`s and opaque IDs; it has
+no surface owner, placement, or bounds layer.
+`cmd/mecatui/ui/geom.go` (`renderedSurfaceMetrics`) retains mandatory outer and
+content bounds plus a content origin. `contentBounds` is the complete effective
+area offered to `Render`: a card spans origin through its offered content width
+and height even when its rendered body is smaller, while a fill surface may use
+its outer bounds as content bounds. The parent chooses placement before
+`Render`: fill surfaces receive the full conversation-body dimensions, while card
+surfaces receive body dimensions minus `askCard` border/padding (clamped at
+zero), then the parent renders decoration. Raw pointer routing maps global
+coordinates to local through the content origin, hit-tests the current local
+regions, and delivers `surfaceHitMsg` through ordinary `HandleMsg` routing. A
+missing ID, a closed surface, or a replaced frame is ignored, so stale delivery
+fails closed instead of resolving a different control.
+
+The ID, action map, regions, and metrics are deliberately ephemeral view caches:
+`approvalSurface.Render` is their sole materializer, so tests render before
+inspecting geometry-dependent cache state. They are freshly replaced during
+rendering and cleared at surface, run, and session teardown. Wheel routing does
+not depend on those caches: the parent calls `HandleWheel` first and consumes
+every wheel while any modal is open. Approval scrolls ready fill views or its
+generic mini-scroll; diff and other approval views simply consume. Approval
+vocabulary, state, rendering, and input stay in the `approval_*.go` files;
+generic geometry and hit dispatch stay in `cmd/mecatui/ui/geom.go` and
+`cmd/mecatui/ui/hit_regions.go`. The structural pin is
+`TestApprovalSurfaceStructuralBoundary`.
+
+This is deliberately not a multi-window manager and defines neither permanent
+surface nor region identities. A future manager may select a rendered window by
+its own layout/z-order policy and route the same local hit message; subdispatch
+inside that window remains surface-owned. Reusing IDs across frames is deferred
+unless a demonstrated Bubble Tea scheduling constraint requires a compatibility
+fallback.
 
 ### Migration note: /mcp
 
@@ -603,7 +645,6 @@ no sessions-specific collaborator widens them.
 - Tiling/focus tree (Phase 3).
 - `approvalButton` component extraction.
 - bubblezone adoption.
-- ANY change to the approval surface (this phase is soul-only).
 - The stale "ADR 0108" citation (docs cleanup flagged, not done).
 
 **Phase-3 note (placement primitive):** lipgloss/v2's `Compositor`/`Layer`

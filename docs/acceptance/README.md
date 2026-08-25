@@ -48,6 +48,7 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
+- [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into
   mecatl. Status: draft.

@@ -406,9 +406,11 @@ func (m Model) spinnerVisible() bool {
 // Model is the root Elm model. It owns the conversation, the bubbles widgets, the
 // renderer (glamour cache), the active run stream, and the per-run cancel func.
 type Model struct {
-	deps Deps
-	keys keyMap
-	rend *renderer
+	deps    Deps
+	keys    keyMap
+	rend    *renderer
+	hits    *hitRegions // reference state shared with value-receiver View copies
+	metrics *renderedSurfaceMetrics
 
 	phase     phase
 	sessionID string
@@ -452,13 +454,7 @@ type Model struct {
 	conv conversation
 	vp   viewport.Model
 
-	// approval is the approval modal's whole state cluster (issue #555 Phase 1):
-	// the visible ask, the FIFO queue behind it, the answered-set dedupe, and the
-	// scrollable surfaces (plan-review viewport, full-screen ask-args view,
-	// in-card args mini-viewport). Its field docs live on approvalState in
-	// approval_state.go.
-	approval approvalState
-
+	// approval state is dynamic: the surface owns it only while an ask is open.
 	// debugAskCycle rotates the /debug-ask built-in (Deps.DebugAsk) through its
 	// canned long-args payloads so repeated invocations exercise the different
 	// wrap shapes (one long line, a compound pipeline, a heredoc).
@@ -900,14 +896,16 @@ func New(deps Deps) Model {
 	// themes alike — styleSelection reads it via m.deps.Theme.Style("selection").
 
 	m := Model{
-		deps:  deps,
-		keys:  keys,
-		rend:  newRenderer(th, keyMarkings(keys)),
-		phase: phaseConnecting,
-		ta:    ta,
-		sp:    sp,
-		vp:    vp,
-		stuck: true,
+		deps:    deps,
+		keys:    keys,
+		rend:    newRenderer(th, keyMarkings(keys)),
+		hits:    &hitRegions{},
+		metrics: &renderedSurfaceMetrics{},
+		phase:   phaseConnecting,
+		ta:      ta,
+		sp:      sp,
+		vp:      vp,
+		stuck:   true,
 		// Seed the active selection from the persisted last-used (composition loads it
 		// from the state file). The connect-time ListModels reconcile clears it to the
 		// server default if its PROVIDER is no longer available, BEFORE the create that
@@ -953,7 +951,7 @@ func New(deps Deps) Model {
 		m.sessionModifiedAt = resume.Row.ModifiedAt
 		m.activeWorkspace = resume.Snapshot.Workspace
 		m.activeMode = client.ModeString(client.ModeFromString(resume.Snapshot.Mode))
-		m.effectiveModel = resume.Snapshot.ResolvedModel
+		(&m).setEffectiveModel(resume.Snapshot.ResolvedModel)
 		m.caps = resume.Snapshot.Capabilities
 		m.conv = conversationFromTranscript(resume.Transcript.Messages)
 		m.startupAdopted = true
@@ -1043,7 +1041,7 @@ func (m Model) resetSession() Model {
 	// "owns all session-derived state" invariant honest — and the restart-now
 	// handoff goes through here. The plan-review viewport is cleared alongside (a
 	// plan ask may have been open), as is the full-screen ask-args view.
-	m.approval.reset()
+	m.closeModal()
 	m.queued = nil
 	m.queuePaused = ""
 	// Drop staged-but-unsent media attachments: /clear wipes the session-derived

@@ -655,11 +655,13 @@ func TestSkillsScrollClampedInRender(t *testing.T) {
 	// Prime the view cache (Render refreshes s.width from the fresh width), then
 	// jump to the bottom: the clamp is against the narrow width's row total.
 	_ = m.View()
-	if st.width != 40 {
-		t.Fatalf("precondition: Render should refresh the view-cache width to 40, got %d", st.width)
+	card := m.deps.Theme.Style("askCard")
+	contentWidth := m.width - card.GetBorderLeftSize() - card.GetBorderRightSize() - card.GetPaddingLeft() - card.GetPaddingRight()
+	if st.width != contentWidth {
+		t.Fatalf("precondition: Render should refresh the view-cache width to %d, got %d", contentWidth, st.width)
 	}
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	narrowTotal := st.rowTotal(st.deps.theme, 40)
+	narrowTotal := st.rowTotal(st.deps.theme, contentWidth)
 	if st.scroll != narrowTotal-skillsBodyLines {
 		t.Fatalf("precondition: scroll after End at width 40 = %d, want %d (rowTotal %d − %d)",
 			st.scroll, narrowTotal-skillsBodyLines, narrowTotal, skillsBodyLines)
@@ -671,12 +673,13 @@ func TestSkillsScrollClampedInRender(t *testing.T) {
 	mm3, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = mm3.(Model)
 	_ = m.View()
-	wideTotal := st.rowTotal(st.deps.theme, 100)
+	wideWidth := m.width - card.GetBorderLeftSize() - card.GetBorderRightSize() - card.GetPaddingLeft() - card.GetPaddingRight()
+	wideTotal := st.rowTotal(st.deps.theme, wideWidth)
 	if wideTotal >= narrowTotal {
 		t.Fatalf("precondition: widening should shrink the row total, narrow=%d wide=%d", narrowTotal, wideTotal)
 	}
-	if st.width != 100 {
-		t.Errorf("Render should refresh the view-cache width to 100, got %d", st.width)
+	if st.width != wideWidth {
+		t.Errorf("Render should refresh the view-cache width to %d, got %d", wideWidth, st.width)
 	}
 	if st.scroll != wideTotal-skillsBodyLines {
 		t.Errorf("after widening, Render should re-clamp scroll to %d (rowTotal %d − %d), got %d",

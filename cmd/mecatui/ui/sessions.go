@@ -261,10 +261,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.activeWorkspace = row.Workspace
 	m.conv = loaded
 	m.restartedThisRun = true
-	if m.modal != nil {
-		m.modal.Close()
-	}
-	m.modal = nil
+	m.closeModal()
 	m.browsingStartupSessions = false
 	m.phase = phaseIdle
 	m.stuck = true
