@@ -32,15 +32,14 @@ type startupResumeError struct {
 func (e *startupResumeError) Error() string { return e.text }
 
 func startupResumeConfig(ctx context.Context, source startupResumeSource, cfg config) (*client.ResumeSelection, string, error) {
-	resume, err := resolveStartupResume(ctx, source, cfg.resumeID, cfg.resumeLatest || cfg.resumeLatestOrNew)
+	resume, err := resolveStartupResume(ctx, source, cfg.resumeID, cfg.resumeLatest)
 	if err != nil {
-		// --resume-latest-or-new degrades a "no eligible chat" miss into a fresh
-		// session (fall through to cfg.workspace) instead of failing startup. Only
-		// that specific miss (noEligibleChat) is degraded: a list/transport failure
-		// still surfaces (and --resume-latest-or-new never uses an exact ID, so no
-		// exact-ID error arises).
+		// --resume-latest degrades a "no eligible chat" miss into a fresh session
+		// (fall through to cfg.workspace) instead of failing startup. Only that
+		// specific miss (noEligibleChat) is degraded: a list/transport failure still
+		// surfaces (and --resume-latest never uses an exact ID).
 		var resumeErr *startupResumeError
-		if cfg.resumeLatestOrNew && errors.As(err, &resumeErr) && resumeErr.noEligibleChat {
+		if cfg.resumeLatest && errors.As(err, &resumeErr) && resumeErr.noEligibleChat {
 			return nil, cfg.workspace, nil
 		}
 		return nil, "", err

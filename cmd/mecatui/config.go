@@ -352,8 +352,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.workspace, "workspace", "", "absolute workspace root for a new session (default: cwd); an adopted session keeps its stored workspace")
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
 	fs.StringVar(&cfg.resumeID, "resume", "", "start by continuing the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session (mutually exclusive with --resume-latest)")
-	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "start by continuing the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions (mutually exclusive with --resume)")
-	fs.BoolVar(&cfg.resumeLatestOrNew, "resume-latest-or-new", false, "like --resume-latest, but start a NEW chat when no eligible chat exists instead of failing (mutually exclusive with --resume and --resume-latest)")
+	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "start by continuing the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions (mutually exclusive with --resume); when none exists, start a new chat instead of failing")
 	fs.StringVar(&cfg.prompt, "prompt", "", "seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both --prompt and --prompt-file may be given (literal first)")
 	fs.StringVar(&cfg.prompt, "p", "", "short form of --prompt")
 	fs.StringVar(&cfg.promptFile, "prompt-file", "", "path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after --prompt when both are given")
@@ -510,8 +509,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 }
 
 // validateResumeSelectors enforces that at most ONE startup resume intent is chosen:
-// --resume, --resume-latest, and --resume-latest-or-new are mutually exclusive. It is
-// shared by the parse-time check and the client-side validate() so both surfaces agree.
+// --resume and --resume-latest are mutually exclusive. It is shared by the
+// parse-time check and the client-side validate() so both surfaces agree.
 func validateResumeSelectors(cfg config) error {
 	n := 0
 	if cfg.resumeID != "" {
@@ -520,11 +519,8 @@ func validateResumeSelectors(cfg config) error {
 	if cfg.resumeLatest {
 		n++
 	}
-	if cfg.resumeLatestOrNew {
-		n++
-	}
 	if n > 1 {
-		return errors.New("--resume, --resume-latest, and --resume-latest-or-new are mutually exclusive")
+		return errors.New("--resume and --resume-latest are mutually exclusive")
 	}
 	return nil
 }
@@ -542,8 +538,6 @@ func validateSessionsLaunch(cfg config) error {
 		return errors.New("mecatui sessions conflicts with --resume")
 	case cfg.resumeLatest:
 		return errors.New("mecatui sessions conflicts with --resume-latest")
-	case cfg.resumeLatestOrNew:
-		return errors.New("mecatui sessions conflicts with --resume-latest-or-new")
 	default:
 		return nil
 	}
