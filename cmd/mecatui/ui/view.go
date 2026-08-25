@@ -113,8 +113,6 @@ func (m Model) renderBody() string {
 		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.dream.view != dreamClosed:
 		return renderDreamOverlay(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.models.view != modelsNone:
-		return renderModelsOverlay(m.deps.Theme, m.models, m.caps, m.modelProvenanceLine(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.effort.view != effortNone:
 		return renderEffortOverlay(m.deps.Theme, m.effort, m.effectiveModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.worktrees.view != worktreesNone:
@@ -283,7 +281,7 @@ func (m Model) headerModelLabel() string {
 		return ""
 	}
 	if rm := m.effectiveModel; rm.ModelID != "" {
-		for _, mi := range m.models.models {
+		for _, mi := range m.modelCatalog.models {
 			if mi.ProviderID == rm.ProviderID && mi.ID == rm.ModelID && mi.DisplayName != "" {
 				return mi.DisplayName
 			}
@@ -340,7 +338,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	// unchanged (it sheds like any other low-priority segment under pressure).
 	if m.effectiveModel.ProviderID == "toolhive" {
 		parts = append(parts, m.deps.Theme.Style("muted").Render("via ToolHive gateway"))
-	} else if row, ok := availableNotDefaultStatus(m.models.statuses); ok {
+	} else if row, ok := availableNotDefaultStatus(m.modelCatalog.statuses); ok {
 		// Sibling (N1): when an intent-driven provider is detected-and-reachable
 		// but NOT the active default, show a muted "<provider-id> gateway
 		// available" segment. Mutually exclusive with the active-case branch
@@ -455,7 +453,7 @@ func (m Model) headerNextBadge() string {
 		return ""
 	}
 	label := next.ModelID
-	for _, mi := range m.models.models {
+	for _, mi := range m.modelCatalog.models {
 		if mi.ProviderID == next.ProviderID && mi.ID == next.ModelID && mi.DisplayName != "" {
 			label = mi.DisplayName
 			break

@@ -306,6 +306,12 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, cmd, handled := m.dispatchSurfaceMsg(msg); handled {
 		return mm, cmd
 	}
+	// /models owns list responses only while its surface is open. Once a ModelsMsg
+	// falls through, Model is the owner and rejects only results older than its
+	// last synchronized token; a different modal must not hide a current result.
+	if result, ok := msg.(client.ModelsMsg); ok && result.RequestToken < m.modelCatalogRequestToken {
+		return m, nil
+	}
 	// Lifecycle / transport msgs (session-ready, connect/stream error, stream
 	// close, clipboard results, slash-command discovery).
 	if mm, cmd, handled := m.updateLifecycle(msg); handled {
@@ -326,8 +332,8 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
 		return mm, cmd
 	}
-	// /models picker result/error + selection-saved msg (carries a follow-up
-	// command during the connect reconcile).
+	// /models catalog results are either consumed by the open surface and applied
+	// through its intent, or fall through here after close; persistence receipts stay root-owned.
 	if mm, cmd, handled := m.updateModelsMsg(msg); handled {
 		return mm, cmd
 	}
@@ -516,7 +522,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		mm, cmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
 		m.activeModel = client.ModelSelection{}
-		m.models.active = client.ModelSelection{}
+		m.modelCatalog.active = client.ModelSelection{}
 		notice := "saved model " + sanitizeTerminal(modelSelLabel(msg.rejected)) +
 			" was rejected by the server (" + sanitizeTerminal(msg.err.Error()) +
 			") — using the server default"
@@ -1326,10 +1332,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
 	// the rendered regions in chrome().
 	m.relayout()
-	// No geometry event is fanned to the open modal surface: the interface is
-	// immediate-mode — Render receives the fresh width/height on every frame and
-	// re-derives geometry-dependent view state at its top, so nothing is stale.
-	// Pre-migration overlays re-derive per render as before.
+	// Open modal surfaces derive geometry at Render time; no resize fan-out is needed.
 	return m, m.maybeKittyTransmit()
 }
 
@@ -1614,7 +1617,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onUserModelKey,
 		m.onReflectionsKey,
 		m.onDreamKey,
-		m.onModelsKey,
 		m.onEffortKey,
 		m.onWorktreesKey,
 		m.onScheduleKey,
@@ -1640,19 +1642,21 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if !handled {
 		return m, nil, false
 	}
-	var intentCmd tea.Cmd
 	if source, ok := m.modal.(surfaceIntentSource); ok {
-		mm, intentCmd, done := m.applySurfaceIntent(source.takeSurfaceIntent())
-		if done {
+		mm, intentCmd, stopSurfaceDispatch := m.applySurfaceIntent(source.takeSurfaceIntent())
+		if stopSurfaceDispatch {
 			return mm, tea.Batch(cmd, intentCmd), true
 		}
 		m = mm.(Model)
+		cmd = tea.Batch(cmd, intentCmd)
 	}
-	cmd = tea.Batch(cmd, intentCmd)
 	if closed {
 		if sessions, ok := m.modal.(*sessionsState); ok {
 			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, sessions.transcriptSurfaceRequestToken)
 			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, sessions.pageRequestToken)
+		}
+		if models, ok := m.modal.(*modelsState); ok {
+			m.modelCatalogRequestToken = max(m.modelCatalogRequestToken, models.requestToken)
 		}
 		m.modal.Close()
 		m.modal = nil
@@ -1674,19 +1678,21 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if !handled {
 		return m, nil, false
 	}
-	var intentCmd tea.Cmd
 	if source, ok := m.modal.(surfaceIntentSource); ok {
-		mm, intentCmd, done := m.applySurfaceIntent(source.takeSurfaceIntent())
-		if done {
+		mm, intentCmd, stopSurfaceDispatch := m.applySurfaceIntent(source.takeSurfaceIntent())
+		if stopSurfaceDispatch {
 			return mm, tea.Batch(cmd, intentCmd), true
 		}
 		m = mm.(Model)
+		cmd = tea.Batch(cmd, intentCmd)
 	}
-	cmd = tea.Batch(cmd, intentCmd)
 	if closed {
 		if sessions, ok := m.modal.(*sessionsState); ok {
 			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, sessions.transcriptSurfaceRequestToken)
 			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, sessions.pageRequestToken)
+		}
+		if models, ok := m.modal.(*modelsState); ok {
+			m.modelCatalogRequestToken = max(m.modelCatalogRequestToken, models.requestToken)
 		}
 		m.modal.Close()
 		m.modal = nil
@@ -1695,12 +1701,34 @@ func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	return m, cmd, true
 }
 
-// applySurfaceIntent applies a drained surface intent synchronously. The router
-// knows only the sealed protocol; Model owns the concrete intent effects.
-func (m Model) applySurfaceIntent(intent surfaceIntent) (tea.Model, tea.Cmd, bool) {
+// applyModelsSurfaceIntent handles the small /models intent family while keeping
+// Model-owned catalog, restart, and persistence effects out of the surface.
+// stopSurfaceDispatch tells the caller to skip its common surface-dispatch
+// post-processing after this root-owned effect takes over.
+func (m Model) applyModelsSurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, handled bool, stopSurfaceDispatch bool) {
 	switch intent := intent.(type) {
-	case nil:
-		return m, nil, false
+	case modelsCatalogIntent:
+		mm, cmd, stopSurfaceDispatch := m.applyModelsCatalog(intent.msg)
+		return mm, cmd, true, stopSurfaceDispatch
+	case modelsSelectIntent:
+		mm, cmd, _ := m.chooseModel(intent.selection, intent.label)
+		return mm, cmd, true, false
+	case modelsGlobalDefaultIntent:
+		mm, cmd := m.setGlobalDefault(intent.selection, intent.label)
+		m = mm.(Model)
+		if surface, ok := m.modal.(*modelsState); ok {
+			surface.catalog.globalDefault = m.modelCatalog.globalDefault
+		}
+		return m, cmd, true, false
+	default:
+		return m, nil, false, false
+	}
+}
+
+// applySessionsSurfaceIntent handles the /sessions intent family while keeping
+// active-session, startup, and maintenance effects owned by Model.
+func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, handled bool, stopSurfaceDispatch bool) {
+	switch intent := intent.(type) {
 	case sessionsPhaseIntent:
 		switch intent.phase {
 		case sessionsIntentPhaseIdle:
@@ -1709,53 +1737,68 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (tea.Model, tea.Cmd, boo
 			m.phase = phaseReplay
 			m.ta.Blur()
 		}
-		return m, nil, false
+		return m, nil, true, false
 	case sessionsAdoptionPreflightIntent:
-		return m, m.adoptionPreflightCmd(intent.row), false
+		return m, m.adoptionPreflightCmd(intent.row), true, false
 	case sessionsMigrationJobIntent:
 		m.maintenanceMigrationJobID = intent.jobID
-		return m, nil, false
+		return m, nil, true, false
 	case sessionsCleanupJobIntent:
 		m.maintenanceCleanupJobID = intent.jobID
-		return m, nil, false
+		return m, nil, true, false
 	case sessionsTranscriptAdoptionIntent:
 		m.caps = intent.capabilities
 		m.effectiveModel = intent.model
 		m.activeMode = intent.mode
-		return m.adoptAuthoritativeTranscript(intent.row, intent.transcript)
+		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript)
+		return mm, cmd, true, stopSurfaceDispatch
 	case sessionsStartupQuitIntent:
 		if sessions, ok := m.modal.(*sessionsState); ok && sessions.pageCancel != nil {
 			sessions.pageCancel()
 		}
 		m.sessionsPageRequestToken++
-		return m, tea.Quit, true
+		return m, tea.Quit, true, true
 	case sessionsStartupNewIntent:
 		if !m.modelsReconciled {
 			m.statusMsg = m.deps.Theme.Style("muted").Render("loading model defaults…")
-			return m, nil, false
+			return m, nil, true, false
 		}
 		if sessions, ok := m.modal.(*sessionsState); ok && sessions.pageCancel != nil {
 			sessions.pageCancel()
 		}
 		m.sessionsPageRequestToken++
 		m.modal, m.phase = nil, phaseConnecting
-		return m, m.createSessionCmd(), true
+		return m, m.createSessionCmd(), true, true
 	case sessionsActiveTitleIntent:
 		if intent.id == m.sessionID {
 			m.sessionTitle = intent.title
 		}
 		m.statusMsg = m.deps.Theme.Style("success").Render(intent.successNotice)
-		return m, nil, false
+		return m, nil, true, false
 	case sessionsStatusNoticeIntent:
 		style := "warning"
 		if intent.style == sessionsStatusNoticeSuccess {
 			style = "success"
 		}
 		m.statusMsg = m.deps.Theme.Style(style).Render(intent.text)
-		return m, nil, false
+		return m, nil, true, false
 	default:
-		return m, nil, false
+		return m, nil, false, false
 	}
+}
+
+// applySurfaceIntent applies a drained surface intent synchronously in the same
+// Tea Update. Returned commands still run asynchronously. stopSurfaceDispatch
+// tells the caller to skip common dispatch post-processing after a root-owned
+// effect takes over; handled=false never carries meaningful work.
+func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if model, cmd, handled, stopSurfaceDispatch := m.applyModelsSurfaceIntent(intent); handled {
+		return model, cmd, stopSurfaceDispatch
+	}
+	if model, cmd, handled, stopSurfaceDispatch := m.applySessionsSurfaceIntent(intent); handled {
+		return model, cmd, stopSurfaceDispatch
+	}
+	return m, nil, false
 }
 
 func (m Model) desiredMode() string {

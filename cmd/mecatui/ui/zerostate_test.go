@@ -126,7 +126,7 @@ func TestZeroStateCapsTailoring(t *testing.T) {
 // "<provider-id> gateway detected (no API key needed) — /models" line when an
 // intent-driven provider is available-but-not-default. The splash renders at
 // phaseIdle (post-connect), by which point the first ModelsMsg has landed and
-// m.models.statuses is populated — so the line catches a new operator at the
+// m.modelCatalog.statuses is populated — so the line catches a new operator at the
 // moment they're most attentive. Suppressed when the gateway is the default
 // (availableNotDefaultStatus returns false) or when no statuses are present.
 func TestZeroStateGatewayNote(t *testing.T) {
@@ -145,14 +145,14 @@ func TestZeroStateGatewayNote(t *testing.T) {
 	}
 
 	// Suppressed when the gateway IS the default (AvailableNotDefault false).
-	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
+	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
 	plain = stripANSIstr(m.renderZeroState())
 	if strings.Contains(plain, "gateway detected") {
 		t.Errorf("splash should NOT render the gateway line when the gateway is the default, got:\n%s", plain)
 	}
 
 	// Suppressed with no statuses (byte-identical pre-feature path).
-	m.models.statuses = nil
+	m.modelCatalog.statuses = nil
 	plain = stripANSIstr(m.renderZeroState())
 	if strings.Contains(plain, "gateway detected") {
 		t.Errorf("splash should NOT render the gateway line with no statuses, got:\n%s", plain)

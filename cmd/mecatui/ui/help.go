@@ -446,12 +446,12 @@ func (m Model) zeroStateMemoryNote() string {
 // "ToolHive gateway detected (no API key needed) — /models" when an
 // intent-driven provider is available-but-not-default, or "" otherwise. The
 // splash only renders at phaseIdle (post-connect), by which point the first
-// ModelsMsg has landed and m.models.statuses is populated — so this catches a
+// ModelsMsg has landed and m.modelCatalog.statuses is populated — so this catches a
 // new operator at the moment they're most attentive. Vendor-neutral: the
 // provider id comes from the status row, so a future non-ToolHive
 // intent-driven provider reads naturally without a code change here.
 func (m Model) zeroStateGatewayNote() string {
-	row, ok := availableNotDefaultStatus(m.models.statuses)
+	row, ok := availableNotDefaultStatus(m.modelCatalog.statuses)
 	if !ok {
 		return ""
 	}

@@ -35,7 +35,7 @@ func idleModelWith(t *testing.T, effective client.ResolvedModel, next client.Mod
 		Mode:    "default",
 		Ctx:     context.Background(),
 	})
-	m.models.models = inv
+	m.modelCatalog.models = inv
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 160, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-test-0001", ResolvedModel: effective},
@@ -203,13 +203,13 @@ func TestModelProvenanceFlag(t *testing.T) {
 // resolved from the FIRST model the gateway credential listed) reads
 // "auto-selected", NOT "server default" (which would imply a deliberate
 // operator choice). The label is now vendor-neutral: it is gated on the WIRE
-// bit (statusAutoSelected over m.models.statuses), never a bare
+// bit (statusAutoSelected over m.modelCatalog.statuses), never a bare
 // ProviderID=="toolhive" check.
 func TestModelProvenanceToolhiveAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
-	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: true}}
+	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: true}}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "auto-selected" {
 		t.Fatalf("provenance = %q, want auto-selected", got)
 	}
@@ -225,7 +225,7 @@ func TestModelProvenanceToolhiveOperatorConfigured_NotAutoSelected(t *testing.T)
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "gpt-5"}
-	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: false}}
+	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: false}}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "gpt-5"}); got != "server default" {
 		t.Fatalf("provenance = %q, want server default (operator-configured, no AutoSelected bit)", got)
 	}
@@ -304,18 +304,24 @@ func TestModelsSetGlobalDefaultPersists(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	mm, cmd = m.onModelsKeyTuple(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	m = mm.(Model)
 	want := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
-	if m.models.globalDefault != want {
-		t.Fatalf("globalDefault = %+v, want %+v (★ marker tracks immediately)", m.models.globalDefault, want)
+	if m.modelCatalog.globalDefault != want {
+		t.Fatalf("globalDefault = %+v, want %+v (★ marker tracks immediately)", m.modelCatalog.globalDefault, want)
 	}
 	// ctrl+g must NOT change the active/pending selection or open the confirm.
 	if !m.activeModel.IsZero() {
 		t.Errorf("ctrl+g must not change the active selection, got %+v", m.activeModel)
 	}
-	if m.models.view != modelsPanel {
-		t.Errorf("ctrl+g must keep the picker open, view = %v", m.models.view)
+	if modelsSurface(t, m).view != modelsPanel {
+		t.Errorf("ctrl+g must keep the picker open, view = %v", modelsSurface(t, m).view)
+	}
+	if got := modelsSurface(t, m).catalog.globalDefault; got != want {
+		t.Fatalf("surface globalDefault = %+v, want %+v (open picker marker must update)", got, want)
+	}
+	if !strings.Contains(stripANSIstr(m.View().Content), "★") {
+		t.Fatal("open picker should render the updated global-default marker")
 	}
 	if !strings.Contains(stripANSIstr(m.statusMsg), "global default set") {
 		t.Errorf("status should read 'global default set', got %q", stripANSIstr(m.statusMsg))
@@ -492,10 +498,8 @@ func TestCarryoverHandoffFailure(t *testing.T) {
 	// cursor row, arms the status note, and fires restartOnModelWithCarryover (the
 	// carryover create). Prime the picker so the cursor is on gpt-5-mini.
 	sel := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"}
-	m.models.models = sampleModels().models
-	m.models.filtered = sampleModels().models
-	m.models.cursor = 1 // gpt-5-mini (same provider as the live openai/gpt-5)
-	mm, _, handled := m.chooseModel()
+	m.modelCatalog.models = sampleModels().models
+	mm, _, handled := m.chooseModel(sel, "")
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("chooseModel should be handled for a same-provider candidate")

@@ -519,12 +519,16 @@ type Model struct {
 	// local merge-queue then owns mid-run input, byte-identical). A ONE-BUNDLE
 	// state — the client-side merge collapses staged lines into ONE text BEFORE
 	// send, so the engine's single-slot inbox only ever has one bundle outstanding.
-	steer     *steerState
-	steerSeq  int            // session-scoped message-id serial (1-based; "steer-%04d")
-	models    modelsState    // /models picker overlay state (view==modelsNone when closed)
-	effort    effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
-	worktrees worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
-	schedule  scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
+	steer    *steerState
+	steerSeq int // session-scoped message-id serial (1-based; "steer-%04d")
+	// modelCatalogRequestToken is the Model-lifetime sequence for durable catalog
+	// requests. It never resets when the picker closes, so an older result cannot
+	// overwrite root state or a reopened picker.
+	modelCatalogRequestToken uint64
+	modelCatalog             modelCatalog   // root-owned inventory, statuses, defaults, and selection reconciliation
+	effort                   effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
+	worktrees                worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
+	schedule                 scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
 	// modal is the ONE open modal overlay (nil = none). Stack/tiling/focus-tree
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
@@ -533,7 +537,7 @@ type Model struct {
 	// activeModel is the currently-selected (provider, model) the NEXT CreateSession
 	// will carry (apply-on-next-create). Seeded from Deps.InitialModel, updated by the
 	// picker, and reconciled-to-default at connect when its provider is unavailable. It
-	// is the SOURCE of truth for the create selection; m.models.active mirrors it for
+	// is the SOURCE of truth for the create selection; m.modelCatalog.active mirrors it for
 	// the picker's ● marker. The header model display reads from it once non-zero.
 	activeModel client.ModelSelection
 	// effectiveModel is the EFFECTIVE provider+model the SERVER resolved THIS session
@@ -913,7 +917,7 @@ func New(deps Deps) Model {
 		// surfaces a loud warning (connectFallbackMsg) — connect still completes.
 		activeModel:     deps.InitialModel,
 		activeMode:      client.ModeString(client.ModeFromString(deps.Mode)),
-		models:          modelsState{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
+		modelCatalog:    modelCatalog{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
 		activeWorkspace: deps.Workspace,
 		// Seed the CLI-supplied seed prompt (-p/--prompt + --prompt-file) for
 		// one-shot auto-submit on the FIRST session ready.
@@ -921,6 +925,11 @@ func New(deps Deps) Model {
 		// Detect emoji-presentation capability ONCE at construction (conservative,
 		// env-based) so the header hot path reads a bool, never os.Environ().
 		emojiOK: emojiCapable(),
+	}
+	// Init issues token 1 for the startup catalog request. Resume skips that
+	// request, so its first picker request starts at 1 instead.
+	if deps.Models != nil && deps.Resume == nil {
+		m.modelCatalogRequestToken = 1
 	}
 	if deps.BrowseSessions {
 		m.phase = phaseIdle
@@ -1095,7 +1104,7 @@ func (m Model) Init() tea.Cmd {
 	if m.deps.BrowseSessions {
 		cmds := []tea.Cmd{m.sp.Tick}
 		if m.deps.Models != nil {
-			cmds = append(cmds, client.ListModelsCmd(m.deps.Ctx, m.deps.Models))
+			cmds = append(cmds, client.ListModelsCmd(m.deps.Ctx, m.deps.Models, m.modelCatalogRequestToken))
 		}
 		if m.deps.Sessions != nil {
 			cmds = append(cmds, sessionsSurface(&m).pageCmd(), textinput.Blink)
@@ -1106,7 +1115,7 @@ func (m Model) Init() tea.Cmd {
 		return tea.Batch(m.sp.Tick, func() tea.Msg { return startupResumeReadyMsg{} })
 	}
 	if m.deps.Models != nil {
-		return tea.Batch(m.sp.Tick, client.ListModelsCmd(m.deps.Ctx, m.deps.Models))
+		return tea.Batch(m.sp.Tick, client.ListModelsCmd(m.deps.Ctx, m.deps.Models, m.modelCatalogRequestToken))
 	}
 	// No-lister / old-server path: with no model lister wired there is nothing to
 	// reconcile, so fire CreateSession directly (with the empty selection) — do NOT

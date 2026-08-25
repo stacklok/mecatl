@@ -59,7 +59,7 @@ func TestEffortPickerWarnsOnNoReasoningModel(t *testing.T) {
 
 	// (1) Known no-reasoning model → warning.
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	m.models.models = []client.ModelInfo{
+	m.modelCatalog.models = []client.ModelInfo{
 		{ID: "no-reason", ProviderID: "openai", DisplayName: "No Reason", Reasoning: false},
 	}
 	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "no-reason"}
@@ -72,7 +72,7 @@ func TestEffortPickerWarnsOnNoReasoningModel(t *testing.T) {
 
 	// (2) Reasoning-capable model → no warning.
 	m2 := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	m2.models.models = []client.ModelInfo{
+	m2.modelCatalog.models = []client.ModelInfo{
 		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true},
 	}
 	m2.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
@@ -83,7 +83,7 @@ func TestEffortPickerWarnsOnNoReasoningModel(t *testing.T) {
 
 	// (3) Unknown model (not in inventory) → silent (fail-open).
 	m3 := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	m3.models.models = nil
+	m3.modelCatalog.models = nil
 	m3.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "mystery"}
 	mm3, _ := m3.runEffort()
 	if got := stripANSIstr(mm3.(Model).View().Content); strings.Contains(got, warn) {

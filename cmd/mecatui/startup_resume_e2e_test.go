@@ -141,7 +141,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 			prepare := func() ui.Model {
 				m := newBrowser()
 				m = updateSessionsCommandModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 35}, nil)
-				m = updateSessionsCommandModel(t, m, client.ModelsMsg{Models: models, Statuses: statuses}, nil)
+				m = updateSessionsCommandModel(t, m, client.ModelsMsg{Models: models, Statuses: statuses, RequestToken: 1}, nil)
 				m = updateSessionsCommandModel(t, m, client.SessionsListedMsg{Sessions: rows}, nil)
 				got, err := cl.ListSessions(ctx)
 				if err != nil || len(got) != baseline {
@@ -215,7 +215,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 				prepareRow := func(row client.SessionListItem) ui.Model {
 					m := newBrowser()
 					m = updateSessionsCommandModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 35}, nil)
-					m = updateSessionsCommandModel(t, m, client.ModelsMsg{Models: models, Statuses: statuses}, nil)
+					m = updateSessionsCommandModel(t, m, client.ModelsMsg{Models: models, Statuses: statuses, RequestToken: 1}, nil)
 					return updateSessionsCommandModel(t, m, client.SessionsListedMsg{Sessions: []client.SessionListItem{row}}, nil)
 				}
 

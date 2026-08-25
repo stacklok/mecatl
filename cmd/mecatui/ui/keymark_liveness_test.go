@@ -769,8 +769,9 @@ func TestEffortOverlayHintsReflectKeyOverride(t *testing.T) {
 func TestModelsOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
-	st := modelsState{view: modelsPanel, models: []client.ModelInfo{{ID: "m1"}}, filtered: []client.ModelInfo{{ID: "m1"}}}
-	got := stripANSIstr(renderModelsOverlay(th, st, client.Capabilities{ModelSelection: true}, "", hk, 100, 30))
+	catalog := modelCatalog{models: []client.ModelInfo{{ID: "m1"}}}
+	picker := modelsState{view: modelsPanel, filtered: []client.ModelInfo{{ID: "m1"}}}
+	got := stripANSIstr(renderModelsPanel(th, catalog, picker, client.Capabilities{ModelSelection: true}, "", hk, modelsRowBudgetFor(30)))
 	if !strings.Contains(got, "↑/↓/ctrl+f14 move · ctrl+f17 use · ctrl+f25 set global default · ctrl+f16 clear filter / close") {
 		t.Errorf("models hint should carry live page/use/set/close: %q", got)
 	}

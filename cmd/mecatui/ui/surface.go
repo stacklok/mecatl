@@ -25,7 +25,9 @@ import (
 // holds at most ONE (the modal surface field); nil-vs-set IS the active
 // predicate. Implemented by state structs on POINTER receivers strictly so the
 // Model can call them on the single instance the interface value holds and
-// mutate it in place — no copy-back ceremony.
+// mutate it in place — no copy-back ceremony. Intent transfer is synchronous in
+// the same Tea Update, while returned tea.Cmd work remains asynchronous. A
+// surface that returns handled=false must not return meaningful command work.
 // GEOMETRY (immediate-mode, the ImGui discipline): geometry flows through
 // Render on EVERY frame — there is NO resize event. A surface sizes itself
 // from the offered width/height args inline on every call and MUST NOT center

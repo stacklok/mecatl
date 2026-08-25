@@ -3938,8 +3938,8 @@ A bounded synchronous bootstrap occurs only for a resolved Codex default with no
 configured model, choosing the first server-ordered entitlement or failing closed.
 Explicit selectors persist and rehydrate through Codex; zero selectors retain the
 existing floating default semantics. `provider_status` includes Codex entitlement
-outcomes for operator remediation, but TUI `intentProviderSet` keeps the `org` tier
-ToolHive-only.
+outcomes for operator remediation, but TUI `configProvenanceProviderSet`
+(`cmd/mecatui/ui/models_catalog.go`) keeps the `org` tier ToolHive-only.
 
 All automated coverage injects transports or uses the allowlist-sanitized SSE
 fixtures retained from the completed live compatibility gate. The one-shot probe
@@ -4211,11 +4211,11 @@ credential still wins; this is disclosure, not routing):
   `m.models.statuses` is populated — so the line catches a new operator at the
   moment they're most attentive. Vendor-neutral; suppressed when the gateway is
   the default or absent (byte-identical no-gateway path).
-- **Picker "org" tag** (`cmd/mecatui/ui/models.go` `modelRowText`/
-  `intentProviderSet`): rows served by an intent-driven provider carry an `org`
+- **Picker "org" tag** (`cmd/mecatui/ui/models_surface.go` `modelRowText`/
+  `cmd/mecatui/ui/models_catalog.go` `configProvenanceProviderSet`): rows served by an intent-driven provider carry an `org`
   ASCII segment (matching `img`/`reason`); nil map ⇒ no tag (byte-identical
   no-gateway path).
-- **Provenance hint** (`cmd/mecatui/ui/models.go` `modelProvenanceLine`): appends
+- **Provenance hint** (`cmd/mecatui/ui/models_catalog.go` `modelProvenanceLine`): appends
   `" · <gateway-id> gateway also available — outranked by your <default-id> key"`
   when the session's default is key-driven AND an intent-driven alternative is
   `available_not_default`; vendor-neutral (reads the status row's `ProviderID`);

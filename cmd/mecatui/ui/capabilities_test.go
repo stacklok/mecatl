@@ -219,7 +219,7 @@ func TestHeaderModelLabelUsesInventoryDisplayName(t *testing.T) {
 	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.phase = phaseIdle // past the connecting gate (the create response has landed)
 	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m.models.models = []client.ModelInfo{
+	m.modelCatalog.models = []client.ModelInfo{
 		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5 (Friendly)"},
 		{ID: "other", ProviderID: "openai", DisplayName: "Other"},
 	}
@@ -228,7 +228,7 @@ func TestHeaderModelLabelUsesInventoryDisplayName(t *testing.T) {
 	}
 
 	// No inventory match ⇒ raw model id.
-	m.models.models = []client.ModelInfo{{ID: "different", ProviderID: "openai", DisplayName: "X"}}
+	m.modelCatalog.models = []client.ModelInfo{{ID: "different", ProviderID: "openai", DisplayName: "X"}}
 	if got := m.headerModelLabel(); got != "gpt-5" {
 		t.Fatalf("headerModelLabel = %q, want the raw model id fallback", got)
 	}

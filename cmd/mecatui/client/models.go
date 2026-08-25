@@ -78,14 +78,16 @@ type ProviderStatus struct {
 	AvailableNotDefault bool
 }
 
-// ModelsMsg carries a ListModels result for the /models picker. Err is set on
-// failure; the picker surfaces it rather than silently degrading. Statuses is
-// the (possibly empty) per-provider live-listing outcome list — empty for
-// every deployment without a surfaced live-inventory provider.
+// ModelsMsg carries a ListModels result for the /models picker. RequestToken is
+// copied from the ListModelsCmd request so the Model can reject stale catalog
+// results. Err is set on failure; the picker surfaces it rather than silently
+// degrading. Statuses is the (possibly empty) per-provider live-listing outcome
+// list — empty for every deployment without a surfaced live-inventory provider.
 type ModelsMsg struct {
-	Models   []ModelInfo
-	Statuses []ProviderStatus
-	Err      error
+	Models       []ModelInfo
+	Statuses     []ProviderStatus
+	RequestToken uint64
+	Err          error
 }
 
 // ModelLister is the subset of *Client the ui's /models picker needs. Splitting
@@ -159,13 +161,14 @@ func mapModelInfo(m *mecatlv1.ModelInfo) ModelInfo {
 }
 
 // ListModelsCmd fetches the model inventory off the update goroutine; the result
-// (success or error) arrives as a ModelsMsg.
-func ListModelsCmd(ctx context.Context, l ModelLister) tea.Cmd {
+// (success or error) arrives as a ModelsMsg carrying the required request token,
+// so the Model can reject stale catalog results.
+func ListModelsCmd(ctx context.Context, l ModelLister, requestToken uint64) tea.Cmd {
 	return func() tea.Msg {
 		ms, statuses, err := l.ListModels(ctx)
 		if err != nil {
-			return ModelsMsg{Err: err}
+			return ModelsMsg{RequestToken: requestToken, Err: err}
 		}
-		return ModelsMsg{Models: ms, Statuses: statuses}
+		return ModelsMsg{Models: ms, Statuses: statuses, RequestToken: requestToken}
 	}
 }

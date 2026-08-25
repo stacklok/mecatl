@@ -1994,7 +1994,7 @@ type nonSelectableCase struct {
 func TestSelectableGateBlocksAndClears(t *testing.T) {
 	cases := []nonSelectableCase{
 		{"mcpOverlay", func(m *Model) { m.modal = &mcpState{view: mcpPanel} }},
-		{"modelsOverlay", func(m *Model) { m.models.view = modelsPanel }},
+		{"modelsOverlay", func(m *Model) { m.modal = &modelsState{view: modelsPanel} }},
 		{"worktreesOverlay", func(m *Model) { m.worktrees.view = worktreesPanel }},
 		{"soulOverlay", func(m *Model) { m.modal = &soulState{view: soulPanel} }},
 		{"help", func(m *Model) { m.showHelp = true }},

@@ -2,14 +2,56 @@
 
 **Status:** active migration template. **Scope:** the GENERAL migration template
 for moving a `cmd/mecatui/ui` overlay onto the `surface` interface. Soul is the
-FIRST migrator (the proof-of-pattern that pins the interface); mcp, skills, and
-/sessions are shipped migrations; section 6 is the checklist for the rest.
+FIRST migrator (the proof-of-pattern that pins the interface); mcp, skills,
+/sessions, and /models are shipped migrations; section 6 is the checklist for the rest.
 
 Issue #555 describes "ADR 0108" as the surface-migration ADR; that is a stale
 reference. [`0108-on-demand-logical-skill-assets`](../adr/0108-on-demand-logical-skill-assets.md)
 is the skill-assets ADR (see the [ADR index](../adr/README.md)). The stale
 citation needs a docs fix; it is deliberately **not** fixed here. This plan
 follows the [design conventions in this folder](./README.md).
+
+## Maintainer rules for future migrations
+
+These rules record the working conventions refined through `/sessions` and
+`/models`; apply them before widening the pattern.
+
+1. **Classify state by lifetime before moving it.** A surface owns state meaningful
+   only while it is open. Group Model-owned state when it survives closure, drives
+   startup, or feeds other views; that is useful Model structure, not a failed
+   surface migration.
+2. **Split files by ownership and say so at file scope.** Every new split file
+   starts with a concise purpose comment. Keep Model-owned construction/effects,
+   durable grouped state, and surface-local interaction/rendering in separately
+   named files when their lifetimes differ.
+3. **Pass a limited read-only view deliberately.** Passing a value containing
+   slices or maps is a structural copy, not a deep snapshot. Shared backing data
+   is immutable by convention: replace fields rather than mutate elements or maps
+   in place. Add cloning only when isolated snapshot semantics are explicitly
+   required.
+4. **Order async results with `RequestToken`.** The owner that decides whether a
+   result remains valid mints its monotonic token, carries it in the result, and
+   rejects stale results before mutation. Use Model-lifetime tokens for work that
+   can outlive a surface and surface-lifetime tokens otherwise; cancellation is
+   not the correctness guard.
+5. **Keep domains and effects distinct in names.** Protocol identifiers, catalog
+   provenance metadata, and one-shot `surfaceIntent` effects are separate concepts;
+   name each for its own domain rather than sharing vague `intent`, `sequence`, or
+   `token` terminology.
+6. **Transfer intent synchronously; run work asynchronously.** An intent hands
+   semantic state from a surface to Model in the same Tea update. Any RPC or
+   persistence work it causes returns as a `tea.Cmd`. Router-private control flags
+   describe dispatcher behavior, not intent semantics.
+7. **Route durable results across surface lifetime deliberately.** An open surface
+   may consume a message and hand its root effect back through an intent. After
+   close, a result falls through only when root-owned behavior remains meaningful;
+   stale results are rejected before either route.
+8. **Test the boundary as well as rendering.** Pin file placement and forbidden
+   Model tombstones structurally, then cover close/reopen, stale async results,
+   root-versus-surface effects, refocus, and unchanged goldens behaviorally.
+9. **File discovered product defects separately.** A behavior-preserving refactor
+   may expose adjacent defects; give them focused issues instead of hiding them in
+   structural cleanup.
 
 ## Binding decisions (already made — do not reopen)
 
@@ -85,6 +127,34 @@ follows the [design conventions in this folder](./README.md).
 12. **Wheel is default-consume.** `HandleWheel` returns `handled=true` (consume,
     the wheel behind the modal is DEAD while it is open) unless a surface
     deliberately delegates (handled=false).
+
+### Shipped: `/models`
+
+`/models` keeps durable discovery in Model-owned `modelCatalog`: startup
+reconciliation, header/provenance labels, provider status, and gateway notices
+remain valid after the picker closes. Opening the dynamic `modelsState` surface
+makes a structural copy of that catalog for picker-local filtering, cursor,
+loading/error, and page-budget view state. Its slices and map are shared
+read-only data: neither the surface nor Model mutates their backing storage in
+place; accepted results replace catalog fields. `ModelsMsg` is consumed by the
+open surface, then handed back as a one-shot `modelsCatalogIntent`; a result
+arriving after close instead falls through to the root catalog reducer and
+never recreates a picker. Selection and `ctrl+g` global-default actions use
+corresponding intents, keeping restart and persistence effects Model-owned
+while generic surface closure refocuses input.
+
+**Request-token convention.** The owner of asynchronous work mints a monotonic
+`uint64` request token and copies it into its result message. The receiver rejects
+a result older than the latest issued token before it can mutate either durable or
+surface state; cancellation is an optimization, not the correctness mechanism.
+`/models` transfers ownership while its picker is open: `modelsState` seeds its
+surface-local token from Model's last synchronized catalog token, advances it for
+its list request, and consumes every non-matching `ModelsMsg` so it cannot fall
+through to root handling. Generic close synchronizes that token back to Model with
+max semantics. Model then owns the token again, rejecting late stale results while
+still accepting valid startup or closed-picker results when another (or no) modal
+is open. Protocol identifiers — for example steer `message_id` — identify protocol
+messages and are not RequestTokens.
 
 ## 1. The `surface` interface
 

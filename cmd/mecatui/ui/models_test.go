@@ -77,6 +77,15 @@ func sampleModels() *fakeModels {
 
 func modelsCaps() client.Capabilities { return client.Capabilities{ModelSelection: true} }
 
+func modelsSurface(t *testing.T, m Model) *modelsState {
+	t.Helper()
+	s, ok := m.modal.(*modelsState)
+	if !ok {
+		t.Fatalf("modal = %T, want *modelsState", m.modal)
+	}
+	return s
+}
+
 // TestRunModelsOpensPicker asserts runModels opens the picker, blurs the input,
 // fires ListModels, and renders the rows once the result lands.
 func TestRunModelsOpensPicker(t *testing.T) {
@@ -85,10 +94,10 @@ func TestRunModelsOpensPicker(t *testing.T) {
 
 	mm, cmd := m.runModels()
 	m = mm.(Model)
-	if m.models.view != modelsPanel {
-		t.Fatalf("view = %v, want modelsPanel", m.models.view)
+	if modelsSurface(t, m).view != modelsPanel {
+		t.Fatalf("view = %v, want modelsPanel", modelsSurface(t, m).view)
 	}
-	if !m.models.loading {
+	if !modelsSurface(t, m).loading {
 		t.Error("picker should be loading until ListModels lands")
 	}
 	if m.ta.Focused() {
@@ -155,7 +164,7 @@ func TestRunModelsNilGuard(t *testing.T) {
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.SessionReadyMsg{Capabilities: modelsCaps()})
 	mm, cmd := m.runModels()
-	if mm.(Model).models.view != modelsNone || cmd != nil {
+	if mm.(Model).modal != nil || cmd != nil {
 		t.Error("runModels with no lister wired must be a no-op")
 	}
 }
@@ -168,23 +177,23 @@ func TestModelsCursorNav(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.models.cursor != 0 {
-		t.Fatalf("initial cursor = %d, want 0", m.models.cursor)
+	if modelsSurface(t, m).cursor != 0 {
+		t.Fatalf("initial cursor = %d, want 0", modelsSurface(t, m).cursor)
 	}
-	if len(m.models.filtered) != 4 {
-		t.Fatalf("filtered len = %d, want 4 (empty filter ⇒ filtered == models)", len(m.models.filtered))
+	if len(modelsSurface(t, m).filtered) != 4 {
+		t.Fatalf("filtered len = %d, want 4 (empty filter ⇒ filtered == models)", len(modelsSurface(t, m).filtered))
 	}
 	// Up at the top clamps.
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.models.cursor != 0 {
-		t.Errorf("cursor after up at top = %d, want 0 (clamped)", m.models.cursor)
+	if modelsSurface(t, m).cursor != 0 {
+		t.Errorf("cursor after up at top = %d, want 0 (clamped)", modelsSurface(t, m).cursor)
 	}
 	// Down moves through all 4 rows then clamps at the last.
 	for i := 0; i < 6; i++ {
 		m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if m.models.cursor != 3 {
-		t.Errorf("cursor after many downs = %d, want 3 (clamped at last)", m.models.cursor)
+	if modelsSurface(t, m).cursor != 3 {
+		t.Errorf("cursor after many downs = %d, want 3 (clamped at last)", modelsSurface(t, m).cursor)
 	}
 }
 
@@ -212,22 +221,22 @@ func TestModelsFilterNarrows(t *testing.T) {
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	m = typeFilter(t, m, "claude")
-	if len(m.models.filtered) != 1 {
-		t.Fatalf("filtered len = %d, want 1 (only claude matches)", len(m.models.filtered))
+	if len(modelsSurface(t, m).filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1 (only claude matches)", len(modelsSurface(t, m).filtered))
 	}
-	if m.models.filtered[0].ID != "anthropic/claude" {
-		t.Fatalf("filtered[0].ID = %q, want anthropic/claude", m.models.filtered[0].ID)
+	if modelsSurface(t, m).filtered[0].ID != "anthropic/claude" {
+		t.Fatalf("filtered[0].ID = %q, want anthropic/claude", modelsSurface(t, m).filtered[0].ID)
 	}
-	if m.models.cursor != 0 {
-		t.Errorf("cursor after narrowing = %d, want 0 (clamped to filtered bounds)", m.models.cursor)
+	if modelsSurface(t, m).cursor != 0 {
+		t.Errorf("cursor after narrowing = %d, want 0 (clamped to filtered bounds)", modelsSurface(t, m).cursor)
 	}
 	// enter switches IMMEDIATELY (no confirm overlay): a live session exists, so the
 	// carryover handoff fires. The picker closes and the phase moves to connecting.
 	want := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
-	mm, cmd, _ = m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if m.models.view != modelsNone {
-		t.Fatalf("enter should switch immediately and close the picker, view = %v", m.models.view)
+	if m.modal != nil {
+		t.Fatalf("enter should switch immediately and close the picker, view = %v", modelsSurface(t, m).view)
 	}
 	if m.phase != phaseConnecting {
 		t.Fatalf("enter should drive phaseConnecting (seamless switch), phase = %v", m.phase)
@@ -260,16 +269,16 @@ func TestModelsFilterByProvider(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = typeFilter(t, m, "openai")
-	if len(m.models.filtered) != 3 {
-		t.Errorf("filter \"openai\" → %d rows, want 3", len(m.models.filtered))
+	if len(modelsSurface(t, m).filtered) != 3 {
+		t.Errorf("filter \"openai\" → %d rows, want 3", len(modelsSurface(t, m).filtered))
 	}
 
 	// Reset and filter by a substring of provider_id ONLY.
-	m.models.filter.SetValue("")
-	m = m.syncModelsFilter()
+	modelsSurface(t, m).filter.SetValue("")
+	modelsSurface(t, m).syncFilter()
 	m = typeFilter(t, m, "router")
-	if len(m.models.filtered) != 1 || m.models.filtered[0].ProviderID != "openrouter" {
-		t.Errorf("filter \"router\" should match the openrouter row by provider_id, got %+v", m.models.filtered)
+	if len(modelsSurface(t, m).filtered) != 1 || modelsSurface(t, m).filtered[0].ProviderID != "openrouter" {
+		t.Errorf("filter \"router\" should match the openrouter row by provider_id, got %+v", modelsSurface(t, m).filtered)
 	}
 }
 
@@ -279,8 +288,8 @@ func TestModelsFilterCaseInsensitive(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeFilter(t, m, "CLAUDE")
-	if len(m.models.filtered) != 1 || m.models.filtered[0].ID != "anthropic/claude" {
-		t.Errorf("case-insensitive filter \"CLAUDE\" should match Claude, got %+v", m.models.filtered)
+	if len(modelsSurface(t, m).filtered) != 1 || modelsSurface(t, m).filtered[0].ID != "anthropic/claude" {
+		t.Errorf("case-insensitive filter \"CLAUDE\" should match Claude, got %+v", modelsSurface(t, m).filtered)
 	}
 }
 
@@ -326,15 +335,15 @@ func TestModelsFilterCursorClamp(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if m.models.cursor != 3 {
-		t.Fatalf("precondition: cursor = %d, want 3", m.models.cursor)
+	if modelsSurface(t, m).cursor != 3 {
+		t.Fatalf("precondition: cursor = %d, want 3", modelsSurface(t, m).cursor)
 	}
 	m = typeFilter(t, m, "gpt-5-mini")
-	if len(m.models.filtered) != 1 {
-		t.Fatalf("filtered len = %d, want 1", len(m.models.filtered))
+	if len(modelsSurface(t, m).filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(modelsSurface(t, m).filtered))
 	}
-	if m.models.cursor != 0 {
-		t.Errorf("cursor after narrowing = %d, want 0 (clamped)", m.models.cursor)
+	if modelsSurface(t, m).cursor != 0 {
+		t.Errorf("cursor after narrowing = %d, want 0 (clamped)", modelsSurface(t, m).cursor)
 	}
 }
 
@@ -346,30 +355,30 @@ func TestModelsFilterEscClears(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeFilter(t, m, "claude")
-	if len(m.models.filtered) != 1 {
-		t.Fatalf("precondition: filtered len = %d, want 1", len(m.models.filtered))
+	if len(modelsSurface(t, m).filtered) != 1 {
+		t.Fatalf("precondition: filtered len = %d, want 1", len(modelsSurface(t, m).filtered))
 	}
 
 	// First esc: clears the filter, stays open.
-	mm, _, handled := m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	mm, _, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled {
 		t.Fatal("esc should be handled by the open picker")
 	}
 	m = mm.(Model)
-	if m.models.view != modelsPanel {
+	if modelsSurface(t, m).view != modelsPanel {
 		t.Error("first esc (non-empty filter) should keep the picker open")
 	}
-	if m.models.filter.Value() != "" {
-		t.Errorf("first esc should clear the filter, value = %q", m.models.filter.Value())
+	if modelsSurface(t, m).filter.Value() != "" {
+		t.Errorf("first esc should clear the filter, value = %q", modelsSurface(t, m).filter.Value())
 	}
-	if len(m.models.filtered) != 4 {
-		t.Errorf("filtered should be restored to the full list, len = %d want 4", len(m.models.filtered))
+	if len(modelsSurface(t, m).filtered) != 4 {
+		t.Errorf("filtered should be restored to the full list, len = %d want 4", len(modelsSurface(t, m).filtered))
 	}
 
 	// Second esc: empty filter ⇒ closes.
-	mm, _, _ = m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mm.(Model)
-	if m.models.view != modelsNone {
+	if m.modal != nil {
 		t.Error("second esc (empty filter) should close the picker")
 	}
 }
@@ -389,22 +398,22 @@ func TestModelsFilterDoesNotInterceptJK(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = typeFilter(t, m, "kimi")
-	if m.models.filter.Value() != "kimi" {
-		t.Errorf("filter value = %q, want \"kimi\" (k/i/m/i must type, not navigate)", m.models.filter.Value())
+	if modelsSurface(t, m).filter.Value() != "kimi" {
+		t.Errorf("filter value = %q, want \"kimi\" (k/i/m/i must type, not navigate)", modelsSurface(t, m).filter.Value())
 	}
-	if m.models.cursor != 0 {
-		t.Errorf("cursor moved to %d while typing \"kimi\"; j/k must not be intercepted as nav", m.models.cursor)
+	if modelsSurface(t, m).cursor != 0 {
+		t.Errorf("cursor moved to %d while typing \"kimi\"; j/k must not be intercepted as nav", modelsSurface(t, m).cursor)
 	}
-	if len(m.models.filtered) != 1 || m.models.filtered[0].ID != "kimi-k2" {
-		t.Errorf("filter \"kimi\" should narrow to kimi-k2, got %+v", m.models.filtered)
+	if len(modelsSurface(t, m).filtered) != 1 || modelsSurface(t, m).filtered[0].ID != "kimi-k2" {
+		t.Errorf("filter \"kimi\" should narrow to kimi-k2, got %+v", modelsSurface(t, m).filtered)
 	}
 
 	// And "jamba" likewise.
-	m.models.filter.SetValue("")
-	m = m.syncModelsFilter()
+	modelsSurface(t, m).filter.SetValue("")
+	modelsSurface(t, m).syncFilter()
 	m = typeFilter(t, m, "jamba")
-	if m.models.filter.Value() != "jamba" || m.models.cursor != 0 {
-		t.Errorf("typing \"jamba\": value=%q cursor=%d, want value \"jamba\" cursor 0", m.models.filter.Value(), m.models.cursor)
+	if modelsSurface(t, m).filter.Value() != "jamba" || modelsSurface(t, m).cursor != 0 {
+		t.Errorf("typing \"jamba\": value=%q cursor=%d, want value \"jamba\" cursor 0", modelsSurface(t, m).filter.Value(), modelsSurface(t, m).cursor)
 	}
 }
 
@@ -440,8 +449,8 @@ func TestModelsWindowFollowsCursorPastBottom(t *testing.T) {
 
 	// Drive the cursor to the last row.
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if m.models.cursor != 29 {
-		t.Fatalf("cursor after End = %d, want 29", m.models.cursor)
+	if modelsSurface(t, m).cursor != 29 {
+		t.Fatalf("cursor after End = %d, want 29", modelsSurface(t, m).cursor)
 	}
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "model-029") {
@@ -467,8 +476,8 @@ func TestModelsWindowFollowsCursorPastTop(t *testing.T) {
 
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if m.models.cursor != 0 {
-		t.Fatalf("cursor after Home = %d, want 0", m.models.cursor)
+	if modelsSurface(t, m).cursor != 0 {
+		t.Fatalf("cursor after Home = %d, want 0", modelsSurface(t, m).cursor)
 	}
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "model-000") {
@@ -492,8 +501,8 @@ func TestModelsNoMatchNote(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeFilter(t, m, "zzzzz")
-	if len(m.models.filtered) != 0 {
-		t.Fatalf("filtered len = %d, want 0", len(m.models.filtered))
+	if len(modelsSurface(t, m).filtered) != 0 {
+		t.Fatalf("filtered len = %d, want 0", len(modelsSurface(t, m).filtered))
 	}
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, `no models match "zzzzz" — esc to clear`) {
@@ -503,7 +512,7 @@ func TestModelsNoMatchNote(t *testing.T) {
 		t.Errorf("the no-match state must be distinct from server-empty/disabled copy:\n%s", out)
 	}
 	// enter is a no-op (cursor past the empty filtered set).
-	mm, _, _ = m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !mm.(Model).activeModel.IsZero() {
 		t.Error("enter on a no-match filter must be a no-op")
 	}
@@ -549,14 +558,14 @@ func TestModelsChooseNoSessionUsesPlainCreate(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	mm, cmd, _ = m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	want := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	if m.activeModel != want {
 		t.Fatalf("activeModel = %+v, want %+v", m.activeModel, want)
 	}
-	if m.models.view != modelsNone {
-		t.Errorf("enter should close the picker, view = %v", m.models.view)
+	if m.modal != nil {
+		t.Errorf("enter should close the picker, view = %v", modelsSurface(t, m).view)
 	}
 	if m.phase != phaseConnecting {
 		t.Fatalf("phase = %v, want phaseConnecting (seamless switch)", m.phase)
@@ -648,7 +657,7 @@ func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 			for i := 0; i < tc.pickDowns; i++ {
 				m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 			}
-			mm, cmd, _ = m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = mm.(Model)
 			// The note is armed (pendingModelSwitchNote); it is NOT yet the visible status
 			// (the rebind has not landed).
@@ -678,12 +687,12 @@ func TestModelsEscClosesNoChange(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 	// Move the cursor, then esc — active must be unchanged.
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	mm, _, handled := m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	mm, _, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled {
 		t.Fatal("esc should be handled by the open picker")
 	}
 	m = mm.(Model)
-	if m.models.view != modelsNone {
+	if m.modal != nil {
 		t.Error("esc should close the picker")
 	}
 	if m.activeModel != seed {
@@ -697,7 +706,7 @@ func TestModelsErrorRenders(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.models.err == nil {
+	if modelsSurface(t, m).err == nil {
 		t.Fatal("a ListModels error should be recorded")
 	}
 	rendered := m.View().Content
@@ -726,18 +735,18 @@ func TestModelsErrorClearsStaleProviderStatuses(t *testing.T) {
 	m := newModelsModel(t, &fakeModels{models: sampleModels().models, statuses: statuses}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
-	if len(m.models.statuses) != 1 {
-		t.Fatalf("precondition: expected the status to be threaded, got %+v", m.models.statuses)
+	if len(m.modelCatalog.statuses) != 1 {
+		t.Fatalf("precondition: expected the status to be threaded, got %+v", m.modelCatalog.statuses)
 	}
 
 	// A later, unrelated ListModels failure.
-	mm2, _, handled := m.updateModelsMsg(client.ModelsMsg{Err: errors.New("transient rpc error")})
+	mm2, _, handled := m.updateModelsMsg(client.ModelsMsg{RequestToken: m.modelCatalogRequestToken, Err: errors.New("transient rpc error")})
 	if !handled {
 		t.Fatal("ModelsMsg should be handled")
 	}
 	m = mm2.(Model)
-	if m.models.statuses != nil {
-		t.Fatalf("stale statuses survived a failed ListModels: %+v", m.models.statuses)
+	if m.modelCatalog.statuses != nil {
+		t.Fatalf("stale statuses survived a failed ListModels: %+v", m.modelCatalog.statuses)
 	}
 
 	rendered := stripANSIstr(m.View().Content)
@@ -766,7 +775,7 @@ func TestModelsKeyRemovedFallback(t *testing.T) {
 	}
 
 	// Drive ListModels through updateModelsMsg directly (idle phase ⇒ no create).
-	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{Models: fm.models})
+	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{RequestToken: m.modelCatalogRequestToken, Models: fm.models})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("ModelsMsg should be handled")
@@ -809,7 +818,7 @@ func TestModelsSaveFailureFailSoft(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 	// Pick gpt-5 (row 0 — the live model) via the seamless switch (enter switches
 	// immediately, firing the carryover handoff + the persist).
-	mm, cmd, _ = m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
 	if m.activeModel != want {
@@ -843,7 +852,7 @@ func TestModelsConnectErrorDegradesToCreate(t *testing.T) {
 	}
 
 	// Drive the connect-time ListModels error through the reducer.
-	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{Err: errors.New("list boom")})
+	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{RequestToken: m.modelCatalogRequestToken, Err: errors.New("list boom")})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("connect-time ModelsMsg error should be handled")
@@ -937,7 +946,7 @@ func TestModelsReconcileKeepsModelMissingFromSnapshot(t *testing.T) {
 	}
 
 	// Drive the connect-time ListModels result through the reducer.
-	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{Models: inventory})
+	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{RequestToken: m.modelCatalogRequestToken, Models: inventory})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("connect-time ModelsMsg should be handled")
@@ -948,8 +957,8 @@ func TestModelsReconcileKeepsModelMissingFromSnapshot(t *testing.T) {
 	if m.activeModel != persisted {
 		t.Errorf("activeModel = %+v, want the KEPT persisted %+v (provider present ⇒ no clear)", m.activeModel, persisted)
 	}
-	if m.models.active != persisted {
-		t.Errorf("models.active = %+v, want the KEPT persisted %+v", m.models.active, persisted)
+	if m.modelCatalog.active != persisted {
+		t.Errorf("models.active = %+v, want the KEPT persisted %+v", m.modelCatalog.active, persisted)
 	}
 	if st := stripANSIstr(m.statusMsg); strings.Contains(st, "no longer available") {
 		t.Errorf("no key-removed notice must fire when only the MODEL is absent, got %q", st)
@@ -969,7 +978,7 @@ func TestModelsReconcileKeepsModelMissingFromSnapshot(t *testing.T) {
 // REJECTS it (gRPC InvalidArgument — the code the server maps a bad selector to),
 // createSessionCmd retries ONCE with the zero selection (server default). Connect
 // must complete (idle), the now-known-bad selection clears for this run (BOTH
-// m.activeModel and the picker's m.models.active — a stale models.active would
+// m.activeModel and the picker's m.modelCatalog.active — a stale models.active would
 // re-seed the picker with the known-bad selection), a LOUD warning names the
 // rejected model, and the state file is NOT rewritten. Exactly TWO creates fire:
 // the rejected one + the single zero retry — never more.
@@ -1018,8 +1027,8 @@ func TestConnectCreateRejectedFallsBackToDefault(t *testing.T) {
 	if !m.activeModel.IsZero() {
 		t.Errorf("activeModel = %+v, want zero (the rejected selection clears for this run)", m.activeModel)
 	}
-	if !m.models.active.IsZero() {
-		t.Errorf("models.active = %+v, want zero (a stale picker selection would re-seed the known-bad pick)", m.models.active)
+	if !m.modelCatalog.active.IsZero() {
+		t.Errorf("models.active = %+v, want zero (a stale picker selection would re-seed the known-bad pick)", m.modelCatalog.active)
 	}
 	st := stripANSIstr(m.statusMsg)
 	if !strings.Contains(st, "openai/gpt-5.5") {
@@ -1150,10 +1159,10 @@ func TestModelsPickerNoActiveMarkerWhenSelectionAbsent(t *testing.T) {
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	// The reconcile (provider present) keeps the selection.
-	if m.models.active != kept {
-		t.Fatalf("models.active = %+v, want the kept %+v", m.models.active, kept)
+	if m.modelCatalog.active != kept {
+		t.Fatalf("models.active = %+v, want the kept %+v", m.modelCatalog.active, kept)
 	}
-	panel := renderModelsPanel(m.deps.Theme, m.models, m.caps, "", defaultHelpKeys(), modelsRowBudgetFor(30))
+	panel := renderModelsPanel(m.deps.Theme, m.modelCatalog, *modelsSurface(t, m), m.caps, "", defaultHelpKeys(), modelsRowBudgetFor(30))
 	rows := strings.Split(stripANSIstr(panel), "\n")
 	for _, row := range rows {
 		if strings.Contains(row, "●") && !strings.Contains(row, "● current") {
@@ -1321,19 +1330,55 @@ func TestRenderProviderStatusLines_UnreachableAndUnauthorized(t *testing.T) {
 }
 
 // TestModelsPickerStatuses_ThreadedFromMsg proves updateModelsMsg captures
-// ModelsMsg.Statuses onto modelsState (the plumbing between the RPC result and
-// the render path).
+// ModelsMsg.Statuses in the root catalog, which is also the render path's source.
 func TestModelsPickerStatuses_ThreadedFromMsg(t *testing.T) {
 	statuses := []client.ProviderStatus{{ProviderID: "toolhive", State: "unreachable", Hint: "x"}}
 	m := newModelsModel(t, &fakeModels{models: sampleModels().models, statuses: statuses}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
-	if len(m.models.statuses) != 1 || m.models.statuses[0].ProviderID != "toolhive" {
-		t.Fatalf("models.statuses = %+v, want the threaded status", m.models.statuses)
+	if len(m.modelCatalog.statuses) != 1 || m.modelCatalog.statuses[0].ProviderID != "toolhive" {
+		t.Fatalf("models.statuses = %+v, want the threaded status", m.modelCatalog.statuses)
 	}
 	rendered := stripANSI([]byte(m.View().Content))
 	if !strings.Contains(string(rendered), "toolhive: proxy not reachable") {
 		t.Fatalf("rendered picker missing the status line:\n%s", rendered)
+	}
+}
+
+// TestModelsCatalogUpdatesWhilePickerClosed proves catalog results remain root-owned:
+// a late update reconciles the next-create selection and feeds gateway/header state
+// without reopening the picker.
+func TestModelsCatalogUpdatesWhilePickerClosed(t *testing.T) {
+	gone := client.ModelSelection{ProviderID: "removed", ModelID: "old-model"}
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), gone)
+	if m.modal != nil {
+		t.Fatalf("picker view = %v, want closed", modelsSurface(t, m).view)
+	}
+
+	statuses := []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", AvailableNotDefault: true, ModelCount: 2}}
+	mm, _, handled := m.updateModelsMsg(client.ModelsMsg{
+		RequestToken: m.modelCatalogRequestToken,
+		Models:       []client.ModelInfo{{ProviderID: "openai", ID: "gpt-5"}},
+		Statuses:     statuses,
+	})
+	if !handled {
+		t.Fatal("ModelsMsg should be handled while picker is closed")
+	}
+	m = mm.(Model)
+	if m.modal != nil {
+		t.Fatalf("late catalog update opened picker: %v", modelsSurface(t, m).view)
+	}
+	if len(m.modelCatalog.models) != 1 || m.modelCatalog.models[0].ID != "gpt-5" {
+		t.Fatalf("catalog models = %+v, want the late inventory", m.modelCatalog.models)
+	}
+	if len(m.modelCatalog.statuses) != 1 || !m.modelCatalog.configProvenanceProviderIDs["toolhive"] {
+		t.Fatalf("catalog statuses/intent = %+v/%v, want ToolHive status and intent", m.modelCatalog.statuses, m.modelCatalog.configProvenanceProviderIDs)
+	}
+	if !m.activeModel.IsZero() || !m.modelCatalog.active.IsZero() {
+		t.Fatalf("reconciled selections = %+v/%+v, want server default", m.activeModel, m.modelCatalog.active)
+	}
+	if m.gatewayNotice == "" {
+		t.Fatal("closed-picker catalog update should arm the gateway notice")
 	}
 }
 
@@ -1374,7 +1419,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 
 	// Active provider is openai (key-driven); toolhive is available-but-not-default.
 	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m.models.statuses = gatewayStatuses()
+	m.modelCatalog.statuses = gatewayStatuses()
 	header := stripANSIstr(m.renderHeader())
 	if !strings.Contains(header, "toolhive gateway available") {
 		t.Errorf("header should show the 'gateway available' segment when an AvailableNotDefault status exists and the active provider is not the gateway, got:\n%s", header)
@@ -1387,7 +1432,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 	// Now make the gateway the ACTIVE default: AvailableNotDefault flips false, so
 	// the 'available' segment disappears and the 'via' segment renders instead.
 	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
-	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
+	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
 	header = stripANSIstr(m.renderHeader())
 	if strings.Contains(header, "gateway available") {
 		t.Errorf("the 'available' segment must NOT render when the gateway IS the active default, got:\n%s", header)
@@ -1398,7 +1443,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 
 	// No statuses (byte-identical pre-feature path): neither segment renders.
 	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m.models.statuses = nil
+	m.modelCatalog.statuses = nil
 	header = stripANSIstr(m.renderHeader())
 	if strings.Contains(header, "gateway available") || strings.Contains(header, "via ToolHive gateway") {
 		t.Errorf("neither gateway segment should render with no statuses, got:\n%s", header)
@@ -1464,8 +1509,8 @@ func TestModelsPickerGolden(t *testing.T) {
 		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.models.view != modelsPanel {
-		t.Fatalf("view = %v, want modelsPanel", m.models.view)
+	if modelsSurface(t, m).view != modelsPanel {
+		t.Fatalf("view = %v, want modelsPanel", modelsSurface(t, m).view)
 	}
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "models.golden", got)
@@ -1621,7 +1666,7 @@ func TestModelsPickerGlobalDefaultGolden(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(),
 		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	// Set claude as the global default (the ★ row), distinct from the ● active gpt-5.
-	m.models.globalDefault = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
+	m.modelCatalog.globalDefault = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	got := stripANSI([]byte(m.View().Content))
@@ -1642,10 +1687,10 @@ func TestModelsChooseCrossProviderStillCarries(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	mm, cmd, _ = m.onModelsKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if m.models.view != modelsNone {
-		t.Fatalf("enter should switch immediately and close the picker, view = %v", m.models.view)
+	if m.modal != nil {
+		t.Fatalf("enter should switch immediately and close the picker, view = %v", modelsSurface(t, m).view)
 	}
 	if m.phase != phaseConnecting {
 		t.Fatalf("phase = %v, want phaseConnecting (seamless cross-provider switch)", m.phase)
@@ -1669,18 +1714,11 @@ func TestModelsChooseCrossProviderStillCarries(t *testing.T) {
 // pressModelsKey routes a key through onModelsKey, asserting it was handled.
 func pressModelsKey(t *testing.T, m Model, msg tea.KeyPressMsg) Model {
 	t.Helper()
-	mm, _, handled := m.onModelsKey(msg)
+	mm, _, handled := m.onOverlayKey(msg)
 	if !handled {
 		t.Fatalf("key %v should be handled by the open picker", msg)
 	}
 	return mm.(Model)
-}
-
-// onModelsKeyTuple is a thin helper that drops the handled bool for the cases that
-// only need the model + cmd.
-func (m Model) onModelsKeyTuple(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	mm, cmd, _ := m.onModelsKey(msg)
-	return mm, cmd
 }
 
 // initLeafMsgs runs cmd's batch leaves ONCE and collects their result msgs WITHOUT
@@ -1843,14 +1881,14 @@ func TestGatewayNoticeClearedOnOpenModels(t *testing.T) {
 
 // --- Proposal 2: picker "org" tag (S1) ----------------------------------------
 
-// TestModelRowOrgTagForIntentProvider: a model row whose provider is in
-// intentProviders carries a "org" segment; a key-driven provider's row does not.
-func TestModelRowOrgTagForIntentProvider(t *testing.T) {
-	intent := map[string]bool{"toolhive": true}
+// TestModelRowOrgTagForConfigIntentProvider: a model row whose provider is in
+// configProvenanceProviderIDs carries a "org" segment; a key-driven provider's row does not.
+func TestModelRowOrgTagForConfigIntentProvider(t *testing.T) {
+	configProvenanceProviderIDs := map[string]bool{"toolhive": true}
 	toolhive := client.ModelInfo{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6"}
 	openrouter := client.ModelInfo{ID: "anthropic/claude", ProviderID: "openrouter", DisplayName: "Claude"}
 
-	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, intent, toolhive)
+	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, configProvenanceProviderIDs, toolhive)
 	if !strings.Contains(got, "org") {
 		t.Errorf("toolhive row should carry the org tag, got %q", got)
 	}
@@ -1859,14 +1897,14 @@ func TestModelRowOrgTagForIntentProvider(t *testing.T) {
 		t.Errorf("org tag should lead the segment list, got %q", got)
 	}
 
-	got = modelRowText(client.ModelSelection{}, client.ModelSelection{}, intent, openrouter)
+	got = modelRowText(client.ModelSelection{}, client.ModelSelection{}, configProvenanceProviderIDs, openrouter)
 	if strings.Contains(got, "org") {
 		t.Errorf("openrouter row must NOT carry the org tag, got %q", got)
 	}
 }
 
-func TestIntentProviderSetExcludesOpenAICodexStatus(t *testing.T) {
-	got := intentProviderSet([]client.ProviderStatus{
+func TestConfigIntentProviderSetExcludesOpenAICodexStatus(t *testing.T) {
+	got := configProvenanceProviderSet([]client.ProviderStatus{
 		{ProviderID: "toolhive", State: "ok"},
 		{ProviderID: "openai-codex", State: "ok"},
 	})
@@ -1878,13 +1916,13 @@ func TestIntentProviderSetExcludesOpenAICodexStatus(t *testing.T) {
 	}
 }
 
-// TestModelRowOrgTagNilIntentProviders: a nil intentProviders map (no gateway)
+// TestModelRowOrgTagNilConfigIntentProviderIDs: a nil configProvenanceProviderIDs map (no gateway)
 // means no row carries the "org" tag — the byte-identical pre-feature path.
-func TestModelRowOrgTagNilIntentProviders(t *testing.T) {
+func TestModelRowOrgTagNilConfigIntentProviderIDs(t *testing.T) {
 	toolhive := client.ModelInfo{ID: "claude-sonnet-4-6", ProviderID: "toolhive", DisplayName: "Claude Sonnet 4.6"}
 	got := modelRowText(client.ModelSelection{}, client.ModelSelection{}, nil, toolhive)
 	if strings.Contains(got, "org") {
-		t.Errorf("nil intentProviders must not produce an org tag, got %q", got)
+		t.Errorf("nil configProvenanceProviderIDs must not produce an org tag, got %q", got)
 	}
 }
 
@@ -1912,15 +1950,15 @@ func TestModelOrgTagRenderedInPicker(t *testing.T) {
 // TestProvenanceHintAppendedWhenGatewayAvailable: an openrouter (default) session
 // with a toolhive AvailableNotDefault status appends the muted hint naming the
 // gateway outranked by the default provider key. The default (openrouter) is
-// key-driven (NOT in intentProviders), so the key-driven guard holds and the hint
+// key-driven (NOT in configProvenanceProviderIDs), so the key-driven guard holds and the hint
 // fires.
 func TestProvenanceHintAppendedWhenGatewayAvailable(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
-	m.models.statuses = gatewayStatuses()
+	m.modelCatalog.statuses = gatewayStatuses()
 	// toolhive is intent-driven; openrouter is NOT (key-driven) — the guard's premise.
-	m.models.intentProviders = map[string]bool{"toolhive": true}
+	m.modelCatalog.configProvenanceProviderIDs = map[string]bool{"toolhive": true}
 	got := m.modelProvenanceLine()
 	if !strings.Contains(got, "current:") {
 		t.Fatalf("provenance line missing the base current: line, got %q", got)
@@ -1940,7 +1978,7 @@ func TestProvenanceHintSuppressedWhenGatewayIsDefault(t *testing.T) {
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	// toolhive is the default here, so AvailableNotDefault is false on its row.
-	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
+	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
 	got := m.modelProvenanceLine()
 	if strings.Contains(got, "gateway also available") {
 		t.Errorf("provenance hint should be suppressed when the gateway IS the default, got %q", got)
@@ -1948,7 +1986,7 @@ func TestProvenanceHintSuppressedWhenGatewayIsDefault(t *testing.T) {
 }
 
 // TestProvenanceHintSuppressedWhenDefaultIsIntentDriven: when the default provider is
-// ITSELF intent-driven (in intentProviders), the "outranked by your … key" wording would
+// ITSELF intent-driven (in configProvenanceProviderIDs), the "outranked by your … key" wording would
 // mislead (an intent-driven default has no key), so the hint is suppressed even though a
 // different gateway row is AvailableNotDefault.
 func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
@@ -1956,9 +1994,9 @@ func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	// A second intent-driven provider is the default; toolhive is AvailableNotDefault.
 	m.effectiveModel = client.ResolvedModel{ProviderID: "other-gateway", ModelID: "some-model"}
-	m.models.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: true}}
+	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: true}}
 	// The default (other-gateway) IS intent-driven — the key-driven guard must suppress.
-	m.models.intentProviders = map[string]bool{"toolhive": true, "other-gateway": true}
+	m.modelCatalog.configProvenanceProviderIDs = map[string]bool{"toolhive": true, "other-gateway": true}
 	got := m.modelProvenanceLine()
 	if strings.Contains(got, "gateway also available") {
 		t.Errorf("provenance hint must be suppressed when the default is intent-driven (no key), got %q", got)

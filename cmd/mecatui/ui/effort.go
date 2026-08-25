@@ -125,7 +125,7 @@ func (m Model) currentModelNoReasoning() bool {
 	if id == "" {
 		return false // no resolved model yet → say nothing
 	}
-	for _, mi := range m.models.models {
+	for _, mi := range m.modelCatalog.models {
 		if mi.ID == id && mi.ProviderID == pid {
 			return !mi.Reasoning
 		}
