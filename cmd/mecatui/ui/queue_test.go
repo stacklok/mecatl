@@ -634,7 +634,11 @@ func TestBuiltinQueuedThenRunsAtDrain(t *testing.T) {
 
 	mm, cmd := m.Update(client.ResultMsg{Stop: "end_turn"})
 	m = mm.(Model)
-	runBatchLeaves(cmd)
+	ready := clearMsgFromCmd(t, cmd)
+	// The queued built-in has started its create-first handoff. Reduce its actual
+	// successful replacement message before checking the cleared state.
+	mm, _ = m.Update(ready)
+	m = mm.(Model)
 
 	if !m.conv.isEmpty() {
 		t.Error("queued /clear should have emptied the conversation at drain")

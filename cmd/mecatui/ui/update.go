@@ -445,9 +445,9 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// clear the pending field, and submit via the identical typed-prompt path so
 	// the behavior is byte-identical to the operator pressing enter. The pending
 	// field is cleared BEFORE submitPrompt runs (defense-in-depth against re-fire
-	// on a /models restart or the connect-fallback rebind, the two paths that
-	// funnel back through here — /clear is NOT one: runClear resets the same
-	// session via resetSession and never reaches this seam).
+	// on a /models restart or the connect-fallback rebind. /clear also reaches
+	// this seam only after its replacement session was created; its pending initial
+	// prompt has already been consumed, so it never re-fires).
 	// A "/"-prefixed seed (e.g. -p /clear) is intercepted by submitPrompt's
 	// built-in intercept — documented behavior.
 	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
@@ -511,6 +511,27 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return mm, cmd, true
 	case client.SessionReadyMsg:
 		return m.applySessionReady(msg)
+	case clearSessionReadyMsg:
+		// The replacement exists, so it is now safe to discard the old transcript
+		// and bind through the ordinary SessionReady machinery. Do this before
+		// scheduling the best-effort close: a close failure cannot disturb the
+		// already-active replacement.
+		m = m.resetSession()
+		mm, bindCmd, handled := m.applySessionReady(msg.ready)
+		m = mm.(Model)
+		// The replacement was created with desiredMode, so its ready echo confirms
+		// that any deferred old-session mode switch is now settled. Leaving it set
+		// would make onIdleSubmit keep deferring every future prompt.
+		m.pendingMode = ""
+		m.statusMsg = m.deps.Theme.Style("success").Render("cleared")
+		m.refreshView()
+		return m, tea.Batch(bindCmd, m.closeSessionCmd(msg.oldID)), handled
+	case clearSessionFailedMsg:
+		// The old session and all of its derived UI state remain intact; only the
+		// temporary input-blocking phase and status are rolled back.
+		m.phase = phaseIdle
+		m.statusMsg = m.deps.Theme.Style("errorText").Render("could not clear: " + sanitizeTerminal(msg.err.Error()))
+		return m, nil, true
 	case connectFallbackMsg:
 		// The connect-time create REJECTED the saved selection; the zero-selection
 		// retry succeeded (createSessionCmd's fallback leg, issue #41). The session is

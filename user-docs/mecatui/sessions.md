@@ -26,6 +26,13 @@ mecatui: final-session-id="01JOPAQUESESSIONID"
 
 Save that value and use it with `--resume`.
 
+## Start fresh with `/clear`
+
+Use `/clear` when you want a fresh session and empty context while staying in the
+current workspace and model. The old conversation remains stored and discoverable
+through `/sessions`; mecatui releases its old runtime resources only on a best-effort
+basis after the replacement session is ready.
+
 ## Browse, continue, inspect, or fork
 
 Open the inventory without creating a session:

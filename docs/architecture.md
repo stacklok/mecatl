@@ -316,7 +316,11 @@ from proto `Event`s** and are bound by the inward-only layering rule. The
 `contracts/gen` + grpc + `internal/app` surface lives only in `cmd/mecatui/client`,
 `cmd/mecatui/embed`, and the `cmd/mecatui` main; the `ui` (Bubble Tea
 model/update/view) and `theme` (pure styling) packages import no `engine/...` or `internal/...`
-package and no proto directly. Usage and theming are documented in `docs/tui.md`.
+package and no proto directly. Its `/clear` command uses the existing create-session
+RPC to create a new empty session first (preserving the current workspace, effective
+model/reasoning effort, and permission mode), then rebinds locally and only afterward
+best-effort closes the old session; a failed create leaves the old session and UI
+unchanged. Usage and theming are documented in `docs/tui.md`.
 
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against

@@ -308,7 +308,12 @@ func TestClearDropsStagedPastes(t *testing.T) {
 	// Drive the real /clear built-in: type it and submit (the palette claims enter
 	// and runs the selected built-in row, the same user path as a bare-line submit).
 	m = typeText(t, m, "/clear")
-	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, clearCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	// Complete the actual create-first handoff; resetSession runs only after its
+	// successful command result is reduced.
+	ready := firstBatchLeaf(t, clearCmd)
+	mm, _ = m.Update(ready)
 	m = mm.(Model)
 
 	if len(m.stagedPastes) != 0 {

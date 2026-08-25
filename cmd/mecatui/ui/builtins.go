@@ -246,21 +246,86 @@ func builtinByName(caps client.Capabilities, w wiredCollaborators, name string) 
 	return builtin{}, false
 }
 
-// runClear resets the conversation and all derived session state so the
-// zero-state welcome card reappears (conv.isEmpty() becomes true). It is
-// idle-only: while a run streams it is a no-op with an explanatory status, so a
-// /clear mid-turn can't tear out the live stream's backing state.
+// runClear starts a create-first handoff to a new empty session. It is idle-only:
+// while a run streams it is a no-op with an explanatory status, so a /clear
+// mid-turn can't tear out the live stream's backing state. The old session and
+// its UI stay bound until creation succeeds; this both avoids data loss on a
+// create failure and prevents a prompt from reaching the old session while the
+// handoff is pending.
 func (m Model) runClear() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot clear while running")
 		return m, nil
 	}
-	// resetSession (model.go) owns the full set of session-derived fields, so a
-	// future such field can never be silently forgotten by /clear.
-	m = m.resetSession()
-	m.statusMsg = m.deps.Theme.Style("success").Render("cleared")
-	m.refreshView()
-	return m, nil
+	if m.deps.Session == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot clear: session creation unavailable")
+		return m, nil
+	}
+
+	oldID := m.sessionID
+	m.phase = phaseConnecting // blocks input while the old session is still displayed
+	m.statusMsg = "clearing — creating a fresh session…"
+	return m, tea.Batch(m.clearSessionCmd(oldID), m.sp.Tick)
+}
+
+// clearSessionSelection prefers the server's effective model echo, while retaining
+// the locally requested reasoning effort when an older server did not echo it.
+func (m Model) clearSessionSelection() client.ModelSelection {
+	sel := m.activeModel
+	if resolved := m.effectiveModel; resolved.ProviderID != "" || resolved.ModelID != "" {
+		if resolved.ProviderID != "" {
+			sel.ProviderID = resolved.ProviderID
+		}
+		if resolved.ModelID != "" {
+			sel.ModelID = resolved.ModelID
+		}
+		if resolved.ReasoningEffort != "" {
+			sel.ReasoningEffort = resolved.ReasoningEffort
+		}
+	}
+	return sel
+}
+
+// clearSessionCmd creates the replacement before the old session is touched. The
+// reducer performs the local reset and binding before it schedules the best-effort
+// close, so a create failure leaves the old session entirely usable.
+func (m Model) clearSessionCmd(oldID string) tea.Cmd {
+	deps := m.deps
+	workspace := m.activeWorkspace
+	if workspace == "" {
+		workspace = deps.Workspace
+	}
+	sel := m.clearSessionSelection()
+	mode := m.desiredMode()
+	return func() tea.Msg {
+		id, caps, resolved, err := deps.Session.CreateSessionInWorkspace(deps.Ctx, workspace, sel, mode)
+		if err != nil {
+			return clearSessionFailedMsg{err: err}
+		}
+		return clearSessionReadyMsg{
+			ready: client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: mode},
+			oldID: oldID,
+		}
+	}
+}
+
+type clearSessionReadyMsg struct {
+	ready client.SessionReadyMsg
+	oldID string
+}
+
+type clearSessionFailedMsg struct{ err error }
+
+// closeSessionCmd is deliberately best-effort: the replacement is already bound,
+// so failure to close the old persisted session must not affect the new one.
+func (m Model) closeSessionCmd(id string) tea.Cmd {
+	deps := m.deps
+	return func() tea.Msg {
+		if id != "" {
+			_ = deps.Session.CloseSession(deps.Ctx, id)
+		}
+		return nil
+	}
 }
 
 // runHelp opens the "?" keys-&-features overlay — the same state the "?" key

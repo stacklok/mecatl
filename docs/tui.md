@@ -454,9 +454,12 @@ root, not the render layer — no proto event, no change to `ui`/`theme`/`client
 
 **Built-in client-side slash commands always appear.** Typing `/` opens the
 palette with a set of commands the TUI itself ships — independent of workspace
-dirs and even when server slash-command expansion is off. `/clear` (reset the
-conversation and scrollback) and `/help` (open the keys-&-features overlay) are
-*always* available because they act purely on the TUI's own state; `/mcp` (browse
+dirs and even when server slash-command expansion is off. `/clear` creates a new
+empty server session in the current workspace, using the current effective model,
+reasoning-effort, and permission mode, then clears the conversation and scrollback
+only after that session is ready; `/help` opens the keys-&-features overlay.
+These commands are *always* available because they are client-owned commands (with
+`/clear` using the existing session-create RPC); `/mcp` (browse
 the MCP inventory), `/agents` (browse the agent-definition inventory — the
 resolved registry the `Subagent` tool routes delegations to), `/team` (the unified
 agents overlay pinned to the Teams tab — same surface as `ctrl+a`, which picks a
@@ -611,7 +614,11 @@ carries. (There is no confirm overlay and no same-provider gate: the server acce
 carryover for any provider.) If no live session exists yet (pre-first-connect, or a
 failure left no session), the pick falls back to a plain `CreateSession` — there's no
 source to carry from. **Dropping the conversation is a separate action**: run `/clear`
-to reset the transcript and start fresh on the current model.
+to reset the transcript and create a fresh empty session on the current workspace
+and effective model. Creation is **create-first**: the old transcript and session
+stay active while the new session is pending, then the TUI rebinds and clears its
+local session state before it best-effort closes the old session. A create failure
+leaves the old chat untouched; a close failure leaves the new chat active.
 
 `ctrl+g` sets the cursor row as the **client global default** (the `★` row) — used
 by new/unseen workspaces; it is control-modified so a bare `g` stays typeable in the

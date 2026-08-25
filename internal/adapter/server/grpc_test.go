@@ -192,7 +192,7 @@ func TestGRPCConverseInvalidUTF8ToolResult(t *testing.T) {
 // a second close is idempotent (still ok, since close != delete-snapshot), and a
 // never-created id surfaces as codes.NotFound.
 func TestGRPCCloseSession(t *testing.T) {
-	svc := newService(t, mockllm.New(), allowRules())
+	svc := newService(t, mockllm.New(mockllm.TextTurn("close-session-reply")), allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 
@@ -203,9 +203,39 @@ func TestGRPCCloseSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
+	transcript, err := client.GetSessionTranscript(ctx, &mecatlv1.GetSessionTranscriptRequest{SessionId: cs.GetSessionId()})
+	if err != nil {
+		t.Fatalf("GetSessionTranscript after create: %v", err)
+	}
+	if len(transcript.GetMessages()) != 0 {
+		t.Fatalf("fresh session transcript has %d messages, want empty", len(transcript.GetMessages()))
+	}
+
+	// The established server-test convention drives the real Engine through the
+	// Service lifecycle and persists its terminal snapshot before CloseSession.
+	if got := driveCompletedTurn(t, svc, session.SessionID(cs.GetSessionId()), "persist this conversation"); got != "close-session-reply" {
+		t.Fatalf("completed turn reply = %q, want close-session-reply", got)
+	}
 
 	if _, err := client.CloseSession(ctx, &mecatlv1.CloseSessionRequest{SessionId: cs.GetSessionId()}); err != nil {
 		t.Fatalf("CloseSession: %v", err)
+	}
+	// EndSession releases runtime resources but keeps the persisted snapshot.
+	transcript, err = client.GetSessionTranscript(ctx, &mecatlv1.GetSessionTranscriptRequest{SessionId: cs.GetSessionId()})
+	if err != nil {
+		t.Fatalf("GetSessionTranscript after close: %v", err)
+	}
+	var sawUser, sawAssistant bool
+	for _, message := range transcript.GetMessages() {
+		if message.GetText() == "persist this conversation" {
+			sawUser = true
+		}
+		if message.GetText() == "close-session-reply" {
+			sawAssistant = true
+		}
+	}
+	if !sawUser || !sawAssistant {
+		t.Fatalf("closed session transcript lost conversation: user=%v assistant=%v messages=%+v", sawUser, sawAssistant, transcript.GetMessages())
 	}
 	// Idempotent: the snapshot still persists, so a second close succeeds.
 	if _, err := client.CloseSession(ctx, &mecatlv1.CloseSessionRequest{SessionId: cs.GetSessionId()}); err != nil {

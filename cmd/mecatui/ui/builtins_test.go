@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -339,13 +340,61 @@ func pressEnter(t *testing.T, m Model) (Model, tea.Cmd) {
 	return mm.(Model), cmd
 }
 
-// TestClearBuiltinResetsState drives a "/clear"+enter and asserts the
-// conversation and all derived session state reset, the status reads "cleared",
-// no stream opens, and no prompt is sent.
-func TestClearBuiltinResetsState(t *testing.T) {
-	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+// firstBatchLeaf runs only the first leaf of a command batch. Both /clear and a
+// prompt put their externally-observable RPC command first; avoiding the reader
+// and spinner leaves keeps reducer tests synchronous and deterministic.
+func firstBatchLeaf(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("command result = %T, want non-empty tea.BatchMsg", msg)
+	}
+	return batch[0]()
+}
 
-	// Seed some session state as if a turn had run.
+// clearMsgFromCmd follows a command tree until the actual /clear create command
+// returns its lifecycle message. It is used where /clear is dispatched by queue
+// draining, which nests its command below the terminal-result batch.
+func clearMsgFromCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	var walk func(tea.Cmd) (tea.Msg, bool)
+	walk = func(next tea.Cmd) (tea.Msg, bool) {
+		if next == nil {
+			return nil, false
+		}
+		msg := next()
+		switch msg := msg.(type) {
+		case clearSessionReadyMsg, clearSessionFailedMsg:
+			return msg, true
+		case tea.BatchMsg:
+			for _, leaf := range msg {
+				if found, ok := walk(leaf); ok {
+					return found, true
+				}
+			}
+		}
+		return nil, false
+	}
+	msg, ok := walk(cmd)
+	if !ok {
+		t.Fatal("clear command did not return a lifecycle message")
+	}
+	return msg
+}
+
+// TestClearBuiltinCreatesThenBindsThenCloses proves the create-first handoff:
+// /clear preserves the old transcript while creation is pending, binds a new empty
+// session through SessionReady, then closes the old session best-effort.
+func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+	conv := m.deps.Session.(*fakeConv)
+	// builtinDispatchModel binds a ready message directly, so model the startup
+	// create that would already have happened in the real lifecycle.
+	conv.createCount = 1
+	conv.closeErr = fmt.Errorf("close unavailable")
+
+	// Seed state that must remain visible until the replacement exists.
 	m.conv.addUser("earlier prompt")
 	m.conv.addError("some error")
 	m.recordFileChange("note.txt")
@@ -356,63 +405,129 @@ func TestClearBuiltinResetsState(t *testing.T) {
 	// Scrolled up (auto-follow off): /clear must re-arm it, since an empty
 	// conversation is at-bottom and the next run must tail its streaming deltas.
 	m.stuck = false
-	m.refreshView()
-	if m.conv.isEmpty() {
-		t.Fatal("precondition: conversation should be non-empty before /clear")
+	m.effectiveModel = client.ResolvedModel{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}
+	m.activeModel = client.ModelSelection{ProviderID: "stale-provider", ModelID: "stale-model", ReasoningEffort: "low"}
+	m.activeWorkspace = "/current-worktree"
+	oldID := m.sessionID
+
+	m.pendingMode = "plan"
+	mm, clearCmd := m.runClear()
+	m = mm.(Model)
+	if m.phase != phaseConnecting || m.sessionID != oldID || m.conv.isEmpty() {
+		t.Fatalf("pending /clear must retain the old UI/session while blocking input: phase=%v id=%q empty=%v", m.phase, m.sessionID, m.conv.isEmpty())
+	}
+	if got := conv.closed(); len(got) != 0 {
+		t.Fatalf("old session closed before replacement creation: %v", got)
+	}
+	_, promptCmd := pressEnter(t, m)
+	if promptCmd != nil {
+		t.Error("pending /clear must not send a prompt to the old session")
 	}
 
-	m = typeText(t, m, "/clear")
-	m, cmd := pressEnter(t, m)
+	msg := firstBatchLeaf(t, clearCmd)
+	ready, ok := msg.(clearSessionReadyMsg)
+	if !ok {
+		t.Fatalf("clear create message = %T, want clearSessionReadyMsg", msg)
+	}
+	if got := conv.createdWksp; got != "/current-worktree" {
+		t.Errorf("clear workspace = %q, want current worktree", got)
+	}
+	if got := conv.createdSel; got != (client.ModelSelection{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}) {
+		t.Errorf("clear selection = %+v, want effective model plus effort", got)
+	}
+	if got := conv.mode; got != m.desiredMode() {
+		t.Errorf("clear mode = %q, want desired mode %q", got, m.desiredMode())
+	}
+	if got := conv.closed(); len(got) != 0 {
+		t.Fatalf("old session closed before successful new-session binding: %v", got)
+	}
 
-	// Drift guard: every session-derived field must match a freshly-zeroed
-	// reference (resetSession of a brand-new model). This compares the WHOLE
-	// session-derived projection, so a future field added to resetSession that
-	// /clear forgets — or a field /clear zeroes but resetSession does not — fails
-	// here without this test re-listing the fields by hand. (sessionState is
-	// defined below; keep it in sync with resetSession in model.go.)
+	mm, closeCmd := m.Update(ready)
+	m = mm.(Model)
 	zero := New(m.deps).resetSession()
 	if !reflect.DeepEqual(sessionState(m), sessionState(zero)) {
-		t.Errorf("/clear must zero ALL session-derived fields (drift?):\n got  %+v\n want %+v",
-			sessionState(m), sessionState(zero))
+		t.Errorf("successful /clear must reset ALL session-derived fields:\n got  %+v\n want %+v", sessionState(m), sessionState(zero))
 	}
-	// Belt-and-braces explicit checks (kept readable; the DeepEqual above is the
-	// drift-proof one). Each line mirrors a field resetSession (model.go) owns.
-	if !m.conv.isEmpty() {
-		t.Error("/clear should empty the conversation")
+	if m.sessionID == oldID || m.sessionID == "" || m.phase != phaseIdle {
+		t.Errorf("successful /clear must bind a new idle session, got id=%q phase=%v", m.sessionID, m.phase)
 	}
-	if !m.stuck {
-		t.Error("/clear should re-arm auto-follow (stuck) — an empty conversation is at-bottom")
+	if m.pendingMode != "" {
+		t.Errorf("successful /clear must settle pending mode, got %q", m.pendingMode)
 	}
-	if m.filesChanged != nil || m.filesSeen != nil {
-		t.Errorf("/clear should reset changed-files: filesChanged=%v filesSeen=%v", m.filesChanged, m.filesSeen)
+	// A delayed mode response for the old session must not alter the replacement.
+	mm, _ = m.Update(client.ModeChangedMsg{SessionID: oldID, Mode: "plan"})
+	m = mm.(Model)
+	if m.activeMode != "plan" {
+		t.Errorf("stale old-session mode update changed replacement mode to %q", m.activeMode)
 	}
-	if m.usage != (client.Usage{}) {
-		t.Errorf("/clear should reset usage, got %+v", m.usage)
+	m.ta.SetValue("new prompt")
+	m, promptCmd = pressEnter(t, m)
+	_ = firstBatchLeaf(t, promptCmd)
+	frames := conv.send.frames()
+	if got := frames[len(frames)-1].GetPrompt().GetSessionId(); got != m.sessionID {
+		t.Errorf("post-clear prompt session = %q, want new session %q", got, m.sessionID)
 	}
-	if m.contextTokens != 0 {
-		t.Errorf("/clear should reset contextTokens, got %d", m.contextTokens)
+	if got := conv.closed(); len(got) != 0 {
+		t.Fatalf("old session closed before reducer bound replacement: %v", got)
 	}
-	if m.activeTool != "" || m.toolProgress != "" {
-		t.Errorf("/clear should reset activeTool/toolProgress, got %q/%q", m.activeTool, m.toolProgress)
+	runBatchLeaves(closeCmd)
+	if got := conv.closed(); !reflect.DeepEqual(got, []string{oldID}) {
+		t.Errorf("closed sessions = %v, want old session only after binding", got)
 	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "cleared") {
-		t.Errorf("status should read 'cleared', got %q", stripANSIstr(m.statusMsg))
+	if got := conv.ops(); !reflect.DeepEqual(got, []string{"create", "close"}) {
+		t.Errorf("session RPC order = %v, want [create close]", got)
 	}
-	if m.ta.Value() != "" {
-		t.Errorf("input should be reset after /clear, got %q", m.ta.Value())
+	if m.sessionID == oldID || m.sessionID == "" {
+		t.Errorf("best-effort close failure must retain new session: id=%q", m.sessionID)
 	}
-	if cmd != nil {
-		t.Error("/clear should open no stream / issue no command")
+}
+
+func TestClearSessionSelectionFallsBackWithoutResolvedModel(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+	want := client.ModelSelection{ProviderID: "saved-provider", ModelID: "saved-model", ReasoningEffort: "medium"}
+	m.activeModel = want
+	m.effectiveModel = client.ResolvedModel{} // older server: no create/session echo
+	if got := m.clearSessionSelection(); got != want {
+		t.Errorf("clear selection without echo = %+v, want %+v", got, want)
 	}
-	if m.phase != phaseIdle {
-		t.Errorf("phase = %v, want idle after /clear", m.phase)
+}
+
+func TestClearBuiltinCreateFailureKeepsOldSession(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+	conv := m.deps.Session.(*fakeConv)
+	conv.createErr = fmt.Errorf("create unavailable")
+	m.conv.addUser("earlier prompt")
+	m.recordFileChange("note.txt")
+	oldID := m.sessionID
+
+	mm, clearCmd := m.runClear()
+	m = mm.(Model)
+	msg := firstBatchLeaf(t, clearCmd)
+	failed, ok := msg.(clearSessionFailedMsg)
+	if !ok {
+		t.Fatalf("clear create message = %T, want clearSessionFailedMsg", msg)
 	}
-	if len(send.frames()) != 0 {
-		t.Errorf("/clear must send no frames, got %d", len(send.frames()))
+	mm, _ = m.Update(failed)
+	m = mm.(Model)
+
+	if m.sessionID != oldID || m.conv.isEmpty() || m.phase != phaseIdle {
+		t.Errorf("failed /clear must retain old active state: id=%q empty=%v phase=%v", m.sessionID, m.conv.isEmpty(), m.phase)
 	}
-	// The zero-state welcome card reappears.
-	if !strings.Contains(stripANSIstr(m.View().Content), "Welcome to mecatui") {
-		t.Error("zero-state welcome card should reappear after /clear")
+	if m.filesChanged == nil {
+		t.Error("failed /clear must retain old derived UI state")
+	}
+	if got := conv.closed(); len(got) != 0 {
+		t.Errorf("failed /clear must not close old session, got %v", got)
+	}
+	if strings.Contains(stripANSIstr(m.statusMsg), "cleared") {
+		t.Errorf("failed /clear status must not claim cleared: %q", stripANSIstr(m.statusMsg))
+	}
+	m.ta.SetValue("retry old session")
+	m, promptCmd := pressEnter(t, m)
+	_ = firstBatchLeaf(t, promptCmd)
+	frames := conv.send.frames()
+	if got := frames[len(frames)-1].GetPrompt().GetSessionId(); got != oldID {
+		t.Errorf("post-failure prompt session = %q, want old session %q", got, oldID)
 	}
 }
 
@@ -460,8 +575,9 @@ func TestHelpBuiltinOpensOverlay(t *testing.T) {
 }
 
 // TestPaletteEnterRunsBuiltinDirectly asserts that pressing enter on a selected
-// BUILT-IN palette row runs it immediately (clears the conversation) rather than
-// text-completing it into the input.
+// BUILT-IN palette row starts /clear immediately rather than text-completing it
+// into the input; the old conversation remains visible until the replacement is
+// created.
 func TestPaletteEnterRunsBuiltinDirectly(t *testing.T) {
 	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
 	m.conv.addUser("prior turn")
@@ -479,8 +595,8 @@ func TestPaletteEnterRunsBuiltinDirectly(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 
-	if !m.conv.isEmpty() {
-		t.Error("enter on built-in /clear row should RUN it (clear the conversation), not text-complete")
+	if m.phase != phaseConnecting || m.conv.isEmpty() {
+		t.Error("enter on built-in /clear row should start a create-first handoff, not text-complete")
 	}
 	// Text-completion would have left "/clear " in the input; running clears it.
 	if strings.HasPrefix(m.ta.Value(), "/clear") {
@@ -492,9 +608,8 @@ func TestPaletteEnterRunsBuiltinDirectly(t *testing.T) {
 }
 
 // TestBuiltinSubmitNeverSends pins that a bare built-in line never reaches the
-// model: across /clear and /help, the fakeSender records zero frames AND the
-// submit returns a nil command — so no async stream-open cmd (which a bare
-// Update never executes in this test) can slip through unobserved.
+// model: /clear creates a replacement session, while /help returns nil. Neither
+// can open a Converse stream or send a prompt frame.
 func TestBuiltinSubmitNeverSends(t *testing.T) {
 	for _, name := range []string{"/clear", "/help"} {
 		t.Run(name, func(t *testing.T) {
@@ -504,11 +619,13 @@ func TestBuiltinSubmitNeverSends(t *testing.T) {
 			if len(send.frames()) != 0 {
 				t.Errorf("%s must not send any frame, got %d", name, len(send.frames()))
 			}
-			// A real prompt submit returns batch(send, waitCmd, sp.Tick); a built-in
-			// returns nil (it opens no stream). Asserting nil closes the gap where an
-			// async stream-open cmd could be returned but never executed in-test.
-			if cmd != nil {
-				t.Errorf("%s submit should return a nil command (no stream open), got non-nil", name)
+			// Only /clear legitimately returns a session-create handoff command;
+			// neither built-in may return a Converse stream command.
+			if name == "/help" && cmd != nil {
+				t.Errorf("%s submit should return nil, got non-nil", name)
+			}
+			if name == "/clear" && cmd == nil {
+				t.Errorf("%s submit should start session creation", name)
 			}
 		})
 	}

@@ -165,6 +165,8 @@ type fakeConv struct {
 	echoSelAsResolved bool
 	createCount       int
 	closedIDs         []string
+	operations        []string
+	closeErr          error
 	mu                sync.Mutex
 	// lastResolved records the resolved model the MOST RECENT CreateSession echoed
 	// back, so GetSession can return it (modelling a real server whose GetSession
@@ -333,6 +335,7 @@ func (c *fakeConv) CreateSessionInWorkspace(_ context.Context, workspace string,
 		c.mode = mode
 	}
 	c.createCount++
+	c.operations = append(c.operations, "create")
 	n := c.createCount
 	c.mu.Unlock()
 	if c.created != nil {
@@ -414,12 +417,14 @@ func (c *fakeConv) carryoverSources() []string {
 	return append([]string(nil), c.carryoverIDs...)
 }
 
-// CloseSession records the id closed (restart-now closes the old session first).
+// CloseSession records the id closed. closeErr models the deliberately ignored
+// best-effort close failure used by replacement-session handoff tests.
 func (c *fakeConv) CloseSession(_ context.Context, id string) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.closedIDs = append(c.closedIDs, id)
-	c.mu.Unlock()
-	return nil
+	c.operations = append(c.operations, "close")
+	return c.closeErr
 }
 
 // closed returns a copy of the recorded CloseSession ids (test-goroutine read).
@@ -427,6 +432,13 @@ func (c *fakeConv) closed() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.closedIDs...)
+}
+
+// ops returns the create/close call order for lifecycle assertions.
+func (c *fakeConv) ops() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.operations...)
 }
 
 func (c *fakeConv) OpenConverse(ctx context.Context) (*client.Stream, error) {

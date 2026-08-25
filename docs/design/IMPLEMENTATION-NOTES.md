@@ -3228,8 +3228,9 @@ expansion.
 calling `submitPrompt`. BOTH re-bind paths — a `/models` restart and the connect-fallback
 rebind (the server-rejected-selector → zero-selection-retry arm, issue #41) — re-enter
 `applySessionReady` with the field already empty; `ui.New` runs once per process, so nothing
-re-seeds it. `/clear` is NOT a third path: `runClear` (`cmd/mecatui/ui/builtins.go`) resets the
-conversation on the SAME session via `resetSession` and never reaches this seam. A whitespace-only seed is a no-op (`TrimSpace` gate). CAVEAT: `applySessionReady`
+re-seeds it. `/clear` IS a third rebind path, but only after it has successfully created
+its fresh empty session; by then the field is already empty, so it never re-fires the
+seed. A whitespace-only seed is a no-op (`TrimSpace` gate). CAVEAT: `applySessionReady`
 can now START A RUN, and its one wrapping caller (the `connectFallbackMsg` arm) keeps mutating
 the returned model afterwards — so a seeded fallback's loud rejected-model warning overwrites
 the run status. Cosmetic today (nothing reads the fields cleared after the run opens), but the
