@@ -2,8 +2,8 @@
 id: 04-mecatui-remote-workspace
 title: Keep remote mecatui workspace-free
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-listener-scoped-workspace-authority/04-mecatui-remote-workspace"
 worktree: ""
 issue: ""
 retries: 0
