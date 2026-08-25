@@ -117,7 +117,6 @@ func selectable(m Model) bool {
 		m.mcp.view == mcpNone &&
 		m.team.view == teamNone &&
 		m.agentsInv.view == agentsInvNone &&
-		m.skills.view == skillsNone &&
 		m.modal == nil && // no surface-migrated overlay owns the body
 		m.userModel.view == userModelNone &&
 		m.reflections.view == reflectionsNone &&

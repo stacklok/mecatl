@@ -295,13 +295,6 @@ func (m Model) runTeam() (tea.Model, tea.Cmd) {
 	return m.openTeam()
 }
 
-// runSkills opens the skills inventory panel. Only registered when caps.Skills
-// && the skills collaborator is wired, so openSkills's own nil/idle guards are
-// belt-and-braces here.
-func (m Model) runSkills() (tea.Model, tea.Cmd) {
-	return m.openSkills()
-}
-
 // runUserModel opens the read-only user-model inspection panel. Only registered
 // when caps.UserModel && the user-model collaborator is wired, so openUserModel's
 // own nil/idle guards are belt-and-braces here.

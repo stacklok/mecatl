@@ -57,9 +57,10 @@ func TestSkillsEmptyStateCapsAware(t *testing.T) {
 	th := aztec()
 	off := client.Capabilities{}            // skills off
 	on := client.Capabilities{Skills: true} // skills on, but inventory empty
-	emptyPanel := skillsState{view: skillsPanel}
 
-	offOut := stripANSIstr(renderSkillsOverlay(th, emptyPanel, off, defaultHelpKeys(), 100, 24))
+	offPanel := &skillsState{view: skillsPanel, deps: surfaceDeps{theme: th, caps: off, marks: defaultHelpKeys()}}
+	offBody, _ := offPanel.Render(100, 24)
+	offOut := stripANSIstr(offBody)
 	if !strings.Contains(offOut, "Skills are not enabled on this server") {
 		t.Errorf("skills off: want 'not enabled' copy in:\n%s", offOut)
 	}
@@ -67,7 +68,9 @@ func TestSkillsEmptyStateCapsAware(t *testing.T) {
 		t.Errorf("skills off copy should carry the remedy:\n%s", offOut)
 	}
 
-	onOut := stripANSIstr(renderSkillsOverlay(th, emptyPanel, on, defaultHelpKeys(), 100, 24))
+	onPanel := &skillsState{view: skillsPanel, deps: surfaceDeps{theme: th, caps: on, marks: defaultHelpKeys()}}
+	onBody, _ := onPanel.Render(100, 24)
+	onOut := stripANSIstr(onBody)
 	if !strings.Contains(onOut, "No skills configured on this server") {
 		t.Errorf("skills on-but-empty: want 'none configured' copy in:\n%s", onOut)
 	}

@@ -22,6 +22,13 @@ import (
 type skillsView int
 
 const (
+	// skillsNone is the zero value of skillsView and represents "overlay closed".
+	// It is NOT read by production routing code (the closed state is
+	// m.modal == nil — the surface is created with view: skillsPanel and torn
+	// down by nil-ing m.modal). It is kept because the iota zero value is
+	// load-bearing for Render's/HandleKey's defense-in-depth: a zero/uninitialized
+	// skillsState renders empty and swallows nothing rather than posing as an open
+	// panel (the same discipline soulNone's doc comment records).
 	skillsNone   skillsView = iota // overlay closed
 	skillsPanel                    // inventory (external + learned lifecycle)
 	skillsDetail                   // learned-skill bounded detail and actions
@@ -29,16 +36,15 @@ const (
 
 // skillsBodyLines is the fixed number of inventory rows the panel shows at once
 // (the scroll window). A fixed budget keeps the panel — and its goldens —
-// deterministic regardless of terminal height (the /soul soulBodyLines
-// convention). A long inventory scrolls; a short one shows in full with no
-// scroll indicator.
+// deterministic regardless of terminal height. A long inventory scrolls; a
+// short one shows in full with no scroll indicator.
 const skillsBodyLines = 14
 
-// skillsState holds the skills overlay state on the Model. It is value-embedded
-// so the Model stays a plain struct that Update copies. The skills slice is
-// replaced wholesale on each RPC result (never mutated in place) so the
-// value-copy semantics hold. scroll is the 0-based index of the first visible
-// rendered row (clamped in the key handlers, reset on each RPC result).
+// skillsState is the skills overlay's state: it is constructed at Open
+// (runSkills) and lives ONLY inside the Model's one `modal surface` interface
+// field — never a pre-declared Model field. The skills slice is replaced
+// wholesale on each RPC result (never mutated in place). skillsState implements
+// `surface` on POINTER receivers.
 type skillsState struct {
 	view        skillsView
 	loading     bool  // the ListSkills RPC is in flight
@@ -46,7 +52,8 @@ type skillsState struct {
 	skills      []client.Skill
 	filtered    []client.Skill  // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
 	filter      textinput.Model // the type-to-filter input; focused while the panel is open
-	scroll      int             // first visible rendered body row (clamped in the key handlers)
+	scroll      int             // view cache: first visible rendered body row (clamped in Render; reset on each RPC result)
+	width       int             // view cache: last Render width, read by HandleKey clamp targets (Render refreshes it every frame)
 	learned     []client.LearnedSkill
 	cursor      int
 	detail      *client.LearnedSkill
@@ -54,78 +61,102 @@ type skillsState struct {
 	project     string
 	generations map[string]uint64 // independent publication/catalog epoch per global/project partition
 	requestID   uint64
+
+	deps             surfaceDeps               // the shared ambient base (incl. ctx), set once at Open
+	learnedLifecycle client.LearnedSkillClient // nil unless the Skills collaborator carries the lifecycle half
+	nextEpoch        func() uint64             // bumps the Model-owned skillsEpoch; correlation survives close/reopen
 }
 
-// openSkills opens the inventory panel and fires the ListSkills RPC. Only
-// callable while idle and when a skills lister is wired; returns the model
-// unchanged otherwise. The result arrives as a client.SkillsMsg handled in
-// updateSkillsMsg.
-func (m Model) openSkills() (tea.Model, tea.Cmd) {
+// runSkills is the Open transition for the skills surface. It validates (idle +
+// lister wired), blurs the textarea, bumps the Model-owned request epoch
+// (correlation must survive close/reopen), constructs the state dynamically
+// with the filter focused for immediate narrowing, installs it on m.modal, and
+// batches the ListSkills + (when the lifecycle half is wired) ListLearnedSkills
+// RPCs with the filter's blink. Only registered when caps.Skills && the skills
+// collaborator is wired.
+func (m Model) runSkills() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Skills == nil {
 		return m, nil
 	}
-	m.ta.Blur() // overlay owns the keyboard while open
+	m.ta.Blur() // modal owns the keyboard while open
 	m.skillsEpoch++
-	m.skills = skillsState{view: skillsPanel, loading: true, project: m.deps.Workspace, requestID: m.skillsEpoch}
-	// Open with the filter FOCUSED so the user can type to narrow immediately (the
-	// /models picker's headline affordance, mirrored here as read-only narrowing —
-	// there is no cursor/enter/select on this inventory). The filtered slice is
-	// (re)derived when the list lands in updateSkillsMsg; an empty query ⇒
-	// filtered == skills.
+	lifecycle, _ := m.deps.Skills.(client.LearnedSkillClient) // nil unless Skills carries the lifecycle half
 	ti := textinput.New()
 	ti.Placeholder = "filter skills…"
 	ti.SetWidth(40)
 	ti.Focus()
-	m.skills.filter = ti
-	m.skills.filtered = nil
+	m.modal = &skillsState{
+		view:             skillsPanel,
+		loading:          true,
+		project:          m.deps.Workspace,
+		requestID:        m.skillsEpoch,
+		filter:           ti,
+		filtered:         nil,
+		deps:             (&m).surfaceDeps(),
+		learnedLifecycle: lifecycle,
+		nextEpoch:        func() uint64 { m.skillsEpoch++; return m.skillsEpoch },
+	}
 	cmds := []tea.Cmd{client.ListSkillsCmd(m.deps.Ctx, m.deps.Skills), textinput.Blink}
-	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
-		cmds = append(cmds, client.ListLearnedSkillsCmd(m.deps.Ctx, lifecycle, m.deps.Workspace, m.skills.requestID))
+	if lifecycle != nil {
+		cmds = append(cmds, client.ListLearnedSkillsCmd(m.deps.Ctx, lifecycle, m.deps.Workspace, m.skillsEpoch))
 	}
 	return m, tea.Batch(cmds...)
 }
 
-// closeSkills dismisses the overlay and returns focus to the prompt input. The
-// loaded list survives (the panel reopens cheaply); the filter is reset so a
-// reopen starts clean (openSkills re-News it regardless). Resetting the filter
-// to the zero value also stops the blink goroutine.
-func (m Model) closeSkills() (tea.Model, tea.Cmd) {
-	m.skills = skillsState{}
-	cmd := m.ta.Focus()
-	return m, cmd
+// Render returns the panel (or detail) body sized from the offered width. The
+// view-cache width and the scroll clamp are re-derived AT THE TOP from the
+// fresh width (the scroll clamp bounds against the wrapped row total at this
+// width), so HandleKey/HandleWheel read a current clamp target. Regions are nil
+// (read-only, not clickable). The height param goes unused by design: the
+// panel's scroll window is the FIXED skillsBodyLines row budget (deterministic
+// goldens, terminal-height-independent).
+func (s *skillsState) Render(width, _ int) (string, []ClickableRegion) {
+	s.width = width
+	s.scroll = clampScroll(s.scroll, s.rowTotal(s.deps.theme, width), skillsBodyLines)
+	if s.view == skillsNone {
+		return "", nil
+	}
+	if s.view == skillsDetail && s.detail != nil {
+		body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff)
+		if s.err != nil {
+			body += "\n\n" + s.deps.theme.Style("errorText").Render(sanitizeTerminal(s.err.Error())) + "\npress esc, then enter to refresh"
+		}
+		return body, nil
+	}
+	return renderSkillsPanel(s.deps.theme, *s, s.deps.caps, s.deps.marks, width), nil
 }
 
-// onSkillsKey routes key presses while the skills overlay is open. The filter
-// input is FOCUSED, so the routing mirrors onModelsKey: nav keys are intercepted
-// first, everything else feeds the input (read-only narrowing — there is NO
-// cursor/enter/select arm here, unlike /models).
+// HandleKey routes key presses while the skills overlay is open. The filter
+// input is FOCUSED: nav keys are intercepted first, everything else feeds the
+// input (read-only narrowing; the learned list's cursor + enter→detail is the
+// one selection path). The detail view discriminates FIRST: esc steps back to
+// the panel (never closes); the lifecycle actions (a = activate, x = reject,
+// d = archive, v = diff, r = rollback) each mint a fresh requestID via
+// s.nextEpoch() and fire the RPC cmd over s.deps.ctx + s.learnedLifecycle.
 //
-// The single sharp edge (mirroring models.go:121-126): keys.Up/keys.Down also
-// bind "k"/"j" (keys.go), so matching them with key.Matches would hijack a typed
-// query like "kotlin"/"java". So list nav matches the ARROW keys by msg.String()
-// ONLY; the other nav keys (pgup/pgdown/home/end) and esc are all non-printable,
-// so key.Matches against ScrollU/ScrollD/ScrollTop/ScrollBottom/Close is safe —
-// none collide with typed text.
+// The sharp edge: keys.Up/keys.Down also bind "k"/"j" (keys.go), so matching
+// them with key.Matches would hijack a typed query like "kotlin"/"java". List
+// nav matches the ARROW keys by msg.String() ONLY; the other nav keys
+// (pgup/pgdown/home/end) and esc are non-printable, so key.Matches against
+// ScrollU/ScrollD/ScrollTop/ScrollBottom/Close is safe.
 //
-// esc is TWO-STAGE: a non-empty filter is cleared first (the panel stays open so
-// a mistyped query can be undone without losing the open panel); an empty filter
-// closes the panel. Every key is handled=true (the open panel swallows keys),
-// unchanged. After any input-feeding key the filter is re-synced (recompute +
-// scroll clamp) and the input's cmd returned for the cursor blink.
+// esc is TWO-STAGE: a non-empty filter is cleared first (the panel stays open);
+// an empty filter closes the panel. Every key is handled=true. After any
+// input-feeding key the filter is re-synced (recompute + scroll clamp) and the
+// input's cmd returned for the cursor blink.
 //
 //nolint:gocyclo // panel, lifecycle detail, and filter keys remain in one visible router
-func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.skills.view == skillsNone {
-		return m, nil, false
+func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
+	if s.view == skillsNone {
+		return nil, false, false
 	}
-	if m.skills.view == skillsDetail {
-		if key.Matches(msg, m.keys.Close) {
-			m.skills.view, m.skills.detail = skillsPanel, nil
-			return m, nil, true
+	if s.view == skillsDetail {
+		if key.Matches(msg, s.deps.keys.Close) {
+			s.view, s.detail = skillsPanel, nil
+			return nil, true, false
 		}
-		lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient)
-		if !ok || m.skills.detail == nil {
-			return m, nil, true
+		if s.learnedLifecycle == nil || s.detail == nil {
+			return nil, true, false
 		}
 		action := ""
 		switch msg.String() {
@@ -136,81 +167,194 @@ func (m Model) onSkillsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		case "d":
 			action = "archive"
 		case "v":
-			if m.skills.detail.Supersedes != "" {
-				m.skillsEpoch++
-				m.skills.requestID = m.skillsEpoch
-				return m, client.DiffLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail, m.skills.requestID), true
+			if s.detail.Supersedes != "" {
+				s.requestID = s.nextEpoch()
+				return client.DiffLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, *s.detail, s.requestID), true, false
 			}
 		case "r":
-			if m.skills.detail.Supersedes != "" {
-				m.skillsEpoch++
-				m.skills.requestID = m.skillsEpoch
-				return m, client.RollbackLearnedSkillCmd(m.deps.Ctx, lifecycle, *m.skills.detail, m.skills.requestID), true
+			if s.detail.Supersedes != "" {
+				s.requestID = s.nextEpoch()
+				return client.RollbackLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, *s.detail, s.requestID), true, false
 			}
 		}
 		if action != "" {
-			m.skillsEpoch++
-			m.skills.requestID = m.skillsEpoch
-			return m, client.MutateLearnedSkillCmd(m.deps.Ctx, lifecycle, action, *m.skills.detail, m.skills.requestID), true
+			s.requestID = s.nextEpoch()
+			return client.MutateLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, action, *s.detail, s.requestID), true, false
 		}
-		return m, nil, true
+		return nil, true, false
 	}
-	if msg.String() == "enter" && len(m.skills.learned) > 0 {
-		lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient)
-		if !ok {
-			return m, nil, true
+	if msg.String() == "enter" && len(s.learned) > 0 {
+		if s.learnedLifecycle == nil {
+			return nil, true, false
 		}
-		selected := m.skills.learned[min(m.skills.cursor, len(m.skills.learned)-1)]
-		m.skillsEpoch++
-		m.skills.requestID = m.skillsEpoch
-		return m, client.GetLearnedSkillCmd(m.deps.Ctx, lifecycle, selected, m.skills.requestID), true
+		selected := s.learned[min(s.cursor, len(s.learned)-1)]
+		s.requestID = s.nextEpoch()
+		return client.GetLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, selected, s.requestID), true, false
 	}
 	switch {
-	case key.Matches(msg, m.keys.Close):
-		if m.skills.filter.Value() != "" {
-			m.skills.filter.SetValue("")
-			m = m.syncSkillsFilter()
-			return m, nil, true
+	case key.Matches(msg, s.deps.keys.Close):
+		if s.filter.Value() != "" {
+			s.filter.SetValue("")
+			s.syncFilter()
+			return nil, true, false
 		}
-		mm, cmd := m.closeSkills()
-		return mm, cmd, true
+		return nil, true, true
 	case msg.String() == keyMenuDown:
-		if len(m.skills.learned) > 0 {
-			m.skills.cursor = min(m.skills.cursor+1, len(m.skills.learned)-1)
+		if len(s.learned) > 0 {
+			s.cursor = min(s.cursor+1, len(s.learned)-1)
 		}
-		m.skills.scroll = clampScroll(m.skills.scroll+1, m.skillsFilteredRowTotal(), skillsBodyLines)
-		return m, nil, true
+		s.scroll = clampScroll(s.scroll+1, s.rowTotal(s.deps.theme, s.width), skillsBodyLines)
+		return nil, true, false
 	case msg.String() == keyMenuUp:
-		m.skills.cursor = max(0, m.skills.cursor-1)
-		m.skills.scroll = clampScroll(m.skills.scroll-1, m.skillsFilteredRowTotal(), skillsBodyLines)
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollD):
-		m.skills.scroll = clampScroll(m.skills.scroll+1, m.skillsFilteredRowTotal(), skillsBodyLines)
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollU):
-		m.skills.scroll = clampScroll(m.skills.scroll-1, m.skillsFilteredRowTotal(), skillsBodyLines)
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.skills.scroll = maxScrollOffset(m.skillsFilteredRowTotal(), skillsBodyLines)
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.skills.scroll = 0
-		return m, nil, true
+		s.cursor = max(0, s.cursor-1)
+		s.scroll = clampScroll(s.scroll-1, s.rowTotal(s.deps.theme, s.width), skillsBodyLines)
+		return nil, true, false
+	case key.Matches(msg, s.deps.keys.ScrollD):
+		s.scroll = clampScroll(s.scroll+1, s.rowTotal(s.deps.theme, s.width), skillsBodyLines)
+		return nil, true, false
+	case key.Matches(msg, s.deps.keys.ScrollU):
+		s.scroll = clampScroll(s.scroll-1, s.rowTotal(s.deps.theme, s.width), skillsBodyLines)
+		return nil, true, false
+	case key.Matches(msg, s.deps.keys.ScrollBottom):
+		s.scroll = maxScrollOffset(s.rowTotal(s.deps.theme, s.width), skillsBodyLines)
+		return nil, true, false
+	case key.Matches(msg, s.deps.keys.ScrollTop):
+		s.scroll = 0
+		return nil, true, false
 	}
 	// Everything else feeds the focused filter input (printable runes, backspace,
 	// ←/→, …); recompute the filtered slice + clamp the scroll afterwards.
-	var cmd tea.Cmd
-	m.skills.filter, cmd = m.skills.filter.Update(msg)
-	m = m.syncSkillsFilter()
-	return m, cmd, true
+	s.filter, cmd = s.filter.Update(msg)
+	s.syncFilter()
+	return cmd, true, false
 }
 
-// skillsFilteredRowTotal is the rendered body-row count over the FILTERED
-// inventory — the clamp target the key handlers use, so the scroll window and
-// the clamp can never disagree about the line count. With an empty filter
-// filtered == skills, so this doubles as the full-inventory total.
-func (m Model) skillsFilteredRowTotal() int {
-	return len(skillsRowLines(m.deps.Theme, m.skills.filtered, cardTextWidth(m.width)))
+// HandleWheel scrolls the panel: wheel up/down move s.scroll, clamped to the
+// row window, and the event is consumed (handled=true). The clamp target uses
+// the view-cache width Render refreshes every frame.
+func (s *skillsState) HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled bool) {
+	if s.view == skillsNone {
+		return nil, false
+	}
+	delta := 1
+	if msg.Mouse().Button == tea.MouseWheelUp {
+		delta = -1
+	}
+	s.scroll = clampScroll(s.scroll+delta, s.rowTotal(s.deps.theme, s.width), skillsBodyLines)
+	return nil, true
+}
+
+// HandleMsg reduces the four RPC-backed message types into the surface state,
+// with the requestID/generation/row-identity staleness checks on surface state.
+// Each fires no follow-up command (the panel is a single-shot read). A
+// client.SkillChangesMsg is deliberately NOT consumed: it is a Model-owned
+// status receipt (writes m.statusMsg from m.skillChangeLast), so it passes
+// through to the Model's slim updateSkillChangesMsg reducer. Anything else
+// (blink ticks, stream events) passes too.
+//
+//nolint:gocyclo // inventory, lifecycle detail, and diff messages share one reducer
+func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
+	if diff, ok := msg.(client.SkillDiffMsg); ok {
+		if diff.RequestID != s.requestID || s.detail == nil || diff.Project != s.detail.Project || diff.SkillID != s.detail.ID || diff.Version != s.detail.Version {
+			return nil, true, false
+		}
+		if diff.Err != nil {
+			s.err = diff.Err
+		} else {
+			s.diff = diff.Diff
+			s.err = nil
+		}
+		return nil, true, false
+	}
+	if learned, ok := msg.(client.LearnedSkillsMsg); ok {
+		if learned.RequestID != s.requestID || learned.Project != s.project {
+			return nil, true, false
+		}
+		for partition, generation := range learned.Generations {
+			if generation < s.generations[partition] {
+				return nil, true, false
+			}
+		}
+		if learned.Err != nil {
+			s.err = learned.Err
+		} else {
+			s.learned = learned.Skills
+			s.cursor = 0
+			s.generations = cloneSkillGenerations(learned.Generations)
+			s.err = nil
+		}
+		return nil, true, false
+	}
+	if detail, ok := msg.(client.LearnedSkillMsg); ok {
+		if detail.RequestID != s.requestID || detail.Generation < s.generations[detail.Project] {
+			return nil, true, false
+		}
+		if s.detail != nil && (detail.Project != s.detail.Project || detail.SelectedSkillID != s.detail.ID || detail.SelectedOwnerAgent != "" && detail.SelectedOwnerAgent != s.detail.OwnerAgent || detail.SelectedVersion != s.detail.Version || detail.ExpectedRevision != "" && detail.ExpectedRevision != s.detail.Revision) {
+			return nil, true, false
+		}
+		targetVersion := detail.SelectedVersion
+		if detail.Action == "rollback" {
+			targetVersion = detail.TargetVersion
+		}
+		if detail.Err == nil && detail.Skill != nil && (detail.Skill.Project != detail.Project || detail.Skill.ID != detail.SelectedSkillID || detail.SelectedOwnerAgent != "" && detail.Skill.OwnerAgent != detail.SelectedOwnerAgent || detail.Skill.Version != targetVersion) {
+			return nil, true, false
+		}
+		if detail.Err != nil {
+			s.err = detail.Err
+			return nil, true, false
+		}
+		if detail.PublicationError != "" {
+			s.err = fmt.Errorf("publication %s: %s", detail.PublicationStatus, detail.PublicationError)
+		}
+		if detail.Skill != nil {
+			value := *detail.Skill
+			s.detail, s.view = &value, skillsDetail
+			s.generations = cloneSkillGenerations(s.generations)
+			s.generations[detail.Project] = detail.Generation
+			if detail.PublicationError == "" {
+				s.err = nil
+			}
+			for i := range s.learned {
+				if s.learned[i].Project == value.Project && s.learned[i].ID == value.ID && (s.learned[i].Version == value.Version || detail.Action == "rollback" && s.learned[i].Version == detail.SelectedVersion) {
+					s.learned[i] = value
+				}
+			}
+		}
+		return nil, true, false
+	}
+	sm, ok := msg.(client.SkillsMsg)
+	if !ok {
+		return nil, false, false
+	}
+	s.loading = false
+	if sm.Err != nil {
+		s.err = sm.Err
+		return nil, true, false
+	}
+	s.err = nil
+	s.skills = sm.Skills
+	s.scroll = 0
+	// Derive the filtered slice (+ clamp the scroll) from the current filter
+	// value; on a fresh open the filter is empty, so filtered == skills.
+	s.syncFilter()
+	return nil, true, false
+}
+
+// Close tears the surface down; teardown is a no-op for skills (the surface
+// holds no resource). The parent dispatchSurfaceKey/dispatchSurfaceMsg closed
+// path runs Close, nils m.modal, and batches m.ta.Focus() itself — the refocus
+// is parent-authored. A skills RPC that lands after close falls through
+// HandleMsg's handled=false and is dropped at the Model.
+func (*skillsState) Close() {}
+
+// rowTotal is the rendered body-row count over the FILTERED inventory — the
+// clamp target HandleKey/HandleWheel/Render use, so the scroll window and the
+// clamp can never disagree about the line count. With an empty filter
+// filtered == skills, so this doubles as the full-inventory total. The width is
+// the view-cache copy Render refreshes (HandleKey receives no width argument;
+// geometry stays pure Render input).
+func (s *skillsState) rowTotal(th theme.Theme, width int) int {
+	return len(skillsRowLines(th, s.filtered, cardTextWidth(width)))
 }
 
 // filterSkills returns the skills whose Name OR Description CONTAIN q
@@ -231,14 +375,13 @@ func filterSkills(skills []client.Skill, q string) []client.Skill {
 	return out
 }
 
-// syncSkillsFilter recomputes the filtered slice from the current filter value
-// and clamps the scroll offset against the filtered row total (the skills panel
-// has no cursor, so scroll is the only thing to clamp). Mirrors syncModelsFilter.
+// syncFilter recomputes the filtered slice from the current filter value and
+// clamps the scroll offset against the filtered row total (the skills panel has
+// no cursor, so scroll is the only thing to clamp). Mirrors syncModelsFilter.
 // Called on every input-feeding key and once when the list lands.
-func (m Model) syncSkillsFilter() Model {
-	m.skills.filtered = filterSkills(m.skills.skills, m.skills.filter.Value())
-	m.skills.scroll = clampScroll(m.skills.scroll, m.skillsFilteredRowTotal(), skillsBodyLines)
-	return m
+func (s *skillsState) syncFilter() {
+	s.filtered = filterSkills(s.skills, s.filter.Value())
+	s.scroll = clampScroll(s.scroll, s.rowTotal(s.deps.theme, s.width), skillsBodyLines)
 }
 
 func cloneSkillGenerations(in map[string]uint64) map[string]uint64 {
@@ -247,127 +390,6 @@ func cloneSkillGenerations(in map[string]uint64) map[string]uint64 {
 		out[partition] = generation
 	}
 	return out
-}
-
-// updateSkillsMsg reduces a client.SkillsMsg into the overlay state. It fires no
-// follow-up command (the panel is a single-shot read), so it returns only the
-// model + handled flag; handled=false for any other message so Update can fall
-// through.
-//
-//nolint:gocyclo // inventory, lifecycle detail, receipt, and diff messages share one reducer
-func (m Model) updateSkillsMsg(msg tea.Msg) (tea.Model, bool) {
-	if diff, ok := msg.(client.SkillDiffMsg); ok {
-		if diff.RequestID != m.skills.requestID || m.skills.detail == nil || diff.Project != m.skills.detail.Project || diff.SkillID != m.skills.detail.ID || diff.Version != m.skills.detail.Version {
-			return m, true
-		}
-		if diff.Err != nil {
-			m.skills.err = diff.Err
-		} else {
-			m.skills.diff = diff.Diff
-			m.skills.err = nil
-		}
-		return m, true
-	}
-	if changes, ok := msg.(client.SkillChangesMsg); ok {
-		if changes.Err != nil || len(changes.Changes) == 0 {
-			return m, true
-		}
-		latest := changes.Changes[len(changes.Changes)-1]
-		if latest.ID != m.skillChangeLast {
-			m.skillChangeLast = latest.ID
-			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("%d learned-skill change receipt(s) available — open /skills", len(changes.Changes)))
-		}
-		return m, true
-	}
-	if learned, ok := msg.(client.LearnedSkillsMsg); ok {
-		if learned.RequestID != m.skills.requestID || learned.Project != m.skills.project {
-			return m, true
-		}
-		for partition, generation := range learned.Generations {
-			if generation < m.skills.generations[partition] {
-				return m, true
-			}
-		}
-		if learned.Err != nil {
-			m.skills.err = learned.Err
-		} else {
-			m.skills.learned = learned.Skills
-			m.skills.cursor = 0
-			m.skills.generations = cloneSkillGenerations(learned.Generations)
-			m.skills.err = nil
-		}
-		return m, true
-	}
-	if detail, ok := msg.(client.LearnedSkillMsg); ok {
-		if detail.RequestID != m.skills.requestID || detail.Generation < m.skills.generations[detail.Project] {
-			return m, true
-		}
-		if m.skills.detail != nil && (detail.Project != m.skills.detail.Project || detail.SelectedSkillID != m.skills.detail.ID || detail.SelectedOwnerAgent != "" && detail.SelectedOwnerAgent != m.skills.detail.OwnerAgent || detail.SelectedVersion != m.skills.detail.Version || detail.ExpectedRevision != "" && detail.ExpectedRevision != m.skills.detail.Revision) {
-			return m, true
-		}
-		targetVersion := detail.SelectedVersion
-		if detail.Action == "rollback" {
-			targetVersion = detail.TargetVersion
-		}
-		if detail.Err == nil && detail.Skill != nil && (detail.Skill.Project != detail.Project || detail.Skill.ID != detail.SelectedSkillID || detail.SelectedOwnerAgent != "" && detail.Skill.OwnerAgent != detail.SelectedOwnerAgent || detail.Skill.Version != targetVersion) {
-			return m, true
-		}
-		if detail.Err != nil {
-			m.skills.err = detail.Err
-			return m, true
-		}
-		if detail.PublicationError != "" {
-			m.skills.err = fmt.Errorf("publication %s: %s", detail.PublicationStatus, detail.PublicationError)
-		}
-		if detail.Skill != nil {
-			value := *detail.Skill
-			m.skills.detail, m.skills.view = &value, skillsDetail
-			m.skills.generations = cloneSkillGenerations(m.skills.generations)
-			m.skills.generations[detail.Project] = detail.Generation
-			if detail.PublicationError == "" {
-				m.skills.err = nil
-			}
-			for i := range m.skills.learned {
-				if m.skills.learned[i].Project == value.Project && m.skills.learned[i].ID == value.ID && (m.skills.learned[i].Version == value.Version || detail.Action == "rollback" && m.skills.learned[i].Version == detail.SelectedVersion) {
-					m.skills.learned[i] = value
-				}
-			}
-		}
-		return m, true
-	}
-	sm, ok := msg.(client.SkillsMsg)
-	if !ok {
-		return m, false
-	}
-	m.skills.loading = false
-	if sm.Err != nil {
-		m.skills.err = sm.Err
-		return m, true
-	}
-	m.skills.err = nil
-	m.skills.skills = sm.Skills
-	m.skills.scroll = 0
-	// Derive the filtered slice (+ clamp the scroll) from the current filter
-	// value; on a fresh open the filter is empty, so filtered == skills.
-	m = m.syncSkillsFilter()
-	return m, true
-}
-
-// renderSkillsOverlay draws the skills panel centred over the conversation region
-// via centerCard (the same bordered-card treatment as the MCP/agents overlays).
-// All server-derived strings are terminal-sanitized.
-func renderSkillsOverlay(th theme.Theme, st skillsState, caps client.Capabilities, hk helpKeys, width, height int) string {
-	if st.view == skillsNone {
-		return ""
-	}
-	if st.view == skillsDetail && st.detail != nil {
-		body := renderLearnedSkillDetail(th, *st.detail, st.diff)
-		if st.err != nil {
-			body += "\n\n" + th.Style("errorText").Render(sanitizeTerminal(st.err.Error())) + "\npress esc, then enter to refresh"
-		}
-		return centerCard(th, body, width, height)
-	}
-	return centerCard(th, renderSkillsPanel(th, st, caps, hk, width), width, height)
 }
 
 func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff string) string {
@@ -503,7 +525,7 @@ func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities,
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Skills inventory") + "\n\n")
 	// The filter input row (focused while the panel is open) sits ABOVE the body
-	// window, inside the card chrome — the same placement as the /models picker,
+	// window, inside the card chrome,
 	// so a user who knows one panel knows the other.
 	b.WriteString(st.filter.View() + "\n\n")
 

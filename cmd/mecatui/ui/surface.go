@@ -12,6 +12,8 @@ package ui
 // param is archived-past design, not current (see docs/design/surface-migration-plan.md).
 
 import (
+	"context"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -70,15 +72,17 @@ type surface interface {
 
 // surfaceDeps is the SHARED ambient base every surface may reach, built once at
 // Open by (m *Model).surfaceDeps() and held on the surface state as its deps
-// field. Fields are ambient collaborators only; surface-SPECIFIC deps (RPC
-// contexts, lifecycle clients, epoch mints) are fields on the surface's own
-// state struct, set next to deps in the same Open literal. Mirrors approvalDeps
+// field. Fields are ambient collaborators only: ctx is ambient (any modal that
+// talks to the server needs the parent context). Surface-SPECIFIC deps
+// (lifecycle clients, epoch mints) are fields on the surface's own state
+// struct, set next to deps in the same Open literal. Mirrors approvalDeps
 // (approval_surface.go).
 type surfaceDeps struct {
 	theme theme.Theme
 	keys  keyMap              // for key.Matches
 	marks helpKeys            // render hints (helpKeyMarkings)
 	caps  client.Capabilities // capability-gated copy
+	ctx   context.Context     // the parent context for the surface's RPC cmd builders
 }
 
 // surfaceDeps builds the surface's shared ambient base from the live Model. It
@@ -91,5 +95,6 @@ func (m *Model) surfaceDeps() surfaceDeps {
 		keys:  m.keys,
 		marks: m.helpKeyMarkings(),
 		caps:  m.caps,
+		ctx:   m.deps.Ctx,
 	}
 }

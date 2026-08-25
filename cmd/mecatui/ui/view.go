@@ -99,8 +99,6 @@ func (m Model) renderBody() string {
 		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.conv.latestTeamBlock(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.agentsInv.view != agentsInvNone:
 		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.skills.view != skillsNone:
-		return renderSkillsOverlay(m.deps.Theme, m.skills, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.modal != nil:
 		body, _ := m.modal.Render(m.width, m.vp.Height())
 		return centerCard(m.deps.Theme, body, m.width, m.vp.Height())

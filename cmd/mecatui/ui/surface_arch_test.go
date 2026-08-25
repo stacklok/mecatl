@@ -19,30 +19,35 @@ import (
 )
 
 // surfaceFileHomes is the set of files a declaration carrying the surface/soul
-// vocabulary may live in. view.go's m.modal.Render(...) and update.go's
+// /skills vocabulary may live in. view.go's m.modal.Render(...) and update.go's
 // m.modal.HandleKey/HandleMsg(...) routing are vocabulary-free call sites and
 // need no exception.
 var surfaceFileHomes = map[string]bool{
 	"surface.go": true,
 	"soul.go":    true,
+	"skills.go":  true,
 }
 
-// surfaceFileCount is the two homes the gate counts — a third surface file is
+// surfaceFileCount is the three homes the gate counts — a fourth surface file is
 // an explicit decision here, not a silent drift.
-const surfaceFileCount = 2
+const surfaceFileCount = 3
 
-// surfaceToken matches the soul + surface identifier vocabulary the gate guards:
-// every soul declaration, plus the interface/deps struct. Anchored so plain
-// "surface"-substring incidental names are not false-positives; widening it to
-// catch a new migrated-in symbol is the visible decision the loud gate is for.
-var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel)$`)
+// surfaceToken matches the soul + skills + surface identifier vocabulary the gate
+// guards: every soul/skills declaration, plus the interface/deps struct, plus the
+// removed-name sentinels (so a re-introduction of a deleted Model-side identifier
+// lands loudly in its proper home). Anchored so plain "surface"-substring
+// incidental names are not false-positives; widening it to catch a new
+// migrated-in symbol is the visible decision the loud gate is for.
+// cardTextWidth/indentWrap stay untracked (shared with the /agents panel; their
+// home, skills.go, is an approved home by construction).
+var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderSkillsPanel|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay)$`)
 
 // TestSurfaceSymbolsLiveInSurfaceFiles walks every non-test ui package file and
 // asserts each declaration whose name (decl name or a method's name) carries
 // the surface/soul vocabulary lives in one of the two homes.
 func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 	if len(surfaceFileHomes) != surfaceFileCount {
-		t.Fatalf("surfaceFileHomes has %d entries, want surfaceFileCount=%d (a third surface file must be an explicit decision here)",
+		t.Fatalf("surfaceFileHomes has %d entries, want surfaceFileCount=%d (a fourth surface file must be an explicit decision here)",
 			len(surfaceFileHomes), surfaceFileCount)
 	}
 	fset := token.NewFileSet()
@@ -80,7 +85,7 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 					continue
 				}
 				if !surfaceFileHomes[file] {
-					t.Errorf("surface/soul-vocabulary declaration %q in non-surface file %s (want surface.go or soul.go)", n, file)
+					t.Errorf("surface/soul/skills-vocabulary declaration %q in non-surface file %s (want surface.go, soul.go, or skills.go)", n, file)
 				}
 			}
 		}
@@ -123,5 +128,65 @@ func TestModelHasNoSoulStateField(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("Model has %d soulState fields, want exactly 0 (soul state lives only in m.modal)", count)
+	}
+}
+
+// TestModelHasNoSkillsStateField asserts Model holds NO skillsState field — the
+// dynamic-Open decision means the skills state lives ONLY in m.modal; a
+// pre-declared m.skills field is the tombstone drift this kills. The Model fields
+// skillsEpoch and skillChangeLast STAY and are NOT chased by this gate — each
+// for its own distinct reason: skillsEpoch is the RPC nonce (correlation must
+// survive surface close/reopen, so the epoch lives on the Model, not the
+// surface); skillChangeLast is the status-receipt cursor, Model-owned because
+// the SkillChangesMsg receipt must fire when NO surface is open (the surface's
+// HandleMsg deliberately passes it through handled=false). Matches by reflect
+// Type.Name() (mirrors TestModelHasNoSoulStateField).
+func TestModelHasNoSkillsStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	var count int
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		if f.Type.Name() == "skillsState" {
+			count++
+		}
+	}
+	if count != 0 {
+		t.Errorf("Model has %d skillsState fields, want exactly 0 (skills state lives only in m.modal)", count)
+	}
+}
+
+// TestSurfaceDepsIsAmbientOnly reflects over the SHARED surfaceDeps struct and
+// asserts it carries ONLY the ambient base fields (theme/keys/marks/caps/ctx)
+// and NONE of the archived deps-per-call wideners (width/lifecycle/nextEpoch/
+// focusInput — surface-SPECIFIC collaborators live as fields on the surface's
+// own state struct, set next to deps in the same Open literal, per
+// docs/design/surface-migration-plan.md §4 decision 8). ctx is ambient: any
+// modal that talks to the server needs the parent context, so it belongs in
+// the shared base, not on each surface. This is the anti-regression guard for
+// the deps-on-state redesign: a deps-per-call widening fails here the moment a
+// non-ambient field lands.
+func TestSurfaceDepsIsAmbientOnly(t *testing.T) {
+	st := reflect.TypeOf(surfaceDeps{})
+	want := []string{"theme", "keys", "marks", "caps", "ctx"}
+	if st.NumField() != len(want) {
+		t.Errorf("surfaceDeps has %d fields, want exactly %d (theme/keys/marks/caps/ctx only)", st.NumField(), len(want))
+	}
+	banned := []string{"width", "lifecycle", "nextEpoch", "focusInput"}
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		for _, b := range banned {
+			if f.Name == b {
+				t.Errorf("surfaceDeps carries the archived widener %q — surface-specific collaborators belong on the surface state struct, not the shared deps", b)
+			}
+		}
+		found := false
+		for _, w := range want {
+			if f.Name == w {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("surfaceDeps field %q is not one of the ambient base fields %v", f.Name, want)
+		}
 	}
 }

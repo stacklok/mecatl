@@ -14,6 +14,27 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+// skillsStateOf returns the open skills surface state (the modal). It fails the
+// test if the surface is not open — the pre-migration m.skills assertions route
+// through this post-migration.
+func skillsStateOf(t *testing.T, m Model) *skillsState {
+	t.Helper()
+	s, ok := m.modal.(*skillsState)
+	if !ok {
+		t.Fatalf("skills surface not open: modal=%T", m.modal)
+	}
+	return s
+}
+
+// openSkillsPanel drives the Open transition (runSkills), asserting the surface
+// was installed, and returns the updated Model + the surface state.
+func openSkillsPanel(t *testing.T, m Model) (Model, *skillsState) {
+	t.Helper()
+	mm, _ := m.runSkills()
+	m = mm.(Model)
+	return m, skillsStateOf(t, m)
+}
+
 // newSkillsModel builds an idle, sized Model wired to the given fakeSkills and
 // the given caps, ready to open the /skills panel. It mirrors newMCPModel.
 func newSkillsModel(t *testing.T, sk client.SkillLister, caps client.Capabilities) Model {
@@ -57,10 +78,11 @@ func TestRunSkillsOpensPanel(t *testing.T) {
 
 	mm, cmd := m.runSkills()
 	m = mm.(Model)
-	if m.skills.view != skillsPanel {
-		t.Fatalf("view = %v, want skillsPanel", m.skills.view)
+	st := skillsStateOf(t, m)
+	if st.view != skillsPanel {
+		t.Fatalf("view = %v, want skillsPanel", st.view)
 	}
-	if !m.skills.loading {
+	if !st.loading {
 		t.Error("panel should be loading until the RPC result lands")
 	}
 	if m.ta.Focused() {
@@ -75,11 +97,11 @@ func TestRunSkillsOpensPanel(t *testing.T) {
 	if fs.calls != 1 {
 		t.Errorf("ListSkills calls = %d, want 1", fs.calls)
 	}
-	if m.skills.loading {
+	if st.loading {
 		t.Error("loading should clear once the result lands")
 	}
-	if len(m.skills.skills) != 2 {
-		t.Fatalf("skills = %#v, want 2", m.skills.skills)
+	if len(st.skills) != 2 {
+		t.Fatalf("skills = %#v, want 2", st.skills)
 	}
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, "code-review") || !strings.Contains(body, "fan-out web research") {
@@ -131,15 +153,15 @@ func TestSkillsPanelWrapsLongDescriptions(t *testing.T) {
 func TestSkillsPanelGatedWhileRunning(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
 	m.phase = phaseRunning
-	mm, _ := m.openSkills()
-	if mm.(Model).skills.view != skillsNone {
+	mm, _ := m.runSkills()
+	if mm.(Model).modal != nil {
 		t.Error("panel opened while running")
 	}
 
 	m2 := newSkillsModel(t, nil, client.Capabilities{Skills: true})
 	m2.deps.Skills = nil
-	mm2, cmd := m2.openSkills()
-	if mm2.(Model).skills.view != skillsNone {
+	mm2, cmd := m2.runSkills()
+	if mm2.(Model).modal != nil {
 		t.Error("panel opened with nil Skills dep")
 	}
 	if cmd != nil {
@@ -152,14 +174,14 @@ func TestSkillsEscClosesPanel(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.skills.view != skillsPanel {
-		t.Fatalf("precondition: panel should be open, view=%v", m.skills.view)
+	if skillsStateOf(t, m).view != skillsPanel {
+		t.Fatalf("precondition: panel should be open, view=%v", skillsStateOf(t, m).view)
 	}
 
 	mm2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mm2.(Model)
-	if m.skills.view != skillsNone {
-		t.Fatalf("esc did not close the panel: %v", m.skills.view)
+	if m.modal != nil {
+		t.Fatalf("esc did not close the panel: modal=%v", m.modal)
 	}
 	if !m.ta.Focused() {
 		t.Error("esc should restore focus to the textarea")
@@ -168,21 +190,29 @@ func TestSkillsEscClosesPanel(t *testing.T) {
 
 func TestSkillsRequestEpochSurvivesCloseReopen(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
-	opened, _ := m.openSkills()
-	m = opened.(Model)
-	first := m.skills.requestID
-	closed, _ := m.closeSkills()
-	m = closed.(Model)
-	reopened, _ := m.openSkills()
-	m = reopened.(Model)
-	if m.skills.requestID <= first {
-		t.Fatalf("reopened epoch=%d, first=%d", m.skills.requestID, first)
+	m, st := openSkillsPanel(t, m)
+	first := st.requestID
+	firstEpoch := m.skillsEpoch
+	// Close via the surface (esc on the empty filter) — the Model nils the modal.
+	_, _, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !closed {
+		t.Fatal("esc on an empty filter should close the panel")
 	}
-	updated, handled := m.updateSkillsMsg(client.LearnedSkillsMsg{RequestID: first, Project: m.skills.project, Generations: map[string]uint64{"": 99}, Skills: []client.LearnedSkill{{ID: "stale"}}})
+	m.modal = nil
+	m, st = openSkillsPanel(t, m)
+	if st.requestID <= first {
+		t.Fatalf("reopened epoch=%d, first=%d", st.requestID, first)
+	}
+	// The epoch survives on the MODEL, not just the surface copy: m.skillsEpoch
+	// is the correlation source that must increment across close/reopen.
+	if m.skillsEpoch <= firstEpoch {
+		t.Fatalf("Model epoch=%d, firstEpoch=%d (close/reopen must advance m.skillsEpoch, not just st.requestID)", m.skillsEpoch, firstEpoch)
+	}
+	_, handled, _ := st.HandleMsg(client.LearnedSkillsMsg{RequestID: first, Project: st.project, Generations: map[string]uint64{"": 99}, Skills: []client.LearnedSkill{{ID: "stale"}}})
 	if !handled {
 		t.Fatal("learned response was not handled")
 	}
-	if got := updated.(Model).skills.learned; len(got) != 0 {
+	if got := st.learned; len(got) != 0 {
 		t.Fatalf("delayed response replaced reopened state: %#v", got)
 	}
 }
@@ -195,7 +225,7 @@ func TestSkillsErrorRendered(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if m.skills.err == nil {
+	if skillsStateOf(t, m).err == nil {
 		t.Fatal("a ListSkills error should be recorded on the panel state")
 	}
 	body := stripANSIstr(m.View().Content)
@@ -212,8 +242,8 @@ func TestSkillsPanelLoadingRender(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
 	mm, _ := m.runSkills()
 	m = mm.(Model) // deliberately NOT feeding the RPC result — stay loading.
-	if !m.skills.loading {
-		t.Fatalf("precondition: panel should be loading, view=%v loading=%v", m.skills.view, m.skills.loading)
+	if st := skillsStateOf(t, m); !st.loading {
+		t.Fatalf("precondition: panel should be loading, view=%v loading=%v", st.view, st.loading)
 	}
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, "loading…") {
@@ -221,12 +251,14 @@ func TestSkillsPanelLoadingRender(t *testing.T) {
 	}
 }
 
-// TestUpdateSkillsMsgFallThrough asserts updateSkillsMsg returns handled=false for
-// a non-SkillsMsg, so Update falls through to normal handling (streaming etc.).
-func TestUpdateSkillsMsgFallThrough(t *testing.T) {
+// TestSkillsHandleMsgFallThrough asserts the surface's HandleMsg returns
+// handled=false for a non-RPC msg (a blink tick, a stream event), so the Model's
+// generic reducer can see it.
+func TestSkillsHandleMsgFallThrough(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
-	if _, handled := m.updateSkillsMsg(tea.KeyPressMsg{Code: tea.KeyEnter}); handled {
-		t.Error("updateSkillsMsg should not handle a non-SkillsMsg")
+	_, st := openSkillsPanel(t, m)
+	if _, handled, _ := st.HandleMsg(struct{}{}); handled {
+		t.Error("HandleMsg should not handle a non-RPC msg")
 	}
 }
 
@@ -268,44 +300,43 @@ func TestSkillsKeySwallowsNonEsc(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 
-	mm2, _, handled := m.onSkillsKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	st := skillsStateOf(t, m)
+	_, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	if !handled {
 		t.Error("a non-esc key while the panel is open should be handled (handled=true)")
 	}
-	m2 := mm2.(Model)
-	if m2.skills.scroll != 0 {
+	if st.scroll != 0 {
 		t.Error("a non-scroll key should not move the scroll offset")
 	}
-	if got := m2.skills.filter.Value(); got != "j" {
+	if got := st.filter.Value(); got != "j" {
 		t.Errorf("typing 'j' should feed the filter, got value %q want \"j\"", got)
 	}
 
 	// A scroll key is handled too (and keeps the panel open). The 2-skill sample
 	// fits the window, so the offset stays clamped at 0.
-	mm3, _, handled := m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	_, handled, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if !handled {
 		t.Error("pgdown while the panel is open should be handled")
 	}
-	m3 := mm3.(Model)
-	if m3.skills.view != skillsPanel {
+	if st.view != skillsPanel {
 		t.Error("pgdown should not close the panel")
 	}
-	if m3.skills.scroll != 0 {
-		t.Errorf("a fitting inventory should clamp scroll at 0, got %d", m3.skills.scroll)
+	if st.scroll != 0 {
+		t.Errorf("a fitting inventory should clamp scroll at 0, got %d", st.scroll)
 	}
 }
 
 // typeSkillsFilter feeds each rune of s into the open skills panel's focused
-// filter input via onSkillsKey (the production routing), asserting each key is
-// handled. It mirrors typeFilter in models_test.go.
+// filter input via the surface's HandleKey (the production routing), asserting
+// each key is handled. It mirrors typeFilter in models_test.go.
 func typeSkillsFilter(t *testing.T, m Model, s string) Model {
 	t.Helper()
+	st := skillsStateOf(t, m)
 	for _, r := range s {
-		mm, _, handled := m.onSkillsKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		_, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
 		if !handled {
 			t.Fatalf("typing %q should be handled by the open skills panel", r)
 		}
-		m = mm.(Model)
 	}
 	return m
 }
@@ -318,14 +349,15 @@ func TestSkillsFilterNarrows(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = typeSkillsFilter(t, m, "deep")
-	if len(m.skills.filtered) != 1 {
-		t.Fatalf("filtered len = %d, want 1 (only deep-research matches)", len(m.skills.filtered))
+	st := skillsStateOf(t, m)
+	if len(st.filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1 (only deep-research matches)", len(st.filtered))
 	}
-	if m.skills.filtered[0].Name != "deep-research" {
-		t.Fatalf("filtered[0].Name = %q, want deep-research", m.skills.filtered[0].Name)
+	if st.filtered[0].Name != "deep-research" {
+		t.Fatalf("filtered[0].Name = %q, want deep-research", st.filtered[0].Name)
 	}
-	if m.skills.scroll != 0 {
-		t.Errorf("scroll after narrowing = %d, want 0 (clamped)", m.skills.scroll)
+	if st.scroll != 0 {
+		t.Errorf("scroll after narrowing = %d, want 0 (clamped)", st.scroll)
 	}
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, "deep-research") {
@@ -343,8 +375,8 @@ func TestSkillsFilterCaseInsensitive(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = typeSkillsFilter(t, m, "DEEP")
-	if len(m.skills.filtered) != 1 || m.skills.filtered[0].Name != "deep-research" {
-		t.Errorf("case-insensitive filter \"DEEP\" should match deep-research, got %+v", m.skills.filtered)
+	if st := skillsStateOf(t, m); len(st.filtered) != 1 || st.filtered[0].Name != "deep-research" {
+		t.Errorf("case-insensitive filter \"DEEP\" should match deep-research, got %+v", st.filtered)
 	}
 }
 
@@ -356,8 +388,8 @@ func TestSkillsFilterByDescription(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = typeSkillsFilter(t, m, "research")
-	if len(m.skills.filtered) != 1 || m.skills.filtered[0].Name != "deep-research" {
-		t.Errorf("filter \"research\" should match deep-research by description, got %+v", m.skills.filtered)
+	if st := skillsStateOf(t, m); len(st.filtered) != 1 || st.filtered[0].Name != "deep-research" {
+		t.Errorf("filter \"research\" should match deep-research by description, got %+v", st.filtered)
 	}
 }
 
@@ -369,30 +401,29 @@ func TestSkillsFilterEscClears(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 	m = typeSkillsFilter(t, m, "deep")
-	if len(m.skills.filtered) != 1 {
-		t.Fatalf("precondition: filtered len = %d, want 1", len(m.skills.filtered))
+	st := skillsStateOf(t, m)
+	if len(st.filtered) != 1 {
+		t.Fatalf("precondition: filtered len = %d, want 1", len(st.filtered))
 	}
 
 	// First esc: clears the filter, stays open.
-	mm, _, handled := m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	_, handled, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled {
 		t.Fatal("esc should be handled by the open panel")
 	}
-	m = mm.(Model)
-	if m.skills.view != skillsPanel {
+	if closed || st.view != skillsPanel {
 		t.Error("first esc (non-empty filter) should keep the panel open")
 	}
-	if m.skills.filter.Value() != "" {
-		t.Errorf("first esc should clear the filter, value = %q", m.skills.filter.Value())
+	if st.filter.Value() != "" {
+		t.Errorf("first esc should clear the filter, value = %q", st.filter.Value())
 	}
-	if len(m.skills.filtered) != 2 {
-		t.Errorf("filtered should be restored to the full list, len = %d want 2", len(m.skills.filtered))
+	if len(st.filtered) != 2 {
+		t.Errorf("filtered should be restored to the full list, len = %d want 2", len(st.filtered))
 	}
 
 	// Second esc: empty filter ⇒ closes.
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	m = mm.(Model)
-	if m.skills.view != skillsNone {
+	_, _, closed = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !closed {
 		t.Error("second esc (empty filter) should close the panel")
 	}
 }
@@ -406,8 +437,8 @@ func TestSkillsFilterNoMatchNote(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = typeSkillsFilter(t, m, "zzzzz")
-	if len(m.skills.filtered) != 0 {
-		t.Fatalf("filtered len = %d, want 0 (no match)", len(m.skills.filtered))
+	if st := skillsStateOf(t, m); len(st.filtered) != 0 {
+		t.Fatalf("filtered len = %d, want 0 (no match)", len(st.filtered))
 	}
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, `no skills match "zzzzz" — esc to clear`) {
@@ -425,8 +456,8 @@ func TestSkillsFilterEmptyShowsFull(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if len(m.skills.filtered) != len(m.skills.skills) {
-		t.Errorf("empty filter: filtered len = %d, want %d (== skills)", len(m.skills.filtered), len(m.skills.skills))
+	if st := skillsStateOf(t, m); len(st.filtered) != len(st.skills) {
+		t.Errorf("empty filter: filtered len = %d, want %d (== skills)", len(st.filtered), len(st.skills))
 	}
 }
 
@@ -444,14 +475,15 @@ func TestSkillsFilterJKNotIntercepted(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 
 	m = typeSkillsFilter(t, m, "kotlin")
-	if m.skills.filter.Value() != "kotlin" {
-		t.Errorf("filter value = %q, want \"kotlin\" (k/o/t/l/i/n must type, not navigate)", m.skills.filter.Value())
+	st := skillsStateOf(t, m)
+	if st.filter.Value() != "kotlin" {
+		t.Errorf("filter value = %q, want \"kotlin\" (k/o/t/l/i/n must type, not navigate)", st.filter.Value())
 	}
-	if m.skills.scroll != 0 {
-		t.Errorf("scroll moved to %d while typing \"kotlin\"; j/k must not be intercepted as nav", m.skills.scroll)
+	if st.scroll != 0 {
+		t.Errorf("scroll moved to %d while typing \"kotlin\"; j/k must not be intercepted as nav", st.scroll)
 	}
-	if len(m.skills.filtered) != 1 || m.skills.filtered[0].Name != "kotlin-thing" {
-		t.Errorf("filter \"kotlin\" should narrow to kotlin-thing, got %+v", m.skills.filtered)
+	if len(st.filtered) != 1 || st.filtered[0].Name != "kotlin-thing" {
+		t.Errorf("filter \"kotlin\" should narrow to kotlin-thing, got %+v", st.filtered)
 	}
 }
 
@@ -466,6 +498,211 @@ func scrollSkills(n int) *fakeSkills {
 	return fs
 }
 
+// TestSkillsScrollViaUpdate routes a scroll key through the REAL m.Update path
+// (onKey → onOverlayKey → dispatchSurfaceKey → HandleKey), NOT the surface's
+// HandleKey helper that bypasses the dispatchSurfaceKey routing — the peer of
+// soul_test.go's TestSoulScrollViaUpdate. It pins that a scroll key reaches the
+// open modal through the full dispatch and moves the window without closing the
+// panel.
+func TestSkillsScrollViaUpdate(t *testing.T) {
+	m := newSkillsModel(t, scrollSkills(30), client.Capabilities{Skills: true})
+	mm, cmd := m.runSkills()
+	m = feedCmd(t, mm.(Model), cmd)
+	st := skillsStateOf(t, m)
+	if st.scroll != 0 {
+		t.Fatalf("precondition: initial scroll = %d, want 0", st.scroll)
+	}
+
+	mm2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = mm2.(Model)
+	st = skillsStateOf(t, m) // panics/fails if the panel closed
+	if st.scroll != 1 {
+		t.Errorf("scroll after pgdown via m.Update = %d, want 1", st.scroll)
+	}
+}
+
+// TestSkillsWheelScrollsPanel asserts a mouse wheel while the skills panel is
+// open is CONSUMED by the panel (HandleWheel handled=true — the default-consume
+// contract): the panel's own scroll window moves and the conversation viewport
+// behind it does NOT (the consume contract). It is the peer of soul_test.go's
+// TestSoulWheelConsumedWhileOpen, driving tea.MouseWheelMsg through the REAL
+// m.Update path (onMouseMsg → onMouseWheel → m.modal.HandleWheel). The
+// description-less scrollSkills fixture yields one rendered row per skill, so
+// 30 skills overflow the fixed skillsBodyLines window and the wheel can move.
+func TestSkillsWheelScrollsPanel(t *testing.T) {
+	m := newSkillsModel(t, scrollSkills(30), client.Capabilities{Skills: true})
+	// Long transcript so the viewport WOULD be scrollable if the wheel fell
+	// through; start stuck at the bottom like a fresh stream (the soul peer
+	// fixture).
+	m.conv.addUser("show me a long answer")
+	m.conv.appendAssistant(strings.Repeat("line of streamed output\n", 120))
+	m.phase = phaseIdle
+	m.stuck = true
+	m.refreshView()
+	if !m.vp.AtBottom() {
+		t.Fatal("precondition: viewport should start at the bottom")
+	}
+
+	mm, cmd := m.runSkills()
+	m = feedCmd(t, mm.(Model), cmd)
+	st := skillsStateOf(t, m)
+	if st.scroll != 0 {
+		t.Fatalf("precondition: initial scroll = %d, want 0", st.scroll)
+	}
+
+	// Wheel down through the REAL Update path; the panel consumes it.
+	mm2, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm2.(Model)
+	st = skillsStateOf(t, m) // fails if the panel closed
+	if st.scroll != 1 {
+		t.Errorf("skills scroll after wheel-down = %d, want 1 (the panel owns the wheel)", st.scroll)
+	}
+	if !m.stuck {
+		t.Error("a consumed wheel must NOT unstick the view (the panel eats it)")
+	}
+	if !m.vp.AtBottom() {
+		t.Error("a consumed wheel must NOT scroll the conversation viewport (the panel eats it)")
+	}
+}
+
+// TestLearnedMsgsViaUpdate drives the three learned-lifecycle RPC Msgs
+// (LearnedSkillsMsg / LearnedSkillMsg / SkillDiffMsg) through the REAL
+// m.Update path (update → dispatchNonInputMsg → dispatchSurfaceMsg →
+// HandleMsg), NOT st.HandleMsg directly, asserting each lands on the surface
+// state. Along with TestSkillsMsgViaUpdate (SkillsMsg) this pins the
+// dispatchSurfaceMsg → HandleMsg routing for ALL four RPC Msgs.
+func TestLearnedMsgsViaUpdate(t *testing.T) {
+	skill := client.LearnedSkill{Project: "/project", ID: "skill-1", Name: "review", OwnerAgent: "agent", Version: "v2", Revision: "r2", State: "active"}
+	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
+	m, _ = openSkillsPanel(t, m) // open via runSkills; deliberately NOT feeding its cmd
+	st := skillsStateOf(t, m)
+
+	// (1) LearnedSkillsMsg lands the learned list.
+	mm2, _ := m.Update(client.LearnedSkillsMsg{
+		RequestID:   st.requestID,
+		Project:     st.project,
+		Skills:      []client.LearnedSkill{skill},
+		Generations: map[string]uint64{"/project": 1},
+	})
+	m = mm2.(Model)
+	st = skillsStateOf(t, m)
+	if len(st.learned) != 1 || st.learned[0].ID != "skill-1" {
+		t.Fatalf("LearnedSkillsMsg via m.Update did not land the learned list: %#v", st.learned)
+	}
+
+	// (2) LearnedSkillMsg opens the detail view.
+	mm3, _ := m.Update(client.LearnedSkillMsg{
+		RequestID:       st.requestID,
+		Project:         "/project",
+		Skill:           &skill,
+		Generation:      1,
+		SelectedSkillID: "skill-1",
+		SelectedVersion: "v2",
+	})
+	m = mm3.(Model)
+	st = skillsStateOf(t, m)
+	if st.view != skillsDetail || st.detail == nil || st.detail.ID != "skill-1" {
+		t.Fatalf("LearnedSkillMsg via m.Update did not open the detail: view=%v detail=%#v", st.view, st.detail)
+	}
+
+	// (3) SkillDiffMsg lands the diff on the open detail.
+	mm4, _ := m.Update(client.SkillDiffMsg{
+		RequestID: st.requestID,
+		Project:   "/project",
+		SkillID:   "skill-1",
+		Version:   "v2",
+		Diff:      "- old\n+ new",
+	})
+	m = mm4.(Model)
+	st = skillsStateOf(t, m)
+	if st.diff != "- old\n+ new" {
+		t.Fatalf("SkillDiffMsg via m.Update did not land the diff: %q", st.diff)
+	}
+	// The error-free diff clears any recorded error.
+	if st.err != nil {
+		t.Fatalf("a clean SkillDiffMsg should leave err nil, got %v", st.err)
+	}
+}
+
+// TestSkillsScrollClampedInRender pins the ImGui clamp-in-Render guarantee:
+// the scroll window's clamp target is re-derived AT THE TOP OF Render from the
+// FRESH offered width (s.width is a view cache Render refreshes every frame),
+// so widening the terminal — which SHRINKS the wrapped row total for a given
+// inventory — re-clamps a now-out-of-bounds scroll on the next Render even if no
+// HandleKey/HandleWheel call runs against the new width. A Render that did not
+// refresh s.width (or clamped only in HandleKey) would leave the stale offset
+// until a key arrived; a HandleKey AFTER the widen would then clamp against the
+// stale view-cache width.
+func TestSkillsScrollClampedInRender(t *testing.T) {
+	// A long description per skill: each wraps to a couple of lines at the WIDE
+	// width but ~10 lines at the NARROW one, so the row total grows a lot when
+	// narrowed and shrinks back when widened — the WIDENING direction is the one
+	// that can leave a bottom-pinned scroll out of bounds (the rowTotal never
+	// shrinks HandleKey-side, only Render-side).
+	desc := strings.Repeat("w ", 90)
+	fs := &fakeSkills{}
+	for i := 0; i < 30; i++ {
+		fs.skills = append(fs.skills, client.Skill{Name: fmt.Sprintf("skill-%02d", i), Description: desc})
+	}
+	m := newSkillsModel(t, fs, client.Capabilities{Skills: true})
+	// Open NARROW so the bottom jump pins a large offset against the large total.
+	mm2, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 30})
+	m = mm2.(Model)
+	mm, cmd := m.runSkills()
+	m = feedCmd(t, mm.(Model), cmd)
+	st := skillsStateOf(t, m)
+
+	// Prime the view cache (Render refreshes s.width from the fresh width), then
+	// jump to the bottom: the clamp is against the narrow width's row total.
+	_ = m.View()
+	if st.width != 40 {
+		t.Fatalf("precondition: Render should refresh the view-cache width to 40, got %d", st.width)
+	}
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+	narrowTotal := st.rowTotal(st.deps.theme, 40)
+	if st.scroll != narrowTotal-skillsBodyLines {
+		t.Fatalf("precondition: scroll after End at width 40 = %d, want %d (rowTotal %d − %d)",
+			st.scroll, narrowTotal-skillsBodyLines, narrowTotal, skillsBodyLines)
+	}
+
+	// Widen the terminal via the production resize path, then render a frame. The
+	// next Render derives the clamp from the FRESH width: the shrunken row total
+	// re-clamps the offset DOWN to the new maximum — and s.width moves with it.
+	mm3, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = mm3.(Model)
+	_ = m.View()
+	wideTotal := st.rowTotal(st.deps.theme, 100)
+	if wideTotal >= narrowTotal {
+		t.Fatalf("precondition: widening should shrink the row total, narrow=%d wide=%d", narrowTotal, wideTotal)
+	}
+	if st.width != 100 {
+		t.Errorf("Render should refresh the view-cache width to 100, got %d", st.width)
+	}
+	if st.scroll != wideTotal-skillsBodyLines {
+		t.Errorf("after widening, Render should re-clamp scroll to %d (rowTotal %d − %d), got %d",
+			wideTotal-skillsBodyLines, wideTotal, skillsBodyLines, st.scroll)
+	}
+}
+
+// TestSkillsMsgViaUpdate routes a client.SkillsMsg through the REAL m.Update
+// path (update → dispatchNonInputMsg → dispatchSurfaceMsg → HandleMsg), NOT the
+// surface's HandleMsg helper — the peer of the soul path. It pins that an RPC
+// result reaches the open modal via the full dispatch and lands the inventory.
+func TestSkillsMsgViaUpdate(t *testing.T) {
+	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
+	m, _ = openSkillsPanel(t, m) // open via runSkills; deliberately NOT feeding its cmd
+
+	mm2, _ := m.Update(client.SkillsMsg{Skills: []client.Skill{{Name: "code-review"}, {Name: "deep-research"}}})
+	m = mm2.(Model)
+	st := skillsStateOf(t, m)
+	if st.loading {
+		t.Fatal("loading should clear once the result lands via m.Update")
+	}
+	if len(st.skills) != 2 {
+		t.Fatalf("skills = %#v, want 2 landed via m.Update", st.skills)
+	}
+}
+
 // TestSkillsScroll asserts the scroll keys move (and clamp) the inventory row
 // window AND that the rendered window content + the "lines X–Y of N" indicator
 // actually shift (mirrors TestSoulScroll). It also locks the scroll reset on a
@@ -475,9 +712,10 @@ func TestSkillsScroll(t *testing.T) {
 	m := newSkillsModel(t, scrollSkills(30), client.Capabilities{Skills: true})
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
+	st := skillsStateOf(t, m)
 
-	if m.skills.scroll != 0 {
-		t.Fatalf("initial scroll = %d, want 0", m.skills.scroll)
+	if st.scroll != 0 {
+		t.Fatalf("initial scroll = %d, want 0", st.scroll)
 	}
 	// At the top: window is rows 1–14 (skill-00..skill-13); the tail is NOT visible.
 	top := stripANSIstr(m.View().Content)
@@ -489,10 +727,9 @@ func TestSkillsScroll(t *testing.T) {
 	}
 
 	// Page down once: skill-00 leaves the top, skill-14 enters.
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	m = mm.(Model)
-	if m.skills.scroll != 1 {
-		t.Errorf("scroll after pgdown = %d, want 1", m.skills.scroll)
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if st.scroll != 1 {
+		t.Errorf("scroll after pgdown = %d, want 1", st.scroll)
 	}
 	pd := stripANSIstr(m.View().Content)
 	if strings.Contains(pd, "skill-00") {
@@ -506,10 +743,9 @@ func TestSkillsScroll(t *testing.T) {
 	}
 
 	// Jump to bottom; max scroll = 30 - 14 = 16: the tail becomes visible.
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	m = mm.(Model)
-	if m.skills.scroll != 16 {
-		t.Errorf("scroll after End = %d, want 16 (30-14)", m.skills.scroll)
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if st.scroll != 16 {
+		t.Errorf("scroll after End = %d, want 16 (30-14)", st.scroll)
 	}
 	bot := stripANSIstr(m.View().Content)
 	if !strings.Contains(bot, "skill-29") || strings.Contains(bot, "skill-00") {
@@ -520,38 +756,33 @@ func TestSkillsScroll(t *testing.T) {
 	}
 
 	// Pgdown past the end clamps.
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	m = mm.(Model)
-	if m.skills.scroll != 16 {
-		t.Errorf("scroll clamps at 16, got %d", m.skills.scroll)
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if st.scroll != 16 {
+		t.Errorf("scroll clamps at 16, got %d", st.scroll)
 	}
 
 	// Page up moves back (pins the ScrollU arm — removing it must fail here).
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	m = mm.(Model)
-	if m.skills.scroll != 15 {
-		t.Errorf("scroll after pgup = %d, want 15", m.skills.scroll)
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if st.scroll != 15 {
+		t.Errorf("scroll after pgup = %d, want 15", st.scroll)
 	}
 
 	// Home returns to the top.
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyHome})
-	m = mm.(Model)
-	if m.skills.scroll != 0 {
-		t.Errorf("scroll after Home = %d, want 0", m.skills.scroll)
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyHome})
+	if st.scroll != 0 {
+		t.Errorf("scroll after Home = %d, want 0", st.scroll)
 	}
 
 	// A fresh inventory result resets a stale offset (never opens mid-list).
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	m = mm.(Model)
-	mFresh, _ := m.updateSkillsMsg(client.SkillsMsg{Skills: scrollSkills(30).skills})
-	m = mFresh.(Model)
-	if m.skills.scroll != 0 {
-		t.Errorf("a fresh SkillsMsg should reset scroll to 0, got %d", m.skills.scroll)
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+	_, _, _ = st.HandleMsg(client.SkillsMsg{Skills: scrollSkills(30).skills})
+	if st.scroll != 0 {
+		t.Errorf("a fresh SkillsMsg should reset scroll to 0, got %d", st.scroll)
 	}
 
 	// esc still closes the scrolled panel.
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if mm.(Model).skills.view != skillsNone {
+	_, _, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !closed {
 		t.Error("esc should still close the scrolled panel")
 	}
 }
@@ -561,18 +792,18 @@ func TestSkillsScroll(t *testing.T) {
 func TestSkillsErrorClearedOnSuccess(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
 
+	_, st := openSkillsPanel(t, m)
+
 	// First drive an error result.
-	mErr, _ := m.updateSkillsMsg(client.SkillsMsg{Err: errors.New("boom")})
-	m = mErr.(Model)
-	if m.skills.err == nil {
+	_, _, _ = st.HandleMsg(client.SkillsMsg{Err: errors.New("boom")})
+	if st.err == nil {
 		t.Fatal("precondition: error should be recorded")
 	}
 
 	// Then a successful result must clear it.
-	mOK, _ := m.updateSkillsMsg(client.SkillsMsg{Skills: []client.Skill{{Name: "x"}}})
-	m = mOK.(Model)
-	if m.skills.err != nil {
-		t.Errorf("a successful result should clear the prior error, got %v", m.skills.err)
+	_, _, _ = st.HandleMsg(client.SkillsMsg{Skills: []client.Skill{{Name: "x"}}})
+	if st.err != nil {
+		t.Errorf("a successful result should clear the prior error, got %v", st.err)
 	}
 }
 
@@ -584,11 +815,11 @@ func TestSkillsPanelScrollGolden(t *testing.T) {
 	m := newSkillsModel(t, scrollSkills(30), client.Capabilities{Skills: true})
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.skills.view != skillsPanel {
-		t.Fatalf("view = %v, want skillsPanel", m.skills.view)
+	st := skillsStateOf(t, m)
+	if st.view != skillsPanel {
+		t.Fatalf("view = %v, want skillsPanel", st.view)
 	}
-	mm, _, _ = m.onSkillsKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	m = mm.(Model)
+	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "skills_scroll.golden", got)
 }
@@ -599,8 +830,8 @@ func TestSkillsPanelGolden(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.skills.view != skillsPanel {
-		t.Fatalf("view = %v, want skillsPanel", m.skills.view)
+	if st := skillsStateOf(t, m); st.view != skillsPanel {
+		t.Fatalf("view = %v, want skillsPanel", st.view)
 	}
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "skills.golden", got)

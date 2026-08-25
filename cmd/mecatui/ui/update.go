@@ -335,8 +335,10 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, cmd, handled := m.updateMCPMsg(msg); handled {
 		return mm, cmd
 	}
-	// Skills overlay result/error msg; fires no follow-up command.
-	if mm, handled := m.updateSkillsMsg(msg); handled {
+	// Skills lifecycle-change receipt; fires no follow-up command. (The four
+	// RPC-backed skills msgs are consumed by the surface's HandleMsg upstream;
+	// only this Model-owned status receipt remains.)
+	if mm, handled := m.updateSkillChangesMsg(msg); handled {
 		return mm, nil
 	}
 	// Inventory-overlay result/error msgs (agentsInv, usermodel, /worktrees,
@@ -472,6 +474,30 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		return mm, tea.Batch(cmd, submitCmd), true
 	}
 	return m, cmd, true
+}
+
+// updateSkillChangesMsg reduces a client.SkillChangesMsg — a bounded lifecycle
+// change receipt — into the Model-owned status line (m.statusMsg from
+// m.skillChangeLast, the newest receipt already announced). It is Model-side by
+// design: it is a status receipt, NOT skills-surface state, and it must keep
+// firing even when no /skills surface is open (the surface's HandleMsg passes it
+// through handled=false). The four RPC-backed skills msgs (inventory, learned
+// list, detail, diff) are consumed by skillsState.HandleMsg upstream and never
+// reach this reducer.
+func (m Model) updateSkillChangesMsg(msg tea.Msg) (tea.Model, bool) {
+	changes, ok := msg.(client.SkillChangesMsg)
+	if !ok {
+		return m, false
+	}
+	if changes.Err != nil || len(changes.Changes) == 0 {
+		return m, true
+	}
+	latest := changes.Changes[len(changes.Changes)-1]
+	if latest.ID != m.skillChangeLast {
+		m.skillChangeLast = latest.ID
+		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("%d learned-skill change receipt(s) available — open /skills", len(changes.Changes)))
+	}
+	return m, true
 }
 
 // updateLifecycle reduces the transport/lifecycle msgs (session-ready, connect &
@@ -1600,7 +1626,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onMCPKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,
-		m.onSkillsKey,
 		m.onUserModelKey,
 		m.onReflectionsKey,
 		m.onDreamKey,
