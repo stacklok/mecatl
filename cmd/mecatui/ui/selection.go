@@ -114,7 +114,6 @@ func selectable(m Model) bool {
 		m.phase != phaseAwaitingApproval &&
 		m.phase != phaseReplay &&
 		!m.showHelp &&
-		m.mcp.view == mcpNone &&
 		m.team.view == teamNone &&
 		m.agentsInv.view == agentsInvNone &&
 		m.modal == nil && // no surface-migrated overlay owns the body

@@ -496,7 +496,6 @@ type Model struct {
 
 	activeTool      string         // tool name in flight, shown beside the spinner
 	toolProgress    string         // transient progress line for the in-flight tool (cleared on result/turn boundary)
-	mcp             mcpState       // MCP overlay state (view==mcpNone when closed)
 	skillsEpoch     uint64         // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
 	skillChangeLast string         // newest bounded lifecycle receipt already announced
 	palette         paletteState   // slash-command palette (open when the input starts with "/")

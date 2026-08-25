@@ -1623,7 +1623,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	overlays := []func(tea.KeyPressMsg) (tea.Model, tea.Cmd, bool){
 		m.onSessionDetailsKey,
-		m.onMCPKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,
 		m.onUserModelKey,
@@ -1978,7 +1977,7 @@ func normalizePastedNewlines(content string) string {
 // drift apart.
 func (m Model) pasteGateOpen() bool {
 	if m.showHelp || m.phase == phaseAwaitingApproval ||
-		m.mcp.view != mcpNone || m.team.view != teamNone || m.agentsInv.view != agentsInvNone || m.dream.view != dreamClosed {
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone || m.dream.view != dreamClosed {
 		return false
 	}
 	return m.phase == phaseIdle || m.phase == phaseRunning
@@ -2309,11 +2308,11 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.ta.Blur()
 		return m, nil
 	case key.Matches(msg, m.keys.MCPPanel):
-		return m.openMCP(mcpPanel)
+		return m.runMCP()
 	case key.Matches(msg, m.keys.Resources):
-		return m.openMCP(mcpResources)
+		return m.runMCPResources()
 	case key.Matches(msg, m.keys.Prompts):
-		return m.openMCP(mcpPrompts)
+		return m.runMCPPrompts()
 	case key.Matches(msg, m.keys.Agents):
 		return m.openAgents()
 	case key.Matches(msg, m.keys.Effort):

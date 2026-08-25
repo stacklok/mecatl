@@ -458,15 +458,15 @@ find it and move it back into the surface before proceeding.
 For each overlay, the pattern needs ONE more capability; enforce it then
 register the overlay:
 
-1. **mcp** — multi-view enum inside one state struct (mcpPanel/resources/
+1. **mcp** ✓ — multi-view enum inside one state struct (mcpPanel/resources/
    prompts/args). Pattern: the surface's own view enum routes internally; the
-   interface stays unchanged.
+   interface stays unchanged. Shipped — see the Migration note below.
 2. **sessions** — picker + transcript view + a phase (replay) coupling. Pattern:
    the surface may RETURN a phase hint via Closed (see `updateSessionsMsg`); do
    NOT widen the interface — the phase transition stays Model-side on close.
-3. **skills** — type-to-filter text input + detail view + epochs. Pattern: the
+3. **skills** ✓ — type-to-filter text input + detail view + epochs. Pattern: the
    surface owns a bubbles component (textinput); deps must include whatever the
-   component uses.
+   component uses. Shipped.
 4. **models** — selecting picker (cursor + enter pick + provenance). Pattern:
    the surfaces may RETURN an action the Model executes (mirror
    `approvalAction`'s propose/dispose) — DO NOT widen the interface; a returned
@@ -475,6 +475,32 @@ register the overlay:
    Pattern: it migrates LAST because it must displace the phase coupling and own
    regions and a queue. Its migration proves the interface can carry approval's
    `approvalDeps` superset.
+
+### Migration note: /mcp
+
+/mcp's added capability is exactly the one §6 row 1 predicted: the surface's own
+`mcpView` enum (panel/resources/resource-preview/prompts/prompt-args) routes
+INTERNALLY — `mcpState.HandleKey`/`Render` switch on `s.view`, so the interface
+stays unchanged. `mcpState` carries two surface-specific fields next to
+`surfaceDeps` in the Open literal: `mcp client.MCP` (the RPC client; the analog
+of skills' `learnedLifecycle`) — `surfaceDeps` is NOT widened.
+
+The one wrinkle past the soul/skills template: a prompt "get" success and the
+resource-preview insert are NOT pure surface mutations — they mean "close and
+drop text into the prompt textarea", a Model-owned mutation. The surface handles
+that WITHOUT widening the interface: `HandleMsg` on
+`client.MCPPromptGotMsg`/`mcpInsertResourceMsg` returns `handled=false,
+closed=true`. The handled=false makes `dispatchSurfaceMsg` return at its
+`!handled` early-return — BEFORE its closed path can act — so the msg falls
+through untouched to the slim Model-side `updateMCPMsg`; that remnant's
+`insertIntoInput` nils `m.modal` and refocuses (the actual close lives there,
+not in the dispatch's own closed path). The resource-preview insert is a
+surface-returned cmd marker (`mcpInsertResourceMsg`) so the preview text rides
+the msg after close. Everything else the old `updateMCPMsg` did
+(sources/groups/resources/read/prompts/err) is surface-consumed; the Model-side
+reducer returns handled=false for all of it. The after-close race (a PromptGot
+arriving after esc) reaches the same remnant, where the close is idempotent
+(`m.modal` already nil).
 
 ## 7. Explicitly OUT of scope (banked)
 

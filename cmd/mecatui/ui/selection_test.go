@@ -1993,7 +1993,7 @@ type nonSelectableCase struct {
 // permission-ask case (the most likely real mid-drag interruption) is included.
 func TestSelectableGateBlocksAndClears(t *testing.T) {
 	cases := []nonSelectableCase{
-		{"mcpOverlay", func(m *Model) { m.mcp.view = mcpPanel }},
+		{"mcpOverlay", func(m *Model) { m.modal = &mcpState{view: mcpPanel} }},
 		{"modelsOverlay", func(m *Model) { m.models.view = modelsPanel }},
 		{"worktreesOverlay", func(m *Model) { m.worktrees.view = worktreesPanel }},
 		{"soulOverlay", func(m *Model) { m.modal = &soulState{view: soulPanel} }},

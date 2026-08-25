@@ -63,7 +63,7 @@ func TestHelpEscCloses(t *testing.T) {
 func TestHelpDoesNotOpenOverAnotherOverlay(t *testing.T) {
 	m := newMCPModel(t, aztec(), samplePanelMCP())
 	m = openOverlay(t, m, ctrlKey('o'))
-	if m.mcp.view == mcpNone {
+	if mcpActive(m) == nil {
 		t.Fatal("MCP overlay should be open")
 	}
 	m = applyAll(m, qmark())
@@ -78,7 +78,7 @@ func TestHelpSwallowsOtherKeysWhileOpen(t *testing.T) {
 	m := zeroStateModel(t, embeddedCaps())
 	m = applyAll(m, qmark())
 	m = applyAll(m, ctrlKey('o')) // would normally open the MCP overlay
-	if m.mcp.view != mcpNone {
+	if mcpActive(m) != nil {
 		t.Fatal("ctrl+o should be swallowed while help is up")
 	}
 	if !m.showHelp {

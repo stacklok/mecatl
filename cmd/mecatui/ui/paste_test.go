@@ -208,7 +208,7 @@ func TestPasteIgnoredDuringApproval(t *testing.T) {
 func TestPasteIgnoredWhileMCPOverlayOpen(t *testing.T) {
 	m := newMCPModel(t, aztec(), samplePanelMCP())
 	m = openOverlay(t, m, ctrlKey('o'))
-	if m.mcp.view == mcpNone {
+	if mcpActive(m) == nil {
 		t.Fatalf("MCP overlay should be open after ctrl+o")
 	}
 
@@ -218,7 +218,7 @@ func TestPasteIgnoredWhileMCPOverlayOpen(t *testing.T) {
 	if got := m.ta.Value(); got != "" {
 		t.Fatalf("paste leaked into input behind the MCP overlay: %q", got)
 	}
-	if m.mcp.view == mcpNone {
+	if mcpActive(m) == nil {
 		t.Fatalf("MCP overlay should still be open after an ignored paste")
 	}
 }

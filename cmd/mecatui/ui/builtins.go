@@ -275,13 +275,6 @@ func (m Model) runSessionDetails() (tea.Model, tea.Cmd) {
 	return m.openSessionDetails()
 }
 
-// runMCP opens the MCP inventory panel — the same surface ctrl+o opens. Only
-// registered when caps.MCP && the MCP collaborator is wired, so openMCP's own
-// nil/idle guards are belt-and-braces here.
-func (m Model) runMCP() (tea.Model, tea.Cmd) {
-	return m.openMCP(mcpPanel)
-}
-
 // runAgentsInv opens the agent-definition inventory panel. Only registered when
 // caps.Agents && the agents collaborator is wired, so openAgentsInv's own
 // nil/idle guards are belt-and-braces here.

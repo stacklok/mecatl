@@ -708,9 +708,14 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	caps := client.Capabilities{MCP: true}
+	render := func(st mcpState) string {
+		p := &st
+		p.deps = surfaceDeps{theme: th, caps: caps, marks: hk}
+		body, _ := p.Render(100, 30)
+		return stripANSIstr(body)
+	}
 	t.Run("panel footer", func(t *testing.T) {
-		st := mcpState{view: mcpPanel}
-		got := stripANSIstr(renderMCPOverlay(th, st, caps, hk, 100, 30))
+		got := render(mcpState{view: mcpPanel})
 		if !strings.Contains(got, "ctrl+f24 refresh · ctrl+f16 close") {
 			t.Errorf("panel footer should carry live refresh+close: %q", got)
 		}
@@ -719,8 +724,7 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 		}
 	})
 	t.Run("resources list", func(t *testing.T) {
-		st := mcpState{view: mcpResources, resources: []client.MCPResource{{Name: "r1", Server: "s"}}}
-		got := stripANSIstr(renderMCPOverlay(th, st, caps, hk, 100, 30))
+		got := render(mcpState{view: mcpResources, resources: []client.MCPResource{{Name: "r1", Server: "s"}}})
 		if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 read · ctrl+f16 close") {
 			t.Errorf("resources hint should carry live move/read/close: %q", got)
 		}
@@ -729,15 +733,13 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 		}
 	})
 	t.Run("prompts list", func(t *testing.T) {
-		st := mcpState{view: mcpPrompts, prompts: []client.MCPPrompt{{Name: "p1", Server: "s"}}}
-		got := stripANSIstr(renderMCPOverlay(th, st, caps, hk, 100, 30))
+		got := render(mcpState{view: mcpPrompts, prompts: []client.MCPPrompt{{Name: "p1", Server: "s"}}})
 		if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 select · ctrl+f16 close") {
 			t.Errorf("prompts hint should carry live move/select/close: %q", got)
 		}
 	})
 	t.Run("prompt arguments", func(t *testing.T) {
-		st := mcpState{view: mcpPromptArgs, argPrompt: client.MCPPrompt{Name: "p1"}}
-		got := stripANSIstr(renderMCPOverlay(th, st, caps, hk, 100, 30))
+		got := render(mcpState{view: mcpPromptArgs, argPrompt: client.MCPPrompt{Name: "p1"}})
 		if !strings.Contains(got, "↑/↓ field · ctrl+f17 next/submit · ctrl+f16 back") {
 			t.Errorf("prompt-args hint should keep fixed arrows and carry live choose/close: %q", got)
 		}
@@ -970,15 +972,13 @@ func TestAncillaryHintsReflectKeyOverride(t *testing.T) {
 	})
 
 	t.Run("status prompts", func(t *testing.T) {
-		mm := m
-		mm.mcp.view = mcpPanel
-		inserted, _ := mm.insertIntoInput("payload", "loaded prompt")
+		inserted, _ := m.insertIntoInput("payload", "loaded prompt")
 		got := inserted.(Model).statusMsg
 		if !strings.Contains(got, "press ctrl+f1 to send") || strings.Contains(got, "press enter") {
 			t.Errorf("MCP insert status should carry live Submit: %q", got)
 		}
 
-		mm = m
+		mm := m
 		mm.queued = []string{"follow up"}
 		mm.pendingMode = "plan"
 		queued, _ := mm.popAndSubmit()
