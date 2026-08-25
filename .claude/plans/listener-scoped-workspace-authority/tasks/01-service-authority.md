@@ -2,7 +2,7 @@
 id: 01-service-authority
 title: Service workspace-authority policy and persisted-root enforcement
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

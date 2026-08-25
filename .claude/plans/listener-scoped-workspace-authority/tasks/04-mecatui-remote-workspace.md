@@ -2,7 +2,7 @@
 id: 04-mecatui-remote-workspace
 title: Keep remote mecatui workspace-free
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
