@@ -178,6 +178,16 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 			return port.ScheduleFire{}, err
 		}
 	}
+	if !mgr.HasScheduler() {
+		return mgr.FireNow(ctx, name)
+	}
+	sched, err := mgr.GetSchedule(ctx, name)
+	if err != nil {
+		return port.ScheduleFire{}, err
+	}
+	if err := s.validatePersistedScheduleWorkspace(sched.Spec); err != nil {
+		return port.ScheduleFire{}, err
+	}
 	return mgr.FireNow(ctx, name)
 }
 

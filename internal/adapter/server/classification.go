@@ -329,6 +329,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"SetSessionEnvironment":        {KindDerived, "called only with the id CreateSession* just returned to the same caller (internal/adapter/acp); renamed from SetSessionWorkspace by the execution-environments refactor"},
 	"CloseSession":                 {KindDerived, "internal cleanup for an id the caller (EndSession, already authorized) or the owning connection has already established as its own; takes no ctx"},
 	"EmitScheduleEvent":            {KindDerived, "stamps the fire's ALREADY-established actor (the scheduler's system principal for a tick fire, or FireNow's caller) captured at fire time; makes no independent ownership decision"},
+	"CanProcessSchedule":           {KindDerived, "scheduler-only pre-claim deployment-authority check over an already-loaded durable schedule; no caller-facing ownership decision"},
 	"MaybeAutoApprovePlan":         {KindDerived, "invoked from relayEvent only for an id the SAME request's already-authorized StartRunContent/ApprovePlan call is streaming"},
 
 	// --- shared infrastructure: process-wide catalog/config, same for every caller by design ---

@@ -19,11 +19,15 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 const deploymentWorkspace = "/deployment/workspace"
@@ -246,4 +250,135 @@ func TestListenerScopedWorkspaceAuthority_Scenario5_PersistedRootIdentityIsLexic
 	if gotRoot != configured {
 		t.Fatalf("workspace factory root = %q, want exact configured root %q", gotRoot, configured)
 	}
+}
+
+func TestListenerScopedWorkspaceAuthority_Scenario5_ScheduledFireCannotReviveOffRoot(t *testing.T) {
+	store, err := jsonlstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	var workspaceCalls atomic.Int32
+	svc := serverAssignedScheduleService(t, store, func(root string) tool.Workspace {
+		workspaceCalls.Add(1)
+		return memfs.NewWorkspace(root)
+	})
+
+	created, err := svc.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name:      "server-root",
+		Prompt:    "run",
+		Trigger:   port.TriggerSpec{Cron: "@every 1h"},
+		Mode:      session.ModePlan,
+		Workspace: "",
+	})
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if created.Spec.Workspace != deploymentWorkspace {
+		t.Fatalf("created schedule workspace = %q, want configured deployment root %q", created.Spec.Workspace, deploymentWorkspace)
+	}
+	if _, err := svc.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "client-root", Prompt: "run", Trigger: port.TriggerSpec{Cron: "@every 1h"}, Mode: session.ModePlan, Workspace: "/client/root",
+	}); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("CreateSchedule with client workspace error = %v, want InvalidArgument", err)
+	}
+	noFS, err := svc.CreateSchedule(context.Background(), port.ScheduleSpec{
+		Name: "no-fs", Prompt: "run", Trigger: port.TriggerSpec{Cron: "@every 1h"}, Mode: session.ModePlan, Profile: string(server.ProfileNoFS),
+	})
+	if err != nil {
+		t.Fatalf("CreateSchedule(no-fs): %v", err)
+	}
+	if noFS.Spec.Workspace != "" {
+		t.Fatalf("no-fs schedule workspace = %q, want empty", noFS.Spec.Workspace)
+	}
+
+	legacy := port.Schedule{Spec: port.ScheduleSpec{
+		Name: "legacy-off-root", Prompt: "run", Trigger: port.TriggerSpec{Cron: "@every 1h"}, Mode: session.ModePlan, Workspace: "/legacy/off-root",
+	}, State: port.ScheduleState{Enabled: true, NextFireAt: time.Now().Add(time.Hour)}}
+	if err := store.ScheduleStore().Save(context.Background(), legacy); err != nil {
+		t.Fatalf("save legacy schedule: %v", err)
+	}
+	var fired atomic.Int32
+	sch := scheduler.New(scheduler.Config{
+		Store: store.ScheduleStore(), Clock: wallclock.Clock{}, Diagnostics: port.NopDiagnostics{},
+		Fire: func(context.Context, port.Schedule, time.Time) (port.ScheduleFire, error) {
+			fired.Add(1)
+			return port.ScheduleFire{}, nil
+		},
+	})
+	svc.SetScheduler(sch)
+	if _, err := svc.FireNow(context.Background(), legacy.Spec.Name); !errors.Is(err, server.ErrFailedPrecondition) {
+		t.Fatalf("FireNow legacy off-root error = %v, want FailedPrecondition", err)
+	}
+	if got := fired.Load(); got != 0 {
+		t.Fatalf("legacy off-root fire callback calls = %d, want 0", got)
+	}
+	stored, err := store.ScheduleStore().Load(context.Background(), legacy.Spec.Name)
+	if err != nil {
+		t.Fatalf("load legacy schedule: %v", err)
+	}
+	if stored.State.FireCount != 0 {
+		t.Fatalf("legacy off-root schedule fire count = %d, want 0 before rejection", stored.State.FireCount)
+	}
+	if got := workspaceCalls.Load(); got != 0 {
+		t.Fatalf("workspace factory calls = %d, want 0 before legacy schedule rejection", got)
+	}
+}
+
+func TestListenerScopedWorkspaceAuthority_Scenario5_AllCreationPathsRespectAuthority(t *testing.T) {
+	store := memstore.New()
+	var factoryCalls atomic.Int32
+	// The counted factory proves adoption rejects an off-root binding before engine
+	// or environment construction can receive it.
+	svc, err := server.NewService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		WorkspaceAuthority: server.WorkspaceAuthorityServerAssigned, AuthoritativeWorkspace: deploymentWorkspace,
+		OwnershipEnforced: true,
+		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+			factoryCalls.Add(1)
+			return server.SessionEngineResult{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	legacy := session.New("legacy-adoption", session.ModeDefault, "/legacy", session.Limits{MaxTurns: 5}, time.Unix(0, 0))
+	if err := legacy.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
+		t.Fatalf("RestoreSessionMetadata: %v", err)
+	}
+	principal := &session.Principal{Issuer: "issuer", Subject: "subject", GrantType: session.GrantTypeUser}
+	if err := legacy.RestoreLabels(principal, ""); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	if err := store.Save(context.Background(), legacy); err != nil {
+		t.Fatalf("store.Save: %v", err)
+	}
+	ctx := session.WithPrincipal(context.Background(), principal)
+	bindings := server.AdoptionBindings{
+		Workspace: "/legacy/off-root", EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/legacy/off-root"},
+		ProviderID: "provider", ModelID: "model", Profile: server.ProfileDefault,
+	}
+	preflight, err := svc.PreflightSessionAdoption(ctx, legacy.ID, bindings)
+	if err != nil {
+		t.Fatalf("PreflightSessionAdoption: %v", err)
+	}
+	if preflight.Eligible || preflight.Reason != server.AdoptionReasonBindingUnresolved {
+		t.Fatalf("off-root adoption preflight = %+v, want binding_unresolved", preflight)
+	}
+	if got := factoryCalls.Load(); got != 0 {
+		t.Fatalf("session engine factory calls = %d, want 0 before off-root adoption rejection", got)
+	}
+}
+
+func serverAssignedScheduleService(t *testing.T, store *jsonlstore.Store, workspaces server.WorkspaceFactory) *server.Service {
+	t.Helper()
+	svc, err := server.NewService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:  store, Workspaces: workspaces, WorkspaceAuthority: server.WorkspaceAuthorityServerAssigned, AuthoritativeWorkspace: deploymentWorkspace,
+		Now: func() time.Time { return time.Unix(0, 0) }, Diagnostics: port.NopDiagnostics{},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	return svc
 }

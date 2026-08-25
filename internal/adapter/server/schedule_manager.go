@@ -138,6 +138,9 @@ type scheduleManager struct {
 	// ownershipEnforced mirrors ScheduleManagerConfig.OwnershipEnforced — see
 	// its doc. Gates physicalScheduleName's owner-prefixing.
 	ownershipEnforced bool
+	// workspaceForCreate applies the owning Service's workspace authority to
+	// schedule create/update requests. Nil preserves standalone manager behavior.
+	workspaceForCreate func(string, SessionProfile) (string, error)
 }
 
 // scheduleStoreProvider is the accessor the jsonlstore + redisstore expose:
@@ -246,6 +249,13 @@ func NewScheduleManager(cfg ScheduleManagerConfig) *scheduleManager {
 // before Start); the pointer is read lock-free on every selector validation.
 func (m *scheduleManager) setModelsPointer(p *atomic.Pointer[[]*mecatlv1.ModelInfo]) {
 	m.models = p
+}
+
+// setWorkspaceForCreate attaches the Service-owned workspace authority to the
+// manager after Service construction. A standalone manager remains
+// client-selectable by leaving this nil.
+func (m *scheduleManager) setWorkspaceForCreate(fn func(string, SessionProfile) (string, error)) {
+	m.workspaceForCreate = fn
 }
 
 // scheduleStore returns the manager's ScheduleStore (the explicit override
@@ -374,6 +384,13 @@ func fireNotFoundErr(fireID string) error {
 func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
 	if !m.requireCaller(ctx) {
 		return port.Schedule{}, fmt.Errorf("%w: unable to create schedule", ErrInvalidArgument)
+	}
+	if m.workspaceForCreate != nil {
+		workspace, err := m.workspaceForCreate(spec.Workspace, SessionProfile(spec.Profile))
+		if err != nil {
+			return port.Schedule{}, err
+		}
+		spec.Workspace = workspace
 	}
 	now := m.now()
 	cronNextFire, originOwner, err := m.validateScheduleSpec(ctx, spec, now)
@@ -812,6 +829,13 @@ func (m *scheduleManager) ListSchedules(ctx context.Context) ([]port.Schedule, e
 func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
 	if !m.requireCaller(ctx) {
 		return port.Schedule{}, scheduleNotFoundErr(port.ErrScheduleNotFound, spec.Name)
+	}
+	if m.workspaceForCreate != nil {
+		workspace, err := m.workspaceForCreate(spec.Workspace, SessionProfile(spec.Profile))
+		if err != nil {
+			return port.Schedule{}, err
+		}
+		spec.Workspace = workspace
 	}
 	now := m.now()
 	// The computed cron next-fire is not needed here (Update preserves the

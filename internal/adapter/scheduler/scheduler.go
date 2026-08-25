@@ -388,6 +388,18 @@ func (s *Scheduler) SetFire(f FireFunc) {
 	s.cfg.Fire = f
 }
 
+// SetCanProcess replaces the pre-claim schedule eligibility predicate before
+// Start. Composition uses it to add Service-owned authority checks after the
+// Service exists.
+func (s *Scheduler) SetCanProcess(fn func(port.Schedule) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started.Load() {
+		panic("scheduler: SetCanProcess after Start")
+	}
+	s.cfg.CanProcess = fn
+}
+
 // SetPresentScheduleName wires the optional physical-to-literal presentation
 // seam before Start. Nil preserves identity.
 func (s *Scheduler) SetPresentScheduleName(fn func(port.Schedule) string) {

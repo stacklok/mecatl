@@ -1217,6 +1217,9 @@ func NewService(cfg Config) (*Service, error) {
 	if cfg.Scheduler != nil && svc.schedMgr != nil {
 		svc.schedMgr.SetScheduler(cfg.Scheduler)
 	}
+	if svc.schedMgr != nil {
+		svc.schedMgr.setWorkspaceForCreate(svc.workspaceForCreate)
+	}
 	return svc, nil
 }
 
@@ -2919,13 +2922,43 @@ func (s *Service) validatePersistedWorkspace(sess *session.Session) error {
 	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned || profileForSession(sess) == ProfileNoFS {
 		return nil
 	}
-	root := sess.Workspace
-	configured := s.cfg.AuthoritativeWorkspace
-	if root == "" || configured == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root ||
-		!filepath.IsAbs(configured) || filepath.Clean(configured) != configured || root != configured {
+	if !s.isAuthoritativeWorkspace(sess.Workspace) {
 		return fmt.Errorf("%w: persisted session %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, sess.ID)
 	}
 	return nil
+}
+
+func (s *Service) isAuthoritativeWorkspace(root string) bool {
+	configured := s.cfg.AuthoritativeWorkspace
+	return root != "" && configured != "" && filepath.IsAbs(root) && filepath.Clean(root) == root &&
+		filepath.IsAbs(configured) && filepath.Clean(configured) == configured && root == configured
+}
+
+// validatePersistedScheduleWorkspace prevents durable schedule specs from
+// becoming a filesystem-authority bypass at fire time.
+func (s *Service) validatePersistedScheduleWorkspace(spec port.ScheduleSpec) error {
+	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned {
+		return nil
+	}
+	if SessionProfile(spec.Profile) == ProfileNoFS {
+		if spec.Workspace == "" {
+			return nil
+		}
+	} else if SessionProfile(spec.Profile) == ProfileDefault && s.isAuthoritativeWorkspace(spec.Workspace) {
+		return nil
+	}
+	return fmt.Errorf("%w: persisted schedule %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, spec.Name)
+}
+
+// CanProcessSchedule reports whether a durable schedule is eligible to be
+// claimed by this deployment's scheduler. Rejected legacy state is logged before
+// the scheduler's claim fence so it cannot revive an off-root filesystem path.
+func (s *Service) CanProcessSchedule(sched port.Schedule) bool {
+	if err := s.validatePersistedScheduleWorkspace(sched.Spec); err != nil {
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "scheduler: refusing schedule outside deployment workspace authority", "schedule", sched.Spec.Name, "err", err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.Environment) error {

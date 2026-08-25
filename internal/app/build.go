@@ -2962,6 +2962,9 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 		return noop, nil // byte-identical default
 	}
 	svc.SetScheduler(sched)
+	sched.SetCanProcess(func(s port.Schedule) bool {
+		return (!cfg.OwnershipEnforced || s.Spec.Owner != nil) && svc.CanProcessSchedule(s)
+	})
 	// makeFireFunc needs the ScheduleStore to persist the in-flight fire record
 	// (RecordFireStart/RecordFireProgress, issue #386). buildScheduler already
 	// resolved it via resolveScheduleStore — the SAME grpcdriver client when
