@@ -62,10 +62,11 @@ const (
 //   - is acpInclude by default.
 var flagMetaByFlag = map[string]flagMeta{
 	// ── Server (serve-only) ───────────────────────────────────────────────
-	"config":       {group: groupServer, common: false, acp: acpExclude},
-	"grpc-addr":    {group: groupServer, common: true, acp: acpExclude},
-	"http-addr":    {group: groupServer, common: true, acp: acpExclude},
-	"metrics-addr": {group: groupServer, common: false, acp: acpExclude},
+	"config":              {group: groupServer, common: false, acp: acpExclude},
+	"grpc-addr":           {group: groupServer, common: true, acp: acpExclude},
+	"http-addr":           {group: groupServer, common: true, acp: acpExclude},
+	"workspace-authority": {group: groupServer, common: false, acp: acpExclude},
+	"metrics-addr":        {group: groupServer, common: false, acp: acpExclude},
 
 	// ── Security (serve-only) ─────────────────────────────────────────────
 	"auth-token": {group: groupSecurity, common: true, acp: acpExclude},

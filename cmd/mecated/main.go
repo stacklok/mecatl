@@ -81,12 +81,13 @@ const defaultMetricsAddr = "127.0.0.1:9090"
 // addresses, TLS, auth, rate limiting, metrics, tracing) is serve-time state
 // owned by this binary.
 type config struct {
-	grpcAddr        string
-	httpAddr        string
-	workspace       string
-	model           string
-	defaultProvider string
-	defaultModel    string
+	grpcAddr           string
+	httpAddr           string
+	workspace          string
+	workspaceAuthority string
+	model              string
+	defaultProvider    string
+	defaultModel       string
 	// defaultProviderFlagSet is true when --default-provider was passed explicitly
 	// (set after parse via fs.Visit), so composition lets CLI out-rank the
 	// operator-global settings.yaml models.default_provider: key.
@@ -1020,6 +1021,8 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	out := app.Config{
 		Workspace:                     cfg.workspace,
+		WorkspaceAuthority:            mustWorkspaceAuthority(cfg),
+		AuthoritativeWorkspace:        cfg.workspace,
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
 		DefaultModel:                  cfg.defaultModel,
@@ -1315,6 +1318,52 @@ func loadAndMergeDaemonConfig(cfg *config, acp bool, load configLoader) error {
 	return nil
 }
 
+// workspaceAuthorityForListeners derives mecated's API workspace policy from both
+// API listeners. Any non-loopback listener is a network boundary, so it wins over
+// a loopback sibling. An explicit operator selection wins over topology.
+func workspaceAuthorityForListeners(cfg config) (server.WorkspaceAuthority, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.workspaceAuthority)) {
+	case "":
+		if isLoopbackHostPort(cfg.grpcAddr) && isLoopbackHostPort(cfg.httpAddr) {
+			return server.WorkspaceAuthorityClientSelected, nil
+		}
+		return server.WorkspaceAuthorityServerAssigned, nil
+	case "client-selected":
+		return server.WorkspaceAuthorityClientSelected, nil
+	case "server-assigned":
+		return server.WorkspaceAuthorityServerAssigned, nil
+	default:
+		return 0, fmt.Errorf("--workspace-authority %q: want client-selected or server-assigned", cfg.workspaceAuthority)
+	}
+}
+
+// mustWorkspaceAuthority is used only after validateEffectiveConfig has accepted
+// the command configuration. Keep the fallback server-assigned so a direct caller
+// that bypasses validation never accidentally grants client root selection.
+func mustWorkspaceAuthority(cfg config) server.WorkspaceAuthority {
+	authority, err := workspaceAuthorityForListeners(cfg)
+	if err != nil {
+		return server.WorkspaceAuthorityServerAssigned
+	}
+	return authority
+}
+
+// validateWorkspaceAuthority rejects a network filesystem deployment without a
+// configured root before app.Build or either API listener starts. The server keeps
+// an empty authoritative root valid for file-less deployments: a later composition
+// root (mecak8s) can select server-assigned authority plus no-FS without inventing
+// a container-root workspace.
+func validateWorkspaceAuthority(cfg config) error {
+	authority, err := workspaceAuthorityForListeners(cfg)
+	if err != nil {
+		return err
+	}
+	if authority == server.WorkspaceAuthorityServerAssigned && cfg.workspace == "" {
+		return errors.New("server-assigned filesystem deployment requires --workspace")
+	}
+	return nil
+}
+
 // validateEffectiveConfig runs the EFFECTIVE-value cross-validation that must
 // see the post-merge config: the perf-MCP loopback/empty-metrics guard and the
 // rate-limit/rate-burst sanity bounds. It is a PURE helper (no I/O, no side
@@ -1324,6 +1373,9 @@ func loadAndMergeDaemonConfig(cfg *config, acp bool, load configLoader) error {
 // and rate_burst=0 meanings (disable / derive) are preserved: only negative and
 // non-finite (NaN/Inf) values are rejected (review fix #5).
 func validateEffectiveConfig(cfg config) error {
+	if err := validateWorkspaceAuthority(cfg); err != nil {
+		return err
+	}
 	// --perf-mcp rides the admin listener, so it is meaningless without one.
 	if cfg.perfMCP && cfg.metricsAddr == "" {
 		return errors.New("--perf-mcp requires --metrics-addr (the loopback admin listener it mounts /mcp on)")
@@ -1386,6 +1438,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.httpAddr, "http-addr", defaultHTTPAddr,
 		"HTTP/SSE listen address (defaults to loopback; set --auth-token and/or --tls-cert before binding non-loopback)")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
+	fs.StringVar(&cfg.workspaceAuthority, "workspace-authority", "", "workspace authority: client-selected or server-assigned (default derives from gRPC + HTTP/SSE listener topology)")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selector still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "server-configured deployment-wide default model id for the default provider, shared by every client; sits BELOW client-side defaults and ABOVE the per-provider built-in default. Validated FAIL-FAST at startup: a model not catalogued for the default provider refuses to start (stricter than per-session selectors, which allow passthrough)")
