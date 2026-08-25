@@ -2,8 +2,8 @@
 id: 05-mecak8s-no-fs
 title: Make mecak8s server-assigned and no-FS by default
 blocked_by: [01-service-authority, 02-internal-authority-paths, 03-mecated-composition]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-listener-scoped-workspace-authority/05-mecak8s-no-fs"
 worktree: ""
 issue: ""
 retries: 0
