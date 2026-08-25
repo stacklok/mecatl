@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -21,13 +22,27 @@ const startupReasonNotFound = client.CapabilityReasonUnknown
 type startupResumeError struct {
 	Reason client.CapabilityReason
 	text   string
+	// noEligibleChat marks the specific --resume-latest miss where the inventory was
+	// listed successfully but held no eligible resumable chat. It is the ONLY miss
+	// --resume-latest-or-new degrades into a fresh session; a list/transport failure
+	// (also Reason == CapabilityReasonUnknown) is NOT this case and still surfaces.
+	noEligibleChat bool
 }
 
 func (e *startupResumeError) Error() string { return e.text }
 
 func startupResumeConfig(ctx context.Context, source startupResumeSource, cfg config) (*client.ResumeSelection, string, error) {
-	resume, err := resolveStartupResume(ctx, source, cfg.resumeID, cfg.resumeLatest)
+	resume, err := resolveStartupResume(ctx, source, cfg.resumeID, cfg.resumeLatest || cfg.resumeLatestOrNew)
 	if err != nil {
+		// --resume-latest-or-new degrades a "no eligible chat" miss into a fresh
+		// session (fall through to cfg.workspace) instead of failing startup. Only
+		// that specific miss (noEligibleChat) is degraded: a list/transport failure
+		// still surfaces (and --resume-latest-or-new never uses an exact ID, so no
+		// exact-ID error arises).
+		var resumeErr *startupResumeError
+		if cfg.resumeLatestOrNew && errors.As(err, &resumeErr) && resumeErr.noEligibleChat {
+			return nil, cfg.workspace, nil
+		}
 		return nil, "", err
 	}
 	if resume != nil {
@@ -67,7 +82,7 @@ func resolveStartupResume(ctx context.Context, source startupResumeSource, exact
 		// Latest means newest with an available authoritative transcript. A
 		// pruned/corrupt row is advisory inventory, so continue to the next row.
 	}
-	return nil, &startupResumeError{Reason: startupReasonNotFound, text: "no eligible resumable chat was found; use --resume with an exact ID or start a new chat"}
+	return nil, &startupResumeError{Reason: startupReasonNotFound, noEligibleChat: true, text: "no eligible resumable chat was found; use --resume with an exact ID or start a new chat"}
 }
 
 func loadExactStartupResume(ctx context.Context, source startupResumeSource, id string) (*client.ResumeSelection, error) {

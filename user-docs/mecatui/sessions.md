@@ -14,7 +14,10 @@ Pass an exact session ID, or let mecatui choose the newest eligible main chat:
 ```sh
 bin/mecatui --resume 01JOPAQUESESSIONID
 bin/mecatui connect 127.0.0.1:8080 --resume-latest
+bin/mecatui --resume-latest-or-new
 ```
+
+`--resume-latest` continues the newest eligible chat and fails startup when none exists. `--resume-latest-or-new` is the same, except it starts a fresh chat when no eligible chat is found instead of failing — the "continue where I left off, otherwise begin" launch. (A genuine storage/list failure still surfaces for both, rather than being masked as a new chat.)
 
 A resumed chat is the stored chat, not a copy. It keeps its stored workspace and model. You can combine a resume selector with `--prompt` to send one next task after the transcript loads.
 

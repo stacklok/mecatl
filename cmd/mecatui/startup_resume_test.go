@@ -140,3 +140,85 @@ func TestADR_0108_StartupStaticValidation(t *testing.T) {
 		t.Fatalf("transcript error = %#v", err)
 	}
 }
+
+// TestResumeLatestOrNew_FlagGrammar covers the --resume-latest-or-new selector: it
+// parses in both modes, and it is mutually exclusive with --resume and
+// --resume-latest (one startup intent).
+func TestResumeLatestOrNew_FlagGrammar(t *testing.T) {
+	for _, mode := range []transportMode{modeLocal, modeConnect} {
+		_, cfg, err := parseTransportFlags(mode, &strings.Builder{}, []string{"--resume-latest-or-new"})
+		if err != nil {
+			t.Fatalf("mode %s: %v", mode, err)
+		}
+		if !cfg.resumeLatestOrNew {
+			t.Fatalf("mode %s did not retain --resume-latest-or-new", mode)
+		}
+	}
+	conflicts := [][]string{
+		{"--resume", "a", "--resume-latest-or-new"},
+		{"--resume-latest", "--resume-latest-or-new"},
+	}
+	for _, args := range conflicts {
+		if _, _, err := parseTransportFlags(modeLocal, &strings.Builder{}, args); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Fatalf("args %v conflict error = %v", args, err)
+		}
+	}
+}
+
+// TestResumeLatestOrNew_FallsBackToNewOnMiss proves --resume-latest-or-new degrades a
+// "no eligible chat" miss into a fresh session (nil selection + the configured
+// workspace) instead of failing startup, while a plain --resume-latest still errors on
+// the same empty inventory.
+func TestResumeLatestOrNew_FallsBackToNewOnMiss(t *testing.T) {
+	empty := func() *fakeStartupResumeSource { return &fakeStartupResumeSource{} }
+
+	// --resume-latest-or-new: miss → new session, no error.
+	sel, ws, err := startupResumeConfig(context.Background(), empty(), config{resumeLatestOrNew: true, workspace: "/ws"})
+	if err != nil {
+		t.Fatalf("or-new miss returned error: %v", err)
+	}
+	if sel != nil {
+		t.Fatalf("or-new miss must yield no selection, got %+v", sel)
+	}
+	if ws != "/ws" {
+		t.Fatalf("or-new miss workspace = %q, want /ws", ws)
+	}
+
+	// --resume-latest: same empty inventory still fails startup.
+	if _, _, err := startupResumeConfig(context.Background(), empty(), config{resumeLatest: true, workspace: "/ws"}); err == nil {
+		t.Fatal("plain --resume-latest on empty inventory must error")
+	}
+}
+
+// TestResumeLatestOrNew_AdoptsWhenEligible proves the happy path is unchanged from
+// --resume-latest: when an eligible chat exists it is adopted (selection + its stored
+// workspace).
+func TestResumeLatestOrNew_AdoptsWhenEligible(t *testing.T) {
+	source := &fakeStartupResumeSource{
+		rows: []client.SessionListItem{
+			{ID: "newest", ModifiedAt: 60, Kind: client.SessionKindMain, State: "completed", Capabilities: client.SessionInventoryCapabilities{PublicChat: true}},
+		},
+		transcripts: map[string]client.SessionTranscript{"newest": {SessionID: "newest", Complete: true}},
+		snapshots:   map[string]client.SessionSnapshot{"newest": {State: "completed", Workspace: "/adopted"}},
+	}
+	sel, ws, err := startupResumeConfig(context.Background(), source, config{resumeLatestOrNew: true, workspace: "/ws"})
+	if err != nil {
+		t.Fatalf("or-new adopt returned error: %v", err)
+	}
+	if sel == nil || sel.Row.ID != "newest" {
+		t.Fatalf("or-new adopt selection = %+v", sel)
+	}
+	if ws != "/adopted" {
+		t.Fatalf("or-new adopt workspace = %q, want /adopted", ws)
+	}
+}
+
+// TestResumeLatestOrNew_ListFailureStillErrors proves the fallback is scoped to the
+// not-found miss ONLY: a genuine inventory-list failure still surfaces (retryable
+// infrastructure error), never silently degraded to a new session.
+func TestResumeLatestOrNew_ListFailureStillErrors(t *testing.T) {
+	source := &fakeStartupResumeSource{listErr: errors.New("inventory unavailable")}
+	if _, _, err := startupResumeConfig(context.Background(), source, config{resumeLatestOrNew: true, workspace: "/ws"}); err == nil {
+		t.Fatal("or-new must surface a list failure, not fall back to a new session")
+	}
+}

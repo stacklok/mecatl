@@ -143,6 +143,11 @@ type config struct {
 	// exclusive; the first prompt still owns all run-entry attachment/revalidation.
 	resumeID     string
 	resumeLatest bool
+	// resumeLatestOrNew is --resume-latest with a graceful miss: it adopts the newest
+	// eligible owned main chat exactly like --resume-latest, but when NO eligible chat
+	// exists it starts a fresh session instead of failing startup. It is mutually
+	// exclusive with both --resume and --resume-latest (one startup intent).
+	resumeLatestOrNew bool
 
 	// prompt is the literal seed-prompt text supplied via -p/--prompt.
 	// Empty = no seed. Joined ahead of --prompt-file when both are given.
@@ -348,6 +353,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
 	fs.StringVar(&cfg.resumeID, "resume", "", "start by continuing the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session (mutually exclusive with --resume-latest)")
 	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "start by continuing the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions (mutually exclusive with --resume)")
+	fs.BoolVar(&cfg.resumeLatestOrNew, "resume-latest-or-new", false, "like --resume-latest, but start a NEW chat when no eligible chat exists instead of failing (mutually exclusive with --resume and --resume-latest)")
 	fs.StringVar(&cfg.prompt, "prompt", "", "seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both --prompt and --prompt-file may be given (literal first)")
 	fs.StringVar(&cfg.prompt, "p", "", "short form of --prompt")
 	fs.StringVar(&cfg.promptFile, "prompt-file", "", "path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after --prompt when both are given")
@@ -487,8 +493,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	if err := finalizeParsedConfig(fs, &cfg); err != nil {
 		return fs, config{}, err
 	}
-	if cfg.resumeID != "" && cfg.resumeLatest {
-		return fs, config{}, errors.New("--resume and --resume-latest are mutually exclusive")
+	if err := validateResumeSelectors(cfg); err != nil {
+		return fs, config{}, err
 	}
 	if err := validateSessionsLaunch(cfg); err != nil {
 		return fs, config{}, err
@@ -501,6 +507,26 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		cfg.promptFileBody = string(body)
 	}
 	return fs, cfg, nil
+}
+
+// validateResumeSelectors enforces that at most ONE startup resume intent is chosen:
+// --resume, --resume-latest, and --resume-latest-or-new are mutually exclusive. It is
+// shared by the parse-time check and the client-side validate() so both surfaces agree.
+func validateResumeSelectors(cfg config) error {
+	n := 0
+	if cfg.resumeID != "" {
+		n++
+	}
+	if cfg.resumeLatest {
+		n++
+	}
+	if cfg.resumeLatestOrNew {
+		n++
+	}
+	if n > 1 {
+		return errors.New("--resume, --resume-latest, and --resume-latest-or-new are mutually exclusive")
+	}
+	return nil
 }
 
 func validateSessionsLaunch(cfg config) error {
@@ -516,6 +542,8 @@ func validateSessionsLaunch(cfg config) error {
 		return errors.New("mecatui sessions conflicts with --resume")
 	case cfg.resumeLatest:
 		return errors.New("mecatui sessions conflicts with --resume-latest")
+	case cfg.resumeLatestOrNew:
+		return errors.New("mecatui sessions conflicts with --resume-latest-or-new")
 	default:
 		return nil
 	}
@@ -701,8 +729,8 @@ func (c config) validate() error {
 	if c.listThemes {
 		return nil
 	}
-	if c.resumeID != "" && c.resumeLatest {
-		return errors.New("--resume and --resume-latest are mutually exclusive")
+	if err := validateResumeSelectors(c); err != nil {
+		return err
 	}
 	if c.workspace == "" {
 		return errors.New("workspace is required")

@@ -185,6 +185,7 @@ func TestSessionsLaunchRejectsSeedAndResumeFlags(t *testing.T) {
 		{args: []string{"--prompt-file", "task.md"}, want: "--prompt-file"},
 		{args: []string{"--resume", "session-id"}, want: "--resume"},
 		{args: []string{"--resume-latest"}, want: "--resume-latest"},
+		{args: []string{"--resume-latest-or-new"}, want: "--resume-latest-or-new"},
 		{args: []string{"-p", "hello"}, want: "-p/--prompt"},
 		{args: []string{"--prompt", "hello"}, want: "-p/--prompt"},
 	}
@@ -197,6 +198,7 @@ func TestSessionsLaunchRejectsSeedAndResumeFlags(t *testing.T) {
 			fs.StringVar(&cfg.promptFile, "prompt-file", "", "")
 			fs.StringVar(&cfg.resumeID, "resume", "", "")
 			fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "")
+			fs.BoolVar(&cfg.resumeLatestOrNew, "resume-latest-or-new", false, "")
 			if err := fs.Parse(tt.args); err != nil {
 				t.Fatal(err)
 			}
