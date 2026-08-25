@@ -2,7 +2,7 @@
 id: 02-internal-authority-paths
 title: Apply workspace authority to schedules and adoption
 blocked_by: [01-service-authority]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

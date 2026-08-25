@@ -2,7 +2,7 @@
 id: 03-mecated-composition
 title: Wire mecated listener topology and authority configuration
 blocked_by: [01-service-authority]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
