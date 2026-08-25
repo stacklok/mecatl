@@ -332,8 +332,7 @@ func typeText(t *testing.T, m Model, s string) Model {
 	return m
 }
 
-// pressEnter submits via the Enter key, returning the model and the resulting
-// command (nil for a built-in that opens no stream).
+// pressEnter submits via the Enter key, returning the model and resulting command.
 func pressEnter(t *testing.T, m Model) (Model, tea.Cmd) {
 	t.Helper()
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -351,36 +350,6 @@ func firstBatchLeaf(t *testing.T, cmd tea.Cmd) tea.Msg {
 		t.Fatalf("command result = %T, want non-empty tea.BatchMsg", msg)
 	}
 	return batch[0]()
-}
-
-// clearMsgFromCmd follows a command tree until the actual /clear create command
-// returns its lifecycle message. It is used where /clear is dispatched by queue
-// draining, which nests its command below the terminal-result batch.
-func clearMsgFromCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
-	t.Helper()
-	var walk func(tea.Cmd) (tea.Msg, bool)
-	walk = func(next tea.Cmd) (tea.Msg, bool) {
-		if next == nil {
-			return nil, false
-		}
-		msg := next()
-		switch msg := msg.(type) {
-		case clearSessionReadyMsg, clearSessionFailedMsg:
-			return msg, true
-		case tea.BatchMsg:
-			for _, leaf := range msg {
-				if found, ok := walk(leaf); ok {
-					return found, true
-				}
-			}
-		}
-		return nil, false
-	}
-	msg, ok := walk(cmd)
-	if !ok {
-		t.Fatal("clear command did not return a lifecycle message")
-	}
-	return msg
 }
 
 // TestClearBuiltinCreatesThenBindsThenCloses proves the create-first handoff:
@@ -607,6 +576,42 @@ func TestPaletteEnterRunsBuiltinDirectly(t *testing.T) {
 	}
 }
 
+// TestBuiltinPaletteAndTypedDispatchAgree proves that selecting a builtin is the
+// same operation as submitting its canonical bare line, including while a run is
+// active. /clear's running warning makes both ingress paths observable.
+func TestBuiltinPaletteAndTypedDispatchAgree(t *testing.T) {
+	for _, phase := range []phase{phaseIdle, phaseRunning} {
+		name := "idle"
+		if phase == phaseRunning {
+			name = "running"
+		}
+		t.Run(name, func(t *testing.T) {
+			typed, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+			typed.phase = phase
+			typed.conv.addUser("prior turn")
+			typed = typeText(t, typed, "/clear")
+			typed, typedCmd := pressEnter(t, typed)
+
+			selected, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+			selected.phase = phase
+			selected.conv.addUser("prior turn")
+			selected = typeText(t, selected, "/")
+			mm, selectedCmd := selected.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			selected = mm.(Model)
+
+			if (typedCmd == nil) != (selectedCmd == nil) {
+				t.Fatalf("command presence differs: typed nil=%t, palette nil=%t", typedCmd == nil, selectedCmd == nil)
+			}
+			if typed.phase != selected.phase || !reflect.DeepEqual(sessionState(typed), sessionState(selected)) || stripANSIstr(typed.statusMsg) != stripANSIstr(selected.statusMsg) {
+				t.Fatalf("typed and palette builtin outcomes differ: typed phase=%v state=%+v status=%q; palette phase=%v state=%+v status=%q", typed.phase, sessionState(typed), stripANSIstr(typed.statusMsg), selected.phase, sessionState(selected), stripANSIstr(selected.statusMsg))
+			}
+			if typed.palette.open || selected.palette.open || typed.ta.Value() != "" || selected.ta.Value() != "" {
+				t.Fatalf("both builtin ingress paths must clear input and close the palette: typed=%q/%t palette=%q/%t", typed.ta.Value(), typed.palette.open, selected.ta.Value(), selected.palette.open)
+			}
+		})
+	}
+}
+
 // TestBuiltinSubmitNeverSends pins that a bare built-in line never reaches the
 // model: /clear creates a replacement session, while /help returns nil. Neither
 // can open a Converse stream or send a prompt frame.
@@ -634,7 +639,7 @@ func TestBuiltinSubmitNeverSends(t *testing.T) {
 // TestBuiltinNameWithArgsFallsThrough guards the intercept against matching the
 // FIRST token regardless of trailing args: a built-in NAME followed by a space +
 // args ("/clear now") has a space, so commandPrefix returns false, the
-// submitPrompt built-in intercept does NOT fire, and the line is sent to the
+// submitPrompt builtin dispatcher does NOT fire, and the line is sent to the
 // model as a normal prompt — NOT swallowed, and the conversation is NOT cleared.
 func TestBuiltinNameWithArgsFallsThrough(t *testing.T) {
 	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
@@ -675,6 +680,68 @@ func TestBuiltinNameWithArgsFallsThrough(t *testing.T) {
 	}
 	if m.phase != phaseRunning {
 		t.Errorf("phase = %v, want running after a normal send", m.phase)
+	}
+}
+
+// TestDispatchBareBuiltinWhitespace defines a bare invocation as exactly a
+// builtin name after trimming surrounding Unicode whitespace. Anything remaining
+// after the name is model-facing input.
+func TestDispatchBareBuiltinWhitespace(t *testing.T) {
+	for _, tc := range []struct {
+		input   string
+		handled bool
+	}{
+		{"/clear", true},
+		{" \u2003/clear\u00a0", true},
+		{"/clear\n", true},
+		{"/clear now", false},
+		{"/clear\nnow", false},
+		{"/foo", false},
+	} {
+		t.Run(strings.ReplaceAll(tc.input, "\n", "\\n"), func(t *testing.T) {
+			m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+			_, _, handled := m.dispatchBareBuiltin(tc.input)
+			if handled != tc.handled {
+				t.Fatalf("dispatchBareBuiltin(%q) handled=%t, want %t", tc.input, handled, tc.handled)
+			}
+		})
+	}
+}
+
+// TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea drives Unicode
+// whitespace through the actual key-by-key textarea ingress, then Enter. The
+// local dispatch must happen before the prompt-opening path.
+func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.conv.addUser("prior turn")
+
+	const input = "\u2003/clear\u00a0"
+	m = typeText(t, m, input)
+	if got := m.ta.Value(); got != input {
+		t.Fatalf("textarea value = %q, want %q", got, input)
+	}
+	m, cmd := pressEnter(t, m)
+
+	if cmd == nil {
+		t.Fatal("Unicode-whitespace /clear must start its local replacement-session handoff")
+	}
+	if m.phase != phaseConnecting || m.conv.isEmpty() {
+		t.Fatalf("pending Unicode-whitespace /clear must retain the old UI while connecting: phase=%v empty=%v", m.phase, m.conv.isEmpty())
+	}
+	ready := firstBatchLeaf(t, cmd)
+	mm, _ := m.Update(ready)
+	m = mm.(Model)
+	if !m.conv.isEmpty() {
+		t.Fatal("Unicode-whitespace /clear must clear the conversation after its local handoff")
+	}
+	if m.phase != phaseIdle {
+		t.Fatalf("Unicode-whitespace /clear phase = %v, want idle", m.phase)
+	}
+	if m.palette.open || m.ta.Value() != "" {
+		t.Fatalf("Unicode-whitespace /clear must close the palette and clear input, open=%t input=%q", m.palette.open, m.ta.Value())
+	}
+	if got := promptTexts(send); len(got) != 0 {
+		t.Fatalf("Unicode-whitespace /clear must send no prompt frames, got %v", got)
 	}
 }
 
@@ -745,7 +812,7 @@ func TestSlashNoMatchBlocksKnownBuiltins(t *testing.T) {
 
 // TestSlashNoMatchCaseInsensitive asserts that a known builtin with mixed case
 // ("/MODELS") is still blocked when gated off, not sent to the model.
-// interceptSlashCommand normalises to lower-case so the guard works.
+// dispatchBareBuiltin normalises to lower-case so the guard works.
 func TestSlashNoMatchCaseInsensitive(t *testing.T) {
 	// Zero caps → /models is gated off.
 	m, send := builtinDispatchModel(t, client.Capabilities{}, false)

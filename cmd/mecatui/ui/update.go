@@ -445,11 +445,11 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// clear the pending field, and submit via the identical typed-prompt path so
 	// the behavior is byte-identical to the operator pressing enter. The pending
 	// field is cleared BEFORE submitPrompt runs (defense-in-depth against re-fire
-	// on a /models restart or the connect-fallback rebind. /clear also reaches
-	// this seam only after its replacement session was created; its pending initial
-	// prompt has already been consumed, so it never re-fires).
-	// A "/"-prefixed seed (e.g. -p /clear) is intercepted by submitPrompt's
-	// built-in intercept — documented behavior.
+	// on a /models restart or the connect-fallback rebind, the two paths that
+	// funnel back through here — /clear is NOT one: runClear resets the same
+	// session via resetSession and never reaches this seam).
+	// A "/"-prefixed seed (e.g. -p /clear) is dispatched by submitPrompt's
+	// builtin dispatcher — documented behavior.
 	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
 		m.pendingInitialPrompt = ""
 		m.ta.SetValue(p)
@@ -2049,9 +2049,9 @@ func (m Model) pasteGateOpen() bool {
 // enqueues ordinary input; esc has a layered meaning before it falls through to
 // cancel:
 //
-//	(1) an open palette claims its NAVIGATION keys (↑/↓/tab/esc) so /-typing shows
-//	    the dropdown while running — but NOT enter: a bare built-in must intercept
-//	    before an ordinary line is steered or queued;
+//	(1) an open palette claims its navigation and completion keys (↑/↓/tab/enter)
+//	    so builtins dispatch through the same path and workspace rows complete;
+//	    esc is handled by the layered cancel path below;
 //	(2) esc/Cancel: non-empty input → clear the input (and resync the palette);
 //	    else non-empty queue → clear the queue (status "queue cleared"); else →
 //	    SendCancel (today's behaviour: the run ends with stop "cancelled");
@@ -2063,18 +2063,16 @@ func (m Model) pasteGateOpen() bool {
 //
 // ctrl+t (expand) and ctrl+c (quit) are handled globally in onKey before this.
 func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	// Let the palette claim its navigation keys while running, but NOT enter — enter
-	// reaches the Submit case so a bare local built-in intercepts and other input
-	// steers or queues. (esc is handled by the Cancel branch below, which layers
-	// clear-input/clear-queue/cancel — the palette's own esc-dismiss would shadow
-	// that, so it is excluded here too.)
-	if m.palette.open && !key.Matches(msg, m.keys.Submit) && !key.Matches(msg, m.keys.Cancel) {
+	// Let the palette claim its navigation and completion keys while running. A
+	// selected builtin dispatches locally; a workspace row completes into the
+	// textarea. Esc stays with the layered cancel path below.
+	if m.palette.open && !key.Matches(msg, m.keys.Cancel) {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
 	}
 	// The @-mention menu, like the palette, claims its navigation/complete keys
-	// while running EXCEPT enter (which reaches the same built-in intercept, then
+	// while running EXCEPT enter (which reaches the same builtin dispatcher, then
 	// steers or queues) and esc (the Cancel branch layers clear-input/clear-queue/cancel
 	// below).
 	if m.mention.open && !key.Matches(msg, m.keys.Submit) && !key.Matches(msg, m.keys.Cancel) {
@@ -2100,7 +2098,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.ta.InsertRune('\n')
 		return m.afterInputEdit(nil)
 	case key.Matches(msg, m.keys.Submit):
-		if mm, cmd, handled := m.interceptSlashCommand(strings.TrimSpace(m.ta.Value())); handled {
+		if mm, cmd, handled := m.dispatchBareBuiltin(m.ta.Value()); handled {
 			return mm, cmd
 		}
 		return m.enqueuePrompt()
@@ -2474,7 +2472,7 @@ func (m Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.paletteMoveDown()
 		return m, nil, true
 	case keyMenuTab, keyMenuEnter:
-		if mm, cmd, ran := m.runSelectedBuiltin(); ran {
+		if mm, cmd, ran := m.dispatchSelectedBuiltin(); ran {
 			return mm, cmd, true
 		}
 		return m.paletteComplete(), nil, true
@@ -2507,15 +2505,10 @@ func (m Model) onMentionKey(msg tea.KeyPressMsg) (Model, bool) {
 	return m, false
 }
 
-// runSelectedBuiltin runs the currently-selected palette row IF it is a built-in
-// command, closing the palette and resetting the input first, and reports ran=
-// true. For a non-built-in (workspace) row it reports ran=false so the caller
-// falls back to paletteComplete (text-completion). Running built-ins directly on
-// palette-enter — rather than text-completing them — is deliberate:
-// paletteComplete writes "/<name> " with a TRAILING SPACE, which makes
-// commandPrefix false and would slip the line past the submitPrompt built-in
-// intercept; for /clear the user expects enter to act, not to pre-fill the input.
-func (m Model) runSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
+// dispatchSelectedBuiltin validates that the selected palette row is a builtin and
+// dispatches the equivalent canonical bare command. Non-builtin workspace rows
+// return ran=false so the caller can complete them into the model-facing input.
+func (m Model) dispatchSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
 	if !m.palette.open || m.palette.cursor >= len(m.palette.filtered) {
 		return m, nil, false
 	}
@@ -2523,18 +2516,7 @@ func (m Model) runSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
 	if !row.Builtin {
 		return m, nil, false
 	}
-	b, found := builtinByName(m.caps, m.wiredCollaborators(), row.Name)
-	if !found {
-		return m, nil, false
-	}
-	// Close the palette and clear the input before acting (mirrors the bare-line
-	// submit intercept), then dispatch.
-	m.palette.open = false
-	m.palette.filtered = nil
-	m.palette.cursor = 0
-	m.ta.Reset()
-	mm, cmd := b.run(m)
-	return mm, cmd, true
+	return m.dispatchBareBuiltin("/" + row.Name)
 }
 
 // afterInputEdit re-syncs the palette from the (possibly changed) textarea
@@ -2589,13 +2571,13 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	if m.sessionID == "" {
 		return m, nil
 	}
-	// A BARE built-in command line ("/clear", "/help", …) is intercepted here —
+	// A BARE built-in command line ("/clear", "/help", …) is dispatched here —
 	// before addUser / stream-open — and dispatched to its Model action, so the
 	// built-in text never reaches the model. A non-built-in "/…" falls through to
 	// the normal send (preserving bare workspace-command invocation), and a
 	// "/name arg" line has a space → commandPrefix is false → also falls through
 	// (workspace commands expand server-side from the full line).
-	if mm, cmd, handled := m.interceptSlashCommand(text); handled {
+	if mm, cmd, handled := m.dispatchBareBuiltin(m.ta.Value()); handled {
 		return mm, cmd
 	}
 	// Expand staged large-paste placeholders IN PLACE first, so the mention
@@ -2604,7 +2586,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// including an "[Image #N]" token embedded in a paste PAYLOAD: the media
 	// reconcile pass below sees it like a typed marker, attaches the staged image
 	// and strips the token from the payload's quoted text; typed-marker semantics,
-	// accepted). The built-in intercept above ran on the RAW value — a placeholder
+	// accepted). The builtin dispatcher above ran on the RAW value — a placeholder
 	// is never a bare "/command", so it is unaffected. The staged store is cleared
 	// further down, AFTER the loud-reject early returns, so a failed submit keeps
 	// it for retry.

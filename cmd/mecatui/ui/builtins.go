@@ -49,8 +49,8 @@ type wiredCollaborators struct {
 
 // wiredCollaborators builds the struct from m.deps — the SINGLE construction
 // site for it, called by every builtinCommands/builtinByName call site
-// (palette.go's builtinRows, update.go's runSelectedBuiltin and submitPrompt) so
-// the three can never drift out of sync again (issue: the palette's hand-rolled
+// (palette.go's builtinRows, update.go's dispatchSelectedBuiltin and
+// dispatchBareBuiltin) so the three can never drift out of sync again (issue: the palette's hand-rolled
 // copy once omitted Sessions, so /sessions never appeared in autocomplete even
 // though the actual dispatch path built it correctly).
 func (m Model) wiredCollaborators() wiredCollaborators {
@@ -533,13 +533,13 @@ func isKnownBuiltinName(name string) bool {
 	return knownBuiltinNames[name]
 }
 
-// interceptSlashCommand checks whether text is a bare slash command (no args, no
-// newlines). If it matches a currently-registered builtin, it executes it. If it
-// matches a KNOWN builtin name that is gated off, it blocks the send with a
-// warning. Otherwise it returns handled=false and the caller falls through to the
-// normal send path (workspace/custom command, issue #348).
-func (m Model) interceptSlashCommand(text string) (tea.Model, tea.Cmd, bool) {
-	name, ok := commandPrefix(text)
+// dispatchBareBuiltin checks whether raw text is a bare slash command after trimming
+// surrounding Unicode whitespace. If it matches a currently-registered builtin, it
+// executes it. If it matches a KNOWN builtin name that is gated off, it blocks the
+// send with a warning. Otherwise it returns handled=false and the caller falls
+// through to the model-facing send path (workspace/custom command, issue #348).
+func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
+	name, ok := commandPrefix(strings.TrimSpace(text))
 	if !ok {
 		return m, nil, false
 	}

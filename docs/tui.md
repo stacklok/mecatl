@@ -1640,10 +1640,11 @@ is never mistaken for a hang. From there (idle), `enter` on an empty line **resu
 input for **editing** (non-destructive), and `esc` **clears** the queue; sending a
 fresh prompt also clears the pause and lets the queue drain at that run's clean end.
 
-A built-in (`/clear`, `/help`) typed mid-run is enqueued like any other line and
-dispatched **at drain time**, when the phase is idle and the built-in's idle-guard is
-satisfied (so a queued `/clear` clears the transcript instead of sending a prompt).
-`/clear` itself empties the queue along with the rest of the session-derived state.
+A bare built-in typed mid-run is handled locally **immediately**: an available
+builtin runs, while an unavailable one retains its local warning. Neither is queued
+or sent to the model. `/clear` retains its running-state warning instead of clearing
+an active conversation. `/clear` itself also empties any queued follow-ups when it
+runs while idle.
 
 Queueing is **running-only**: while a permission modal is open the modal keys own the
 keyboard unchanged (no mid-approval queueing).
