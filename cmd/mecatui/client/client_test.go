@@ -53,7 +53,7 @@ func TestDialBearerCleartextGuard(t *testing.T) {
 	}
 }
 
-// TestIsLoopbackHost covers the host classification used to gate the token.
+// TestIsLoopbackHost covers the host classification used to gate the token and remote workspace authority.
 func TestIsLoopbackHost(t *testing.T) {
 	cases := map[string]bool{
 		"127.0.0.1:8080": true,
@@ -69,8 +69,8 @@ func TestIsLoopbackHost(t *testing.T) {
 		"":               false,
 	}
 	for host, want := range cases {
-		if got := isLoopbackHost(host); got != want {
-			t.Errorf("isLoopbackHost(%q) = %v, want %v", host, got, want)
+		if got := IsLoopbackHost(host); got != want {
+			t.Errorf("IsLoopbackHost(%q) = %v, want %v", host, got, want)
 		}
 	}
 }

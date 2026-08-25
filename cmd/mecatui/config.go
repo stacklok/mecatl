@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -31,18 +32,21 @@ type config struct {
 	browseSessions bool
 	// helpAll is true when --help-all was passed; it requests the exhaustive
 	// flag listing and exits 0 before transport resolution.
-	helpAll    bool
-	helpFlags  bool
-	keymap     *cliconfig.KeyValueList
-	workspace  string
-	mode       string
-	theme      string
-	themeDir   string
-	authToken  string
-	useTLS     bool
-	tlsCA      string
-	insecure   bool
-	listThemes bool
+	helpAll   bool
+	helpFlags bool
+	keymap    *cliconfig.KeyValueList
+	workspace string
+	// workspaceExplicit distinguishes an operator-supplied --workspace from the
+	// empty default. Remote connect rejects the former without resolving it.
+	workspaceExplicit bool
+	mode              string
+	theme             string
+	themeDir          string
+	authToken         string
+	useTLS            bool
+	tlsCA             string
+	insecure          bool
+	listThemes        bool
 
 	// noAltScreen renders mecatui INLINE in the terminal's normal buffer instead
 	// of the alternate screen. Off by default (full-screen TUI on the alt screen);
@@ -566,6 +570,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.defaultProviderFlagSet = true
 	case "terminal-title":
 		cfg.terminalTitleFlagSet = true
+	case "workspace":
+		cfg.workspaceExplicit = true
 	}
 	markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
 }
@@ -628,7 +634,7 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	cfg.anthropicKey = keys.Anthropic
 	cfg.openCodeKey = keys.OpenCode
 
-	if !cfg.listThemes {
+	if !cfg.listThemes && cfg.transportMode != modeConnect {
 		ws, err := resolveWorkspace(cfg.workspace)
 		if err != nil {
 			return err
@@ -694,6 +700,27 @@ func transportUsage(fs *flag.FlagSet, mode transportMode, browseSessions ...bool
 	}
 }
 
+// configureWorkspaceForTransport applies the workspace authority rule after the
+// connect target is known. A remote client never resolves its cwd: the empty wire
+// field asks the server to select its authoritative root. An explicit path is
+// rejected before a dial or CreateSession call. Embedded and loopback workflows
+// retain the local cwd/worktree default.
+func configureWorkspaceForTransport(cfg *config) error {
+	if cfg.transportMode == modeConnect && !client.IsLoopbackHost(cfg.connectAddress) {
+		if cfg.workspaceExplicit {
+			return errors.New("--workspace is not allowed when connecting to a remote server")
+		}
+		cfg.workspace = ""
+		return nil
+	}
+	ws, err := resolveWorkspace(cfg.workspace)
+	if err != nil {
+		return err
+	}
+	cfg.workspace = ws
+	return nil
+}
+
 // resolveWorkspace defaults an empty workspace to the cwd and makes it absolute.
 func resolveWorkspace(ws string) (string, error) {
 	if ws == "" {
@@ -721,10 +748,10 @@ func (c config) validate() error {
 	if err := validateResumeSelectors(c); err != nil {
 		return err
 	}
-	if c.workspace == "" {
+	if c.workspace == "" && (c.transportMode != modeConnect || client.IsLoopbackHost(c.connectAddress)) {
 		return errors.New("workspace is required")
 	}
-	if !filepath.IsAbs(c.workspace) {
+	if c.workspace != "" && !filepath.IsAbs(c.workspace) {
 		return fmt.Errorf("workspace must be absolute: %q", c.workspace)
 	}
 	switch c.mode {

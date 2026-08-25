@@ -123,18 +123,16 @@ func run(argv []string) error {
 		return runLogin(res.remaining)
 	}
 
-	fs, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining, res.browseSessions)
+	cfg, err := parseRunConfig(res)
 	if err != nil {
 		return err
 	}
-	cfg.connectAddress = res.address
 	if cfg.providerKeys.AuthFileWarning != "" {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
 	}
 	if err := cfg.validate(); err != nil {
 		return err
 	}
-	_ = fs // returned for tests; production discards it.
 
 	// UNIVERSAL global-slog floor: redirect the stdlib default to io.Discard (or, under
 	// --quiet, still discard) BEFORE transport setup or the Bubble Tea program.
@@ -307,6 +305,20 @@ func run(argv []string) error {
 	})
 	maybeWriteFinalSessionHandoff(os.Stderr, finalModel, runErr, interrupted)
 	return runErr
+}
+
+// parseRunConfig resolves the transport-independent flags, then applies the
+// target-aware workspace authority rule before any transport is dialed.
+func parseRunConfig(res transportResolution) (config, error) {
+	_, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining, res.browseSessions)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.connectAddress = res.address
+	if err := configureWorkspaceForTransport(&cfg); err != nil {
+		return config{}, err
+	}
+	return cfg, nil
 }
 
 // applyLaunchIntent threads command-derived launch state into the ui at the

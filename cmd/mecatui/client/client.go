@@ -47,7 +47,7 @@ type Client struct {
 func Dial(cfg DialConfig) (*Client, error) {
 	var opts []grpc.DialOption
 
-	loopback := isLoopbackHost(cfg.Server)
+	loopback := IsLoopbackHost(cfg.Server)
 
 	// Refuse to leak a bearer token in cleartext to a non-loopback server. The
 	// per-RPC credential's RequireTransportSecurity() also blocks this at send
@@ -378,11 +378,11 @@ func (b bearerCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[str
 
 func (b bearerCreds) RequireTransportSecurity() bool { return !b.allowInsecure }
 
-// isLoopbackHost reports whether the host part of a "host:port" (or bare host)
+// IsLoopbackHost reports whether the host part of a "host:port" (or bare host)
 // target is loopback: an IP in 127.0.0.0/8, ::1, or the name "localhost".
 // A target with no resolvable/parseable host is treated as NON-loopback (fail
 // safe — we'd rather demand TLS than leak a token).
-func isLoopbackHost(server string) bool {
+func IsLoopbackHost(server string) bool {
 	host := server
 	if h, _, err := net.SplitHostPort(server); err == nil {
 		host = h
