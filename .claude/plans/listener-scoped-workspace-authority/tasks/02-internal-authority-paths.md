@@ -2,8 +2,8 @@
 id: 02-internal-authority-paths
 title: Apply workspace authority to schedules and adoption
 blocked_by: [01-service-authority]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-listener-scoped-workspace-authority/02-internal-authority-paths"
 worktree: ""
 issue: ""
 retries: 0
