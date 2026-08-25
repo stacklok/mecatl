@@ -135,9 +135,10 @@ posture in [ADR 0032](../adr/0032-worktree-binding.md).
   `Grep`, `Glob`, `Bash`, `Parallel`, and `SkillDraft`, while retaining the
   documented no-FS-safe tools.
   - verify: `TestNoFSCatalogProfile`
-- AC4.3: mecak8s accepts an explicit no-FS profile but rejects an explicit
-  filesystem profile and every non-empty workspace, so a caller cannot bypass
-  the file-less deployment default.
+- AC4.3: mecak8s accepts an explicit no-FS profile and treats the wire's empty
+  (omitted/default) profile as no-FS. It rejects every non-no-FS profile and
+  every non-empty workspace, so a caller cannot bypass the file-less deployment
+  default.
   - verify: `TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProfileAndWorkspace`
 - AC4.4: The offline mecak8s fixture creates and runs a default session
   without using the container root as its agent workspace.

@@ -37,9 +37,9 @@ from a request or from the server package's socket state.
   service assigns the configured deployment root.
 - A filesystem-bearing network deployment must fail before listener startup
   when it has no configured authoritative workspace. A no-FS deployment is the
-  exception: it has no filesystem root to configure. `mecak8s` rejects an
-  explicitly requested filesystem profile unless a future operator-enabled
-  mounted-workspace deployment defines it.
+  exception: it has no filesystem root to configure. `mecak8s` maps the wire's
+  empty (omitted/default) profile to no-FS and rejects every non-no-FS profile
+  unless a future operator-enabled mounted-workspace deployment defines it.
 - `mecated` chooses the policy from its listener topology: its default
   loopback-only deployment remains client-selectable, while any non-loopback,
   wildcard, or mixed API-listener configuration is server-assigned. `mecak8s`
