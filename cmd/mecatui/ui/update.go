@@ -309,41 +309,81 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onDisarmMsg(msg)
 
 	default:
-		// Lifecycle / transport msgs (session-ready, connect/stream error, stream
-		// close, clipboard results, slash-command discovery) are reduced in a
-		// separate type-switch to keep this dispatcher's branch count in check.
-		if mm, cmd, handled := m.updateLifecycle(msg); handled {
-			return mm, cmd
-		}
-		// MCP overlay result/error msgs (Stage D) are reduced first; if it's not
-		// one of those, fall through to the stream-event handler.
-		if mm, cmd, handled := m.updateMCPMsg(msg); handled {
-			return mm, cmd
-		}
-		// Skills overlay result/error msg is reduced next; if it's not a SkillsMsg,
-		// fall through to the stream-event handler. It fires no follow-up command.
-		if mm, handled := m.updateSkillsMsg(msg); handled {
-			return mm, nil
-		}
-		// Agent-definition inventory result/error msg is reduced next; if it's not an
-		// Inventory-overlay result/error msgs (agentsInv, soul, usermodel,
-		// /worktrees) — none carries a follow-up command. Grouped into one helper to
-		// keep update() under the cyclomatic cap as overlays accrue; each falls
-		// through if its msg type does not match.
-		if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
-			return mm, cmd
-		}
-		// /models picker result/error + selection-saved msg. During connect it also
-		// returns the CreateSession command (the §4 reconcile-then-create sequence),
-		// so this one DOES carry a follow-up command. Fall through if not a models msg.
-		if mm, cmd, handled := m.updateModelsMsg(msg); handled {
-			return mm, cmd
-		}
-		// Stream events (session.init / turn.start / deltas / tool.* /
-		// permission.ask / hook / compaction / result) are handled separately to
-		// keep this reducer's branch count in check.
-		return m.updateStreamEvent(msg)
+		return m.dispatchNonInputMsg(msg)
 	}
+}
+
+// dispatchNonInputMsg is the default (non-key/non-mouse/non-tick) arm of
+// update(): the surface-migrated overlay route first, then the lifecycle /
+// MCP / skills / inventory / models fall-through chain, terminating at
+// updateStreamEvent. Extracted so update() stays under the cyclomatic cap as
+// overlays accrue (each helper returns handled=false for a non-matching msg, so
+// at most one consumes).
+func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// The open modal surface routes every non-key/wheel Msg through m.modal
+	// BEFORE the Model's generic reducer; handled=false falls through to the
+	// rest of the chain.
+	if mm, cmd, handled := m.dispatchSurfaceMsg(msg); handled {
+		return mm, cmd
+	}
+	// Lifecycle / transport msgs (session-ready, connect/stream error, stream
+	// close, clipboard results, slash-command discovery).
+	if mm, cmd, handled := m.updateLifecycle(msg); handled {
+		return mm, cmd
+	}
+	// MCP overlay result/error msgs (Stage D).
+	if mm, cmd, handled := m.updateMCPMsg(msg); handled {
+		return mm, cmd
+	}
+	// Skills overlay result/error msg; fires no follow-up command.
+	if mm, handled := m.updateSkillsMsg(msg); handled {
+		return mm, nil
+	}
+	// Inventory-overlay result/error msgs (agentsInv, usermodel, /worktrees,
+	// /schedule, /sessions) — grouped to keep update() flat as overlays accrue.
+	if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
+		return mm, cmd
+	}
+	// /models picker result/error + selection-saved msg (carries a follow-up
+	// command during the connect reconcile).
+	if mm, cmd, handled := m.updateModelsMsg(msg); handled {
+		return mm, cmd
+	}
+	// Stream events (session.init / turn.start / deltas / tool.* /
+	// permission.ask / hook / compaction / result).
+	return m.updateStreamEvent(msg)
+}
+
+// updateInventoryMsgs is the fall-through chain for the unmigrated inventory
+// overlays (agentsInv, userModel, reflections, dream, worktrees, schedule,
+// sessions): each per-overlay helper returns handled=false for a non-matching
+// msg, so at most one consumes. Most carry no follow-up command; /schedule's
+// ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
+// migrated onto the modal no longer ride this chain — HandleMsg owns their
+// routing.
+func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if mm, handled := m.updateAgentsInvMsg(msg); handled {
+		return mm, nil, true
+	}
+	if mm, handled := m.updateUserModelMsg(msg); handled {
+		return mm, nil, true
+	}
+	if mm, handled := m.updateReflectionsMsg(msg); handled {
+		return mm, nil, true
+	}
+	if mm, handled := m.updateDreamMsg(msg); handled {
+		return mm, nil, true
+	}
+	if mm, handled := m.updateWorktreesMsg(msg); handled {
+		return mm, nil, true
+	}
+	if mm, cmd, handled := m.updateScheduleMsg(msg); handled {
+		return mm, cmd, true
+	}
+	if mm, cmd, handled := m.updateSessionsMsg(msg); handled {
+		return mm, cmd, true
+	}
+	return m, nil, false
 }
 
 func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
@@ -1276,6 +1316,10 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
 	// the rendered regions in chrome().
 	m.relayout()
+	// No geometry event is fanned to the open modal surface: the interface is
+	// immediate-mode — Render receives the fresh width/height on every frame and
+	// re-derives geometry-dependent view state at its top, so nothing is stale.
+	// Pre-migration overlays re-derive per render as before.
 	return m, m.maybeKittyTransmit()
 }
 
@@ -1545,13 +1589,18 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // /models picker is the only SELECTING one (cursor + enter); the rest are read-only
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	// The open modal surface routes through m.modal BEFORE the legacy per-overlay
+	// route list; the closed path nils the field and refocuses via the surface's
+	// Close cmd.
+	if mm, cmd, handled := m.dispatchSurfaceKey(msg); handled {
+		return mm, cmd, true
+	}
 	overlays := []func(tea.KeyPressMsg) (tea.Model, tea.Cmd, bool){
 		m.onSessionDetailsKey,
 		m.onMCPKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,
 		m.onSkillsKey,
-		m.onSoulKey,
 		m.onUserModelKey,
 		m.onReflectionsKey,
 		m.onDreamKey,
@@ -1567,6 +1616,48 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		}
 	}
 	return m, nil, false
+}
+
+// dispatchSurfaceKey routes a KeyPressMsg through the open modal surface when
+// one is open. On handled+closed it runs the surface's (no-return) Close, nils
+// the field, and batches the textarea refocus — the parent refocuses because
+// the returned cmd belongs to the surface, not the close. Extracted from
+// onOverlayKey so update() stays under the cyclomatic cap; onOverlayKey reads it.
+func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.modal == nil {
+		return m, nil, false
+	}
+	cmd, handled, closed := m.modal.HandleKey(msg)
+	if !handled {
+		return m, nil, false
+	}
+	if closed {
+		m.modal.Close()
+		m.modal = nil
+		return m, tea.Batch(cmd, m.ta.Focus()), true
+	}
+	return m, cmd, true
+}
+
+// dispatchSurfaceMsg routes a NON-input Msg through the open modal surface
+// before the Model's generic reducer; handled=false falls through. On
+// handled+closed it runs the surface's (no-return) Close, nils the field, and
+// batches the textarea refocus (same parent-refocuses path as
+// dispatchSurfaceKey). Extracted so update() stays under the cyclomatic cap.
+func (m Model) dispatchSurfaceMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if m.modal == nil {
+		return m, nil, false
+	}
+	cmd, handled, closed := m.modal.HandleMsg(msg)
+	if !handled {
+		return m, nil, false
+	}
+	if closed {
+		m.modal.Close()
+		m.modal = nil
+		return m, tea.Batch(cmd, m.ta.Focus()), true
+	}
+	return m, cmd, true
 }
 
 func (m Model) desiredMode() string {
@@ -3358,9 +3449,20 @@ func (m Model) endRun(stop string) Model {
 // args mini-viewport over the card) via the pure approvalState.approvalToggle
 // half; a wheel the modal does not claim falls through to the conversation
 // viewport behind it (so a wheel elsewhere keeps scrolling the transcript).
+//
+// The open modal surface gets the wheel before the viewport and CONSUMES it by
+// default (handled=true: a modal captures input, so the wheel behind it is
+// DEAD); handled=false is allowed only when the surface deliberately delegates
+// (approval's plateau-only claim below is its own seam, pre-migration).
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.phase == phaseAwaitingApproval {
 		if cmd, approval := (&m.approval).approvalWheel(msg, (&m).approvalDeps()); approval {
+			return m, cmd
+		}
+	}
+	// Open modal surface gets the wheel BEFORE the conversation viewport.
+	if m.modal != nil {
+		if cmd, handled := m.modal.HandleWheel(msg); handled {
 			return m, cmd
 		}
 	}

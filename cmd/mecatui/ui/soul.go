@@ -12,17 +12,33 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// soulView is the active soul (persona) inspection overlay (none = closed). Like
-// the /skills and /agents panels it is a read-only inventory layered over the
-// conversation: idle-only, esc to dismiss. UNLIKE those (short lists) the soul is a
-// multi-KB BODY of persona text, so this panel is SCROLLABLE: a line-window over
-// the content with pgup/pgdown (and up/down, home/end) moving the viewport. The
-// soul is agent-read-only; the panel only displays it, never edits it.
+// runSoul is the Open transition for the soul (persona) surface. It validates
+// (idle + fetcher wired), blurs the textarea, constructs the state dynamically
+// (never a pre-declared Model field), installs it on m.modal, and fires the
+// GetSoul RPC; the result lands on soulState.HandleMsg. Only registered when
+// caps.Soul && the soul collaborator is wired.
+func (m Model) runSoul() (tea.Model, tea.Cmd) {
+	if m.phase != phaseIdle || m.deps.Soul == nil {
+		return m, nil
+	}
+	m.ta.Blur() // modal owns the keyboard while open
+	m.modal = &soulState{view: soulPanel, loading: true, deps: (&m).surfaceDeps()}
+	return m, client.GetSoulCmd(m.deps.Ctx, m.deps.Soul)
+}
+
+// soulView is the soul panel's view discriminator. The soul panel is a
+// read-only, scrollable persona inspector: idle-only, esc to dismiss, a
+// line-window over the content with pgup/pgdown (and up/down, home/end) moving
+// the viewport. The soul is agent-read-only; the panel only displays it.
 type soulView int
 
 const (
-	soulNone  soulView = iota // overlay closed
-	soulPanel                 // read-only, scrollable persona inspector
+	// soulNone is the iota zero value; it is load-bearing for Render's
+	// defense-in-depth guard (`if s.view != soulPanel`), so a zero/uninitialized
+	// soulState renders empty rather than as an open panel. The closed state is
+	// m.modal == nil, not view == soulNone.
+	soulNone  soulView = iota
+	soulPanel          // read-only, scrollable persona inspector
 )
 
 // soulBodyLines is the fixed number of soul-content lines the panel shows at once
@@ -32,83 +48,88 @@ const (
 // this scrolls; shorter content shows in full with no scroll indicator.
 const soulBodyLines = 12
 
-// soulState holds the soul overlay state on the Model. It is value-embedded so the
-// Model stays a plain struct that Update copies. The Soul value is replaced
-// wholesale on each RPC result (never mutated in place) so the value-copy
-// semantics hold. scroll is the 0-based index of the first visible content line.
+// soulState is the soul overlay's state: it is constructed at Open (runSoul)
+// and lives ONLY inside the Model's one `modal surface` interface field —
+// never a pre-declared Model field. deps is the shared ambient base
+// (theme/keys/marks/caps), set once at Open. The Soul value is replaced
+// wholesale on each RPC result (never mutated in place). soulState implements
+// `surface` on POINTER receivers.
 type soulState struct {
 	view    soulView
 	loading bool // the GetSoul RPC is in flight
 	err     error
 	soul    client.Soul
-	scroll  int // first visible content line (clamped in the key handlers)
+	scroll  int         // view cache: first visible content line (clamped in HandleKey; soul's clamp reads no geometry)
+	deps    surfaceDeps // the shared ambient base, set once at Open
 }
 
-// openSoul opens the inspection panel and fires the GetSoul RPC. Only callable
-// while idle and when a soul fetcher is wired; returns the model unchanged
-// otherwise. The result arrives as a client.SoulMsg handled in updateSoulMsg.
-func (m Model) openSoul() (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle || m.deps.Soul == nil {
-		return m, nil
+// Render returns the soul panel body sized from the offered geometry: width
+// drives the card text budget; the scroll window stays the fixed
+// soulBodyLines-height line window over the wrapped content. All server-derived
+// strings are terminal-sanitized. Regions are nil (read-only, not clickable).
+// The height param goes unused by design: the scroll window is the FIXED
+// soulBodyLines line budget (deterministic goldens, terminal-height-
+// independent), not a function of terminal height.
+func (s *soulState) Render(width, _ int) (string, []ClickableRegion) {
+	if s.view != soulPanel {
+		return "", nil
 	}
-	m.ta.Blur() // overlay owns the keyboard while open
-	m.soul = soulState{view: soulPanel, loading: true}
-	return m, client.GetSoulCmd(m.deps.Ctx, m.deps.Soul)
+	return renderSoulPanel(s.deps.theme, *s, s.deps.caps, s.deps.marks, width), nil
 }
 
-// closeSoul dismisses the overlay and returns focus to the prompt input.
-func (m Model) closeSoul() (tea.Model, tea.Cmd) {
-	m.soul = soulState{}
-	cmd := m.ta.Focus()
-	return m, cmd
-}
-
-// onSoulKey routes key presses while the soul overlay is open. esc closes it; the
-// scroll keys (pgup/pgdown, up/down, home/end) move the content window. Every
-// other key is swallowed (handled=true) so it never leaks into idle input. Returns
-// handled=false only when the overlay is closed.
-func (m Model) onSoulKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.soul.view == soulNone {
-		return m, nil, false
-	}
+// HandleKey routes key presses while the soul overlay is open. esc self-closes
+// (closed=true); the scroll keys (pgup/pgdown, up/down, home/end) move the
+// content window. Every other key is swallowed (handled=true) so it never leaks
+// into idle input. Key bindings read from s.deps.
+func (s *soulState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
 	switch {
-	case key.Matches(msg, m.keys.Close):
-		mm, cmd := m.closeSoul()
-		return mm, cmd, true
-	case key.Matches(msg, m.keys.ScrollD), key.Matches(msg, m.keys.Down):
-		m.soul.scroll = clampSoulScroll(m.soul.scroll+1, m.soul.soul.Content)
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.Up):
-		m.soul.scroll = clampSoulScroll(m.soul.scroll-1, m.soul.soul.Content)
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.soul.scroll = clampSoulScroll(soulMaxScroll(m.soul.soul.Content), m.soul.soul.Content)
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.soul.scroll = 0
-		return m, nil, true
+	case key.Matches(msg, s.deps.keys.Close):
+		return nil, true, true
+	case key.Matches(msg, s.deps.keys.ScrollD), key.Matches(msg, s.deps.keys.Down):
+		s.scroll = clampSoulScroll(s.scroll+1, s.soul.Content)
+		return nil, true, false
+	case key.Matches(msg, s.deps.keys.ScrollU), key.Matches(msg, s.deps.keys.Up):
+		s.scroll = clampSoulScroll(s.scroll-1, s.soul.Content)
+		return nil, true, false
+	case key.Matches(msg, s.deps.keys.ScrollBottom):
+		s.scroll = clampSoulScroll(soulMaxScroll(s.soul.Content), s.soul.Content)
+		return nil, true, false
+	case key.Matches(msg, s.deps.keys.ScrollTop):
+		s.scroll = 0
+		return nil, true, false
 	}
-	return m, nil, true
+	return nil, true, false
 }
 
-// updateSoulMsg reduces a client.SoulMsg into the overlay state. It fires no
-// follow-up command (single-shot read), returning only the model + handled flag;
-// handled=false for any other message so Update can fall through.
-func (m Model) updateSoulMsg(msg tea.Msg) (tea.Model, bool) {
+// HandleWheel consumes the wheel while the soul modal is open: the modal
+// captures input, so it returns handled=true.
+func (*soulState) HandleWheel(tea.MouseWheelMsg) (cmd tea.Cmd, handled bool) {
+	return nil, true
+}
+
+// HandleMsg reduces a client.SoulMsg (the GetSoul RPC result) into the overlay
+// state. It fires no follow-up command (single-shot read), returning handled; a
+// non-SoulMsg returns handled=false so the Model's generic reducer can see it.
+func (s *soulState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
 	sm, ok := msg.(client.SoulMsg)
 	if !ok {
-		return m, false
+		return nil, false, false
 	}
-	m.soul.loading = false
+	s.loading = false
 	if sm.Err != nil {
-		m.soul.err = sm.Err
-		return m, true
+		s.err = sm.Err
+		return nil, true, false
 	}
-	m.soul.err = nil
-	m.soul.soul = sm.Soul
-	m.soul.scroll = 0
-	return m, true
+	s.err = nil
+	s.soul = sm.Soul
+	s.scroll = 0
+	return nil, true, false
 }
+
+// Close tears the overlay down; teardown is a no-op for soul (the surface
+// holds no resource). A GetSoul RPC that lands after close falls through
+// HandleMsg's handled=false and is dropped at the Model.
+func (*soulState) Close() {}
 
 // soulMaxScroll is the largest valid scroll offset for content: total lines minus
 // the visible window, never negative.
@@ -128,15 +149,6 @@ func soulContentLines(content string) []string {
 		return nil
 	}
 	return strings.Split(content, "\n")
-}
-
-// renderSoulOverlay draws the soul panel centred over the conversation region via
-// centerCard. All server-derived strings are terminal-sanitized.
-func renderSoulOverlay(th theme.Theme, st soulState, caps client.Capabilities, hk helpKeys, width, height int) string {
-	if st.view != soulPanel {
-		return ""
-	}
-	return centerCard(th, renderSoulPanel(th, st, caps, hk, width), width, height)
 }
 
 // soulDisabledNote is the empty-state copy when soul is NOT enabled on the

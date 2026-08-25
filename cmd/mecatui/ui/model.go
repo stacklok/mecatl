@@ -509,7 +509,6 @@ type Model struct {
 	subagents       subagentState  // Subagents-tab state of the unified agents overlay (roster | focus)
 	parallel        parallelState  // Parallel-tab state of the unified agents overlay (roster | group focus)
 	agentsInv       agentsInvState // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	soul            soulState      // soul (persona) inspection overlay state (view==soulNone when closed)
 	userModel       userModelState // user-model inspection overlay state (view==userModelNone when closed)
 	userModelGen    uint64         // monotonic request generation; invalidates delayed detail/index responses
 	reflections     reflectionsState
@@ -533,6 +532,11 @@ type Model struct {
 	worktrees worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
 	schedule  scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
 	sessions  sessionsState  // /sessions overlay state (view==sessionsNone when closed) — issue #245
+	// modal is the ONE open modal overlay (nil = none). Stack/tiling/focus-tree
+	// is later; the field carries the one migrated surface. A surface's state is
+	// created at Open and lives ONLY inside this interface field — never a
+	// pre-declared tombstone field (surface.go).
+	modal surface
 	// activeModel is the currently-selected (provider, model) the NEXT CreateSession
 	// will carry (apply-on-next-create). Seeded from Deps.InitialModel, updated by the
 	// picker, and reconciled-to-default at connect when its provider is unavailable. It

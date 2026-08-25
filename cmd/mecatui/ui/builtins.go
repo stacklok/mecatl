@@ -302,13 +302,6 @@ func (m Model) runSkills() (tea.Model, tea.Cmd) {
 	return m.openSkills()
 }
 
-// runSoul opens the read-only soul (persona) inspection panel. Only registered
-// when caps.Soul && the soul collaborator is wired, so openSoul's own nil/idle
-// guards are belt-and-braces here.
-func (m Model) runSoul() (tea.Model, tea.Cmd) {
-	return m.openSoul()
-}
-
 // runUserModel opens the read-only user-model inspection panel. Only registered
 // when caps.UserModel && the user-model collaborator is wired, so openUserModel's
 // own nil/idle guards are belt-and-braces here.

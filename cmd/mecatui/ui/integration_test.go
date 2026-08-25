@@ -298,8 +298,8 @@ func TestSoulSlashCommandEndToEnd(t *testing.T) {
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if m.soul.view != soulPanel {
-		t.Fatalf("/soul+enter should open the persona panel, view=%v", m.soul.view)
+	if s := soulActive(m); s == nil || s.view != soulPanel {
+		t.Fatalf("/soul+enter should open the persona panel (modal), got %+v", m.modal)
 	}
 	if fs.calls != 1 {
 		t.Errorf("GetSoul calls = %d, want 1 (the /soul built-in fired the RPC)", fs.calls)

@@ -876,8 +876,10 @@ func TestSoulAndUserModelOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	t.Run("soul", func(t *testing.T) {
-		st := soulState{view: soulPanel, soul: client.Soul{Present: true, Provenance: client.SoulProvenanceUser, SizeBytes: 10, SHA256: "abc"}}
-		got := stripANSIstr(renderSoulOverlay(th, st, client.Capabilities{Soul: true}, hk, 100, 30))
+		st := soulState{view: soulPanel, soul: client.Soul{Present: true, Provenance: client.SoulProvenanceUser, SizeBytes: 10, SHA256: "abc"},
+			deps: surfaceDeps{theme: th, marks: hk, caps: client.Capabilities{Soul: true}}}
+		body, _ := st.Render(100, 30)
+		got := stripANSIstr(body)
 		if !strings.Contains(got, "ctrl+f14/ctrl+f15 scroll · ctrl+f16 close") {
 			t.Errorf("soul hint should carry live scroll+close: %q", got)
 		}

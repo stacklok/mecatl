@@ -54,6 +54,20 @@ func sampleSoul() *fakeSoul {
 	}}
 }
 
+// soulActive returns the open soul modal (or nil) off the Model, so a test can
+// read the migrated state without holding a soulState field. It asserts the modal
+// IS a *soulState, which pins the open path too.
+func soulActive(m Model) *soulState {
+	if m.modal == nil {
+		return nil
+	}
+	s, ok := m.modal.(*soulState)
+	if !ok {
+		return nil
+	}
+	return s
+}
+
 // TestRunSoulOpensPanel asserts runSoul opens the panel, blurs the input, fires
 // GetSoul, and renders the persona once the result lands.
 func TestRunSoulOpensPanel(t *testing.T) {
@@ -62,10 +76,11 @@ func TestRunSoulOpensPanel(t *testing.T) {
 
 	mm, cmd := m.runSoul()
 	m = mm.(Model)
-	if m.soul.view != soulPanel {
-		t.Fatalf("view = %v, want soulPanel", m.soul.view)
+	st := soulActive(m)
+	if st == nil || st.view != soulPanel {
+		t.Fatalf("modal surface = %v, want a *soulState at soulPanel", m.modal)
 	}
-	if !m.soul.loading {
+	if !st.loading {
 		t.Error("panel should be loading until the RPC result lands")
 	}
 	if m.ta.Focused() {
@@ -89,10 +104,28 @@ func TestSoulOpenGuards(t *testing.T) {
 	// nil fetcher → no-op.
 	m := newSoulModel(t, nil, client.Capabilities{Soul: true})
 	m.deps.Soul = nil
-	mm, cmd := m.openSoul()
-	if mm.(Model).soul.view != soulNone || cmd != nil {
-		t.Error("openSoul with no fetcher must be a no-op")
+	mm, cmd := m.runSoul()
+	if m.modal != nil || cmd != nil {
+		t.Error("runSoul with no fetcher must be a no-op")
 	}
+	_ = mm
+}
+
+// keyPress routes a key through the ACTIVE soul surface's HandleKey (the new
+// routing; onOverlayKey's m.modal arm), returning the handled/closed flags.
+// It mirrors the old m.onSoulKey test helper but goes through the surface.
+func keySoul(m Model, msg tea.KeyPressMsg) (Model, tea.Cmd, bool, bool) {
+	if m.modal == nil {
+		return m, nil, false, false
+	}
+	s := m.modal
+	cmd, handled, closed := s.HandleKey(msg)
+	if handled && closed {
+		s.Close()
+		m.modal = nil
+		return m, tea.Batch(cmd, m.ta.Focus()), true, true
+	}
+	return m, cmd, handled, closed
 }
 
 // TestSoulScroll asserts the scroll keys move (and clamp) the content window AND
@@ -112,8 +145,8 @@ func TestSoulScroll(t *testing.T) {
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if m.soul.scroll != 0 {
-		t.Fatalf("initial scroll = %d, want 0", m.soul.scroll)
+	if s := soulActive(m); s == nil || s.scroll != 0 {
+		t.Fatalf("initial scroll want 0, got %+v", s)
 	}
 	// At the top: window is lines 1–12 (line-00..line-11); the indicator reflects that
 	// and the last lines are NOT yet visible.
@@ -126,10 +159,9 @@ func TestSoulScroll(t *testing.T) {
 	}
 
 	// Page down once: the window shifts by one. line-00 leaves the top, line-12 enters.
-	mm, _, _ = m.onSoulKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	m = mm.(Model)
-	if m.soul.scroll != 1 {
-		t.Errorf("scroll after pgdown = %d, want 1", m.soul.scroll)
+	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if s := soulActive(m); s == nil || s.scroll != 1 {
+		t.Errorf("scroll after pgdown want 1, got %+v", s)
 	}
 	pd := stripANSIstr(m.View().Content)
 	if strings.Contains(pd, "line-00") {
@@ -144,10 +176,9 @@ func TestSoulScroll(t *testing.T) {
 
 	// Jump to bottom; max scroll = 30 - 12 = 18. The window shows the LAST lines and the
 	// indicator ends at 30.
-	mm, _, _ = m.onSoulKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	m = mm.(Model)
-	if m.soul.scroll != 18 {
-		t.Errorf("scroll after End = %d, want 18 (30-12)", m.soul.scroll)
+	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	if s := soulActive(m); s == nil || s.scroll != 18 {
+		t.Errorf("scroll after End want 18 (30-12), got %+v", s)
 	}
 	bot := stripANSIstr(m.View().Content)
 	if !strings.Contains(bot, "line-29") || strings.Contains(bot, "line-00") {
@@ -158,31 +189,102 @@ func TestSoulScroll(t *testing.T) {
 	}
 
 	// Pgdown past the end clamps (offset + window + indicator unchanged).
-	mm, _, _ = m.onSoulKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	m = mm.(Model)
-	if m.soul.scroll != 18 {
-		t.Errorf("scroll clamps at 18, got %d", m.soul.scroll)
+	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if s := soulActive(m); s == nil || s.scroll != 18 {
+		t.Errorf("scroll clamps at 18, got %+v", s)
 	}
 	if !strings.Contains(stripANSIstr(m.View().Content), "lines 19–30 of 30") {
 		t.Error("clamped window indicator should still read 'lines 19–30 of 30'")
 	}
 
 	// Page up moves back (pins the ScrollU arm — removing it must fail here).
-	mm, _, _ = m.onSoulKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	m = mm.(Model)
-	if m.soul.scroll != 17 {
-		t.Errorf("scroll after pgup = %d, want 17", m.soul.scroll)
+	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if s := soulActive(m); s == nil || s.scroll != 17 {
+		t.Errorf("scroll after pgup want 17, got %+v", s)
 	}
 
 	// Home returns to the top: window + indicator reset.
-	mm, _, _ = m.onSoulKey(tea.KeyPressMsg{Code: tea.KeyHome})
-	m = mm.(Model)
-	if m.soul.scroll != 0 {
-		t.Errorf("scroll after Home = %d, want 0", m.soul.scroll)
+	m, _, _, _ = keySoul(m, tea.KeyPressMsg{Code: tea.KeyHome})
+	if s := soulActive(m); s == nil || s.scroll != 0 {
+		t.Errorf("scroll after Home want 0, got %+v", s)
 	}
 	home := stripANSIstr(m.View().Content)
 	if !strings.Contains(home, "line-00") || !strings.Contains(home, "lines 1–12 of 30") {
 		t.Errorf("after Home the window should reset to line-00 / 'lines 1–12 of 30', got:\n%s", home)
+	}
+}
+
+// TestSoulScrollViaUpdate routes a scroll key through the REAL m.Update path
+// (onKey → onOverlayKey → dispatchSurfaceKey → HandleKey), NOT the keySoul helper
+// that calls HandleKey directly and bypasses the dispatchSurfaceKey routing. It
+// pins that a scroll key reaches the open modal through the full dispatch and
+// moves the window without closing the panel. (TestSoulScroll above exercises the
+// full key set via the direct helper; this one owns the m.Update coverage.)
+func TestSoulScrollViaUpdate(t *testing.T) {
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, fmt.Sprintf("line-%02d", i))
+	}
+	fs := &fakeSoul{soul: client.Soul{Content: strings.Join(lines, "\n"), Present: true, Provenance: client.SoulProvenanceUser, Trusted: true, SizeBytes: 100}}
+	m := newSoulModel(t, fs, client.Capabilities{Soul: true})
+	mm, cmd := m.runSoul()
+	m = feedCmd(t, mm.(Model), cmd)
+	if s := soulActive(m); s == nil || s.scroll != 0 {
+		t.Fatalf("initial scroll want 0, got %+v", s)
+	}
+
+	mm2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = mm2.(Model)
+	if s := soulActive(m); s == nil {
+		t.Fatal("pgdown through m.Update must not close the panel")
+	} else if s.scroll != 1 {
+		t.Errorf("scroll after pgdown via m.Update want 1, got %d", s.scroll)
+	}
+	pd := stripANSIstr(m.View().Content)
+	if strings.Contains(pd, "line-00") {
+		t.Errorf("after pgdown the window should no longer show line-00, got:\n%s", pd)
+	}
+	if !strings.Contains(pd, "line-12") {
+		t.Errorf("after pgdown the window should reveal line-12, got:\n%s", pd)
+	}
+}
+
+// TestSoulWheelConsumedWhileOpen asserts a mouse wheel while the soul modal is
+// open is CONSUMED by the modal (the default-consume contract: handled=true),
+// never delegates to the conversation viewport. It pins the onMouseWheel
+// m.modal routing arm (update.go): handled=true consumes, and the panel stays
+// open while the viewport stays put.
+func TestSoulWheelConsumedWhileOpen(t *testing.T) {
+	m := newSoulModel(t, sampleSoul(), client.Capabilities{Soul: true})
+	// Long transcript so the viewport WOULD be scrollable if the wheel fell
+	// through; start stuck at the bottom like a fresh stream.
+	m.conv.addUser("show me a long answer")
+	m.conv.appendAssistant(strings.Repeat("line of streamed output\n", 120))
+	m.phase = phaseIdle
+	m.stuck = true
+	m.refreshView()
+	if !m.vp.AtBottom() {
+		t.Fatal("precondition: viewport should start at the bottom")
+	}
+
+	mm, cmd := m.runSoul()
+	m = feedCmd(t, mm.(Model), cmd)
+	if soulActive(m) == nil {
+		t.Fatal("precondition: soul panel should be open")
+	}
+
+	// Wheel up through the REAL Update path (onMouseMsg → onMouseWheel → the
+	// m.modal.HandleWheel arm → CONSUMED by soul).
+	mm2, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = mm2.(Model)
+	if soulActive(m) == nil {
+		t.Fatal("a consumed wheel must not close the soul panel")
+	}
+	if !m.stuck {
+		t.Error("a consumed wheel-up must NOT unstick the view (the modal eats it)")
+	}
+	if !m.vp.AtBottom() {
+		t.Error("a consumed wheel-up must NOT scroll the viewport (the modal eats it)")
 	}
 }
 
@@ -231,9 +333,32 @@ func TestSoulKeySwallowsNonEsc(t *testing.T) {
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
 
-	_, _, handled := m.onSoulKey(tea.KeyPressMsg{Code: 'x'})
+	_, _, handled, _ := keySoul(m, tea.KeyPressMsg{Code: 'x'})
 	if !handled {
 		t.Error("a non-esc key while the panel is open should be swallowed (handled=true)")
+	}
+}
+
+// TestSoulEscClosesPanel asserts esc closes the panel via the REAL m.Update path
+// (onKey → onOverlayKey → dispatchSurfaceKey → HandleKey → closed), restoring idle
+// input. It mirrors TestAgentsInvEscClosesPanel but — unlike the agents close path,
+// which calls m.ta.Focus() directly inside the handler — the surface close path
+// returns the focusInput cmd from Close, so feedCmd must run it for focus to land.
+func TestSoulEscClosesPanel(t *testing.T) {
+	m := newSoulModel(t, sampleSoul(), client.Capabilities{Soul: true})
+	mm, cmd := m.runSoul()
+	m = feedCmd(t, mm.(Model), cmd)
+	if soulActive(m) == nil {
+		t.Fatal("precondition: panel should be open")
+	}
+
+	mm2, escCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = feedCmd(t, mm2.(Model), escCmd)
+	if m.modal != nil {
+		t.Fatalf("esc did not close the panel: modal=%v", m.modal)
+	}
+	if !m.ta.Focused() {
+		t.Error("esc should restore focus to the textarea")
 	}
 }
 
@@ -243,8 +368,9 @@ func TestSoulError(t *testing.T) {
 	m := newSoulModel(t, fs, client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.soul.err == nil {
-		t.Fatal("a GetSoul error should be recorded on the state")
+	st := soulActive(m)
+	if st == nil || st.err == nil {
+		t.Fatal("a GetSoul error should be recorded on the open modal")
 	}
 	if !strings.Contains(m.View().Content, "boom") {
 		t.Errorf("error not surfaced in the panel:\n%s", m.View().Content)
@@ -258,8 +384,8 @@ func TestSoulPanelGolden(t *testing.T) {
 	m := newSoulModel(t, sampleSoul(), client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
 	m = feedCmd(t, mm.(Model), cmd)
-	if m.soul.view != soulPanel {
-		t.Fatalf("view = %v, want soulPanel", m.soul.view)
+	if s := soulActive(m); s == nil || s.view != soulPanel {
+		t.Fatalf("modal surface = %v, want a *soulState at soulPanel", m.modal)
 	}
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "soul.golden", got)

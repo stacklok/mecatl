@@ -10,6 +10,8 @@ This folder no longer holds the per-feature design records — those are now num
   implementation reference.
 - [principles.md](./principles.md) — the **platform principles** acceptance plans cite
   as `Principle N` (the ac-trace grounding list).
+- [surface-migration-plan.md](./surface-migration-plan.md) — the issue #555 surface
+  interface (one modal, dynamic Open, surfaceDeps); `/soul` is the first migrator.
 - this file — the **documentation & citation conventions** the `docs/lint` gate enforces.
 
 One source of truth per fact: current behaviour in
