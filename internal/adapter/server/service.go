@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +33,21 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
+)
+
+// WorkspaceAuthority controls whether a Service accepts a client-selected
+// workspace or binds every filesystem session to its configured deployment root.
+// It belongs at the server boundary: engine code never receives listener topology
+// or filesystem-authority policy.
+type WorkspaceAuthority uint8
+
+const (
+	// WorkspaceAuthorityClientSelected preserves the embedded and loopback behavior:
+	// callers select the workspace for filesystem sessions.
+	WorkspaceAuthorityClientSelected WorkspaceAuthority = iota
+	// WorkspaceAuthorityServerAssigned rejects every non-empty filesystem request
+	// and assigns Config.AuthoritativeWorkspace instead.
+	WorkspaceAuthorityServerAssigned
 )
 
 // WorkspaceFactory builds the session-scoped tool.Workspace for a session root.
@@ -213,6 +229,13 @@ type Config struct {
 	OwnershipEnforced bool
 	// Workspaces builds a Workspace for a session root. Required.
 	Workspaces WorkspaceFactory
+	// WorkspaceAuthority decides whether API callers choose filesystem roots or the
+	// deployment assigns one. The zero value preserves client-selectable local use.
+	WorkspaceAuthority WorkspaceAuthority
+	// AuthoritativeWorkspace is the configured root used only when WorkspaceAuthority
+	// is WorkspaceAuthorityServerAssigned. It must be an absolute, already-clean path
+	// whenever configured; no symlink resolution is performed.
+	AuthoritativeWorkspace string
 	// CommandRunner is the MAIN session's bound command runner (issue #462). It is
 	// the runner the main session's Environment binds when the session runs on the
 	// DEFAULT workspace; a session whose workspace DIFFERS (a worktree binding, an
@@ -1073,6 +1096,19 @@ func (k *keyedMutex) lock(key session.SessionID) func() {
 	}
 }
 
+// validateWorkspaceAuthorityConfig rejects an invalid configured root without
+// touching the filesystem. The client-selectable zero value intentionally ignores
+// an authority root so embedded callers retain their historical behavior.
+func validateWorkspaceAuthorityConfig(cfg Config) error {
+	if cfg.WorkspaceAuthority != WorkspaceAuthorityClientSelected && cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned {
+		return fmt.Errorf("%w: unknown workspace authority %d", ErrConfig, cfg.WorkspaceAuthority)
+	}
+	if cfg.WorkspaceAuthority == WorkspaceAuthorityServerAssigned && cfg.AuthoritativeWorkspace != "" && (!filepath.IsAbs(cfg.AuthoritativeWorkspace) || filepath.Clean(cfg.AuthoritativeWorkspace) != cfg.AuthoritativeWorkspace) {
+		return fmt.Errorf("%w: authoritative workspace must be a clean absolute path", ErrConfig)
+	}
+	return nil
+}
+
 // NewService validates cfg and constructs a Service. It returns ErrConfig if
 // Engine, Store or Workspaces is nil.
 func NewService(cfg Config) (*Service, error) {
@@ -1084,6 +1120,9 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	if cfg.Workspaces == nil {
 		return nil, fmt.Errorf("%w: Workspaces is required", ErrConfig)
+	}
+	if err := validateWorkspaceAuthorityConfig(cfg); err != nil {
+		return nil, err
 	}
 	if cfg.DefaultMode == "" {
 		cfg.DefaultMode = session.ModeDefault
@@ -1554,6 +1593,7 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, ow
 	return nil, release, nil
 }
 
+<<<<<<< HEAD
 func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) error {
 	if creator, ok := s.cfg.Store.(port.SessionCreator); ok {
 		return creator.Create(ctx, sess)
@@ -1586,20 +1626,43 @@ func (s *Service) resolveCreateCollision(ctx context.Context, id session.Session
 	return winner, err == nil, err
 }
 
-func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+// workspaceForCreate enforces the profile-aware request contract before any
+// factory, trust, or environment seam receives a root. Server-assigned mode
+// intentionally checks only direct-request emptiness: client input is never
+// cleaned or compared with the configured root.
+func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (string, error) {
 	switch profile {
 	case ProfileDefault:
-		if workspace == "" {
-			return nil, fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
+		if s.cfg.WorkspaceAuthority == WorkspaceAuthorityServerAssigned {
+			if workspace != "" {
+				return "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
+			}
+			if s.cfg.AuthoritativeWorkspace == "" {
+				return "", fmt.Errorf("%w: deployment assigns the workspace but no authoritative workspace is configured", ErrInvalidArgument)
+			}
+			return s.cfg.AuthoritativeWorkspace, nil
 		}
+		if workspace == "" {
+			return "", fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
+		}
+		return workspace, nil
 	case ProfileNoFS:
 		if workspace != "" {
-			return nil, fmt.Errorf("%w: profile %q must not carry a workspace (a no-FS session has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, workspace)
+			return "", fmt.Errorf("%w: profile %q must not carry a workspace (a no-FS session has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, workspace)
 		}
+		return "", nil
 	default:
 		// Defensive: the wire handlers ParseSessionProfile first, but an
 		// in-process caller could hand anything.
-		return nil, fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
+		return "", fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
+	}
+}
+
+func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+	var err error
+	workspace, err = s.workspaceForCreate(workspace, profile)
+	if err != nil {
+		return nil, err
 	}
 	if mode == "" {
 		mode = s.cfg.DefaultMode
@@ -2842,7 +2905,38 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return nil, err
+	}
 	return s.reopenLoadedSession(ctx, sess)
+}
+
+// validatePersistedWorkspace makes server-assigned authority durable. Unlike a
+// direct request, stored state is compared only under a narrow lexical identity:
+// both roots must be absolute and clean and their cleaned strings must match.
+// It intentionally never resolves symlinks or opens a workspace.
+func (s *Service) validatePersistedWorkspace(sess *session.Session) error {
+	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned || profileForSession(sess) == ProfileNoFS {
+		return nil
+	}
+	root := sess.Workspace
+	configured := s.cfg.AuthoritativeWorkspace
+	if root == "" || configured == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root ||
+		!filepath.IsAbs(configured) || filepath.Clean(configured) != configured || root != configured {
+		return fmt.Errorf("%w: persisted session %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, sess.ID)
+	}
+	return nil
+}
+
+func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.Environment) error {
+	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned || profileForSession(sess) == ProfileNoFS {
+		return nil
+	}
+	ws := env.Workspace()
+	if ws == nil || ws.Root() != s.cfg.AuthoritativeWorkspace {
+		return fmt.Errorf("%w: environment override does not match the deployment-assigned workspace", ErrFailedPrecondition)
+	}
+	return nil
 }
 
 // reopenLoadedSession applies the existing terminal-state recovery funnel to an
@@ -3082,6 +3176,9 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// remain the same ErrNotFound class.
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validatePersistedWorkspace(sess); err != nil {
 		return nil, err
 	}
 	if err := admitRunPurpose(sess, purpose); err != nil {
@@ -3528,6 +3625,9 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		engine = se.engine
 	}
 	if hasEnvOverride {
+		if err := s.validateEnvironmentOverride(sess, envOverride); err != nil {
+			return nil, tool.Environment{}, err
+		}
 		// A per-session Environment override (ACP fs/* buffers, no-fs) is COMPLETE:
 		// the creator supplied the accurate ref and the correct (possibly nil)
 		// CommandRunner. Use it directly — never guess a ref or runner from the
@@ -4170,6 +4270,9 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	// to idle for a NEW prompt, exactly the terminal states this seam must REJECT.
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validatePersistedWorkspace(sess); err != nil {
 		return nil, err
 	}
 	if sess.State != session.StateAwaiting {
