@@ -115,12 +115,12 @@ func TestApprovalSurfaceRoutesKeysBeforePhase(t *testing.T) {
 func TestEffectiveModelSetterUpdatesApprovalIdentityOnly(t *testing.T) {
 	m := planAskModel(t, true)
 	s := approvalSurfaceOf(t, m)
-	(&m).setEffectiveModel(client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 128000})
+	(&m).setResolvedSessionModel(client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 128000})
 	if s.modelID != "gpt-5" {
 		t.Fatalf("approval model id = %q, want gpt-5", s.modelID)
 	}
-	(&m).setEffectiveModel(client.ResolvedModel{ModelID: "gpt-5", ContextWindow: 64000})
-	if got := m.effectiveModel.ContextWindow; got != 128000 {
+	(&m).setResolvedSessionModel(client.ResolvedModel{ModelID: "gpt-5", ContextWindow: 64000})
+	if got := m.resolvedSessionModel.ContextWindow; got != 128000 {
 		t.Fatalf("context window = %d, want raise-only 128000", got)
 	}
 	if s.modelID != "gpt-5" {
@@ -209,7 +209,7 @@ func TestSurfaceApprovalMigration_Scenario2_PlanReviewLayoutAndOffset(t *testing
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "Plan ready for review (1 of 2)") {
 		t.Fatalf("queue-count change must invalidate plan cache: %q", got)
 	}
-	(&m).setEffectiveModel(client.ResolvedModel{ModelID: "review-model"})
+	(&m).setResolvedSessionModel(client.ResolvedModel{ModelID: "review-model"})
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "plan model: review-model") {
 		t.Fatalf("model change must invalidate plan cache: %q", got)
 	}

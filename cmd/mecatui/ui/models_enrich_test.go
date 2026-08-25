@@ -23,7 +23,7 @@ import (
 // idleModelWith builds an idle, sized model with the given effective + pending-next
 // selections wired (no overlays open), so the header next-badge logic is exercised
 // directly. effective is delivered as the create response's resolved model; next is
-// set as the pending activeModel.
+// set as the pending createModelSelection.
 func idleModelWith(t *testing.T, effective client.ResolvedModel, next client.ModelSelection, inv []client.ModelInfo) Model {
 	t.Helper()
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
@@ -40,7 +40,7 @@ func idleModelWith(t *testing.T, effective client.ResolvedModel, next client.Mod
 		tea.WindowSizeMsg{Width: 160, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-test-0001", ResolvedModel: effective},
 	)
-	m.activeModel = next
+	m.createModelSelection = next
 	return m
 }
 
@@ -130,7 +130,7 @@ func TestHeaderNextBadgeDroppedUnderWidthPressure(t *testing.T) {
 func TestModelProvenanceServerDefault(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}); got != "server default" {
 		t.Fatalf("provenance = %q, want server default", got)
 	}
@@ -145,7 +145,7 @@ func TestModelProvenanceWorkspaceDefault(t *testing.T) {
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		WorkspaceDefault: ws, WorkspaceDefaultSet: true,
 	})
-	m.effectiveModel = client.ResolvedModel{ProviderID: ws.ProviderID, ModelID: ws.ModelID}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: ws.ProviderID, ModelID: ws.ModelID}
 	if got := m.modelProvenance(ws); got != "workspace default" {
 		t.Fatalf("provenance = %q, want workspace default", got)
 	}
@@ -160,7 +160,7 @@ func TestModelProvenanceGlobalDefault(t *testing.T) {
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		GlobalDefault: gd,
 	})
-	m.effectiveModel = client.ResolvedModel{ProviderID: gd.ProviderID, ModelID: gd.ModelID}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: gd.ProviderID, ModelID: gd.ModelID}
 	if got := m.modelProvenance(gd); got != "global default" {
 		t.Fatalf("provenance = %q, want global default", got)
 	}
@@ -177,7 +177,7 @@ func TestModelProvenancePickedThisSession(t *testing.T) {
 		WorkspaceDefault: picked, WorkspaceDefaultSet: true,
 	})
 	m.pickedThisSession = picked
-	m.effectiveModel = client.ResolvedModel{ProviderID: picked.ProviderID, ModelID: picked.ModelID}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: picked.ProviderID, ModelID: picked.ModelID}
 	if got := m.modelProvenance(picked); got != "picked this session" {
 		t.Fatalf("provenance = %q, want picked this session", got)
 	}
@@ -191,7 +191,7 @@ func TestModelProvenanceFlag(t *testing.T) {
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		Model: "gpt-5",
 	})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}); got != "--model flag" {
 		t.Fatalf("provenance = %q, want --model flag", got)
 	}
@@ -208,7 +208,7 @@ func TestModelProvenanceFlag(t *testing.T) {
 func TestModelProvenanceToolhiveAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: true}}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "auto-selected" {
 		t.Fatalf("provenance = %q, want auto-selected", got)
@@ -224,7 +224,7 @@ func TestModelProvenanceToolhiveAutoSelected(t *testing.T) {
 func TestModelProvenanceToolhiveOperatorConfigured_NotAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "gpt-5"}
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: false}}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "gpt-5"}); got != "server default" {
 		t.Fatalf("provenance = %q, want server default (operator-configured, no AutoSelected bit)", got)
@@ -239,7 +239,7 @@ func TestModelProvenanceToolhiveOperatorConfigured_NotAutoSelected(t *testing.T)
 func TestModelProvenanceNoStatusRow_NotAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "server default" {
 		t.Fatalf("provenance = %q, want server default (no status row)", got)
 	}
@@ -311,8 +311,8 @@ func TestModelsSetGlobalDefaultPersists(t *testing.T) {
 		t.Fatalf("globalDefault = %+v, want %+v (★ marker tracks immediately)", m.modelCatalog.globalDefault, want)
 	}
 	// ctrl+g must NOT change the active/pending selection or open the confirm.
-	if !m.activeModel.IsZero() {
-		t.Errorf("ctrl+g must not change the active selection, got %+v", m.activeModel)
+	if !m.createModelSelection.IsZero() {
+		t.Errorf("ctrl+g must not change the active selection, got %+v", m.createModelSelection)
 	}
 	if modelsSurface(t, m).view != modelsPanel {
 		t.Errorf("ctrl+g must keep the picker open, view = %v", modelsSurface(t, m).view)
@@ -449,8 +449,8 @@ func TestCarryoverHandoff(t *testing.T) {
 	// (d) the header shows the NEW effective model (gpt-5-mini), set from the new
 	// SessionReadyMsg — the shared reducer path.
 	want := client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5-mini"}
-	if fm.effectiveModel != want {
-		t.Fatalf("final effectiveModel = %+v, want %+v (rebound from the carryover session)", fm.effectiveModel, want)
+	if fm.resolvedSessionModel != want {
+		t.Fatalf("final resolvedSessionModel = %+v, want %+v (rebound from the carryover session)", fm.resolvedSessionModel, want)
 	}
 	// (e) the carryover handoff reset the LOCAL transcript (the server carries the
 	// history; the client rebuilds from the seeded session).
@@ -618,8 +618,8 @@ func TestSeamlessSwitchCrossProviderCarriesProgram(t *testing.T) {
 	}
 	// The header shows the NEW effective model (claude).
 	want := client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
-	if fm.effectiveModel != want {
-		t.Fatalf("final effectiveModel = %+v, want %+v (rebound from the carryover session)", fm.effectiveModel, want)
+	if fm.resolvedSessionModel != want {
+		t.Fatalf("final resolvedSessionModel = %+v, want %+v (rebound from the carryover session)", fm.resolvedSessionModel, want)
 	}
 	// The cross-provider strip caveat is unit-tested in TestModelsChooseSwitchArmsStatusNote
 	// (the double-ctrl+c quit overwrites statusMsg here, so it can't be asserted at
@@ -798,7 +798,7 @@ func TestRestartFailedEnterRetries(t *testing.T) {
 	m.phase = phaseIdle
 	m.sessionID = ""
 	m.restartFailed = true
-	m.activeModel = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
+	m.createModelSelection = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 
 	mm, cmd := m.onIdleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -865,7 +865,7 @@ func TestRestartRetryReFailureStaysRecoverable(t *testing.T) {
 	m.phase = phaseIdle
 	m.sessionID = ""
 	m.restartFailed = true
-	m.activeModel = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
+	m.createModelSelection = client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 
 	// Enter-to-retry fires the recoverable create path.
 	mm, cmd := m.onIdleKey(tea.KeyPressMsg{Code: tea.KeyEnter})

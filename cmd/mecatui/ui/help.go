@@ -392,7 +392,7 @@ func (m Model) renderZeroState() string {
 	in := welcome.Info{
 		Cwd:         m.deps.Workspace,
 		Model:       m.zeroStateModelName(),
-		Provider:    m.activeModel.ProviderID, // "" when no selection yet → modelLine omits it
+		Provider:    m.createModelSelection.ProviderID, // "" when no selection yet → modelLine omits it
 		Version:     m.deps.Version,
 		Tagline:     "your local agentic coding harness",
 		Submit:      hk.submit,
@@ -462,7 +462,7 @@ func (m Model) zeroStateGatewayNote() string {
 // zeroStateModelName picks the model id shown on the splash: the picker's active
 // selection once set, else the launch-time --model display (mirrors the header).
 func (m Model) zeroStateModelName() string {
-	if name := m.activeModel.ModelID; name != "" {
+	if name := m.createModelSelection.ModelID; name != "" {
 		return sanitizeTerminal(name)
 	}
 	return m.deps.Model

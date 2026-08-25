@@ -36,7 +36,7 @@ func scenario8Model(adopter client.SessionAdopter, row client.SessionListItem) M
 		Workspace: "/target", Ctx: context.Background(), NoAltScreen: true,
 	})
 	m.activeWorkspace = "/target"
-	m.effectiveModel = client.ResolvedModel{ProviderID: "provider-b", ModelID: "model-b"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "provider-b", ModelID: "model-b"}
 	setActiveSessions(&m, sessionsState{view: sessionsPanel, tab: tabOtherRuns, loadState: sessionsComplete, sessions: []client.SessionListItem{row}})
 	ensureActiveSessions(&m).syncFilter()
 	return m
@@ -272,7 +272,7 @@ func TestSessionStorageContinuity_Scenario8_AdoptAffordanceTruth(t *testing.T) {
 		t.Fatalf("adopt action shown before server preflight:\n%s", before)
 	}
 	unresolved := scenario8Model(&scenario8Adopter{}, legacy)
-	unresolved.effectiveModel = client.ResolvedModel{}
+	unresolved.resolvedSessionModel = client.ResolvedModel{}
 	unresolved.deps.InitialModel = client.ModelSelection{}
 	if unresolved.adoptionPreflightCmd(legacy) != nil || !strings.Contains(stripANSIstr(unresolved.View().Content), "select an explicit workspace, environment, provider, and model") {
 		t.Fatal("unresolved target silently fell back instead of requiring explicit selection")

@@ -103,7 +103,7 @@ func (m Model) renderBody() string {
 	case m.dream.view != dreamClosed:
 		return renderDreamOverlay(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.effort.view != effortNone:
-		return renderEffortOverlay(m.deps.Theme, m.effort, m.effectiveModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
+		return renderEffortOverlay(m.deps.Theme, m.effort, m.resolvedSessionModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.worktrees.view != worktreesNone:
 		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.schedule.view != scheduleNone:
@@ -235,7 +235,7 @@ func (m Model) postureBadgeRender() (styled string, plainWidth int, present bool
 //
 //  1. While CONNECTING (no create response yet) ⇒ "" (no segment): the server owns
 //     the resolved value and we must not guess it.
-//  2. The EFFECTIVE model the server resolved THIS session to (m.effectiveModel,
+//  2. The EFFECTIVE model the server resolved THIS session to (m.resolvedSessionModel,
 //     echoed verbatim on SessionReadyMsg) — shown from turn zero. Its human display
 //     name is resolved from the already-held ListModels inventory by (provider_id,
 //     model_id); when the inventory has no match (not yet loaded, or a passthrough
@@ -247,7 +247,7 @@ func (m Model) headerModelLabel() string {
 	if m.phase == phaseConnecting {
 		return ""
 	}
-	if rm := m.effectiveModel; rm.ModelID != "" {
+	if rm := m.resolvedSessionModel; rm.ModelID != "" {
 		for _, mi := range m.modelCatalog.models {
 			if mi.ProviderID == rm.ProviderID && mi.ID == rm.ModelID && mi.DisplayName != "" {
 				return mi.DisplayName
@@ -255,7 +255,7 @@ func (m Model) headerModelLabel() string {
 		}
 		return rm.ModelID
 	}
-	if name := m.activeModel.ModelID; name != "" {
+	if name := m.createModelSelection.ModelID; name != "" {
 		return name
 	}
 	return m.deps.Model
@@ -293,7 +293,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 		// THIS session to, appended as a subtle ` · <effort>` so it rides WITH the model
 		// segment (and sheds with it under width pressure). Shown ONLY when non-empty
 		// (auto/unset echoes "" and so never renders).
-		if eff := effortHeaderSuffix(m.effectiveModel.ReasoningEffort); eff != "" {
+		if eff := effortHeaderSuffix(m.resolvedSessionModel.ReasoningEffort); eff != "" {
 			seg += " · " + eff
 		}
 		parts = append(parts, seg)
@@ -303,7 +303,7 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	// toolhive — disclosure-only (no acknowledgment required), riding the same
 	// segment slice so the EXISTING width-shedding/fitHeader math applies
 	// unchanged (it sheds like any other low-priority segment under pressure).
-	if m.effectiveModel.ProviderID == "toolhive" {
+	if m.resolvedSessionModel.ProviderID == "toolhive" {
 		parts = append(parts, m.deps.Theme.Style("muted").Render("via ToolHive gateway"))
 	} else if row, ok := availableNotDefaultStatus(m.modelCatalog.statuses); ok {
 		// Sibling (N1): when an intent-driven provider is detected-and-reachable
@@ -403,16 +403,16 @@ func (m Model) renderHeaderMode(mode string) string {
 
 // headerNextBadge is the muted "next: <model>" header badge previewing the
 // pendingNext (apply-on-next-create) selection. It shows ONLY when there is a KNOWN
-// effective model to contrast against (m.effectiveModel set) AND the pendingNext
-// resolves to a DIFFERENT (provider, model). Both guards matter: when no effective
-// model is known yet (connecting / older server) the model SEGMENT already shows the
+// resolved session model to contrast against (m.resolvedSessionModel set) AND the pendingNext
+// resolves to a DIFFERENT (provider, model). Both guards matter: when no resolved
+// session model is known yet (connecting / older server) the model SEGMENT already shows the
 // pendingNext, so a "next:" badge would just duplicate it; and a same-model next is
 // nothing to preview. The display name is resolved from the ListModels inventory by
 // (provider_id, model_id), falling back to the raw id — the same lookup the
-// effective-model label uses. Returns "" when there is no distinct next model.
+// resolved-session-model label uses. Returns "" when there is no distinct next model.
 func (m Model) headerNextBadge() string {
-	next := m.activeModel
-	eff := m.effectiveModel
+	next := m.createModelSelection
+	eff := m.resolvedSessionModel
 	if next.ModelID == "" || eff.ModelID == "" {
 		return ""
 	}
@@ -638,7 +638,7 @@ const footerGapPad = 2
 
 // contextWindow returns the denominator for the footer context meter:
 //
-//  1. m.effectiveModel.ContextWindow > 0 — the window the SERVER resolved for THIS
+//  1. m.resolvedSessionModel.ContextWindow > 0 — the window the SERVER resolved for THIS
 //     session's model (echoed on SessionReadyMsg, refreshed on every model switch /
 //     GetSession). It is now LIVE-FIRST server-side, so a live-only model heals to
 //     its real window. Exact operator configuration precedes live metadata; the global
@@ -647,8 +647,8 @@ const footerGapPad = 2
 //     trigger together. The client never recomputes the window.
 //  2. 0 — unknown; the meter renderers degrade to the bare "ctx <N>" current size.
 func (m Model) contextWindow() int64 {
-	if m.effectiveModel.ContextWindow > 0 {
-		return m.effectiveModel.ContextWindow
+	if m.resolvedSessionModel.ContextWindow > 0 {
+		return m.resolvedSessionModel.ContextWindow
 	}
 	return 0
 }

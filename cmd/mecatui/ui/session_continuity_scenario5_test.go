@@ -20,7 +20,7 @@ func TestSessionContinuityUX_Scenario5_DetailsSurface(t *testing.T) {
 	m.sessionCreatedAt = 1_700_000_000
 	m.sessionModifiedAt = 1_700_000_100
 	m.activeWorkspace = "/work/repo"
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5"}
 
 	got := stripANSIstr(renderSessionDetails(m.deps.Theme, m.sessionDetails(), helpKeys{closeOnly: "esc"}, 100, 30))
 	for _, want := range []string{

@@ -248,7 +248,7 @@ func TestGenericAskFooterIsUnchanged(t *testing.T) {
 
 func TestPlanAskRendersModelNames(t *testing.T) {
 	m := planAskModel(t, true)
-	(&m).setEffectiveModel(client.ResolvedModel{ModelID: "gpt-5", ProviderID: "openai"})
+	(&m).setResolvedSessionModel(client.ResolvedModel{ModelID: "gpt-5", ProviderID: "openai"})
 	// The setter updates the plan-review model identity; View repopulates its cache.
 	_ = m.View()
 	got := stripANSIstr(m.View().Content)
@@ -262,7 +262,7 @@ func TestPlanAskRendersModelNames(t *testing.T) {
 
 func TestPlanAskRendersModelNamesWhenUnknown(t *testing.T) {
 	m := planAskModel(t, true)
-	m.effectiveModel = client.ResolvedModel{} // no echo
+	m.resolvedSessionModel = client.ResolvedModel{} // no echo
 	got := stripANSIstr(m.View().Content)
 	if strings.Contains(got, "plan model:") {
 		t.Errorf("plan modal with no model echo must not show 'plan model:', got %q", got)
@@ -1026,7 +1026,7 @@ func TestPlanApprovedFiresModeModelRefresh(t *testing.T) {
 }
 
 // TestPlanApprovedRefreshUpdatesModeAndModel proves the ResolvedModelMsg
-// refetch result updates both m.activeMode and m.effectiveModel when the
+// refetch result updates both m.activeMode and m.resolvedSessionModel when the
 // server returns a flipped mode + new execute model. This is the end-to-end
 // reducer path: the ResolvedModelMsg lands after plan_approved and the header
 // updates in-place while the execution run is in progress.
@@ -1042,8 +1042,8 @@ func TestPlanApprovedRefreshUpdatesModeAndModel(t *testing.T) {
 
 	// Before the refetch lands: mode is still the create-time default
 	// (SessionReadyMsg didn't set a Mode, so activeMode is the deps.Mode).
-	// effectiveModel still shows the plan model (from SessionReadyMsg).
-	planModel := m.effectiveModel
+	// resolvedSessionModel still shows the plan model (from SessionReadyMsg).
+	planModel := m.resolvedSessionModel
 
 	// Simulate the refetch result: the server's session snapshot returns a
 	// flipped mode AND a new execute model.
@@ -1063,15 +1063,15 @@ func TestPlanApprovedRefreshUpdatesModeAndModel(t *testing.T) {
 		t.Fatalf("activeMode = %q, want accept-edits after the refetch", m.activeMode)
 	}
 
-	// effectiveModel must be the execute model, not the plan model.
-	if m.effectiveModel.ModelID == planModel.ModelID && planModel.ModelID != "" {
-		t.Fatalf("effectiveModel.ModelID = %q, want the execute model (not the plan model %q)", m.effectiveModel.ModelID, planModel.ModelID)
+	// resolvedSessionModel must be the execute model, not the plan model.
+	if m.resolvedSessionModel.ModelID == planModel.ModelID && planModel.ModelID != "" {
+		t.Fatalf("resolvedSessionModel.ModelID = %q, want the execute model (not the plan model %q)", m.resolvedSessionModel.ModelID, planModel.ModelID)
 	}
-	if m.effectiveModel.ModelID != "gpt-5-execute" {
-		t.Fatalf("effectiveModel.ModelID = %q, want gpt-5-execute", m.effectiveModel.ModelID)
+	if m.resolvedSessionModel.ModelID != "gpt-5-execute" {
+		t.Fatalf("resolvedSessionModel.ModelID = %q, want gpt-5-execute", m.resolvedSessionModel.ModelID)
 	}
-	if m.effectiveModel.ContextWindow != 200000 {
-		t.Fatalf("effectiveModel.ContextWindow = %d, want 200000", m.effectiveModel.ContextWindow)
+	if m.resolvedSessionModel.ContextWindow != 200000 {
+		t.Fatalf("resolvedSessionModel.ContextWindow = %d, want 200000", m.resolvedSessionModel.ContextWindow)
 	}
 }
 
@@ -1134,7 +1134,7 @@ func TestResolvedModelMsgModeUpdateBenignOnFooterHeal(t *testing.T) {
 	m, _, _ := planProceedModel(t, true)
 	// Set a known mode and model before the heal lands.
 	m.activeMode = "plan"
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 128000}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 128000}
 
 	// The footer-heal ResolvedModelMsg: same model identity, a raised window,
 	// and NO Mode (the footer-heal path doesn't carry mode).
@@ -1150,12 +1150,12 @@ func TestResolvedModelMsgModeUpdateBenignOnFooterHeal(t *testing.T) {
 	}
 
 	// Model identity must be untouched.
-	if m.effectiveModel.ProviderID != "openai" || m.effectiveModel.ModelID != "gpt-5" {
-		t.Fatalf("effectiveModel identity = %+v, want openai/gpt-5 (untouched by the footer heal)", m.effectiveModel)
+	if m.resolvedSessionModel.ProviderID != "openai" || m.resolvedSessionModel.ModelID != "gpt-5" {
+		t.Fatalf("resolvedSessionModel identity = %+v, want openai/gpt-5 (untouched by the footer heal)", m.resolvedSessionModel)
 	}
 
 	// ContextWindow must be RAISED (the heal's only mutation).
-	if m.effectiveModel.ContextWindow != 256000 {
-		t.Fatalf("effectiveModel.ContextWindow = %d, want 256000 (raised by the heal)", m.effectiveModel.ContextWindow)
+	if m.resolvedSessionModel.ContextWindow != 256000 {
+		t.Fatalf("resolvedSessionModel.ContextWindow = %d, want 256000 (raised by the heal)", m.resolvedSessionModel.ContextWindow)
 	}
 }

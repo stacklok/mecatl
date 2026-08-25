@@ -154,7 +154,7 @@ type fakeConv struct {
 	created     chan struct{}
 	createdOnce sync.Once
 	// resolvedModel is the EFFECTIVE model the fake's create response echoes back —
-	// the header e2e asserts it lands in m.effectiveModel and renders from turn zero.
+	// the header e2e asserts it lands in m.resolvedSessionModel and renders from turn zero.
 	resolvedModel client.ResolvedModel
 	// echoSelAsResolved, when true, makes CreateSession echo the REQUESTED selector
 	// back as the resolved model (so the restart-now handoff e2e sees the new effective

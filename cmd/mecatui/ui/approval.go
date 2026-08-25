@@ -31,7 +31,7 @@ func openApprovalSurface(m *Model) *approvalSurface {
 	s := &approvalSurface{
 		deps:        m.surfaceDeps(),
 		sessionID:   m.sessionID,
-		modelID:     m.effectiveModel.ModelID,
+		modelID:     m.resolvedSessionModel.ModelID,
 		render:      newApprovalRender(m.rend),
 		expandTools: m.expandTools,
 	}

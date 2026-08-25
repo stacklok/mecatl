@@ -241,8 +241,8 @@ func TestModelsFilterNarrows(t *testing.T) {
 	if m.phase != phaseConnecting {
 		t.Fatalf("enter should drive phaseConnecting (seamless switch), phase = %v", m.phase)
 	}
-	if m.activeModel != want {
-		t.Errorf("activeModel = %+v, want the filtered+chosen %+v", m.activeModel, want)
+	if m.createModelSelection != want {
+		t.Errorf("createModelSelection = %+v, want the filtered+chosen %+v", m.createModelSelection, want)
 	}
 	// Running the armed cmd fires CreateSessionWithCarryover with the live session id
 	// as the source — the seamless switch's carryover seam.
@@ -513,7 +513,7 @@ func TestModelsNoMatchNote(t *testing.T) {
 	}
 	// enter is a no-op (cursor past the empty filtered set).
 	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !mm.(Model).activeModel.IsZero() {
+	if !mm.(Model).createModelSelection.IsZero() {
 		t.Error("enter on a no-match filter must be a no-op")
 	}
 }
@@ -561,8 +561,8 @@ func TestModelsChooseNoSessionUsesPlainCreate(t *testing.T) {
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	want := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
-	if m.activeModel != want {
-		t.Fatalf("activeModel = %+v, want %+v", m.activeModel, want)
+	if m.createModelSelection != want {
+		t.Fatalf("createModelSelection = %+v, want %+v", m.createModelSelection, want)
 	}
 	if m.modal != nil {
 		t.Errorf("enter should close the picker, view = %v", modelsSurface(t, m).view)
@@ -695,8 +695,8 @@ func TestModelsEscClosesNoChange(t *testing.T) {
 	if m.modal != nil {
 		t.Error("esc should close the picker")
 	}
-	if m.activeModel != seed {
-		t.Errorf("esc must not change activeModel: got %+v, want %+v", m.activeModel, seed)
+	if m.createModelSelection != seed {
+		t.Errorf("esc must not change createModelSelection: got %+v, want %+v", m.createModelSelection, seed)
 	}
 }
 
@@ -770,8 +770,8 @@ func TestModelsKeyRemovedFallback(t *testing.T) {
 	store := &fakeStore{}
 	gone := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	m := newModelsModel(t, fm, store, modelsCaps(), gone)
-	if m.activeModel != gone {
-		t.Fatalf("precondition: activeModel seeded = %+v, want %+v", m.activeModel, gone)
+	if m.createModelSelection != gone {
+		t.Fatalf("precondition: createModelSelection seeded = %+v, want %+v", m.createModelSelection, gone)
 	}
 
 	// Drive ListModels through updateModelsMsg directly (idle phase ⇒ no create).
@@ -783,8 +783,8 @@ func TestModelsKeyRemovedFallback(t *testing.T) {
 	if cmd != nil {
 		t.Error("at idle, ModelsMsg must NOT fire a create command")
 	}
-	if !m.activeModel.IsZero() {
-		t.Errorf("active should be cleared to the server default, got %+v", m.activeModel)
+	if !m.createModelSelection.IsZero() {
+		t.Errorf("active should be cleared to the server default, got %+v", m.createModelSelection)
 	}
 	if !strings.Contains(stripANSIstr(m.statusMsg), "no longer available") {
 		t.Errorf("a loud key-removed notice should fire, got %q", stripANSIstr(m.statusMsg))
@@ -802,8 +802,8 @@ func TestModelsReconcileKeepsAvailable(t *testing.T) {
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), keep)
 	mm, _, _ := m.updateModelsMsg(client.ModelsMsg{Models: fm.models})
 	m = mm.(Model)
-	if m.activeModel != keep {
-		t.Errorf("an available selection must be preserved, got %+v want %+v", m.activeModel, keep)
+	if m.createModelSelection != keep {
+		t.Errorf("an available selection must be preserved, got %+v want %+v", m.createModelSelection, keep)
 	}
 }
 
@@ -821,8 +821,8 @@ func TestModelsSaveFailureFailSoft(t *testing.T) {
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
-	if m.activeModel != want {
-		t.Fatalf("active should hold for the run despite the save failure, got %+v", m.activeModel)
+	if m.createModelSelection != want {
+		t.Fatalf("active should hold for the run despite the save failure, got %+v", m.createModelSelection)
 	}
 	m = feedCmd(t, m, cmd) // runs the carryover create + the failing Save + the selectionSavedMsg reduction
 	if !strings.Contains(stripANSIstr(m.statusMsg), "could not persist") {
@@ -954,8 +954,8 @@ func TestModelsReconcileKeepsModelMissingFromSnapshot(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("connect-time ModelsMsg must fire CreateSession")
 	}
-	if m.activeModel != persisted {
-		t.Errorf("activeModel = %+v, want the KEPT persisted %+v (provider present ⇒ no clear)", m.activeModel, persisted)
+	if m.createModelSelection != persisted {
+		t.Errorf("createModelSelection = %+v, want the KEPT persisted %+v (provider present ⇒ no clear)", m.createModelSelection, persisted)
 	}
 	if m.modelCatalog.active != persisted {
 		t.Errorf("models.active = %+v, want the KEPT persisted %+v", m.modelCatalog.active, persisted)
@@ -978,7 +978,7 @@ func TestModelsReconcileKeepsModelMissingFromSnapshot(t *testing.T) {
 // REJECTS it (gRPC InvalidArgument — the code the server maps a bad selector to),
 // createSessionCmd retries ONCE with the zero selection (server default). Connect
 // must complete (idle), the now-known-bad selection clears for this run (BOTH
-// m.activeModel and the picker's m.modelCatalog.active — a stale models.active would
+// m.createModelSelection and the picker's m.modelCatalog.active — a stale models.active would
 // re-seed the picker with the known-bad selection), a LOUD warning names the
 // rejected model, and the state file is NOT rewritten. Exactly TWO creates fire:
 // the rejected one + the single zero retry — never more.
@@ -1024,8 +1024,8 @@ func TestConnectCreateRejectedFallsBackToDefault(t *testing.T) {
 	if conv.createCount != 2 {
 		t.Errorf("CreateSession fired %d times, want exactly 2 (the rejected create + ONE zero retry)", conv.createCount)
 	}
-	if !m.activeModel.IsZero() {
-		t.Errorf("activeModel = %+v, want zero (the rejected selection clears for this run)", m.activeModel)
+	if !m.createModelSelection.IsZero() {
+		t.Errorf("createModelSelection = %+v, want zero (the rejected selection clears for this run)", m.createModelSelection)
 	}
 	if !m.modelCatalog.active.IsZero() {
 		t.Errorf("models.active = %+v, want zero (a stale picker selection would re-seed the known-bad pick)", m.modelCatalog.active)
@@ -1137,8 +1137,8 @@ func TestConnectCreateTransientFailureStaysFatal(t *testing.T) {
 	if conv.createCount != 1 {
 		t.Errorf("CreateSession fired %d times, want exactly 1 (no zero-selection retry on a transient failure)", conv.createCount)
 	}
-	if m.activeModel != persisted {
-		t.Errorf("activeModel = %+v, want the UNTOUCHED persisted %+v (a transient failure must not clear the pick)", m.activeModel, persisted)
+	if m.createModelSelection != persisted {
+		t.Errorf("createModelSelection = %+v, want the UNTOUCHED persisted %+v (a transient failure must not clear the pick)", m.createModelSelection, persisted)
 	}
 	if st := stripANSIstr(m.statusMsg); strings.Contains(st, "rejected") {
 		t.Errorf("no dishonest 'rejected' warning may fire on a transient failure, got %q", st)
@@ -1374,8 +1374,8 @@ func TestModelsCatalogUpdatesWhilePickerClosed(t *testing.T) {
 	if len(m.modelCatalog.statuses) != 1 || !m.modelCatalog.configProvenanceProviderIDs["toolhive"] {
 		t.Fatalf("catalog statuses/intent = %+v/%v, want ToolHive status and intent", m.modelCatalog.statuses, m.modelCatalog.configProvenanceProviderIDs)
 	}
-	if !m.activeModel.IsZero() || !m.modelCatalog.active.IsZero() {
-		t.Fatalf("reconciled selections = %+v/%+v, want server default", m.activeModel, m.modelCatalog.active)
+	if !m.createModelSelection.IsZero() || !m.modelCatalog.active.IsZero() {
+		t.Fatalf("reconciled selections = %+v/%+v, want server default", m.createModelSelection, m.modelCatalog.active)
 	}
 	if m.gatewayNotice == "" {
 		t.Fatal("closed-picker catalog update should arm the gateway notice")
@@ -1389,12 +1389,12 @@ func TestModelsCatalogUpdatesWhilePickerClosed(t *testing.T) {
 func TestHeaderToolhiveSegment(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	if strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
 		t.Fatal("non-toolhive session must NOT show the gateway segment")
 	}
 
-	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 	if !strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
 		t.Fatal("a toolhive session must show the gateway segment at a wide width")
@@ -1418,7 +1418,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 
 	// Active provider is openai (key-driven); toolhive is available-but-not-default.
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	m.modelCatalog.statuses = gatewayStatuses()
 	header := stripANSIstr(m.renderHeader())
 	if !strings.Contains(header, "toolhive gateway available") {
@@ -1431,7 +1431,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 
 	// Now make the gateway the ACTIVE default: AvailableNotDefault flips false, so
 	// the 'available' segment disappears and the 'via' segment renders instead.
-	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
 	header = stripANSIstr(m.renderHeader())
 	if strings.Contains(header, "gateway available") {
@@ -1442,7 +1442,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 	}
 
 	// No statuses (byte-identical pre-feature path): neither segment renders.
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	m.modelCatalog.statuses = nil
 	header = stripANSIstr(m.renderHeader())
 	if strings.Contains(header, "gateway available") || strings.Contains(header, "via ToolHive gateway") {
@@ -1457,7 +1457,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 func TestHeaderProviderRouteSuffix(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "moonshotai/kimi-k3"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "moonshotai/kimi-k3"}
 	m.phase = phaseIdle // a bound session, so the model segment renders
 	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 
@@ -1955,7 +1955,7 @@ func TestModelOrgTagRenderedInPicker(t *testing.T) {
 func TestProvenanceHintAppendedWhenGatewayAvailable(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	m.modelCatalog.statuses = gatewayStatuses()
 	// toolhive is intent-driven; openrouter is NOT (key-driven) — the guard's premise.
 	m.modelCatalog.configProvenanceProviderIDs = map[string]bool{"toolhive": true}
@@ -1976,7 +1976,7 @@ func TestProvenanceHintAppendedWhenGatewayAvailable(t *testing.T) {
 func TestProvenanceHintSuppressedWhenGatewayIsDefault(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	// toolhive is the default here, so AvailableNotDefault is false on its row.
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
 	got := m.modelProvenanceLine()
@@ -1993,7 +1993,7 @@ func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	// A second intent-driven provider is the default; toolhive is AvailableNotDefault.
-	m.effectiveModel = client.ResolvedModel{ProviderID: "other-gateway", ModelID: "some-model"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "other-gateway", ModelID: "some-model"}
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: true}}
 	// The default (other-gateway) IS intent-driven — the key-driven guard must suppress.
 	m.modelCatalog.configProvenanceProviderIDs = map[string]bool{"toolhive": true, "other-gateway": true}
@@ -2011,7 +2011,7 @@ func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
 func TestProvenanceHintSuppressedWhenNoStatus(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	got := m.modelProvenanceLine()
 	if strings.Contains(got, "gateway also available") {
 		t.Errorf("provenance hint should be suppressed with no statuses, got %q", got)

@@ -22,7 +22,7 @@ func TestFooterContextMeterWithWindow(t *testing.T) {
 	})
 	// The footer denominator is the SERVER-echoed per-model window (resolve-at-use,
 	// live-first server-side); set it as the test would receive it on SessionReady.
-	m.effectiveModel = client.ResolvedModel{ContextWindow: 200000}
+	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
 	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
 	// The meter's numerator comes from the per-turn TurnEndMsg (current
 	// occupancy); the facets come from the cumulative ResultMsg total.
@@ -74,7 +74,7 @@ func TestFooterContextMeterUnknownWindow(t *testing.T) {
 // session totals (adding both would double-count).
 func TestContextMeterTracksLatestTurnNotCumulative(t *testing.T) {
 	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
-	m.effectiveModel = client.ResolvedModel{ContextWindow: 200000}
+	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
 	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30})
 
 	// Two turns: the meter shows the LATEST turn's prompt size, not the sum.
@@ -118,7 +118,7 @@ func TestContextMeterTracksLatestTurnNotCumulative(t *testing.T) {
 func TestFooterNarrowWidthTiers(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	m := New(Deps{Theme: th})
-	m.effectiveModel = client.ResolvedModel{ContextWindow: 200000}
+	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
 	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 140000, OutputTokens: 345}})
 	m = applyAll(m, client.ResultMsg{
 		Stop:  "end_turn",
@@ -163,7 +163,7 @@ func TestFooterNarrowWidthTiers(t *testing.T) {
 func TestFooterTeamSegmentTiers(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	m := New(Deps{Theme: th})
-	m.effectiveModel = client.ResolvedModel{ContextWindow: 200000}
+	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
 	m = applyAll(m, tea.WindowSizeMsg{Width: 200, Height: 30})
 	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 140000, OutputTokens: 345}})
 	m = applyAll(m, client.ResultMsg{
@@ -213,7 +213,7 @@ func TestFooterTeamSegmentTiers(t *testing.T) {
 func TestFooterNoTeamSegment(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	m := New(Deps{Theme: th})
-	m.effectiveModel = client.ResolvedModel{ContextWindow: 200000}
+	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
 	m = applyAll(m, client.ResultMsg{
 		Stop:  "end_turn",
 		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345},
@@ -231,7 +231,7 @@ func TestFooterNoTeamSegment(t *testing.T) {
 func TestFooterTeamDoneDropsSegment(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	m := New(Deps{Theme: th})
-	m.effectiveModel = client.ResolvedModel{ContextWindow: 200000}
+	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
 	m = applyAll(m, client.ResultMsg{
 		Stop:  "end_turn",
 		Usage: client.Usage{InputTokens: 140000},

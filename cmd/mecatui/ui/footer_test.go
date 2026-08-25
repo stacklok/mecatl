@@ -494,7 +494,7 @@ func TestFooterCountsIdleAsNotWorking(t *testing.T) {
 func TestContextWindowPrecedence(t *testing.T) {
 	cases := []struct {
 		name      string
-		echo      int64 // m.effectiveModel.ContextWindow (server-resolved, live-first)
+		echo      int64 // m.resolvedSessionModel.ContextWindow (server-resolved, live-first)
 		wantValue int64
 	}{
 		{"echo set → echo used", 200000, 200000},
@@ -503,7 +503,7 @@ func TestContextWindowPrecedence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var m Model
-			m.effectiveModel = client.ResolvedModel{ContextWindow: tc.echo}
+			m.resolvedSessionModel = client.ResolvedModel{ContextWindow: tc.echo}
 			if got := m.contextWindow(); got != tc.wantValue {
 				t.Errorf("contextWindow() = %d, want %d", got, tc.wantValue)
 			}
@@ -517,7 +517,7 @@ func TestContextWindowPrecedence(t *testing.T) {
 // glyph in the stripped footer.
 func TestFooterMeterUsesServerEchoedWindow(t *testing.T) {
 	m, _ := selModel(t)
-	m.effectiveModel = client.ResolvedModel{ContextWindow: 200000}
+	m.resolvedSessionModel = client.ResolvedModel{ContextWindow: 200000}
 	m.contextTokens = 40000
 	m.phase = phaseIdle
 	m.sel = selection{} // inactive: show the status+meter footer, not the selection count
@@ -536,7 +536,7 @@ func TestFooterMeterUsesServerEchoedWindow(t *testing.T) {
 // percentage.
 func TestFooterMeterDegradesWhenWindowUnknown(t *testing.T) {
 	m, _ := selModel(t)
-	m.effectiveModel = client.ResolvedModel{} // window unknown
+	m.resolvedSessionModel = client.ResolvedModel{} // window unknown
 	m.contextTokens = 40000
 	m.phase = phaseIdle
 	m.sel = selection{}

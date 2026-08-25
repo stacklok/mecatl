@@ -85,8 +85,8 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	// contextWindow() reports it, and the footer renders the bar.
 	healed := client.ResolvedModelMsg{SessionID: "sess-test-0001", Resolved: client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000}}
 	m = applyAll(m, healed)
-	if got := m.effectiveModel.ContextWindow; got != 1_050_000 {
-		t.Fatalf("effectiveModel.ContextWindow = %d, want 1,050,000 after the heal", got)
+	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
+		t.Fatalf("resolvedSessionModel.ContextWindow = %d, want 1,050,000 after the heal", got)
 	}
 	if got := m.contextWindow(); got != 1_050_000 {
 		t.Fatalf("contextWindow() = %d, want 1,050,000 after the heal", got)
@@ -99,8 +99,8 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	}
 
 	// 4) Identity untouched (only the denominator self-corrected).
-	if m.effectiveModel.ProviderID != "openrouter" || m.effectiveModel.ModelID != "openai/gpt-5.5" {
-		t.Fatalf("heal mutated the model identity: %+v", m.effectiveModel)
+	if m.resolvedSessionModel.ProviderID != "openrouter" || m.resolvedSessionModel.ModelID != "openai/gpt-5.5" {
+		t.Fatalf("heal mutated the model identity: %+v", m.resolvedSessionModel)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 func TestFooterHealStopsRefetchingOnceKnown(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := healModel(t, conv)
-	m.effectiveModel.ContextWindow = 200000 // window already KNOWN
+	m.resolvedSessionModel.ContextWindow = 200000 // window already KNOWN
 
 	_, cmd := m.Update(client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000}})
 	if cmd != nil {
@@ -147,8 +147,8 @@ func TestFooterHealCatalogued128KNeverRefetches(t *testing.T) {
 	m.sel = selection{}
 	m.refreshView()
 
-	if got := m.effectiveModel.ContextWindow; got != 128_000 {
-		t.Fatalf("precondition: effectiveModel.ContextWindow = %d, want a genuine 128000 first echo", got)
+	if got := m.resolvedSessionModel.ContextWindow; got != 128_000 {
+		t.Fatalf("precondition: resolvedSessionModel.ContextWindow = %d, want a genuine 128000 first echo", got)
 	}
 	_, cmd := m.Update(client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 40000}})
 	if cmd != nil {
@@ -168,7 +168,7 @@ func TestFooterHealDropsStaleSession(t *testing.T) {
 	m := healModel(t, conv) // sessionID == "sess-test-0001", window 0
 
 	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-OTHER", Resolved: client.ResolvedModel{ContextWindow: 1_050_000}})
-	if got := m.effectiveModel.ContextWindow; got != 0 {
+	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
 		t.Fatalf("stale-session heal landed: window = %d, want 0 (dropped)", got)
 	}
 }
@@ -178,16 +178,16 @@ func TestFooterHealDropsStaleSession(t *testing.T) {
 func TestFooterHealRaiseOnly(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
 	m := healModel(t, conv)
-	m.effectiveModel.ContextWindow = 1_050_000 // already known-large
+	m.resolvedSessionModel.ContextWindow = 1_050_000 // already known-large
 
 	// A smaller window arrives (a transient floor read) — must NOT lower.
 	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-test-0001", Resolved: client.ResolvedModel{ContextWindow: 128000}})
-	if got := m.effectiveModel.ContextWindow; got != 1_050_000 {
+	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
 		t.Fatalf("smaller heal lowered the window to %d, want it kept at 1,050,000 (raise-only)", got)
 	}
 	// A zero window (unknown) must NOT erase it either.
 	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-test-0001", Resolved: client.ResolvedModel{ContextWindow: 0}})
-	if got := m.effectiveModel.ContextWindow; got != 1_050_000 {
+	if got := m.resolvedSessionModel.ContextWindow; got != 1_050_000 {
 		t.Fatalf("zero heal erased the window to %d, want it kept at 1,050,000 (raise-only)", got)
 	}
 }
@@ -210,7 +210,7 @@ func TestFooterHealErrorBenign(t *testing.T) {
 	}
 	// Feed the error result back: window stays unknown (0), no panic, footer degraded.
 	m = applyAll(m, client.ResolvedModelMsg{SessionID: "sess-test-0001", Err: errFakeGet})
-	if got := m.effectiveModel.ContextWindow; got != 0 {
+	if got := m.resolvedSessionModel.ContextWindow; got != 0 {
 		t.Fatalf("error heal changed the window to %d, want 0 (benign)", got)
 	}
 }

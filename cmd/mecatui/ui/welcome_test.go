@@ -179,7 +179,7 @@ func TestNoBannerSuppressesSplash(t *testing.T) {
 
 // TestSplashShowsProvider asserts the active selection's provider is rendered on
 // the identity line ("model · provider") when set — renderZeroState now threads
-// m.activeModel.ProviderID into welcome.Info.Provider.
+// m.createModelSelection.ProviderID into welcome.Info.Provider.
 func TestSplashShowsProvider(t *testing.T) {
 	t.Setenv("MECATUI_NO_KITTY", "1")
 	recv := &fakeRecver{gate: make(chan struct{})}
@@ -188,7 +188,7 @@ func TestSplashShowsProvider(t *testing.T) {
 	m := New(Deps{
 		Session: conv, Conv: conv, Theme: aztec(),
 		Server: "127.0.0.1:8080", Workspace: "/workspace", Mode: "default",
-		// A persisted selection seeds m.activeModel (ProviderID + ModelID).
+		// A persisted selection seeds m.createModelSelection (ProviderID + ModelID).
 		InitialModel: client.ModelSelection{ProviderID: "anthropic", ModelID: "claude-opus-4"},
 		Ctx:          t.Context(), NoAltScreen: true,
 	})

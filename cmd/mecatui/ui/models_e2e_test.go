@@ -82,8 +82,8 @@ func TestModelsE2EPersistedSelectionCarried(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(scaleWait(3*time.Second)))
 
 	fm := tm.FinalModel(t).(Model)
-	if fm.activeModel != persisted {
-		t.Errorf("final activeModel = %+v, want %+v", fm.activeModel, persisted)
+	if fm.createModelSelection != persisted {
+		t.Errorf("final createModelSelection = %+v, want %+v", fm.createModelSelection, persisted)
 	}
 }
 
@@ -111,8 +111,8 @@ func TestModelsE2EKeyRemovedFallback(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(scaleWait(3*time.Second)))
 
 	fm := tm.FinalModel(t).(Model)
-	if !fm.activeModel.IsZero() {
-		t.Errorf("final activeModel = %+v, want zero (fell back to server default)", fm.activeModel)
+	if !fm.createModelSelection.IsZero() {
+		t.Errorf("final createModelSelection = %+v, want zero (fell back to server default)", fm.createModelSelection)
 	}
 }
 
@@ -146,15 +146,15 @@ func TestModelsE2EStaleSnapshotCarriesSavedSelection(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(scaleWait(3*time.Second)))
 
 	fm := tm.FinalModel(t).(Model)
-	if fm.activeModel != persisted {
-		t.Errorf("final activeModel = %+v, want the kept %+v", fm.activeModel, persisted)
+	if fm.createModelSelection != persisted {
+		t.Errorf("final createModelSelection = %+v, want the kept %+v", fm.createModelSelection, persisted)
 	}
 }
 
 // TestModelsE2EFilterAndSelect drives the headline scroll+filter flow end-to-end:
 // after connect, open /models (via the slash-command submit path), type a filter
 // that uniquely narrows the list, press enter, and assert the FILTERED+chosen model
-// is carried into activeModel. Sequenced on the create signal + FinalModel only,
+// is carried into createModelSelection. Sequenced on the create signal + FinalModel only,
 // never on tm.Output() (the documented flush-starvation flake discipline).
 func TestModelsE2EFilterAndSelect(t *testing.T) {
 	models := []client.ModelInfo{
@@ -177,7 +177,7 @@ func TestModelsE2EFilterAndSelect(t *testing.T) {
 
 	// Type a filter that uniquely narrows to the openrouter/claude row, then press
 	// enter — the seamless switch (no confirm overlay): a live session exists, so the
-	// carryover handoff fires and activeModel is set to the filtered+chosen model.
+	// carryover handoff fires and createModelSelection is set to the filtered+chosen model.
 	for _, r := range "claude" {
 		tm.Send(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
@@ -190,7 +190,7 @@ func TestModelsE2EFilterAndSelect(t *testing.T) {
 
 	fm := tm.FinalModel(t).(Model)
 	want := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
-	if fm.activeModel != want {
-		t.Errorf("final activeModel = %+v, want the filtered+chosen %+v (seamless switch)", fm.activeModel, want)
+	if fm.createModelSelection != want {
+		t.Errorf("final createModelSelection = %+v, want the filtered+chosen %+v (seamless switch)", fm.createModelSelection, want)
 	}
 }

@@ -530,21 +530,10 @@ type Model struct {
 	// created at Open and lives ONLY inside this interface field — never a
 	// pre-declared tombstone field (surface.go).
 	modal surface
-	// activeModel is the currently-selected (provider, model) the NEXT CreateSession
-	// will carry (apply-on-next-create). Seeded from Deps.InitialModel, updated by the
-	// picker, and reconciled-to-default at connect when its provider is unavailable. It
-	// is the SOURCE of truth for the create selection; m.modelCatalog.active mirrors it for
-	// the picker's ● marker. The header model display reads from it once non-zero.
-	activeModel client.ModelSelection
-	// effectiveModel is the EFFECTIVE provider+model the SERVER resolved THIS session
-	// to, echoed verbatim on SessionReadyMsg (the create response). The header shows
-	// its id from turn zero. DISTINCT from activeModel: activeModel is what the NEXT
-	// create will REQUEST (and may be the zero/empty default selection), whereas
-	// effectiveModel is what the CURRENT session actually RESOLVED to (server-owned).
-	// The header reads effectiveModel for the live model display, never resolving a
-	// default itself. Zero value (empty ids) until SessionReadyMsg and for an older
-	// server → the header shows no model segment. The model is FIXED per session.
-	effectiveModel client.ResolvedModel
+	// createModelSelection is the client selection for future CreateSession calls. Zero uses the server default.
+	createModelSelection client.ModelSelection
+	// resolvedSessionModel is the server-resolved model for the bound session.
+	resolvedSessionModel client.ResolvedModel
 	// providerRoute is the DOWNSTREAM provider the serving provider routed the LATEST
 	// turn to (issue #480; today only the openrouter entry produces it, as a display
 	// name like "Google"). Updated on each ProviderRouteMsg; the header appends it to
@@ -705,7 +694,7 @@ type Model struct {
 	// app. While set, enter on an empty prompt re-fires restartOnModelCmd (NEVER
 	// createSessionCmd — its issue-#41 fallback leg would clear the user's EXPLICIT
 	// pick on a rejection; see onIdleSubmit) with the selection still in
-	// m.activeModel. Cleared the moment a session is (re)established
+	// m.createModelSelection. Cleared the moment a session is (re)established
 	// (SessionReadyMsg) or a retry is fired.
 	restartFailed bool
 
@@ -913,10 +902,10 @@ func New(deps Deps) Model {
 		// A model merely absent from the snapshot is kept (issue #41); if the server then
 		// rejects the create, createSessionCmd's fallback leg retries on the default and
 		// surfaces a loud warning (connectFallbackMsg) — connect still completes.
-		activeModel:     deps.InitialModel,
-		activeMode:      client.ModeString(client.ModeFromString(deps.Mode)),
-		modelCatalog:    modelCatalog{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
-		activeWorkspace: deps.Workspace,
+		createModelSelection: deps.InitialModel,
+		activeMode:           client.ModeString(client.ModeFromString(deps.Mode)),
+		modelCatalog:         modelCatalog{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
+		activeWorkspace:      deps.Workspace,
 		// Seed the CLI-supplied seed prompt (-p/--prompt + --prompt-file) for
 		// one-shot auto-submit on the FIRST session ready.
 		pendingInitialPrompt: deps.InitialPrompt,
@@ -951,7 +940,7 @@ func New(deps Deps) Model {
 		m.sessionModifiedAt = resume.Row.ModifiedAt
 		m.activeWorkspace = resume.Snapshot.Workspace
 		m.activeMode = client.ModeString(client.ModeFromString(resume.Snapshot.Mode))
-		(&m).setEffectiveModel(resume.Snapshot.ResolvedModel)
+		(&m).setResolvedSessionModel(resume.Snapshot.ResolvedModel)
 		m.caps = resume.Snapshot.Capabilities
 		m.conv = conversationFromTranscript(resume.Transcript.Messages)
 		m.startupAdopted = true
@@ -1003,7 +992,7 @@ func (m *Model) recordFileChange(path string) {
 //
 // It deliberately does NOT clear the picker/inventory overlay state (models/
 // worktrees/schedule/sessions) — those are transport/compose state like
-// activeModel/caps, NOT session-derived transcript state, so a /clear or a
+// createModelSelection/caps, NOT session-derived transcript state, so a /clear or a
 // session switch must not dismiss an open picker. Transcript and replay state
 // belong to the dynamically-owned sessionsState and are torn down by its Close
 // or transcript-to-picker transition; m.conv remains the authoritative live

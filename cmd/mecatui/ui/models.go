@@ -40,7 +40,7 @@ func (m Model) openModels() (tea.Model, tea.Cmd) {
 
 // chooseModel applies a surface selection through the existing restart path.
 func (m Model) chooseModel(sel client.ModelSelection, label string) (tea.Model, tea.Cmd, bool) {
-	crossProvider := m.effectiveModel.ProviderID != "" && sel.ProviderID != m.effectiveModel.ProviderID
+	crossProvider := m.resolvedSessionModel.ProviderID != "" && sel.ProviderID != m.resolvedSessionModel.ProviderID
 	if label == "" {
 		label = modelSelLabel(sel)
 	}
@@ -68,7 +68,7 @@ func modelSwitchNote(label string, crossProvider bool) string {
 // down ALL per-session client state bound to the OLD session, resets the
 // conversation transcript, drives the phase back to phaseConnecting, and fires the
 // restartOnModelCmd (CloseSession(old) → CreateSession(new, selector)). The new
-// header/caps/effectiveModel all arrive on the resulting SessionReadyMsg, so the UI
+// header/caps/resolvedSessionModel all arrive on the resulting SessionReadyMsg, so the UI
 // rebinds entirely from the NEW session. See restartOnModelCmd for the teardown
 // rationale (esp. the stream-subscription invalidation).
 func (m Model) restartOnModel(sel client.ModelSelection) (tea.Model, tea.Cmd, bool) {
@@ -80,7 +80,7 @@ func (m Model) restartOnModel(sel client.ModelSelection) (tea.Model, tea.Cmd, bo
 
 	oldID := m.sessionID
 	m.modelCatalog.active = sel
-	m.activeModel = sel
+	m.createModelSelection = sel
 	m.pickedThisSession = sel
 	// Suppress the first-run welcome splash for the rest of the run (resetSession
 	// empties the conversation; without this the restart's empty-idle frame re-fires
@@ -94,7 +94,7 @@ func (m Model) restartOnModel(sel client.ModelSelection) (tea.Model, tea.Cmd, bo
 	// Rebind the rest of the per-session client state to "no session yet": the new
 	// values arrive on the NEW session's SessionReadyMsg.
 	m = m.bindSessionID("")
-	m.effectiveModel = client.ResolvedModel{}
+	m.resolvedSessionModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false // a fresh attempt; clear any prior failure flag
 	m.restartFailedForkID = ""
@@ -110,7 +110,7 @@ func (m Model) restartOnModel(sel client.ModelSelection) (tea.Model, tea.Cmd, bo
 // restartOnModelCmd closes the OLD session (best-effort) then creates a NEW session
 // carrying the picked selector, off the update goroutine. On SUCCESS it returns the
 // same SessionReadyMsg the connect path uses, so the reducer rebinds the session id,
-// caps, and effectiveModel uniformly (no second code path). On FAILURE it returns a
+// caps, and resolvedSessionModel uniformly (no second code path). On FAILURE it returns a
 // DISTINCT restartFailedMsg (NOT client.ConnectErrMsg): a ConnectErrMsg would drive
 // the TERMINAL fatal screen, which is right for "never connected" but WRONG here — we
 // just destroyed a working session at the user's request, so a transient blip (server
@@ -156,7 +156,7 @@ func (m Model) restartOnModelWithCarryover(sel client.ModelSelection) (tea.Model
 
 	oldID := m.sessionID
 	m.modelCatalog.active = sel
-	m.activeModel = sel
+	m.createModelSelection = sel
 	m.pickedThisSession = sel
 	m.restartedThisRun = true
 
@@ -169,7 +169,7 @@ func (m Model) restartOnModelWithCarryover(sel client.ModelSelection) (tea.Model
 	// Rebind the rest of the per-session client state to "no session yet": the new
 	// values arrive on the new session's SessionReadyMsg.
 	m = m.bindSessionID("")
-	m.effectiveModel = client.ResolvedModel{}
+	m.resolvedSessionModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false
 	m.restartFailedForkID = ""
@@ -227,7 +227,7 @@ func (m Model) switchEffort(sel client.ModelSelection) (tea.Model, tea.Cmd, bool
 
 	oldID := m.sessionID
 	m.modelCatalog.active = sel
-	m.activeModel = sel
+	m.createModelSelection = sel
 	m.pickedThisSession = sel
 	// Suppress the first-run welcome splash for the rest of the run — the fork keeps
 	// the transcript, but a fork at turn 0 (empty conversation) would otherwise
@@ -245,7 +245,7 @@ func (m Model) switchEffort(sel client.ModelSelection) (tea.Model, tea.Cmd, bool
 	// Rebind the rest of the per-session client state to "no session yet": the new
 	// values arrive on the fork's SessionReadyMsg.
 	m = m.bindSessionID("")
-	m.effectiveModel = client.ResolvedModel{}
+	m.resolvedSessionModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false // a fresh attempt; clear any prior failure flag
 	m.restartFailedForkID = ""
@@ -263,7 +263,7 @@ func (m Model) switchEffort(sel client.ModelSelection) (tea.Model, tea.Cmd, bool
 // preferable to blocking the handoff) and refetches the fork's resolved model via
 // GetSession (the fork RPC carries no capabilities/resolved-model echo), returning
 // the SAME SessionReadyMsg the connect path uses so the reducer rebinds session id,
-// caps, and effectiveModel uniformly. The resolved-model refetch is what drives the
+// caps, and resolvedSessionModel uniformly. The resolved-model refetch is what drives the
 // /effort cursor ● and the header effort suffix (the fork's effort echo).
 // Capabilities come from the GetSession snapshot (snap.Capabilities), the
 // same authoritative source as the footer-heal RefetchSessionCmd path.

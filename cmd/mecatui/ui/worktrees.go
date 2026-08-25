@@ -165,7 +165,7 @@ func (m Model) onWorktreesConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, b
 // it tears down ALL per-session client state bound to the OLD session, resets the
 // conversation transcript, drives the phase back to phaseConnecting, and fires
 // restartOnWorkspaceCmd (CloseSession(old) → CreateSessionInWorkspace(new, path)).
-// The new header/caps/effectiveModel all arrive on the resulting SessionReadyMsg,
+// The new header/caps/resolvedSessionModel all arrive on the resulting SessionReadyMsg,
 // so the UI rebinds entirely from the NEW session. Mirrors restartOnModel
 // (models.go) but passes the worktree PATH as the new-session workspace.
 func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd, bool) {
@@ -180,7 +180,7 @@ func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd, bool) {
 	m = m.resetSession()
 
 	m = m.bindSessionID("")
-	m.effectiveModel = client.ResolvedModel{}
+	m.resolvedSessionModel = client.ResolvedModel{}
 	m.caps = client.Capabilities{}
 	m.restartFailed = false
 	m.restartFailedForkID = ""
@@ -208,7 +208,7 @@ func (m Model) restartOnWorkspaceCmd(oldID, workspace string) tea.Cmd {
 		if oldID != "" {
 			_ = deps.Session.CloseSession(deps.Ctx, oldID)
 		}
-		id, caps, resolved, err := deps.Session.CreateSessionInWorkspace(deps.Ctx, workspace, m.activeModel, m.desiredMode())
+		id, caps, resolved, err := deps.Session.CreateSessionInWorkspace(deps.Ctx, workspace, m.createModelSelection, m.desiredMode())
 		if err != nil {
 			return restartFailedMsg{err: err, model: workspace}
 		}

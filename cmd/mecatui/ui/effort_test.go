@@ -62,7 +62,7 @@ func TestEffortPickerWarnsOnNoReasoningModel(t *testing.T) {
 	m.modelCatalog.models = []client.ModelInfo{
 		{ID: "no-reason", ProviderID: "openai", DisplayName: "No Reason", Reasoning: false},
 	}
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "no-reason"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "no-reason"}
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
@@ -75,7 +75,7 @@ func TestEffortPickerWarnsOnNoReasoningModel(t *testing.T) {
 	m2.modelCatalog.models = []client.ModelInfo{
 		{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true},
 	}
-	m2.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m2.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	mm2, _ := m2.runEffort()
 	if got := stripANSIstr(mm2.(Model).View().Content); strings.Contains(got, warn) {
 		t.Errorf("a reasoning-capable model must NOT warn:\n%s", got)
@@ -84,7 +84,7 @@ func TestEffortPickerWarnsOnNoReasoningModel(t *testing.T) {
 	// (3) Unknown model (not in inventory) → silent (fail-open).
 	m3 := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	m3.modelCatalog.models = nil
-	m3.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "mystery"}
+	m3.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "mystery"}
 	mm3, _ := m3.runEffort()
 	if got := stripANSIstr(mm3.(Model).View().Content); strings.Contains(got, warn) {
 		t.Errorf("an unknown model must be silent (fail-open):\n%s", got)
@@ -106,7 +106,7 @@ func TestRunEffortGatedWithoutModelSelection(t *testing.T) {
 // effort row (so the active tier is pre-selected), not always at the top.
 func TestEffortCursorStartsOnCurrent(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	m.effectiveModel.ReasoningEffort = "high"
+	m.resolvedSessionModel.ReasoningEffort = "high"
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	// effortTiers = [auto low medium high xhigh max] → "high" is index 3.
@@ -177,8 +177,8 @@ func TestEffortPickForksDirectly(t *testing.T) {
 	// The selection applied synchronously: model PRESERVED, effort changed, recorded
 	// as the explicit this-session pick.
 	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "high"}
-	if m.activeModel != want {
-		t.Fatalf("activeModel = %+v, want %+v (model preserved, effort changed)", m.activeModel, want)
+	if m.createModelSelection != want {
+		t.Fatalf("createModelSelection = %+v, want %+v (model preserved, effort changed)", m.createModelSelection, want)
 	}
 	if m.pickedThisSession != want {
 		t.Fatalf("pickedThisSession = %+v, want %+v", m.pickedThisSession, want)
@@ -256,8 +256,8 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	}
 	// … and the effective model updates from the refetch (the new effort echo drives
 	// the header suffix + the /effort cursor ●).
-	if m.effectiveModel.ReasoningEffort != "high" {
-		t.Errorf("effectiveModel.ReasoningEffort = %q, want high (from the fork's GetSession refetch)", m.effectiveModel.ReasoningEffort)
+	if m.resolvedSessionModel.ReasoningEffort != "high" {
+		t.Errorf("resolvedSessionModel.ReasoningEffort = %q, want high (from the fork's GetSession refetch)", m.resolvedSessionModel.ReasoningEffort)
 	}
 	if m.phase != phaseIdle {
 		t.Errorf("phase = %v, want phaseIdle (the fork's SessionReadyMsg rebinds idle)", m.phase)
@@ -323,8 +323,8 @@ func TestEffortPickFailureRetryReforks(t *testing.T) {
 	}
 	// The failing pick applied the selection synchronously — the retry re-fires it.
 	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "low"}
-	if m.activeModel != want {
-		t.Fatalf("precondition: activeModel = %+v, want %+v", m.activeModel, want)
+	if m.createModelSelection != want {
+		t.Fatalf("precondition: createModelSelection = %+v, want %+v", m.createModelSelection, want)
 	}
 
 	// The fork succeeded in creating the peer session — only the fork RPC erred, so
@@ -373,7 +373,7 @@ func TestEffortPickFailureRetryReforks(t *testing.T) {
 // resolved-model refetch fails. The app must DEGRADE gracefully — recoverable
 // (restartFailed armed, the fork origin recorded for a re-fork retry), NOT stuck in
 // phaseConnecting and NOT fatal — and the source session IS closed (the fork itself
-// succeeded). m.effectiveModel may stay stale (the footer heal re-derives it), but
+// succeeded). m.resolvedSessionModel may stay stale (the footer heal re-derives it), but
 // the fork happened. (The transcript is the fork's guarantee: it rides the
 // server-side copy regardless of the refetch.)
 func TestEffortPickRefetchFailureKeepsFork(t *testing.T) {
@@ -422,7 +422,7 @@ func TestEffortPickRefetchFailureKeepsFork(t *testing.T) {
 func TestEffortPickAutoSendsEmpty(t *testing.T) {
 	store := &fakeStore{}
 	m := newModelsModel(t, sampleModels(), store, modelsCaps(), client.ModelSelection{})
-	m.effectiveModel.ReasoningEffort = "high" // start from a non-auto state
+	m.resolvedSessionModel.ReasoningEffort = "high" // start from a non-auto state
 	conv := m.deps.Session.(*fakeConv)
 
 	mm, _ := m.runEffort()
@@ -437,8 +437,8 @@ func TestEffortPickAutoSendsEmpty(t *testing.T) {
 	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // apply directly
 	m = mm.(Model)
 	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: ""}
-	if m.activeModel != want {
-		t.Fatalf("activeModel = %+v, want %+v (auto ⇒ empty effort)", m.activeModel, want)
+	if m.createModelSelection != want {
+		t.Fatalf("createModelSelection = %+v, want %+v (auto ⇒ empty effort)", m.createModelSelection, want)
 	}
 	m = feedCmd(t, m, cmd)
 	if conv.forkedEffort != "" {
@@ -482,7 +482,7 @@ func TestEffortHeaderSuffix(t *testing.T) {
 // render together.
 func TestEffortPickerGolden(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	m.effectiveModel.ReasoningEffort = "medium" // the ● row
+	m.resolvedSessionModel.ReasoningEffort = "medium" // the ● row
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	// Move the cursor OFF the current row so the ● and the highlight are distinct.
@@ -533,7 +533,7 @@ func TestEffortPickCurrentTierForksToo(t *testing.T) {
 func TestEffortPickCurrentTierNonAutoForksToo(t *testing.T) {
 	store := &fakeStore{}
 	m := newModelsModel(t, sampleModels(), store, modelsCaps(), client.ModelSelection{})
-	m.effectiveModel.ReasoningEffort = "high" // the CURRENT tier is non-auto
+	m.resolvedSessionModel.ReasoningEffort = "high" // the CURRENT tier is non-auto
 	conv := m.deps.Session.(*fakeConv)
 
 	mm, _ := m.runEffort()
@@ -592,7 +592,7 @@ func TestEffortRendersInHeader(t *testing.T) {
 		t.Fatalf("unset effort must not render a suffix:\n%s", header)
 	}
 	// Set effort: the suffix renders beside the model.
-	m.effectiveModel.ReasoningEffort = "high"
+	m.resolvedSessionModel.ReasoningEffort = "high"
 	m.refreshView()
 	header = stripANSIstr(m.renderHeader())
 	if !strings.Contains(header, "· high") {

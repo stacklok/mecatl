@@ -147,19 +147,19 @@ func (m *Model) closeModal() {
 	m.metrics.clear()
 }
 
-// setEffectiveModel applies server-authoritative model information. A model-ID
+// setResolvedSessionModel applies server-authoritative model information. A model-ID
 // change replaces the complete identity and updates an open plan review; a
 // same-model update may only raise the known context window.
-func (m *Model) setEffectiveModel(resolved client.ResolvedModel) (changed bool) {
-	if resolved.ModelID != "" && resolved.ModelID != m.effectiveModel.ModelID {
-		m.effectiveModel = resolved
+func (m *Model) setResolvedSessionModel(resolved client.ResolvedModel) (changed bool) {
+	if resolved.ModelID != "" && resolved.ModelID != m.resolvedSessionModel.ModelID {
+		m.resolvedSessionModel = resolved
 		if s := approvalSurfaceFor(m); s != nil && isPlanAsk(s.ask.Tool) {
 			s.modelID = resolved.ModelID
 		}
 		return true
 	}
-	if resolved.ContextWindow > m.effectiveModel.ContextWindow {
-		m.effectiveModel.ContextWindow = resolved.ContextWindow
+	if resolved.ContextWindow > m.resolvedSessionModel.ContextWindow {
+		m.resolvedSessionModel.ContextWindow = resolved.ContextWindow
 		return true
 	}
 	return false

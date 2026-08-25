@@ -80,8 +80,8 @@ func (m Model) sessionDetails() sessionDetailsView {
 	return sessionDetailsView{
 		ID: m.sessionID, Title: m.sessionTitle, State: m.sessionState,
 		Workspace: m.activeWorkspace, CreatedAt: m.sessionCreatedAt,
-		ModifiedAt: m.sessionModifiedAt, ProviderID: m.effectiveModel.ProviderID,
-		ModelID: m.effectiveModel.ModelID,
+		ModifiedAt: m.sessionModifiedAt, ProviderID: m.resolvedSessionModel.ProviderID,
+		ModelID: m.resolvedSessionModel.ModelID,
 	}
 }
 
@@ -200,7 +200,7 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) adoptionBindings() client.AdoptionBindings {
-	provider, model := m.effectiveModel.ProviderID, m.effectiveModel.ModelID
+	provider, model := m.resolvedSessionModel.ProviderID, m.resolvedSessionModel.ModelID
 	if provider == "" && model == "" {
 		provider, model = m.deps.InitialModel.ProviderID, m.deps.InitialModel.ModelID
 	}

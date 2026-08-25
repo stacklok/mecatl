@@ -271,8 +271,8 @@ func (m Model) runClear() (tea.Model, tea.Cmd) {
 // clearSessionSelection prefers the server's effective model echo, while retaining
 // the locally requested reasoning effort when an older server did not echo it.
 func (m Model) clearSessionSelection() client.ModelSelection {
-	sel := m.activeModel
-	if resolved := m.effectiveModel; resolved.ProviderID != "" || resolved.ModelID != "" {
+	sel := m.createModelSelection
+	if resolved := m.resolvedSessionModel; resolved.ProviderID != "" || resolved.ModelID != "" {
 		if resolved.ProviderID != "" {
 			sel.ProviderID = resolved.ProviderID
 		}

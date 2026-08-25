@@ -55,7 +55,7 @@ func TestSessionsAdoptionGoldens(t *testing.T) {
 	m := newSessionsGoldenModel(t, []client.SessionListItem{legacy})
 	m.deps.Adoption = adopter
 	m.activeWorkspace = "/workspace"
-	m.effectiveModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	m = openAndLoad(t, m, []client.SessionListItem{legacy})
 	ensureActiveSessions(&m).tab = tabOtherRuns
 	ensureActiveSessions(&m).syncFilter()

@@ -27,7 +27,7 @@ func (m Model) reduceModelCatalog(msg client.ModelsMsg) Model {
 	m.modelCatalog.models = msg.Models
 	m.modelCatalog.statuses = msg.Statuses
 	m.modelCatalog.configProvenanceProviderIDs = configProvenanceProviderSet(msg.Statuses)
-	m.modelCatalog.active = m.activeModel
+	m.modelCatalog.active = m.createModelSelection
 	return m.reconcileSelection()
 }
 
@@ -116,10 +116,10 @@ func (m Model) reconcileSelection() Model {
 		gone = m.modelCatalog.active.ProviderID
 	}
 	m.modelCatalog.active = client.ModelSelection{}
-	m.activeModel = client.ModelSelection{}
+	m.createModelSelection = client.ModelSelection{}
 	notice := "saved model " + sanitizeTerminal(gone) +
 		" is no longer available (provider key removed?) — using the server default"
-	if id := m.effectiveModel.ModelID; id != "" {
+	if id := m.resolvedSessionModel.ModelID; id != "" {
 		notice += " — now running " + sanitizeTerminal(id)
 	}
 	m.statusMsg = m.deps.Theme.Style("warning").Render(notice)
@@ -129,7 +129,7 @@ func (m Model) reconcileSelection() Model {
 // liveModelLabel returns the live session model's catalog display name, falling
 // back to its raw ID and then a neutral placeholder while it is unknown.
 func (m Model) liveModelLabel() string {
-	rm := m.effectiveModel
+	rm := m.resolvedSessionModel
 	if rm.ModelID == "" {
 		return "the current model"
 	}
@@ -144,7 +144,7 @@ func (m Model) liveModelLabel() string {
 // modelProvenanceLine builds the picker header's best-effort current-model
 // provenance from client-held state. The server remains authoritative.
 func (m Model) modelProvenanceLine() string {
-	eff := client.ModelSelection{ProviderID: m.effectiveModel.ProviderID, ModelID: m.effectiveModel.ModelID}
+	eff := client.ModelSelection{ProviderID: m.resolvedSessionModel.ProviderID, ModelID: m.resolvedSessionModel.ModelID}
 	if eff.ModelID == "" {
 		return ""
 	}

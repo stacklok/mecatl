@@ -405,8 +405,8 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	// Scrolled up (auto-follow off): /clear must re-arm it, since an empty
 	// conversation is at-bottom and the next run must tail its streaming deltas.
 	m.stuck = false
-	m.effectiveModel = client.ResolvedModel{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}
-	m.activeModel = client.ModelSelection{ProviderID: "stale-provider", ModelID: "stale-model", ReasoningEffort: "low"}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}
+	m.createModelSelection = client.ModelSelection{ProviderID: "stale-provider", ModelID: "stale-model", ReasoningEffort: "low"}
 	m.activeWorkspace = "/current-worktree"
 	oldID := m.sessionID
 
@@ -485,8 +485,8 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 func TestClearSessionSelectionFallsBackWithoutResolvedModel(t *testing.T) {
 	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
 	want := client.ModelSelection{ProviderID: "saved-provider", ModelID: "saved-model", ReasoningEffort: "medium"}
-	m.activeModel = want
-	m.effectiveModel = client.ResolvedModel{} // older server: no create/session echo
+	m.createModelSelection = want
+	m.resolvedSessionModel = client.ResolvedModel{} // older server: no create/session echo
 	if got := m.clearSessionSelection(); got != want {
 		t.Errorf("clear selection without echo = %+v, want %+v", got, want)
 	}
