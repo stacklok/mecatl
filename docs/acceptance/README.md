@@ -91,6 +91,8 @@ when the code that satisfies the plan has landed.
   evaluator port at the single dispatch chokepoint; Cedar is an opt-in adapter.
   Status: draft.
 
+- [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — network listeners assign one operator-configured filesystem root while embedded and loopback deployments retain client-selected workspaces; mecak8s is no-FS by default. Status: draft.
+
 ## See also
 
 - [Development process](../development-process.md) — the spine end to end.
