@@ -78,8 +78,14 @@ bin/mecated serve &                                    # listens on 127.0.0.1:80
 bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
 ```
 
-`--workspace` defaults to the current directory and is always resolved to an
-absolute path (the server requires absolute).
+`--workspace` defaults to the current directory for an embedded server and for a
+loopback client-selected `mecated`; it is resolved to an absolute path in those
+modes. For a remote `connect` target, mecatui does **not** send its local cwd.
+An explicit `--workspace` is rejected locally before it is resolved or
+transmitted. A server-assigned deployment chooses its configured root from an
+empty wire workspace; `mecak8s` chooses its no-FS profile from its empty profile.
+The server independently enforces this contract for stale and non-mecatui
+clients.
 
 ### Transport commands
 
@@ -131,13 +137,14 @@ request; it does not run an OIDC browser flow or refresh the token itself.
 # A local port-forward is loopback, so it is the one plaintext bearer exception.
 kubectl port-forward -n mecatl service/mecak8s-agent 8080:8080 &
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
-bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN" --workspace /tmp
+bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 For a non-loopback endpoint, `mecatui` refuses to send a bearer without `--tls`.
-Use `--tls-ca` when the deployment uses a private CA. The workspace is evaluated
-by the **server**, not the TUI host: `/tmp` above is a path inside the selected
-agent pod, not your local checkout. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
+Use `--tls-ca` when the deployment uses a private CA. A remote server chooses
+its own workspace authority: mecatui sends no local cwd, and an explicit
+`--workspace` is rejected locally rather than being treated as a path inside an
+agent pod. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
 
 `ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
 a usage error, with one carve-out: `mecatui connect --help` renders the connect

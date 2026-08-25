@@ -28,6 +28,14 @@ and is not recommended. It drops
 Prometheus/OTel admin surface. It inverts `mecated`'s interactive defaults: `--headless`
 defaults **on** and `--posture` defaults to **`auto`** (an unattended daemon).
 
+`mecak8s` is always a server-assigned workspace deployment, but its normal
+storage-free pod has no mounted workspace. An omitted or empty wire `profile`
+therefore creates a `no-fs` session; clients must not send a workspace path, and
+any profile other than `no-fs` is rejected. The empty workspace/profile contract
+is intentional: it does not request a cwd from the client or an arbitrary path
+inside the pod. A mounted-workspace mode requires a future explicit operator
+design.
+
 ```console
 $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-lease-k8s-namespace mecatl --openai
 ```

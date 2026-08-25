@@ -42,6 +42,8 @@ root conflicts with the normal storage-free posture. See [MCP client](/building/
 | `--posture` default | `strict` | `auto` |
 | Project-tier ingestion + read-only child shell | granted at `auto`/`yolo` by the interactive ladder | one root-aware trust decision — explicit `--trust-project`, `trustedWorkspaces:`, or remembered trust admits BOTH; without trust, headless auto gives allow-all with neither |
 | Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
+| Workspace authority | Loopback client-selected by default | **Always server-assigned; no mounted root by default** |
+| New-session profile | Default filesystem profile unless requested otherwise | **`no-fs`** when the wire profile is omitted or empty; every other profile is rejected |
 | Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
 | Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |
 | Prometheus `/metrics` listener | Yes | Opt-in (`--metrics-addr`, loopback only) |
@@ -51,6 +53,13 @@ root conflicts with the normal storage-free posture. See [MCP client](/building/
 | ACP surface | Yes | No |
 
 The `--redis-url` flag exists **only on `cmd/mecak8s`**. `mecated` does not expose it. If you want Redis-backed state with `mecated`, you need `mecak8s`.
+
+The no-FS default is intentional. A standard mecak8s pod is storage-free and
+has no authoritative filesystem root, so a client must not send a workspace
+path. Empty profile/workspace values request the no-FS session; they never mean
+“use the client cwd” or “choose a pod path.” A future mounted-workspace offering
+must explicitly define its operator authority before it can accept a filesystem
+profile.
 
 :::note[MCP OAuth credentials from Kubernetes Secrets]
 

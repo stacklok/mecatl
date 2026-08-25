@@ -57,6 +57,40 @@ under `pipefail` so a broken scan cannot pass vacuously). **`dependabot`**
 SHA-pinned GitHub Actions (grouping minor+patch, isolating majors); every action
 is **SHA-pinned** with a `# vX.Y.Z` comment that dependabot preserves.
 
+### Listener-scoped workspace authority
+
+Workspace selection is a deployment policy fixed at composition, not a claim a
+network client can make with a path string. A loopback-only or embedded
+`mecated` deployment uses **client-selected** authority, so its client can pick
+an absolute checkout or sibling worktree. `mecated` switches to
+**server-assigned** authority for any non-loopback, wildcard, or mixed API
+listener (and operators must select it explicitly when a loopback listener sits
+behind a proxy). In that mode, `--workspace` is the one authoritative deployment
+root and every filesystem `CreateSession` request must carry an empty
+`workspace` field. A non-empty value is rejected as `InvalidArgument` before
+path cleaning, filesystem access, trust evaluation, or environment creation;
+it is never compared with or substituted for the configured root. A
+filesystem-bearing server-assigned deployment without `--workspace` fails before
+it starts listeners.
+
+This policy also validates persisted filesystem sessions, rehydration, scheduled
+fires, legacy adoption, and composition-created environment overrides. Stored
+roots must be non-empty, absolute, clean, and exactly equal to the configured
+clean root; relative/traversal spellings, symlink aliases, and roots made stale
+by configuration change fail closed before filesystem access. The direct wire
+rule is stricter: a non-empty client value is always rejected without cleaning
+or comparison. The wire field remains for compatibility: an empty workspace is
+an intentional request for the server's configured root, never a request to
+infer a path from the client host.
+
+`mecak8s` is always server-assigned and has no mounted workspace by default. It
+maps an omitted or empty profile to `no-fs`, accepts no client workspace, and
+rejects any non-`no-fs` profile until a future operator-enabled mounted-workspace
+deployment defines that authority. A remote `mecatui` likewise refuses an
+explicit workspace locally, before resolving or sending its own cwd; the service
+remains the enforcement boundary for every other client. See
+[ADR 0234](../adr/0234-listener-scoped-workspace-authority.md).
+
 ### Multi-replica deployment & single-writer enforcement
 
 By default mecatl assumes **session affinity** — route each session to exactly

@@ -68,6 +68,23 @@ defence) on.
 Before binding a non-loopback address, add `--tls-cert` / `--tls-key` and
 `--auth-token` — see [the trust model](#the-trust-model) below.
 
+### Workspace authority follows listener topology
+
+A loopback-only `mecated` (and embedded `mecatui`) lets a client choose an
+absolute workspace, which is the convenient local developer workflow. Any
+non-loopback, wildcard, or mixed `mecated` API listener instead uses a single
+**server-assigned** workspace. Configure that root with `--workspace`; clients
+must leave `CreateSession.workspace` empty. Empty means “use the server root,”
+not “use the client's current directory.”
+
+The server rejects any non-empty client workspace with `InvalidArgument` before
+it cleans or accesses that path, and refuses to start a server-assigned
+filesystem deployment without `--workspace`. If a reverse proxy makes a
+loopback listener remotely reachable, set `--workspace-authority=server-assigned`
+explicitly. This is one-root deployment authority, not remote multi-workspace
+authorization. A remote `mecatui` sends no local cwd and rejects an explicit
+workspace locally; other clients remain subject to server enforcement.
+
 ---
 
 ## Architecture

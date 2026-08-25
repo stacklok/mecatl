@@ -70,6 +70,30 @@ trusted source, the same way you would point `mecated serve --skills-dir` at a
 trusted directory. Start `mecated serve` with the same `--store-dir`, and
 explicitly enable the imported skills directory.
 
+### Workspace authority
+
+`--workspace-authority` controls who may select the workspace for a filesystem
+session. The topology-derived default is `client-selected` only when both API
+listeners are loopback; any non-loopback, wildcard, or mixed listener defaults
+to `server-assigned`. Set `--workspace-authority=server-assigned` explicitly
+when a reverse proxy makes a loopback listener remotely reachable.
+
+In a server-assigned filesystem deployment, configure the one authoritative root
+with `--workspace` and have every client send an **empty** `workspace` field in
+its `CreateSession` request. The empty value means “use the server's configured
+root”; it never means “use my local cwd.” A non-empty client path is rejected as
+`InvalidArgument` before the service cleans it, touches the filesystem, evaluates
+trust, or creates an environment. The server also fails before opening listeners
+if server-assigned filesystem authority has no `--workspace`. This policy remains
+in force when a session is rehydrated or resumed, when a schedule fires, and for
+legacy adoption; stale or non-canonical stored roots fail closed.
+
+Loopback-only and embedded deployments retain local developer behavior: clients
+may select an absolute checkout or sibling worktree. This is not an
+authorization scheme for a remote multi-workspace service. Use one deployment
+root, or wait for a future opaque scoped-grant design. See [ADR
+0234](../adr/0234-listener-scoped-workspace-authority.md).
+
 ### Flags
 
 | Flag | Default | Meaning |
