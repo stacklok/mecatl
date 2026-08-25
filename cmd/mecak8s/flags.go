@@ -32,6 +32,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -483,7 +484,12 @@ func parseFlags(argv []string) (config, error) {
 // byte-identical no-metrics posture), non-nil when --otlp-* is set.
 func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config {
 	out := app.Config{
-		Workspace:              cfg.workspace,
+		// mecak8s is a network-facing, file-less deployment. Do not pass its
+		// process cwd (including a container root) into composition as an agent
+		// workspace; every new session is constrained to no-FS below.
+		Workspace:              "",
+		WorkspaceAuthority:     server.WorkspaceAuthorityServerAssigned,
+		NoFSOnly:               true,
 		Model:                  cfg.model,
 		DefaultProvider:        cfg.defaultProvider,
 		DefaultModel:           cfg.defaultModel,

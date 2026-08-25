@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -149,6 +152,104 @@ func TestAppConfigHeadlessDefault(t *testing.T) {
 	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	if ac.Interactive {
 		t.Error("default mecak8s must be Interactive=false (headless=true default) so the auto-deny/reviewer path engages")
+	}
+}
+
+func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS(t *testing.T) {
+	cfg, err := parseFlags([]string{"--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	cfg.workspace = "/"
+	built, err := app.Build(context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
+	if err != nil {
+		t.Fatalf("app.Build: %v", err)
+	}
+	defer built.Close()
+
+	harness := server.NewHarnessServer(built.Service)
+	resp, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatalf("CreateSession(empty wire profile and workspace): %v", err)
+	}
+	sess, err := built.Service.GetSession(context.Background(), session.SessionID(resp.GetSessionId()))
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Profile != string(server.ProfileNoFS) {
+		t.Errorf("session profile = %q, want %q", sess.Profile, server.ProfileNoFS)
+	}
+	if sess.Workspace != "" {
+		t.Errorf("session workspace = %q, want empty for no-FS", sess.Workspace)
+	}
+}
+
+func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProfileAndWorkspace(t *testing.T) {
+	cfg, err := parseFlags([]string{"--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	built, err := app.Build(context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
+	if err != nil {
+		t.Fatalf("app.Build: %v", err)
+	}
+	defer built.Close()
+
+	harness := server.NewHarnessServer(built.Service)
+	if _, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Profile: string(server.ProfileNoFS)}); err != nil {
+		t.Fatalf("CreateSession(no-fs, empty workspace): %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		req  *mecatlv1.CreateSessionRequest
+	}{
+		{name: "empty wire profile with workspace", req: &mecatlv1.CreateSessionRequest{Workspace: "/caller/workspace"}},
+		{name: "no-fs with workspace", req: &mecatlv1.CreateSessionRequest{Profile: string(server.ProfileNoFS), Workspace: "/caller/workspace"}},
+		{name: "unsupported filesystem profile", req: &mecatlv1.CreateSessionRequest{Profile: "filesystem"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := harness.CreateSession(context.Background(), tc.req)
+			if got := status.Code(err); got != codes.InvalidArgument {
+				t.Fatalf("CreateSession(%+v) status = %s, want %s (error: %v)", tc.req, got, codes.InvalidArgument, err)
+			}
+		})
+	}
+}
+
+func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sFixtureRunsNoFS(t *testing.T) {
+	cfg, err := parseFlags([]string{"--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	cfg.workspace = "/"
+	cfg.sessionLeaseK8sNamespace = ""
+	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	if appCfg.Workspace != "" {
+		t.Fatalf("mecak8s app workspace = %q, want empty: the container root must not be an agent workspace", appCfg.Workspace)
+	}
+	built, err := app.Build(context.Background(), appCfg)
+	if err != nil {
+		t.Fatalf("app.Build: %v", err)
+	}
+	defer built.Close()
+
+	sess, err := built.Service.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(context.Background(), sess.ID, "hello from mecak8s")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	var stop session.StopReason
+	for ev := range run.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil {
+			stop = ev.Result.Stop
+		}
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if stop != session.StopEndTurn {
+		t.Errorf("run stop = %q, want %q", stop, session.StopEndTurn)
 	}
 }
 
