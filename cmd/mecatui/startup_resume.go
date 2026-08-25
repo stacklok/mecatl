@@ -24,7 +24,7 @@ type startupResumeError struct {
 	text   string
 	// noEligibleChat marks the specific --resume-latest miss where the inventory was
 	// listed successfully but held no eligible resumable chat. It is the ONLY miss
-	// --resume-latest-or-new degrades into a fresh session; a list/transport failure
+	// --resume-latest degrades into a fresh session; a list/transport failure
 	// (also Reason == CapabilityReasonUnknown) is NOT this case and still surfaces.
 	noEligibleChat bool
 }

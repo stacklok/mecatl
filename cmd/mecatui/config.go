@@ -143,11 +143,6 @@ type config struct {
 	// exclusive; the first prompt still owns all run-entry attachment/revalidation.
 	resumeID     string
 	resumeLatest bool
-	// resumeLatestOrNew is --resume-latest with a graceful miss: it adopts the newest
-	// eligible owned main chat exactly like --resume-latest, but when NO eligible chat
-	// exists it starts a fresh session instead of failing startup. It is mutually
-	// exclusive with both --resume and --resume-latest (one startup intent).
-	resumeLatestOrNew bool
 
 	// prompt is the literal seed-prompt text supplied via -p/--prompt.
 	// Empty = no seed. Joined ahead of --prompt-file when both are given.
