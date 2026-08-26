@@ -2,8 +2,8 @@
 id: 06-documentation-and-integration
 title: Document listener-scoped workspace authority and verify integration
 blocked_by: [02-internal-authority-paths, 03-mecated-composition, 04-mecatui-remote-workspace, 05-mecak8s-no-fs]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-listener-scoped-workspace-authority/06-documentation-and-integration"
 worktree: ""
 issue: ""
 retries: 0
