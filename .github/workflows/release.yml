@@ -352,8 +352,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read # checkout
-      packages: write # push chart to GHCR
-      id-token: write # OIDC: ghcr login, cosign keyless signing
+      packages: write # push chart to GHCR (helm registry login + docker/login-action use GITHUB_TOKEN, not OIDC)
+      id-token: write # OIDC: cosign keyless signing only
     env:
       # ghcr.io/<owner>/<repo>/charts, lowercased by GHCR — a sibling OCI path
       # to the image repo above, matching stacklok/atrium's oci://ghcr.io/
