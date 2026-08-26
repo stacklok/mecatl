@@ -218,30 +218,40 @@ func oversizedMetadata() []byte {
 	return body
 }
 
-func TestSDKAuthorizationCodeValidatesCallbackStateAndIssuer(t *testing.T) {
+func TestOAuthControllerValidatesCallbackStateAndMetadataConditionedIssuer(t *testing.T) {
 	tests := []struct {
-		name string
-		opts oauthFixtureOptions
+		name    string
+		opts    oauthFixtureOptions
+		wantErr bool
 	}{
-		{name: "wrong state", opts: oauthFixtureOptions{challengeMetadata: true, callbackState: "wrong"}},
-		{name: "missing issuer", opts: oauthFixtureOptions{challengeMetadata: true, omitCallbackIssuer: true}},
-		{name: "wrong issuer", opts: oauthFixtureOptions{challengeMetadata: true, callbackIssuer: "http://127.0.0.1/wrong"}},
+		{name: "wrong state", opts: oauthFixtureOptions{challengeMetadata: true, callbackState: "wrong"}, wantErr: true},
+		{name: "advertised matching issuer", opts: oauthFixtureOptions{challengeMetadata: true}},
+		{name: "advertised missing issuer", opts: oauthFixtureOptions{challengeMetadata: true, omitCallbackIssuer: true}, wantErr: true},
+		{name: "advertised mismatching issuer", opts: oauthFixtureOptions{challengeMetadata: true, callbackIssuer: "http://127.0.0.1/wrong"}, wantErr: true},
+		{name: "unadvertised missing issuer", opts: oauthFixtureOptions{challengeMetadata: true, unadvertisedIssuer: true, omitCallbackIssuer: true}},
+		{name: "unadvertised matching issuer", opts: oauthFixtureOptions{challengeMetadata: true, unadvertisedIssuer: true}},
+		{name: "unadvertised mismatching issuer", opts: oauthFixtureOptions{challengeMetadata: true, unadvertisedIssuer: true, callbackIssuer: "http://127.0.0.1/wrong"}, wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newOAuthFixture(t, test.opts)
-			handler, err := fixture.newHandler(nil)
-			if err != nil {
-				t.Fatalf("construct handler: %v", err)
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			if session, err := fixture.connect(ctx, handler); err == nil {
-				_ = session.Close()
-				t.Fatal("connect unexpectedly succeeded")
+			_, err := fixture.connectController(ctx)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("connect unexpectedly succeeded")
+				}
+				if got := fixture.count("token"); got != 0 {
+					t.Errorf("token exchanges = %d, want callback rejected before exchange", got)
+				}
+				return
 			}
-			if got := fixture.count("token"); got != 0 {
-				t.Errorf("token exchanges = %d, want callback rejected before exchange", got)
+			if err != nil {
+				t.Fatalf("connect: %v", err)
+			}
+			if got := fixture.count("token"); got != 1 {
+				t.Errorf("token exchanges = %d, want 1", got)
 			}
 		})
 	}

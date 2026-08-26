@@ -21,6 +21,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
+
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 )
 
 const (
@@ -42,6 +45,7 @@ type oauthFixtureOptions struct {
 	callbackState       string
 	callbackIssuer      string
 	omitCallbackIssuer  bool
+	unadvertisedIssuer  bool
 	stepUp              bool
 	keepStepUpRejecting bool
 	ineligibleForbidden bool
@@ -255,7 +259,7 @@ func (f *oauthFixture) serveASMetadata(w http.ResponseWriter, r *http.Request, k
 		TokenEndpointAuthMethodsSupported:          f.tokenAuthMethods(),
 		CodeChallengeMethodsSupported:              f.opts.codeMethods,
 		ClientIDMetadataDocumentSupported:          f.opts.cimdSupported,
-		AuthorizationResponseIssParameterSupported: true,
+		AuthorizationResponseIssParameterSupported: !f.opts.unadvertisedIssuer,
 	})
 }
 
@@ -464,6 +468,38 @@ func (f *oauthFixture) newHandler(configure func(*auth.AuthorizationCodeHandlerC
 		configure(cfg)
 	}
 	return auth.NewAuthorizationCodeHandler(cfg)
+}
+
+func (f *oauthFixture) connectController(ctx context.Context) (*mcpadapter.Server, error) {
+	store, err := credentialstore.NewMemoryBackend().Open("oauth-sdk-fixture")
+	if err != nil {
+		return nil, err
+	}
+	f.t.Cleanup(func() { _ = store.Close() })
+	opts := mcpadapter.OAuthOptions{
+		Subject: mcpadapter.OAuthSubject{Profile: "qualification", Principal: "fixture"},
+		Issuer:  f.issuer,
+		Client: mcpadapter.OAuthClientConfig{Preregistered: &oauthex.ClientCredentials{
+			ClientID:         testClientID,
+			ClientSecretAuth: &oauthex.ClientSecretAuth{ClientSecret: testClientSecret},
+			Issuer:           f.issuer,
+		}},
+		RedirectURL: "http://127.0.0.1/callback",
+		Presenter: mcpadapter.OAuthPresenterFunc(func(ctx context.Context, authorizationURL string) (*auth.AuthorizationResult, error) {
+			return f.fetchAuthorization(ctx, &auth.AuthorizationArgs{URL: authorizationURL})
+		}),
+		CredentialStore: store,
+		Network:         mcpadapter.OAuthNetworkPolicy{PrivateOrigins: []string{f.server.URL}},
+		AllowedScopes:   []string{"read"},
+		Timeout:         2 * time.Second,
+	}
+	mcpadapter.AllowOAuthLoopbackForTest(f.t, &opts)
+	server, err := mcpadapter.Connect(ctx, mcpadapter.ServerConfig{Name: "qualification", URL: f.mcpURL, OAuth: &opts}, nil)
+	if err != nil {
+		return nil, err
+	}
+	f.t.Cleanup(func() { _ = server.Close() })
+	return server, nil
 }
 
 func (f *oauthFixture) connect(ctx context.Context, handler *auth.AuthorizationCodeHandler) (*mcpsdk.ClientSession, error) {

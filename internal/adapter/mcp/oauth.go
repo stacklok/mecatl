@@ -319,6 +319,7 @@ func newOAuthPersistenceCore(ctx context.Context, resource string, opts OAuthOpt
 		AuthorizationCodeFetcher: fetcher,
 		ScopeFilter:              scopeFilter(opts.AllowedScopes),
 		RequestRefreshToken:      opts.RequestRefreshToken,
+		AcceptUnadvertisedIss:    true,
 		Client:                   client,
 		InitialTokenSource:       state.initialTokenSource(),
 		NewTokenSource:           state.newTokenSource,

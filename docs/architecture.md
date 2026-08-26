@@ -64,7 +64,11 @@ read-only Reader. Those options are mutually exclusive, and no independently sup
 writer is accepted, so reads and writes cannot cross CAS domains. It never constructs or
 closes a backend. The opt-in `mcp/oauthlogin` host runtime and `internal/app.LoginMCP`
 one-shot operation can populate a mutable store by driving a real protected MCP initialize
-and tool listing through a random IPv4-loopback callback. The strict operator-tier
+and tool listing through a random IPv4-loopback callback. RFC 9207 callback issuer
+validation is conditioned on authorization-server metadata: an advertised
+`authorization_response_iss_parameter_supported` requires a matching `iss`; an
+unadvertised server may omit `iss`, while any supplied value must still match the discovered
+issuer. The strict operator-tier
 `mcp.servers` schema and the single `internal/cliconfig` loader feed all three headless
 roots. Normal serve, ACP, mecatequi, and mecak8s install no presenter; only
 `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]` authorizes a

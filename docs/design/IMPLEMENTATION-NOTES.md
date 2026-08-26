@@ -7380,7 +7380,13 @@ separate exact-resource marker for its audience-bound bearer, remains no-proxy/D
 and rejects cleartext except for an exact private-origin opt-in; an allowlist entry alone
 never grants credential egress. Static `Authorization` and OAuth are mutually exclusive.
 Preregistered confidential and CIMD clients are the only supported registrations; DCR and a
-broad production claim remain blocked on ADR 0219's official-SDK hooks. Construction and
+broad production claim remain blocked on ADR 0219's official-SDK hooks. The root module
+pins `github.com/modelcontextprotocol/go-sdk` at
+`v1.7.1-0.20260825151509-2732839dbadd`; the controller enables the SDK's
+`AcceptUnadvertisedIss` compatibility path, leaving authorization-server discovery and
+metadata-conditioned RFC 9207 validation in the SDK. A missing callback `iss` is accepted
+only when discovery did not advertise issuer responses; a supplied issuer must always match.
+Construction and
 credential restore inherit the caller's `Connect` cancellation; `Close` cancels and joins
 all controller operations before releasing owned transport state.
 
@@ -7390,8 +7396,10 @@ all controller operations before releasing owned transport state.
 serializes the complete interaction per runtime instance, binds `tcp4` on
 `127.0.0.1:0`, derives a redirect with a fresh 32-byte random path segment, and starts a
 dedicated bounded `http.Server`. Its exact-path GET handler rejects request bodies,
-duplicate/empty/oversized query values, wrong Host, mismatched state (constant-time), and a
-non-canonical or unexpected issuer. It returns only code/state/issuer; static success and
+duplicate/empty/oversized query values, wrong Host, and mismatched state (constant-time).
+The `iss` value is optional at this host boundary; when supplied it must be canonical and
+match the configured issuer, and an absent value stays absent for the SDK's discovery-aware
+RFC 9207 check. It returns only code/state/issuer; static success and
 failure pages carry no provider values and set no-store, CSP, referrer, MIME-sniffing, and
 permissions headers. Sixteen invalid requests exhaust the flow.
 

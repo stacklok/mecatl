@@ -104,9 +104,11 @@ func (f *callbackFlow) validate(r *http.Request) (callbackOutcome, int, bool) {
 	if !f.stateSet.Load() || subtle.ConstantTimeCompare([]byte(state), []byte(f.expectedState)) != 1 {
 		return callbackOutcome{}, http.StatusBadRequest, false
 	}
-	canonical, err := canonicalIssuer(issuer)
-	if err != nil || canonical != f.expectedIssuer {
-		return callbackOutcome{}, http.StatusBadRequest, false
+	if issuer != "" {
+		canonical, err := canonicalIssuer(issuer)
+		if err != nil || canonical != f.expectedIssuer {
+			return callbackOutcome{}, http.StatusBadRequest, false
+		}
 	}
 
 	_, hasError := query["error"]
@@ -149,12 +151,7 @@ func validQuery(query url.Values) bool {
 			return false
 		}
 	}
-	for _, required := range []string{"state", "iss"} {
-		if len(query[required]) != 1 {
-			return false
-		}
-	}
-	return true
+	return len(query["state"]) == 1
 }
 
 func (f *callbackFlow) complete(outcome callbackOutcome) {

@@ -116,6 +116,32 @@ func TestAuthorizeRealLoopbackHappyPath(t *testing.T) {
 	_ = listener.Close()
 }
 
+func TestCallbackAcceptsAbsentIssuerAndPreservesEmptyResult(t *testing.T) {
+	var redirect string
+	launcher := launcherFunc(func(_ context.Context, _ string) error {
+		req, _ := http.NewRequest(http.MethodGet, redirect+"?code=code-canary&state=state-canary", nil)
+		if got := request(t, req).status; got != http.StatusOK {
+			t.Fatalf("callback status = %d", got)
+		}
+		return nil
+	})
+
+	err := runWithLauncher(t, launcher, func(ctx context.Context, gotRedirect string, present func(context.Context, string) (Result, error)) error {
+		redirect = gotRedirect
+		result, err := present(ctx, "https://as.example.test/authorize?state=state-canary")
+		if err != nil {
+			return err
+		}
+		if result != (Result{Code: "code-canary", State: "state-canary", Iss: ""}) {
+			t.Fatalf("result = %#v", result)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCallbackRejectsInvalidRequestsThenAcceptsValid(t *testing.T) {
 	tests := map[string]func(string) *http.Request{
 		"wrong path": func(redirect string) *http.Request {
@@ -146,10 +172,6 @@ func TestCallbackRejectsInvalidRequestsThenAcceptsValid(t *testing.T) {
 		},
 		"wrong issuer": func(redirect string) *http.Request {
 			req, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "c", "s", "https://other.example.test"), nil)
-			return req
-		},
-		"missing issuer": func(redirect string) *http.Request {
-			req, _ := http.NewRequest(http.MethodGet, redirect+"?code=c&state=s", nil)
 			return req
 		},
 		"missing code": func(redirect string) *http.Request {

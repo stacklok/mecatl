@@ -141,6 +141,12 @@ environment-variable name.
 - OAuth credentials authenticate the MCP connection. They do not grant the
   model permission to call a tool: every namespaced MCP tool still passes through
   the ordinary permission policy and audit path.
+- OAuth remains constrained to RFC 9728 metadata with one exact
+  resource/authorization server, S256, and Basic-authenticated confidential clients.
+  RFC 9207 issuer validation follows authorization-server metadata: if the server
+  advertises `authorization_response_iss_parameter_supported`, its callback must
+  include the matching `iss`; otherwise `iss` may be omitted, but any supplied
+  issuer must still match.
 - A connection drop can trigger one bounded reconnect and retry. A server-declared
   tool failure is not replayed automatically because the call may have mutated
   remote state. The startup tool catalog is retained across reconnects; changed

@@ -21,6 +21,19 @@ func TestOAuthLoginPresenterConvertsOnlyCallbackResult(t *testing.T) {
 	}
 }
 
+func TestOAuthLoginPresenterPreservesEmptyIssuer(t *testing.T) {
+	presenter := OAuthLoginPresenter(func(context.Context, string) (oauthlogin.Result, error) {
+		return oauthlogin.Result{Code: "code", State: "state"}, nil
+	})
+	result, err := presenter.PresentAuthorization(context.Background(), "https://issuer.example/authorize?state=state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Code != "code" || result.State != "state" || result.Iss != "" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestOAuthLoginPresenterPreservesCancellation(t *testing.T) {
 	presenter := OAuthLoginPresenter(func(context.Context, string) (oauthlogin.Result, error) {
 		return oauthlogin.Result{}, context.Canceled
