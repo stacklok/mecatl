@@ -137,7 +137,7 @@ func validateAdoptionBindingShape(bindings AdoptionBindings) error {
 // workspace is rejected by workspaceForCreate before any resolver or factory is
 // consulted; local/embedded adoption remains unchanged.
 func (s *Service) adoptionBindingsForAuthority(bindings AdoptionBindings) (AdoptionBindings, error) {
-	if !s.cfg.WorkspaceAuthority.serverAssigned() {
+	if s.cfg.WorkspaceAuthority.clientSelectsRoot() {
 		return bindings, nil
 	}
 	workspace, profile, err := s.workspaceForCreate(bindings.Workspace, bindings.Profile)

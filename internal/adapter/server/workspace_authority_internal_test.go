@@ -50,3 +50,23 @@ func TestValidateEnvironmentOverrideUsesAuthoritativeIdentity(t *testing.T) {
 		}
 	})
 }
+
+// TestClientSelectsRootFailsSafeForNewValues pins the reason the authority
+// predicate is phrased around the single permissive value: a future authority
+// constant (or an unknown value) must be treated as deployment-assigned — the
+// gates enforce — rather than silently client-selectable. Only the explicit
+// client-selected authority selects the root.
+func TestClientSelectsRootFailsSafeForNewValues(t *testing.T) {
+	if !WorkspaceAuthorityClientSelected.clientSelectsRoot() {
+		t.Fatal("client-selected authority must let the caller select the root")
+	}
+	for _, a := range []WorkspaceAuthority{
+		WorkspaceAuthorityServerAssigned,
+		WorkspaceAuthorityFileless,
+		WorkspaceAuthority(42), // a value added later, unhandled here
+	} {
+		if a.clientSelectsRoot() {
+			t.Fatalf("authority %d must be deployment-assigned (fail safe), got client-selected", a)
+		}
+	}
+}

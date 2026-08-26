@@ -58,11 +58,15 @@ const (
 	WorkspaceAuthorityFileless
 )
 
-// serverAssigned reports whether the deployment — not the caller — chooses the
-// session root. It is the ONE predicate every authority gate branches on, so a
-// new authority value cannot fail open by being missed at one of the call sites.
-func (a WorkspaceAuthority) serverAssigned() bool {
-	return a == WorkspaceAuthorityServerAssigned || a == WorkspaceAuthorityFileless
+// clientSelectsRoot reports whether the CALLER, not the deployment, chooses the
+// session root. Only the explicit client-selected authority does; every other
+// authority — server-assigned, file-less, and any value added later — is
+// deployment-assigned. Phrasing the ONE predicate around the single permissive
+// value is deliberate: a new authority constant is deployment-assigned by default
+// (the authority gates enforce), rather than silently client-selectable the way a
+// `== ServerAssigned || == Fileless` test would leave it.
+func (a WorkspaceAuthority) clientSelectsRoot() bool {
+	return a == WorkspaceAuthorityClientSelected
 }
 
 // WorkspaceFactory builds the session-scoped tool.Workspace for a session root.
@@ -1265,7 +1269,7 @@ func (s *Service) wireScheduleManager(cfg Config) {
 	// would be to reject an empty workspace — which validateScheduleSpec already
 	// does, with a message that explains WHY a schedule needs one. Leaving the
 	// hook nil there keeps client-selected schedule validation byte-identical.
-	if cfg.WorkspaceAuthority.serverAssigned() {
+	if !cfg.WorkspaceAuthority.clientSelectsRoot() {
 		s.schedMgr.setWorkspaceForCreate(s.workspaceForCreate)
 	}
 }
@@ -1706,7 +1710,7 @@ func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (
 	case ProfileDefault:
 		// Unreachable under Fileless (profileForCreate mapped every profile to
 		// no-FS), so this arm sees only ClientSelected and ServerAssigned.
-		if s.cfg.WorkspaceAuthority.serverAssigned() {
+		if !s.cfg.WorkspaceAuthority.clientSelectsRoot() {
 			if workspace != "" {
 				return "", "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
 			}
@@ -2991,7 +2995,7 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 // both roots must be absolute and clean and their cleaned strings must match.
 // It intentionally never resolves symlinks or opens a workspace.
 func (s *Service) validatePersistedWorkspace(sess *session.Session) error {
-	if !s.cfg.WorkspaceAuthority.serverAssigned() || profileForSession(sess) == ProfileNoFS {
+	if s.cfg.WorkspaceAuthority.clientSelectsRoot() || profileForSession(sess) == ProfileNoFS {
 		return nil
 	}
 	if !s.isAuthoritativeWorkspace(sess.Workspace) {
@@ -3009,7 +3013,7 @@ func (s *Service) isAuthoritativeWorkspace(root string) bool {
 // validatePersistedScheduleWorkspace prevents durable schedule specs from
 // becoming a filesystem-authority bypass at fire time.
 func (s *Service) validatePersistedScheduleWorkspace(spec port.ScheduleSpec) error {
-	if !s.cfg.WorkspaceAuthority.serverAssigned() {
+	if s.cfg.WorkspaceAuthority.clientSelectsRoot() {
 		return nil
 	}
 	// A server-assigned schedule persists the empty WIRE workspace for BOTH
@@ -3035,7 +3039,7 @@ func (s *Service) CanProcessSchedule(sched port.Schedule) bool {
 }
 
 func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.Environment) error {
-	if !s.cfg.WorkspaceAuthority.serverAssigned() || profileForSession(sess) == ProfileNoFS {
+	if s.cfg.WorkspaceAuthority.clientSelectsRoot() || profileForSession(sess) == ProfileNoFS {
 		return nil
 	}
 	ws := env.Workspace()
