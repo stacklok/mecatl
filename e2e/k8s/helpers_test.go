@@ -502,13 +502,13 @@ func freeLocalPort() int {
 
 // createSessionOverHTTP creates a session via POST /v1/sessions and returns the
 // session id. It mirrors the createSessionBody shape (workspace + mode) the
-// server's HTTP handler decodes. The workspace is empty (the mock provider does
-// not touch the filesystem; a no-fs profile is unnecessary — the default
-// profile requires a workspace, so pass "/tmp" which exists in the pod).
+// server's HTTP handler decodes. The deployment is server-assigned (mounted
+// workspace at /tmp), so the request sends an EMPTY workspace and the server
+// assigns its configured root (ADR 0237).
 func createSessionOverHTTP(ctx context.Context, addr string) string {
 	ginkgo.GinkgoHelper()
 	body, _ := json.Marshal(map[string]any{
-		"workspace": "/tmp",
+		"workspace": "",
 		"mode":      "default",
 	})
 	url := fmt.Sprintf("http://%s/v1/sessions", addr)
@@ -670,6 +670,7 @@ func enableLiveProvider() {
 		"--session-lease-k8s-namespace=mecatl",
 		"--headless=true",
 		"--posture=auto",
+		"--workspace=/tmp",
 		"--default-provider=" + liveProviderID,
 		"--default-model=" + liveProviderModel,
 	}

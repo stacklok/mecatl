@@ -211,6 +211,7 @@ func baseAgentArgs() []string {
 		"--session-lease-k8s-namespace=" + k8sNamespace,
 		"--headless=true",
 		"--posture=auto",
+		"--workspace=/tmp",
 		"--mock",
 	}
 }

@@ -39,7 +39,7 @@ import (
 
 func createSessionAs(ctx context.Context, addr, bearer string) (int, string) {
 	ginkgo.GinkgoHelper()
-	body, _ := json.Marshal(map[string]any{"workspace": "/tmp", "mode": "default"})
+	body, _ := json.Marshal(map[string]any{"workspace": "", "mode": "default"})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("http://%s/v1/sessions", addr), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -351,7 +351,7 @@ var _ = ginkgo.Describe("caller identity, from the caller's and operator's view"
 			client := mecatlv1.NewHarnessServiceClient(conn)
 
 			request := func(ctx context.Context) error {
-				_, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/tmp"})
+				_, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 				return err
 			}
 			ctx, cancel := shortCtx(30 * time.Second)

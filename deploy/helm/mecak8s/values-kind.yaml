@@ -21,3 +21,7 @@ redis:
   credentialsSecret: ""
   local:
     enabled: true
+
+# The e2e exercises the mounted-workspace (server-assigned FS) path: /tmp is a
+# writable emptyDir in the pod, so sessions get a real filesystem root.
+workspace: /tmp

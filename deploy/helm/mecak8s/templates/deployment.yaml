@@ -39,6 +39,9 @@ spec:
             - --session-lease-k8s-namespace={{ .Release.Namespace }}
             - --headless=true
             - --posture=auto
+            {{- if .Values.workspace }}
+            - --workspace={{ .Values.workspace }}
+            {{- end }}
             {{- if .Values.mockProvider }}
             - --mock
             {{- end }}

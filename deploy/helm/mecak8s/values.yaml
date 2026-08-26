@@ -13,6 +13,13 @@ image:
 replicaCount: 2
 mockProvider: false
 
+# workspace is the operator-mounted agent filesystem root (e.g. a PVC mount
+# path). Empty (the default) is a FILE-LESS deployment: every session is no-FS.
+# A non-empty ABSOLUTE path makes the deployment server-assigned filesystem
+# authority rooted there — clients cannot select another root (ADR 0237). Mount
+# the volume yourself; the chart only passes the flag.
+workspace: ""
+
 redis:
   # A production release never creates Redis. Supply the managed endpoint and,
   # when the service needs a private CA or ACL credentials, a Secret holding

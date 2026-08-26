@@ -33,17 +33,17 @@ import (
 // --- schedule request bodies + handlers --------------------------------------
 
 // scheduleBody is the minimal valid create/update body this suite needs: a
-// mutating, workspace-bound cron schedule. Matching the server's own validation
-// (a non-mutating schedule requires plan mode; a default-profile schedule
-// requires a workspace since the fire mints a filesystem session) was itself
-// learned by hand-probing the real API before this helper existed.
+// mutating cron schedule. Under this deployment's server-assigned workspace
+// authority (ADR 0237) the request carries an EMPTY workspace — the server
+// assigns its configured root at fire time; a non-mutating schedule still
+// requires plan mode.
 func scheduleBody(name string) []byte {
 	body, _ := json.Marshal(map[string]any{
 		"name":      name,
 		"prompt":    "noop",
 		"trigger":   map[string]any{"cron": "0 0 * * *"},
 		"mutating":  true,
-		"workspace": "/tmp",
+		"workspace": "",
 	})
 	return body
 }
@@ -120,7 +120,7 @@ func scheduleBodyWithPrompt(name, prompt string) []byte {
 		"prompt":    prompt,
 		"trigger":   map[string]any{"cron": "0 0 * * *"},
 		"mutating":  true,
-		"workspace": "/tmp",
+		"workspace": "",
 	})
 	return body
 }
@@ -145,7 +145,7 @@ func createScheduleWithPromptAs(ctx context.Context, addr, bearer, name, prompt 
 func forkSessionAs(ctx context.Context, addr, bearer, sourceID string) (int, []byte) {
 	ginkgo.GinkgoHelper()
 	body, _ := json.Marshal(map[string]any{
-		"workspace":         "/tmp",
+		"workspace":         "",
 		"mode":              "default",
 		"source_session_id": sourceID,
 	})
