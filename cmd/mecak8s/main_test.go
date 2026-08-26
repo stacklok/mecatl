@@ -169,6 +169,9 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS(t *tes
 	if cfg.workspace != "" {
 		t.Fatalf("default workspace = %q, want empty (file-less by default)", cfg.workspace)
 	}
+	// Disable the k8s session lease: this offline test has no kubeconfig/in-cluster
+	// config, and app.Build builds a lease client when the namespace is set.
+	cfg.sessionLeaseK8sNamespace = ""
 	built, err := app.Build(context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
@@ -197,6 +200,8 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProf
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
+	// Disable the k8s session lease (no kubeconfig in this offline test).
+	cfg.sessionLeaseK8sNamespace = ""
 	built, err := app.Build(context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
@@ -234,6 +239,8 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sMountedWorkspaceIsSer
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
+	// Disable the k8s session lease (no kubeconfig in this offline test).
+	cfg.sessionLeaseK8sNamespace = ""
 	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	if ac.WorkspaceAuthority != server.WorkspaceAuthorityServerAssigned {
 		t.Fatalf("WorkspaceAuthority = %v, want ServerAssigned for a configured mount", ac.WorkspaceAuthority)
