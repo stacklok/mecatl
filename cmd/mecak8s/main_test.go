@@ -63,6 +63,9 @@ func TestParseFlagsK8sDefaults(t *testing.T) {
 	if def.grpcAddr != defaultGRPCAddr {
 		t.Errorf("grpcAddr default = %q, want %q (a pod binds 0.0.0.0)", def.grpcAddr, defaultGRPCAddr)
 	}
+	if def.workspace != "" {
+		t.Errorf("workspace default = %q, want empty (file-less by default; a container cwd must never become the agent workspace)", def.workspace)
+	}
 	if def.httpAddr != defaultHTTPAddr {
 		t.Errorf("httpAddr default = %q, want %q", def.httpAddr, defaultHTTPAddr)
 	}
@@ -160,7 +163,12 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS(t *tes
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	cfg.workspace = "/"
+	// No --workspace: the default is a file-less deployment. The flag no longer
+	// defaults to the process cwd, so a container root can never become the agent
+	// workspace by omission (the reason this used to force cfg.workspace = "/").
+	if cfg.workspace != "" {
+		t.Fatalf("default workspace = %q, want empty (file-less by default)", cfg.workspace)
+	}
 	built, err := app.Build(context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
@@ -216,12 +224,68 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProf
 	}
 }
 
+func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sMountedWorkspaceIsServerAssigned(t *testing.T) {
+	// A configured --workspace (a mounted PVC path) is an operator-enabled
+	// filesystem deployment: server-assigned authority rooted at the mount, so a
+	// default-profile session mints on that root and a client cannot select
+	// another. A real temp dir stands in for the mount.
+	mount := t.TempDir()
+	cfg, err := parseFlags([]string{"--workspace", mount, "--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	if ac.WorkspaceAuthority != server.WorkspaceAuthorityServerAssigned {
+		t.Fatalf("WorkspaceAuthority = %v, want ServerAssigned for a configured mount", ac.WorkspaceAuthority)
+	}
+	if ac.AuthoritativeWorkspace != mount || ac.Workspace != mount {
+		t.Fatalf("authoritative/workspace = %q/%q, want the mount %q", ac.AuthoritativeWorkspace, ac.Workspace, mount)
+	}
+
+	built, err := app.Build(context.Background(), ac)
+	if err != nil {
+		t.Fatalf("app.Build: %v", err)
+	}
+	defer built.Close()
+	harness := server.NewHarnessServer(built.Service)
+
+	// An omitted (empty) workspace requests the operator root; the session mints
+	// on the mount as a default-profile (filesystem) session, not no-FS.
+	resp, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatalf("CreateSession(empty): %v", err)
+	}
+	sess, err := built.Service.GetSession(context.Background(), session.SessionID(resp.GetSessionId()))
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Profile != "" {
+		t.Errorf("session profile = %q, want default (filesystem) on a mounted deployment", sess.Profile)
+	}
+	if sess.Workspace != mount {
+		t.Errorf("session workspace = %q, want the deployment mount %q", sess.Workspace, mount)
+	}
+
+	// A client cannot select a different root: server-assigned rejects a non-empty
+	// client workspace before any filesystem access.
+	if _, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/client/root"}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("CreateSession(client workspace) status = %s, want InvalidArgument", status.Code(err))
+	}
+}
+
+func TestParseFlagsMecak8sRejectsRelativeWorkspace(t *testing.T) {
+	if _, err := parseFlags([]string{"--workspace", "relative/mount"}); err == nil {
+		t.Fatal("parseFlags(--workspace relative/mount) = nil, want an absolute-path error")
+	}
+}
+
 func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sFixtureRunsNoFS(t *testing.T) {
 	cfg, err := parseFlags([]string{"--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	cfg.workspace = "/"
+	// No --workspace: file-less by default (the flag no longer defaults to cwd, so
+	// the container root cannot become the agent workspace by omission).
 	cfg.sessionLeaseK8sNamespace = ""
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	if appCfg.Workspace != "" {

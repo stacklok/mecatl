@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -264,13 +265,11 @@ func parseFlags(argv []string) (config, error) {
 	fs := flag.NewFlagSet("mecak8s", flag.ContinueOnError)
 	var cfg config
 
-	cwd, _ := os.Getwd()
-
 	fs.StringVar(&cfg.grpcAddr, "grpc-addr", defaultGRPCAddr,
 		"gRPC listen address (a pod binds 0.0.0.0; set --auth-token and/or --tls-cert for a non-mesh deployment)")
 	fs.StringVar(&cfg.httpAddr, "http-addr", defaultHTTPAddr,
 		"HTTP/SSE listen address (carries /healthz, /readyz, /drain outside auth; the API mux inside auth)")
-	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
+	fs.StringVar(&cfg.workspace, "workspace", "", "optional shared agent workspace root, e.g. a mounted PVC path. Empty (the default) is a FILE-LESS deployment: every session is no-FS. A non-empty ABSOLUTE path selects a server-assigned filesystem deployment rooted there — the operator vouches for the mount and clients cannot select another root (ADR 0237)")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id (e.g. openai, openrouter, anthropic); validated FAIL-FAST at startup")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "server-configured deployment-wide default model id for the default provider; validated FAIL-FAST at startup")
@@ -472,6 +471,14 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, fmt.Errorf("--metrics-addr %q is not loopback: the admin mux (/metrics, /debug/pprof, /debug/vars) exposes unauthenticated runtime data; bind loopback (e.g. 127.0.0.1:9090) or leave it empty", cfg.metricsAddr)
 	}
 
+	// A configured workspace is a server-assigned filesystem root (a mounted PVC),
+	// so it must be an absolute, already-clean path — the same rule NewService
+	// enforces for the authoritative root. Reject a relative or unclean value here
+	// with a flag-level message rather than letting it surface from app.Build.
+	if cfg.workspace != "" && (!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
+		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
+	}
+
 	return cfg, nil
 }
 
@@ -483,13 +490,21 @@ func parseFlags(argv []string) (config, error) {
 // from the observability handles (issue #343): nil when telemetry is off (the
 // byte-identical no-metrics posture), non-nil when --otlp-* is set.
 func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config {
+	// Workspace authority is driven by whether an operator configured a root.
+	// Empty (the default) is a FILE-LESS deployment: never pass the process cwd
+	// (a container root) as an agent workspace — every session is no-FS. A
+	// non-empty root is a deliberately mounted filesystem (e.g. a PVC): a
+	// server-assigned deployment rooted there, so clients cannot select another
+	// root (ADR 0237). Session/harness state stays in Redis + the k8s API either
+	// way (ADR 0048); a mounted workspace holds agent working files, not state.
+	workspace, authority, authoritativeRoot := "", server.WorkspaceAuthorityFileless, ""
+	if cfg.workspace != "" {
+		workspace, authority, authoritativeRoot = cfg.workspace, server.WorkspaceAuthorityServerAssigned, cfg.workspace
+	}
 	out := app.Config{
-		// mecak8s is a network-facing, file-less deployment. Do not pass its
-		// process cwd (including a container root) into composition as an agent
-		// workspace; the file-less authority constrains every new session to no-FS
-		// and forbids configuring a root at all.
-		Workspace:              "",
-		WorkspaceAuthority:     server.WorkspaceAuthorityFileless,
+		Workspace:              workspace,
+		WorkspaceAuthority:     authority,
+		AuthoritativeWorkspace: authoritativeRoot,
 		Model:                  cfg.model,
 		DefaultProvider:        cfg.defaultProvider,
 		DefaultModel:           cfg.defaultModel,

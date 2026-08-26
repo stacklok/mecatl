@@ -37,14 +37,21 @@ from a request or from the server package's socket state.
   service assigns the configured deployment root.
 - A filesystem-bearing network deployment must fail before listener startup
   when it has no configured authoritative workspace. A no-FS deployment is the
-  exception: it has no filesystem root to configure. `mecak8s` maps the wire's
-  empty (omitted/default) profile to no-FS and rejects every non-no-FS profile
-  unless a future operator-enabled mounted-workspace deployment defines it.
+  exception: it has no filesystem root to configure. `mecak8s` is file-less by
+  default — it maps the wire's empty (omitted/default) profile to no-FS and
+  rejects every non-no-FS profile — UNLESS an operator configures a mounted
+  workspace root (`--workspace`, e.g. a PVC mount). A configured root is a
+  server-assigned filesystem deployment rooted there: the mount must be an
+  absolute clean path, every session is assigned that single root, and a client
+  cannot select another. Harness and session state remain in Redis and the k8s
+  API either way (ADR 0048); a mounted workspace holds agent working files, not
+  harness state, and a root shared across replicas requires a ReadWriteMany
+  volume.
 - `mecated` chooses the policy from its listener topology: its default
   loopback-only deployment remains client-selectable, while any non-loopback,
   wildcard, or mixed API-listener configuration is server-assigned. `mecak8s`
-  is always server-assigned and defaults new sessions to the existing no-FS
-  profile.
+  is always server-assigned; it defaults new sessions to the no-FS profile and
+  serves the operator-configured mounted root when one is set.
 - Server-assigned authority applies to persisted-session run entry and
   rehydration, scheduled-fire creation, legacy adoption, and
   composition-created environment overrides as well as direct API creation.

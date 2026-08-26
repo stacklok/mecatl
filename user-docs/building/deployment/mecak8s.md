@@ -43,7 +43,7 @@ root conflicts with the normal storage-free posture. See [MCP client](/building/
 | Project-tier ingestion + read-only child shell | granted at `auto`/`yolo` by the interactive ladder | one root-aware trust decision — explicit `--trust-project`, `trustedWorkspaces:`, or remembered trust admits BOTH; without trust, headless auto gives allow-all with neither |
 | Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
 | Workspace authority | Loopback client-selected by default | **Always server-assigned; no mounted root by default** |
-| New-session profile | Default filesystem profile unless requested otherwise | **`no-fs`** when the wire profile is omitted or empty; every other profile is rejected |
+| New-session profile | Default filesystem profile unless requested otherwise | **`no-fs`** when the wire profile is omitted or empty (no mounted root); a filesystem session when `--workspace` mounts one |
 | Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
 | Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |
 | Prometheus `/metrics` listener | Yes | Opt-in (`--metrics-addr`, loopback only) |
@@ -57,9 +57,26 @@ The `--redis-url` flag exists **only on `cmd/mecak8s`**. `mecated` does not expo
 The no-FS default is intentional. A standard mecak8s pod is storage-free and
 has no authoritative filesystem root, so a client must not send a workspace
 path. Empty profile/workspace values request the no-FS session; they never mean
-“use the client cwd” or “choose a pod path.” A future mounted-workspace offering
-must explicitly define its operator authority before it can accept a filesystem
-profile.
+“use the client cwd” or “choose a pod path.”
+
+### Mounted workspace (shared filesystem root)
+
+To give sessions a real filesystem, mount a volume into the pod and point
+`--workspace` at it (for example a PVC mounted at `/workspace`). A configured
+root turns mecak8s into a **server-assigned filesystem deployment** rooted
+there: every session is assigned that single root, the filesystem tools and
+Bash operate on it, and — because authority is server-assigned — a client still
+cannot select a different root (a non-empty client workspace is rejected with
+`InvalidArgument`). The path must be absolute and clean; a relative value is
+refused at startup.
+
+This does not change mecak8s's storage-free posture: harness and session state
+still live in Redis and the Kubernetes API, and the mounted volume holds only
+agent working files. A root shared across the two default replicas needs a
+`ReadWriteMany` volume; a `ReadWriteOnce` PVC binds to a single node, so scale
+to one replica or use a per-pod volume if your storage class cannot do RWX. The
+operator vouches for the mount, so scope it deliberately — see the pod-filesystem
+note below.
 
 :::note[MCP OAuth credentials from Kubernetes Secrets]
 
@@ -296,7 +313,7 @@ Create a session and run a prompt through pod A:
 
 ```sh
 SESSION_ID=$(curl -s -X POST http://127.0.0.1:8081/v1/sessions \
-  -d '{"workspace":"/tmp","mode":"default"}' | jq -r .session_id)
+  -d '{"mode":"default"}' | jq -r .session_id)
 
 curl -s -X POST "http://127.0.0.1:8081/v1/sessions/$SESSION_ID/prompt" \
   -H 'Accept: text/event-stream' -d '{"text":"say hello"}' > /dev/null
@@ -470,7 +487,7 @@ For a development port-forward, bearer traffic stays on loopback:
 ```sh
 kubectl port-forward -n mecatl service/mecak8s-agent 8080:8080 &
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
-bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN" --workspace /tmp
+bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 To prove that the token is actually required, remove the environment fallback and
@@ -478,7 +495,7 @@ submit a prompt in a separate TUI session:
 
 ```sh
 env -u MECATL_AUTH_TOKEN \
-  bin/mecatui connect 127.0.0.1:8080 --workspace /tmp
+  bin/mecatui connect 127.0.0.1:8080
 ```
 
 A gRPC dial can succeed before credentials are checked; the unauthenticated
