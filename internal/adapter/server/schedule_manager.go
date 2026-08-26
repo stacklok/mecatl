@@ -548,6 +548,35 @@ func scheduleSingletonExplicit(_ port.ScheduleSpec) bool { return false }
 // ListModels advertises) and the cadence floor against the composition-
 // injected scheduler MinInterval — two deployment-level inputs the spec alone
 // cannot carry.
+// validateScheduleWorkspaceProfile enforces the profile-aware workspace rule,
+// mirroring the session create-seam (service.go createSession): a default-profile
+// schedule REQUIRES a workspace (a fire mints a filesystem session), a no-fs
+// schedule must NOT carry one. Enforcing it at create is fail-closed — otherwise
+// an empty-workspace default schedule is accepted at create but fails at FIRE time
+// ("workspace is required"), i.e. a schedule that can never fire.
+//
+// EXCEPTION under server-assigned authority (ADR 0237): the authority hook
+// (m.workspaceForCreate, installed only for a server-assigned deployment) already
+// rejected a non-empty client workspace, and the deployment assigns the root at
+// fire time. There an empty default-profile workspace is the correct WIRE value,
+// not a can-never-fire mistake, so the required-workspace rule is
+// client-selected-only.
+func (m *scheduleManager) validateScheduleWorkspaceProfile(spec port.ScheduleSpec) error {
+	switch SessionProfile(spec.Profile) {
+	case ProfileDefault:
+		if spec.Workspace == "" && m.workspaceForCreate == nil {
+			return fmt.Errorf("%w: a default-profile schedule requires a workspace (the fire mints a filesystem session)", ErrInvalidArgument)
+		}
+	case ProfileNoFS:
+		if spec.Workspace != "" {
+			return fmt.Errorf("%w: a %q schedule must not carry a workspace (a no-FS fire has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, spec.Workspace)
+		}
+	default:
+		return fmt.Errorf("%w: unknown schedule profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, spec.Profile, ProfileNoFS)
+	}
+	return nil
+}
+
 func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.ScheduleSpec, now time.Time) (time.Time, *session.Principal, error) {
 	if spec.Name == "" {
 		return time.Time{}, nil, fmt.Errorf("%w: schedule name is required", ErrInvalidArgument)
@@ -594,30 +623,8 @@ func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.Sc
 	if !spec.Mutating && mode != session.ModePlan {
 		return time.Time{}, nil, fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode)
 	}
-	// Validate the workspace PROFILE-AWARE, mirroring the session create-seam
-	// (service.go createSession): a default-profile schedule REQUIRES a workspace
-	// (a fire mints a filesystem session), a no-fs schedule must NOT carry one.
-	// Enforcing it HERE is fail-closed — otherwise an empty-workspace default
-	// schedule is accepted at create but fails at FIRE time ("workspace is
-	// required"), i.e. a schedule that can never fire.
-	//
-	// EXCEPTION under server-assigned authority (ADR 0237): the authority hook
-	// (m.workspaceForCreate, installed only for a server-assigned deployment)
-	// already rejected a non-empty client workspace, and the deployment assigns the
-	// root at fire time. There an empty default-profile workspace is the correct
-	// WIRE value, not a can-never-fire mistake, so the required-workspace rule is
-	// client-selected-only.
-	switch SessionProfile(spec.Profile) {
-	case ProfileDefault:
-		if spec.Workspace == "" && m.workspaceForCreate == nil {
-			return time.Time{}, nil, fmt.Errorf("%w: a default-profile schedule requires a workspace (the fire mints a filesystem session)", ErrInvalidArgument)
-		}
-	case ProfileNoFS:
-		if spec.Workspace != "" {
-			return time.Time{}, nil, fmt.Errorf("%w: a %q schedule must not carry a workspace (a no-FS fire has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, spec.Workspace)
-		}
-	default:
-		return time.Time{}, nil, fmt.Errorf("%w: unknown schedule profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, spec.Profile, ProfileNoFS)
+	if err := m.validateScheduleWorkspaceProfile(spec); err != nil {
+		return time.Time{}, nil, err
 	}
 	// Selector validation (ADR 0073, AC1.2c): a non-empty selector must name a
 	// provider+model pair the deployment actually serves — resolved against the
