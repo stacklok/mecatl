@@ -1,4 +1,4 @@
-# ADR 0234 — Listener-scoped workspace authority
+# ADR 0237 — Listener-scoped workspace authority
 
 - Status: Proposed
 - Date: 2026-08-25

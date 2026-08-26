@@ -2,7 +2,7 @@
 
 **Phase:** workspace-selection security hotfix
 **Status:** in-progress, 2026-08-25. Derived from the workspace-security handover and the agreed listener-topology policy.
-**ADR:** [ADR 0234](../adr/0234-listener-scoped-workspace-authority.md) — client paths are authority only on a local deployment; network deployments assign the root.
+**ADR:** [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) — client paths are authority only on a local deployment; network deployments assign the root.
 **Accumulator branch:** `acc/listener-scoped-workspace-authority` (off `main`).
 
 The smallest set of work that prevents a remote API caller from choosing the
@@ -15,7 +15,7 @@ turn path strings into a remote multi-workspace authorization protocol.
 
 ## Why these scope cuts
 
-- [ADR 0234](../adr/0234-listener-scoped-workspace-authority.md) — a network
+- [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) — a network
   deployment assigns an operator-configured root and requires an empty client
   workspace rather than comparing request paths.
 - [ADR 0032](../adr/0032-worktree-binding.md) — client-selected worktrees are
@@ -35,7 +35,7 @@ authority policy therefore belongs in `internal/adapter/server`, while each
 `cmd/` root selects its policy from listener topology. This keeps socket and
 flag knowledge out of the server adapter, consistent with the composition
 boundary in [`architecture.md`](../architecture.md) and the deployment decision
-in [ADR 0234](../adr/0234-listener-scoped-workspace-authority.md).
+in [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md).
 
 **Acceptance:**
 - AC1.1: With server-assigned filesystem authority and a configured deployment
@@ -100,7 +100,7 @@ not inferred inside the Service from an address string.
 credential transport. It must use that same client-side topology fact only to
 avoid sending a local workspace path. The server remains authoritative: this
 client change is privacy and usability hardening, not the access-control gate.
-This separation follows [ADR 0234](../adr/0234-listener-scoped-workspace-authority.md).
+This separation follows [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md).
 
 **Acceptance:**
 - AC3.1: A non-loopback `mecatui connect` invocation with no explicit
@@ -202,10 +202,10 @@ remain uninspected non-empty rejections under AC1.2.
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Remote callers selecting among multiple workspaces | Scoped resource grants / filesystem-service design | [ADR 0234](../adr/0234-listener-scoped-workspace-authority.md) |
-| Per-request filesystem verb grants, mounts, or leases | Scoped resource grants | [ADR 0234](../adr/0234-listener-scoped-workspace-authority.md) |
+| Remote callers selecting among multiple workspaces | Scoped resource grants / filesystem-service design | [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) |
+| Per-request filesystem verb grants, mounts, or leases | Scoped resource grants | [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) |
 | Redesigning trust, project ingestion, or permission posture | Existing root-aware trust model | [ADR 0095](../adr/0095-root-aware-project-trust.md) |
-| Hardening a deliberately configured container-root workspace or Kubernetes secret mounts | Separate deployment-hardening issue | [ADR 0234](../adr/0234-listener-scoped-workspace-authority.md) |
+| Hardening a deliberately configured container-root workspace or Kubernetes secret mounts | Separate deployment-hardening issue | [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) |
 
 ## Cross-cutting deliverables
 

@@ -137,14 +137,15 @@ func validateAdoptionBindingShape(bindings AdoptionBindings) error {
 // workspace is rejected by workspaceForCreate before any resolver or factory is
 // consulted; local/embedded adoption remains unchanged.
 func (s *Service) adoptionBindingsForAuthority(bindings AdoptionBindings) (AdoptionBindings, error) {
-	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned {
+	if !s.cfg.WorkspaceAuthority.serverAssigned() {
 		return bindings, nil
 	}
-	workspace, err := s.workspaceForCreate(bindings.Workspace, bindings.Profile)
+	workspace, profile, err := s.workspaceForCreate(bindings.Workspace, bindings.Profile)
 	if err != nil {
 		return AdoptionBindings{}, err
 	}
 	bindings.Workspace = workspace
+	bindings.Profile = profile
 	if bindings.Profile == ProfileNoFS {
 		bindings.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindNoFS}
 	} else {
@@ -366,7 +367,6 @@ func (s *Service) AdoptSession(ctx context.Context, sourceID session.SessionID, 
 	bindings, err = s.adoptionBindingsForAuthority(bindings)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrFailedPrecondition, AdoptionReasonBindingUnresolved)
-	}
 	}
 	unlockSource := s.runEntryMu.lock(sourceID)
 	defer unlockSource()

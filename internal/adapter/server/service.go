@@ -46,9 +46,24 @@ const (
 	// callers select the workspace for filesystem sessions.
 	WorkspaceAuthorityClientSelected WorkspaceAuthority = iota
 	// WorkspaceAuthorityServerAssigned rejects every non-empty filesystem request
-	// and assigns Config.AuthoritativeWorkspace instead.
+	// and assigns Config.AuthoritativeWorkspace instead. It REQUIRES a configured
+	// AuthoritativeWorkspace.
 	WorkspaceAuthorityServerAssigned
+	// WorkspaceAuthorityFileless is a server-assigned deployment with no filesystem
+	// root at all (mecak8s): the wire's empty/omitted profile means ProfileNoFS and
+	// every filesystem profile is refused. It REQUIRES an EMPTY
+	// AuthoritativeWorkspace — which is why it is a distinct authority rather than
+	// a separate flag: "server-assigned with no root" is otherwise
+	// indistinguishable from "server-assigned, root not configured yet".
+	WorkspaceAuthorityFileless
 )
+
+// serverAssigned reports whether the deployment — not the caller — chooses the
+// session root. It is the ONE predicate every authority gate branches on, so a
+// new authority value cannot fail open by being missed at one of the call sites.
+func (a WorkspaceAuthority) serverAssigned() bool {
+	return a == WorkspaceAuthorityServerAssigned || a == WorkspaceAuthorityFileless
+}
 
 // WorkspaceFactory builds the session-scoped tool.Workspace for a session root.
 // The server is workspace-agnostic: the composition root injects memfs (tests)
@@ -232,9 +247,11 @@ type Config struct {
 	// WorkspaceAuthority decides whether API callers choose filesystem roots or the
 	// deployment assigns one. The zero value preserves client-selectable local use.
 	WorkspaceAuthority WorkspaceAuthority
-	// AuthoritativeWorkspace is the configured root used only when WorkspaceAuthority
-	// is WorkspaceAuthorityServerAssigned. It must be an absolute, already-clean path
-	// whenever configured; no symlink resolution is performed.
+	// AuthoritativeWorkspace is the configured root assigned to every filesystem
+	// session under WorkspaceAuthorityServerAssigned, which requires it to be a
+	// non-empty absolute, already-clean path; no symlink resolution is performed.
+	// It must be EMPTY under WorkspaceAuthorityFileless and is ignored under
+	// WorkspaceAuthorityClientSelected.
 	AuthoritativeWorkspace string
 	// CommandRunner is the MAIN session's bound command runner (issue #462). It is
 	// the runner the main session's Environment binds when the session runs on the
@@ -1100,13 +1117,29 @@ func (k *keyedMutex) lock(key session.SessionID) func() {
 // touching the filesystem. The client-selectable zero value intentionally ignores
 // an authority root so embedded callers retain their historical behavior.
 func validateWorkspaceAuthorityConfig(cfg Config) error {
-	if cfg.WorkspaceAuthority != WorkspaceAuthorityClientSelected && cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned {
+	switch cfg.WorkspaceAuthority {
+	case WorkspaceAuthorityClientSelected:
+		// The configured root is ignored, so an incidental value is not an error:
+		// embedded callers keep their historical behavior.
+		return nil
+	case WorkspaceAuthorityServerAssigned:
+		// A filesystem deployment with no root would build and then reject every
+		// filesystem request. Fail here instead, once, at construction.
+		if cfg.AuthoritativeWorkspace == "" {
+			return fmt.Errorf("%w: server-assigned workspace authority requires an authoritative workspace (use %s for a file-less deployment)", ErrConfig, "WorkspaceAuthorityFileless")
+		}
+		if !filepath.IsAbs(cfg.AuthoritativeWorkspace) || filepath.Clean(cfg.AuthoritativeWorkspace) != cfg.AuthoritativeWorkspace {
+			return fmt.Errorf("%w: authoritative workspace must be a clean absolute path", ErrConfig)
+		}
+		return nil
+	case WorkspaceAuthorityFileless:
+		if cfg.AuthoritativeWorkspace != "" {
+			return fmt.Errorf("%w: file-less workspace authority must not configure an authoritative workspace; got %q", ErrConfig, cfg.AuthoritativeWorkspace)
+		}
+		return nil
+	default:
 		return fmt.Errorf("%w: unknown workspace authority %d", ErrConfig, cfg.WorkspaceAuthority)
 	}
-	if cfg.WorkspaceAuthority == WorkspaceAuthorityServerAssigned && cfg.AuthoritativeWorkspace != "" && (!filepath.IsAbs(cfg.AuthoritativeWorkspace) || filepath.Clean(cfg.AuthoritativeWorkspace) != cfg.AuthoritativeWorkspace) {
-		return fmt.Errorf("%w: authoritative workspace must be a clean absolute path", ErrConfig)
-	}
-	return nil
 }
 
 // NewService validates cfg and constructs a Service. It returns ErrConfig if
@@ -1214,13 +1247,27 @@ func NewService(cfg Config) (*Service, error) {
 			OwnershipEnforced: cfg.OwnershipEnforced,
 		})
 	}
-	if cfg.Scheduler != nil && svc.schedMgr != nil {
-		svc.schedMgr.SetScheduler(cfg.Scheduler)
-	}
-	if svc.schedMgr != nil {
-		svc.schedMgr.setWorkspaceForCreate(svc.workspaceForCreate)
-	}
+	svc.wireScheduleManager(cfg)
 	return svc, nil
+}
+
+// wireScheduleManager attaches the post-construction seams the schedule manager
+// can only receive once the Service exists. Both are no-ops without a manager.
+func (s *Service) wireScheduleManager(cfg Config) {
+	if s.schedMgr == nil {
+		return
+	}
+	if cfg.Scheduler != nil {
+		s.schedMgr.SetScheduler(cfg.Scheduler)
+	}
+	// Install the authority hook ONLY where it changes the outcome. Under
+	// client-selected authority its sole effect on a default-profile schedule
+	// would be to reject an empty workspace — which validateScheduleSpec already
+	// does, with a message that explains WHY a schedule needs one. Leaving the
+	// hook nil there keeps client-selected schedule validation byte-identical.
+	if cfg.WorkspaceAuthority.serverAssigned() {
+		s.schedMgr.setWorkspaceForCreate(s.workspaceForCreate)
+	}
 }
 
 // SetModels atomically swaps the selectable-model inventory. It is the composition
@@ -1596,7 +1643,6 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, ow
 	return nil, release, nil
 }
 
-<<<<<<< HEAD
 func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) error {
 	if creator, ok := s.cfg.Store.(port.SessionCreator); ok {
 		return creator.Create(ctx, sess)
@@ -1629,41 +1675,67 @@ func (s *Service) resolveCreateCollision(ctx context.Context, id session.Session
 	return winner, err == nil, err
 }
 
+// profileForCreate resolves the deployment's effective profile for a request.
+// A file-less deployment reads the wire's empty (omitted/default) profile as
+// no-FS and refuses every other profile, so a caller cannot ask a deployment
+// with no filesystem root for a filesystem session.
+func (s *Service) profileForCreate(profile SessionProfile) (SessionProfile, error) {
+	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityFileless {
+		return profile, nil
+	}
+	switch profile {
+	case ProfileDefault, ProfileNoFS:
+		return ProfileNoFS, nil
+	default:
+		return "", fmt.Errorf("%w: this deployment is file-less: profile %q is not available (supported: \"\" (default, treated as %q) and %q)", ErrInvalidArgument, profile, ProfileNoFS, ProfileNoFS)
+	}
+}
+
 // workspaceForCreate enforces the profile-aware request contract before any
 // factory, trust, or environment seam receives a root. Server-assigned mode
 // intentionally checks only direct-request emptiness: client input is never
-// cleaned or compared with the configured root.
-func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (string, error) {
+// cleaned or compared with the configured root. It returns the EFFECTIVE profile
+// alongside the root so every caller persists the profile the deployment
+// actually applied, rather than the requested one.
+func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (string, SessionProfile, error) {
+	profile, err := s.profileForCreate(profile)
+	if err != nil {
+		return "", "", err
+	}
 	switch profile {
 	case ProfileDefault:
-		if s.cfg.WorkspaceAuthority == WorkspaceAuthorityServerAssigned {
+		// Unreachable under Fileless (profileForCreate mapped every profile to
+		// no-FS), so this arm sees only ClientSelected and ServerAssigned.
+		if s.cfg.WorkspaceAuthority.serverAssigned() {
 			if workspace != "" {
-				return "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
+				return "", "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
 			}
 			if s.cfg.AuthoritativeWorkspace == "" {
-				return "", fmt.Errorf("%w: deployment assigns the workspace but no authoritative workspace is configured", ErrInvalidArgument)
+				// NewService rejects this combination; kept as a fail-closed guard so a
+				// future second constructor cannot turn it into an empty-root session.
+				return "", "", fmt.Errorf("%w: deployment assigns the workspace but no authoritative workspace is configured", ErrInvalidArgument)
 			}
-			return s.cfg.AuthoritativeWorkspace, nil
+			return s.cfg.AuthoritativeWorkspace, profile, nil
 		}
 		if workspace == "" {
-			return "", fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
+			return "", "", fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
 		}
-		return workspace, nil
+		return workspace, profile, nil
 	case ProfileNoFS:
 		if workspace != "" {
-			return "", fmt.Errorf("%w: profile %q must not carry a workspace (a no-FS session has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, workspace)
+			return "", "", fmt.Errorf("%w: profile %q must not carry a workspace (a no-FS session has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, workspace)
 		}
-		return "", nil
+		return "", profile, nil
 	default:
 		// Defensive: the wire handlers ParseSessionProfile first, but an
 		// in-process caller could hand anything.
-		return "", fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
+		return "", "", fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
 	}
 }
 
 func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	var err error
-	workspace, err = s.workspaceForCreate(workspace, profile)
+	workspace, profile, err = s.workspaceForCreate(workspace, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -2919,7 +2991,7 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 // both roots must be absolute and clean and their cleaned strings must match.
 // It intentionally never resolves symlinks or opens a workspace.
 func (s *Service) validatePersistedWorkspace(sess *session.Session) error {
-	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned || profileForSession(sess) == ProfileNoFS {
+	if !s.cfg.WorkspaceAuthority.serverAssigned() || profileForSession(sess) == ProfileNoFS {
 		return nil
 	}
 	if !s.isAuthoritativeWorkspace(sess.Workspace) {
@@ -2937,7 +3009,7 @@ func (s *Service) isAuthoritativeWorkspace(root string) bool {
 // validatePersistedScheduleWorkspace prevents durable schedule specs from
 // becoming a filesystem-authority bypass at fire time.
 func (s *Service) validatePersistedScheduleWorkspace(spec port.ScheduleSpec) error {
-	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned {
+	if !s.cfg.WorkspaceAuthority.serverAssigned() {
 		return nil
 	}
 	if SessionProfile(spec.Profile) == ProfileNoFS {
@@ -2962,7 +3034,7 @@ func (s *Service) CanProcessSchedule(sched port.Schedule) bool {
 }
 
 func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.Environment) error {
-	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityServerAssigned || profileForSession(sess) == ProfileNoFS {
+	if !s.cfg.WorkspaceAuthority.serverAssigned() || profileForSession(sess) == ProfileNoFS {
 		return nil
 	}
 	ws := env.Workspace()

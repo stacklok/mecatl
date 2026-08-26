@@ -92,7 +92,7 @@ Loopback-only and embedded deployments retain local developer behavior: clients
 may select an absolute checkout or sibling worktree. This is not an
 authorization scheme for a remote multi-workspace service. Use one deployment
 root, or wait for a future opaque scoped-grant design. See [ADR
-0234](../adr/0234-listener-scoped-workspace-authority.md).
+0237](../adr/0237-listener-scoped-workspace-authority.md).
 
 ### Flags
 

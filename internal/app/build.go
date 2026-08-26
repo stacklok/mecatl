@@ -126,11 +126,20 @@ const (
 // the fields they need. Sink and ToolCallRecorder are optional (nil installs no
 // telemetry — the engine nil-guards both).
 type Config struct {
-	Workspace     string
-	Model         string
-	UseOpenAI     bool
-	OpenAIBaseURL string
-	OpenAIKey     string
+	Workspace string
+	// WorkspaceAuthority is the deployment's workspace-selection policy (ADR 0237).
+	// The zero value is client-selectable, preserving embedded and loopback use.
+	// The cmd/ main owns this decision: listener topology never reaches the server
+	// adapter.
+	WorkspaceAuthority server.WorkspaceAuthority
+	// AuthoritativeWorkspace is the root assigned to every filesystem session under
+	// WorkspaceAuthorityServerAssigned, which requires it. A file-less deployment
+	// selects WorkspaceAuthorityFileless and leaves this empty.
+	AuthoritativeWorkspace string
+	Model                  string
+	UseOpenAI              bool
+	OpenAIBaseURL          string
+	OpenAIKey              string
 	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
 	// snapshot consumed only by the distinct openai-codex registry entry.
 	OpenAICodexCredential openaicodex.Credential
@@ -1715,6 +1724,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
 		},
 		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
+		// ADR 0237: the deployment's workspace-selection policy, decided by the cmd/
+		// main from its listener topology and passed through verbatim.
+		WorkspaceAuthority:     cfg.WorkspaceAuthority,
+		AuthoritativeWorkspace: cfg.AuthoritativeWorkspace,
 		// CommandRunner (issue #462): the MAIN session's bound runner — the
 		// Environment seam hands it to Tool.Execute so Bash observes the session
 		// namespace. nil when Bash is disabled (the catalog omits Bash and the

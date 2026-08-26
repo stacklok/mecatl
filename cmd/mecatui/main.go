@@ -309,7 +309,7 @@ func run(argv []string) error {
 
 // parseRunConfig resolves the transport-independent flags, then applies the
 // target-aware workspace authority rule before any transport is dialed.
-func parseRunConfig(res transportResolution) (config, error) {
+func parseRunConfig(res invocationResolution) (config, error) {
 	_, cfg, err := parseTransportFlags(res.mode, os.Stderr, res.remaining, res.browseSessions)
 	if err != nil {
 		return config{}, err

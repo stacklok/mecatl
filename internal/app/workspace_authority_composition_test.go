@@ -41,12 +41,13 @@ func TestListenerScopedWorkspaceAuthority_Scenario2_LocalClientWorkspacePreserve
 func TestADR_0032_WorktreeBindingRemainsClientSelectableOnly(t *testing.T) {
 	root := t.TempDir()
 	built, err := Build(context.Background(), Config{
-		Workspace:           root,
-		WorkspaceAuthority:  server.WorkspaceAuthorityServerAssigned,
-		NoSoul:              true,
-		MemoryDir:           t.TempDir(),
-		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-test"}),
-		liveModelHTTPClient: offlineHTTPClient(),
+		Workspace:              root,
+		WorkspaceAuthority:     server.WorkspaceAuthorityServerAssigned,
+		AuthoritativeWorkspace: root,
+		NoSoul:                 true,
+		MemoryDir:              t.TempDir(),
+		envDetector:            fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-test"}),
+		liveModelHTTPClient:    offlineHTTPClient(),
 		providerConstructor: func(Config, string, string, string) port.LLMProvider {
 			return mockllm.New(mockllm.TextTurn("done"))
 		},

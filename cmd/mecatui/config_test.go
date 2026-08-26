@@ -177,7 +177,7 @@ func TestParseFlagsDefaults(t *testing.T) {
 
 // TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorkspace pins the remote client privacy default: no client cwd reaches CreateSession.
 func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorkspace(t *testing.T) {
-	cfg, err := parseRunConfig(transportResolution{mode: modeConnect, address: "203.0.113.10:8080"})
+	cfg, err := parseRunConfig(invocationResolution{mode: modeConnect, address: "203.0.113.10:8080"})
 	if err != nil {
 		t.Fatalf("parse run config: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario3_LocalConnectPreservesWorkspa
 		{name: "loopback connect", mode: modeConnect, addr: "127.0.0.1:8080"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := parseRunConfig(transportResolution{mode: tc.mode, address: tc.addr, remaining: tc.remaining})
+			cfg, err := parseRunConfig(invocationResolution{mode: tc.mode, address: tc.addr, remaining: tc.remaining})
 			if err != nil {
 				t.Fatalf("parse run config: %v", err)
 			}
@@ -223,7 +223,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRej
 	if parsed.workspace != explicitWorkspace {
 		t.Fatalf("parsed workspace = %q, want unresolved input %q", parsed.workspace, explicitWorkspace)
 	}
-	_, err = parseRunConfig(transportResolution{
+	_, err = parseRunConfig(invocationResolution{
 		mode: modeConnect, address: "203.0.113.10:8080",
 		remaining: []string{"--workspace", explicitWorkspace},
 	})

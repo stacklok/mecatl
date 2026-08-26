@@ -486,10 +486,10 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 	out := app.Config{
 		// mecak8s is a network-facing, file-less deployment. Do not pass its
 		// process cwd (including a container root) into composition as an agent
-		// workspace; every new session is constrained to no-FS below.
+		// workspace; the file-less authority constrains every new session to no-FS
+		// and forbids configuring a root at all.
 		Workspace:              "",
-		WorkspaceAuthority:     server.WorkspaceAuthorityServerAssigned,
-		NoFSOnly:               true,
+		WorkspaceAuthority:     server.WorkspaceAuthorityFileless,
 		Model:                  cfg.model,
 		DefaultProvider:        cfg.defaultProvider,
 		DefaultModel:           cfg.defaultModel,

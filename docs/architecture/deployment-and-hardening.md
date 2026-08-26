@@ -89,7 +89,7 @@ rejects any non-`no-fs` profile until a future operator-enabled mounted-workspac
 deployment defines that authority. A remote `mecatui` likewise refuses an
 explicit workspace locally, before resolving or sending its own cwd; the service
 remains the enforcement boundary for every other client. See
-[ADR 0234](../adr/0234-listener-scoped-workspace-authority.md).
+[ADR 0237](../adr/0237-listener-scoped-workspace-authority.md).
 
 ### Multi-replica deployment & single-writer enforcement
 

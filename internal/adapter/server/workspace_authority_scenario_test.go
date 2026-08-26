@@ -347,7 +347,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario5_AllCreationPathsRespectAutho
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
 	principal := &session.Principal{Issuer: "issuer", Subject: "subject", GrantType: session.GrantTypeUser}
-	if err := legacy.RestoreLabels(principal, ""); err != nil {
+	if err := legacy.RestoreLabels(principal, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
 	if err := store.Save(context.Background(), legacy); err != nil {
