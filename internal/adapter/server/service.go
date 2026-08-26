@@ -2980,9 +2980,9 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validatePersistedWorkspace(sess); err != nil {
-		return nil, err
-	}
+	// Persisted workspace authority is enforced at the top of reopenLoadedSession
+	// (the shared recovery choke point); nothing runs between the load and the
+	// reopen here, so a separate check would be pure redundancy.
 	return s.reopenLoadedSession(ctx, sess)
 }
 
@@ -3046,9 +3046,21 @@ func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.En
 }
 
 // reopenLoadedSession applies the existing terminal-state recovery funnel to an
-// already-authorized session. Run entry uses this form so its purpose gate can
-// reject a session before recovery mutates or persists it.
+// already-ownership-authorized session. Run entry uses this form so its purpose
+// gate can reject a session before recovery mutates or persists it.
+//
+// It is ALSO the structural choke point for persisted workspace authority (ADR
+// 0237): every route that recovers a loaded session for use — loadAndReopen,
+// startRunContent, ForkSession — passes through here, so validating the persisted
+// root at the top means a new recovery route cannot silently skip the check the
+// way ForkSession once did. The check is a pure lexical no-op under client-selected
+// authority. Two routes still validate earlier on their own: startRunContent (to
+// reject before its purpose gate and run-registry cleanup) and resumeFromAwaiting
+// (which rejects terminal states and so bypasses this funnel entirely).
 func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session) (*session.Session, error) {
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return nil, err
+	}
 	id := sess.ID
 	// Repopulate the in-memory learned-rule store from the durable EventLog's
 	// allow-always verdicts (cloud-native Phase 3b) BEFORE the run starts, so a
@@ -3284,6 +3296,10 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if err != nil {
 		return nil, err
 	}
+	// Validate the persisted root EARLY — before the purpose gate and the run-
+	// registry cleanup below — so an off-root session is rejected before any side
+	// effect. reopenLoadedSession also enforces this (the shared choke point), so
+	// this call is a deliberate earlier gate, not the sole defense.
 	if err := s.validatePersistedWorkspace(sess); err != nil {
 		return nil, err
 	}

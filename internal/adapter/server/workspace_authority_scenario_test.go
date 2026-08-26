@@ -445,3 +445,53 @@ func serverAssignedScheduleService(t *testing.T, store *jsonlstore.Store, worksp
 	}
 	return svc
 }
+
+// TestListenerScopedWorkspaceAuthority_Scenario5_ForkOffRootFailsClosed pins that
+// ForkSession is gated by the same persisted-workspace authority as every other
+// recovery route (issue found in panel review): a stale off-root source must be
+// rejected before the fork is persisted or a per-session engine (and its
+// workspace-scoped ingestion) is built. The gate lives at the shared
+// reopenLoadedSession choke point, so this proves the funnel covers fork.
+func TestListenerScopedWorkspaceAuthority_Scenario5_ForkOffRootFailsClosed(t *testing.T) {
+	store := memstore.New()
+	var engineCalls atomic.Int32
+	svc, err := server.NewService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{
+			LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
+			Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
+		}),
+		Store:                  store,
+		Workspaces:             func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		DefaultLimits:          session.Limits{MaxTurns: 5},
+		Now:                    func() time.Time { return time.Unix(0, 0) },
+		WorkspaceAuthority:     server.WorkspaceAuthorityServerAssigned,
+		AuthoritativeWorkspace: deploymentWorkspace,
+		OwnershipEnforced:      true,
+		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+			engineCalls.Add(1)
+			return server.SessionEngineResult{Close: func() error { return nil }}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	// A stale off-root source: persisted with a root the deployment no longer
+	// assigns (e.g. created under an earlier client-selected configuration).
+	owner := &session.Principal{Issuer: "iss", Subject: "sub", GrantType: session.GrantTypeUser}
+	src := session.New("fork-src-off-root", session.ModeDefault, "/other/root", session.Limits{MaxTurns: 5}, time.Unix(0, 0))
+	if err := src.RestoreLabels(owner, session.Authority{}); err != nil {
+		t.Fatalf("RestoreLabels: %v", err)
+	}
+	if err := store.Save(context.Background(), src); err != nil {
+		t.Fatalf("store.Save: %v", err)
+	}
+
+	ctx := session.WithPrincipal(context.Background(), owner)
+	if _, err := svc.ForkSession(ctx, src.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+		t.Fatalf("ForkSession off-root error = %v, want FailedPrecondition", err)
+	}
+	if got := engineCalls.Load(); got != 0 {
+		t.Fatalf("session engine factory calls = %d, want 0 before the off-root fork is rehydrated", got)
+	}
+}
