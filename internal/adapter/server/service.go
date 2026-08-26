@@ -3039,7 +3039,12 @@ func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.En
 		return nil
 	}
 	ws := env.Workspace()
-	if ws == nil || ws.Root() != s.cfg.AuthoritativeWorkspace {
+	// Use the same lexical identity rule as the other persisted-root gates rather
+	// than a raw string compare: under WorkspaceAuthorityFileless the configured
+	// root is "", and a bare `ws.Root() != ""` would ACCEPT an empty-root override
+	// on a non-no-FS session, where isAuthoritativeWorkspace fails closed. Equivalent
+	// to the old compare under ServerAssigned (a non-empty clean absolute root).
+	if ws == nil || !s.isAuthoritativeWorkspace(ws.Root()) {
 		return fmt.Errorf("%w: environment override does not match the deployment-assigned workspace", ErrFailedPrecondition)
 	}
 	return nil
