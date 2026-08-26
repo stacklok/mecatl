@@ -121,8 +121,9 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 	if s.cfg.MemberEngine == nil {
 		return "", nil, ErrTeamsDisabled
 	}
-	if workspace == "" {
-		return "", nil, fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
+	workspace, _, err := s.workspaceForCreate(workspace, ProfileDefault)
+	if err != nil {
+		return "", nil, err
 	}
 
 	t := team.New(name)
@@ -138,11 +139,10 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 	} else if s.cfg.CommandRunnerFactory != nil {
 		baseRunner = s.cfg.CommandRunnerFactory(workspace)
 	}
-	// The workspace comes from the client-controlled CreateTeam request, so it
-	// MUST NOT panic on a nil return from the Workspaces factory (a misconfigured
-	// factory, a bad root, etc.). NewEnvironment rejects a nil Workspace with a
-	// normal error; wrap it as ErrInvalidArgument so the caller sees a bad-request
-	// status rather than a server crash.
+	// The workspace is service-authorized and assigned, but a nil return from the
+	// Workspaces factory (a misconfigured factory, etc.) must not panic. NewEnvironment
+	// rejects a nil Workspace with a normal error; wrap it as ErrInvalidArgument so the
+	// caller sees a bad-request status rather than a server crash.
 	base, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace}, baseWS, baseRunner)
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: team workspace could not be built: %w", ErrInvalidArgument, err)

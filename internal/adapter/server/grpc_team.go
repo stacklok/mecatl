@@ -17,9 +17,6 @@ import (
 // initial roster atomically (any member failure abandons the whole team). The
 // enrolled roster is echoed back so the caller need not follow up with ListTeam.
 func (h *HarnessServer) CreateTeam(ctx context.Context, req *mecatlv1.CreateTeamRequest) (*mecatlv1.CreateTeamResponse, error) {
-	if req.GetWorkspace() == "" {
-		return nil, status.Error(codes.InvalidArgument, "workspace is required")
-	}
 	id, enrolled, err := h.svc.CreateTeam(ctx, req.GetWorkspace(), req.GetName(), req.GetGoal(), int(req.GetMaxTeamTokens()), fromProtoTeammateSpecs(req.GetMembers()))
 	if err != nil {
 		return nil, toStatus(err)

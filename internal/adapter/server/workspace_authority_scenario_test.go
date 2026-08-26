@@ -23,6 +23,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
@@ -68,6 +69,15 @@ func serverAssignedAuthorityService(t *testing.T, store *memstore.Store, workspa
 				}),
 				Close: func() error { return nil },
 			}, nil
+		},
+		MemberEngine: func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
+			catalog := tool.NewCatalog()
+			for _, candidate := range agent.MemberTools(tm, spec.Name, nil) {
+				catalog.MustRegister(candidate)
+			}
+			return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
+				LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
+			})}
 		},
 	})
 	if err != nil {
@@ -209,6 +219,63 @@ func TestListenerScopedWorkspaceAuthority_Scenario1_GrpcAndHTTPAgree(t *testing.
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("HTTP empty CreateSession status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+}
+
+func TestListenerScopedWorkspaceAuthority_Scenario1_CreateTeamGrpcAndHTTPAgree(t *testing.T) {
+	var roots []string
+	svc := serverAssignedAuthorityService(t, nil, func(root string) tool.Workspace {
+		roots = append(roots, root)
+		return memfs.NewWorkspace(root)
+	})
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+	httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer httpServer.Close()
+
+	created, err := client.CreateTeam(context.Background(), &mecatlv1.CreateTeamRequest{})
+	if err != nil {
+		t.Fatalf("gRPC empty CreateTeam: %v", err)
+	}
+	if created.GetTeamId() == "" {
+		t.Fatal("gRPC empty CreateTeam returned an empty team id")
+	}
+	if got := strings.Join(roots, ","); got != deploymentWorkspace {
+		t.Fatalf("gRPC CreateTeam workspace roots = %q, want %q", got, deploymentWorkspace)
+	}
+
+	grpcCalls, grpcRoots := len(roots), strings.Join(roots, ",")
+	_, err = client.CreateTeam(context.Background(), &mecatlv1.CreateTeamRequest{Workspace: "/client/root"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("gRPC CreateTeam with client workspace error = %v, want InvalidArgument", err)
+	}
+	if len(roots) != grpcCalls || strings.Join(roots, ",") != grpcRoots {
+		t.Fatalf("rejected gRPC CreateTeam constructed workspace: before=%q after=%q", grpcRoots, strings.Join(roots, ","))
+	}
+
+	resp, err := http.Post(httpServer.URL+"/v1/teams", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("HTTP empty CreateTeam: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("HTTP empty CreateTeam status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	if got := strings.Join(roots, ","); got != deploymentWorkspace+","+deploymentWorkspace {
+		t.Fatalf("HTTP CreateTeam workspace roots = %q, want deployment workspace for both successful calls", got)
+	}
+
+	httpCalls, httpRoots := len(roots), strings.Join(roots, ",")
+	resp, err = http.Post(httpServer.URL+"/v1/teams", "application/json", strings.NewReader(`{"workspace":"/client/root"}`))
+	if err != nil {
+		t.Fatalf("HTTP CreateTeam with client workspace: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("HTTP CreateTeam with client workspace status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if len(roots) != httpCalls || strings.Join(roots, ",") != httpRoots {
+		t.Fatalf("rejected HTTP CreateTeam constructed workspace: before=%q after=%q", httpRoots, strings.Join(roots, ","))
 	}
 }
 
@@ -390,13 +457,22 @@ func TestListenerScopedWorkspaceAuthority_Scenario5_ScheduledFireCannotReviveOff
 func TestListenerScopedWorkspaceAuthority_Scenario5_AllCreationPathsRespectAuthority(t *testing.T) {
 	store := memstore.New()
 	var factoryCalls atomic.Int32
-	// The counted factory proves adoption rejects an off-root binding before engine
-	// or environment construction can receive it.
+	var workspaceCalls atomic.Int32
+	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"})
+	// The counted factory proves adoption and CreateTeam reject off-root bindings
+	// before engine or environment construction can receive them.
 	svc, err := server.NewService(server.Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: eng,
+		Store:  store,
+		Workspaces: func(root string) tool.Workspace {
+			workspaceCalls.Add(1)
+			return memfs.NewWorkspace(root)
+		},
 		WorkspaceAuthority: server.WorkspaceAuthorityServerAssigned, AuthoritativeWorkspace: deploymentWorkspace,
 		OwnershipEnforced: true,
+		MemberEngine: func(_ *team.Team, _ agent.MemberSpec, _ string) agent.MemberBuild {
+			return agent.MemberBuild{Engine: eng}
+		},
 		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
 			factoryCalls.Add(1)
 			return server.SessionEngineResult{}, nil
@@ -404,6 +480,13 @@ func TestListenerScopedWorkspaceAuthority_Scenario5_AllCreationPathsRespectAutho
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
+	}
+	_, err = server.NewHarnessServer(svc).CreateTeam(context.Background(), &mecatlv1.CreateTeamRequest{Workspace: "/client/root"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("CreateTeam with client workspace code = %v, want InvalidArgument (err=%v)", status.Code(err), err)
+	}
+	if got := workspaceCalls.Load(); got != 0 {
+		t.Fatalf("workspace factory calls = %d, want 0 before rejected CreateTeam construction", got)
 	}
 	legacy := session.New("legacy-adoption", session.ModeDefault, "/legacy", session.Limits{MaxTurns: 5}, time.Unix(0, 0))
 	if err := legacy.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {

@@ -1030,10 +1030,6 @@ func (h *HTTPHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if body.Workspace == "" {
-		writeError(w, http.StatusBadRequest, "workspace is required")
-		return
-	}
 	var specs []agent.MemberSpec
 	if len(body.Members) > 0 {
 		specs = make([]agent.MemberSpec, 0, len(body.Members))

@@ -53,8 +53,9 @@ from a request or from the server package's socket state.
   is always server-assigned; it defaults new sessions to the no-FS profile and
   serves the operator-configured mounted root when one is set.
 - Server-assigned authority applies to persisted-session run entry and
-  rehydration, scheduled-fire creation, legacy adoption, and
-  composition-created environment overrides as well as direct API creation.
+  rehydration, scheduled-fire creation, legacy adoption, agent-team
+  `CreateTeam`, and composition-created environment overrides as well as direct
+  API creation.
   Stored filesystem roots are equal only when both are non-empty, absolute,
   clean paths with identical cleaned strings. Relative paths, traversal
   spellings, symlink aliases, and a root stale after configuration
