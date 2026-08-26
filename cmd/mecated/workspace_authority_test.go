@@ -16,6 +16,16 @@ func TestListenerScopedWorkspaceAuthority_Scenario1_NetworkFilesystemRequiresCon
 	if err := validateWorkspaceAuthority(cfg); err != nil {
 		t.Fatalf("network deployment with authoritative workspace: %v", err)
 	}
+
+	// A relative or unclean --workspace on a network listener must fail at the flag
+	// layer (matching NewService's clean-absolute rule and mecak8s), not surface
+	// later from app.Build.
+	for _, ws := range []string{"relative/root", "/srv/../srv/repo", "/srv/repo/"} {
+		bad := config{grpcAddr: "0.0.0.0:8080", httpAddr: "127.0.0.1:8081", workspace: ws}
+		if err := validateWorkspaceAuthority(bad); err == nil {
+			t.Fatalf("validateWorkspaceAuthority(--workspace %q) = nil, want a clean-absolute-path error", ws)
+		}
+	}
 }
 
 func TestListenerScopedWorkspaceAuthority_Scenario2_MecatedPolicyFollowsAPIListenerTopology(t *testing.T) {

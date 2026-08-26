@@ -1361,6 +1361,13 @@ func validateWorkspaceAuthority(cfg config) error {
 	if authority == server.WorkspaceAuthorityServerAssigned && cfg.workspace == "" {
 		return errors.New("server-assigned filesystem deployment requires --workspace")
 	}
+	// Mirror NewService's authoritative-root rule at the flag layer so a relative or
+	// unclean --workspace on a network listener fails here with a flag-level message,
+	// not two layers down from app.Build. Matches mecak8s, which rejects the same.
+	if authority == server.WorkspaceAuthorityServerAssigned && cfg.workspace != "" &&
+		(!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
+		return fmt.Errorf("--workspace %q must be a clean absolute path for a server-assigned deployment", cfg.workspace)
+	}
 	return nil
 }
 

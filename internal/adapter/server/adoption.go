@@ -206,9 +206,17 @@ func (s *Service) resolveAdoptionBindings(ctx context.Context, bindings Adoption
 // the short trial lease is released before return and every condition is checked
 // again by AdoptSession under the mutation lease.
 func (s *Service) PreflightSessionAdoption(ctx context.Context, id session.SessionID, bindings AdoptionBindings) (AdoptionPreflight, error) {
-	if normalized, err := s.adoptionBindingsForAuthority(bindings); err == nil {
-		bindings = normalized
+	// Reject an authority-invalid binding up front rather than swallowing the error.
+	// resolveAdoptionBindings below re-normalizes and would still return
+	// binding_unresolved, so the OUTCOME was already correct — but swallowing meant
+	// the ownership, source, and mutation-lease steps all ran for a binding doomed
+	// to fail authority. Rejecting here skips that (notably the lease acquire/release)
+	// and matches AdoptSession, which normalizes before any of it.
+	normalized, err := s.adoptionBindingsForAuthority(bindings)
+	if err != nil {
+		return AdoptionPreflight{Reason: AdoptionReasonBindingUnresolved, Bindings: bindings}, nil
 	}
+	bindings = normalized
 	result := AdoptionPreflight{Bindings: bindings}
 	reason, err := s.adoptionOwnershipPreflight(ctx, id)
 	if err != nil {

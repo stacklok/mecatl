@@ -1130,9 +1130,9 @@ func validateWorkspaceAuthorityConfig(cfg Config) error {
 		// A filesystem deployment with no root would build and then reject every
 		// filesystem request. Fail here instead, once, at construction.
 		if cfg.AuthoritativeWorkspace == "" {
-			return fmt.Errorf("%w: server-assigned workspace authority requires an authoritative workspace (use %s for a file-less deployment)", ErrConfig, "WorkspaceAuthorityFileless")
+			return fmt.Errorf("%w: server-assigned workspace authority requires an authoritative workspace (use WorkspaceAuthorityFileless for a file-less deployment)", ErrConfig)
 		}
-		if !filepath.IsAbs(cfg.AuthoritativeWorkspace) || filepath.Clean(cfg.AuthoritativeWorkspace) != cfg.AuthoritativeWorkspace {
+		if !isCleanAbs(cfg.AuthoritativeWorkspace) {
 			return fmt.Errorf("%w: authoritative workspace must be a clean absolute path", ErrConfig)
 		}
 		return nil
@@ -3004,10 +3004,18 @@ func (s *Service) validatePersistedWorkspace(sess *session.Session) error {
 	return nil
 }
 
+// isCleanAbs reports whether p is a non-empty, absolute, already-clean path — the
+// single lexical invariant the authoritative-root checks share. Kept in one place
+// so validateWorkspaceAuthorityConfig (the configured root) and
+// isAuthoritativeWorkspace (a stored root) cannot drift.
+func isCleanAbs(p string) bool {
+	return p != "" && filepath.IsAbs(p) && filepath.Clean(p) == p
+}
+
 func (s *Service) isAuthoritativeWorkspace(root string) bool {
-	configured := s.cfg.AuthoritativeWorkspace
-	return root != "" && configured != "" && filepath.IsAbs(root) && filepath.Clean(root) == root &&
-		filepath.IsAbs(configured) && filepath.Clean(configured) == configured && root == configured
+	// Once root == the configured value, the configured side's non-empty/abs/clean
+	// tests are implied by the same tests on root, so one isCleanAbs suffices.
+	return root == s.cfg.AuthoritativeWorkspace && isCleanAbs(root)
 }
 
 // validatePersistedScheduleWorkspace prevents durable schedule specs from
