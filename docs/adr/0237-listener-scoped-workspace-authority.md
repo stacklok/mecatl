@@ -54,6 +54,14 @@ from a request or from the server package's socket state.
   changes fail closed before filesystem access. This stored-state comparison
   does not relax the direct-request rule: a non-empty client workspace remains
   rejected without cleaning or comparison.
+- A scheduled fire is a deferred session create, so under server-assigned
+  authority a schedule persists the empty wire workspace, not a resolved root:
+  create rejects a non-empty client workspace and stores an empty one, and each
+  fire is assigned the deployment root when it mints its session, exactly as a
+  live create is. A schedule therefore tracks the current deployment root rather
+  than freezing a snapshot — a single-root deployment that reconfigures its root
+  fires existing schedules at the new root. A non-empty persisted schedule
+  workspace is stale off-root state and is refused before the fire is claimed.
 - A remote `mecatui` rejects an explicit workspace locally before resolving or
   transmitting a cwd. The Service remains the enforcement boundary for stale
   and non-mecatui clients.

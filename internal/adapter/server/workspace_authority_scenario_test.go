@@ -325,8 +325,19 @@ func TestListenerScopedWorkspaceAuthority_Scenario5_ScheduledFireCannotReviveOff
 	if err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
-	if created.Spec.Workspace != deploymentWorkspace {
-		t.Fatalf("created schedule workspace = %q, want configured deployment root %q", created.Spec.Workspace, deploymentWorkspace)
+	if created.Spec.Workspace != "" {
+		t.Fatalf("created schedule workspace = %q, want empty (the wire value; the fire assigns the deployment root)", created.Spec.Workspace)
+	}
+	// Round-trip: the persisted schedule workspace must survive re-entry into the
+	// create gate the fire path uses. An empty stored workspace mints a session on
+	// the deployment root; persisting the resolved root instead made the fire fail
+	// with InvalidArgument, so the schedule could never fire.
+	fireSess, err := svc.CreateSessionWithProfile(context.Background(), created.Spec.Workspace, session.ModePlan, session.Limits{}, server.ProviderSelector{}, server.SessionProfile(created.Spec.Profile))
+	if err != nil {
+		t.Fatalf("re-create session from persisted schedule spec (the fire path): %v", err)
+	}
+	if fireSess.Workspace != deploymentWorkspace {
+		t.Fatalf("fire session workspace = %q, want deployment root %q", fireSess.Workspace, deploymentWorkspace)
 	}
 	if _, err := svc.CreateSchedule(context.Background(), port.ScheduleSpec{
 		Name: "client-root", Prompt: "run", Trigger: port.TriggerSpec{Cron: "@every 1h"}, Mode: session.ModePlan, Workspace: "/client/root",

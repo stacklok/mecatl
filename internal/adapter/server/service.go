@@ -3012,11 +3012,12 @@ func (s *Service) validatePersistedScheduleWorkspace(spec port.ScheduleSpec) err
 	if !s.cfg.WorkspaceAuthority.serverAssigned() {
 		return nil
 	}
-	if SessionProfile(spec.Profile) == ProfileNoFS {
-		if spec.Workspace == "" {
-			return nil
-		}
-	} else if SessionProfile(spec.Profile) == ProfileDefault && s.isAuthoritativeWorkspace(spec.Workspace) {
+	// A server-assigned schedule persists the empty WIRE workspace for BOTH
+	// profiles (ADR 0237): a no-FS fire has no root, and a default-profile fire is
+	// assigned the deployment root when it mints its session. A non-empty persisted
+	// workspace is therefore stale off-root state — a schedule written under an
+	// earlier client-selected configuration, or via a shared client-selected store.
+	if spec.Workspace == "" {
 		return nil
 	}
 	return fmt.Errorf("%w: persisted schedule %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, spec.Name)
