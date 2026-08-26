@@ -301,6 +301,43 @@ added), reuses the digest already captured, and stores a verifiable provenance
 attestation with the image — no separate, separately-versioned reusable workflow
 with its own permission/secrets contract. See <https://slsa.dev/>.
 
+### `publish-helm-chart` — the `deploy/helm/mecak8s` Helm chart
+
+A third job in the same workflow, independent of `publish`/`publish-mecatui`
+(no `needs:`, so it runs in parallel — the chart references either image
+only by tag/digest *value*, via its `image.tag`/`image.digest` values, not by
+a build-time dependency). Publishes `deploy/helm/mecak8s` as a signed OCI
+artifact under `ghcr.io/<owner>/<repo>/charts` so `stacklok/infra`'s Flux
+GitOps pipeline has an artifact to point a `HelmRepository` at (mirrors
+`stacklok/atrium`'s `helm-publish.yml`). Elevates to:
+
+```yaml
+permissions:
+  contents: read   # checkout
+  packages: write  # push chart to GHCR
+  id-token: write  # OIDC: GHCR login, cosign keyless signing
+```
+
+Flow: `helm lint` (with the same minimal production-shaped `--set` overrides
+`Taskfile.yml`'s `deploy:check` uses, since this chart's `required`/`fail`
+guards need real values to lint cleanly) → `helm package --version
+<tag-without-v>` (no version is baked into `Chart.yaml`'s committed value —
+the tag *is* the release, same as the Go binaries) → `helm push` to
+`oci://ghcr.io/<owner>/<repo>/charts` → `cosign sign` the pushed digest
+(keyless, same OIDC identity as the image signing above; no SLSA attestation
+for the chart, matching atrium's precedent).
+
+Verifying a published chart (replace `<owner>/<repo>` and `<version>`):
+
+```sh
+helm pull oci://ghcr.io/<owner>/<repo>/charts/mecak8s --version <version>
+
+cosign verify \
+  ghcr.io/<owner>/<repo>/charts/mecak8s@sha256:... \
+  --certificate-identity-regexp '^https://github.com/<owner>/<repo>/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 ## `mecatequi-reusable.yml` — reusable `workflow_call` (the recommended adoption path)
 
 The **reusable workflow** a consumer adopts mecatequi with — a ~15-line caller

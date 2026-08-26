@@ -333,3 +333,142 @@ jobs:
           subject-name: ${{ steps.build.outputs.image_name }}
           subject-digest: ${{ steps.build.outputs.image_digest }}
           push-to-registry: true
+
+  # publish-helm-chart (#767): publish the storage-free mecak8s agent's Helm
+  # chart (deploy/helm/mecak8s) as a signed OCI artifact, so stacklok/infra's
+  # Flux GitOps pipeline has something to point a HelmRepository at — that
+  # repo only ever consumes charts as published OCI artifacts, never straight
+  # from a sibling repo's git tree. Mirrors stacklok/atrium's
+  # helm-publish.yml: helm package + push to GHCR, then cosign keyless-sign
+  # the pushed digest, same supply-chain posture as the image jobs above
+  # (minus SLSA attestation — atrium's chart publish doesn't attest either).
+  # Runs independently of `publish`/`publish-mecatui`: the chart doesn't
+  # reference either image by digest, only by the tag its `image.tag`/
+  # `image.digest` values expect a caller to set, so there is no ordering
+  # dependency and it can run in parallel.
+  publish-helm-chart:
+    name: Package, publish, sign Helm chart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+      packages: write # push chart to GHCR
+      id-token: write # OIDC: ghcr login, cosign keyless signing
+    env:
+      # ghcr.io/<owner>/<repo>/charts, lowercased by GHCR — a sibling OCI path
+      # to the image repo above, matching stacklok/atrium's oci://ghcr.io/
+      # stacklok/atrium/charts shape.
+      OCI_REGISTRY: ghcr.io/${{ github.repository }}/charts
+      CHART_PATH: deploy/helm/mecak8s
+      # On workflow_dispatch github.ref_name is the default branch, so prefer
+      # the explicit input; on a tag push github.ref_name is the tag.
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ env.VERSION }}
+
+      - uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+        with:
+          version: v3.18.4
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # No version is baked into the Go code or the chart's committed
+      # Chart.yaml — the tag IS the release (see .claude/skills/cut-release).
+      # Strip the leading `v`: Helm/semver does not accept it in
+      # Chart.yaml's version field.
+      - name: Resolve chart version from tag
+        id: version
+        run: |
+          CHART_VERSION="${VERSION#v}"
+          echo "chart_version=$CHART_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved chart version: $CHART_VERSION (from ${VERSION})"
+
+      # Bare `helm lint` renders with an empty values.yaml, which trips this
+      # chart's required-field guards (image.tag, redis.endpoint, ...) — those
+      # surface as non-fatal INFO lines that helm lint still renders past
+      # (see Taskfile.yml's deploy:check comment on why it prefers `helm
+      # template | kubeconform` for the same reason), so lint here with the
+      # same minimal production-shaped overrides that target already uses.
+      - name: helm lint
+        run: helm lint "${CHART_PATH}" --set image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials
+
+      - name: helm package
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart_version }}
+        run: |
+          mkdir -p dist
+          helm package "${CHART_PATH}" --version "${CHART_VERSION}" --destination dist
+          ls -la dist/
+          test -f "dist/mecak8s-${CHART_VERSION}.tgz"
+
+      - name: helm registry login
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # cosign reads the Docker keychain (~/.docker/config.json), NOT helm's
+      # registry config — so `helm registry login` above does not authenticate
+      # it. Without this, `cosign sign` fails reading the just-pushed manifest
+      # back from ghcr with `UNAUTHORIZED: authentication required`.
+      - name: Log in to ghcr for cosign
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: helm push
+        id: push
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart_version }}
+        run: |
+          # helm push prints `Digest: sha256:...` on success — capture for
+          # cosign sign.
+          OUTPUT=$(helm push "dist/mecak8s-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" 2>&1)
+          echo "$OUTPUT"
+          DIGEST=$(echo "$OUTPUT" | awk '/^Digest:/ {print $2}')
+          if [ -z "$DIGEST" ]; then
+            echo "FAIL: could not parse digest from helm push output" >&2
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "▶ pushed chart digest: $DIGEST"
+
+      - name: cosign sign chart
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          # Sign by digest, not tag — guarantees we sign the artifact that
+          # was just pushed, even if a concurrent push moves the tag.
+          cosign sign -y "${OCI_REGISTRY}/mecak8s@${DIGEST}"
+
+      - name: Summary
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart_version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo "## Helm chart published"
+            echo ""
+            echo "**Pull command:**"
+            echo ""
+            echo '```'
+            echo "helm pull oci://${OCI_REGISTRY}/mecak8s --version ${CHART_VERSION}"
+            echo '```'
+            echo ""
+            echo "**Install command:**"
+            echo ""
+            echo '```'
+            echo "helm install mecak8s oci://${OCI_REGISTRY}/mecak8s --version ${CHART_VERSION}"
+            echo '```'
+            echo ""
+            echo "**Verify signature:**"
+            echo ""
+            echo '```'
+            echo "cosign verify ${OCI_REGISTRY}/mecak8s@${DIGEST} \\"
+            echo "  --certificate-identity-regexp='https://github.com/stacklok/mecatl/' \\"
+            echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
