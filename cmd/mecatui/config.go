@@ -761,36 +761,41 @@ func (c config) validate() error {
 	}
 	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
 	// 1); the predicate + its rationale live once on config.mayEmbed.
-	mayEmbed := c.mayEmbed()
-	// When hosting an embedded server the provider must be resolvable: an OpenAI,
-	// Anthropic, or OpenRouter key in the environment, the offline mock, or an
-	// auto-detected/explicit ToolHive LLM gateway proxy (--toolhive-llm, default
-	// on) — the same detection app.Build runs, so this pre-check agrees with what
-	// the embedded server will actually resolve.
-	if mayEmbed && !c.providerKeys.Any() && c.openAIKey == "" && c.openRouterKey == "" && c.anthropicKey == "" && c.openCodeKey == "" && !c.mock {
-		hasCustom, err := cliconfig.HasOperatorProviderDefinitions(true, true, nil)
-		if err != nil {
-			return fmt.Errorf("resolve operator provider configuration: %w", err)
+	if c.mayEmbed() {
+		if err := validateEmbeddedProvider(c); err != nil {
+			return err
 		}
-		if !hasCustom {
-			var probe app.Config
-			c.toolhiveLLMFlags.Apply(&probe)
-			if !app.ToolhiveAvailable(probe) {
-				return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see docs/usage.md")
-			}
-		}
-	}
-	// Operator posture: refuse an allow-all tier (auto or yolo) when running
-	// privileged outside a declared sandbox. The tier is the AUTHORITATIVE one
-	// (incl. the operator-global settings.yaml posture: key), so a YAML-only
-	// allow-all tier cannot escape the refusal — and app.Build re-checks it as
-	// the fail-closed backstop.
-	if mayEmbed {
+		// Operator posture: refuse an allow-all tier (auto or yolo) when running
+		// privileged outside a declared sandbox. The tier is the AUTHORITATIVE one
+		// (incl. the operator-global settings.yaml posture: key), so a YAML-only
+		// allow-all tier cannot escape the refusal — and app.Build re-checks it as
+		// the fail-closed backstop.
 		if err := app.PostureRefusalReason(embeddedAuthoritativePosture(c), embeddedPrivileged()); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// validateEmbeddedProvider ensures an embedded server has a provider path before the TUI
+// takes over the terminal. It mirrors app.Build's provider availability rules.
+func validateEmbeddedProvider(c config) error {
+	if c.providerKeys.Any() || c.openAIKey != "" || c.openRouterKey != "" || c.anthropicKey != "" || c.openCodeKey != "" || c.mock {
+		return nil
+	}
+	hasCustom, err := cliconfig.HasOperatorProviderDefinitions(true, true, nil)
+	if err != nil {
+		return fmt.Errorf("resolve operator provider configuration: %w", err)
+	}
+	if hasCustom {
+		return nil
+	}
+	var probe app.Config
+	c.toolhiveLLMFlags.Apply(&probe)
+	if app.ToolhiveAvailable(probe) {
+		return nil
+	}
+	return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see docs/usage.md")
 }
 
 // mayEmbed reports whether this run may host an embedded server, and so is
