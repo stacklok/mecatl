@@ -47,10 +47,19 @@ fi
 
 echo "Bumping reusable-workflow pins ${OLD_TAG} -> ${NEW_TAG}"
 
+# perl -pi -e, not `sed -i -E`: BSD sed (macOS's default /bin/sed) parses `-i -E` as `-i` taking
+# `-E` itself as its (mandatory-argument) backup suffix, silently running in BASIC regex mode —
+# the `(...)`/`\1` groups below then fail with "\1 not defined in the RE". perl's -i is
+# consistent across BSD/GNU/macOS/Linux. OLD_TAG/NEW_TAG cross via %ENV (already validated
+# vX.Y.Z above), never interpolated into the regex/replacement source, so no quoting hazard.
 # The three sibling-action `uses:` pins (and the matching header-comment reference).
-sed -i -E "s#(stacklok/mecatl/\.github/actions/[^@]+@)${OLD_TAG}#\1${NEW_TAG}#g" "${WF}"
+OLD_TAG="${OLD_TAG}" NEW_TAG="${NEW_TAG}" perl -pi -e \
+  's/(stacklok\/mecatl\/\.github\/actions\/[^@]+@)\Q$ENV{OLD_TAG}\E/$1$ENV{NEW_TAG}/g' \
+  "${WF}"
 # The gate's EXPECTED_TAG default, in lockstep.
-sed -i -E "s#(EXPECTED_TAG=\"\\\$\{EXPECTED_TAG:-)${OLD_TAG}(\}\")#\1${NEW_TAG}\2#" "${GATE}"
+OLD_TAG="${OLD_TAG}" NEW_TAG="${NEW_TAG}" perl -pi -e \
+  's/(EXPECTED_TAG="\$\{EXPECTED_TAG:-)\Q$ENV{OLD_TAG}\E(\}")/$1$ENV{NEW_TAG}$2/' \
+  "${GATE}"
 
 # Prove the gate passes both with an explicit override and on the committed default.
 EXPECTED_TAG="${NEW_TAG}" bash "${GATE}"

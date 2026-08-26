@@ -32,7 +32,12 @@ fi
 # Extract every first-party sibling-action ref and its pinned tag. The grep matches a
 # `uses: stacklok/mecatl/.github/actions/<name>@<ref>` line (with optional leading dash/space)
 # and the sed captures the <ref>. Third-party `actions/*@<sha>` lines do NOT match this prefix.
-mapfile -t refs < <(
+# A plain while-read loop, not `mapfile` (bash 4+ only) — macOS ships bash 3.2 as /bin/bash, and
+# this script is also run by maintainers locally (task lint:reusable-pins / cut-release).
+refs=()
+while IFS= read -r ref; do
+  refs+=("${ref}")
+done < <(
   grep -E 'uses:[[:space:]]+stacklok/mecatl/\.github/actions/[^@]+@' "${WF}" |
     sed -E 's#.*@([^[:space:]#]+).*#\1#'
 )
