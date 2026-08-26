@@ -76,6 +76,58 @@ func serverAssignedAuthorityService(t *testing.T, store *memstore.Store, workspa
 	return svc
 }
 
+// TestWorkspaceAuthorityConfigRejectsUnrepresentableCombinations pins the reason
+// the file-less deployment is a third authority value rather than a separate
+// bool: every meaningful combination of authority and configured root is
+// expressible, and the meaningless ones fail ONCE at construction instead of on
+// every request. A bool would let "server-assigned, root not configured" build.
+func TestWorkspaceAuthorityConfigRejectsUnrepresentableCombinations(t *testing.T) {
+	base := func() server.Config {
+		return server.Config{
+			Engine: agent.NewEngine(agent.Deps{
+				LLM:     mockllm.New(mockllm.TextTurn("ok")),
+				Catalog: tool.NewCatalog(),
+				Policy:  permpolicy.NewPolicy(nil, nil),
+				Model:   "test-model",
+			}),
+			Store:      memstore.New(),
+			Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		authority server.WorkspaceAuthority
+		root      string
+		wantErr   bool
+	}{
+		{name: "client-selected ignores an incidental root", authority: server.WorkspaceAuthorityClientSelected, root: deploymentWorkspace},
+		{name: "client-selected without a root", authority: server.WorkspaceAuthorityClientSelected},
+		{name: "server-assigned with a clean absolute root", authority: server.WorkspaceAuthorityServerAssigned, root: deploymentWorkspace},
+		{name: "server-assigned without a root", authority: server.WorkspaceAuthorityServerAssigned, wantErr: true},
+		{name: "server-assigned with a relative root", authority: server.WorkspaceAuthorityServerAssigned, root: "relative/root", wantErr: true},
+		{name: "server-assigned with an unclean root", authority: server.WorkspaceAuthorityServerAssigned, root: "/deployment/../deployment/workspace", wantErr: true},
+		{name: "file-less without a root", authority: server.WorkspaceAuthorityFileless},
+		{name: "file-less with a root", authority: server.WorkspaceAuthorityFileless, root: deploymentWorkspace, wantErr: true},
+		{name: "unknown authority", authority: server.WorkspaceAuthority(42), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base()
+			cfg.WorkspaceAuthority = tc.authority
+			cfg.AuthoritativeWorkspace = tc.root
+			_, err := server.NewService(cfg)
+			if tc.wantErr {
+				if !errors.Is(err, server.ErrConfig) {
+					t.Fatalf("NewService err = %v, want ErrConfig", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewService: %v", err)
+			}
+		})
+	}
+}
+
 func TestListenerScopedWorkspaceAuthority_Scenario1_EmptyWorkspaceUsesConfiguredRoot(t *testing.T) {
 	svc := serverAssignedAuthorityService(t, nil, nil)
 
