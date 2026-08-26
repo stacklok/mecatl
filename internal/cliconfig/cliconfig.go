@@ -24,8 +24,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -83,6 +85,9 @@ type ProviderFlags struct {
 	anthropicBaseURL  *string
 	openCodeBaseURL   *string
 	authFile          *string
+	authSnapshot      *authfile.File
+	authSnapshotReady bool
+	authSnapshotWarn  string
 }
 
 // RegisterProviderFlags registers --openai-base-url / --openrouter-base-url /
@@ -136,7 +141,10 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	if path == "" {
 		path = authfile.DefaultPath(env)
 	}
-	af, warning := authfile.Load(path, explicitPath != "", env, knownAuthProviders)
+	af, warning := authfile.Load(path, explicitPath != "", env, nil)
+	if pf != nil {
+		pf.authSnapshot, pf.authSnapshotReady, pf.authSnapshotWarn = af, true, warning
+	}
 	keys.AuthFileWarning = warning
 	keys.OpenAI = cmp.Or(keys.OpenAI, af.APIKey("openai"))
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
@@ -153,6 +161,66 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 		}
 	}
 	return keys
+}
+
+// HasOperatorProviderDefinitions reports whether the operator settings declare at
+// least one custom provider. It is an embedded-server preflight only; app.Build remains
+// the sole owner of the resolved definitions used for construction.
+func HasOperatorProviderDefinitions(conventional, importClaude bool, files []string) (bool, error) {
+	resolver := permconfig.NewWithEnv(permconfig.Options{
+		Conventional: conventional, ImportClaude: importClaude, ExplicitFiles: files,
+		Diagnostics: port.NopDiagnostics{},
+	}, xdgconfig.OSEnv)
+	definitions, _, err := resolver.OperatorProviders()
+	return len(definitions) > 0, err
+}
+
+// ResolveProviderCredentials resolves the one immutable credential snapshot for
+// a resolved operator provider definition set. Custom credentials come only from
+// auth.yaml; they deliberately have no environment fallback.
+func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.ProviderDefinitions, env xdgconfig.ResolveEnv) (ResolvedCredentials, error) {
+	var keys ResolvedCredentials
+	if pf != nil {
+		keys = readProviderKeys(env.Getenv)
+	}
+	path, explicit := authfile.DefaultPath(env), false
+	if pf != nil && value(pf.authFile) != "" {
+		path, explicit = value(pf.authFile), true
+	}
+	known := append([]string{}, knownAuthProviders...)
+	for id := range definitions {
+		known = append(known, id)
+	}
+	sort.Strings(known)
+	var file *authfile.File
+	if pf != nil && pf.authSnapshotReady {
+		file = pf.authSnapshot
+		if file != nil && file.ValidateKnown(known) != "" {
+			return ResolvedCredentials{}, fmt.Errorf("auth file validation failed")
+		}
+		if file == nil && pf.authSnapshotWarn != "" {
+			return ResolvedCredentials{}, fmt.Errorf("auth file validation failed")
+		}
+	} else {
+		var err error
+		file, err = authfile.LoadStrict(path, explicit, env, known)
+		if err != nil {
+			return ResolvedCredentials{}, err
+		}
+	}
+	keys.OpenAI = cmp.Or(keys.OpenAI, file.APIKey("openai"))
+	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
+	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
+	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
+	keys.customAPIKeys = make(map[string]string, len(definitions))
+	keys.customMethods = make(map[string]string, len(definitions))
+	for id, definition := range definitions {
+		keys.customMethods[id] = definition.Auth.Method
+		if definition.Auth.Method == "api_key" {
+			keys.customAPIKeys[id] = file.APIKey(id)
+		}
+	}
+	return keys, nil
 }
 
 // AuthFilePath reports the path Resolve would inspect and whether it came from
@@ -179,22 +247,29 @@ func (pf *ProviderFlags) ApplyResolvedAPIKeys(cfg *app.Config, keys ResolvedCred
 	pf.applyResolvedAPIKeys(cfg, keys)
 }
 
-func (pf *ProviderFlags) applyResolvedAPIKeys(cfg *app.Config, keys ResolvedCredentials) {
+func (*ProviderFlags) applyResolvedAPIKeys(cfg *app.Config, keys ResolvedCredentials) {
 	cfg.OpenAIKey = keys.OpenAI
 	cfg.OpenRouterKey = keys.OpenRouter
 	cfg.AnthropicKey = keys.Anthropic
 	cfg.OpenCodeKey = keys.OpenCode
-	// A nil receiver (a config built WITHOUT RegisterProviderFlags — e.g. a test that
-	// constructs the cmd config struct directly) applies the env/auth-file keys but
-	// leaves the base URLs at their zero value, exactly as the pre-extraction inline
-	// code did when the base-url flags were never set. This keeps embeddedConfig/
-	// appConfig safe to call on a hand-built config.
-	if pf != nil {
-		cfg.OpenAIBaseURL = value(pf.openAIBaseURL)
-		cfg.OpenRouterBaseURL = value(pf.openRouterBaseURL)
-		cfg.AnthropicBaseURL = value(pf.anthropicBaseURL)
-		cfg.OpenCodeBaseURL = value(pf.openCodeBaseURL)
+}
+
+// EndpointOverrides returns the non-secret CLI endpoint overrides. Command roots
+// map this directly onto app.Config; Build merges it over settings-derived overrides.
+func (pf *ProviderFlags) EndpointOverrides() permconfig.ProviderOverrides {
+	if pf == nil {
+		return nil
 	}
+	overrides := permconfig.ProviderOverrides{}
+	for id, baseURL := range map[string]string{
+		"openai": value(pf.openAIBaseURL), "openrouter": value(pf.openRouterBaseURL),
+		"anthropic": value(pf.anthropicBaseURL), "opencode": value(pf.openCodeBaseURL),
+	} {
+		if baseURL != "" {
+			overrides[id] = permconfig.ProviderOverride{BaseURL: baseURL}
+		}
+	}
+	return overrides
 }
 
 // ReadProviderKeys reads provider credentials from the environment alone
@@ -226,6 +301,10 @@ type ResolvedCredentials struct {
 	// immutable outside the provider adjunct and it is populated only after
 	// startup validation of a file-backed manual token.
 	OpenAICodex openaicodex.Credential
+	// customAPIKeys and customMethods are private so generic config formatting
+	// cannot accidentally project custom credentials.
+	customAPIKeys map[string]string
+	customMethods map[string]string
 	// AuthFileWarning is non-empty when the auth.yaml credentials file (the explicit
 	// --auth-file path, or the conventional default) could not be read or parsed
 	// cleanly. It is set by Resolve/Apply (ReadProviderKeys alone never touches the file).
@@ -242,6 +321,15 @@ type ResolvedKeys = ResolvedCredentials
 
 // HasOpenAICodex reports whether validation produced a usable manual token.
 func (k ResolvedCredentials) HasOpenAICodex() bool { return k.OpenAICodex.Configured() }
+
+// CustomAPIKey returns the file-only key for one custom provider.
+func (k ResolvedCredentials) CustomAPIKey(id string) string { return k.customAPIKeys[id] }
+
+// CustomAvailable reports whether the custom provider has the authentication its
+// validated definition requires.
+func (k ResolvedCredentials) CustomAvailable(id string) bool {
+	return k.customMethods[id] == "none" || (k.customMethods[id] == "api_key" && k.customAPIKeys[id] != "")
+}
 
 // Any reports whether at least one provider credential is present. It is the shared
 // "is any real provider configured?" predicate (mecatui uses it for its startup guard).

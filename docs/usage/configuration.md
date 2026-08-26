@@ -170,6 +170,35 @@ manual `openai-codex` OAuth snapshot live in the separate, strict, read-only
 has no refresh/write path, and requires a process restart after replacement. See
 the [exact credential schema and trust boundary](mecated.md#openai-codex-subscription-manual-token-experimental).
 
+### Operator-defined LLM providers
+
+Only the operator-tier settings file may define custom providers or override an
+eligible built-in endpoint. Project `.mecatl/settings.yaml` provider blocks are
+ignored. A custom provider has a lower-case stable ID, an HTTPS `base_url` without
+userinfo, query, or fragment, a required `default_model`, and one supported wire
+flavor. `provider_overrides` is limited to `openai`, `openrouter`, `anthropic`, and
+`opencode`; it cannot change the Codex or ToolHive endpoint policy.
+
+```yaml
+providers:
+  team-gateway:
+    base_url: https://gateway.example/v1
+    default_model: team-chat
+    api_flavor: openai-responses # openai-responses | openai-chat-completions | anthropic-messages
+    auth:
+      method: api_key # api_key | none
+provider_overrides:
+  openai:
+    base_url: https://openai-proxy.example/v1
+```
+
+Keep the matching key out of `settings.yaml`; it belongs in the operator-local
+`auth.yaml` as `providers.<id>.api_key`. A custom `api_key` provider is unavailable
+without that exact record. A `none` provider needs no record. Custom keys never use
+environment-variable fallback. `auth.yaml` accepts only built-in IDs plus the
+validated custom IDs from the resolved operator configuration, so unknown or malformed
+entries fail closed without echoing credentials.
+
 ### Workspace
 
 `--workspace` (server-wide default) and the per-session `workspace` field set

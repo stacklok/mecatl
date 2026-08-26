@@ -119,9 +119,9 @@ func New(opts ...Option) *Provider {
 	// the SDK's ssestream decoder ultimately reads. See provider/ssefilter
 	// for why an SSE keepalive would otherwise kill a streaming turn outright.
 	reqOpts = append(reqOpts, option.WithMiddleware(ssefilter.NewKeepaliveFilter()))
-	if c.apiKey != "" {
-		reqOpts = append(reqOpts, option.WithAPIKey(c.apiKey))
-	}
+	// Always install the resolved value, including an empty value. Otherwise the
+	// SDK autoloads OPENAI_API_KEY, which violates a custom auth.method=none.
+	reqOpts = append(reqOpts, option.WithAPIKey(c.apiKey))
 	if c.baseURL != "" {
 		reqOpts = append(reqOpts, option.WithBaseURL(c.baseURL))
 	}

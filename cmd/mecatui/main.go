@@ -534,7 +534,8 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 
 	cfg = applyTrustPrompt(cfg, diag)
 
-	srv, err := embed.Start(ctx, embeddedConfig(cfg, diag), perfConfig(cfg, perfLogger))
+	composition := embeddedConfig(cfg, diag)
+	srv, err := embed.Start(ctx, composition, perfConfig(cfg, perfLogger))
 	if err != nil {
 		_ = diagCloser.Close()
 		return "", client.DialConfig{}, noop, fmt.Errorf("start embedded server: %w", err)
@@ -593,21 +594,8 @@ func applyTrustPrompt(cfg config, diag port.Diagnostics) config {
 	return cfg
 }
 
-// embeddedConfig maps the TUI config onto the shared app.Config build contract for
-// the in-process server. It enables the standard default toolset (Bash unless
-// --no-bash, Fork), the agent-teams capability (inert until a client
-// drives a team), conventional agent-definition discovery (AgentsConventional:
-// true, also inert until a <name>.md exists under a conventional dir), and
-// cross-session memory (Remember/Recall) scoped per-project (see resolveMemoryDir;
-// disable with --no-memory or relocate with --memory-dir), slash-command expansion
-// from the conventional dirs (.mecatl/commands, .claude/commands; disable with
-// --no-commands or relocate with --commands-dir), conventional skill discovery
-// (the read-only Skill tool over .claude/skills etc.; disable with --no-skills or
-// scope with --skills-dir), and ToolHive MCP server discovery (ToolHiveEnabled:
-// true, fail-soft when no runtime is reachable, so inert on a laptop without
-// Podman/Docker). It leaves the heavier opt-ins (static --mcp-server, telemetry,
-// the writable SkillDraft quarantine) off — a focused single-user default. The
-// provider is OpenAI when OPENAI_API_KEY is set, else the offline mock (--mock).
+// embeddedConfig constructs the embedded server's declarative app.Config. app.Build
+// loads the injected provider credential; connect mode never calls this function.
 func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	cmdDir, enableCmds := resolveCommands(cfg)
 	skillDirs, skillsConv := resolveSkills(cfg)
@@ -790,6 +778,8 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	// over the same resolver the other binaries use. The legacy --mcp-server
 	// flag stays off (heavier opt-in), but operator settings are honored here.
 	out.MCPProfileLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
+	out.ProviderCredentialLoader = cliconfig.NewProviderCredentialResolver(cfg.providerFlags, keys)
+	out.ProviderOverrides = cfg.providerFlags.EndpointOverrides()
 	return out
 }
 

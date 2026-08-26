@@ -95,6 +95,32 @@ OPERATOR-TIER plan-mode auto-approve flag (issue #206): when true, a plan-mode s
 | --- | --- | --- | --- |
 | `plan-mode-auto-approve` | `bool` | `false` | PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue #206 Wave 6a). Like Posture/ReasoningEffort it is honoured ONLY from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve: key is IGNORED with a WARN (operator-tier only — a project repo enabling autonomous plan approval is a security DOWNGRADE). false = absent (the resolver returns false and composition keeps the default OFF). The composition layer interprets the bool; permconfig only reads the scalar. |
 
+## `providers`
+
+Tier: **operator**
+
+Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in auth.yaml.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `providers.team-gateway` | `providerdefinition` | `(absent)` |  |
+| `providers.team-gateway.base_url` | `string` | `(required)` |  |
+| `providers.team-gateway.default_model` | `string` | `(required)` |  |
+| `providers.team-gateway.api_flavor` | `string` | `(required)` |  |
+| `providers.team-gateway.auth` | `providerauth` | `(absent)` |  |
+| `providers.team-gateway.auth.method` | `string` | `none` |  |
+
+## `provider_overrides`
+
+Tier: **operator**
+
+Strict endpoint overrides for built-in openai, openrouter, anthropic, and opencode only. Codex and ToolHive policies cannot be overridden here.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `provider_overrides.openai` | `provideroverride` | `(absent)` |  |
+| `provider_overrides.openai.base_url` | `string` | `(required)` |  |
+
 ## `learning`
 
 Tier: **operator + project**

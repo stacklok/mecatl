@@ -352,9 +352,12 @@ scheduler tailing pod logs parses the last line; the unset default keeps the ind
 JSON. `--run-id`/`--task-ref` are deliberately not accepted — a scheduler correlates via
 its own launch identity plus `Summary.session_id`.
 See `docs/adr/0028-mecatequi.md`. The four real-provider mains (`mecated`, `mecatui`,
-`mecatequi`, `mecak8s`) share provider credential + base-URL wiring through `internal/cliconfig`, so
-all four read the same `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY`
-environment keys and register the same base-URL flags. The daemon/headless mains
+`mecatequi`, `mecak8s`) share credential loading and non-secret endpoint-override wiring through
+`internal/cliconfig`: each root injects a `ProviderCredentialResolver` and maps its base-URL
+flags into `app.Config.ProviderOverrides`. `app.Build` merges those command overrides over
+operator `provider_overrides` settings before registry construction. All four read the same
+`OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` environment keys and register the
+same base-URL flags. The daemon/headless mains
 (`mecated`, `mecatequi`, `mecak8s`) also share the repeatable `--mcp-server name=URL`
 flag and its `MCP_<NAME>_TOKEN` bearer convention through the same package
 (`cliconfig.MCPServerList`, ADR 0082) — a scheduler launching one-shot runs injects a

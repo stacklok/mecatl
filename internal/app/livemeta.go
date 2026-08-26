@@ -86,6 +86,21 @@ func newLiveMetaStore() *liveMetaStore {
 	return s
 }
 
+// seedCustomProviderFloors adds configured custom-provider default models to the
+// composition-owned live metadata store before any network refresh.
+func (s *liveMetaStore) seedCustomProviderFloors(reg *providerRegistry) {
+	if s == nil || reg == nil {
+		return
+	}
+	floors := make(map[string][]modelEntry)
+	for _, providerID := range reg.Available() {
+		if floor := customProviderInventoryFloor(reg, providerID); len(floor) > 0 {
+			floors[providerID] = floor
+		}
+	}
+	s.mergeSwap(floors)
+}
+
 // seedFromCatalog populates the store from the embedded catalog for the supplied
 // available providers — the t=0 floor, computed at Build with NO network. It mirrors
 // modelSnapshot's per-provider embedded projection so the seed and the picker seed

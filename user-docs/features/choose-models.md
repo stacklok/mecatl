@@ -47,6 +47,14 @@ and keybinding details.
 
 ## CLI journey
 
+### Endpoint overrides
+
+The built-in provider endpoint flags (`--openai-base-url`, `--openrouter-base-url`,
+`--anthropic-base-url`, and `--opencode-base-url`) are non-secret command configuration.
+They override the matching operator `provider_overrides` setting; settings override the
+built-in endpoint. Custom provider URLs remain defined only by their provider definition.
+OpenAI and Anthropic keep their SDK endpoint when neither source supplies an override.
+
 ### Configure a server default
 
 Use deployment flags when every session on a server should start from the same
@@ -80,6 +88,16 @@ model.
 server used through `mecatui connect`. `mecak8s` exposes the corresponding server
 configuration. See the [operator provider and model reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#provider-selection)
 for credential sources and deployment options.
+
+### Operator-defined gateways
+
+An operator can declare a named HTTPS gateway in the user-global `settings.yaml` under
+`providers:` and make it the deployment default with `models.default_provider`. API-key
+gateways use the matching provider ID in the operator-local `auth.yaml`; credentials are
+never read from a project file or supplied by `mecatui connect`. The server snapshots these
+settings and credentials once while it starts, so changing either file requires a restart.
+Built-in `--*-base-url` flags still take precedence over eligible built-in endpoint overrides.
+See the [provider configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md#providers) for the accepted flavors and fields.
 
 ### Configure aliases, slots, and task routing
 

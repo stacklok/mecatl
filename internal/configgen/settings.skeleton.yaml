@@ -115,6 +115,25 @@
 #| approval capability).
 # plan-mode-auto-approve: true
 
+#| === providers === (tier: operator)
+#| Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider
+#| URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in
+#| auth.yaml.
+# providers:
+#   team-gateway:
+#     base_url: https://gateway.example/v1
+#     default_model: team-chat
+#     api_flavor: openai-responses
+#     auth:
+#       method: api_key
+
+#| === provider_overrides === (tier: operator)
+#| Strict endpoint overrides for built-in openai, openrouter, anthropic, and opencode
+#| only. Codex and ToolHive policies cannot be overridden here.
+# provider_overrides:
+#   openai:
+#     base_url: https://proxy.example/v1
+
 #| === learning === (tier: operator + project)
 #| Optional completed-trajectory observation policy. Off means no automatic
 #| completed-trajectory reflection or review; project settings may only tighten the

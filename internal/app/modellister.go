@@ -443,7 +443,34 @@ func (l openCodeLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	return out, nil
 }
 
-// embeddedModels projects the embedded providercatalog subset for a provider into
+// providerInventoryFloor returns the embedded catalog for built-ins and the one
+// configured default model for custom providers. Custom providers deliberately
+// have no static catalog: their default is enough to keep zero-selectors,
+// validation, picker seeds, and listing failures deterministic.
+func providerInventoryFloor(reg *providerRegistry, providerID string) []modelEntry {
+	if embedded := embeddedModels(providerID); len(embedded) > 0 {
+		return embedded
+	}
+	if reg != nil {
+		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel != "" {
+			return []modelEntry{{ID: entry.defaultModel}}
+		}
+	}
+	return nil
+}
+
+// customProviderInventoryFloor returns the configured custom-provider default model
+// as its synchronous inventory floor.
+func customProviderInventoryFloor(reg *providerRegistry, providerID string) []modelEntry {
+	if reg != nil {
+		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel != "" {
+			return []modelEntry{{ID: entry.defaultModel}}
+		}
+	}
+	return nil
+}
+
+// embeddedModels projects the embedded catalog for one provider into the internal
 // []modelEntry — the FALLBACK FLOOR used by BOTH the synchronous seed
 // (modelSnapshot) and the live refresh when a provider has no lister or its fetch
 // fails/empties. Returns nil for an uncatalogued provider (an honest miss). Since
@@ -581,9 +608,9 @@ func liveModelSnapshot(ctx context.Context, d port.Diagnostics, reg *providerReg
 func resolveProviderModels(ctx context.Context, d port.Diagnostics, reg *providerRegistry, pid string) []modelEntry {
 	entry, ok := reg.Lookup(pid)
 	if !ok || entry.lister == nil {
-		return embeddedModels(pid) // no lister: embedded floor, exactly as today
+		return providerInventoryFloor(reg, pid)
 	}
-	embedded := embeddedModels(pid)
+	embedded := providerInventoryFloor(reg, pid)
 	live, err := entry.lister.ListModels(ctx)
 	if err != nil {
 		state := classifyLiveListError(err)
@@ -610,7 +637,21 @@ func resolveProviderModels(ctx context.Context, d port.Diagnostics, reg *provide
 		d.Log(ctx, port.LevelWarn, "live model fetch returned no models, using embedded catalog", "provider", pid)
 		return embedded
 	}
-	return live
+	return mergeCustomProviderFloor(reg, pid, live)
+}
+
+func mergeCustomProviderFloor(reg *providerRegistry, providerID string, live []modelEntry) []modelEntry {
+	floor := customProviderInventoryFloor(reg, providerID)
+	if len(floor) == 0 {
+		return live
+	}
+	out := append([]modelEntry(nil), floor...)
+	for _, model := range live {
+		if model.ID != floor[0].ID {
+			out = append(out, model)
+		}
+	}
+	return out
 }
 
 // providerStatus is one provider's last live-listing outcome (issue #262,

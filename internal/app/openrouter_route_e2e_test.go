@@ -81,10 +81,10 @@ func TestOpenRouterRouteE2E(t *testing.T) {
 	built, err := Build(ctx, Config{
 		Workspace: workspace,
 		NoSoul:    true,
-		// Point the openrouter entry at the test server (real adapter, real wire).
-		OpenRouterBaseURL: srv.URL + "/v1",
-		// openai too, for the parity leg (same server, no openrouter knobs).
-		OpenAIBaseURL: srv.URL + "/v1",
+		ProviderOverrides: permconfig.ProviderOverrides{
+			providerOpenRouter: {BaseURL: srv.URL + "/v1"},
+			providerOpenAI:     {BaseURL: srv.URL + "/v1"},
+		},
 		envDetector: fakeEnv(map[string]string{
 			"OPENROUTER_API_KEY": "sk-test",
 			"OPENAI_API_KEY":     "sk-test",
@@ -192,9 +192,11 @@ func TestOpenRouterRouteE2ECacheHit(t *testing.T) {
 	defer srv.Close()
 
 	built, err := Build(ctx, Config{
-		Workspace:           workspace,
-		NoSoul:              true,
-		OpenRouterBaseURL:   srv.URL + "/v1",
+		Workspace: workspace,
+		NoSoul:    true,
+		ProviderOverrides: permconfig.ProviderOverrides{
+			providerOpenRouter: {BaseURL: srv.URL + "/v1"},
+		},
 		envDetector:         fakeEnv(map[string]string{"OPENROUTER_API_KEY": "sk-test"}),
 		liveModelHTTPClient: offlineHTTPClient(),
 	})

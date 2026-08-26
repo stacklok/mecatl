@@ -58,7 +58,9 @@ type providerEntry struct {
 // credentials. Operator-machine-local only — there is no project-tier
 // equivalent (a project has no business supplying credentials).
 type File struct {
-	providers map[string]providerEntry
+	providers   map[string]providerEntry
+	path        string
+	baseWarning string
 }
 
 type rawFile struct {
@@ -118,6 +120,17 @@ func (f *File) OAuth(name string) OAuthEntry {
 		return OAuthEntry{}
 	}
 	return entry.oauth
+}
+
+// LoadStrict is the fail-closed credential-file entry point for callers whose
+// provider set is configuration-derived. Unlike Load's legacy best-effort merge,
+// any file warning rejects the entire snapshot without returning file content.
+func LoadStrict(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders []string) (*File, error) {
+	file, warning := Load(path, explicit, env, knownProviders)
+	if warning != "" {
+		return nil, errors.New("auth file validation failed")
+	}
+	return file, nil
 }
 
 // DefaultPath returns the conventional auth.yaml location:
@@ -205,14 +218,8 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	// would otherwise be echoed verbatim into the warning — the same CWE-532
 	// class as the decode-error branch above. "Value-free" is a property of
 	// the whole warning surface, not just that one branch.
-	f := File{providers: make(map[string]providerEntry, len(raw.Providers))}
-	unknown := 0
-	invalidSemantics := 0
+	f := File{providers: make(map[string]providerEntry, len(raw.Providers)), path: path, baseWarning: permWarning}
 	for name, rawEntry := range raw.Providers {
-		if !slices.Contains(knownProviders, name) {
-			unknown++
-			continue
-		}
 		entry := providerEntry{APIKey: string(rawEntry.APIKey)}
 		if rawEntry.OAuth != nil {
 			entry.oauth = OAuthEntry{
@@ -221,6 +228,25 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 				ExpiresAt:   string(rawEntry.OAuth.ExpiresAt),
 			}
 			entry.hasOAuth = true
+		}
+		f.providers[name] = entry
+	}
+	return &f, f.ValidateKnown(knownProviders)
+}
+
+// ValidateKnown applies the command root's final provider allowlist to an
+// already parsed immutable snapshot. It is intentionally separate from Load so
+// roots can first discover custom provider IDs, then validate auth.yaml without
+// a second filesystem read.
+func (f *File) ValidateKnown(knownProviders []string) string {
+	if f == nil {
+		return ""
+	}
+	unknown, invalidSemantics := 0, 0
+	for name, entry := range f.providers {
+		if len(knownProviders) > 0 && !slices.Contains(knownProviders, name) {
+			unknown++
+			continue
 		}
 		entry, invalid := validateProviderEntry(name, entry)
 		if invalid {
@@ -232,17 +258,16 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	if unknown > 0 {
 		contentWarnings = append(contentWarnings, fmt.Sprintf(
 			"auth file %s: %d unknown provider(s) ignored (expected one of %s) — check provider names in the file",
-			path, unknown, strings.Join(knownProviders, ", "),
+			f.path, unknown, strings.Join(knownProviders, ", "),
 		))
 	}
 	if invalidSemantics > 0 {
 		contentWarnings = append(contentWarnings, fmt.Sprintf(
 			"auth file %s: %d provider credential entry/entries contained ignored fields (OAuth is only valid for openai-codex with a non-empty access_token; API keys do not enable openai-codex)",
-			path, invalidSemantics,
+			f.path, invalidSemantics,
 		))
 	}
-	warning := joinWarnings(append([]string{permWarning}, contentWarnings...)...)
-	return &f, warning
+	return joinWarnings(append([]string{f.baseWarning}, contentWarnings...)...)
 }
 
 func schemaWarning(path string) string {

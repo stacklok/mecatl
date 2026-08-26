@@ -14,12 +14,15 @@ import (
 	"sync"
 	"time"
 
+	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/openrouter"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/provider/anthropic"
@@ -152,6 +155,9 @@ type providerEntry struct {
 	provider  port.LLMProvider // resilience-wrapped, ready to hand to an engine
 	available bool             // ≥1 of the provider's env[] keys resolved
 	baseURL   string           // for logging/diagnostics ONLY; never wired
+	// defaultModel is the composition-owned floor for a custom provider. Built-in
+	// entries leave it empty and resolve through builtinDefaultModel.
+	defaultModel string
 	// lister is the OPTIONAL live-catalog capability for this provider (nil =>
 	// embedded-catalog only). Setting it (at registry build, per provider id) is the
 	// ENTIRE opt-in for live model listing — no merge/snapshot plumbing change. It is
@@ -361,7 +367,12 @@ func (r *providerRegistry) DefaultModelAutoSelected() bool {
 // model string is for the PARENT's provider and may be invalid on the child's, so
 // the child rebases off this provider-appropriate default rather than inheriting
 // the parent model. Composition-only, like the rest of the registry.
-func (*providerRegistry) DefaultModelFor(id string) string { return builtinDefaultModel[id] }
+func (r *providerRegistry) DefaultModelFor(id string) string {
+	if entry, ok := r.Lookup(id); ok && entry.defaultModel != "" {
+		return entry.defaultModel
+	}
+	return builtinDefaultModel[id]
+}
 
 // healDefaultModel fills a still-empty defaultModel for an INTENT-DRIVEN
 // default provider (issue #262 §1 accepted deviation: toolhive registered
@@ -528,7 +539,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// back-compat selector the cmd layer still sets when a key is present, but it does
 	// NOT gate the registry (a key alone suffices — env auto-detection is the S1 model).
 	if key := providerKey(cfg.OpenAIKey, providerOpenAI, detect); key != "" {
-		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, key, cfg.OpenAIBaseURL)
+		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, key, builtinBaseURL(cfg, providerOpenAI))
 	}
 
 	if entry, err := newOpenAICodexEntry(cfg); err != nil {
@@ -540,7 +551,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// openrouter: same stateless openai adapter, OpenRouter base URL, keyed by
 	// OPENROUTER_API_KEY (falling back to OPENAI_API_KEY by convention).
 	if key := providerKey(cfg.OpenRouterKey, providerOpenRouter, detect); key != "" {
-		baseURL := cfg.OpenRouterBaseURL
+		baseURL := builtinBaseURL(cfg, providerOpenRouter)
 		if baseURL == "" {
 			baseURL = openRouterDefaultBaseURL
 		}
@@ -572,7 +583,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// openaicompat lister (bare ids, no display name). The lister IS keyed here —
 	// unlike openrouter's keyless public catalog, OpenCode Go requires the bearer.
 	if key := providerKey(cfg.OpenCodeKey, providerOpenCode, detect); key != "" {
-		baseURL := cfg.OpenCodeBaseURL
+		baseURL := builtinBaseURL(cfg, providerOpenCode)
 		if baseURL == "" {
 			baseURL = openCodeDefaultBaseURL
 		}
@@ -586,8 +597,10 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// or the catalog-driven env vars via detect. Per-session routing, sub-agent
 	// provider switch, and the capability intersection treat it as data (no change).
 	if key := providerKey(cfg.AnthropicKey, providerAnthropic, detect); key != "" {
-		entries[providerAnthropic] = newAnthropicEntry(cfg, key, meta)
+		entries[providerAnthropic] = newAnthropicEntryFor(cfg, providerAnthropic, key, builtinBaseURL(cfg, providerAnthropic), meta, true)
 	}
+
+	addCustomProviderEntries(entries, cfg, meta)
 
 	// toolhive (issue #262, D1): registered by CONFIG-DETECTED INTENT alone —
 	// resolveToolhiveIntent NEVER runs a network probe, so registration never
@@ -626,6 +639,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// Seed the live-metadata store from the embedded catalog for every available
 	// provider — the t=0 floor every resolver reads before the background live swap.
 	meta.seedFromCatalog(reg.Available())
+	meta.seedCustomProviderFloors(reg)
 	if err := bootstrapOpenAICodexDefault(ctx, reg, cfg); err != nil {
 		return nil, err
 	}
@@ -673,6 +687,88 @@ func providerRegistryDetector(detect envDetector) envDetector {
 		return osGetenv
 	}
 	return detect
+}
+
+func builtinBaseURL(cfg Config, id string) string {
+	return cfg.ProviderOverrides[id].BaseURL
+}
+
+func mergeProviderOverrides(settings, command permconfig.ProviderOverrides) permconfig.ProviderOverrides {
+	if len(settings) == 0 && len(command) == 0 {
+		return nil
+	}
+	merged := make(permconfig.ProviderOverrides, len(settings)+len(command))
+	for id, override := range settings {
+		merged[id] = override
+	}
+	for id, override := range command {
+		if override.BaseURL != "" {
+			merged[id] = override
+		}
+	}
+	return merged
+}
+
+func sortedProviderDefinitions(definitions permconfig.ProviderDefinitions) []permconfig.ProviderDefinition {
+	out := make([]permconfig.ProviderDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		out = append(out, definition)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func addCustomProviderEntries(entries map[string]providerEntry, cfg Config, meta *liveMetaStore) {
+	for _, definition := range sortedProviderDefinitions(cfg.ProviderDefinitions) {
+		key := cfg.CustomProviderAPIKeys[definition.ID]
+		if definition.Auth.Method == "api_key" && key == "" {
+			continue
+		}
+		entries[definition.ID] = newCustomProviderEntry(cfg, definition, key, meta)
+	}
+}
+
+func newCustomProviderEntry(cfg Config, definition permconfig.ProviderDefinition, key string, meta *liveMetaStore) providerEntry {
+	inferenceClient := customProviderInferenceHTTPClient()
+	var entry providerEntry
+	switch definition.APIFlavor {
+	case "openai-responses":
+		entry = newOpenAICompatEntry(cfg, definition.ID, key, definition.BaseURL, openai.WithHTTPClient(inferenceClient))
+	case "openai-chat-completions":
+		entry = newOpenCodeEntry(cfg, definition.ID, key, definition.BaseURL, openaichat.WithHTTPClient(inferenceClient))
+	case "anthropic-messages":
+		entry = newAnthropicEntryFor(cfg, definition.ID, key, definition.BaseURL, meta, false,
+			anthropic.WithRequestOption(anthropicoption.WithHTTPClient(inferenceClient)))
+	default:
+		// Definitions are validated before composition. Keep this fail-closed for
+		// hand-built Config values used by embedding callers and tests.
+		return providerEntry{}
+	}
+	entry.defaultModel = definition.DefaultModel
+	listingClient := customProviderListingHTTPClient(cfg.liveModelHTTPClient)
+	switch definition.APIFlavor {
+	case "openai-responses", "openai-chat-completions":
+		entry.lister = gatewayLister{inner: openaicompat.NewLister(definition.BaseURL, key, listingClient)}
+	case "anthropic-messages":
+		entry.lister = anthropicLister{inner: anthropic.NewLister(key, definition.BaseURL, listingClient)}
+	}
+	return entry
+}
+
+func customProviderInferenceHTTPClient() *http.Client {
+	return &http.Client{CheckRedirect: openaicompat.RefuseRedirects}
+}
+
+func customProviderListingHTTPClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{}
+	}
+	clone := *client
+	if clone.Timeout <= 0 {
+		clone.Timeout = 5 * time.Second
+	}
+	clone.CheckRedirect = openaicompat.RefuseRedirects
+	return &clone
 }
 
 // newOpenAICodexEntry returns an unavailable zero entry when no manual token is
@@ -801,7 +897,10 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 	// (e.g. the gateway entry's redirect-refusing WithHTTPClient), never just the
 	// initial one.
 	construct := func(effort string, caps port.ProviderCapabilities) port.LLMProvider {
-		opts := []openai.Option{openai.WithAPIKey(key)}
+		opts := make([]openai.Option, 0, 4+len(extra))
+		if key != "" {
+			opts = append(opts, openai.WithAPIKey(key))
+		}
 		if baseURL != "" {
 			opts = append(opts, openai.WithBaseURL(baseURL))
 		}
@@ -862,13 +961,16 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 // openaichat has no per-model modality gating (all its models are text+image via
 // static caps), so a caps-driven re-mint would rebuild an identical adapter; only
 // the reasoning-effort axis re-mints meaningfully.
-func newOpenCodeEntry(cfg Config, id, key, baseURL string) providerEntry {
+func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.Option) providerEntry {
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM provider available", "provider", id, "model", cfg.Model, "base_url", baseURL)
 	if cfg.providerConstructor != nil {
 		return providerEntry{id: id, provider: cfg.providerConstructor(cfg, id, key, baseURL), available: true, baseURL: baseURL}
 	}
 	construct := func(effort string, _ port.ProviderCapabilities) port.LLMProvider {
-		opts := []openaichat.Option{openaichat.WithAPIKey(key)}
+		opts := make([]openaichat.Option, 0, 3)
+		if key != "" {
+			opts = append(opts, openaichat.WithAPIKey(key))
+		}
 		if baseURL != "" {
 			opts = append(opts, openaichat.WithBaseURL(baseURL))
 		}
@@ -881,6 +983,7 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string) providerEntry {
 		// OpenAI-over-Chat-Completions entry gets it for free on every
 		// per-session/heal re-mint.
 		opts = append(opts, openaichat.WithCacheDialect(openaichatCacheDialectFor(id, baseURL, cfg)))
+		opts = append(opts, extra...)
 		var llm port.LLMProvider = openaichat.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -904,24 +1007,25 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string) providerEntry {
 	return providerEntry{id: id, provider: llm, available: true, baseURL: baseURL, remint: construct}
 }
 
-// entry. It honors the SAME composition-only providerConstructor test seam first
+// newAnthropicEntryFor constructs an Anthropic Messages entry. It honors the SAME composition-only providerConstructor test seam first
 // (so the offline multi-provider e2e can back "anthropic" with a mock), else
 // constructs the anthropic adapter with WithMaxTokens set to the default model's
 // catalogued output limit (Anthropic REQUIRES max_tokens and rejects a value
 // above the model's ceiling; a conservative fallback applies when uncatalogued).
 // It logs the provider id, default model, and base URL ONLY — never the key. No
 // lister in P1 (live Anthropic listing is deferred).
-func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntry {
-	baseURL := cfg.AnthropicBaseURL
-	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM provider available", "provider", providerAnthropic, "model", cfg.Model, "base_url", baseURL)
+func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaStore, liveListing bool, extra ...anthropic.Option) providerEntry {
+	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM provider available", "provider", id, "model", cfg.Model, "base_url", baseURL)
 	if cfg.providerConstructor != nil {
 		entry := providerEntry{
-			id:        providerAnthropic,
-			provider:  cfg.providerConstructor(cfg, providerAnthropic, key, baseURL),
+			id:        id,
+			provider:  cfg.providerConstructor(cfg, id, key, baseURL),
 			available: true,
 			baseURL:   baseURL,
 		}
-		entry.lister = anthropicLister{inner: anthropic.NewLister(key, baseURL, cfg.liveModelHTTPClient)}
+		if liveListing {
+			entry.lister = anthropicLister{inner: anthropic.NewLister(key, baseURL, cfg.liveModelHTTPClient)}
+		}
 		return entry
 	}
 	// normaliseAnthropicCacheTTL is called ONCE here (a build-time, not a
@@ -937,7 +1041,6 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 	// sessionCaps), so the two cannot drift on resolvers or resilience wrapping.
 	construct := func(effort string, caps port.ProviderCapabilities) port.LLMProvider {
 		opts := []anthropic.Option{
-			anthropic.WithAPIKey(key),
 			// PER-MODEL max_tokens: each request's max_tokens is resolved LIVE-FIRST from
 			// the live-metadata store (the live output ceiling when present), else the
 			// catalogued ceiling, else the adapter's conservative default. So a per-session/
@@ -946,7 +1049,7 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 			// catalog doesn't know gets its true ceiling from the live API. The adapter stays
 			// catalog-/store-free — composition owns the closure over meta.
 			anthropic.WithMaxTokensResolver(func(model string) int {
-				return meta.outputLimitFor(providerAnthropic, model)
+				return meta.outputLimitFor(id, model)
 			}),
 			// THINKING-FROM-LIVE: the adapter's extended-thinking mode (adaptive / manual /
 			// none) reads the LIVE descriptor (Capabilities.Thinking.Types) when the model is
@@ -954,7 +1057,7 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 			// floor (known=false). This retires the stale-prefix guesswork for live runs
 			// while keeping the deterministic matrix for offline/uncatalogued models.
 			anthropic.WithThinkingResolver(func(model string) (adaptive, enabled, known bool) {
-				return meta.thinkingFor(providerAnthropic, model)
+				return meta.thinkingFor(id, model)
 			}),
 			anthropic.WithProviderCapabilities(caps),
 			// Prompt caching (ADR 0100): --no-prompt-cache disables the three NEW
@@ -963,6 +1066,9 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 			// uniform TTL across every marker the adapter emits. INSIDE the closure
 			// so every per-session/heal re-mint carries both.
 			anthropic.WithConversationCaching(!cfg.PromptCacheDisabled),
+		}
+		if key != "" {
+			opts = append([]anthropic.Option{anthropic.WithAPIKey(key)}, opts...)
 		}
 		if cacheTTL != "" {
 			opts = append(opts, anthropic.WithCacheTTL(cacheTTL))
@@ -975,6 +1081,7 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 		if baseURL != "" {
 			opts = append(opts, anthropic.WithBaseURL(baseURL))
 		}
+		opts = append(opts, extra...)
 		var llm port.LLMProvider = anthropic.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -985,7 +1092,7 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 			BreakerThreshold:  cfg.LLMBreakerThreshold,
 			BreakerCooldown:   cfg.LLMBreakerCooldown,
 			// Provider-tag every resilience line (see the openai entry).
-			Diagnostics: cfg.diag().With("provider", providerAnthropic),
+			Diagnostics: cfg.diag().With("provider", id),
 		})
 	}
 	// The OPERATOR-DEFAULT effort baked into the shared .provider (anthropic
@@ -994,23 +1101,18 @@ func newAnthropicEntry(cfg Config, key string, meta *liveMetaStore) providerEntr
 	// default-model capability intersection is stamped by buildProviderRegistry's
 	// post-assembly fixup (it needs the assembled registry + meta); until then the
 	// shared .provider carries the adapter's static transmit caps.
-	llm := construct(operatorDefaultEffortFor(cfg, providerAnthropic), anthropicStaticCaps)
+	llm := construct(operatorDefaultEffortFor(cfg, id), anthropicStaticCaps)
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
-		"provider", providerAnthropic,
+		"provider", id,
 		"max_attempts", cfg.LLMMaxAttempts,
 		"per_attempt_timeout", cfg.LLMPerAttemptTimeout,
 		"stream_idle_timeout", cfg.LLMStreamIdleTimeout,
 		"breaker_threshold", cfg.LLMBreakerThreshold,
 		"breaker_cooldown", cfg.LLMBreakerCooldown)
-	entry := providerEntry{id: providerAnthropic, provider: llm, available: true, baseURL: baseURL, remint: construct}
-	// Anthropic opts into LIVE model listing: its keyed /v1/models endpoint
-	// self-describes the rich per-model metadata (output ceiling, context window,
-	// image, thinking types). The lister rides on the entry (so only anthropic
-	// advertises it) and carries the key for a READ-ONLY metadata GET — it is
-	// availability-gated by construction (this code runs only when the key resolved)
-	// and never logs the key. The HTTP client is the composition test seam (nil ⇒
-	// default client; tests inject a mock transport).
-	entry.lister = anthropicLister{inner: anthropic.NewLister(key, baseURL, cfg.liveModelHTTPClient)}
+	entry := providerEntry{id: id, provider: llm, available: true, baseURL: baseURL, remint: construct}
+	if liveListing {
+		entry.lister = anthropicLister{inner: anthropic.NewLister(key, baseURL, cfg.liveModelHTTPClient)}
+	}
 	return entry
 }
 
@@ -1076,7 +1178,7 @@ func resolveDefaultModel(cfg Config, reg *providerRegistry) (providerID, modelID
 	}
 	// (3) client last-used: S4.
 	// (4) per-provider default model from the table (no entry => "" => endpoint default).
-	return defID, builtinDefaultModel[defID]
+	return defID, reg.DefaultModelFor(defID)
 }
 
 // preferredDefaultProvider picks the default provider id from explicit tiers.

@@ -85,6 +85,19 @@ explicitly. This is one-root deployment authority, not remote multi-workspace
 authorization. A remote `mecatui` sends no local cwd and rejects an explicit
 workspace locally; other clients remain subject to server enforcement.
 
+## Operator-defined providers
+
+Operator-local `~/.config/mecatl/settings.yaml` can declare a named compatible
+provider with an HTTPS base URL, required default model, and one explicit API flavor:
+`openai-responses`, `openai-chat-completions`, or `anthropic-messages`. Keep an
+`api_key` provider's credential in the matching `providers.<id>.api_key` record in
+owner-readable `~/.config/mecatl/auth.yaml`; `auth.method: none` needs no credential.
+The ID is persisted with sessions, so removing or renaming it makes those sessions fail
+loudly instead of selecting another provider. Built-in endpoint settings belong under
+`provider_overrides`; the matching `--*-base-url` flag wins. See the
+[configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md)
+for the strict schema.
+
 ---
 
 ## Architecture

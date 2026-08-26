@@ -744,7 +744,8 @@ configured.**
   `EnableSemanticRecall bool` paired with reusing the existing OpenAI key/base
   URL. **Recommendation:** a single `SemanticRecall bool` flag; when true AND an
   OpenAI key is present, build the embedder from the SAME key/base URL the LLM
-  provider uses (`cfg.OpenAIKey`/`cfg.OpenAIBaseURL`, `build.go:100,99`). This
+  provider uses (`cfg.OpenAIKey` and the effective `ProviderOverrides["openai"]`
+  endpoint, `build.go`). This
   avoids a second credential surface.
 - **Wiring (`buildCatalog`, `build.go:759-778`):** inside the existing
   `if cfg.MemoryDir != ""` block (semantic recall requires a store), after
@@ -754,7 +755,7 @@ configured.**
   if cfg.SemanticRecall && cfg.OpenAIKey != "" {
       emb := openai.NewEmbedder(
           openai.WithAPIKey(cfg.OpenAIKey),
-          openai.WithBaseURL(cfg.OpenAIBaseURL),         // empty = default host
+          openai.WithBaseURL(cfg.ProviderOverrides["openai"].BaseURL), // empty = default host
           openai.WithEmbeddingModel(cfg.EmbedderModel),  // empty = default small
       )
       cat.MustRegister(memory.NewSemanticRecallTool(store, emb))

@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
@@ -509,13 +510,12 @@ func streamOnce(t *testing.T, p port.LLMProvider) {
 	}
 }
 
-// TestRegistryOpenRouterBaseURLOverrideRoutes proves the openrouter entry's provider
-// was constructed with openai.WithBaseURL from cfg.OpenRouterBaseURL — i.e. the base
+// TestRegistryOpenRouterEndpointOverrideRoutes proves the openrouter entry's provider
+// was constructed with openai.WithBaseURL from the effective endpoint override — i.e. the base
 // URL is actually WIRED INTO THE ADAPTER, not merely stored on the logging-only
-// entry.baseURL field. It points OpenRouterBaseURL at a local stub, streams once, and
-// asserts the stub received the request at the configured path. (Panel finding #3 +
-// the cfg.OpenRouterBaseURL override path.)
-func TestRegistryOpenRouterBaseURLOverrideRoutes(t *testing.T) {
+// entry.baseURL field. It points the override at a local stub, streams once, and
+// asserts the stub received the request at the configured path.
+func TestRegistryOpenRouterEndpointOverrideRoutes(t *testing.T) {
 	var hit atomic.Int32
 	var gotPath atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -533,7 +533,9 @@ func TestRegistryOpenRouterBaseURLOverrideRoutes(t *testing.T) {
 	defer srv.Close()
 
 	reg, err := buildProviderRegistry(Config{
-		OpenRouterBaseURL: srv.URL + "/api/v1",
+		ProviderOverrides: permconfig.ProviderOverrides{
+			providerOpenRouter: {BaseURL: srv.URL + "/api/v1"},
+		},
 	}, fakeEnv(map[string]string{"OPENROUTER_API_KEY": "sk-openrouter"}))
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)

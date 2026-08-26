@@ -768,10 +768,16 @@ func (c config) validate() error {
 	// on) — the same detection app.Build runs, so this pre-check agrees with what
 	// the embedded server will actually resolve.
 	if mayEmbed && !c.providerKeys.Any() && c.openAIKey == "" && c.openRouterKey == "" && c.anthropicKey == "" && c.openCodeKey == "" && !c.mock {
-		var probe app.Config
-		c.toolhiveLLMFlags.Apply(&probe)
-		if !app.ToolhiveAvailable(probe) {
-			return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see docs/usage.md")
+		hasCustom, err := cliconfig.HasOperatorProviderDefinitions(true, true, nil)
+		if err != nil {
+			return fmt.Errorf("resolve operator provider configuration: %w", err)
+		}
+		if !hasCustom {
+			var probe app.Config
+			c.toolhiveLLMFlags.Apply(&probe)
+			if !app.ToolhiveAvailable(probe) {
+				return errors.New("no LLM provider configured: set a provider credential, use --auth-file, enable a ToolHive gateway, pass --mock, or connect to mecated; see docs/usage.md")
+			}
 		}
 	}
 	// Operator posture: refuse an allow-all tier (auto or yolo) when running

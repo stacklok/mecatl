@@ -428,8 +428,8 @@ func TestAppConfigMapping(t *testing.T) {
 		if cfg.OpenAIKey != "sk-oai" || cfg.OpenRouterKey != "sk-or" || cfg.AnthropicKey != "sk-ant" {
 			t.Errorf("all three keys must be read: %q / %q / %q", cfg.OpenAIKey, cfg.OpenRouterKey, cfg.AnthropicKey)
 		}
-		if cfg.OpenAIBaseURL != "https://oai.example" || cfg.OpenRouterBaseURL != "https://or.example" || cfg.AnthropicBaseURL != "https://ant.example" {
-			t.Errorf("all three base-urls must map: %q / %q / %q", cfg.OpenAIBaseURL, cfg.OpenRouterBaseURL, cfg.AnthropicBaseURL)
+		if cfg.ProviderOverrides["openai"].BaseURL != "https://oai.example" || cfg.ProviderOverrides["openrouter"].BaseURL != "https://or.example" || cfg.ProviderOverrides["anthropic"].BaseURL != "https://ant.example" {
+			t.Errorf("all three endpoint overrides must map: %#v", cfg.ProviderOverrides)
 		}
 		if cfg.DefaultProvider != "anthropic" {
 			t.Errorf("DefaultProvider = %q, want anthropic (mecatequi can now run Anthropic explicitly)", cfg.DefaultProvider)

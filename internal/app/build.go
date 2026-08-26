@@ -138,7 +138,6 @@ type Config struct {
 	AuthoritativeWorkspace string
 	Model                  string
 	UseOpenAI              bool
-	OpenAIBaseURL          string
 	OpenAIKey              string
 	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
 	// snapshot consumed only by the distinct openai-codex registry entry.
@@ -221,27 +220,39 @@ type Config struct {
 	// OpenRouter base URL substituted. OpenRouterKey is the credential (the cmd
 	// layer reads it from OPENROUTER_API_KEY); when empty the registry falls back
 	// to the OPENROUTER_API_KEY / OPENAI_API_KEY env vars via its envDetector.
-	// OpenRouterBaseURL overrides the default https://openrouter.ai/api/v1. These
-	// are ADDITIVE — the OpenAI fields above are unchanged (S1 is non-breaking).
-	OpenRouterKey     string
-	OpenRouterBaseURL string
+	// OpenRouterKey is the credential for the OpenRouter Responses-compatible
+	// endpoint; its effective endpoint comes from ProviderOverrides.
+	OpenRouterKey string
+	// ProviderDefinitions and CustomProviderAPIKeys are the validated operator
+	// snapshot supplied by command wiring. Custom keys are never read from the
+	// environment and must not be logged.
+	ProviderDefinitions   permconfig.ProviderDefinitions
+	CustomProviderAPIKeys map[string]string
+	// ProviderCredentialLoader resolves credentials for the one operator provider-definition
+	// snapshot Build owns. Command roots inject the cliconfig adapter; Build calls it once
+	// before default selection and registry construction and closes its lifecycle.
+	ProviderCredentialLoader interface {
+		Load(permconfig.ProviderDefinitions) (ProviderCredentials, interface{ Close() error }, error)
+	}
+	ProviderCredentialLifecycle interface{ Close() error }
+	// ProviderOverrides is the effective built-in endpoint source. Command-root CLI
+	// overrides are merged over operator settings before registry construction.
+	ProviderOverrides permconfig.ProviderOverrides
 
 	// OpenCode Go: the OpenCode Go gateway (https://opencode.ai/zen/go/v1) over
 	// the native Chat Completions adapter (openaichat). OpenCodeKey is the
 	// credential (the cmd layer reads it from OPENCODE_API_KEY); when empty the
 	// registry falls back to the OPENCODE_API_KEY env var via its envDetector.
-	// OpenCodeBaseURL overrides the default base URL. ADDITIVE — the other
-	// provider fields are unchanged.
-	OpenCodeKey     string
-	OpenCodeBaseURL string
+	// OpenCodeKey is the credential; its effective endpoint comes from
+	// ProviderOverrides.
+	OpenCodeKey string
 
 	// Anthropic (multi-provider P1): the native Anthropic Messages-API provider.
 	// AnthropicKey is the credential (the cmd layer reads it from ANTHROPIC_API_KEY);
 	// when empty the registry falls back to the ANTHROPIC_API_KEY env var via its
-	// envDetector. AnthropicBaseURL overrides the API host for a compatible/proxy
-	// endpoint. These are ADDITIVE — the OpenAI/OpenRouter fields are unchanged.
-	AnthropicKey     string
-	AnthropicBaseURL string
+	// envDetector. Its effective compatible/proxy endpoint comes from
+	// ProviderOverrides.
+	AnthropicKey string
 
 	// ToolhiveLLM (issue #262) opts INTO auto-detecting a locally-running
 	// ToolHive LLM gateway proxy: reading ToolHive's own config file (via the
@@ -1247,9 +1258,19 @@ func closeMCPProfileLifecycle(ctx context.Context, cfg Config) {
 	}
 }
 
+// ProviderCredentials is the immutable credential snapshot returned by a
+// ProviderCredentialLoader.
+type ProviderCredentials struct {
+	OpenAIKey             string
+	OpenRouterKey         string
+	AnthropicKey          string
+	OpenCodeKey           string
+	OpenAICodexCredential openaicodex.Credential
+	CustomProviderAPIKeys map[string]string
+}
+
 // Built is the result of Build: the assembled server.Service plus a Close func
-// that tears down composition-owned resources (the MCP manager). Close is always
-// safe to call, even when nothing needs closing.
+// that tears down composition-owned resources. Close is always safe to call.
 type Built struct {
 	Service *server.Service
 	Close   func()
@@ -1265,10 +1286,14 @@ type Built struct {
 //
 //nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
-	profileLifecycle := cfg.MCPProfileLifecycle
+	mcpProfileLifecycle := cfg.MCPProfileLifecycle
+	providerCredentialLifecycle := cfg.ProviderCredentialLifecycle
 	closeProfiles := sync.OnceFunc(func() {
-		cfg.MCPProfileLifecycle = profileLifecycle
+		cfg.MCPProfileLifecycle = mcpProfileLifecycle
 		closeMCPProfileLifecycle(ctx, cfg)
+		if providerCredentialLifecycle != nil {
+			_ = providerCredentialLifecycle.Close()
+		}
 	})
 	profilesTransferred := false
 	defer func() {
@@ -1395,7 +1420,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			cfg.MCPServers = profiles
 			cfg.MCPProfileLifecycle = lifecycle
-			profileLifecycle = lifecycle
+			mcpProfileLifecycle = lifecycle
 		}
 		if models := resolver.OperatorModelPolicy(); models != nil {
 			cfg.contextWindows = map[string]map[string]int(models.ContextWindows)
@@ -1407,7 +1432,34 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		cfg.MCPServers = profiles
 		cfg.MCPProfileLifecycle = lifecycle
-		profileLifecycle = lifecycle
+		mcpProfileLifecycle = lifecycle
+	}
+
+	definitions := cfg.ProviderDefinitions
+	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
+		var err error
+		var settingsOverrides permconfig.ProviderOverrides
+		definitions, settingsOverrides, err = resolver.OperatorProviders()
+		if err != nil {
+			return nil, err
+		}
+		cfg.ProviderDefinitions = definitions
+		cfg.ProviderOverrides = mergeProviderOverrides(settingsOverrides, cfg.ProviderOverrides)
+	}
+	if cfg.ProviderCredentialLoader != nil {
+		credentials, lifecycle, err := cfg.ProviderCredentialLoader.Load(definitions)
+		if err != nil {
+			return nil, err
+		}
+		cfg.CustomProviderAPIKeys = credentials.CustomProviderAPIKeys
+		cfg.OpenAIKey = credentials.OpenAIKey
+		cfg.OpenRouterKey = credentials.OpenRouterKey
+		cfg.AnthropicKey = credentials.AnthropicKey
+		cfg.OpenCodeKey = credentials.OpenCodeKey
+		cfg.OpenAICodexCredential = credentials.OpenAICodexCredential
+		cfg.UseOpenAI = cfg.UseOpenAI || credentials.OpenAIKey != ""
+		cfg.ProviderCredentialLifecycle = lifecycle
+		providerCredentialLifecycle = lifecycle
 	}
 
 	// Guardrails operator-tier config (issue #27, decision 3): fold the user-global +
@@ -4445,7 +4497,7 @@ func validateDefaultModel(cfg Config, reg *providerRegistry) error {
 	if cfg.DefaultProvider != "" && reg.Default() != cfg.DefaultProvider {
 		return fmt.Errorf("--default-provider %q: unknown or unavailable provider (available: %v); a deployment-wide default must be known-good at startup", cfg.DefaultProvider, reg.Available())
 	}
-	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) {
+	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
 		return fmt.Errorf("--default-model %q: not catalogued for the default provider %q; a deployment-wide default must be known-good at startup — either choose a catalogued model id, or pass it as the per-session passthrough --model (which accepts any model the provider serves)", cfg.DefaultModel, reg.Default())
 	}
 	if cfg.DefaultModel != "" && cfg.Model != "" {

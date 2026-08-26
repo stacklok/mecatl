@@ -67,8 +67,9 @@ func TestApplyMapsAllSixFields(t *testing.T) {
 	if cfg.OpenAIKey != "sk-openai" || cfg.OpenRouterKey != "sk-openrouter" || cfg.AnthropicKey != "sk-anthropic" {
 		t.Errorf("keys not mapped: %q / %q / %q", cfg.OpenAIKey, cfg.OpenRouterKey, cfg.AnthropicKey)
 	}
-	if cfg.OpenAIBaseURL != "https://oai.example" || cfg.OpenRouterBaseURL != "https://or.example" || cfg.AnthropicBaseURL != "https://ant.example" {
-		t.Errorf("base URLs not mapped: %q / %q / %q", cfg.OpenAIBaseURL, cfg.OpenRouterBaseURL, cfg.AnthropicBaseURL)
+	overrides := pf.EndpointOverrides()
+	if overrides["openai"].BaseURL != "https://oai.example" || overrides["openrouter"].BaseURL != "https://or.example" || overrides["anthropic"].BaseURL != "https://ant.example" {
+		t.Errorf("endpoint overrides not mapped: %#v", overrides)
 	}
 	if !keys.Any() {
 		t.Errorf("returned keys should be present; Any()=%v", keys.Any())
@@ -101,8 +102,8 @@ func TestApplyEmptyEnvLeavesEmptyFields(t *testing.T) {
 	if cfg.OpenAIKey != "" || cfg.OpenRouterKey != "" || cfg.AnthropicKey != "" {
 		t.Errorf("empty env must leave empty key fields; got %q / %q / %q", cfg.OpenAIKey, cfg.OpenRouterKey, cfg.AnthropicKey)
 	}
-	if cfg.OpenAIBaseURL != "" || cfg.OpenRouterBaseURL != "" || cfg.AnthropicBaseURL != "" {
-		t.Errorf("unset base URLs must be empty; got %q / %q / %q", cfg.OpenAIBaseURL, cfg.OpenRouterBaseURL, cfg.AnthropicBaseURL)
+	if overrides := pf.EndpointOverrides(); len(overrides) != 0 {
+		t.Errorf("unset endpoint overrides must be empty; got %#v", overrides)
 	}
 	if keys.Any() {
 		t.Error("ResolvedKeys.Any() must be false with no credentials")

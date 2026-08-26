@@ -411,7 +411,8 @@ func TestMecatuiAuthFileOnlyParse(t *testing.T) {
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("validate auth-file credential: %v", err)
 	}
-	if embedded := embeddedConfig(cfg, nil); embedded.AnthropicKey != cfg.anthropicKey {
+	embedded := embeddedConfig(cfg, nil)
+	if embedded.AnthropicKey != cfg.anthropicKey {
 		t.Errorf("embedded AnthropicKey = %q, want resolved auth-file credential", embedded.AnthropicKey)
 	}
 	if cfg.providerKeys.AuthFileWarning != "" {

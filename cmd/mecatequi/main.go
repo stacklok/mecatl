@@ -85,7 +85,8 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	built, err := app.Build(context.Background(), appConfig(f, diag, obs))
+	composition := appConfig(f, diag, obs)
+	built, err := app.Build(context.Background(), composition)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "mecatequi: build: %v\n", err)
 		flushTelemetry(stderr, obs, f.otlpShutdownTimeout)

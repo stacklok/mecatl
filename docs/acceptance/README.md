@@ -48,6 +48,9 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
+- [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
+  truthfully named gateway providers over the existing Responses, Chat Completions, and
+  Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
 - [Surface approval migration](surface-approval-migration.md) — final Phase-2 migration of the mecatui approval UI onto the dynamic surface contract, including ephemeral render-frame hit dispatch. Status: landed.
 - [Spine convergence](spine-convergence.md) — bring the
   to-acceptance-plan / plan-orchestrate / test-writer spine + ac-trace into

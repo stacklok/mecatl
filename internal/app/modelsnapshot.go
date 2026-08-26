@@ -35,9 +35,9 @@ func modelSnapshot(reg *providerRegistry) []*mecatlv1.ModelInfo {
 		if pid == providerMock {
 			continue // the mock never advertises selectable models
 		}
-		// The seed is the embedded floor for EVERY provider (no live fetch at Build).
-		// embeddedModels returns nil for an uncatalogued provider (an honest miss).
-		for _, m := range embeddedModels(pid) {
+		// The seed is the configured inventory floor for custom providers and the
+		// embedded floor for built-ins (no live fetch at Build).
+		for _, m := range providerInventoryFloor(reg, pid) {
 			out = append(out, projectModelEntry(reg, pid, m))
 		}
 	}

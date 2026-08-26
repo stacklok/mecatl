@@ -53,7 +53,8 @@ func run() error {
 		return fmt.Errorf("telemetry: %w", oerr)
 	}
 
-	built, err := app.Build(ctx, appConfig(cfg, diag, obs))
+	composition := appConfig(cfg, diag, obs)
+	built, err := app.Build(ctx, composition)
 	if err != nil {
 		flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 		return err

@@ -2,7 +2,9 @@ package anthropic
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -13,6 +15,38 @@ import (
 // SDK's ListAutoPaging follows the cursor across pages; a generous page keeps the
 // round-trips low (Anthropic's model count is small — tens, not thousands).
 const listerPageLimit int64 = 1000
+
+const maxModelsResponseBytes int64 = 1 << 20
+
+var errModelsResponseTooLarge = errors.New("anthropic: models response exceeds byte cap")
+
+type cappedReadCloser struct {
+	io.ReadCloser
+	remaining int64
+}
+
+func (r *cappedReadCloser) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, errModelsResponseTooLarge
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.ReadCloser.Read(p)
+	r.remaining -= int64(n)
+	return n, err
+}
+
+type cappedTransport struct{ base http.RoundTripper }
+
+func (t cappedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	resp.Body = &cappedReadCloser{ReadCloser: resp.Body, remaining: maxModelsResponseBytes}
+	return resp, nil
+}
 
 // ThinkingDescriptor is the adapter's OWN neutral projection of a model's
 // extended-thinking capability (Capabilities.Thinking.Types). It carries nothing
@@ -63,9 +97,16 @@ func NewLister(key, baseURL string, httpClient *http.Client) *Lister {
 	if baseURL != "" {
 		reqOpts = append(reqOpts, option.WithBaseURL(baseURL))
 	}
-	if httpClient != nil {
-		reqOpts = append(reqOpts, option.WithHTTPClient(httpClient))
+	if httpClient == nil {
+		httpClient = &http.Client{}
 	}
+	clientCopy := *httpClient
+	base := clientCopy.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	clientCopy.Transport = cappedTransport{base: base}
+	reqOpts = append(reqOpts, option.WithHTTPClient(&clientCopy))
 	client := sdk.NewClient(reqOpts...)
 	return &Lister{models: client.Models}
 }

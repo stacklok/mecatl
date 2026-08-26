@@ -68,6 +68,12 @@ const MaxContextWindowTokens = 2_000_000
 // where a typo'd key would silently disable a rule list (see the custom
 // UnmarshalYAML on Permissions / SubagentPermissions).
 type Config struct {
+	// Providers holds strict, operator-tier custom LLM provider definitions. Project
+	// values are ignored by Resolver with a value-free warning.
+	Providers ProviderDefinitions `yaml:"providers"`
+	// ProviderOverrides holds strict operator-tier endpoint overrides for eligible
+	// built-in providers. It is never accepted from a project workspace.
+	ProviderOverrides ProviderOverrides `yaml:"provider_overrides"`
 	// Permissions holds the allow/ask/deny rule-spec lists plus the child-scoped
 	// `subagent:` block.
 	Permissions Permissions `yaml:"permissions"`
@@ -449,7 +455,7 @@ func (s *MCPServerProfile) UnmarshalYAML(node *yaml.Node) error {
 	if err != nil {
 		return err
 	}
-	if s.Auth.Mode != "none" && u.Scheme != "https" && !mcpLoopback(u.Hostname()) {
+	if s.Auth.Mode != "none" && u.Scheme != providerHTTPS && !mcpLoopback(u.Hostname()) {
 		return errors.New("mcp.servers[].url must use https for authenticated profiles except loopback http")
 	}
 	if s.Auth.OAuth != nil {
@@ -707,7 +713,7 @@ func validateMCPHTTPURL(field, raw string, httpsOnly bool) (*url.URL, error) {
 		return nil, fmt.Errorf("%s must be an absolute HTTP(S) URL without userinfo or fragment", field)
 	}
 	u.Scheme = strings.ToLower(u.Scheme)
-	if u.Scheme != "https" && (httpsOnly || u.Scheme != "http") {
+	if u.Scheme != providerHTTPS && (httpsOnly || u.Scheme != "http") {
 		return nil, fmt.Errorf("%s has an unsupported scheme", field)
 	}
 	if port := u.Port(); port != "" {

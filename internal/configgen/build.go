@@ -25,6 +25,8 @@ func BuildModel(docs Docs) *Model {
 		postureSubtree(docs),
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
+		providersSubtree(docs),
+		providerOverridesSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
 		storageManagementSubtree(docs),
@@ -146,6 +148,39 @@ func guardrailsSubtree(docs Docs) *Subtree {
 			"(the CLI --guardrails=off also sets it).",
 		CommentedOut: true,
 		Fields:       fields,
+	}
+}
+
+const configStringType = "string"
+
+func providersSubtree(_ Docs) *Subtree {
+	return &Subtree{
+		Key:          "providers",
+		Tier:         TierOperator,
+		CommentedOut: true,
+		Doc:          "Strict operator-defined LLM providers. Project-tier definitions are ignored. Provider URLs must be HTTPS without userinfo, query, or fragment; credentials belong only in auth.yaml.",
+		Fields: []*Field{{
+			Key: "team-gateway", Type: "providerdefinition", Default: "(absent)", ExampleMapKey: "team-gateway",
+			Nested: []*Field{
+				{Key: "base_url", Type: configStringType, Default: "(required)", ExampleValue: "https://gateway.example/v1"},
+				{Key: "default_model", Type: configStringType, Default: "(required)", ExampleValue: "team-chat"},
+				{Key: "api_flavor", Type: configStringType, Default: "(required)", ExampleValue: "openai-responses"},
+				{Key: "auth", Type: "providerauth", Default: "(absent)", Nested: []*Field{{Key: "method", Type: configStringType, Default: "none", ExampleValue: "api_key"}}},
+			},
+		}},
+	}
+}
+
+func providerOverridesSubtree(_ Docs) *Subtree {
+	return &Subtree{
+		Key:          "provider_overrides",
+		Tier:         TierOperator,
+		CommentedOut: true,
+		Doc:          "Strict endpoint overrides for built-in openai, openrouter, anthropic, and opencode only. Codex and ToolHive policies cannot be overridden here.",
+		Fields: []*Field{{
+			Key: "openai", Type: "provideroverride", Default: "(absent)", ExampleMapKey: "openai",
+			Nested: []*Field{{Key: "base_url", Type: configStringType, Default: "(required)", ExampleValue: "https://proxy.example/v1"}},
+		}},
 	}
 }
 

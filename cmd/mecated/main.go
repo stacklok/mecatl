@@ -903,7 +903,8 @@ func run(mode commandMode, remaining []string) error {
 		return telemetry.NewSink(childSinks...), scoped
 	}
 
-	built, err := app.Build(ctx, appConfig(cfg, sink, mainScoped, roleScoper, obs.metrics, diag))
+	composition := appConfig(cfg, sink, mainScoped, roleScoper, obs.metrics, diag)
+	built, err := app.Build(ctx, composition)
 	if err != nil {
 		return err
 	}
@@ -1012,12 +1013,8 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 	return observability{providers: providers, metrics: metrics, recorder: recorder}, nil
 }
 
-// appConfig maps the CLI/env config onto the shared app.Config build contract,
-// threading the telemetry sink (EventSink), the per-tool audit recorder
-// (ToolCallRecorder), the child-engine role scoper (MetricsRoleScoper, issue
-// #47), the schedule-fire metrics callback (ScheduleMetricsEmitter, issue
-// #233), and the general-purpose operational logging sink (Diagnostics) into
-// the engine/composition.
+// appConfig constructs the command root's declarative app.Config. app.Build loads the
+// injected provider credential after resolving operator definitions.
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	out := app.Config{
 		Workspace:                     cfg.workspace,
@@ -1110,34 +1107,36 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// and cost knobs are operator-tier YAML only (the `guardrails:` subtree of the
 		// user-global settings.yaml), folded onto Config by foldOperatorGuardrails — a
 		// flag cannot express a rule list.
-		GuardrailsModel:         cfg.guardrailsModel,
-		GuardrailsDisabled:      cfg.guardrailsOff,
-		ModelAliases:            cfg.modelAliases.AsMap(),
-		ModelSlots:              cfg.modelSlots.AsMap(),
-		CommandsDir:             cfg.commandsDir,
-		EnableCommands:          cfg.enableCommands,
-		EnableParallel:          cfg.enableParallel,
-		WebSearchURL:            cfg.websearchURL,
-		WebSearchAPIKey:         cfg.websearchAPIKey,
-		WebSearchAuthHeader:     cfg.websearchAuthHeader,
-		WebSearchQueryParam:     cfg.websearchQueryParam,
-		SearXNGURL:              cfg.searxngURL,
-		BraveAPIKey:             cfg.braveAPIKey,
-		ExaAPIKey:               cfg.exaAPIKey,
-		WebSearchOff:            cfg.websearchOff,
-		ForkPreservedCap:        cfg.forkPreservedCap,
-		EnableTeams:             cfg.enableTeams,
-		MCPServers:              cfg.mcpServers.Servers(),
-		MCPProfileLoader:        cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
-		MCPResourceTools:        cfg.mcpResourceTools,
-		MCPPrompts:              cfg.mcpPrompts,
-		ToolHiveEnabled:         cfg.toolHiveEnabled,
-		ToolHiveGroup:           cfg.toolHiveGroup,
-		PermissionsConventional: cfg.permissionsConventional,
-		ImportClaudePermissions: cfg.importClaudePermissions,
-		TrustProject:            cfg.trustProject,
-		PermissionConfigs:       cfg.permissionConfigs,
-		AllowAllTools:           cfg.allowAllTools,
+		GuardrailsModel:          cfg.guardrailsModel,
+		GuardrailsDisabled:       cfg.guardrailsOff,
+		ModelAliases:             cfg.modelAliases.AsMap(),
+		ModelSlots:               cfg.modelSlots.AsMap(),
+		CommandsDir:              cfg.commandsDir,
+		EnableCommands:           cfg.enableCommands,
+		EnableParallel:           cfg.enableParallel,
+		WebSearchURL:             cfg.websearchURL,
+		WebSearchAPIKey:          cfg.websearchAPIKey,
+		WebSearchAuthHeader:      cfg.websearchAuthHeader,
+		WebSearchQueryParam:      cfg.websearchQueryParam,
+		SearXNGURL:               cfg.searxngURL,
+		BraveAPIKey:              cfg.braveAPIKey,
+		ExaAPIKey:                cfg.exaAPIKey,
+		WebSearchOff:             cfg.websearchOff,
+		ForkPreservedCap:         cfg.forkPreservedCap,
+		EnableTeams:              cfg.enableTeams,
+		MCPServers:               cfg.mcpServers.Servers(),
+		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
+		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),
+		MCPResourceTools:         cfg.mcpResourceTools,
+		MCPPrompts:               cfg.mcpPrompts,
+		ToolHiveEnabled:          cfg.toolHiveEnabled,
+		ToolHiveGroup:            cfg.toolHiveGroup,
+		PermissionsConventional:  cfg.permissionsConventional,
+		ImportClaudePermissions:  cfg.importClaudePermissions,
+		TrustProject:             cfg.trustProject,
+		PermissionConfigs:        cfg.permissionConfigs,
+		AllowAllTools:            cfg.allowAllTools,
 		// Posture ladder: --posture sets the tier directly; --yolo/--trust-project are
 		// aliases composition folds MAX-tier (resolvePosture). postureFlagSet lets CLI
 		// out-rank the operator-global settings.yaml posture: key. Privileged is the

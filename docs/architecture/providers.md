@@ -93,8 +93,9 @@ type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`
 
 **Compatible endpoints**: `WithBaseURL(url)` overrides the host (vLLM, LiteLLM,
 a local proxy); the SDK appends `/responses`. `WithAPIKey` and
-`WithRequestOption` round out the options. `cmd/mecated` plumbs
-`--openai-base-url` through to it.
+`WithRequestOption` round out the options. Command roots map `--openai-base-url`
+into the non-secret built-in endpoint override map that composition folds over
+operator settings.
 
 ## Multi-provider — registry, per-session routing & model inventory
 
@@ -203,6 +204,32 @@ and `docs/design/IMPLEMENTATION-NOTES.md` for the exact mechanics.
 before (the default path is byte-identical). A composition-only `providerConstructor`
 seam (mirroring `envDetector`) lets the offline e2e back two real provider ids with
 mocks; production leaves it nil.
+
+### Operator-defined providers
+
+Operator-local `settings.yaml` may declare first-class `providers.<id>` entries with an
+HTTPS base URL, required default model, one wire flavor (`openai-responses`,
+`openai-chat-completions`, or `anthropic-messages`), and either `auth.method: none`
+or `api_key` (ADR 0238). `provider_overrides` changes only the base URLs of the
+eligible built-ins; it does not turn a built-in into a custom provider. Custom IDs cannot
+collide with any built-in or the reserved offline `mock` ID.
+
+`app.Build` resolves the operator definition set once, passes that set to the injected
+`ProviderCredentialLoader` once, then applies the returned immutable `ProviderCredentials`
+before default selection and registry construction. Command roots project their non-secret
+base-URL flags into `ProviderOverrides`; Build merges those over settings-derived overrides
+before registry construction. The command roots inject the local `cliconfig` resolver but do
+not construct custom-provider registry state; Build owns and closes any credential lifecycle
+after later build failures and at normal shutdown. This keeps a
+future refreshable credential implementation at the composition boundary without exposing it
+to the engine or wire API. `mecatui connect` does not embed a server and performs no local
+provider-credential I/O. Custom API keys remain file-only records keyed by provider ID; `none`
+has no ambient credential fallback. The configured default model is
+available synchronously even when live listing fails or returns no models. Live `/models`
+requests use the declared flavor and resolved authentication, have bounded time/body
+envelopes, and refuse redirects. Inference uses the same redirect-refusing transport:
+a redirect never forwards a request body or credentials to its target. That transport
+policy is retained when default or live-model capability reminting rebuilds an adapter.
 
 **OpenRouter downstream-provider routing (issue #480, ADR 0210).** OpenRouter is a
 *meta-provider* — one model id is served by several **downstream** inference

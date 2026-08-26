@@ -91,7 +91,20 @@ func TestListerMapsModelInfo(t *testing.T) {
 	}
 }
 
-// TestThinkingResolverLiveThenPrefixFloor proves WithThinkingResolver: a known live
+func TestListerRejectsOversizedResponse(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"` + strings.Repeat("x", 1<<20) + `"}]}`)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	})}
+	_, err := NewLister("sk-test-key", "", client).ListModels(context.Background())
+	if err == nil {
+		t.Fatal("ListModels accepted an oversized response")
+	}
+}
+
 // descriptor drives the mode authoritatively; an UNKNOWN model (known=false) falls
 // back to the embedded prefix matrix (the offline floor).
 func TestThinkingResolverLiveThenPrefixFloor(t *testing.T) {
