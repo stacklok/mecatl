@@ -278,3 +278,82 @@ func TestUserScopeNamesAndPrefix(t *testing.T) {
 		t.Fatal("user prefix not applied")
 	}
 }
+
+func TestForgetScopeDescriptionsAndExpectedVersionSchema(t *testing.T) {
+	store := memmemory.New()
+	projectTools := memorytools.ProjectTools(store)
+	userTools := memorytools.UserTools(store)
+	projectForget := named(t, projectTools, "ForgetMemory")
+	userForget := named(t, userTools, "ForgetUserMemory")
+
+	// Scope-specific descriptions
+	projectDesc := projectForget.Spec().Description
+	userDesc := userForget.Spec().Description
+	if !strings.Contains(projectDesc, "project") {
+		t.Errorf("project forget description missing scope: %q", projectDesc)
+	}
+	if !strings.Contains(userDesc, "user") {
+		t.Errorf("user forget description missing scope: %q", userDesc)
+	}
+	// Schema-level expected_version description
+	schemaRaw := string(projectForget.Spec().Schema)
+	if !strings.Contains(schemaRaw, "Opaque revision token") || !strings.Contains(schemaRaw, "InspectMemory") {
+		t.Errorf("project forget schema missing expected_version description: %s", schemaRaw)
+	}
+}
+
+func TestStaleVersionConflictMessages(t *testing.T) {
+	store := memmemory.New()
+	tools := memorytools.ProjectTools(store)
+	remember := named(t, tools, "Remember")
+	forget := named(t, tools, "ForgetMemory")
+	// Remember a record
+	execute(t, remember, map[string]any{"key": "test/conflict", "value": "v1"})
+	// Stale version conflict (Actual != "")
+	stale := execute(t, forget, map[string]any{"key": "test/conflict", "expected_version": "wrong-opaque"})
+	if !stale.IsError {
+		t.Fatal("expected error for stale version")
+	}
+	content := stale.Content
+	assertContains := []string{"stale version", "project", "expected_version=", "actual=", "InspectMemory", "never guess"}
+	for _, want := range assertContains {
+		if !strings.Contains(content, want) {
+			t.Errorf("stale conflict message missing %q: %s", want, content)
+		}
+	}
+
+	// Missing-record conflict (Actual == "") using a non-existent key with some expected_version
+	missing := execute(t, forget, map[string]any{"key": "test/nonexistent", "expected_version": "some-token"})
+	if !missing.IsError {
+		t.Fatal("expected error for missing record")
+	}
+	missingContent := missing.Content
+	if !strings.Contains(missingContent, "no current record exists") || !strings.Contains(missingContent, "re-inspect") || !strings.Contains(missingContent, "InspectMemory") {
+		t.Errorf("missing-record conflict message incorrect: %s", missingContent)
+	}
+
+	// User/user-model scope stale version conflict.
+	userStore := memmemory.New()
+	userRemember := named(t, memorytools.UserTools(userStore), "RememberUser")
+	userForget := named(t, memorytools.UserTools(userStore), "ForgetUserMemory")
+	execute(t, userRemember, map[string]any{"key": "editor", "value": "v1"})
+	userStale := execute(t, userForget, map[string]any{"key": "user/editor", "expected_version": "bad"})
+	if !userStale.IsError {
+		t.Fatal("expected user stale error")
+	}
+	userStaleMsg := userStale.Content
+	if !strings.Contains(userStaleMsg, "user/user-model") || !strings.Contains(userStaleMsg, "InspectUserMemory") {
+		t.Errorf("user stale message missing scope/tool refs: %s", userStaleMsg)
+	}
+
+	// User/user-model missing-record conflict.
+	userMissing := execute(t, userForget, map[string]any{"key": "user/nonexistent", "expected_version": "token"})
+	if !userMissing.IsError {
+		t.Fatal("expected user missing error")
+	}
+	userMissingMsg := userMissing.Content
+	if !strings.Contains(userMissingMsg, "no current record exists") || !strings.Contains(userMissingMsg, "user/user-model") {
+		t.Errorf("user missing message incorrect: %s", userMissingMsg)
+	}
+}
+
