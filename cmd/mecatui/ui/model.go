@@ -750,8 +750,8 @@ type Model struct {
 	// next run boundary regardless of how many readers leaked.
 	streamGen uint64
 
-	// liveCh is the live session event feed's reader channel (LiveStreamCmd /
-	// LiveReplayStreamCmd); WaitForMsg drains it. Armed when the active session
+	// liveCh is the live session event feed's reader channel (LiveStreamCmd);
+	// WaitForMsg drains it. Armed when the active session
 	// settles (session create / run end) and torn down on session switch / reset.
 	liveCh    chan tea.Msg
 	liveStop  func() // idempotent teardown (context.CancelFunc via sync.Once)

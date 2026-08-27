@@ -60,14 +60,16 @@ func (c *Client) StreamSessionLive(ctx context.Context, id string) (*EventStream
 	return NewEventStream(stream), nil
 }
 
-// eventStreamCmd owns the common live/replay event-stream lifecycle.
-func eventStreamCmd(ctx context.Context, open func(context.Context, string) (*EventStream, error), id string) (ch chan tea.Msg, stop func()) {
+// LiveStreamCmd opens the live session event stream for session id synchronously,
+// then runs ReadLoop on a goroutine. It returns the message channel and an
+// idempotent teardown function.
+func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan tea.Msg, stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	ch = make(chan tea.Msg, 64)
 	var once sync.Once
 	stop = func() { once.Do(cancel) }
 
-	es, err := open(ctx, id)
+	es, err := live.StreamSessionLive(ctx, id)
 	if err != nil {
 		go func() {
 			defer close(ch)
@@ -77,22 +79,6 @@ func eventStreamCmd(ctx context.Context, open func(context.Context, string) (*Ev
 	}
 	go es.ReadLoop(ctx, ch)
 	return ch, stop
-}
-
-// LiveStreamCmd opens the LIVE session event stream for session id and runs
-// ReadLoop on a goroutine, pushing tea.Msgs onto a channel the ui drains via
-// WaitForMsg (the SAME fan-in the live Converse and replay streams use).
-// Returns the channel + a teardown func (cancel) the ui calls on session switch
-// / reset.
-func LiveStreamCmd(ctx context.Context, c *Client, id string) (ch chan tea.Msg, stop func()) {
-	return eventStreamCmd(ctx, c.StreamSessionLive, id)
-}
-
-// LiveReplayStreamCmd is the interface variant of LiveStreamCmd: it opens the
-// LIVE session event stream for session id via a LiveStreamer (instead of a
-// concrete *Client).
-func LiveReplayStreamCmd(ctx context.Context, r LiveStreamer, id string) (ch chan tea.Msg, stop func()) {
-	return eventStreamCmd(ctx, r.StreamSessionLive, id)
 }
 
 // StreamSessionEvents opens the durable-event-log replay (cloud-native Phase 3a
@@ -109,21 +95,6 @@ func (c *Client) StreamSessionEvents(ctx context.Context, id string) (*EventStre
 		return nil, fmt.Errorf("stream session events: %w", err)
 	}
 	return NewEventStream(stream), nil
-}
-
-// StreamSessionEventsCmd opens the replay stream for session id and runs ReadLoop
-// on a goroutine, pushing tea.Msgs onto a channel the ui drains via WaitForMsg
-// (the SAME fan-in the live Converse stream uses). Returns the channel + a
-// teardown func (cancel) the ui calls when it leaves the transcript view.
-func StreamSessionEventsCmd(ctx context.Context, c *Client, id string) (ch chan tea.Msg, stop func()) {
-	return eventStreamCmd(ctx, c.StreamSessionEvents, id)
-}
-
-// ReplayStreamCmd is the interface variant of StreamSessionEventsCmd: it opens the
-// replay stream for session id via a SessionReplayer (instead of a concrete
-// *Client).
-func ReplayStreamCmd(ctx context.Context, r SessionReplayer, id string) (ch chan tea.Msg, stop func()) {
-	return eventStreamCmd(ctx, r.StreamSessionEvents, id)
 }
 
 // Live-feed reconnect + catch-up (issue #387). When the LIVE session event feed
@@ -240,8 +211,8 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 // cancels the loop's ctx AND JOINS the loop goroutine, so a caller that mutates
 // state the loop reads (e.g. a test shrinking the package-level backoff vars)
 // cannot race the loop's final backoff read after stop. Mirrors
-// LiveReplayStreamCmd / ReplayStreamCmd (which need no join — their ReadLoop
-// goroutines only read the injected stream, not package-level test knobs). The ui
+// LiveStreamCmd needs no join because its ReadLoop goroutine only reads the
+// injected stream, not package-level test knobs. The ui
 // stores the channel + stop, tags reads with the live-reconnect generation, and
 // re-arms the live reader on LiveReconnectedMsg.
 func ReconnectLiveCmd(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string) (ch chan tea.Msg, stop func()) {

@@ -2839,8 +2839,8 @@ func (m Model) waitCmd() tea.Cmd {
 	return func() tea.Msg { return streamMsg{gen: gen, msg: read()} }
 }
 
-// liveMsg wraps one message pulled from the LIVE session event feed (LiveStreamCmd
-// / LiveReplayStreamCmd) with the generation that channel belonged to when the
+// liveMsg wraps one message pulled from the LIVE session event feed
+// (LiveStreamCmd) with the generation that channel belonged to when the
 // reader was armed. It is the live-delivery analogue of streamMsg (live Converse
 // run) and replayMsg (stored-session replay): the reducer drops any liveMsg whose
 // gen no longer matches m.liveGen, so a stale reader left bound to an abandoned
@@ -3082,7 +3082,7 @@ func (m *Model) armLiveFeed() tea.Cmd {
 	m.disarmLiveFeed()
 
 	m.liveGen++
-	ch, stop := client.LiveReplayStreamCmd(m.deps.Ctx, m.deps.LiveStream, m.sessionID)
+	ch, stop := client.LiveStreamCmd(m.deps.Ctx, m.deps.LiveStream, m.sessionID)
 	m.liveCh = ch
 	m.liveStop = stop
 	m.liveArmed = m.sessionID
