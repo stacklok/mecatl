@@ -6984,6 +6984,13 @@ on the byte-identical no-scheduling path). The pieces:
   as the run-entry session lease, different id — no contention). On each tick:
   `Due` → misfire policy → `Claim` (at-most-once) → `FireFunc` → `RecordFire`. The
   `FireFunc` seam (`scheduler.FireFunc`) is how composition injects the run-entry funnel.
+  Standby logging is a rate-limited heartbeat (issue #778): a lease held by a
+  peer logs at INFO and a failed acquire at WARN on entry; repeated attempts log
+  at DEBUG, then re-announce at the original level after `standbyLogInterval`
+  (5m by default). This keeps a persistently wedged lease backend visible
+  without flooding a healthy multi-replica deployment. A cause change within
+  the interval does not reset the heartbeat and is reported on its next beat;
+  successful leadership acquisition after standby always logs once at INFO.
 - **Composition** (`internal/app/build.go` `buildScheduler`/`startScheduler`) wires the
   scheduler whenever the configured store exposes the `ScheduleStore()` accessor and
   the operator has not passed `--no-scheduler`, reusing the configured store + the

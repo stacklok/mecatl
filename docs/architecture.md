@@ -928,7 +928,10 @@ the existing run-entry funnel. The pieces:
   non-leader serves RPCs and retries the acquire on a jittered backoff,
   promoting when the leader's lease lapses; a definitive Renew loss demotes the
   leader back to standby (failover), and a sticky
-  store-unsupported flag stops the loop re-acquiring forever. `FireNow` is
+  store-unsupported flag stops the loop re-acquiring forever. Standby logging is
+  rate-limited: state transitions and periodic heartbeats remain
+  operator-visible, while repeated acquire attempts are logged at debug level to
+  avoid replica-scale log noise. `FireNow` is
   gated on leadership (`ErrNotLeader` → FailedPrecondition/412). On each tick:
   `Due` → misfire policy → `Claim` (at-most-once) → `FireFunc` → `RecordFire`.
   The `FireFunc` seam is how composition injects the run-entry funnel.

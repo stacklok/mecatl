@@ -248,12 +248,33 @@ const (
 	// errgroup slot for longer than this. Mirrors the leader-lease acquire
 	// timeout's "bounded so a wedged backend cannot stall" discipline.
 	singletonTrialTimeout = 5 * time.Second
-	// leaderStandbyBackoff is how long a non-leader (standby) replica waits
-	// between leader-lease acquire attempts. Short enough that a standby takes
-	// over soon after the leader's lease lapses (TTL), long enough to avoid
-	// hammering the lease backend on contention.
-	leaderStandbyBackoff = 2 * time.Second
 )
+
+// leaderStandbyBackoff is how long a non-leader (standby) replica waits
+// between leader-lease acquire attempts. Short enough that a standby takes
+// over soon after the leader's lease lapses (TTL), long enough to avoid
+// hammering the lease backend on contention. It is a package var (not a
+// const), matching stopLeadershipJoinTimeout/staleFireWindow below, so a test
+// can shrink it to drive repeated standby acquire attempts without sleeping
+// through the production interval.
+var leaderStandbyBackoff = 2 * time.Second
+
+// standbyLogInterval bounds how often a standby replica repeats its
+// leader-lease state (steady standby, or a still-failing acquire) at
+// INFO/WARN. The state is not an event — logging it on every backoff buried
+// an operator's log on a multi-replica deployment (issue #778, roughly one
+// line every 2s per non-leader replica for the pod's lifetime). A bounded
+// heartbeat instead keeps a persistently wedged lease backend visible without
+// flooding a healthy standby; the per-attempt case between beats logs at
+// DEBUG. Driven off the injected port.Clock so a test can cross it
+// deterministically via a fake clock's advance, without a dedicated seam.
+//
+// A cause change (lease-held <-> acquire-failure) mid-interval does NOT reset
+// the heartbeat — it is reported on the next scheduled beat, not immediately.
+// That is a deliberate trade: an operator sees the standby state promptly on
+// entry and periodically thereafter, but a rapidly flapping backend cannot
+// re-flood the log the way the fix closes for the steady-state case.
+var standbyLogInterval = 5 * time.Minute
 
 // stopLeadershipJoinTimeout bounds how long Stop waits for the leadership loop
 // and the current epoch's tick+renewer goroutines to join after being
@@ -573,6 +594,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 // epoch (demote) loops straight back to the acquire so a deposed former leader
 // can win a later epoch.
 func (s *Scheduler) leadershipLoop(ctx context.Context) {
+	var lastStandbyLog time.Time
 	for {
 		if ctx.Err() != nil {
 			return
@@ -590,6 +612,11 @@ func (s *Scheduler) leadershipLoop(ctx context.Context) {
 		lease, standalone, err := s.acquireLeader(ctx)
 		switch {
 		case err == nil:
+			if !lastStandbyLog.IsZero() {
+				s.diag.Log(ctx, port.LevelInfo, "scheduler acquired leadership; leaving standby",
+					"owner", s.cfg.LeaseOwner)
+				lastStandbyLog = time.Time{}
+			}
 			// Acquired: run the epoch (blocks until demote or Stop).
 			s.runEpoch(ctx, lease)
 			continue
@@ -602,17 +629,24 @@ func (s *Scheduler) leadershipLoop(ctx context.Context) {
 			<-ctx.Done() // standalone runs until Stop; no retry
 			return
 		default:
-			// ErrLeaseHeld (a peer leads) or a transient infra fault: standby.
-			if errors.Is(err, port.ErrLeaseHeld) {
-				s.diag.Log(ctx, port.LevelInfo, "another replica is the scheduler leader; standing by",
-					"owner", s.cfg.LeaseOwner)
-			} else {
-				s.diag.Log(ctx, port.LevelWarn, "scheduler: leader lease acquire failed; retrying in standby",
-					"owner", s.cfg.LeaseOwner, "err", err.Error())
+			if ctx.Err() != nil {
+				return
 			}
+			// ErrLeaseHeld (a peer leads) or a transient infra fault: standby.
+			// See standbyLogInterval: the per-attempt case is DEBUG, and the
+			// state is re-announced at INFO/WARN only once per heartbeat.
+			level, message := port.LevelDebug, "scheduler: leader lease acquire retrying in standby"
+			if now := s.cfg.Clock.Now(); lastStandbyLog.IsZero() || now.Sub(lastStandbyLog) >= standbyLogInterval {
+				lastStandbyLog = now
+				level, message = port.LevelInfo, "another replica is the scheduler leader; standing by"
+				if !errors.Is(err, port.ErrLeaseHeld) {
+					level, message = port.LevelWarn, "scheduler: leader lease acquire failed; retrying in standby"
+				}
+			}
+			s.diag.Log(ctx, level, message, "owner", s.cfg.LeaseOwner, "err", err.Error())
 			// Jittered backoff: on a leader's death N standbys would otherwise
 			// re-acquire in lockstep (a thundering-herd on the lease backend).
-			if !s.sleepOrDone(ctx, jitteredBackoff()) {
+			if !sleepOrDone(ctx, jitteredBackoff()) {
 				return
 			}
 		}
@@ -735,7 +769,7 @@ func (s *Scheduler) releaseLeader() {
 }
 
 // sleepOrDone waits d or returns false if ctx is done first.
-func (*Scheduler) sleepOrDone(ctx context.Context, d time.Duration) bool {
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {

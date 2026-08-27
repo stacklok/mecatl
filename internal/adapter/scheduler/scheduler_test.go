@@ -292,6 +292,142 @@ func TestStandbyOnLeaseHeld(t *testing.T) {
 	}
 }
 
+// standbyHarness starts a Scheduler in standby against lease, with the
+// standby backoff shrunk so the leadership loop retries fast in real time and
+// the standby log heartbeat shrunk to interval (crossed deterministically via
+// clk.advance, never real time). Callers defer the returned stop func.
+func standbyHarness(t *testing.T, lease port.SessionLease, clk *fakeClock, diag *capturingDiag, interval time.Duration) (*scheduler.Scheduler, func()) {
+	t.Helper()
+	restoreBackoff := scheduler.SetLeaderStandbyBackoffForTest(time.Millisecond)
+	restoreInterval := scheduler.SetStandbyLogIntervalForTest(interval)
+	s := scheduler.New(scheduler.Config{
+		Store:       memschedulestore.New(),
+		Lease:       lease,
+		LeaseOwner:  "owner-standby",
+		Fire:        (&fireStub{}).fire,
+		Clock:       clk,
+		Diagnostics: diag,
+	})
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	return s, func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+		restoreInterval()
+		restoreBackoff()
+	}
+}
+
+// diagLevelsFrom returns a snapshot of the levels logged from index mark
+// onward.
+func diagLevelsFrom(diag *capturingDiag, mark int) []port.Level {
+	diag.mu.Lock()
+	defer diag.mu.Unlock()
+	return append([]port.Level(nil), diag.levels[mark:]...)
+}
+
+// TestStandbyLeaseHeldLogsHeartbeatNotPerAttempt is issue #778: a standby
+// replica losing the lease to a peer must log the state once on entry, DEBUG
+// per retry in between, and re-announce at INFO only once it crosses the
+// standby log heartbeat — never once per acquire attempt.
+func TestStandbyLeaseHeldLogsHeartbeatNotPerAttempt(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	diag := &capturingDiag{}
+	lease := &heldLease{clk: clk, owner: "someone-else"}
+	s, stop := standbyHarness(t, lease, clk, diag, time.Minute)
+	defer stop()
+
+	if !pollUntil(2*time.Second, func() bool { return len(diagLevelsFrom(diag, 0)) >= 3 }) {
+		t.Fatal("leadership loop did not perform enough standby attempts")
+	}
+	levels := diagLevelsFrom(diag, 0)
+	if levels[0] != port.LevelInfo {
+		t.Fatalf("first standby log level = %v, want INFO", levels[0])
+	}
+	for _, l := range levels[1:] {
+		if l != port.LevelDebug {
+			t.Fatalf("standby log levels before the heartbeat elapses = %v, want [INFO DEBUG...]", levels)
+		}
+	}
+
+	mark := len(levels)
+	clk.advance(time.Minute)
+	if !pollUntil(2*time.Second, func() bool {
+		for _, l := range diagLevelsFrom(diag, mark) {
+			if l == port.LevelInfo {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("standby heartbeat did not re-announce at INFO after crossing standbyLogInterval")
+	}
+	if _, leader := s.LeaderOwner(); leader {
+		t.Fatal("LeaderOwner leader = true, want false (standby throughout)")
+	}
+}
+
+// TestStandbyAcquireFailureLogsHeartbeatAtWarn covers the sibling the issue
+// called out as arguably worse: a persistent acquire failure (not a peer
+// holding the lease) must WARN once on entry and DEBUG per retry, not WARN
+// per backoff.
+func TestStandbyAcquireFailureLogsHeartbeatAtWarn(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	diag := &capturingDiag{}
+	lease := &alwaysFailingLease{err: errors.New("dial tcp: i/o timeout")}
+	_, stop := standbyHarness(t, lease, clk, diag, time.Minute)
+	defer stop()
+
+	if !pollUntil(2*time.Second, func() bool { return len(diagLevelsFrom(diag, 0)) >= 3 }) {
+		t.Fatal("leadership loop did not perform enough standby attempts")
+	}
+	levels := diagLevelsFrom(diag, 0)
+	if levels[0] != port.LevelWarn {
+		t.Fatalf("first standby log level = %v, want WARN", levels[0])
+	}
+	for _, l := range levels[1:] {
+		if l != port.LevelDebug {
+			t.Fatalf("standby log levels before the heartbeat elapses = %v, want [WARN DEBUG...]", levels)
+		}
+	}
+}
+
+// TestStandbyLogIntervalSuppressesClassChangeWithinWindow pins the accepted
+// trade of the heartbeat design: a cause change (lease-held <-> acquire
+// failure) inside the heartbeat window does NOT re-announce immediately — it
+// stays DEBUG until the next scheduled beat. Flapping cannot re-flood the log
+// the way the per-attempt log the issue reported could.
+func TestStandbyLogIntervalSuppressesClassChangeWithinWindow(t *testing.T) {
+	defer goleak.VerifyNone(t)
+	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	diag := &capturingDiag{}
+	lease := &flippableLease{}
+	_, stop := standbyHarness(t, lease, clk, diag, time.Minute)
+	defer stop()
+
+	if !pollUntil(2*time.Second, func() bool { return len(diagLevelsFrom(diag, 0)) >= 1 }) {
+		t.Fatal("leadership loop did not perform the first standby attempt")
+	}
+	if levels := diagLevelsFrom(diag, 0); levels[0] != port.LevelInfo {
+		t.Fatalf("first standby log level = %v, want INFO (lease held)", levels[0])
+	}
+	mark := len(diagLevelsFrom(diag, 0))
+
+	lease.setFailed(true)
+	// A generous number of retries within the SAME heartbeat window: the class
+	// changed, but the interval has not elapsed, so nothing above DEBUG fires.
+	time.Sleep(50 * time.Millisecond)
+	for _, l := range diagLevelsFrom(diag, mark) {
+		if l != port.LevelDebug {
+			t.Fatalf("standby log level after a mid-window class change = %v, want DEBUG (suppressed until the heartbeat elapses)", l)
+		}
+	}
+}
+
 // TestMisfireFireOnceNow: MisfireFireOnceNow (default) + past NextFireAt fires
 // once + advances to a future next fire.
 func TestMisfireFireOnceNow(t *testing.T) {
@@ -1654,14 +1790,16 @@ func pollUntil(deadline time.Duration, f func() bool) bool {
 // test can assert an internal event (like declareLeaderLost's WARN) fired
 // without a exported hook into the scheduler's private state.
 type capturingDiag struct {
-	mu   sync.Mutex
-	msgs []string
+	mu     sync.Mutex
+	msgs   []string
+	levels []port.Level
 }
 
-func (d *capturingDiag) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+func (d *capturingDiag) Log(_ context.Context, level port.Level, msg string, _ ...any) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.msgs = append(d.msgs, msg)
+	d.levels = append(d.levels, level)
 }
 
 func (d *capturingDiag) With(...any) port.Diagnostics { return d }
@@ -1775,6 +1913,49 @@ func (*heldLease) Renew(_ context.Context, _ port.Lease) (port.Lease, error) {
 	return port.Lease{}, port.ErrLeaseHeld
 }
 func (*heldLease) Release(_ context.Context, _ port.Lease) error { return nil }
+
+// alwaysFailingLease always returns a fixed, non-ErrLeaseHeld error from
+// Acquire — a persistent transient infra fault (as opposed to a peer holding
+// the lease), the sibling standby path issue #778 called out as arguably
+// worse to leave unbounded at WARN.
+type alwaysFailingLease struct {
+	err error
+}
+
+func (l *alwaysFailingLease) Acquire(context.Context, session.SessionID, string) (port.Lease, error) {
+	return port.Lease{}, l.err
+}
+func (*alwaysFailingLease) Renew(context.Context, port.Lease) (port.Lease, error) {
+	return port.Lease{}, nil
+}
+func (*alwaysFailingLease) Release(context.Context, port.Lease) error { return nil }
+
+// flippableLease lets a test toggle Acquire between ErrLeaseHeld (the default)
+// and a generic transient failure mid-run, to exercise the standby log
+// heartbeat across a cause change.
+type flippableLease struct {
+	mu     sync.Mutex
+	failed bool
+}
+
+func (l *flippableLease) setFailed(v bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.failed = v
+}
+
+func (l *flippableLease) Acquire(context.Context, session.SessionID, string) (port.Lease, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failed {
+		return port.Lease{}, errors.New("dial tcp: i/o timeout")
+	}
+	return port.Lease{}, port.ErrLeaseHeld
+}
+func (*flippableLease) Renew(context.Context, port.Lease) (port.Lease, error) {
+	return port.Lease{}, nil
+}
+func (*flippableLease) Release(context.Context, port.Lease) error { return nil }
 
 // heldSessionLease is a port.SessionLease that tracks per-session-id holds. A
 // held id returns ErrLeaseHeld to any Acquire from a different owner; release(id)
