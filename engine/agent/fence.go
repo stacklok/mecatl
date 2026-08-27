@@ -6,32 +6,6 @@ import (
 	"github.com/stacklok/mecatl/engine/governance"
 )
 
-// UntrustedFence is the delimiter wrapping an untrusted block in a model-visible prompt.
-//
-// Deprecated: use governance.UntrustedFence.
-const UntrustedFence = governance.UntrustedFence
-
-// WriteUntrustedBlock writes body wrapped in an untrusted-content fence.
-//
-// Deprecated: use governance.WriteUntrustedBlock.
-func WriteUntrustedBlock(b *strings.Builder, body string) {
-	governance.WriteUntrustedBlock(b, body)
-}
-
-// FenceUntrusted returns body wrapped in an untrusted-content fence.
-//
-// Deprecated: use governance.FenceUntrusted.
-func FenceUntrusted(body string) string {
-	return governance.FenceUntrusted(body)
-}
-
-// NeutraliseFraming defangs model-visible harness framing in s.
-//
-// Deprecated: use governance.NeutraliseFraming.
-func NeutraliseFraming(s string) string {
-	return governance.NeutraliseFraming(s)
-}
-
 func neutraliseChildText(s string) string {
 	return governance.NeutraliseDelegationResult(s)
 }

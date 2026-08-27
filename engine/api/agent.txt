@@ -97,13 +97,10 @@ const StopReasonCancelled MemberStopReason = "cancelled"
 const StopReasonError MemberStopReason = "error"
 const SubagentSessionPrefix untyped string = "subagent-"
 const TeamSessionPrefix untyped string = "team-"
-const UntrustedFence untyped string = "<<<UNTRUSTED"
 func DefaultChildLimits() session.Limits
-func FenceUntrusted(body string) string
 func MemberSessionID(teamID string, member string) session.SessionID
 func MemberToolNames() map[string]struct{}
 func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool
-func NeutraliseFraming(s string) string
 func NewBashStatusTool() tool.Tool
 func NewBashTool() tool.Tool
 func NewEngine(deps Deps) *Engine
@@ -189,7 +186,6 @@ func WithUntrustedGoal(untrusted bool) SupervisorOption
 func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
-func WriteUntrustedBlock(b *strings.Builder, body string)
 type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; Managed bool}
 type BashStatusTool struct{}
 type BashTool struct{}

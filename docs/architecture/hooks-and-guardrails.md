@@ -97,8 +97,9 @@ prose-extracting `ValidateJSON`), sanitize is bounded against laundering, and th
 checker engine is built tool-less with no recursion into guardrails. The canonical
 fence and framing-neutralisation helpers shared with the child-ask reviewer live in
 `engine/governance/fence.go` (exported, single source of truth).
-`engine/agent/fence.go` retains deprecated compatibility forwarders plus
-`StripLoneCodeFence`, which remains shared by the verdict parsers. Full mechanics:
+`engine/agent/fence.go` retains the agent-specific `StripLoneCodeFence` parser and
+private delegation-result wrapper; the public framing APIs live only in governance.
+`StripLoneCodeFence` remains shared by the verdict parsers. Full mechanics:
 `docs/adr/0021-guardrails.md`.
 
 ## Prerequisites

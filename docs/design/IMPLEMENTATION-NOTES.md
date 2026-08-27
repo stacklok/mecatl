@@ -3272,10 +3272,11 @@ three layers to keep the engine importable and the verdict shape in the adapter:
   raw text; composition parses it.
 - **`engine/governance/fence.go`** — the canonical shared fencing helpers:
   `UntrustedFence`, `WriteUntrustedBlock`, `FenceUntrusted`, and
-  `NeutraliseFraming`. `engine/agent/fence.go` retains `StripLoneCodeFence` (the
-  security-sensitive lone-fence stripper the ask-review AND guardrail verdict parsers
-  share — one parser, never diverging) plus deprecated compatibility forwarders for
-  the relocated APIs.
+  `NeutraliseFraming`. `engine/agent/fence.go` retains the agent-specific
+  `StripLoneCodeFence` parser (the security-sensitive lone-fence stripper the
+  ask-review AND guardrail verdict parsers share — one parser, never diverging)
+  and the private delegation-result wrapper; the public framing APIs live only
+  in governance.
 - **`internal/app/guardrails.go`** — `buildGuardrailsHooks` (decorates the **main**
   hooks at `buildEngine` + the per-session factory, so a **fresh per-session
   failure-streak** is built; returns inner unchanged when no model is set),

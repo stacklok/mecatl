@@ -299,7 +299,7 @@ func TestStructuredChildDeliverableSurvivesResultNeutralisation(t *testing.T) {
 	// Positive control: these lines really ARE listed headers, so this test is about their
 	// SURFACE and not about entries that were deleted. If NeutraliseFraming stops redacting
 	// them the prompt paths have lost their guard and this test must not quietly pass.
-	if !strings.Contains(NeutraliseFraming(structuredFindings), redactedFraming) {
+	if !strings.Contains(governance.NeutraliseFraming(structuredFindings), redactedFraming) {
 		t.Fatalf("the fixture no longer contains any listed header, so this test proves nothing about the surface split — re-point it at lines the prompt surface still matches")
 	}
 
