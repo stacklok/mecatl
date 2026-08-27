@@ -1,0 +1,127 @@
+version: '3'
+
+# Disposable, operator-run mecak8s Kind baseline. It intentionally owns only
+# Kind, the local chart/image, and in-chart local Redis.
+vars:
+  CLUSTER: mecatl-dev
+  CONTEXT: kind-mecatl-dev
+  NAMESPACE: mecatl
+  RELEASE: mecak8s
+  STATE: .scratch/kind/mecatl-dev
+  KUBECONFIG: deploy/mecak8s-kind/kconfig.yaml
+  SETUP_LOCK: .scratch/kind/mecatl-dev.setup-lock
+  IMAGE: ko.local/mecak8s:dev
+
+tasks:
+  kind-setup:
+    desc: Recreate the local mecak8s Kind baseline with local Redis
+    cmds:
+      - task: reset-state
+      - task: cluster-create
+      - task: namespace-apply
+      - task: image-build-load
+      - task: chart-apply
+
+  kind-status:
+    desc: Show the local mecak8s Kind baseline
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods,services,statefulsets -n {{.NAMESPACE}}
+      - helm status {{.RELEASE}} --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}}
+
+  kind-port-forward:
+    desc: Forward mecak8s gRPC and HTTP to loopback only (Ctrl-C to stop)
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/{{.RELEASE}}-mecak8s 18080:8080 18081:8081
+
+  kind-destroy:
+    desc: Delete the named Kind baseline and its local state
+    cmds:
+      - kind delete cluster --name={{.CLUSTER}}
+      - rm -rf {{.STATE}}
+      - rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}
+
+  reset-state:
+    internal: true
+    preconditions:
+      - sh: command -v kind >/dev/null 2>&1
+        msg: kind is required
+    cmds:
+      - cmd: |
+          set -eu
+          kind delete cluster --name={{.CLUSTER}} 2>/dev/null || true
+          rm -rf {{.STATE}}
+          rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}
+          mkdir -p .scratch/kind deploy/mecak8s-kind
+          : > {{.SETUP_LOCK}}
+
+  cluster-ready:
+    internal: true
+    preconditions:
+      - sh: command -v kind >/dev/null 2>&1
+        msg: kind is required
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - cmd: |
+          set -eu
+          kind get clusters 2>/dev/null | grep -Fxq '{{.CLUSTER}}' || { echo "cluster {{.CLUSTER}} not found"; exit 1; }
+          [ -f {{.KUBECONFIG}} ] || { echo "kubeconfig {{.KUBECONFIG}} not found"; exit 1; }
+          [ "$(kubectl --kubeconfig={{.KUBECONFIG}} config current-context)" = '{{.CONTEXT}}' ] || { echo "kubeconfig context mismatch"; exit 1; }
+
+  cluster-create:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-kind/cleanup-on-failure.sh "$status"' EXIT
+          mkdir -p {{.STATE}}
+          kind create cluster --name={{.CLUSTER}} --config=deploy/mecak8s-kind/kind-config.yaml
+          kind get kubeconfig --name={{.CLUSTER}} > {{.KUBECONFIG}}
+
+  namespace-apply:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} label namespace {{.NAMESPACE}} pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/audit=restricted pod-security.kubernetes.io/warn=restricted --overwrite
+
+  image-build-load:
+    internal: true
+    preconditions:
+      - sh: command -v ko >/dev/null 2>&1
+        msg: ko is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-kind/cleanup-on-failure.sh "$status"' EXIT
+          runtime=docker
+          [ "${KIND_EXPERIMENTAL_PROVIDER:-}" != podman ] || runtime=podman
+          command -v "$runtime" >/dev/null 2>&1 || { echo "$runtime is required"; exit 1; }
+          KO_DOCKER_REPO=ko.local/mecak8s ko build --local --bare --tags=dev ./cmd/mecak8s >/dev/null
+          archive={{.STATE}}/mecak8s.tar
+          "$runtime" save {{.IMAGE}} -o "$archive"
+          kind load image-archive "$archive" --name={{.CLUSTER}}
+          rm -f "$archive"
+
+  chart-apply:
+    internal: true
+    preconditions:
+      - sh: command -v helm >/dev/null 2>&1
+        msg: helm is required
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          trap 'status=$?; deploy/mecak8s-kind/cleanup-on-failure.sh "$status"' EXIT
+          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --wait --timeout=4m
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s

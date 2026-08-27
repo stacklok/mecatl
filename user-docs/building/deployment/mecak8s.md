@@ -24,7 +24,7 @@ Kill any pod. The survivor acquires the lease and resumes interrupted sessions f
 
 ## Local ToolHive-free Kind profile
 
-For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create vMCP resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. See `deploy/mecak8s-vmcp/README.md` for the local workflow.
+For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create vMCP resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. Host access is through `task mecak8s:kind-port-forward`, which binds gRPC and HTTP to `127.0.0.1` only. See [`deploy/mecak8s-kind/README.md`](../../../deploy/mecak8s-kind/README.md) for the local workflow; it makes no production network-isolation claim and has no general NetworkPolicy.
 
 For global MCP OAuth, use an externally provisioned read-only environment credential and
 restart pods after rotation. `mecak8s` never launches a browser; a local mutable credential

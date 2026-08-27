@@ -78,13 +78,47 @@ func kindVMCPArgs() []string {
 // hang mounting a missing volume until the install times out (the regression
 // this test exists to catch).
 func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
+	values, err := os.ReadFile("values-kind.yaml")
+	if err != nil {
+		t.Fatalf("read Kind values: %v", err)
+	}
+	for _, want := range []string{
+		"mockProvider: true", "endpoint: redis:6379", "credentialsSecret: \"\"",
+		"enabled: true", "workspace: /tmp",
+	} {
+		if !strings.Contains(string(values), want) {
+			t.Fatalf("Kind values missing %q", want)
+		}
+	}
+
+	e2eFiles, err := filepath.Glob(filepath.Join("..", "..", "..", "e2e", "k8s", "*.go"))
+	if err != nil {
+		t.Fatalf("list e2e files: %v", err)
+	}
+	e2eText := ""
+	for _, path := range e2eFiles {
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read e2e file %s: %v", path, readErr)
+		}
+		e2eText += string(body)
+	}
+	if !strings.Contains(e2eText, "values-kind.yaml") || strings.Contains(e2eText, "values-kind-vmcp.yaml") {
+		t.Fatal("e2e/k8s must install values-kind.yaml directly, without an operator-fixture overlay")
+	}
+
 	rendered, err := helm(t, "template", "kind", ".", "-f", "values-kind.yaml")
 	if err != nil {
 		t.Fatalf("render Kind profile: %v", err)
 	}
-	for _, forbidden := range []string{"--oidc-issuer", "--tls-cert", "--tls-key", "mecak8s-tls", "fixture-ca", "type: NodePort", "nodePort:"} {
+	for _, forbidden := range []string{"--oidc-issuer", "--tls-cert", "--tls-key", "mecak8s-tls", "fixture-ca", "secretName:", "type: NodePort", "nodePort:"} {
 		if strings.Contains(rendered, forbidden) {
-			t.Fatalf("bare Kind render (no vmcp overlay) unexpectedly contains %q — e2e/k8s's suite creates no matching Secret and would hang", forbidden)
+			t.Fatalf("bare Kind render (no fixture overlay) unexpectedly contains %q — e2e/k8s's suite creates no matching Secret and would hang", forbidden)
+		}
+	}
+	for _, want := range []string{"replicas: 2", "- --mock", "--redis-url=redis:6379", "--workspace=/tmp", "type: ClusterIP"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("bare Kind render missing %q", want)
 		}
 	}
 }
@@ -637,7 +671,7 @@ func taskFileClosure(t *testing.T, text string, roots ...string) string {
 }
 
 func TestMecak8sHelmChart_Scenario1_KindLifecycleUsesNamedCluster(t *testing.T) {
-	path := filepath.Join("..", "..", "mecak8s-vmcp", "Taskfile.yml")
+	path := filepath.Join("..", "..", "mecak8s-kind", "Taskfile.yml")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

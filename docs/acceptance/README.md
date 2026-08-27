@@ -48,6 +48,9 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
+- [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
+  operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
+  identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
