@@ -254,17 +254,20 @@ func TestReplayReadLoopCancelUnblocks(t *testing.T) {
 }
 
 // fakeStreamSessionEventsClient is a scripted HarnessServiceClient for the
-// StreamSessionEvents wrapper test: it overrides only the one server-streaming
-// RPC under test, returning a scripted fakeEventStream (an EventRecver, but the
-// real wrapper only needs Recv, so it doubles as the ServerStreamingClient via
-// the embedded ClientStream no-op below). The proto→plain mapping runs offline.
+// StreamSessionEvents and StreamSessionLive wrapper tests. It returns a scripted
+// fakeEventStream (an EventRecver, but the real wrappers only need Recv, so it
+// doubles as the ServerStreamingClient via the embedded ClientStream no-op
+// below). The proto→plain mapping runs offline.
 type fakeStreamSessionEventsClient struct {
 	mecatlv1.HarnessServiceClient
 
 	stream *fakeEventStream
 	err    error
 
-	lastReq *mecatlv1.StreamSessionEventsRequest
+	lastReq     *mecatlv1.StreamSessionEventsRequest
+	liveStream  *fakeEventStream
+	liveErr     error
+	lastLiveReq *mecatlv1.StreamSessionLiveRequest
 }
 
 // fakeServerStreamingClient is a minimal grpc.ServerStreamingClient[Event] stand-in:
@@ -290,6 +293,112 @@ func (f *fakeStreamSessionEventsClient) StreamSessionEvents(_ context.Context, i
 	return fakeServerStreamingClient{f.stream}, nil
 }
 
+func (f *fakeStreamSessionEventsClient) StreamSessionLive(_ context.Context, in *mecatlv1.StreamSessionLiveRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[mecatlv1.Event], error) {
+	f.lastLiveReq = in
+	if f.liveErr != nil {
+		return nil, f.liveErr
+	}
+	return fakeServerStreamingClient{f.liveStream}, nil
+}
+
+// TestLiveStreamCmd asserts the concrete live wrapper routes to
+// StreamSessionLive, yields the scripted messages, closes its channel, and has
+// an idempotent stop.
+func TestLiveStreamCmd(t *testing.T) {
+	fake := &fakeStreamSessionEventsClient{
+		liveStream: newFakeEventStream(eventsFromScript(scriptedRunResult())...),
+	}
+	cl := newFakeClient(fake)
+
+	ch, stop := LiveStreamCmd(context.Background(), cl, "sess-live")
+	defer stop()
+
+	if cap(ch) != 64 {
+		t.Errorf("channel capacity = %d, want 64", cap(ch))
+	}
+	msgs := drain(ch)
+	if fake.lastLiveReq.GetSessionId() != "sess-live" {
+		t.Errorf("request session_id = %q, want sess-live", fake.lastLiveReq.GetSessionId())
+	}
+	if len(msgs) == 0 {
+		t.Fatal("no msgs")
+	}
+	if _, ok := msgs[0].(SessionInitMsg); !ok {
+		t.Errorf("first msg = %T, want SessionInitMsg", msgs[0])
+	}
+	if _, ok := msgs[len(msgs)-1].(StreamClosedMsg); !ok {
+		t.Errorf("last msg = %T, want StreamClosedMsg", msgs[len(msgs)-1])
+	}
+	stop()
+	stop()
+}
+
+type liveCmdResult struct {
+	ch   chan tea.Msg
+	stop func()
+}
+
+type gatedLiveStreamer struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *gatedLiveStreamer) StreamSessionLive(_ context.Context, _ string) (*EventStream, error) {
+	close(s.entered)
+	<-s.release
+	return NewEventStream(newFakeEventStream()), nil
+}
+
+func TestLiveReplayStreamCmdOpensSynchronously(t *testing.T) {
+	live := &gatedLiveStreamer{entered: make(chan struct{}), release: make(chan struct{})}
+	returned := make(chan liveCmdResult, 1)
+
+	go func() {
+		ch, stop := LiveReplayStreamCmd(context.Background(), live, "sess-live")
+		returned <- liveCmdResult{ch: ch, stop: stop}
+	}()
+
+	<-live.entered
+	select {
+	case <-returned:
+		t.Fatal("LiveReplayStreamCmd returned before its opener was released")
+	default:
+	}
+
+	close(live.release)
+	select {
+	case result := <-returned:
+		result.stop()
+		for range result.ch {
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LiveReplayStreamCmd did not return after its opener was released")
+	}
+}
+
+func TestLiveStreamCmdOpenError(t *testing.T) {
+	boom := errors.New("live RPC unavailable")
+	cl := newFakeClient(&fakeStreamSessionEventsClient{liveErr: boom})
+
+	ch, stop := LiveStreamCmd(context.Background(), cl, "sess-live-error")
+	msgs := drain(ch)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d msgs, want one StreamErrMsg: %#v", len(msgs), msgs)
+	}
+	se, ok := msgs[0].(StreamErrMsg)
+	if !ok {
+		t.Fatalf("msg = %T, want StreamErrMsg: %#v", msgs[0], msgs)
+	}
+	if !errors.Is(se.Err, boom) {
+		t.Errorf("error = %v, want wrapping %v", se.Err, boom)
+	}
+	if se.Transient != TransientStreamErr(boom) {
+		t.Errorf("transient = %t, want %t", se.Transient, TransientStreamErr(boom))
+	}
+	stop()
+	stop()
+}
+
 // TestStreamSessionEventsCmd asserts the cmd opens the replay stream + runs
 // ReadLoop, that the channel yields the scripted msgs then closes, and that
 // stop() cancels (idempotent + no panic).
@@ -304,6 +413,9 @@ func TestStreamSessionEventsCmd(t *testing.T) {
 	ch, stop := StreamSessionEventsCmd(context.Background(), cl, "sess-replay")
 	defer stop()
 
+	if cap(ch) != 64 {
+		t.Errorf("channel capacity = %d, want 64", cap(ch))
+	}
 	msgs := drain(ch)
 	if len(msgs) == 0 {
 		t.Fatal("no msgs")
@@ -496,6 +608,46 @@ func (f *fakeSessionReplayer) StreamSessionEvents(_ context.Context, id string) 
 		return nil, f.err
 	}
 	return NewEventStream(f.stream), nil
+}
+
+type fakeLiveStreamer struct {
+	stream *fakeEventStream
+	calls  int
+	lastID string
+}
+
+func (f *fakeLiveStreamer) StreamSessionLive(_ context.Context, id string) (*EventStream, error) {
+	f.calls++
+	f.lastID = id
+	return NewEventStream(f.stream), nil
+}
+
+// TestLiveReplayStreamCmd asserts the interface live wrapper routes to the
+// LiveStreamer, yields the scripted messages, closes its channel, and has an
+// idempotent stop.
+func TestLiveReplayStreamCmd(t *testing.T) {
+	live := &fakeLiveStreamer{
+		stream: newFakeEventStream(eventsFromScript(scriptedRunResult())...),
+	}
+
+	ch, stop := LiveReplayStreamCmd(context.Background(), live, "sess-live")
+	defer stop()
+
+	msgs := drain(ch)
+	if live.calls != 1 || live.lastID != "sess-live" {
+		t.Errorf("StreamSessionLive calls/id = %d/%q, want 1/sess-live", live.calls, live.lastID)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("no msgs")
+	}
+	if _, ok := msgs[0].(SessionInitMsg); !ok {
+		t.Errorf("first msg = %T, want SessionInitMsg", msgs[0])
+	}
+	if _, ok := msgs[len(msgs)-1].(StreamClosedMsg); !ok {
+		t.Errorf("last msg = %T, want StreamClosedMsg", msgs[len(msgs)-1])
+	}
+	stop()
+	stop()
 }
 
 // TestReplayStreamCmd asserts the interface variant of StreamSessionEventsCmd:
