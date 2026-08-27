@@ -99,6 +99,23 @@ func TestStoreRejectsAdapterOwnedDirectorySymlinks(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "migration registry",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				canonical := filepath.Join(root, canonicalDirName)
+				if err := os.Mkdir(canonical, 0o700); err != nil {
+					t.Fatalf("Mkdir canonical dir: %v", err)
+				}
+				target := filepath.Join(root, "migration-target")
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatalf("Mkdir target: %v", err)
+				}
+				if err := os.Symlink(target, filepath.Join(canonical, migrationJobsDir)); err != nil {
+					t.Fatalf("Symlink migration registry: %v", err)
+				}
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

@@ -178,14 +178,19 @@ func TestStoreInitializationDurablyPublishesCreatedDirectories(t *testing.T) {
 	}
 	canonical := filepath.Join(root, canonicalDirName)
 	catalog := filepath.Join(canonical, inventoryCatalogDirName)
+	migrationRegistry := filepath.Join(canonical, migrationJobsDir)
 	wantPrefix := []string{
 		filepath.Join(base, "parent"), base,
 		root, filepath.Join(base, "parent"),
 		canonical, root,
 		catalog, canonical,
+		migrationRegistry, canonical,
 	}
 	if len(synced) < len(wantPrefix) || !reflect.DeepEqual(synced[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("initial directory syncs = %v, want prefix %v", synced, wantPrefix)
+	}
+	if info, err := os.Lstat(migrationRegistry); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("migration registry = (%v, %v), want a real directory", info, err)
 	}
 }
 

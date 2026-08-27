@@ -321,6 +321,10 @@ func (st *Store) verifiedCurrent(id session.SessionID, want []byte) bool {
 	return want == nil || string(current.Snapshot) == string(want)
 }
 
+func (st *Store) migrationJobDir() string {
+	return filepath.Join(st.resolver.canonicalDir(), migrationJobsDir)
+}
+
 func (st *Store) migrationJobPath(id string) (string, error) {
 	if len(id) != 32 {
 		return "", errors.New("invalid migration job handle")
@@ -328,8 +332,7 @@ func (st *Store) migrationJobPath(id string) (string, error) {
 	if _, err := hex.DecodeString(id); err != nil {
 		return "", errors.New("invalid migration job handle")
 	}
-	dir := filepath.Join(st.resolver.canonicalDir(), migrationJobsDir)
-	return filepath.Join(dir, id+".json"), nil
+	return filepath.Join(st.migrationJobDir(), id+".json"), nil
 }
 
 type migrationAcquisitionContextKey struct{}
@@ -362,8 +365,8 @@ func (st *Store) AcquireSessionMigrationJob(ctx context.Context, id string) (con
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, nil, fmt.Errorf("jsonlstore: create migration registry: %w", err)
+	if err := validateAdapterDirectory(st.migrationJobDir()); err != nil {
+		return nil, nil, fmt.Errorf("jsonlstore: validate migration registry: %w", err)
 	}
 	fl := flock.New(path+".lock", flock.SetPermissions(0o600))
 	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
@@ -408,12 +411,12 @@ func (st *Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMi
 		return err
 	}
 	defer releaseOwnership()
+	if !st.durability.HostCrashSafe() {
+		return errors.New("jsonlstore: migration checkpoint requires atomic replacement, file sync, and directory sync")
+	}
 	path, err := st.migrationJobPath(job.ID)
 	if err != nil {
 		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("jsonlstore: create migration registry: %w", err)
 	}
 	data, err := json.Marshal(job)
 	if err != nil {

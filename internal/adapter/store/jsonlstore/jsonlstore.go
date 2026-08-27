@@ -220,7 +220,7 @@ func validateAdapterDirectory(path string) error {
 	return nil
 }
 
-func createDurableDirectoryHierarchy(path string, mode os.FileMode, ops snapshotOps) error {
+func createDurableDirectoryHierarchy(path string, ops snapshotOps) error {
 	var missing []string
 	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
 		info, err := os.Stat(current)
@@ -241,7 +241,7 @@ func createDurableDirectoryHierarchy(path string, mode os.FileMode, ops snapshot
 	}
 	for i := len(missing) - 1; i >= 0; i-- {
 		created := missing[i]
-		if err := os.Mkdir(created, mode); err != nil {
+		if err := os.Mkdir(created, 0o700); err != nil {
 			if !os.IsExist(err) {
 				return err
 			}
@@ -273,22 +273,29 @@ func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := createDurableDirectoryHierarchy(root, 0o700, ops); err != nil {
+	if err := createDurableDirectoryHierarchy(root, ops); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create store dir: %w", err)
 	}
 	resolver := sessionResolver{dir: root}
-	if err := createDurableDirectoryHierarchy(resolver.canonicalDir(), 0o700, ops); err != nil {
+	if err := createDurableDirectoryHierarchy(resolver.canonicalDir(), ops); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
 	}
 	if err := validateAdapterDirectory(resolver.canonicalDir()); err != nil {
 		return nil, fmt.Errorf("jsonlstore: validate canonical dir: %w", err)
 	}
 	inventoryDir := filepath.Join(resolver.canonicalDir(), inventoryCatalogDirName)
-	if err := createDurableDirectoryHierarchy(inventoryDir, 0o700, ops); err != nil {
+	if err := createDurableDirectoryHierarchy(inventoryDir, ops); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create inventory catalog dir: %w", err)
 	}
 	if err := validateAdapterDirectory(inventoryDir); err != nil {
 		return nil, fmt.Errorf("jsonlstore: validate inventory catalog dir: %w", err)
+	}
+	migrationDir := filepath.Join(resolver.canonicalDir(), migrationJobsDir)
+	if err := createDurableDirectoryHierarchy(migrationDir, ops); err != nil {
+		return nil, fmt.Errorf("jsonlstore: create migration registry: %w", err)
+	}
+	if err := validateAdapterDirectory(migrationDir); err != nil {
+		return nil, fmt.Errorf("jsonlstore: validate migration registry: %w", err)
 	}
 	ownerBytes := make([]byte, 16)
 	if _, err := rand.Read(ownerBytes); err != nil {
