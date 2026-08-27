@@ -209,6 +209,17 @@ func normalizeStoreRoot(dir string) (string, error) {
 // createDurableDirectoryHierarchy publishes every adapter-created directory before
 // its children are used. An unsupported directory sync is reflected later by the
 // durability capability probe; any other sync failure makes construction fail.
+func validateAdapterDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("path %q is not a directory", path)
+	}
+	return nil
+}
+
 func createDurableDirectoryHierarchy(path string, mode os.FileMode, ops snapshotOps) error {
 	var missing []string
 	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
@@ -269,8 +280,15 @@ func newStoreWithSnapshotOps(dir string, ops snapshotOps) (*Store, error) {
 	if err := createDurableDirectoryHierarchy(resolver.canonicalDir(), 0o700, ops); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create canonical dir: %w", err)
 	}
-	if err := createDurableDirectoryHierarchy(filepath.Join(resolver.canonicalDir(), inventoryCatalogDirName), 0o700, ops); err != nil {
+	if err := validateAdapterDirectory(resolver.canonicalDir()); err != nil {
+		return nil, fmt.Errorf("jsonlstore: validate canonical dir: %w", err)
+	}
+	inventoryDir := filepath.Join(resolver.canonicalDir(), inventoryCatalogDirName)
+	if err := createDurableDirectoryHierarchy(inventoryDir, 0o700, ops); err != nil {
 		return nil, fmt.Errorf("jsonlstore: create inventory catalog dir: %w", err)
+	}
+	if err := validateAdapterDirectory(inventoryDir); err != nil {
+		return nil, fmt.Errorf("jsonlstore: validate inventory catalog dir: %w", err)
 	}
 	ownerBytes := make([]byte, 16)
 	if _, err := rand.Read(ownerBytes); err != nil {
@@ -1076,9 +1094,9 @@ func (st *Store) openCanonicalSidecarForAppend(path string) (*os.Root, *os.File,
 		_ = root.Close()
 		return nil, nil, fmt.Errorf("jsonlstore: inspect sidecar for append: %w", lstatErr)
 	}
-	f, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NONBLOCK, 0o600)
+	f, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		f, err = root.OpenFile(name, os.O_RDWR|syscall.O_NONBLOCK, 0)
+		f, err = root.OpenFile(name, os.O_RDWR|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	}
 	if err != nil {
 		_ = root.Close()
@@ -1100,8 +1118,8 @@ func (st *Store) openCanonicalSidecarForAppend(path string) (*os.Root, *os.File,
 // session-family lock, so truncating an uncommitted EOF fragment and appending
 // the replacement is atomic with respect to every supported writer.
 func (st *Store) appendLine(path string, b []byte) error {
-	if !st.durability.DirectorySync {
-		return errors.New("jsonlstore: sidecar append requires directory sync")
+	if !st.durability.FileSync || !st.durability.DirectorySync {
+		return errors.New("jsonlstore: sidecar append requires file and directory sync")
 	}
 	root, f, err := st.openCanonicalSidecarForAppend(path)
 	if err != nil {

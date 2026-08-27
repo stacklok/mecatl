@@ -18,6 +18,53 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func TestEventLogAppendRequiresAllSyncCapabilitiesBeforeMutatingSidecar(t *testing.T) {
+	for _, capability := range []struct {
+		name    string
+		disable func(*Store)
+	}{
+		{
+			name:    "file sync",
+			disable: func(st *Store) { st.durability.FileSync = false },
+		},
+		{
+			name:    "directory sync",
+			disable: func(st *Store) { st.durability.DirectorySync = false },
+		},
+	} {
+		for _, existing := range []bool{false, true} {
+			t.Run(capability.name+"/existing="+strconv.FormatBool(existing), func(t *testing.T) {
+				st := newInternalStore(t)
+				id := session.SessionID("unsupported-sync")
+				path := st.resolver.canonicalPath(id, kindEvents)
+				want := []byte("existing sidecar bytes\n")
+				if existing {
+					writeBytes(t, path, want)
+				}
+				capability.disable(st)
+				for seq := int64(1); seq <= 2; seq++ {
+					if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: seq}); err == nil {
+						t.Fatalf("Append #%d succeeded without %s", seq, capability.name)
+					}
+				}
+				got, err := os.ReadFile(path)
+				if !existing {
+					if !os.IsNotExist(err) {
+						t.Fatalf("sidecar after failed appends = %q, %v; want absent", got, err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("ReadFile existing sidecar: %v", err)
+				}
+				if !bytes.Equal(got, want) {
+					t.Fatalf("existing sidecar changed after failed appends: got %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestEventLogAppendDurabilityFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

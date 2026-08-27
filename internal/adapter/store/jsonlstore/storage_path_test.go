@@ -44,3 +44,68 @@ func TestStoreRejectsEmptyRoot(t *testing.T) {
 		t.Fatal("New(\"\") succeeded, want error")
 	}
 }
+
+func TestStorePreservesConfiguredRootSymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatalf("Mkdir target: %v", err)
+	}
+	configured := filepath.Join(base, "configured")
+	if err := os.Symlink(target, configured); err != nil {
+		t.Fatalf("Symlink configured root: %v", err)
+	}
+	st, err := New(configured)
+	if err != nil {
+		t.Fatalf("New through configured root symlink: %v", err)
+	}
+	if st.resolver.dir != configured {
+		t.Fatalf("configured root = %q, want %q", st.resolver.dir, configured)
+	}
+}
+
+func TestStoreRejectsAdapterOwnedDirectorySymlinks(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, root string)
+	}{
+		{
+			name: "canonical",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				target := filepath.Join(root, "canonical-target")
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatalf("Mkdir target: %v", err)
+				}
+				if err := os.Symlink(target, filepath.Join(root, canonicalDirName)); err != nil {
+					t.Fatalf("Symlink canonical dir: %v", err)
+				}
+			},
+		},
+		{
+			name: "inventory catalog",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				canonical := filepath.Join(root, canonicalDirName)
+				if err := os.Mkdir(canonical, 0o700); err != nil {
+					t.Fatalf("Mkdir canonical dir: %v", err)
+				}
+				target := filepath.Join(root, "catalog-target")
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatalf("Mkdir target: %v", err)
+				}
+				if err := os.Symlink(target, filepath.Join(canonical, inventoryCatalogDirName)); err != nil {
+					t.Fatalf("Symlink inventory catalog dir: %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.setup(t, root)
+			if _, err := New(root); err == nil {
+				t.Fatal("New succeeded with an adapter-owned directory symlink")
+			}
+		})
+	}
+}
