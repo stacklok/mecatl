@@ -184,9 +184,15 @@
   EventLog.Append, and ToolCall all take the same stable per-family flock identity;
   sidecar-first/snapshot-last deletion therefore cannot race a same-family append,
   while unrelated families proceed independently. Snapshot replacement holds that
-  owner-only flock
-  from inactive-temp recovery through same-directory write, file sync, atomic rename,
-  and directory sync. Replacement temp names carry a random process-owner token and
+  owner-only flock from inactive-temp recovery through same-directory write, file
+  sync, atomic rename, and directory sync. Event and tool sidecars use the same
+  flock across cooperating jsonlstore processes: newline is their commit marker,
+  append truncates only an unterminated EOF fragment before writing and file-syncing
+  one complete record, and first publication directory-syncs. Event reads capture a
+  bounded newline-terminated prefix under that lock then yield after releasing it;
+  only an unterminated final fragment is ignored. A malformed complete or middle
+  record, unknown format, malformed payload, or I/O error fails loudly. The flock
+  does not coordinate arbitrary external writers. Replacement temp names carry a random process-owner token and
   monotonic generation; only names that validate against that private protocol are
   cleanup candidates. Startup skips a family whose lock is live, while the next
   successful Save waits for the lock and removes all prior inactive generations

@@ -60,7 +60,8 @@ mecated serve \
   --posture auto
 ```
 
-`--store-dir` enables JSONL persistence. `--auth-token` requires the token on every
+`--store-dir` enables local JSONL persistence with an authoritative v2 current
+snapshot plus readable v1 history. `--auth-token` requires the token on every
 request (also readable from `MECATL_AUTH_TOKEN`). `--posture auto` sets allow-all
 for unattended runs while keeping the child substitution floor (prompt-injection
 defence) on.
@@ -458,19 +459,20 @@ Enable JSONL persistence by pointing `--store-dir` at a directory:
 mecated serve --store-dir /var/lib/mecatl/sessions
 ```
 
-Each session gets three files sharing one stem under a `sid-v1` subdirectory: a
-`.session.jsonl` snapshot log, a `.tools.jsonl` audit sidecar, and a
-`.events.jsonl` durable event log (reasoning, approval pairs, delegation
-lifecycle). Completed sessions are immediately readable by the event-sourced
+Each session has an authoritative `.session.json` v2 current snapshot and
+`.tools.jsonl` audit and `.events.jsonl` durable-event sidecars under `sid-v1`.
+Older `.session.jsonl` snapshot histories remain readable and are promoted lazily
+on the next write. The files are plaintext and owner-only; do not edit or share
+them. Completed sessions are immediately readable by the event-sourced
 rehydration path (`internal/adapter/eventsource`); in-flight sessions are
 rehydrated from the snapshot on restart.
 
 The stem is derived from the session id but is **not** reversible, so locate a
-session by reading the id out of the file (`tail -n1 … | jq -r .id`) rather than
-from the filename — see [Session store](/building/extension-points/session-store.md) for
-the layout and a ready-made loop. A store directory written by an older version
-keeps its files directly under `--store-dir`; they stay readable and move into
-`sid-v1/` on that session's next write, so no migration step is needed.
+session by reading the id from the authoritative snapshot rather than from the
+filename — see [Session store](/building/extension-points/session-store.md) for
+the layout. A store directory written by an older version keeps its files directly
+under `--store-dir`; they stay readable and move into `sid-v1/` on that session's
+next write, so no migration step is needed.
 
 :::note[Kubernetes and persistent volumes]
 

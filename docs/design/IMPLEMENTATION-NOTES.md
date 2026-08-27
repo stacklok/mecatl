@@ -6041,7 +6041,11 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
   unsupported sync primitives are an explicit weaker capability rather than a
   host-crash-safety claim. A write, file-sync, or rename failure leaves the prior
   snapshot authoritative and fails loudly; a directory-sync failure after rename
-  reports an error with the new snapshot already authoritative.
+  reports an error with the new snapshot already authoritative. Delete and legacy
+  promotion open and sync every affected root/canonical directory before their first
+  destructive mutation; sidecars move or disappear before snapshot authority changes.
+  If progress is partial they sync it before returning, so retry converges; unavailable
+  directory sync rejects the destructive operation before it changes anything.
   The owner-only version directory makes canonical names physically disjoint
   from root-level legacy and schedule names.
   `internal/adapter/store/jsonlstore/resolve.go` (`sessionResolver`) is the single
@@ -6237,14 +6241,18 @@ yet (a replay consumer is Phase 3b). See `CLOUD-NATIVE.md` (Phase 3, ledger row 
 
   `Append` writes a per-record format-tagged line
   `{"v":"eventlog-json/1","ev":<session.Event JSON>}` via `appendLine` under the
-  stable family flock. Save, Delete, legacy promotion/removal, EventLog.Append,
-  and ToolCall share that one cross-process mutation identity; the family lock
-  covers the full sidecar-first/snapshot-last operation, while unrelated families
-  remain independent. `Read` scans ALL lines cumulatively (NOT latest-line-wins like the snapshot read),
-  decodes each, and yields in append order, rejecting an unknown format tag as an infra
-  error (a forward-incompatible log fails loud, not silently skips). `Delete` removes
-  sidecars before each family snapshot, preserving the partial-failure-stays-visible
-  invariant. The composition
+  stable family flock. Newline is the commit marker: append truncates only an
+  unterminated EOF fragment, rejects short writes, then writes and file-syncs one
+  complete newline-terminated record; first sidecar publication directory-syncs.
+  Save, Delete, legacy promotion/removal, EventLog.Append, and ToolCall share that
+  one cross-process mutation identity for cooperating jsonlstore processes (not
+  arbitrary external writers); the family lock covers the full sidecar-first/
+  snapshot-last operation, while unrelated families remain independent. `Read`
+  captures a bounded complete-record prefix under the flock and yields after releasing
+  it. It ignores only an unterminated final fragment; malformed newline-terminated or
+  middle records, unknown format tags, malformed payloads, and I/O faults fail loudly.
+  `Delete` removes sidecars before each family snapshot, preserving the
+  partial-failure-stays-visible invariant. The composition
   layer (`internal/app/build.go` (`buildStore`)) wires the jsonlstore `Store` as both
   `SessionStore` and `EventLog`; the memstore default supplies an in-memory
   `engine/adapter/memstore/eventlog.go` (`EventLog`) sibling so the seam is never nil

@@ -211,34 +211,32 @@ log   := memstore.NewEventLog()
 
 The default backend for `mecated`. The same package triples as `port.SessionStore`, `port.EventLog`, and `port.ToolCallRecorder`.
 
-Each session owns **three** files under a `sid-v1` subdirectory of the store directory, sharing one stem:
+Each session owns an authoritative v2 snapshot and two append-only sidecars under a
+`sid-v1` subdirectory, sharing one stem:
 
 ```
-<store-dir>/sid-v1/sid-v1-<token>.session.jsonl   one snapshot per Save (latest line wins)
-<store-dir>/sid-v1/sid-v1-<token>.tools.jsonl     one record per tool call
-<store-dir>/sid-v1/sid-v1-<token>.events.jsonl    one record per relayed event (eventlog-json/1)
+<store-dir>/sid-v1/sid-v1-<token>.session.json      authoritative v2 current snapshot
+<store-dir>/sid-v1/sid-v1-<token>.tools.jsonl       one record per tool call
+<store-dir>/sid-v1/sid-v1-<token>.events.jsonl      one record per relayed event (eventlog-json/1)
 ```
 
-**The filename is not the session id.** `<token>` is a sanitized, truncated
-excerpt of the id plus a hash — bounded so a session id of any length names a
-valid file, and deliberately not reversible. To find a session on disk, read the
-id out of the file rather than inferring it from the name:
+Historical v1 `.session.jsonl` files remain readable and are lazily promoted on a
+later write. Do not infer the session id from a filename or edit these files; the
+store is plaintext and its files, including sidecars, are owner-only (`0600`).
 
-```sh
-for f in "$STORE_DIR"/sid-v1/*.session.jsonl; do
-  printf '%s\t%s\n' "$(tail -n1 "$f" | jq -r .id)" "$f"
-done
-```
-
-`Delete` removes the sidecars **before** the snapshot, and is not atomic across
-the three. That order is deliberate: listing enumerates only `*.session.jsonl`,
-so a partial delete leaves the session still visible and the next retention sweep
-retries it. The reverse order could orphan a sidecar no sweep could find.
+Snapshot replacement uses a same-directory temporary file, full write, file sync
+where supported, atomic replacement, and directory sync where supported.
+`SnapshotDurability` reports the available primitives: only all three make a
+successful save host-crash safe. Events and tool records are newline-committed;
+an interrupted final fragment is ignored or replaced on the next append, while a
+malformed complete record fails loudly. A stable family flock coordinates
+cooperating jsonlstore processes, not arbitrary external writers. Quiesce every
+writer before copying the complete store directory for backup or restore.
 
 Select it with `--store-dir <path>`. The directory is created if it does not
-exist, owner-only (`0700`) — it holds plaintext transcripts. A store written by an
-older version keeps its files directly under `<store-dir>`; those are read as-is
-and moved into `sid-v1/` the next time that session is written.
+exist, owner-only (`0700`). A store written by an older version keeps its files
+directly under `<store-dir>`; those are read as-is and moved into `sid-v1/` the
+next time that session is written.
 
 ### internal/adapter/redisstore — Redis-backed
 

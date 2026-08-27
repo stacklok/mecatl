@@ -557,22 +557,42 @@ func (r sessionResolver) loadSnapshot(id session.SessionID) ([]byte, error) {
 // read the snapshot at all before appending, and a torn latest line must not
 // make a session unwritable — appending a fresh snapshot after it is precisely
 // what restores the session, since Load takes the last line.
-func (r sessionResolver) prepareWrite(id session.SessionID) error {
+func (st *Store) prepareWrite(id session.SessionID) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
-	present, err := r.canonicalOwnership(id)
-	if err != nil || present {
+	present, err := st.resolver.canonicalOwnership(id)
+	if err != nil {
 		return err
 	}
-	line, ok, err := r.legacySnapshot(id)
+	if present {
+		// A canonical v1 snapshot may be the visible result of an earlier legacy
+		// rename whose final directory sync failed. Re-sync both namespaces on the
+		// retry before claiming success. Current v2 snapshots have their own
+		// replacement boundary and stay on the ordinary fast path.
+		currentName, nameErr := st.resolver.currentSnapshotName(id)
+		if nameErr != nil {
+			return nameErr
+		}
+		current, existsErr := st.resolver.exists(currentName)
+		if existsErr != nil || current || !st.durability.DirectorySync {
+			return existsErr
+		}
+		dirs, openErr := st.openDurableDirectories(st.resolver.dir, st.resolver.canonicalDir())
+		if openErr != nil {
+			return openErr
+		}
+		defer dirs.close()
+		return dirs.sync()
+	}
+	line, ok, err := st.resolver.legacySnapshot(id)
 	if err != nil || !ok {
 		return err
 	}
 	if _, err := sessnap.Unmarshal(line); err != nil {
 		return err
 	}
-	return r.migrateLegacyFamily(id)
+	return st.migrateLegacyFamily(id)
 }
 
 // snapshotModifiedAt preserves the v1 file's logical modification time on the
@@ -844,26 +864,44 @@ func scanCurrentSnapshotDir(root *os.Root, byID map[session.SessionID]snapshotFi
 // migrateLegacyFamily preserves bytes and append order by renaming sidecars
 // first and the snapshot last (familyOrder). Missing sources support
 // interrupted retries.
-func (r sessionResolver) migrateLegacyFamily(id session.SessionID) error {
-	root, err := r.openRoot()
+func (st *Store) migrateLegacyFamily(id session.SessionID) error {
+	dirs, err := st.openDurableDirectories(st.resolver.dir, st.resolver.canonicalDir())
+	if err != nil {
+		return err
+	}
+	defer dirs.close()
+	root, err := st.resolver.openRoot()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	for _, kind := range familyOrder {
-		src, err := r.legacyName(id, kind)
+
+	move := func(kind sessionKind) error {
+		src, err := st.resolver.legacyName(id, kind)
 		if err != nil {
 			return fmt.Errorf("jsonlstore: migrate %s: %w", kind.suffix(), err)
 		}
-		dst, err := r.canonicalRelativeName(id, kind)
+		dst, err := st.resolver.canonicalRelativeName(id, kind)
 		if err != nil {
 			return fmt.Errorf("jsonlstore: migrate %s: %w", kind.suffix(), err)
 		}
-		if err := moveLegacyFile(root, src, dst); err != nil {
+		if err := moveLegacyFile(st.snapshot.moveRoot, root, src, dst); err != nil {
 			return fmt.Errorf("jsonlstore: migrate %s: %w", kind.suffix(), err)
+		}
+		return nil
+	}
+	for _, kind := range sidecarKinds {
+		if err := move(kind); err != nil {
+			return errors.Join(err, dirs.sync())
 		}
 	}
-	return nil
+	if err := dirs.sync(); err != nil {
+		return err
+	}
+	if err := move(kindSnapshot); err != nil {
+		return errors.Join(err, dirs.sync())
+	}
+	return dirs.sync()
 }
 
 // moveLegacyFile renames one legacy family file onto its canonical path.
@@ -885,7 +923,7 @@ func (r sessionResolver) migrateLegacyFamily(id session.SessionID) error {
 //
 // A present destination with a present regular source is a genuine clash:
 // error rather than let os.Rename silently clobber already-migrated data.
-func moveLegacyFile(root *os.Root, src, dst string) error {
+func moveLegacyFile(move func(*os.Root, string, string) error, root *os.Root, src, dst string) error {
 	info, err := root.Lstat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -903,7 +941,7 @@ func moveLegacyFile(root *os.Root, src, dst string) error {
 	if present {
 		return fmt.Errorf("destination already exists: %q", dst)
 	}
-	return root.Rename(src, dst)
+	return move(root, src, dst)
 }
 
 func sessionNotFound(id session.SessionID) error {

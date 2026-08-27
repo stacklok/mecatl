@@ -84,7 +84,14 @@ func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailure
 		t.Fatal(err)
 	}
 	originalSync := st2.snapshot.syncDir
-	st2.snapshot.syncDir = func(*os.File) error { return errors.New("injected post-rename crash") }
+	syncCalls := 0
+	st2.snapshot.syncDir = func(dir *os.File) error {
+		syncCalls++
+		if syncCalls == 5 { // after legacy sidecars and snapshot authority are durable
+			return errors.New("injected post-rename crash")
+		}
+		return originalSync(dir)
+	}
 	migrationCtx, releaseMigration = acquireMigrationTestContext(t, st2)
 	defer releaseMigration()
 	reason, err = st2.MigrateSessionFamily(migrationCtx, inspection.Families[0])

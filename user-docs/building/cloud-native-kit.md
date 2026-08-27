@@ -23,9 +23,11 @@ A replacement process resumes from the last persisted turn boundary; it does not
 resume an in-flight goroutine or guarantee that work after the last save exists.
 Graceful shutdown cancels active runs after its bounded drain window, while a
 crash may leave a Kubernetes lease held until its TTL expires. Recovery occurs
-when a later prompt or approval re-enters the session. Local JSONL persistence is
-restart-safe, but it has no fsync or atomic-rename guarantee against host or
-process crashes; use an external durable backend when that guarantee matters.
+when a later prompt or approval re-enters the session. Local JSONL persistence is restart-safe and uses file and directory sync where the
+filesystem supports them. `SnapshotDurability` reports whether those primitives make
+snapshot saves host-crash safe; weaker filesystems do not receive that claim. A
+process crash can still lose work after the last successful save or leave an
+unterminated final sidecar record, which is safely ignored on recovery.
 
 The harness was unusually close to this by construction: the LLM adapters keep no server-side state (`store:false`; full replay on every turn), and the session aggregate round-trips through a stable snapshot saved at every turn boundary. The remaining gaps were the snapshot missing three fields (session profile, provider/model selector, cumulative token usage), a process death while parked awaiting approval stranding the session, and the event stream being emitted and discarded rather than persisted.
 

@@ -27,6 +27,7 @@ package jsonlstore
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -37,6 +38,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,10 +78,58 @@ type snapshotOps struct {
 	write        func(*os.File, []byte) (int, error)
 	syncFile     func(*os.File) error
 	rename       func(string, string) error
+	moveRoot     func(*os.Root, string, string) error
+	remove       func(string) error
 	openDir      func(string) (*os.File, error)
 	syncDir      func(*os.File) error
 	atomicRename bool
 	fileSync     bool
+}
+
+type durableDirectorySet struct {
+	ops  snapshotOps
+	dirs map[string]*os.File
+}
+
+func (st *Store) openDurableDirectories(paths ...string) (*durableDirectorySet, error) {
+	if !st.durability.DirectorySync {
+		return nil, errors.New("jsonlstore: destructive operation requires directory sync")
+	}
+	set := &durableDirectorySet{ops: st.snapshot, dirs: make(map[string]*os.File, len(paths))}
+	for _, path := range paths {
+		path = filepath.Clean(path)
+		if _, ok := set.dirs[path]; ok {
+			continue
+		}
+		dir, err := st.snapshot.openDir(path) //nolint:gosec // owner-only store directory
+		if err != nil {
+			set.close()
+			return nil, fmt.Errorf("jsonlstore: open directory for durable mutation: %w", err)
+		}
+		set.dirs[path] = dir
+	}
+	return set, nil
+}
+
+func (s *durableDirectorySet) sync() error {
+	paths := make([]string, 0, len(s.dirs))
+	for path := range s.dirs {
+		paths = append(paths, path)
+	}
+	slices.Sort(paths)
+	var syncErr error
+	for _, path := range paths {
+		if err := s.ops.syncDir(s.dirs[path]); err != nil {
+			syncErr = errors.Join(syncErr, fmt.Errorf("jsonlstore: sync directory %q: %w", path, err))
+		}
+	}
+	return syncErr
+}
+
+func (s *durableDirectorySet) close() {
+	for _, dir := range s.dirs {
+		_ = dir.Close()
+	}
 }
 
 func defaultSnapshotOps() snapshotOps {
@@ -88,6 +138,8 @@ func defaultSnapshotOps() snapshotOps {
 		write:      (*os.File).Write,
 		syncFile:   (*os.File).Sync,
 		rename:     os.Rename,
+		moveRoot:   (*os.Root).Rename,
+		remove:     os.Remove,
 		openDir:    os.Open,
 		syncDir:    (*os.File).Sync,
 		// Go's os.Rename is an atomic replacement when source and destination
@@ -400,7 +452,7 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 		if err := reapSnapshotTemps(path); err != nil {
 			return err
 		}
-		if err := st.resolver.prepareWrite(s.ID); err != nil {
+		if err := st.prepareWrite(s.ID); err != nil {
 			return err
 		}
 		modifiedAt, err := st.resolver.snapshotModifiedAt(s.ID, time.Now())
@@ -564,8 +616,8 @@ const maxScannerTokenSize = 16 * 1024 * 1024
 
 // newScanner builds a bufio.Scanner over f with the generous buffer a snapshot
 // or event-log line can need.
-func newScanner(f *os.File) *bufio.Scanner {
-	sc := bufio.NewScanner(f)
+func newScanner(r io.Reader) *bufio.Scanner {
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), maxScannerTokenSize)
 	return sc
 }
@@ -685,6 +737,11 @@ func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.Ses
 }
 
 func (st *Store) deleteSessionFamilyLocked(id session.SessionID) error {
+	dirs, err := st.openDurableDirectories(st.resolver.dir, st.resolver.canonicalDir())
+	if err != nil {
+		return err
+	}
+	defer dirs.close()
 	if err := st.advanceInventoryGeneration(); err != nil {
 		return err
 	}
@@ -696,37 +753,58 @@ func (st *Store) deleteSessionFamilyLocked(id session.SessionID) error {
 	if err != nil {
 		return err
 	}
+
+	mutated := false
+	remove := func(path, label string) error {
+		removed, err := removeSessionFile(st.snapshot.remove, path)
+		mutated = mutated || removed
+		if err != nil {
+			if mutated {
+				err = errors.Join(err, dirs.sync())
+			}
+			return fmt.Errorf("jsonlstore: delete %s %q: %w", label, id, err)
+		}
+		return nil
+	}
 	for _, kind := range sidecarKinds {
-		if err := removeSessionFile(st.resolver.canonicalPath(id, kind)); err != nil {
-			return fmt.Errorf("jsonlstore: delete %q: %w", id, err)
+		if err := remove(st.resolver.canonicalPath(id, kind), kind.suffix()); err != nil {
+			return err
 		}
 		if legacyOwned {
-			if err := removeSessionFile(st.resolver.legacyPath(id, kind)); err != nil {
-				return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+			if err := remove(st.resolver.legacyPath(id, kind), "legacy "+kind.suffix()); err != nil {
+				return err
 			}
 		}
 	}
+	if err := dirs.sync(); err != nil {
+		return err
+	}
+
+	mutated = false
 	if canonicalOwned {
-		if err := removeSessionFile(st.resolver.canonicalPath(id, kindSnapshot)); err != nil {
-			return fmt.Errorf("jsonlstore: delete v1 %q: %w", id, err)
+		if err := remove(st.resolver.canonicalPath(id, kindSnapshot), "v1"); err != nil {
+			return err
 		}
-		if err := removeSessionFile(st.resolver.currentSnapshotPath(id)); err != nil {
-			return fmt.Errorf("jsonlstore: delete current %q: %w", id, err)
+		if err := remove(st.resolver.currentSnapshotPath(id), "current"); err != nil {
+			return err
 		}
 	}
 	if legacyOwned {
-		if err := removeSessionFile(st.resolver.legacyPath(id, kindSnapshot)); err != nil {
-			return fmt.Errorf("jsonlstore: delete legacy %q: %w", id, err)
+		if err := remove(st.resolver.legacyPath(id, kindSnapshot), "legacy"); err != nil {
+			return err
 		}
 	}
-	return nil
+	return dirs.sync()
 }
 
-func removeSessionFile(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+func removeSessionFile(remove func(string) error, path string) (bool, error) {
+	if err := remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 // toolCallRecord is the structured line written by ToolCall. It is a flat,
@@ -770,10 +848,10 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	ctx, cancel := context.WithTimeout(context.Background(), st.toolCallLockTimeout)
 	defer cancel()
 	_ = st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-		if err := st.resolver.prepareWrite(id); err != nil {
+		if err := st.prepareWrite(id); err != nil {
 			return err
 		}
-		return appendLine(st.resolver.canonicalPath(id, kindTools), line)
+		return st.appendLine(st.resolver.canonicalPath(id, kindTools), line)
 	})
 }
 
@@ -782,8 +860,8 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 // its session.Event JSON verbatim (already redacted at the relay) and wrapped in
 // the {"v":"eventlog-json/1","ev":...} envelope so Read can validate the format.
 // It uses the same stable per-family cross-process mutation identity as
-// Save/Delete/ToolCall, and is best-effort durable: the relay logs a WARN on a
-// returned error and never aborts the run.
+// Save/Delete/ToolCall. A nil return means the newline-committed record has
+// been file-synced; first publication of the sidecar is directory-synced too.
 func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
 	if err := validateSessionID(id); err != nil {
 		return err
@@ -797,49 +875,61 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 		return fmt.Errorf("jsonlstore: marshal event record: %w", err)
 	}
 	return st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-		if err := st.resolver.prepareWrite(id); err != nil {
+		if err := st.prepareWrite(id); err != nil {
 			return err
 		}
-		return appendLine(st.resolver.canonicalPath(id, kindEvents), line)
+		return st.appendLine(st.resolver.canonicalPath(id, kindEvents), line)
 	})
 }
 
 // Read scans the per-session event log and yields every recorded event in append
 // order (cumulative — NOT latest-line-wins like the snapshot read). It satisfies
 // port.EventLog. A MISS (no event file) yields an EMPTY sequence: absence is data.
-// A genuine fault — an undecodable record, an unknown format tag, or an I/O error
-// — is yielded as the error on a zero-value event and the consumer stops (the
-// iterator returns after the consumer's range body returns false on the error
-// item, the standard iter.Seq2 error idiom).
+// A genuine fault — an undecodable newline-terminated record, an unknown format
+// tag, or an I/O error — is yielded as the error on a zero-value event and the
+// consumer stops. Only an unterminated final record is ignored: newline is the
+// event-record commit marker.
 func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
+		if err := validateSessionID(id); err != nil {
+			yield(session.Event{}, err)
+			return
+		}
 		var (
-			path    string
-			present bool
+			f            *os.File
+			completeSize int64
 		)
 		err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-			var err error
-			path, present, err = st.resolver.readablePath(id, kindEvents)
-			return err
+			path, present, err := st.resolver.readablePath(id, kindEvents)
+			if err != nil || !present {
+				return err
+			}
+			f, err = os.Open(path) //nolint:gosec // resolver-derived path
+			if os.IsNotExist(err) {
+				f = nil
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("open event file: %w", err)
+			}
+			completeSize, err = completeRecordSize(f)
+			if err != nil {
+				_ = f.Close()
+				f = nil
+				return fmt.Errorf("inspect event file tail: %w", err)
+			}
+			return nil
 		})
 		if err != nil {
-			yield(session.Event{}, fmt.Errorf("jsonlstore: resolve event file: %w", err))
+			yield(session.Event{}, fmt.Errorf("jsonlstore: capture event file: %w", err))
 			return
 		}
-		if !present {
-			return
-		}
-		f, err := os.Open(path) //nolint:gosec // resolver-derived path
-		if err != nil {
-			if os.IsNotExist(err) {
-				return
-			}
-			yield(session.Event{}, fmt.Errorf("jsonlstore: open event file: %w", err))
+		if f == nil {
 			return
 		}
 		defer func() { _ = f.Close() }()
 
-		sc := newScanner(f)
+		sc := newScanner(io.NewSectionReader(f, 0, completeSize))
 		for sc.Scan() {
 			b := sc.Bytes()
 			if len(strings.TrimSpace(string(b))) == 0 {
@@ -882,48 +972,89 @@ func (st *Store) ScheduleStore() port.ScheduleStore {
 	return &scheduleStore{dir: st.resolver.dir, mu: &st.mu}
 }
 
-// appendLine appends b followed by a newline to the file at path, opening it
-// for append (creating it if needed). Each line is a complete JSON record.
-//
-// TORN-TAIL REPAIR. A write is one unsynced Write of record+'\n', so a crash,
-// SIGKILL or ENOSPC partway through leaves a truncated final line with NO
-// terminating newline. Appending straight onto that would GLUE the next record
-// to the fragment, so one interrupted write would corrupt the following record
-// too — turning a damaged tail into a permanently unreadable file, and (for the
-// snapshot) destroying the very append that would otherwise have repaired it,
-// since Load is last-line-wins. So: if the file is non-empty and does not end
-// in '\n', emit a leading newline first. The fragment then stands as its own
-// line, where scanLastNonBlankLine and readLastLine both look PAST it to the
-// record just written. Damage stays bounded to the one interrupted record.
-func appendLine(path string, b []byte) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o644) //nolint:gosec // path is sanitized
+// completeRecordSize returns the byte offset immediately after the final newline.
+// A suffix after that offset is an uncommitted record fragment.
+func completeRecordSize(f *os.File) (int64, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	const blockSize int64 = 32 * 1024
+	for end := info.Size(); end > 0; {
+		start := max(int64(0), end-blockSize)
+		buf := make([]byte, end-start)
+		n, err := f.ReadAt(buf, start)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
+		}
+		if idx := bytes.LastIndexByte(buf[:n], '\n'); idx >= 0 {
+			return start + int64(idx) + 1, nil
+		}
+		end = start
+	}
+	return 0, nil
+}
+
+// appendLine appends one newline-committed record. The caller holds the stable
+// session-family lock, so truncating an uncommitted EOF fragment and appending
+// the replacement is atomic with respect to every supported writer.
+func (st *Store) appendLine(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600) //nolint:gosec // resolver-derived owner-only path
+	created := err == nil
+	if errors.Is(err, os.ErrExist) {
+		f, err = os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // resolver-derived owner-only path
+	}
 	if err != nil {
 		return fmt.Errorf("jsonlstore: open for append: %w", err)
 	}
-	rec := make([]byte, 0, len(b)+2)
+	closed := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
+		}
+	}()
+
+	end, err := completeRecordSize(f)
+	if err != nil {
+		return fmt.Errorf("jsonlstore: inspect tail for append: %w", err)
+	}
 	info, err := f.Stat()
 	if err != nil {
-		_ = f.Close()
 		return fmt.Errorf("jsonlstore: stat for append: %w", err)
 	}
-	if size := info.Size(); size > 0 {
-		var tail [1]byte
-		if _, err := f.ReadAt(tail[:], size-1); err != nil {
-			_ = f.Close()
-			return fmt.Errorf("jsonlstore: read tail for append: %w", err)
-		}
-		if tail[0] != '\n' {
-			rec = append(rec, '\n')
+	if end != info.Size() {
+		if err := f.Truncate(end); err != nil {
+			return fmt.Errorf("jsonlstore: truncate torn tail: %w", err)
 		}
 	}
-	rec = append(rec, b...)
-	rec = append(rec, '\n')
-	if _, err := f.Write(rec); err != nil {
-		_ = f.Close()
+	if _, err := f.Seek(end, io.SeekStart); err != nil {
+		return fmt.Errorf("jsonlstore: seek for append: %w", err)
+	}
+	record := append(append(make([]byte, 0, len(b)+1), b...), '\n')
+	written, err := st.snapshot.write(f, record)
+	if err != nil {
 		return fmt.Errorf("jsonlstore: append: %w", err)
+	}
+	if written != len(record) {
+		return fmt.Errorf("jsonlstore: append: wrote %d of %d bytes: %w", written, len(record), io.ErrShortWrite)
+	}
+	if err := st.snapshot.syncFile(f); err != nil {
+		return fmt.Errorf("jsonlstore: sync appended record: %w", err)
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("jsonlstore: close after append: %w", err)
+	}
+	closed = true
+	if !created {
+		return nil
+	}
+	dir, err := st.snapshot.openDir(filepath.Dir(path)) //nolint:gosec // owner-only store directory
+	if err != nil {
+		return fmt.Errorf("jsonlstore: open sidecar directory: %w", err)
+	}
+	defer func() { _ = dir.Close() }()
+	if err := st.snapshot.syncDir(dir); err != nil {
+		return fmt.Errorf("jsonlstore: sync sidecar directory: %w", err)
 	}
 	return nil
 }

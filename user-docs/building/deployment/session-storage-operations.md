@@ -185,8 +185,14 @@ It contains no destructive shell command examples; use your platform's backup to
 service stopped.
 
 1. **Stop and quiesce.** Stop the user service and confirm the daemon has exited. Confirm no other
-   process or replica points at the same local store and no maintenance job is active. A filesystem
-   copy while the daemon is writing is not a supported backup.
+   process or replica points at the same local store and no maintenance job is active.
+   A filesystem copy while the daemon is writing is not a supported backup. The stable
+   family flock coordinates cooperating mecatl processes only; it cannot make an
+   external copy or arbitrary writer consistent. V2 snapshots and sidecars sync where
+   supported, but `SnapshotDurability` can report a weaker filesystem, so a successful
+   operation must not be advertised as host-crash safe there. An interrupted final
+   JSONL record is the only tolerated torn tail; a complete malformed record fails
+   loudly and needs operator recovery.
 2. **Back up.** Snapshot or copy the complete state directory—not selected globs—including current
    snapshots, legacy files, tool/event sidecars, catalog data, maintenance job state, and lock
    sentinels. Preserve ownership, mode, timestamps, and filesystem boundaries. Record the executable

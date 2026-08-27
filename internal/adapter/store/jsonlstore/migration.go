@@ -181,6 +181,11 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 	path := st.resolver.currentSnapshotPath(expected.ID)
 	var reason string
 	err = st.withSnapshotFamilyLock(ctx, path, func() error {
+		dirs, err := st.openDurableDirectories(st.resolver.canonicalDir())
+		if err != nil {
+			return err
+		}
+		defer dirs.close()
 		_, info, line, found, err := st.migrationSource(expected.ID)
 		if err != nil {
 			reason = "invalid_snapshot"
@@ -188,9 +193,11 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 		}
 		if !found {
 			// A previous attempt may have committed and removed v1 before its job
-			// checkpoint. A readable matching v2 is idempotent success.
+			// checkpoint. A readable matching v2 is idempotent success after the
+			// canonical directory is synced again, which converges a retry after a
+			// failed final removal sync.
 			if st.verifiedCurrent(expected.ID, nil) {
-				return nil
+				return dirs.sync()
 			}
 			reason = "changed"
 			return nil
@@ -218,7 +225,7 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 		if err := st.advanceInventoryGeneration(); err != nil {
 			return err
 		}
-		if err := st.resolver.prepareWrite(expected.ID); err != nil {
+		if err := st.prepareWrite(expected.ID); err != nil {
 			return err
 		}
 		v1Path := st.resolver.canonicalPath(expected.ID, kindSnapshot)
@@ -243,10 +250,14 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 			reason = "verification_failed"
 			return nil
 		}
-		if err := os.Remove(v1Path); err != nil && !os.IsNotExist(err) {
+		removed, err := removeSessionFile(st.snapshot.remove, v1Path)
+		if err != nil {
 			return err
 		}
-		return st.syncCanonicalDir()
+		if removed {
+			return dirs.sync()
+		}
+		return nil
 	})
 	if err != nil {
 		return "backend_failure", nil
@@ -299,18 +310,6 @@ func (st *Store) verifiedCurrent(id session.SessionID, want []byte) bool {
 		return false
 	}
 	return want == nil || string(current.Snapshot) == string(want)
-}
-
-func (st *Store) syncCanonicalDir() error {
-	if !st.durability.DirectorySync {
-		return nil
-	}
-	dir, err := st.snapshot.openDir(st.resolver.canonicalDir())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dir.Close() }()
-	return st.snapshot.syncDir(dir)
 }
 
 func (st *Store) migrationJobPath(id string) (string, error) {

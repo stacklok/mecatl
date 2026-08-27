@@ -439,7 +439,7 @@ func TestResolverRootRejectsTraversalDuringMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonicalRelativeName: %v", err)
 	}
-	if err := moveLegacyFile(root, filepath.Join("..", filepath.Base(foreign)), dst); err == nil {
+	if err := moveLegacyFile((*os.Root).Rename, root, filepath.Join("..", filepath.Base(foreign)), dst); err == nil {
 		t.Fatal("moveLegacyFile accepted a source outside the store root")
 	}
 	assertBytes(t, foreign, want)
@@ -489,7 +489,7 @@ func TestMigrationRejectsSymlinkSourceToForeignDescendant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonicalRelativeName: %v", err)
 	}
-	if err := moveLegacyFile(root, src, dst); err == nil {
+	if err := moveLegacyFile((*os.Root).Rename, root, src, dst); err == nil {
 		t.Fatal("moveLegacyFile accepted a symlink source")
 	}
 	assertBytes(t, foreign, want)
@@ -786,11 +786,8 @@ func TestLongLegacyIDMigratesForward(t *testing.T) {
 	}
 }
 
-// TestAppendLineRepairsTornTail pins appendLine's two branches directly: a file
-// ending in '\n' is appended to verbatim, and one ending mid-record gets a
-// separating newline so the fragment cannot swallow the next record. Without it
-// a single interrupted write corrupts the FOLLOWING record too, in any of the
-// three per-session files.
+// TestAppendLineRepairsTornTail pins that a clean file is extended and an
+// unterminated EOF fragment is discarded before the next committed record.
 func TestAppendLineRepairsTornTail(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -798,7 +795,7 @@ func TestAppendLineRepairsTornTail(t *testing.T) {
 		want     string
 	}{
 		{"clean tail", "{\"a\":1}\n", "{\"a\":1}\n{\"b\":2}\n"},
-		{"torn tail", "{\"a\":1}\n{\"partial", "{\"a\":1}\n{\"partial\n{\"b\":2}\n"},
+		{"torn tail", "{\"a\":1}\n{\"partial", "{\"a\":1}\n{\"b\":2}\n"},
 		{"empty file", "", "{\"b\":2}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -806,7 +803,11 @@ func TestAppendLineRepairsTornTail(t *testing.T) {
 			if tc.existing != "" {
 				writeBytes(t, path, []byte(tc.existing))
 			}
-			if err := appendLine(path, []byte("{\"b\":2}")); err != nil {
+			st, err := New(filepath.Dir(path))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if err := st.appendLine(path, []byte("{\"b\":2}")); err != nil {
 				t.Fatalf("appendLine: %v", err)
 			}
 			assertBytes(t, path, []byte(tc.want))
