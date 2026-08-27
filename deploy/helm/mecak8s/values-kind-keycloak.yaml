@@ -1,0 +1,23 @@
+# Optional OIDC/TLS overlay for the local mecak8s Kind fixture. Layer it after
+# values-kind.yaml only through kind-keycloak-apply; e2e/k8s installs the base
+# profile alone and creates none of these fixture-owned Secrets.
+oidc:
+  enabled: true
+  issuer: https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl
+  audience: mecak8s
+  allowPrivateHTTPSIssuer: true
+  caSecret: fixture-ca
+  caKey: tls.crt
+
+service:
+  type: NodePort
+  grpcPort: 8080
+  httpPort: 8081
+  nodePorts:
+    grpc: 30081
+
+tls:
+  enabled: true
+  secretName: mecak8s-tls
+  certKey: tls.crt
+  keyKey: tls.key

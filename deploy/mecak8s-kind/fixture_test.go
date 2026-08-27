@@ -240,3 +240,115 @@ func fixtureTaskClosure(t *testing.T, roots ...string) string {
 	}
 	return out.String()
 }
+
+// TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn pins the identity layer's
+// independent lifecycle: the base cannot transitively install identity assets,
+// while the opt-in setup applies them only after the base is ready.
+func TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn(t *testing.T) {
+	base := fixtureTaskClosure(t, "kind-setup")
+	for _, forbidden := range []string{"cert-manager", "certificate-apply", "keycloak", "oidc", "tls", "values-kind-keycloak.yaml"} {
+		if strings.Contains(strings.ToLower(base), forbidden) {
+			t.Fatalf("base setup transitively depends on optional identity asset %q", forbidden)
+		}
+	}
+
+	identity := fixtureTaskClosure(t, "kind-keycloak-apply", "kind-keycloak-setup")
+	for _, want := range []string{
+		"kind-keycloak-apply:", "kind-keycloak-setup:", "cert-manager-install:",
+		"certificate-apply:", "keycloak-apply:", "chart-keycloak-apply:",
+		"deploy/mecak8s-kind/fixture-tls.yaml", "deploy/mecak8s-kind/keycloak.yaml",
+		"values-kind-keycloak.yaml", "helm upgrade --install cert-manager", "apply -f",
+		"rollout status deployment/keycloak",
+		"rollout status deployment/{{.RELEASE}}-mecak8s",
+	} {
+		if !strings.Contains(identity, want) {
+			t.Fatalf("optional Keycloak lifecycle missing %q", want)
+		}
+	}
+	if strings.Index(identity, "task: kind-setup") > strings.Index(identity, "task: kind-keycloak-apply") {
+		t.Fatal("kind-keycloak-setup must establish the base before applying identity")
+	}
+}
+
+// TestMecak8sKindFixture_Scenario3_KeycloakOIDCOverlay pins the disposable
+// private-HTTPS OIDC shape. The CA is narrowly mounted for the validator and
+// no process-wide or deprecated insecure escape hatch is admitted.
+func TestMecak8sKindFixture_Scenario3_KeycloakOIDCOverlay(t *testing.T) {
+	overlay, err := os.ReadFile("../helm/mecak8s/values-kind-keycloak.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"issuer: https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl",
+		"audience: mecak8s", "allowPrivateHTTPSIssuer: true", "caSecret: fixture-ca",
+		"caKey: tls.crt", "secretName: mecak8s-tls", "certKey: tls.crt", "keyKey: tls.key",
+	} {
+		if !strings.Contains(string(overlay), want) {
+			t.Fatalf("Keycloak overlay missing %q", want)
+		}
+	}
+
+	task := fixtureTaskClosure(t, "kind-keycloak-apply")
+	for _, want := range []string{"--values=deploy/helm/mecak8s/values-kind.yaml", "--values=deploy/helm/mecak8s/values-kind-keycloak.yaml"} {
+		if !strings.Contains(task, want) {
+			t.Fatalf("Keycloak chart apply missing %q", want)
+		}
+	}
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is required to render the Keycloak overlay")
+	}
+	cmd := exec.Command("helm", "template", "kind", ".", "-f", "values-kind.yaml", "-f", "values-kind-keycloak.yaml")
+	cmd.Dir = "../helm/mecak8s"
+	rendered, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render Keycloak OIDC overlay: %v\n%s", err, rendered)
+	}
+	for _, want := range []string{
+		"--oidc-issuer=https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl",
+		"--oidc-audience=mecak8s", "--oidc-ca-cert-file=/var/run/secrets/oidc-ca/tls.crt",
+		"--oidc-allow-private-https-issuer", "secretName: fixture-ca",
+		`- {key: "tls.crt", path: "tls.crt"}`, "--tls-cert=/var/run/secrets/tls/tls.crt",
+		"--tls-key=/var/run/secrets/tls/tls.key", "secretName: mecak8s-tls",
+	} {
+		if !strings.Contains(string(rendered), want) {
+			t.Fatalf("rendered Keycloak OIDC overlay missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"SSL_CERT_FILE", "--oidc-insecure-allow-private-issuer"} {
+		if strings.Contains(string(rendered), forbidden) {
+			t.Fatalf("rendered Keycloak OIDC overlay contains forbidden transport setting %q", forbidden)
+		}
+	}
+}
+
+// TestMecak8sKindFixture_Scenario3_ResourceAudience pins the public desktop
+// client and resource-specific audience scope. The audience is opt-in and is
+// emitted only into the access token.
+func TestMecak8sKindFixture_Scenario3_ResourceAudience(t *testing.T) {
+	manifest, err := os.ReadFile("keycloak.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(manifest)
+	for _, want := range []string{
+		`"name": "mecak8s:access"`, `"included.custom.audience": "mecak8s"`,
+		`"access.token.claim": "true"`, `"id.token.claim": "false"`,
+		`"clientId": "mecatui-kind"`, `"pkce.code.challenge.method": "S256"`,
+		`"publicClient": true`, `"standardFlowEnabled": true`,
+		"\"optionalClientScopes\": [\n            \"mecak8s:access\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Keycloak resource audience configuration missing %q", want)
+		}
+	}
+	client := text[strings.Index(text, `"clientId": "mecatui-kind"`):]
+	for _, forbidden := range []string{
+		`"clientAuthenticatorType": "client-secret"`, `"directAccessGrantsEnabled": true`,
+		`"implicitFlowEnabled": true`, `"serviceAccountsEnabled": true`,
+		"\"defaultClientScopes\": [\n            \"mecak8s:access\"",
+	} {
+		if strings.Contains(client, forbidden) {
+			t.Fatalf("public mecatui client contains forbidden configuration %q", forbidden)
+		}
+	}
+}

@@ -23,6 +23,20 @@ tasks:
       - task: image-build-load
       - task: chart-apply
 
+  kind-keycloak-apply:
+    desc: Idempotently apply the optional Keycloak, certificate, and OIDC/TLS layer
+    cmds:
+      - task: cert-manager-install
+      - task: certificate-apply
+      - task: keycloak-apply
+      - task: chart-keycloak-apply
+
+  kind-keycloak-setup:
+    desc: Recreate the Kind baseline then apply its optional Keycloak identity layer
+    cmds:
+      - task: kind-setup
+      - task: kind-keycloak-apply
+
   kind-status:
     desc: Show the local mecak8s Kind baseline
     cmds:
@@ -112,6 +126,47 @@ tasks:
           "$runtime" save {{.IMAGE}} -o "$archive"
           kind load image-archive "$archive" --name={{.CLUSTER}}
           rm -f "$archive"
+
+  cert-manager-install:
+    internal: true
+    preconditions:
+      - sh: command -v helm >/dev/null 2>&1
+        msg: helm is required
+    cmds:
+      - task: cluster-ready
+      - helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager --version=v1.17.2 --namespace=cert-manager --create-namespace --set crds.enabled=true --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --wait --timeout=4m
+
+  certificate-apply:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-kind/fixture-tls.yaml
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/fixture-ca --timeout=120s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/mecak8s-tls --timeout=120s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} wait --for=condition=Ready certificate/keycloak-tls --timeout=120s
+
+  keycloak-apply:
+    internal: true
+    preconditions:
+      - sh: command -v kubectl >/dev/null 2>&1
+        msg: kubectl is required
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} apply -f deploy/mecak8s-kind/keycloak.yaml
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/keycloak -n {{.NAMESPACE}} --timeout=240s
+
+  chart-keycloak-apply:
+    internal: true
+    preconditions:
+      - sh: command -v helm >/dev/null 2>&1
+        msg: helm is required
+    cmds:
+      - task: cluster-ready
+      - helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/helm/mecak8s/values-kind-keycloak.yaml --wait --timeout=4m
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
 
   chart-apply:
     internal: true

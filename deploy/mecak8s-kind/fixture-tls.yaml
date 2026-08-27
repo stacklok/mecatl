@@ -1,0 +1,62 @@
+# Fixture-local CA and leaf certificates for the optional Keycloak HTTPS issuer.
+# cert-manager generates both Secrets at runtime; no key or certificate value belongs in Git.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: fixture-ca-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fixture-ca
+spec:
+  isCA: true
+  commonName: fixture-ca
+  secretName: fixture-ca
+  issuerRef:
+    name: fixture-ca-bootstrap
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: fixture-ca
+spec:
+  ca:
+    secretName: fixture-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mecak8s-tls
+spec:
+  secretName: mecak8s-tls
+  commonName: mecak8s-mecak8s.mecatl.svc.cluster.local
+  dnsNames:
+    - mecak8s-mecak8s.mecatl.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: fixture-ca
+    kind: Issuer
+---
+# Keycloak terminates its own TLS. The same fixture CA is projected directly to
+# mecak8s's OIDC validator without changing process-wide TLS trust.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keycloak-tls
+spec:
+  secretName: keycloak-tls
+  commonName: keycloak.mecatl.svc.cluster.local
+  dnsNames:
+    - keycloak.mecatl.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: fixture-ca
+    kind: Issuer

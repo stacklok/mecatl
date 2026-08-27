@@ -2,8 +2,8 @@
 id: 03-keycloak-optional
 title: "Optional Keycloak identity overlay"
 blocked_by: [01-kind-base]
-status: pending
-branch: ""
+status: done
+branch: "plan-mecak8s-kind-fixture/03-keycloak-optional"
 worktree: ""
 issue: ""
 retries: 0
