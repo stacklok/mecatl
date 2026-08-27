@@ -511,3 +511,22 @@ func TestMecak8sHelmChart_OIDC_RawDriverNetworkPolicyShape(t *testing.T) {
 		}
 	}
 }
+
+func TestMecak8sHelmChart_ImagePullSecrets(t *testing.T) {
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render production values: %v", err)
+	}
+	if strings.Contains(rendered, "imagePullSecrets:") {
+		t.Fatal("default render (imagePullSecrets unset) unexpectedly contains imagePullSecrets")
+	}
+
+	args := append(productionArgs(), "--set", "imagePullSecrets[0].name=ghcr-pull-secret")
+	rendered, err = helm(t, args...)
+	if err != nil {
+		t.Fatalf("render with imagePullSecrets: %v", err)
+	}
+	if !strings.Contains(rendered, "imagePullSecrets:") || !strings.Contains(rendered, "- name: ghcr-pull-secret") {
+		t.Fatal("render with imagePullSecrets set missing the projected pull secret")
+	}
+}

@@ -10,6 +10,11 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
+# imagePullSecrets projects Secret(s) of type kubernetes.io/dockerconfigjson
+# onto the pod for pulling a private image (e.g. a private GHCR repository).
+# Empty by default: a public image needs none.
+imagePullSecrets: []
+
 replicaCount: 2
 mockProvider: false
 
