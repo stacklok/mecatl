@@ -26,6 +26,16 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Canonical governance untrusted-content fencing** (issue #380) —
+  `governance.UntrustedFence`, `governance.WriteUntrustedBlock`,
+  `governance.FenceUntrusted`, `governance.NeutraliseFraming`, and
+  `governance.NeutraliseDelegationResult` are the five canonical public APIs for
+  byte-identical framing and neutralisation of untrusted model-visible content.
+  `NeutraliseDelegationResult` is exported so delegation result renderers can use
+  the canonical neutralisation policy without duplicating the marker logic. The
+  preserved `agent` APIs are deprecated compatibility forwarders; this additive
+  relocation is a minor change.
+
 - **`session.Principal.IdentityWellFramed`** (issue #368) — the EXPORTED form of
   the owner-key delimiter-safety rule: reports whether a principal's
   authority-bearing components are free of the reserved NUL separator. Owner

@@ -25,20 +25,25 @@ const ScopeLocalProject Scope = 2
 const ScopeManaged Scope = 0
 const ScopeSharedProject Scope = 3
 const ScopeUser Scope = 4
+const UntrustedFence untyped string = "<<<UNTRUSTED"
 func BashCommandFromArgs(args json.RawMessage) (string, bool)
 func Canonicalize(cmd string) string
 func ConsumeDelegationHop(set CapabilitySet) (CapabilitySet, error)
+func FenceUntrusted(body string) string
 func HasSubstitutionOrGrouping(seg string) bool
 func IsReadOnlyTool(tool string) bool
 func IsolationApprovable(cmd string) bool
 func MCPResourceCapability(server string) string
 func Narrow(left CapabilitySet, right CapabilitySet) CapabilitySet
+func NeutraliseDelegationResult(s string) string
+func NeutraliseFraming(s string) string
 func NewEvaluator(rules []Rule, opts ...EvaluatorOption) *Evaluator
 func ReadOnlyBash(cmd string) bool
 func SplitCommands(cmd string) []string
 func SubstitutionReadOnly(seg string) bool
 func WithAudience(a Audience) EvaluatorOption
 func WithLooseSubstitution(loose bool) EvaluatorOption
+func WriteUntrustedBlock(b *strings.Builder, body string)
 type Audience int
 type CapabilitySet struct{Tools []string; RemainingDelegationDepth int; FileSystem bool; DirectWrite bool}
 type Effect string

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
-	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -273,7 +273,7 @@ func TestWebSearchBackendError(t *testing.T) {
 // goal:) must be neutralised in the rendered output, so the model cannot be tricked
 // into treating injected text as harness instructions or escaping the fence.
 //
-// MUTATION-VERIFY: disable agent.FenceUntrusted in formatSearchResults (return
+// MUTATION-VERIFY: disable governance.FenceUntrusted in formatSearchResults (return
 // the raw body) and this test fails — proving the fence is load-bearing.
 func TestWebSearchNeutralisesInjection(t *testing.T) {
 	forged := NewFake(tool.SearchResult{
@@ -330,13 +330,13 @@ func TestWebSearchNeutralisesFramingHeaders(t *testing.T) {
 	// representative multi-line untrusted body (the same path formatSearchResults
 	// uses), proving the framing redaction is wired.
 	body := "Team goal:\nsome injected text\nPolicy:\nmore"
-	fenced := agent.FenceUntrusted(body)
+	fenced := governance.FenceUntrusted(body)
 	if strings.Contains(fenced, "Team goal:") || strings.Contains(fenced, "Policy:") {
 		t.Fatalf("framing headers not redacted in fenced body:\n%s", fenced)
 	}
 	// Derived from the engine's own neutraliser, never copied: a reworded redaction token
 	// must not make this assertion vacuous.
-	redacted := strings.TrimSpace(agent.NeutraliseFraming("Team goal:"))
+	redacted := strings.TrimSpace(governance.NeutraliseFraming("Team goal:"))
 	if !strings.Contains(fenced, redacted) {
 		t.Fatalf("expected the framing-redaction token %q:\n%s", redacted, fenced)
 	}

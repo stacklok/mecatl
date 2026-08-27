@@ -37,8 +37,9 @@ type flags struct {
 	prompt         string
 	promptFile     string
 	promptFileBody string
-	// untrustedPrompt fences the prompt body via agent.FenceUntrusted (cmd-side
-	// only). Default false: a normal CI prompt is the operator's own trusted task.
+	// untrustedPrompt fences the prompt body via governance.FenceUntrusted
+	// (cmd-side only). Default false: a normal CI prompt is the operator's own
+	// trusted task.
 	untrustedPrompt bool
 	// instructions is the TRUSTED operator-framing channel (--instructions). When
 	// non-empty buildPrompt emits it OUTSIDE the untrusted fence (never fenced), ahead

@@ -8,10 +8,10 @@ import (
 
 // fenceDelivery wraps a delivery note body in the SAME fenced-untrusted block
 // renderFireDelivery produces (internal/app/scheduler_delivery.go ->
-// agent.FenceUntrusted): a "<<<UNTRUSTED\n" opener, the body, a trailing
-// "<<<UNTRUSTED\n". The client package may not import engine/agent (the
+// governance.FenceUntrusted): a "<<<UNTRUSTED\n" opener, the body, a trailing
+// "<<<UNTRUSTED\n". The client package may not import engine/governance (the
 // ui->no-engine layering rule), so this is the literal mirror of
-// agent.WriteUntrustedBlock's bytes -- kept in sync by the delivery tests'
+// governance.WriteUntrustedBlock's bytes -- kept in sync by the delivery tests'
 // contract (the live-wire relay + the TUI client detect the note via this exact
 // shape). A drift would surface as a delivery-card regression here.
 func fenceDelivery(body string) string {

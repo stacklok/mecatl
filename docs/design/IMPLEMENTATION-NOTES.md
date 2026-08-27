@@ -3261,21 +3261,21 @@ three layers to keep the engine importable and the verdict shape in the adapter:
   (whole-output-single-object, the #31 discipline — **not** `session.ValidateJSON`),
   `CompileRule`/`RuleSpec`/`CompiledRule` + the most-specific-wins matcher, the
   consecutive-failure `failureStreak`, the merge, the built-in inspection prompts. It imports
-  `engine/agent` **only** for the exported fence helpers (`agent.UntrustedFence` /
-  `NeutraliseFraming` / `WriteUntrustedBlock` — exported in #27 so the checker fences
-  untrusted content with the **same** single source of truth as the team/ask-review
-  prompts).
+  `engine/governance` for the canonical fence helpers (`governance.UntrustedFence` /
+  `NeutraliseFraming` / `WriteUntrustedBlock`), so the checker fences untrusted
+  content with the **same** single source of truth as the team/ask-review prompts.
 - **`engine/agent/guardrailcheck.go`** — `RunGuardrailCheck`, the engine-driving half
   (it needs the unexported `drainChild`): a tool-less one-turn drive bounded by
   `guardrailCheckTimeout` (30s). It is a **free function**, not an exported struct —
   matching the `engineAskReviewer` / `engineJudge` siblings, which keep the concrete
   impl unexported (composition noise stays out of the importable public API). Returns
   raw text; composition parses it.
-- **`engine/agent/fence.go`** — the shared fencing helpers, moved out of
-  `teamsupervisor.go` so a consumer finds them by concept: `UntrustedFence`,
-  `WriteUntrustedBlock`, `NeutraliseFraming`, and `StripLoneCodeFence` (the
+- **`engine/governance/fence.go`** — the canonical shared fencing helpers:
+  `UntrustedFence`, `WriteUntrustedBlock`, `FenceUntrusted`, and
+  `NeutraliseFraming`. `engine/agent/fence.go` retains `StripLoneCodeFence` (the
   security-sensitive lone-fence stripper the ask-review AND guardrail verdict parsers
-  now share — one parser, never diverging).
+  share — one parser, never diverging) plus deprecated compatibility forwarders for
+  the relocated APIs.
 - **`internal/app/guardrails.go`** — `buildGuardrailsHooks` (decorates the **main**
   hooks at `buildEngine` + the per-session factory, so a **fresh per-session
   failure-streak** is built; returns inner unchanged when no model is set),
@@ -4537,12 +4537,10 @@ Exa-anonymous is the default while it lasts — and why graceful degradation is 
   `toolkit.MaxOutputBytes`; carried because engine must not import the root module
   per the fstools precedent, #269).
 - **Fencing (LLM01):** results are UNTRUSTED external content, wrapped via
-  `agent.FenceUntrusted` — the canonical single-source-of-truth fence in `engine/agent`
-  (the same one modelhook and the team/ask-review prompts use). The tool body now lives
-  in `engine/adapter/search` and imports `engine/agent` directly (the #363 Option B
-  decision, accepting the dep-cone cost of the first engine/adapter→agent import).
-  Follow-up: relocate fence primitives to `engine/governance` to shrink the cone. The
-  adversarial `TestWebSearchNeutralisesInjection` (mutation-verified) proves a forged
+  `governance.FenceUntrusted` — the canonical single-source-of-truth fence in
+  `engine/governance`. The tool body lives in `engine/adapter/search` and imports
+  that domain leaf directly, avoiding an adapter→agent dependency. The adversarial
+  `TestWebSearchNeutralisesInjection` (mutation-verified) proves a forged
   inner fence + `Tool:`/`Team goal:` headers are neutralised so a result can't break
   out and smuggle instructions.
 - **HTTP adapter (heavy):** `engine/adapter/search/httpsearch.go` — vendor-neutral
@@ -4622,7 +4620,7 @@ shared, per-session, no-FS, and child catalog assembly paths.
   and never loads a subresource. Other accepted text formats pass through UTF-8
   repair and newline normalization.
 - **Prompt-injection boundary:** provenance and page text (including the
-  extracted title) pass through one `agent.FenceUntrusted` block because redirect
+  extracted title) pass through one `governance.FenceUntrusted` block because redirect
   targets and metadata are attacker-controlled too. Content truncation happens
   before fencing so the closing marker always survives.
 - **Lifetime:** the resolver/dialer holder lives with the tool, but the HTTP
@@ -5358,7 +5356,7 @@ the scoped WRITE path is deferred** (see below).
 - **Injection rides the cache-stable `Role`/StablePrefix via the shared `agentPromptConfig`
   seam.** `agentPromptConfig` gained a `memoryHead` parameter; a non-empty head is appended to
   `parts` (alongside the def body + preloaded skill bodies) as a fenced UNTRUSTED **DATA** block
-  (`agent.WriteUntrustedBlock` — framing-neutralised, treat-as-reference-facts header), so it lands
+  (`governance.WriteUntrustedBlock` — framing-neutralised, treat-as-reference-facts header), so it lands
   in `pc.Role` → the byte-stable StablePrefix, **never a per-turn user message**. This is the
   opposite seam from the tier-0 `MemoryIndexAssembler` (the volatile turn-0-user-message index that
   changes when the model `Remember`s) — per-agent memory changes rarely, so it must NOT bust prefix
@@ -5409,7 +5407,7 @@ the scoped WRITE path is deferred** (see below).
   line `Agent memory (<name>) — …` interpolates `def.Name` into the TRUSTED prompt prefix OUTSIDE the
   untrusted fence; `def.Name` is only validated non-empty, so an attacker-authored project-tier name
   carrying a newline + a forged section header could fabricate a trusted prompt section.
-  `agent.NeutraliseFraming(def.Name)` defangs it (the memory CONTENT stays inside the
+  `governance.NeutraliseFraming(def.Name)` defangs it (the memory CONTENT stays inside the
   `WriteUntrustedBlock` fence). Pinned by `TestMemoryHeaderNeutralisesDefName`.
 
 - **Token collision is many-to-one — ACCEPTABLE for read-only v1, but NOT for the write path.** Two
@@ -5703,7 +5701,7 @@ checker model), a non-denied escape routes through the SAME engine-backed
 `modelhook.VerdictChecker` the hook-path Runner uses (`engine/agent/guardrailcheck.go`
 (`RunGuardrailCheck`) over a tool-less one-turn checker engine +
 `internal/adapter/modelhook/verdict.go` (`ParseVerdict`) — the dual-LLM quarantine, with
-the escape's raw args JSON fenced via `agent.WriteUntrustedBlock` under an
+the escape's raw args JSON fenced via `governance.WriteUntrustedBlock` under an
 escape-specific rubric). Verdict mapping: safe → falls through to the ordinary `auto`
 row (read allow / write ask); unsafe → DENY (a checker block is a veto, mirroring the
 hook-path PreToolUse block); checker error/timeout/unparseable → fail CLOSED to the
@@ -6524,7 +6522,7 @@ trade-offs, both composition/scheduler-layer (no `engine/agent` change):
   UNTRUSTED (model-authored + tool-result-laden; a prior fire may have been
   prompt-injected), so it must NOT become replayable `Conversation.Messages` (which
   would carry injection forward as live instructions). The fence
-  (`agent.FenceUntrusted` + `NeutraliseFraming`, `engine/agent/fence.go`) quarantines
+  (`governance.FenceUntrusted` + `NeutraliseFraming`, `engine/governance/fence.go`) quarantines
   it so a forged closing marker or harness section header in the prior content
   cannot break out of its block; a forged `<<<UNTRUSTED` in the prior body is
   neutralised to `[redacted-marker]` (only the fence-pair the helper emits is raw).

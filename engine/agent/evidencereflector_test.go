@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -102,7 +103,7 @@ func TestEvidenceReflectorOneProviderCallZeroToolsAndSelectedModel(t *testing.T)
 			t.Errorf("request leaked %q", forbidden)
 		}
 	}
-	if !strings.Contains(request.System.StablePrefix, "Abstention is normal") || !strings.Contains(request.System.StablePrefix, "lowercase activation name") || !strings.Contains(request.Messages[0].Text, agent.UntrustedFence) {
+	if !strings.Contains(request.System.StablePrefix, "Abstention is normal") || !strings.Contains(request.System.StablePrefix, "lowercase activation name") || !strings.Contains(request.Messages[0].Text, governance.UntrustedFence) {
 		t.Fatal("reflection policy or untrusted fence missing")
 	}
 }

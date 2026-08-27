@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
@@ -186,12 +187,12 @@ func TestMemoryHeaderNeutralisesDefName(t *testing.T) {
 	}
 	// The token is DERIVED from the engine's own neutraliser rather than copied, so a
 	// reworded redaction token cannot make this assertion silently vacuous.
-	redacted := strings.TrimSpace(agent.NeutraliseFraming("Team goal:"))
+	redacted := strings.TrimSpace(governance.NeutraliseFraming("Team goal:"))
 	if !strings.Contains(memSection, redacted) {
 		t.Fatalf("def.Name framing header was not neutralised in the memory header:\n%s", memSection)
 	}
 	// The memory CONTENT is still fenced and present.
-	if !strings.Contains(pc.Role, agent.UntrustedFence) || !strings.Contains(pc.Role, memHead) {
+	if !strings.Contains(pc.Role, governance.UntrustedFence) || !strings.Contains(pc.Role, memHead) {
 		t.Fatalf("memory content must stay fenced and present:\n%s", pc.Role)
 	}
 }
@@ -361,7 +362,7 @@ func TestDefMemoryInjectedIntoStablePrefix(t *testing.T) {
 			t.Fatalf("sentinel missing from the system prompt (StablePrefix):\n%s", obs.systems[0])
 		}
 		// The fence proves it rode as DATA, not a bare instruction.
-		if !strings.Contains(obs.systems[0], agent.UntrustedFence) {
+		if !strings.Contains(obs.systems[0], governance.UntrustedFence) {
 			t.Fatalf("memory head must be fenced as UNTRUSTED data; fence missing:\n%s", obs.systems[0])
 		}
 		for _, um := range obs.userMsgs {

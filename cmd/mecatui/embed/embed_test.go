@@ -940,7 +940,7 @@ func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
 
 	// 5. Assert: the note arrived LIVE on the subscription, names the schedule
 	// and the fire id, and is the fenced delivery note (renderFireDelivery wraps
-	// the header + body in agent.FenceUntrusted).
+	// the header + body in governance.FenceUntrusted).
 	if !strings.Contains(deliveredNote, "[scheduled task "+schedName+" ") {
 		t.Errorf("delivered note does not name the schedule: %q (want prefix %q)", deliveredNote, "[scheduled task "+schedName+" ")
 	}
@@ -951,7 +951,7 @@ func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
 		t.Errorf("delivered note does not state the stop reason: %q", deliveredNote)
 	}
 	// The fenced-untrusted wrapper: the note body is inside an
-	// agent.FenceUntrusted block (<<<UNTRUSTED…<<<UNTRUSTED — the SAME marker
+	// governance.FenceUntrusted block (<<<UNTRUSTED…<<<UNTRUSTED — the SAME marker
 	// opens and closes the block). Assert the fence markers are present so the
 	// note is the genuine rendered delivery note, not a stray user_prompt.
 	if !strings.Contains(deliveredNote, "<<<UNTRUSTED") {

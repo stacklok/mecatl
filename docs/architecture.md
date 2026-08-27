@@ -286,7 +286,7 @@ per-package `doc.go` files and honoured by the code:
 | `session`, `governance`, `tool`, `prompt` (domain) | stdlib + other domain packages. Never `adapter`, `agent`, `contracts`, `os`, or any third-party library. |
 | `port` | domain packages + stdlib (`context`, `io`, `iter`, `time`). |
 | `agent` (application) | domain + `port` + stdlib only. Never an adapter or `contracts`. (Tests may import adapters.) |
-| `adapter/*` | domain + `port` + the one external lib it adapts. Never `agent`, except the narrow `search`/`webfetch` call to `agent.FenceUntrusted`: fetched external text must use the same framing-neutralisation choke point as every other model-facing untrusted block, and copying that security policy into adapters would be worse than this leaf call. (Deliberate adapter→adapter carve-outs: (1) `adapter/mcpperf` may import `adapter/telemetry` solely for the `RuntimeSnapshot` data DTO it projects into tool output — a plain JSON struct with no OTel/SDK types, not a behavioural dependency; the DTO stays in `telemetry` by design. (2) `adapter/soul` AND `adapter/memory` import `adapter/skills` for `ScanForInjection` — the conservative role-override deny-list is shared so the soul (load-time) and the user-model RememberUser write path (write-time) reuse the same injection gate rather than copying the regexes. (3) `adapter/{permconfig,skills,agents,soul,memory}` import the leaf `adapter/xdgconfig` for the shared `ResolveEnv`/`UserConfigDir` XDG path-resolution seam — a stdlib-only adapter leaf, extracted to de-duplicate the copies (the user-model store resolves `<xdg>/mecatl/usermodel` through it). (4) `adapter/soul` and `adapter/memory` import the DOMAIN `engine/prompt` for a single compile-time assertion only — `var _ prompt.SoulSource = (*Store)(nil)` (soul→prompt) and `var _ prompt.UserModelSource = (*Store)(nil)` (memory→prompt) — pinning that each adapter satisfies the consumer-local prompt port it is bound to at composition. These are assertion-only edges (no prompt value is constructed or called); the adapters meet the ports structurally, and `engine/prompt` never imports them. |
+| `adapter/*` | domain + `port` + the one external lib it adapts. Never `agent`. `search`/`webfetch` import the domain leaf `governance` for its canonical untrusted-content framing, keeping fetched text on the same framing-neutralisation choke point as every other model-facing untrusted block without copying that security policy into adapters. (Deliberate adapter→adapter carve-outs: (1) `adapter/mcpperf` may import `adapter/telemetry` solely for the `RuntimeSnapshot` data DTO it projects into tool output — a plain JSON struct with no OTel/SDK types, not a behavioural dependency; the DTO stays in `telemetry` by design. (2) `adapter/soul` AND `adapter/memory` import `adapter/skills` for `ScanForInjection` — the conservative role-override deny-list is shared so the soul (load-time) and the user-model RememberUser write path (write-time) reuse the same injection gate rather than copying the regexes. (3) `adapter/{permconfig,skills,agents,soul,memory}` import the leaf `adapter/xdgconfig` for the shared `ResolveEnv`/`UserConfigDir` XDG path-resolution seam — a stdlib-only adapter leaf, extracted to de-duplicate the copies (the user-model store resolves `<xdg>/mecatl/usermodel` through it). (4) `adapter/soul` and `adapter/memory` import the DOMAIN `engine/prompt` for a single compile-time assertion only — `var _ prompt.SoulSource = (*Store)(nil)` (soul→prompt) and `var _ prompt.UserModelSource = (*Store)(nil)` (memory→prompt) — pinning that each adapter satisfies the consumer-local prompt port it is bound to at composition. These are assertion-only edges (no prompt value is constructed or called); the adapters meet the ports structurally, and `engine/prompt` never imports them. |
 | `contracts/gen` | generated; protobuf + gRPC runtime. |
 | `app` (composition) | the shared engine/service assembly (`app.Build`). MAY import adapters + `agent` + (via `server`) `contracts/gen`. Nothing imports it but the `cmd/` mains. |
 | `cmd/*` | flags + serving; consumes `internal/app`. With `app`, the only places concrete adapters meet ports. |
@@ -621,8 +621,8 @@ pre-Phase-2 path is byte-identical when neither field is set):
   context is UNTRUSTED (model-authored + tool-result-laden; a prior fire may
   have been prompt-injected), so it must NOT become replayable
   `Conversation.Messages` (which would carry injection forward as live
-  instructions). The fence (`agent.FenceUntrusted` + `NeutraliseFraming`,
-  `engine/agent/fence.go`) quarantines it: a forged `<<<UNTRUSTED` closing marker
+  instructions). The canonical governance fence (`governance.FenceUntrusted` +
+  `NeutraliseFraming`, `engine/governance/fence.go`) quarantines it: a forged `<<<UNTRUSTED` closing marker
   or harness section header in the prior content is neutralised, so it cannot
   break out of its block. The summary is clamped to the last 20 turns and a 10000-
   rune budget. On prior-session-load failure (not found, decode error) the fire
@@ -703,7 +703,7 @@ fire reaches its terminal `EvResult` and `RecordFire` persists the
 record, the scheduler's `SetDeliverFireResult` callback
 (`deliverFireResult`, `internal/app/scheduler_delivery_run.go`) renders the
 outcome as a **fenced-untrusted** harness note (`renderFireDelivery` —
-`agent.FenceUntrusted` + `NeutraliseFraming`, never a live instruction), enqueues
+`governance.FenceUntrusted` + `NeutraliseFraming`, never a live instruction), enqueues
 it to a DURABLE per-session pending-delivery queue (`port.DeliveryQueue`, a
 sidecar-backed `FileDeliveryQueue`; the exactly-once ledger is session-scoped and
 survives restart), and delivers it into the origin: an idle/completed/cancelled/

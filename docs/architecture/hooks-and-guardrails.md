@@ -94,9 +94,12 @@ is `block` / `sanitize` / `advisory`, fail-safe. Two non-obvious points:
 
 The verdict parse uses the whole-output-single-object discipline (not the fail-open
 prose-extracting `ValidateJSON`), sanitize is bounded against laundering, and the
-checker engine is built tool-less with no recursion into guardrails. The fence
-helpers it shares with the child-ask reviewer live in `engine/agent/fence.go`
-(exported, single source of truth). Full mechanics: `docs/adr/0021-guardrails.md`.
+checker engine is built tool-less with no recursion into guardrails. The canonical
+fence and framing-neutralisation helpers shared with the child-ask reviewer live in
+`engine/governance/fence.go` (exported, single source of truth).
+`engine/agent/fence.go` retains deprecated compatibility forwarders plus
+`StripLoneCodeFence`, which remains shared by the verdict parsers. Full mechanics:
+`docs/adr/0021-guardrails.md`.
 
 ## Prerequisites
 

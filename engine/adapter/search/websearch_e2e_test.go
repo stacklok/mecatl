@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/search"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -70,7 +71,7 @@ func TestWebSearchModelFacingE2E(t *testing.T) {
 	for _, ev := range evs {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, discoveredURL) {
 			foundResult = true
-			if !strings.Contains(ev.ToolResult.Content, agent.UntrustedFence) {
+			if !strings.Contains(ev.ToolResult.Content, governance.UntrustedFence) {
 				t.Fatalf("WebSearch result not fenced:\n%s", ev.ToolResult.Content)
 			}
 		}

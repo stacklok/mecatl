@@ -100,7 +100,7 @@ This invariant holds across both adoption paths — the reusable workflow (§ Re
 | Operator workflow config (posture, flags, model) | Trusted | Set by a maintainer in the workflow; passed as action inputs |
 | `--instructions` content | Trusted | Emitted outside the untrusted-prompt fence, never fenced |
 
-`--untrusted-prompt` wraps the prompt body in the harness's untrusted-data fence (`agent.FenceUntrusted` in `cmd/mecatequi/main.go`) so the model treats the issue text as data to act on, not instructions to obey. This is cmd-side only — nothing in `engine/agent` or `internal/app` is modified for it.
+`--untrusted-prompt` wraps the prompt body in the harness's canonical untrusted-data fence (`governance.FenceUntrusted` in `engine/governance/fence.go`) so the model treats the issue text as data to act on, not instructions to obey. The cmd invokes that shared helper while assembling the prompt; no engine-loop or composition behavior is changed for it.
 
 `--instructions` is the symmetric trusted channel: operator framing (such as "write your final message as a PR description and self-verify before finishing") that is emitted outside the fence ahead of the prompt body. The GitHub Action bakes in a default `--instructions` value covering both of those; passing an empty string omits the channel entirely, and the prompt is byte-identical to the pre-flag string.
 

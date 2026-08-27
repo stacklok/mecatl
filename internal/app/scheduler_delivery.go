@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -26,7 +26,7 @@ const fireDeliveryMaxRunes = 10000
 // model-authored schedule name cannot break out of the block.
 func renderFireStarted(scheduleName, fireID string) string {
 	header := fmt.Sprintf("[scheduled task %s started (fire %s)]", scheduleName, fireID)
-	return agent.FenceUntrusted(header)
+	return governance.FenceUntrusted(header)
 }
 
 // renderFireDelivery renders a fire's terminal outcome as a FENCED-UNTRUSTED
@@ -61,5 +61,5 @@ func renderFireDelivery(scheduleName, fireID string, stop session.StopReason, fi
 	// marker or harness section header (in either the model-authored schedule
 	// name or the fire's output text) is neutralised.
 	combined := header + "\n" + body
-	return agent.FenceUntrusted(combined)
+	return governance.FenceUntrusted(combined)
 }

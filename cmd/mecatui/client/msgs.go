@@ -675,7 +675,7 @@ type DeliveryNoteMsg struct {
 const deliveryNotePrefix = "[scheduled task "
 
 // deliveryNoteFenceOpener is the leading fence marker renderFireDelivery wraps
-// EVERY delivery note in (agent.FenceUntrusted writes "<<<UNTRUSTED\n" then the
+// EVERY delivery note in (governance.FenceUntrusted writes "<<<UNTRUSTED\n" then the
 // body). Detection keys off the fence opener FOLLOWED by the header prefix so a
 // non-delivery user prompt (never fenced) cannot match, and a user who literally
 // typed "[scheduled task …" (un-fenced) is NOT mis-detected. This mirrors the

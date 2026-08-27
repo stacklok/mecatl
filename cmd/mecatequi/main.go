@@ -10,8 +10,8 @@
 // daemon's.
 //
 // Pipeline 1 scope: the untrusted-prompt fence is cmd-side ONLY — mecatequi builds the
-// fenced prompt string with the existing agent.FenceUntrusted helper and passes it as
-// ordinary prompt text. Nothing in engine/agent, internal/app, or
+// fenced prompt string with the canonical governance.FenceUntrusted helper and passes
+// it as ordinary prompt text. Nothing in engine/agent, internal/app, or
 // internal/adapter/server is modified for it.
 //
 // DEVIATION FROM mecated (on purpose): --headless defaults to true. A single-shot CI

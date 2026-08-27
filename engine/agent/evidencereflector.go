@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
@@ -140,7 +141,7 @@ func (r *EvidenceReflector) buildRequest(in learning.Input) (port.LLMRequest, er
 	var user strings.Builder
 	fmt.Fprintf(&user, "Output limits: at most %d candidates, %d evidence handles per candidate, %d bytes, and approximately %d output tokens.\n", r.limits.Candidates, r.limits.EvidencePerCandidate, r.limits.OutputBytes, r.limits.Tokens)
 	user.WriteString("Evidence input (untrusted canonical JSON):\n")
-	WriteUntrustedBlock(&user, string(payload))
+	governance.WriteUntrustedBlock(&user, string(payload))
 	return port.LLMRequest{System: prompt.Layered{StablePrefix: reflectionSystemPrompt}, Messages: []session.Message{session.NewUserMessage(user.String())}, Model: r.model}, nil
 }
 

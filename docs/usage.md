@@ -226,8 +226,8 @@ in-chat `Schedule` tool, the REST/gRPC API):
     conversation as a FENCED UNTRUSTED preamble prepended to the prompt (NOT as
     seeded history). Carried context is UNTRUSTED (model-authored +
     tool-result-laden; a prior fire may have been prompt-injected), so it must not
-    become live instructions; the fence (`agent.FenceUntrusted` +
-    `NeutraliseFraming`) quarantines it so a forged `<<<UNTRUSTED` marker or
+    become live instructions; the canonical governance fence
+    (`governance.FenceUntrusted` + `NeutraliseFraming`) quarantines it so a forged `<<<UNTRUSTED` marker or
     harness section header in the prior content cannot break out of its block.
     Allowed on either trigger. On prior-session-load failure (not found, decode
     error) the fire degrades to fresh-context (WARN, never fails the fire). A

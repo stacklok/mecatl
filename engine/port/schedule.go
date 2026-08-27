@@ -274,8 +274,8 @@ const (
 //     context is UNTRUSTED (model-authored + tool-result-laden; a prior fire
 //     may have been prompt-injected), so it MUST NOT become replayable
 //     Conversation.Messages (which would carry injection forward as live
-//     instructions). The fence (agent.FenceUntrusted + NeutraliseFraming)
-//     quarantines it so a forged closing marker or harness section header in
+//     instructions). The canonical governance fence (governance.FenceUntrusted +
+//     NeutraliseFraming) quarantines it so a forged closing marker or harness section header in
 //     the prior content cannot break out of its block. On prior-session-load
 //     failure (not found, decode error) the fire degrades to fresh-context
 //     (WARN, never fails the fire). A re-armed one-shot does NOT carry context

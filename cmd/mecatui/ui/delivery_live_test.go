@@ -84,8 +84,8 @@ func deliveryUserPromptEvent(_, _, text string) *mecatlv1.Event {
 // untrusted-fence wrapping). deliveryProvenanceText is the SAME body wrapped
 // in the fenced-untrusted block renderFireDelivery produces (the
 // "<<<UNTRUSTED\n" opener + body + trailing "<<<UNTRUSTED\n"). The ui package
-// may not import engine/agent, so this is the literal mirror of
-// agent.WriteUntrustedBlock's bytes; the client's deliverNoteFrom detects the
+// may not import engine/governance, so this is the literal mirror of
+// governance.WriteUntrustedBlock's bytes; the client's deliverNoteFrom detects the
 // note via this exact fenced shape.
 const deliveryProvenanceBody = "[scheduled task nightly-sync (fire sched--fire1) completed with stop reason: end_turn]\nfire result text"
 

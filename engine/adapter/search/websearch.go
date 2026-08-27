@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -292,11 +292,10 @@ func formatSearchResults(results []tool.SearchResult, limit int) string {
 	}
 	// Fence the assembled (untrusted) body, then cap the FENCED block to the shared
 	// output-bytes limit, exactly as the other tools cap their output. The fence is the
-	// canonical single-source-of-truth one in engine/agent (the same one modelhook and
-	// the team/ask-review prompts use), reached directly — internal/adapter may import
-	// engine/agent (no layering rule denies it; engine/agent imports nothing internal,
-	// so the edge is acyclic).
-	return truncateBytes(agent.FenceUntrusted(strings.TrimRight(b.String(), "\n")))
+	// canonical single source of truth in engine/governance (the same one modelhook
+	// and the team/ask-review prompts use), reached directly without an
+	// adapter-to-agent dependency.
+	return truncateBytes(governance.FenceUntrusted(strings.TrimRight(b.String(), "\n")))
 }
 
 // oneLine collapses any embedded newlines/CRs in an untrusted field to spaces so a

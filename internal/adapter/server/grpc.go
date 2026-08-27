@@ -1195,7 +1195,7 @@ func relayLiveEvent(ev session.Event) bool {
 		// is the single detection pattern (mirrors the TUI client's
 		// deliveryNotePrefix). A non-delivery EvUserPrompt stays skipped.
 		//
-		// renderFireDelivery wraps the note in agent.FenceUntrusted, so the
+		// renderFireDelivery wraps the note in governance.FenceUntrusted, so the
 		// recorded text starts with the untrusted-fence opener
 		// ("<<<UNTRUSTED\n") FOLLOWED by the "[scheduled task " provenance
 		// header on the next line. The detection matches that FENCED form so a
@@ -1221,7 +1221,7 @@ func relayLiveEvent(ev session.Event) bool {
 const deliveryNoteHeaderPrefix = "[scheduled task "
 
 // deliveryNoteFenceOpener is the leading fence marker renderFireDelivery wraps
-// EVERY delivery note in (agent.FenceUntrusted writes "<<<UNTRUSTED\n" then the
+// EVERY delivery note in (governance.FenceUntrusted writes "<<<UNTRUSTED\n" then the
 // body). Detection keys off the fence opener FOLLOWED by the header prefix so a
 // non-delivery user prompt (never fenced) cannot match.
 const deliveryNoteFenceOpener = "<<<UNTRUSTED\n"

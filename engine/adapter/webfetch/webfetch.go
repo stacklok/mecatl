@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -207,12 +207,12 @@ func renderResponse(requestedURL, finalURL string, statusCode int, mediaType, ti
 	// Fence metadata and body together: redirect targets and titles are external
 	// input too. Truncate before fencing, then re-check because framing
 	// neutralisation may expand attacker-controlled marker lines.
-	content = truncateBody(content, maxRenderedBytes-len(agent.FenceUntrusted("")))
-	fenced := agent.FenceUntrusted(content)
+	content = truncateBody(content, maxRenderedBytes-len(governance.FenceUntrusted("")))
+	fenced := governance.FenceUntrusted(content)
 	for len(fenced) > maxRenderedBytes && len(content) > len(bodyTruncatedMarker) {
 		over := len(fenced) - maxRenderedBytes
 		content = truncateBody(strings.TrimSuffix(content, bodyTruncatedMarker), len(content)-over)
-		fenced = agent.FenceUntrusted(content)
+		fenced = governance.FenceUntrusted(content)
 	}
 	return fenced
 }

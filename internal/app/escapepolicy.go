@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -255,7 +254,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 // Verdict mapping: safe → fall through to the ordinary auto posture row
 // (read Allow / write Ask); unsafe → DENY the escape (a checker block is a
 // veto, mirroring the hook-path PreToolUse block). The content under review
-// is the call's RAW args JSON, fenced with agent.UntrustedFence and
+// is the call's RAW args JSON, fenced with governance.UntrustedFence and
 // framing-neutralised — the identical quarantine the ask-review and guardrail
 // prompts use, so an injected path cannot forge the fence or a verdict.
 type escapeGuardrailRoute struct {
@@ -276,7 +275,7 @@ func (r *escapeGuardrailRoute) review(ctx context.Context, c session.ToolCall) (
 	var sb strings.Builder
 	sb.WriteString(escapeGuardrailPrompt)
 	sb.WriteString("\n\n")
-	agent.WriteUntrustedBlock(&sb, string(c.Args))
+	governance.WriteUntrustedBlock(&sb, string(c.Args))
 	return r.checker.Check(ctx, modelhook.CheckRequest{
 		Phase:   modelhook.PhasePre,
 		Tool:    c.Name,

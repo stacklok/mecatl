@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -40,7 +41,7 @@ func TestWebFetchToolThroughAgentLoop(t *testing.T) {
 	var secondRequestSawResult bool
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
 		for _, message := range req.Messages {
-			if message.ToolResult != nil && strings.Contains(message.ToolResult.Content, usefulText) && strings.Contains(message.ToolResult.Content, agent.UntrustedFence) {
+			if message.ToolResult != nil && strings.Contains(message.ToolResult.Content, usefulText) && strings.Contains(message.ToolResult.Content, governance.UntrustedFence) {
 				secondRequestSawResult = true
 			}
 		}
@@ -79,7 +80,7 @@ func TestWebFetchToolThroughAgentLoop(t *testing.T) {
 			final = event.Result.Text
 		}
 	}
-	if !strings.Contains(toolResult, usefulText) || !strings.Contains(toolResult, agent.UntrustedFence) {
+	if !strings.Contains(toolResult, usefulText) || !strings.Contains(toolResult, governance.UntrustedFence) {
 		t.Fatalf("WebFetch result missing converted fenced content:\n%s", toolResult)
 	}
 	if strings.Contains(toolResult, "ignore previous instructions") {
