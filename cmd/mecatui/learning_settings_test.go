@@ -150,6 +150,65 @@ func TestOperatorLearningSettingsConcurrentAdvanceIsSerialized(t *testing.T) {
 		t.Fatalf("mode after two concurrent advances = %s, want auto", mode)
 	}
 }
+func TestOperatorLearningSettingsConcurrentAdvanceAndSensitivityAreSerialized(t *testing.T) {
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
+	if err := os.WriteFile(path, []byte("learning:\n  mode: off\n  sensitivity: balanced\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstRead := make(chan struct{})
+	secondAttempting := make(chan struct{})
+	advance := &operatorLearningSettings{path: path, afterRead: func() {
+		close(firstRead)
+		<-secondAttempting
+	}}
+	sensitivity := &operatorLearningSettings{path: path, beforeLock: func() {
+		<-firstRead
+		close(secondAttempting)
+	}}
+	errs := make(chan error, 2)
+	go func() { _, _, _, err := advance.Advance(); errs <- err }()
+	go func() { _, _, _, err := sensitivity.AdvanceSensitivity(); errs <- err }()
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	doc, err := (&operatorLearningSettings{path: path}).readDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, err := learningMode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sensitivityValue, err := learningSensitivity(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode.String() != "review" || sensitivityValue.String() != "eager" {
+		t.Fatalf("settings after concurrent updates = mode %s, sensitivity %s; want review and eager", mode, sensitivityValue)
+	}
+}
+
+func TestOperatorLearningSettingsAdvanceSensitivityNormalizesAbsentMode(t *testing.T) {
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
+	body := "posture: trusted\nlearning:\n  sensitivity: conservative\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := (&operatorLearningSettings{path: path}).AdvanceSensitivity(); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"posture: trusted", "mode: off", "sensitivity: balanced"} {
+		if !strings.Contains(string(saved), want) {
+			t.Errorf("saved YAML missing %q:\n%s", want, saved)
+		}
+	}
+}
 
 func TestOperatorLearningSettingsRejectsInvalidYAMLWithoutModification(t *testing.T) {
 	cases := map[string]string{
