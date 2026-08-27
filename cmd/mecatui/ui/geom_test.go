@@ -63,8 +63,8 @@ func frameApprovalRegions(m Model) []frameApprovalRegion {
 	return regions
 }
 
-func frameVerdictAt(m Model, x, y int) (client.Verdict, bool) {
-	for _, region := range frameApprovalRegions(m) {
+func frameVerdictAt(regions []frameApprovalRegion, x, y int) (client.Verdict, bool) {
+	for _, region := range regions {
 		if region.rect.contains(x, y) {
 			return region.verdict, true
 		}
@@ -72,14 +72,15 @@ func frameVerdictAt(m Model, x, y int) (client.Verdict, bool) {
 	return client.VerdictAllowOnce, false
 }
 
-// hitScan sweeps the whole frame and returns every (verdict, x, y) cell the
+// hitScan sweeps one rendered frame and returns every (verdict, x, y) cell the
 // hit map reports. The button boxes must appear as contiguous per-verdict
 // column spans on the expected rows, with gaps between buttons and nothing outside.
 func hitScan(m Model) map[client.Verdict]map[int][]int {
+	regions := frameApprovalRegions(m)
 	hits := map[client.Verdict]map[int][]int{}
 	for y := 0; y < m.height; y++ {
 		for x := 0; x < m.width; x++ {
-			if verdict, ok := frameVerdictAt(m, x, y); ok {
+			if verdict, ok := frameVerdictAt(regions, x, y); ok {
 				if hits[verdict] == nil {
 					hits[verdict] = map[int][]int{}
 				}
@@ -145,18 +146,11 @@ func TestAskButtonAtGenericModalHitsEachButton(t *testing.T) {
 	}
 }
 
-// buttonCenter finds the middle column of a verdict button's span on its first
-// hit row — the cell a real click is most likely to land on.
+// buttonCenter finds the middle cell of a verdict button's first hit region.
 func buttonCenter(m Model, verdict client.Verdict) (int, int, bool) {
-	for y := 0; y < m.height; y++ {
-		var xs []int
-		for x := 0; x < m.width; x++ {
-			if got, ok := frameVerdictAt(m, x, y); ok && got == verdict {
-				xs = append(xs, x)
-			}
-		}
-		if len(xs) > 0 {
-			return xs[len(xs)/2], y, true
+	for _, region := range frameApprovalRegions(m) {
+		if region.verdict == verdict {
+			return (region.rect.x0 + region.rect.x1 - 1) / 2, region.rect.y0, true
 		}
 	}
 	return 0, 0, false
@@ -211,10 +205,11 @@ func TestAskButtonAtGenericModalBandMatchesRenderedBox(t *testing.T) {
 	}
 	top, bottom := boxRows[0], boxRows[2]
 	// Every box row must hit; the rows immediately above and below must not.
+	regions := frameApprovalRegions(m)
 	for y := 0; y < m.height; y++ {
 		hit := false
 		for x := 0; x < m.width; x++ {
-			if _, ok := frameVerdictAt(m, x, y); ok {
+			if _, ok := frameVerdictAt(regions, x, y); ok {
 				hit = true
 				break
 			}
@@ -264,12 +259,12 @@ func TestClickAtReturnsAskVerdicts(t *testing.T) {
 	}
 	// frameVerdictAt returns the region's verdict for a cell inside it, and misses outside.
 	for _, r := range regions {
-		verdict, ok := frameVerdictAt(m, r.rect.x0, r.rect.y0)
+		verdict, ok := frameVerdictAt(regions, r.rect.x0, r.rect.y0)
 		if !ok || verdict != r.verdict {
 			t.Errorf("frameVerdictAt(%d,%d) = %v, %v; want %v", r.rect.x0, r.rect.y0, verdict, ok, r.verdict)
 		}
 	}
-	if _, ok := frameVerdictAt(m, 0, 0); ok {
+	if _, ok := frameVerdictAt(regions, 0, 0); ok {
 		t.Error("a click at the frame corner must miss every approval region")
 	}
 }
@@ -282,7 +277,7 @@ func TestClickAtOutsideApprovalPhaseIsEmpty(t *testing.T) {
 	if got := frameApprovalRegions(m); len(got) != 0 {
 		t.Errorf("phaseRunning must emit no approval regions, got %d", len(got))
 	}
-	if _, ok := frameVerdictAt(m, m.width/2, m.height/2); ok {
+	if _, ok := frameVerdictAt(frameApprovalRegions(m), m.width/2, m.height/2); ok {
 		t.Error("no click may resolve outside phaseAwaitingApproval")
 	}
 }
@@ -361,6 +356,7 @@ func TestPlanRenderedButtonLabelClickSendsApproval(t *testing.T) {
 func TestPlanRenderedFootnoteAndBlankRowsDoNotHit(t *testing.T) {
 	m := planAskModel(t, true)
 	lines := strings.Split(stripANSIstr(m.View().Content), "\n")
+	regions := frameApprovalRegions(m)
 	foundFootnote, foundBlank := false, false
 	for y, line := range lines {
 		isFootnote := strings.Contains(line, "auto-accept allows every edit")
@@ -375,7 +371,7 @@ func TestPlanRenderedFootnoteAndBlankRowsDoNotHit(t *testing.T) {
 			foundBlank = true
 		}
 		for x := 0; x < m.width; x++ {
-			if _, ok := frameVerdictAt(m, x, y); ok {
+			if _, ok := frameVerdictAt(regions, x, y); ok {
 				t.Fatalf("rendered non-button row %d (%q) hit a button at x=%d", y, line, x)
 			}
 		}
@@ -470,11 +466,7 @@ func TestAskButtonAtRequiresApprovalPhase(t *testing.T) {
 	// WOULD be resolves nothing (the conversation path owns the click then).
 	m := driveTo(t, theme.New("aztec", theme.AztecPalette()))
 	m.phase = phaseRunning
-	for y := 0; y < m.height; y++ {
-		for x := 0; x < m.width; x++ {
-			if _, ok := frameVerdictAt(m, x, y); ok {
-				t.Fatalf("askButtonAt must be gated on phaseAwaitingApproval (hit at %d,%d in phaseRunning)", x, y)
-			}
-		}
+	if regions := frameApprovalRegions(m); len(regions) != 0 {
+		t.Fatalf("askButtonAt must be gated on phaseAwaitingApproval, got %d hit regions in phaseRunning", len(regions))
 	}
 }
