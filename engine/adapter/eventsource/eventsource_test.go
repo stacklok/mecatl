@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,7 +79,204 @@ func toolCall(id, name, args string) session.ToolCall {
 	return session.NewToolCall(session.ToolCallID(id), name, json.RawMessage(args))
 }
 
-// TestFoldStructuralConversation reconstructs a text → tool-call → text run and
+func assertRetryParity(t *testing.T, live, folded *session.Session) {
+	t.Helper()
+	liveSnap, err := sessnap.Of(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foldedSnap, err := sessnap.Of(folded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if liveSnap.State != foldedSnap.State || liveSnap.StopReason != foldedSnap.StopReason ||
+		liveSnap.Counters != foldedSnap.Counters || liveSnap.Usage == nil != (foldedSnap.Usage == nil) ||
+		(liveSnap.Usage != nil && *liveSnap.Usage != *foldedSnap.Usage) ||
+		liveSnap.Permanent != foldedSnap.Permanent || liveSnap.RetryDisposition != foldedSnap.RetryDisposition ||
+		liveSnap.StreamProgress != foldedSnap.StreamProgress || liveSnap.RetryPending != foldedSnap.RetryPending ||
+		liveSnap.RetryPendingDisposition != foldedSnap.RetryPendingDisposition || liveSnap.RetryPendingProgress != foldedSnap.RetryPendingProgress ||
+		liveSnap.LastError != foldedSnap.LastError {
+		t.Fatalf("snapshot metadata differs\n live: %+v\nfolded: %+v", liveSnap, foldedSnap)
+	}
+	liveMessages, _ := json.Marshal(live.Conversation.Messages)
+	foldedMessages, _ := json.Marshal(folded.Conversation.Messages)
+	if string(liveMessages) != string(foldedMessages) {
+		t.Fatalf("conversation differs\n live: %s\nfolded: %s", liveMessages, foldedMessages)
+	}
+}
+
+func TestFoldParityForCompleteErrorStop(t *testing.T) {
+	live := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	if err := live.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", "", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.RecordAssistant(session.NewAssistantMessage("clean error terminal", "", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.Stop(session.StopError); err != nil {
+		t.Fatal(err)
+	}
+
+	evs := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvMessageDelta, Text: "prior complete"},
+		{Type: session.EvTurnStart, Turn: 1},
+		{Type: session.EvMessageDelta, Turn: 1, Text: "clean error terminal"},
+		{Type: session.EvResult, Turn: 1, Result: &session.ResultPayload{Stop: session.StopError, Error: "provider-declared failure", Disposition: session.RetryDispositionPermanent, Progress: session.StreamProgressComplete}},
+	}
+	folded, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRetryParity(t, live, folded)
+	if folded.State != session.StateCompleted || folded.LastError() != "" || folded.FailurePermanence() {
+		t.Fatalf("complete error stop retained failure state: state=%v last=%q permanent=%v", folded.State, folded.LastError(), folded.FailurePermanence())
+	}
+}
+
+func TestFoldParityForIteratorError(t *testing.T) {
+	live := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	if err := live.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", "", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.Fail(); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressVisible); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.RecordLastError("upstream reset"); err != nil {
+		t.Fatal(err)
+	}
+
+	evs := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvMessageDelta, Text: "prior complete"},
+		{Type: session.EvTurnStart, Turn: 1},
+		{Type: session.EvMessageDelta, Turn: 1, Text: "incomplete partial"},
+		{Type: session.EvResult, Turn: 1, Result: &session.ResultPayload{Stop: session.StopError, Error: "upstream reset", Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}},
+	}
+	folded, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRetryParity(t, live, folded)
+}
+
+func TestFoldDiscardsOnlyFailedPartialAssistant(t *testing.T) {
+	call := toolCall("c1", "Read", `{"path":"a.go"}`)
+	evs := []session.Event{
+		{Type: session.EvUserPrompt, UserPrompt: &session.UserPromptPayload{Text: "inspect"}},
+		{Type: session.EvTurnStart},
+		{Type: session.EvMessageDelta, Text: "checking"},
+		{Type: session.EvToolCall, ToolCall: &call},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolResult("c1", "ok"))},
+		{Type: session.EvTurnStart, Turn: 1},
+		{Type: session.EvMessageDelta, Turn: 1, Text: "incomplete secret partial"},
+		{Type: session.EvResult, Turn: 1, Result: &session.ResultPayload{Stop: session.StopError, Error: "upstream reset", Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}},
+	}
+	s, err := eventsource.Fold(meta(), seq(evs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.State != session.StateFailed {
+		t.Fatalf("state = %v", s.State)
+	}
+	if d, p := s.FailureMetadata(); d != session.RetryDispositionRetryable || p != session.StreamProgressVisible {
+		t.Fatalf("failure metadata = (%v,%v)", d, p)
+	}
+	for _, msg := range s.Conversation.Messages {
+		if strings.Contains(msg.Text, "incomplete secret partial") {
+			t.Fatalf("failed partial assistant entered replay history: %+v", s.Conversation.Messages)
+		}
+	}
+	if len(s.Conversation.Messages) != 3 || s.Conversation.Messages[1].Text != "checking" || s.Conversation.Messages[2].ToolResult == nil {
+		t.Fatalf("prior completed tool cycle was not preserved: %+v", s.Conversation.Messages)
+	}
+}
+
+func TestFoldFailedStepRetrySnapshotParity(t *testing.T) {
+	baseEvents := []session.Event{
+		{Type: session.EvUserPrompt, UserPrompt: &session.UserPromptPayload{Text: "original"}},
+		{Type: session.EvTurnStart},
+		{Type: session.EvMessageDelta, Text: "prior completed turn"},
+		{Type: session.EvTurnStart, Turn: 1},
+		{Type: session.EvResult, Turn: 1, Result: &session.ResultPayload{Stop: session.StopError, Error: "reset", Usage: session.Usage{InputTokens: 7, OutputTokens: 4}, Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}},
+		{Type: session.EvModelRetry, ModelRetry: &session.ModelRetryPayload{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressVisible}},
+	}
+	newPrepared := func(t *testing.T) *session.Session {
+		t.Helper()
+		s := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		if err := s.RecordUserPrompt("original", nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.BeginTurn(); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RecordAssistant(session.NewAssistantMessage("prior completed turn", "", nil)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.BeginTurn(); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RecordUsage(session.Usage{InputTokens: 7, OutputTokens: 4}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Fail(); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressVisible); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.PrepareFailedStepRetry(); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	tests := []struct {
+		name   string
+		live   func(*testing.T) *session.Session
+		events []session.Event
+	}{
+		{"pending crash before turn", newPrepared, baseEvents},
+		{"deferred clean brake", newPrepared, append(append([]session.Event{}, baseEvents...), session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopBudget, Progress: session.StreamProgressUnknown}})},
+		{"running crash discards partial", func(t *testing.T) *session.Session {
+			s := newPrepared(t)
+			if err := s.BeginTurn(); err != nil {
+				t.Fatal(err)
+			}
+			return s
+		}, append(append([]session.Event{}, baseEvents...), session.Event{Type: session.EvTurnStart}, session.Event{Type: session.EvMessageDelta, Text: "partial retry delta"})},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			live := tc.live(t)
+			folded, err := eventsource.Fold(meta(), seq(tc.events))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertRetryParity(t, live, folded)
+			for _, msg := range folded.Conversation.Messages {
+				if strings.Contains(msg.Text, "partial retry delta") {
+					t.Fatalf("partial retry entered history: %+v", folded.Conversation.Messages)
+				}
+			}
+		})
+	}
+}
+
 // asserts the conversation pairing, the assistant text, the tool call/result, the
 // counters, the cumulative usage, and the completed terminal state.
 //
@@ -497,6 +695,11 @@ func TestFoldRoundTripsFailurePermanence(t *testing.T) {
 		}
 		if got := s.FailurePermanence(); got != tc.wantPerman {
 			t.Fatalf("%s: FailurePermanence = %v, want %v", tc.name, got, tc.wantPerman)
+		}
+		if tc.stop == session.StopError && tc.permanent {
+			if d, p := s.FailureMetadata(); d != session.RetryDispositionPermanent || p != session.StreamProgressUnknown {
+				t.Fatalf("%s: FailureMetadata = (%v,%v), want (permanent,unknown)", tc.name, d, p)
+			}
 		}
 		if got := s.LastError(); got != tc.wantLastError {
 			t.Fatalf("%s: LastError = %q, want %q", tc.name, got, tc.wantLastError)

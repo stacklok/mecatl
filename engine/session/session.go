@@ -456,11 +456,19 @@ type Session struct {
 	pending *PendingAsk
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
-	// permanent records whether the failure that landed this session in StateFailed
-	// is permanent (unrecoverable). It is meaningful ONLY when State==StateFailed;
-	// any transition out (resetToIdle via Recover/Reopen/Interrupt) clears it so a
-	// healed session never keeps a stale permanence flag.
+	// permanent is the compatibility projection of failureDisposition==Permanent.
 	permanent bool
+	// failureDisposition and failureProgress retain the typed terminal facts needed
+	// to decide failed-step retry eligibility after restart. They are meaningful only in
+	// StateFailed and are cleared by resetToIdle.
+	failureDisposition RetryDisposition
+	failureProgress    StreamProgress
+	// retryPending records a durably-prepared exact model-step retry. It is
+	// meaningful while idle or running and prevents a new user prompt from
+	// bypassing the failed step after a process crash.
+	retryPending     bool
+	retryDisposition RetryDisposition
+	retryProgress    StreamProgress
 	// lastError records the terminal failure CAUSE (the loop's
 	// session.ResultPayload.Error) when this session is in StateFailed. It is the
 	// Permanent-analog for the failure detail itself: persisted on the snapshot so a
@@ -616,7 +624,7 @@ func (s *Session) RecordUserPrompt(text string, instructions []Message) error {
 // difference is the recorded user message carries Parts. It is legal from any
 // non-terminal state.
 func (s *Session) RecordUserPromptWithParts(text string, parts []Content, instructions []Message) error {
-	if s.State.IsTerminal() {
+	if s.State.IsTerminal() || (s.retryPending && s.State == StateIdle) {
 		return fmt.Errorf("%w: RecordUserPrompt from %q", ErrIllegalTransition, s.State)
 	}
 	for _, m := range instructions {
@@ -723,6 +731,7 @@ func (s *Session) Complete() error {
 	}
 	s.State = StateCompleted
 	s.pending = nil
+	s.clearRetryIntent()
 	return nil
 }
 
@@ -735,6 +744,7 @@ func (s *Session) Stop(reason StopReason) error {
 	s.stop = reason
 	s.State = StateCompleted
 	s.pending = nil
+	s.clearRetryIntent()
 	return nil
 }
 
@@ -747,6 +757,7 @@ func (s *Session) Cancel() error {
 	s.stop = StopCancelled
 	s.State = StateCancelled
 	s.pending = nil
+	s.clearRetryIntent()
 	return nil
 }
 
@@ -758,11 +769,86 @@ func (s *Session) Cancel() error {
 // of StateFailed (resetToIdle via Recover/Interrupt/Reopen), so a healed session
 // never keeps a stale permanence marker.
 func (s *Session) RecordFailurePermanence(permanent bool) error {
+	if permanent {
+		return s.RecordFailureMetadata(RetryDispositionPermanent, s.failureProgress)
+	}
 	if s.State != StateFailed {
 		return fmt.Errorf("%w: RecordFailurePermanence from %q", ErrIllegalTransition, s.State)
 	}
-	s.permanent = permanent
+	s.permanent = false
+	if s.failureDisposition == RetryDispositionPermanent {
+		s.failureDisposition = RetryDispositionUnknown
+	}
 	return nil
+}
+
+// RecordFailureMetadata stamps typed provider retry facts on a failed session.
+func (s *Session) RecordFailureMetadata(disposition RetryDisposition, progress StreamProgress) error {
+	if s.State != StateFailed {
+		return fmt.Errorf("%w: RecordFailureMetadata from %q", ErrIllegalTransition, s.State)
+	}
+	if !disposition.Valid() || !progress.Valid() {
+		return fmt.Errorf("%w: invalid failure metadata disposition=%d progress=%d", ErrIllegalTransition, disposition, progress)
+	}
+	s.failureDisposition = disposition
+	s.failureProgress = progress
+	s.permanent = disposition == RetryDispositionPermanent
+	return nil
+}
+
+// FailureMetadata returns typed terminal facts only while the session is failed.
+func (s *Session) FailureMetadata() (RetryDisposition, StreamProgress) {
+	if s.State != StateFailed {
+		return RetryDispositionUnknown, StreamProgressUnknown
+	}
+	return s.failureDisposition, s.failureProgress
+}
+
+// PrepareFailedStepRetry consumes an eligible failed attempt into a durable,
+// prompt-free retry intent. It repairs any interrupted tool-call tail and resets
+// per-run counters while preserving the failed attempt's typed retry facts.
+// Calling it again on an already-prepared idle session is idempotent.
+func (s *Session) PrepareFailedStepRetry() error {
+	if s.retryPending && s.State == StateIdle {
+		return nil
+	}
+	if s.State != StateFailed || !s.failureDisposition.Valid() || !s.failureProgress.Valid() ||
+		s.failureDisposition != RetryDispositionRetryable ||
+		(s.failureProgress != StreamProgressPrecommit && s.failureProgress != StreamProgressVisible) {
+		return fmt.Errorf("%w: PrepareFailedStepRetry from %q", ErrIllegalTransition, s.State)
+	}
+	disposition, progress := s.failureDisposition, s.failureProgress
+	s.closeOutInterruptedTurn(recoverCloseOutMessage)
+	s.resetToIdle()
+	s.retryPending = true
+	s.retryDisposition = disposition
+	s.retryProgress = progress
+	return nil
+}
+
+// RestoreFailedStepRetryPending restores additive snapshot retry intent without
+// widening sessnap.RestoreState. It is legal only on an idle or running aggregate.
+func (s *Session) RestoreFailedStepRetryPending(disposition RetryDisposition, progress StreamProgress) error {
+	if (s.State != StateIdle && s.State != StateRunning) || disposition != RetryDispositionRetryable ||
+		(progress != StreamProgressPrecommit && progress != StreamProgressVisible) {
+		return fmt.Errorf("%w: RestoreFailedStepRetryPending from %q", ErrIllegalTransition, s.State)
+	}
+	s.retryPending = true
+	s.retryDisposition = disposition
+	s.retryProgress = progress
+	return nil
+}
+
+// FailedStepRetryPending reports the durable retry intent and its original failure
+// facts. The marker remains set while the retry model step is running.
+func (s *Session) FailedStepRetryPending() (RetryDisposition, StreamProgress, bool) {
+	return s.retryDisposition, s.retryProgress, s.retryPending
+}
+
+func (s *Session) clearRetryIntent() {
+	s.retryPending = false
+	s.retryDisposition = RetryDispositionUnknown
+	s.retryProgress = StreamProgressUnknown
 }
 
 // FailurePermanence reports whether the failure that landed this session in
@@ -818,6 +904,13 @@ func (s *Session) Fail() error {
 	s.stop = StopError
 	s.State = StateFailed
 	s.pending = nil
+	// A new failure supersedes the prepared retry's facts. terminate stamps the
+	// new attempt's typed metadata immediately after this transition.
+	s.clearRetryIntent()
+	s.failureDisposition = RetryDispositionUnknown
+	s.failureProgress = StreamProgressUnknown
+	s.permanent = false
+	s.lastError = ""
 	return nil
 }
 
@@ -859,7 +952,10 @@ func (s *Session) resetToIdle() {
 	s.stop = StopNone
 	s.pending = nil
 	s.permanent = false
+	s.failureDisposition = RetryDispositionUnknown
+	s.failureProgress = StreamProgressUnknown
 	s.lastError = ""
+	s.clearRetryIntent()
 	s.Counters = Counters{}
 	// CRITICAL: Usage is DELIBERATELY NOT cleared here (the divergence from
 	// Counters). The MaxRunTokens budget (StopBudget) is evaluated against the
@@ -1000,8 +1096,16 @@ func (s *Session) Abandon() error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: Abandon from %q", ErrIllegalTransition, s.State)
 	}
+	pending, disposition, progress := s.retryPending, s.retryDisposition, s.retryProgress
 	s.closeOutInterruptedTurn(abandonCloseOutMessage)
 	s.resetToIdle()
+	// Exact retry is the one Abandon carve-out: a crash after durable preparation
+	// must return to idle-but-pending, not become an ordinary promptable session.
+	if pending {
+		s.retryPending = true
+		s.retryDisposition = disposition
+		s.retryProgress = progress
+	}
 	return nil
 }
 

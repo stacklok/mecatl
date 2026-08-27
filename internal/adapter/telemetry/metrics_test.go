@@ -15,8 +15,13 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // newTestMetrics builds a Metrics adapter backed by a ManualReader so tests can
@@ -202,6 +207,40 @@ func TestMetricsEventsTotal(t *testing.T) {
 	}
 	if got := sumPoint(t, events, attrType, "message.delta"); got != 2 {
 		t.Errorf("events{message.delta} = %d, want 2", got)
+	}
+}
+
+func TestFailedStepRetryRunBalancesActiveRunMetric(t *testing.T) {
+	metrics, reader := newTestMetrics(t)
+	eng := agent.NewEngine(agent.Deps{
+		LLM:                 mockllm.New(mockllm.TextTurn("retried")),
+		Catalog:             tool.NewCatalog(),
+		Policy:              permpolicy.NewPolicy(nil, nil),
+		Sink:                metrics,
+		MaxNoProgressNudges: -1,
+	})
+	sess := session.New("retry-metrics", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	if err := sess.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Fail(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressPrecommit); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.PrepareFailedStepRetry(); err != nil {
+		t.Fatal(err)
+	}
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
+	run := eng.RetryFailedStep(context.Background(), sess, env)
+	for range run.Events() {
+	}
+	if got := activeRunsValue(t, reader); got != 0 {
+		t.Fatalf("active_runs after failed-step retry = %d, want 0", got)
+	}
+	if got := sumPoint(t, collect(t, reader)["mecatl.events"], attrType, string(session.EvSessionInit)); got != 1 {
+		t.Fatalf("retry session.init events = %d, want 1", got)
 	}
 }
 

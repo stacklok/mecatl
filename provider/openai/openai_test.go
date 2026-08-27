@@ -559,6 +559,121 @@ func TestTranslateResponseFailed(t *testing.T) {
 	}
 }
 
+func TestResponseFailedErrorMetadata(t *testing.T) {
+	_, err := decodeFixtureErr(t, "response_failed.sse")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	metadata := readProviderMetadata(t, err)
+	want := providerMetadataSnapshot{
+		inBandStatus:    http.StatusServiceUnavailable,
+		code:            "server_error",
+		correlationKind: "response",
+		correlationID:   "resp_fail",
+	}
+	if metadata != want {
+		t.Errorf("metadata = %+v, want %+v", metadata, want)
+	}
+}
+
+func TestTopLevelErrorUsesObservedResponseIDForMetadata(t *testing.T) {
+	_, err := decodeFixtureErr(t, "error_event.sse")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	metadata := readProviderMetadata(t, err)
+	want := providerMetadataSnapshot{
+		inBandStatus:    http.StatusTooManyRequests,
+		code:            "rate_limit_exceeded",
+		correlationKind: "response",
+		correlationID:   "resp_err",
+	}
+	if metadata != want {
+		t.Errorf("metadata = %+v, want %+v", metadata, want)
+	}
+}
+
+func TestTopLevelErrorDoesNotUseResponseIDFromUnknownEvent(t *testing.T) {
+	st := &streamState{}
+	if _, err := translate(responses.ResponseStreamEventUnion{
+		Type:     "response.synthetic_metadata.updated",
+		Response: responses.Response{ID: "untrusted-response-id"},
+	}, st); err != nil {
+		t.Fatalf("translate unknown event: %v", err)
+	}
+	_, err := translate(responses.ResponseStreamEventUnion{
+		Type: "error", Code: "rate_limit_exceeded", Message: "rate limited",
+	}, st)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	metadata := readProviderMetadata(t, err)
+	if metadata.correlationKind != "" || metadata.correlationID != "" {
+		t.Errorf("metadata unexpectedly used unknown event response ID: %+v", metadata)
+	}
+}
+
+func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "req_409")
+		w.Header().Set("X-Unrelated-Header", "must-not-leak")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"prompt secret must-not-leak"}}`)
+	}))
+	defer srv.Close()
+
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("prompt secret must-not-leak")}})
+	if err == nil {
+		t.Fatal("expected HTTP error")
+	}
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error %T does not preserve the SDK error", err)
+	}
+	metadata := readProviderMetadata(t, err)
+	want := providerMetadataSnapshot{
+		httpStatus:      http.StatusBadRequest,
+		code:            "invalid_request_error",
+		correlationKind: "request",
+		correlationID:   "req_409",
+	}
+	if metadata != want {
+		t.Errorf("metadata = %+v, want %+v", metadata, want)
+	}
+	if got := metadata.correlationID; strings.Contains(got, "must-not-leak") {
+		t.Errorf("metadata leaked response data: %+v", metadata)
+	}
+}
+
+type providerMetadataCarrier interface {
+	error
+	ProviderHTTPStatus() int
+	ProviderInBandStatus() int
+	ProviderErrorCode() string
+	ProviderErrorCorrelationKind() string
+	ProviderErrorCorrelationID() string
+}
+
+type providerMetadataSnapshot struct {
+	httpStatus, inBandStatus             int
+	code, correlationKind, correlationID string
+}
+
+func readProviderMetadata(t *testing.T, err error) providerMetadataSnapshot {
+	t.Helper()
+	var carrier providerMetadataCarrier
+	if !errors.As(err, &carrier) {
+		t.Fatalf("error %T does not expose provider metadata", err)
+	}
+	return providerMetadataSnapshot{
+		httpStatus: carrier.ProviderHTTPStatus(), inBandStatus: carrier.ProviderInBandStatus(),
+		code: carrier.ProviderErrorCode(), correlationKind: carrier.ProviderErrorCorrelationKind(),
+		correlationID: carrier.ProviderErrorCorrelationID(),
+	}
+}
+
 // TestResponseFailedRateLimitIsRetryable verifies that a response.failed event
 // carrying code "rate_limit_exceeded" returns a *responseStreamError whose
 // StatusCode() is 429 (retryable by DefaultClassifier). This is the root cause

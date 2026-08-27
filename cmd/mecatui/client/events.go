@@ -230,9 +230,10 @@ func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out
 		case StreamClosedMsg, StreamErrMsg:
 			// Swallow the replay's terminal marker; the reconnect owns its own.
 			continue
-		case DeliveryNoteMsg:
-			// The only catch-up payload: a fire-result delivery note emitted during
-			// the gap. Forward it; the ui dedupes by fire id.
+		case DeliveryNoteMsg, ResultMsg:
+			// Delivery notes recover gap output. ResultMsg is forwarded only so the UI
+			// can recover the latest durable failed-step retry eligibility; it must not replay
+			// transcript cards or trigger automatic retry.
 			if !emit(ctx, out, m) {
 				return ctx.Err()
 			}

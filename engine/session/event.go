@@ -8,6 +8,10 @@ type EventType string
 const (
 	// EvSessionInit is emitted once when a run starts.
 	EvSessionInit EventType = "session.init"
+	// EvModelRetry is emitted immediately after session.init when a failed-step retry
+	// starts. ModelRetry carries authoritative typed reconstruction data; Text is bounded,
+	// harness-authored lifecycle guidance and is never recorded in model history.
+	EvModelRetry EventType = "model.retry"
 	// EvTurnStart is emitted at the beginning of each turn. Its Turn field is the
 	// 0-based turn index (turnIdx = Counters.Turns - 1); turn.end mirrors it. The
 	// 0-based wire contract is load-bearing — clients that surface a human-facing
@@ -487,6 +491,14 @@ type UserPromptPayload struct {
 	Parts []Content
 }
 
+// ModelRetryPayload is the structured durable marker that a failed-step retry
+// run has started. Disposition and Progress are copied from the consumed failed
+// terminal so event-sourced reconstruction never parses advisory Text.
+type ModelRetryPayload struct {
+	Disposition RetryDisposition
+	Progress    StreamProgress
+}
+
 // ResultPayload is the terminal payload carried by an EvResult Event.
 type ResultPayload struct {
 	// Stop is the reason the run ended.
@@ -499,13 +511,12 @@ type ResultPayload struct {
 	// It surfaces the error the loop would otherwise drop so callers (the demo,
 	// API clients) can see why a run failed instead of an opaque "error".
 	Error string
-	// Permanent reports whether a StopError failure is a PERMANENT provider
-	// rejection — replaying the identical request cannot succeed (e.g. a 4xx
-	// other than 408/429: invalid_encrypted_content, a policy-blocked model).
-	// It is meaningful ONLY when Stop==StopError; false for a transient failure
-	// (retryable, e.g. a 5xx) and for any non-Error terminal. Fail-open: an
-	// unclassifiable error is treated as NOT permanent.
+	// Permanent is the compatibility projection of Disposition==Permanent.
 	Permanent bool
+	// Disposition classifies whether replaying the failed model request is safe.
+	Disposition RetryDisposition
+	// Progress records how far the terminal model stream advanced semantically.
+	Progress StreamProgress
 }
 
 // TurnEndPayload is the payload carried by an EvTurnEnd Event. It is a typed
@@ -1182,6 +1193,9 @@ type Event struct {
 	ToolResult *ToolResult
 	// Ask is set on EvPermissionAsk.
 	Ask *PendingAsk
+	// ModelRetry is set on EvModelRetry and carries the prior failed terminal's
+	// typed facts for durable reconstruction without parsing Text.
+	ModelRetry *ModelRetryPayload
 	// Result is set on EvResult.
 	Result *ResultPayload
 	// TurnEnd is set on EvTurnEnd (this turn's usage + elapsed time).

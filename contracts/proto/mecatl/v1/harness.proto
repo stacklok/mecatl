@@ -5,7 +5,7 @@
 //
 // HarnessService is the network surface over the WP8 agent loop. The
 // primary RPC is the bidi `Converse` stream: the client sends a mandatory
-// first `Prompt` frame, then zero or more `ResumeApproval` / `Cancel`
+// first `Prompt` or `RetryStart` frame, then zero or more `ResumeApproval` / `Cancel`
 // control frames, while the server streams typed `Event` envelopes for the
 // lifetime of the run, terminating in a `result` event.
 //
@@ -1137,12 +1137,14 @@ message Session {
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The
-// first frame MUST be `prompt`. Field numbers 1-9 are reserved for the
+// first frame MUST be `prompt` or `retry`. Field numbers 1-9 are reserved for the
 // start family; 10+ for the gate/cancellation family.
 message ConverseRequest {
   oneof kind {
-    // prompt is the mandatory first frame; it names the session and the text.
+    // prompt starts a normal run with a new user message.
     Prompt prompt = 1;
+    // retry starts a prompt-free retry of an eligible failed model step.
+    RetryStart retry = 2;
     // resume_approval resolves a paused permission.ask.
     ResumeApproval resume_approval = 10;
     // cancel aborts the in-flight run.
@@ -1243,7 +1245,12 @@ message ContentBlock {
   string last_modified = 12;
 }
 
-// Prompt is the mandatory first Converse frame. It names the session the run
+message RetryStart {
+  // session_id is the failed session whose exact model step should be retried.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// Prompt is a normal Converse start frame. It names the session the run
 // executes against and the user prompt to process. The prompt is text and/or
 // media: at least one of text/parts must be non-empty. The "text or parts
 // non-empty" rule is a CROSS-FIELD constraint enforced by the server (the proto
@@ -1460,6 +1467,15 @@ message Event {
   // accepted / appended / retracted / none_pending / too_late). CLIENT-VISIBLE, one per
   // steer frame, sequenced in send order.
   SteerAck steer_outcome = 20;
+  // model_retry carries the typed failed terminal consumed by a model.retry
+  // lifecycle boundary. Clients and event-source hosts must not parse text.
+  ModelRetry model_retry = 21;
+}
+
+// ModelRetry identifies the failed-step retry intent being driven.
+message ModelRetry {
+  RetryDisposition retry_disposition = 1;
+  StreamProgress stream_progress = 2;
 }
 
 // SteerEcho is the proto projection of session.SteerPayload (EvSteer): the
@@ -2023,6 +2039,25 @@ message PermissionAsk {
   string reason = 4;
 }
 
+// RetryDisposition is the neutral causal retry classification of a failed model
+// stream. UNKNOWN is an explicit conservative classification, distinct from an
+// absent optional field sent by an older server.
+enum RetryDisposition {
+  RETRY_DISPOSITION_UNSPECIFIED = 0;
+  RETRY_DISPOSITION_UNKNOWN = 1;
+  RETRY_DISPOSITION_RETRYABLE = 2;
+  RETRY_DISPOSITION_PERMANENT = 3;
+}
+
+// StreamProgress records the semantic commit boundary reached by a model stream.
+enum StreamProgress {
+  STREAM_PROGRESS_UNSPECIFIED = 0;
+  STREAM_PROGRESS_UNKNOWN = 1;
+  STREAM_PROGRESS_PRECOMMIT = 2;
+  STREAM_PROGRESS_VISIBLE = 3;
+  STREAM_PROGRESS_COMPLETE = 4;
+}
+
 // Result is the terminal payload carried by a result event. Mirrors
 // session.ResultPayload.
 message Result {
@@ -2038,6 +2073,11 @@ message Result {
   // replaying the identical request cannot succeed (e.g. a 4xx other than
   // 408/429). Absent/false means transient or unclassified (fail-open).
   bool permanent = 5;
+  // retry_disposition is always present on terminal results from new servers;
+  // absence identifies an older server, while explicit UNKNOWN is conservative.
+  optional RetryDisposition retry_disposition = 6;
+  // stream_progress is presence-aware for the same old-server distinction.
+  optional StreamProgress stream_progress = 7;
 }
 
 // TurnEnd is the payload carried by a turn.end event. Mirrors

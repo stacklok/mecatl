@@ -18,6 +18,15 @@ type permanentTestError struct {
 	msg string
 }
 
+type typedFailureError struct {
+	disposition session.RetryDisposition
+	progress    session.StreamProgress
+}
+
+func (*typedFailureError) Error() string                                { return "typed failure" }
+func (e *typedFailureError) RetryDisposition() session.RetryDisposition { return e.disposition }
+func (e *typedFailureError) StreamProgress() session.StreamProgress     { return e.progress }
+
 func (e *permanentTestError) Error() string { return e.msg }
 func (*permanentTestError) Permanent() bool { return true }
 
@@ -77,7 +86,35 @@ func TestRunTransientErrorNotPermanent(t *testing.T) {
 	}
 }
 
-// TestRunCleanStopNotPermanent asserts that a clean StopEndTurn terminal has
+func TestRunTypedFailureMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    session.RetryDisposition
+		p    session.StreamProgress
+	}{
+		{"unknown", session.RetryDispositionUnknown, session.StreamProgressUnknown},
+		{"retryable precommit", session.RetryDispositionRetryable, session.StreamProgressPrecommit},
+		{"retryable visible", session.RetryDispositionRetryable, session.StreamProgressVisible},
+		{"permanent", session.RetryDispositionPermanent, session.StreamProgressPrecommit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &typedFailureError{disposition: tc.d, progress: tc.p}
+			e := newEngine(agent.Deps{LLM: mockllm.New(mockllm.ErrorTurn(err)), Catalog: catalogWith(t, loopTool())})
+			sess := newSession(t, session.Limits{})
+			res := lastResult(t, drain(e.Run(context.Background(), sess, agent.EnvForWS(memfs.NewWorkspace("/ws"), nil), agent.RunRequest{Text: "test"})))
+			if res.Disposition != tc.d || res.Progress != tc.p {
+				t.Fatalf("result metadata = (%v,%v), want (%v,%v)", res.Disposition, res.Progress, tc.d, tc.p)
+			}
+			if res.Permanent != (tc.d == session.RetryDispositionPermanent) {
+				t.Fatalf("Permanent = %v for disposition %v", res.Permanent, tc.d)
+			}
+			if d, p := sess.FailureMetadata(); d != tc.d || p != tc.p {
+				t.Fatalf("session metadata = (%v,%v), want (%v,%v)", d, p, tc.d, tc.p)
+			}
+		})
+	}
+}
+
 // Permanent==false on the result payload.
 func TestRunCleanStopNotPermanent(t *testing.T) {
 	llm := mockllm.New(
@@ -96,6 +133,9 @@ func TestRunCleanStopNotPermanent(t *testing.T) {
 	}
 	if res.Permanent {
 		t.Fatal("ResultPayload.Permanent = true, want false for clean terminal")
+	}
+	if res.Progress != session.StreamProgressComplete {
+		t.Fatalf("ResultPayload.Progress = %v, want complete", res.Progress)
 	}
 }
 

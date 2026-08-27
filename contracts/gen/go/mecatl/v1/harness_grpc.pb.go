@@ -5,7 +5,7 @@
 //
 // HarnessService is the network surface over the WP8 agent loop. The
 // primary RPC is the bidi `Converse` stream: the client sends a mandatory
-// first `Prompt` frame, then zero or more `ResumeApproval` / `Cancel`
+// first `Prompt` or `RetryStart` frame, then zero or more `ResumeApproval` / `Cancel`
 // control frames, while the server streams typed `Event` envelopes for the
 // lifetime of the run, terminating in a `result` event.
 //

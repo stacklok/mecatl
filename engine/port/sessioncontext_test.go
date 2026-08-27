@@ -28,3 +28,19 @@ func TestSessionIDContext(t *testing.T) {
 		t.Fatalf("parent context changed to %q, want %q", id, parent)
 	}
 }
+
+func TestAttemptCorrelationContext(t *testing.T) {
+	ctx := port.WithTurnIndex(port.WithRunSerial(context.Background(), 42), 3)
+	if serial, ok := port.RunSerialFromContext(ctx); !ok || serial != 42 {
+		t.Fatalf("RunSerialFromContext = (%d, %v), want (42, true)", serial, ok)
+	}
+	if turn, ok := port.TurnIndexFromContext(ctx); !ok || turn != 3 {
+		t.Fatalf("TurnIndexFromContext = (%d, %v), want (3, true)", turn, ok)
+	}
+	if _, ok := port.RunSerialFromContext(context.Background()); ok {
+		t.Fatal("empty context unexpectedly carried a run serial")
+	}
+	if _, ok := port.TurnIndexFromContext(context.Background()); ok {
+		t.Fatal("empty context unexpectedly carried a turn index")
+	}
+}

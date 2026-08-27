@@ -938,6 +938,30 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 	})
 }
 
+// RetryFailedStep resumes the failed model step without submitting another user
+// prompt. Persisted conversation and tool state are reused, while live turn-0
+// instructions and system prompt inputs are re-resolved by the normal request builder.
+// sess must carry durable failed-step retry intent prepared by the host.
+func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
+	return e.startRun(ctx, sess, RunRequest{}, func(ctx context.Context, r *Run) {
+		e.emit(r, session.Event{Type: session.EvSessionInit})
+		disposition, progress, pending := sess.FailedStepRetryPending()
+		if !pending {
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, errors.New("agent: failed-step retry intent is not prepared"), false)
+			return
+		}
+		retryText := "The failed model step is being retried without adding another user prompt."
+		if progress == session.StreamProgressVisible {
+			retryText = "The prior partial model output failed and is superseded; the failed model step is being retried."
+		}
+		e.emit(r, session.Event{Type: session.EvModelRetry, Text: retryText, ModelRetry: &session.ModelRetryPayload{
+			Disposition: disposition,
+			Progress:    progress,
+		}})
+		e.runLoop(ctx, r, sess, env, session.Usage{}, "", true)
+	})
+}
+
 // ResumeApproval is the FOURTH, awaiting-ONLY run-entry seam (cloud-native Phase
 // 2): it re-enters the loop AT a parked permission ask on a session that is in
 // StateAwaiting (typically loaded fresh from a snapshot after the process that
@@ -1136,7 +1160,7 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env t
 	// brake is evaluated against the AGGREGATE's cumulative Usage (sess.Usage) instead
 	// — which RecordUsage below keeps in lock-step and which the snapshot persists —
 	// so the budget survives reopen/restart while EvResult.Usage stays per-run.
-	e.runLoop(ctx, r, sess, env, session.Usage{}, "")
+	e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 }
 
 // runLoop is the SHARED turn-loop body driven by both the prompt entry (drive,
@@ -1150,8 +1174,10 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env t
 // already-spent-this-re-entry delta for driveFromAwaiting, so the EvResult figure
 // the team supervisor sums stays accurate). lastText seeds the last meaningful
 // assistant text. The budget brake reads sess.Usage directly (persisted spend is
-// honoured), independent of total.
-func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, total session.Usage, lastText string) {
+// honoured), independent of total. skipFirstBoundaryInjections is used only by
+// failed-step retry reuses conversation state; live instruction sources are re-resolved.
+// while every later iteration resumes the ordinary boundary drains.
+func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, total session.Usage, lastText string, skipFirstBoundaryInjections bool) {
 	// no-progress nudge accounting (Workstream A). noProgressNudges counts the
 	// continuation messages injected this run; nudgeCap is the budget (defaulted in
 	// NewEngine to defaultNoProgressNudges; a negative cap DISABLES nudging).
@@ -1161,6 +1187,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 	// per run, mirroring the noProgressNudges accounting; it is consumed only in
 	// finishTurnNoTools' real-clean-end branch.
 	var bgPendingNudged bool
+	firstIteration := true
 
 	for {
 		// Plan-approval gate (issue #206): terminate immediately if a plan verdict
@@ -1186,10 +1213,13 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 		// STILL durable history (the run then terminates StopMaxTurns / StopBudget
 		// normally; the recorded message is addressed by the next run). See
 		// runBoundaryInjections.
-		if err := e.runBoundaryInjections(ctx, r, sess); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
-			return
+		if shouldRunBoundaryInjections(firstIteration, skipFirstBoundaryInjections) {
+			if err := e.runBoundaryInjections(ctx, r, sess); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
+				return
+			}
 		}
+		firstIteration = false
 
 		// Step 2: stop conditions BEFORE the model call (limit / cancellation / token
 		// budget). preTurnTerminal owns the precedence and the matching terminate call;
@@ -1217,9 +1247,14 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 
 		// Step 4: build the request and consume the model stream.
 		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, sess, env, turnIdx)
+		// Provider-reported usage is spend, not semantic visibility. Record it even
+		// when the stream fails so retries, cumulative budgets, and EvResult remain
+		// honest without retaining failed-attempt content.
+		total = total.Add(usage)
+		_ = sess.RecordUsage(usage)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-				e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
+				e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, err, false)
 				return
 			}
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, permanentCause(err))
@@ -1244,18 +1279,8 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			emitUsage.InputTokens = est
 			estimated = est > 0 // a zero estimate is no estimate worth flagging
 		}
-		total = total.Add(usage)
-		// Accumulate this turn's usage onto the aggregate's CUMULATIVE Usage. This is
-		// the value the budget brake reads (budgetExhausted(r, sess.Usage)) and the
-		// snapshot persists, so the budget survives reopen/restart — there is NO loop
-		// seed; the brake reads sess.Usage directly. `total` is the separate zero-based
-		// per-run delta the EvResult carries (the figure the team supervisor sums per
-		// round). The session is StateRunning here (BeginTurn succeeded), so the
-		// running-only RecordUsage guard is satisfied. A guard error is impossible on
-		// this path but would only mean the aggregate misses one turn's usage (a
-		// best-effort budget undercount, never a correctness fault), so it is
-		// deliberately not promoted to a terminal error.
-		_ = sess.RecordUsage(usage)
+		// Cumulative and per-run usage were recorded immediately after runTurn so the
+		// same accounting applies to both successful and failed streams.
 		if asst.Text != "" {
 			lastText = asst.Text
 		}
@@ -1318,6 +1343,10 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			return
 		}
 	}
+}
+
+func shouldRunBoundaryInjections(firstIteration, skipFirst bool) bool {
+	return !firstIteration || !skipFirst
 }
 
 // runBoundaryInjections runs the Step 2a turn-boundary injection drains, in
@@ -1657,15 +1686,24 @@ func (e *Engine) lookupTool(r *Run, name string) (tool.Tool, bool) {
 //     completes (no mid-stream abort → no-replay-after-first-chunk holds).
 func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Session, lastText string, total session.Usage) bool {
 	if reason, stopped := sess.StopReason(); stopped {
-		e.terminate(ctx, r, sess, reason, lastText, total, nil, false)
+		if _, _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
+			e.deferFailedStepRetry(ctx, r, sess, reason, lastText, total)
+		} else {
+			e.terminate(ctx, r, sess, reason, lastText, total, nil, false)
+		}
 		return true
 	}
 	if ctx.Err() != nil {
+		// Cancellation explicitly abandons retry intent through Session.Cancel.
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
 	if e.budgetExhausted(r, sess.Usage) {
-		e.terminateComplete(ctx, r, sess, session.StopBudget, lastText, total, "")
+		if _, _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
+			e.deferFailedStepRetry(ctx, r, sess, session.StopBudget, lastText, total)
+		} else {
+			e.terminateComplete(ctx, r, sess, session.StopBudget, lastText, total, "")
+		}
 		return true
 	}
 	return false
@@ -1871,7 +1909,8 @@ func (l *turnLatency) summary() turnTiming {
 // streaming content deltas reports no inter-token summary (there is no gap).
 func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
 	req := e.buildRequest(ctx, r, sess, env)
-	seq, err := e.deps.LLM.Stream(ctx, req)
+	attemptCtx := port.WithTurnIndex(port.WithRunSerial(ctx, r.serial), turnIdx)
+	seq, err := e.deps.LLM.Stream(attemptCtx, req)
 	if err != nil {
 		return session.Message{}, session.Usage{}, session.StopNone, turnTiming{}, fmt.Errorf("agent: start stream: %w", err)
 	}
@@ -2382,11 +2421,26 @@ func joinChildren(joins []backgroundJoin, d time.Duration) []backgroundJoin {
 	return pending
 }
 
+// deferFailedStepRetry closes a retry Run that reached a clean pre-turn brake
+// before BeginTurn/provider invocation. Unlike ordinary clean termination it leaves
+// the aggregate idle with durable retry intent, so no queued prompt may overtake it.
+func (e *Engine) deferFailedStepRetry(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage) {
+	e.closeSteerDrained(ctx, r, sess)
+	e.drainChildren(ctx, r)
+	e.fireStop(ctx, r, sess, reason)
+	e.emitResult(r, sess, reason, text, usage, "", session.RetryDispositionUnknown, session.StreamProgressUnknown)
+	e.save(ctx, r, sess)
+}
+
 // terminate ends the run with a non-success terminal state. It moves the session
 // to the matching terminal state (Cancel for cancelled, Fail for error, Stop for
 // a tripped limit) and emits the terminal result Event. permanent records whether
 // a StopError failure is permanent (unrecoverable; retry will fail again).
 func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, reason session.StopReason, text string, usage session.Usage, cause error, permanent bool) {
+	disposition, progress := failureFacts(cause)
+	if disposition == session.RetryDispositionUnknown && permanent {
+		disposition = session.RetryDispositionPermanent
+	}
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
 	switch reason {
@@ -2394,18 +2448,18 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 		_ = sess.Cancel()
 	case session.StopError:
 		_ = sess.Fail()
-		_ = sess.RecordFailurePermanence(permanent)
+		_ = sess.RecordFailureMetadata(disposition, progress)
 	default:
 		if !sess.State.IsTerminal() {
 			_ = sess.Stop(reason)
 		}
 	}
 	var errMsg string
-	if cause != nil {
+	if cause != nil && reason != session.StopCancelled {
 		errMsg = cause.Error()
 	}
 	e.fireStop(ctx, r, sess, reason)
-	e.emitResult(r, sess, reason, text, usage, errMsg, permanent)
+	e.emitResult(r, sess, reason, text, usage, errMsg, disposition, progress)
 	e.save(ctx, r, sess)
 }
 
@@ -2466,7 +2520,7 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	// terminateComplete has no Go error to classify (the provider relays a stop
 	// CHUNK, not an error), so the permanence bit is always false here — honest
 	// fail-open. Only the error terminate() path carries a real classified cause.
-	e.emitResult(r, sess, reason, text, usage, errMsg, false)
+	e.emitResult(r, sess, reason, text, usage, errMsg, session.RetryDispositionUnknown, session.StreamProgressComplete)
 }
 
 // observeCompletion invokes the optional host observer after the aggregate has
@@ -2515,11 +2569,38 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 // returns "" for a benign stop (end_turn / a clean limit), where a cause would
 // be noise — StopBudget/StopMaxTurns/StopNoProgress already carry their own
 // honest notes.
+// failureFacts extracts neutral typed metadata from a terminal provider error.
+// Missing interfaces remain conservative unknown values; no text inference occurs.
+func failureFacts(err error) (session.RetryDisposition, session.StreamProgress) {
+	var disposition session.RetryDisposition
+	var classified port.RetryDispositionError
+	if errors.As(err, &classified) {
+		disposition = classified.RetryDisposition()
+		if !disposition.Valid() {
+			disposition = session.RetryDispositionUnknown
+		}
+	} else {
+		var pe port.PermanentError
+		if errors.As(err, &pe) && pe.Permanent() {
+			disposition = session.RetryDispositionPermanent
+		}
+	}
+	var progress session.StreamProgress
+	var progressed port.StreamProgressError
+	if errors.As(err, &progressed) {
+		progress = progressed.StreamProgress()
+		if !progress.Valid() {
+			progress = session.StreamProgressUnknown
+		}
+	}
+	return disposition, progress
+}
+
 // permanentCause reports whether err is a permanent provider rejection that will
 // fail again on retry (fail-open: an unclassifiable error returns false).
 func permanentCause(err error) bool {
-	var pe port.PermanentError
-	return errors.As(err, &pe) && pe.Permanent()
+	disposition, _ := failureFacts(err)
+	return disposition == session.RetryDispositionPermanent
 }
 
 func stopTerminalCause(stop session.StopReason, text string) string {
@@ -2535,16 +2616,18 @@ func stopTerminalCause(stop session.StopReason, text string) string {
 // emitResult publishes the single terminal result Event. errMsg carries the
 // failure detail on an error termination (empty for success/limit/cancel).
 // permanent records whether a StopError failure is permanent (unrecoverable).
-func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string, permanent bool) {
+func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReason, text string, usage session.Usage, errMsg string, disposition session.RetryDisposition, progress session.StreamProgress) {
 	u := usage
 	e.emit(r, session.Event{
 		Type: session.EvResult,
 		Result: &session.ResultPayload{
-			Stop:      reason,
-			Text:      text,
-			Usage:     usage,
-			Error:     errMsg,
-			Permanent: permanent,
+			Stop:        reason,
+			Text:        text,
+			Usage:       usage,
+			Error:       errMsg,
+			Permanent:   disposition == session.RetryDispositionPermanent,
+			Disposition: disposition,
+			Progress:    progress,
 		},
 		Usage: &u,
 	})

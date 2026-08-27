@@ -68,7 +68,7 @@ record; current behaviour is in the linked [architecture](../architecture.md) do
 | Item | Status | Notes |
 |---|---|---|
 | Stop conditions (turns/tool-calls/failures) | ✅ | enforced + default limits |
-| Provider retry/backoff + circuit breaker | ✅ | `llmresilience` |
+| Provider semantic retry/backoff + circuit breaker | ✅ | `llmresilience`: tentative non-text chunks buffer until meaningful text or clean completion; only typed retryable+precommit transparently replays. Typed disposition/progress, prompt-free failed-step retry, persisted retry intent, and one bounded mecatui auto-retry shipped in issue #409 / ADR 0239 |
 | Provider error surfaced to client | ✅ | `ResultPayload.Error` |
 | **Auto-resume persisted sessions after restart** | ✅ | `GetSession`/`Approve`/`Cancel` fall back to `SessionStore.Load`; persist at create, on entering `awaiting`, and at run end (engine `Store` + `Service.Persist`). With `--store-dir` (jsonlstore) a session survives restart and is loadable — `mecatui` defaults this on at a per-workspace dir under `$XDG_STATE_HOME/mecatui/sessions` (issue #79), `mecated` leaves it off by default. Boundary: an in-flight *stream* is NOT resumed across restart (the `*agent.Run` is in-memory). Since cloud-native Phase 2, an `Approve` against a runless-but-stored session that died while `awaiting` **re-enters the loop at the ask** (`Service.resumeFromAwaiting`); `ErrNoActiveRun` (HTTP 409 / gRPC FailedPrecondition) is returned only for `Approve` against a non-awaiting state and for `Cancel` against any runless session. See `CLOUD-NATIVE.md` Phase 2 |
 | Graceful shutdown | ✅ | gRPC GracefulStop + HTTP Shutdown |

@@ -1620,27 +1620,35 @@ limits `max_turns`, `max_tool_calls`, and `budget` (the run just ran out of
 turn/tool/token budget; firing the merged prompt reopens it with a fresh budget, which
 is what a lined-up "continue" wants).
 
-A **transient** failure — an idle/stalled stream, an overloaded/unavailable backend, a
-rate limit, or a transient upstream 5xx — is treated like a healthy stop and
-**auto-resumes** the merged queue, since a plain retry is likely to succeed. This
-auto-resume fires **only** when follow-ups are staged: a transient death of a run with
-an **empty** queue does not auto-retry the original prompt — the user must resend it
-manually.
+A terminal provider failure is classified by two presence-aware fields: retry
+disposition (`unknown`, `retryable`, or `permanent`) and stream progress
+(`unknown`, `precommit`, `visible`, or `complete`). Mecatui starts **one** automatic,
+prompt-free failed-step retry only when a new server explicitly reports
+`retryable + precommit`. It sends a fresh `Converse` stream whose first frame is
+`RetryStart`, not another Prompt, so the original user message is not duplicated.
+The textarea and queued future prompts stay untouched. If that retry succeeds, the
+existing healthy queue drain resumes.
 
-A **permanent** provider error — a 4xx rejection other than 408/429, a
-context-window overflow, a policy block — renders a ONE-LINE summary block
-(`✗ <first line, ≤120 runes> — retrying won't help; the request is rejected. Start a
+An absent typed field (an old server) or explicit `unknown` pauses and preserves
+the queue. `/retry` is available for every bound idle session and sends `RetryStart`;
+the server authoritatively accepts or rejects eligibility from durable state. It adds no
+Prompt or user card and does not reset the textarea or mutate queued prompts. Visible
+output is never retried automatically. Retry transport failures and clean pre-turn
+brakes preserve the manual affordance and keep queued work paused; only `turn.start`
+proves an authoritative model attempt. Persisted conversation/tool state is reused, but
+live turn-0 instructions, operator profile, and system prompt are re-resolved.
+
+A **permanent** provider error, such as a non-retryable 4xx rejection or context-window
+overflow, renders a ONE-LINE summary block
+(`✗ <first line, ≤120 runes>: retrying won't help; the request is rejected. Start a
 new session or /clear.`) instead of a raw error block. The raw error payload is
 available on `ctrl+t` expand under a dim `raw payload:` header. A permanent error is
-never auto-retried (the `transient` flag is forced false).
-When a session that failed permanently is recovered for a new prompt, a
-transient `recover_notice` warning line appears before the first turn so you see it
-before burning another provider call.
+never auto-retried. When a session that failed permanently is recovered for a new
+prompt, a transient `recover_notice` warning line appears before the first turn.
 
-A **hard**
-error, a **user cancel**, `max_consecutive_failures`, or a stream close instead
-**pauses and keeps** the queue, so a genuinely-broken run or a deliberate cancel never
-silently fires the backlog. The card switches from the muted `⏳ N queued · ↑ edit` to a
+A paused retry, hard error, user cancel, `max_consecutive_failures`, or stream close
+**pauses and keeps** the queue, so a broken run or deliberate cancel never silently
+fires the backlog. The card switches from the muted `⏳ N queued · ↑ edit` to a
 louder `⏸ N queued · paused: <reason>` with the resume/edit/clear keys, so a held queue
 is never mistaken for a hang. From there (idle), `enter` on an empty line **resumes**
 (sends the merged queue), `↑` on an empty line pulls the merged queue back into the

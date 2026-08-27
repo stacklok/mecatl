@@ -133,6 +133,12 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.Ask != nil {
 		out.Ask = toProtoAsk(*ev.Ask)
 	}
+	if ev.ModelRetry != nil {
+		out.ModelRetry = &mecatlv1.ModelRetry{
+			RetryDisposition: retryDispositionToProto(ev.ModelRetry.Disposition),
+			StreamProgress:   streamProgressToProto(ev.ModelRetry.Progress),
+		}
+	}
 	if ev.Result != nil {
 		out.Result = toProtoResult(*ev.Result)
 	}
@@ -687,12 +693,44 @@ func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
 
 // toProtoResult maps a session.ResultPayload to its proto Result form.
 func toProtoResult(p session.ResultPayload) *mecatlv1.Result {
+	disposition := p.Disposition
+	if disposition == session.RetryDispositionUnknown && p.Permanent {
+		disposition = session.RetryDispositionPermanent
+	}
+	protoDisposition := retryDispositionToProto(disposition)
+	progress := streamProgressToProto(p.Progress)
 	return &mecatlv1.Result{
-		Stop:      string(p.Stop),
-		Text:      valid(p.Text),
-		Usage:     toProtoUsage(p.Usage),
-		Error:     valid(p.Error),
-		Permanent: p.Permanent,
+		Stop:             string(p.Stop),
+		Text:             valid(p.Text),
+		Usage:            toProtoUsage(p.Usage),
+		Error:            valid(p.Error),
+		Permanent:        disposition == session.RetryDispositionPermanent,
+		RetryDisposition: &protoDisposition,
+		StreamProgress:   &progress,
+	}
+}
+
+func retryDispositionToProto(d session.RetryDisposition) mecatlv1.RetryDisposition {
+	switch d {
+	case session.RetryDispositionRetryable:
+		return mecatlv1.RetryDisposition_RETRY_DISPOSITION_RETRYABLE
+	case session.RetryDispositionPermanent:
+		return mecatlv1.RetryDisposition_RETRY_DISPOSITION_PERMANENT
+	default:
+		return mecatlv1.RetryDisposition_RETRY_DISPOSITION_UNKNOWN
+	}
+}
+
+func streamProgressToProto(p session.StreamProgress) mecatlv1.StreamProgress {
+	switch p {
+	case session.StreamProgressPrecommit:
+		return mecatlv1.StreamProgress_STREAM_PROGRESS_PRECOMMIT
+	case session.StreamProgressVisible:
+		return mecatlv1.StreamProgress_STREAM_PROGRESS_VISIBLE
+	case session.StreamProgressComplete:
+		return mecatlv1.StreamProgress_STREAM_PROGRESS_COMPLETE
+	default:
+		return mecatlv1.StreamProgress_STREAM_PROGRESS_UNKNOWN
 	}
 }
 

@@ -95,18 +95,18 @@ func (e *explicitNoRetryTestError) Error() string { return e.err.Error() }
 func (e *explicitNoRetryTestError) Unwrap() error { return e.err }
 func (*explicitNoRetryTestError) Retryable() bool { return false }
 
-func TestExplicitNoRetryDecisionIsNotPromotedToPermanentMidStream(t *testing.T) {
+func TestExplicitNoRetryDecisionRemainsCausallyRetryableMidStream(t *testing.T) {
 	inner := &oai.Error{StatusCode: http.StatusServiceUnavailable, Message: "temporary"}
 	err := &explicitNoRetryTestError{err: inner}
-	p := &resilientProvider{cfg: Config{Classifier: func(error) bool { return false }}}
 
-	got := p.asPermanent(err)
-	if got != err {
-		t.Fatalf("asPermanent returned %T %v, want original explicit-decision error", got, got)
+	got := classifyVisibleError(err)
+	var disposition port.RetryDispositionError
+	if !errors.As(got, &disposition) || disposition.RetryDisposition() != port.RetryDispositionRetryable {
+		t.Fatalf("disposition = %v, want retryable", disposition)
 	}
 	var permanent port.PermanentError
 	if errors.As(got, &permanent) {
-		t.Fatal("explicit no-retry decision was incorrectly promoted to port.PermanentError")
+		t.Fatal("explicit no-retry policy veto was incorrectly promoted to port.PermanentError")
 	}
 }
 
@@ -1223,6 +1223,45 @@ func TestBreakerHalfOpenPermanentErrorStaysOpen(t *testing.T) {
 	}
 }
 
+func TestBreakerHalfOpenVisibleOutcomeHealth(t *testing.T) {
+	tests := []struct {
+		name         string
+		trial        step
+		wantOpen     bool
+		wantHalfOpen bool
+		wantFailures int
+		wantErr      bool
+	}{
+		{"clean success closes", step{chunks: textTurn("ok")}, false, false, 0, false},
+		{"visible transient failure reopens", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: apiErr(503)}, true, false, 2, true},
+		{"visible permanent failure stays half-open", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: apiErr(400)}, true, true, 1, true},
+		{"visible cancellation is neutral", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: context.Canceled}, true, true, 1, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clk := &manualClock{t: time.Unix(1000, 0)}
+			f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, tc.trial}}
+			wrapped := Wrap(f, Config{MaxAttempts: 1, BreakerThreshold: 1, BreakerCooldown: time.Second, Clock: clk.Now})
+			p := wrapped.(*resilientProvider)
+			_, _ = p.Stream(context.Background(), port.LLMRequest{})
+			clk.Advance(2 * time.Second)
+			seq, err := p.Stream(context.Background(), port.LLMRequest{})
+			if err == nil && seq != nil {
+				_, err = drain(t, seq)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("trial err=%v, wantErr=%v", err, tc.wantErr)
+			}
+			p.breaker.mu.Lock()
+			open, halfOpen, failures := p.breaker.open, p.breaker.halfOpen, p.breaker.consecutiveFailures
+			p.breaker.mu.Unlock()
+			if open != tc.wantOpen || halfOpen != tc.wantHalfOpen || failures != tc.wantFailures {
+				t.Fatalf("breaker=(open=%v half=%v failures=%d), want (%v,%v,%d)", open, halfOpen, failures, tc.wantOpen, tc.wantHalfOpen, tc.wantFailures)
+			}
+		})
+	}
+}
+
 func errorsAsBreaker(err error) bool {
 	var be *BreakerError
 	return errors.As(err, &be)
@@ -1946,24 +1985,26 @@ func lastKind(cs []port.Chunk) any {
 	return cs[len(cs)-1].Kind
 }
 
-// TestIsCommittingPredicate is the table test for the isCommitting predicate
-// over all 7 ChunkKind values.
-func TestIsCommittingPredicate(t *testing.T) {
+// TestAdvancesVisiblePredicate pins the semantic boundary: only meaningful text
+// escapes before clean completion; all current non-text chunks remain tentative.
+func TestAdvancesVisiblePredicate(t *testing.T) {
 	cases := []struct {
-		kind port.ChunkKind
-		want bool
+		chunk port.Chunk
+		want  bool
 	}{
-		{port.ChunkText, true},
-		{port.ChunkReasoning, false},
-		{port.ChunkReasoningItem, false},
-		{port.ChunkToolCall, true},
-		{port.ChunkUsage, true},
-		{port.ChunkDone, true},
-		{port.ChunkPhase, true},
+		{port.Chunk{Kind: port.ChunkText, Text: "answer"}, true},
+		{port.Chunk{Kind: port.ChunkText, Text: " \n\t"}, false},
+		{port.Chunk{Kind: port.ChunkReasoning}, false},
+		{port.Chunk{Kind: port.ChunkReasoningItem}, false},
+		{port.Chunk{Kind: port.ChunkToolCall}, false},
+		{port.Chunk{Kind: port.ChunkUsage}, false},
+		{port.Chunk{Kind: port.ChunkDone}, false},
+		{port.Chunk{Kind: port.ChunkPhase}, false},
+		{port.Chunk{Kind: port.ChunkProviderRoute}, false},
 	}
 	for _, tc := range cases {
-		if got := isCommitting(tc.kind); got != tc.want {
-			t.Errorf("isCommitting(%v) = %v, want %v", tc.kind, got, tc.want)
+		if got := advancesVisible(tc.chunk); got != tc.want {
+			t.Errorf("advancesVisible(%+v) = %v, want %v", tc.chunk, got, tc.want)
 		}
 	}
 }

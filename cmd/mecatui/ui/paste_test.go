@@ -301,8 +301,8 @@ func TestPasteSyncsPalette(t *testing.T) {
 	if got := m.ta.Value(); got != "/re" {
 		t.Fatalf("input value = %q, want the pasted '/re'", got)
 	}
-	// "/re" filters the seeded workspace rows to review + refactor.
-	if len(m.palette.filtered) != 2 {
-		t.Fatalf("palette filtered = %d, want 2 (review, refactor) after pasting '/re'", len(m.palette.filtered))
+	// "/re" filters to the retry built-in plus review + refactor.
+	if len(m.palette.filtered) != 3 {
+		t.Fatalf("palette filtered = %d, want 3 (retry, review, refactor) after pasting '/re'", len(m.palette.filtered))
 	}
 }

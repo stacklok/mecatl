@@ -20,7 +20,7 @@ type LLMProvider interface {
 }
 ```
 
-**`Stream`** starts a streaming model call and returns a Go 1.23 `iter.Seq2[Chunk, error]` iterator. The outer error reports a failure to start the stream (network unreachable, bad request). An error emitted from the iterator itself is a mid-stream failure — a dropped connection after the model started responding. The loop treats these differently: a start failure is retried by the resilience decorator; a mid-stream error is terminal (no replay after the first chunk).
+**`Stream`** starts a streaming model call and returns a Go 1.23 `iter.Seq2[Chunk, error]` iterator. The outer error reports a failure to start the stream. An error emitted from the iterator is a stream failure. Do not infer retry safety from where the error appears: the resilience decorator combines typed retry disposition with semantic stream progress. Reasoning, replay metadata, phase, route, usage, tool calls, and leading whitespace can remain precommit after raw chunks have arrived; meaningful text commits the attempt.
 
 Context cancellation is the API "cancel" verb — cancel the context to interrupt an in-flight turn mid-stream. Both the OpenAI and Anthropic adapters stop yielding on `ctx.Done()`.
 
@@ -94,7 +94,15 @@ Neither of these widens `LLMRequest`. The structure is neutral (one opaque blob 
 
 The loop assembles these into a `session.Message` and records it. Tool calls arrive fully assembled (the adapter buffers the per-token JSON and emits the complete call once it is valid), so the dispatch layer never deals with partial tool calls.
 
-`ChunkUsage` and `ChunkDone` are always the last two chunks in a normal stream, in that order. A mid-stream error yields no `ChunkDone`; the loop recognizes a stream error as `StopError` and fails the session.
+`ChunkUsage` and `ChunkDone` are always the last two chunks in a normal stream, in that order. A stream error yields no `ChunkDone`; the loop recognizes it as `StopError` and records typed failure metadata when the error exposes it.
+
+### Classify failures without leaking provider data
+
+Provider errors may implement `RetryDispositionError` and `StreamProgressError`; the root resilience adapter also classifies established `StatusCode() int`, permanent-error, and transport-error shapes. Use `Retryable` only when replaying the identical request is safe at the transport/provider level; use `Permanent` for a known rejection, and leave unknown facts `Unknown`. These facts do not decide retry policy or circuit-breaker health by themselves.
+
+A provider may also implement the structural `ProviderErrorMetadataError` contract. Its primitive getters expose HTTP or in-band status, provider code, and one correlation kind/ID pair without coupling an independently released provider module to a new engine-owned value type. Root composition validates statuses, bounded printable tokens, and the closed correlation-kind set before emitting anything; invalid metadata is omitted as a whole. Do not put response bodies, prompts, URLs, arbitrary headers, tokens, or credentials in metadata. A gateway-backed adapter, including ToolHive over Responses, can report only fields the gateway actually exposes.
+
+The resilience layer buffers tentative chunks in wire order. The first meaningful text flushes and marks the attempt visible; a clean done flushes tool-only or whitespace-only turns. Only a typed retryable error while still precommit can be discarded and replayed transparently. Unknown future chunk kinds commit conservatively.
 
 ### Why streaming matters
 

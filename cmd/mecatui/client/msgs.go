@@ -460,6 +460,9 @@ type ParallelMsg struct {
 	WinnerWorkspace string
 }
 
+// ModelRetryMsg is the durable, client-visible failed-step retry lifecycle notice.
+type ModelRetryMsg struct{ Text string }
+
 // CompactionMsg is a muted "history compacted" notice.
 type CompactionMsg struct{ Text string }
 
@@ -540,23 +543,64 @@ type SteerEchoMsg struct {
 	MessageID string
 }
 
+// RetryDisposition is the proto-free causal classification of a failed model step.
+// Presence is carried separately on ResultMsg so explicit unknown is distinguishable
+// from an older server that omitted the field.
+type RetryDisposition uint8
+
+const (
+	retryDispositionUnspecified RetryDisposition = iota
+	// RetryDispositionUnknown means the server cannot safely classify the failure.
+	RetryDispositionUnknown
+	// RetryDispositionRetryable means the failure cause permits replay.
+	RetryDispositionRetryable
+	// RetryDispositionPermanent means replaying the same step cannot succeed.
+	RetryDispositionPermanent
+)
+
+// StreamProgress is the proto-free semantic commit boundary of a model stream.
+type StreamProgress uint8
+
+const (
+	streamProgressUnspecified StreamProgress = iota
+	// StreamProgressUnknown means no safe commit-boundary claim is available.
+	StreamProgressUnknown
+	// StreamProgressPrecommit means no model output became visible or committed.
+	StreamProgressPrecommit
+	// StreamProgressVisible means model output became externally visible.
+	StreamProgressVisible
+	// StreamProgressComplete means the model stream completed.
+	StreamProgressComplete
+)
+
+const resultStopError = "error"
+
 // ResultMsg is the terminal event: stop reason, final text, error, usage.
 type ResultMsg struct {
 	Stop  string
 	Text  string
 	Error string
 	Usage Usage
-	// Transient marks a stop=error whose Error text classifies as a transient
-	// (retryable) failure — see TransientResultError. The ui auto-resumes a paused
-	// queue on a transient error; a hard error still pauses. Always false for a
-	// non-error stop.
+	// Transient is a presentation/backward-compatibility classification only. New
+	// servers derive it from RetryDisposition; only an absent typed disposition may
+	// use the legacy error-text vocabulary. It never authorizes exact replay.
 	Transient bool
-	// Permanent reports whether a stop=error failure is a PERMANENT provider
-	// rejection — the server classified it as irrecoverable (e.g. a 4xx other than
-	// 408/429). When true, the ui renders a structured permanent-error block
-	// instead of a raw error block and forces Transient=false. Older servers leave
-	// this false; the legacy Transient vocab path is the fallback.
-	Permanent bool
+	// Permanent controls permanent-error presentation. A present typed disposition
+	// takes precedence over the legacy proto Permanent bit.
+	Permanent               bool
+	RetryDisposition        RetryDisposition
+	RetryDispositionPresent bool
+	StreamProgress          StreamProgress
+	StreamProgressPresent   bool
+}
+
+// FailedStepRetryEligible reports whether this terminal result proves that replaying the
+// failed model step is safe. Legacy/transient presentation signals are deliberately
+// ignored: failed-step retry requires both typed facts from a new server.
+func (r ResultMsg) FailedStepRetryEligible() bool {
+	return r.Stop == resultStopError &&
+		r.RetryDispositionPresent && r.RetryDisposition == RetryDispositionRetryable &&
+		r.StreamProgressPresent && r.StreamProgress == StreamProgressPrecommit
 }
 
 // Usage is the token accounting carried by ResultMsg (and usage-bearing events).
@@ -592,9 +636,8 @@ type ConnectErrMsg struct{ Err error }
 // StreamErrMsg reports a non-EOF Recv error on the Converse stream.
 type StreamErrMsg struct {
 	Err error
-	// Transient marks a stream error that classifies as a transient (retryable)
-	// transport/backend failure — see TransientStreamErr. The ui auto-resumes a
-	// paused queue on a transient stream error; a hard error still pauses.
+	// Transient is legacy display metadata from TransientStreamErr. A transport
+	// failure has no typed semantic commit fact and never authorizes TUI replay.
 	Transient bool
 }
 
@@ -1099,6 +1142,8 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 // falls through to the delegation switch.
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
+	case "model.retry":
+		return ModelRetryMsg{Text: ev.GetText()}
 	case "compaction":
 		return CompactionMsg{Text: ev.GetText()}
 	case "no_progress":
@@ -1325,13 +1370,58 @@ func conversationMessagesFromProto(in []*mecatlv1.ConversationMessage) []Convers
 // resultMsg builds a ResultMsg from the proto Result payload.
 // The helper exists to keep EventToMsg within the cyclomatic-complexity bound.
 func resultMsg(r *mecatlv1.Result) ResultMsg {
-	transient := TransientResultError(r.GetError()) && !r.GetPermanent()
+	dispositionPresent := r.RetryDisposition != nil
+	progressPresent := r.StreamProgress != nil
+	disposition := retryDispositionFromProto(r.GetRetryDisposition())
+
+	transient := false
+	permanent := false
+	if dispositionPresent {
+		transient = r.GetStop() == resultStopError && disposition == RetryDispositionRetryable
+		permanent = r.GetStop() == resultStopError && disposition == RetryDispositionPermanent
+	} else {
+		permanent = r.GetPermanent()
+		transient = r.GetStop() == resultStopError && TransientResultError(r.GetError()) && !permanent
+	}
+
 	return ResultMsg{
-		Stop:      r.GetStop(),
-		Text:      r.GetText(),
-		Error:     r.GetError(),
-		Usage:     usageFrom(r.GetUsage()),
-		Transient: transient,
-		Permanent: r.GetPermanent(),
+		Stop:                    r.GetStop(),
+		Text:                    r.GetText(),
+		Error:                   r.GetError(),
+		Usage:                   usageFrom(r.GetUsage()),
+		Transient:               transient,
+		Permanent:               permanent,
+		RetryDisposition:        disposition,
+		RetryDispositionPresent: dispositionPresent,
+		StreamProgress:          streamProgressFromProto(r.GetStreamProgress()),
+		StreamProgressPresent:   progressPresent,
+	}
+}
+
+func retryDispositionFromProto(v mecatlv1.RetryDisposition) RetryDisposition {
+	switch v {
+	case mecatlv1.RetryDisposition_RETRY_DISPOSITION_UNKNOWN:
+		return RetryDispositionUnknown
+	case mecatlv1.RetryDisposition_RETRY_DISPOSITION_RETRYABLE:
+		return RetryDispositionRetryable
+	case mecatlv1.RetryDisposition_RETRY_DISPOSITION_PERMANENT:
+		return RetryDispositionPermanent
+	default:
+		return retryDispositionUnspecified
+	}
+}
+
+func streamProgressFromProto(v mecatlv1.StreamProgress) StreamProgress {
+	switch v {
+	case mecatlv1.StreamProgress_STREAM_PROGRESS_UNKNOWN:
+		return StreamProgressUnknown
+	case mecatlv1.StreamProgress_STREAM_PROGRESS_PRECOMMIT:
+		return StreamProgressPrecommit
+	case mecatlv1.StreamProgress_STREAM_PROGRESS_VISIBLE:
+		return StreamProgressVisible
+	case mecatlv1.StreamProgress_STREAM_PROGRESS_COMPLETE:
+		return StreamProgressComplete
+	default:
+		return streamProgressUnspecified
 	}
 }

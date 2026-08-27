@@ -334,6 +334,10 @@ func TestReconnectLiveCmd_CatchUpDropsNonDeliveryEvents(t *testing.T) {
 		{Type: "turn.start", Turn: 1},
 		{Type: "message.delta", Turn: 1, Text: "earlier assistant text"},
 		{Type: "user_prompt", UserPrompt: &mecatlv1.UserPrompt{Text: "a genuine earlier user prompt"}},
+		{Type: "result", Result: &mecatlv1.Result{
+			Stop: "error", RetryDisposition: retryDisposition(mecatlv1.RetryDisposition_RETRY_DISPOSITION_RETRYABLE),
+			StreamProgress: streamProgress(mecatlv1.StreamProgress_STREAM_PROGRESS_VISIBLE),
+		}},
 		deliveryEvent("nightly-sync", "sched--fire-gap"),
 	}
 	live := &fakeLiveStreamerReconnect{failN: 0}
@@ -343,11 +347,13 @@ func TestReconnectLiveCmd_CatchUpDropsNonDeliveryEvents(t *testing.T) {
 	defer stop()
 	msgs := drainRecon(t, ch)
 
-	var deliveries, assistantDeltas, userPrompts, turnStarts int
+	var deliveries, results, assistantDeltas, userPrompts, turnStarts int
 	for _, m := range msgs {
 		switch m.(type) {
 		case DeliveryNoteMsg:
 			deliveries++
+		case ResultMsg:
+			results++
 		case AssistantDeltaMsg:
 			assistantDeltas++
 		case UserPromptMsg:
@@ -356,8 +362,8 @@ func TestReconnectLiveCmd_CatchUpDropsNonDeliveryEvents(t *testing.T) {
 			turnStarts++
 		}
 	}
-	if deliveries != 1 {
-		t.Errorf("expected exactly 1 forwarded DeliveryNoteMsg, got %d", deliveries)
+	if deliveries != 1 || results != 1 {
+		t.Errorf("expected one delivery and one typed ResultMsg, got delivery=%d result=%d", deliveries, results)
 	}
 	if assistantDeltas != 0 || userPrompts != 0 || turnStarts != 0 {
 		t.Errorf("non-delivery transcript events leaked through catch-up: assistant=%d user=%d turn=%d (want all 0)",

@@ -56,6 +56,10 @@ var (
 	// provider (ReadMcpResource / GetMcpPrompt) was called but no MCP provider
 	// is configured. Adapters map it to FailedPrecondition / HTTP 412.
 	ErrNoMCPProvider = errors.New("server: no MCP provider configured")
+	// ErrFailedStepRetryIneligible is the stable precondition sentinel returned when a
+	// session cannot retry its failed model step from persisted conversation state.
+	// Eligibility is based only on typed persisted state.
+	ErrFailedStepRetryIneligible = fmt.Errorf("%w: failed-step retry is not eligible", ErrFailedPrecondition)
 	// ErrFailedPrecondition signals the request is well-formed but the server is
 	// in a state that forbids it — typically a server-side misconfiguration the
 	// client cannot fix by changing its arguments (e.g. spawning a Mutating team

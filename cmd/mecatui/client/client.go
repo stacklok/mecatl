@@ -186,14 +186,12 @@ func IsInvalidArgument(err error) bool {
 	return status.Code(err) == codes.InvalidArgument
 }
 
-// transientVocab is the shared, case-insensitive vocabulary that marks a terminal
-// error as TRANSIENT — a failure the run is likely to survive on a plain retry (an
-// idle/stalled stream, an overloaded/unavailable backend, a rate limit, a transient
-// upstream 5xx). It is deliberately kept in the client package (the ONLY mecatui
-// layer with gRPC/proto access): the ui reads only the derived Transient bool on
-// ResultMsg/StreamErrMsg, never classifies. Deliberately EXCLUDES the bare
-// "server_error" token — OpenRouter reuses that string for non-transient upstream
-// faults too, so auto-resuming on it would fight a genuinely broken run.
+// transientVocab is the shared, case-insensitive legacy presentation vocabulary.
+// It is deliberately kept in the client package (the ONLY mecatui layer with
+// gRPC/proto access): the ui reads only the derived Transient bool on ResultMsg/
+// StreamErrMsg, never classifies and never uses it to authorize replay. The bare
+// "server_error" token is excluded because OpenRouter also uses it for permanent
+// upstream faults.
 //
 // The word entries are matched as substrings (they are alphabetic, so they land
 // word-bounded in real error text). The numeric HTTP status codes in transientCodes
@@ -247,12 +245,10 @@ func containsBoundedCode(s, code string) bool {
 
 func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
 
-// TransientStreamErr classifies a Converse stream Recv error as transient (safe to
-// auto-resume a paused queue against) vs a hard failure. The gRPC status code is the
-// primary signal — Unavailable / DeadlineExceeded / ResourceExhausted are the classic
-// retryable trio; a context deadline is transient too — with the status message and the
-// raw error text as a vocabulary fallback for servers that fold a transient upstream
-// condition into a generic code. A nil error is never transient.
+// TransientStreamErr classifies a Converse stream Recv error for presentation and
+// compatibility only. A stream error has no semantic commit fact, so the TUI never
+// uses this signal to authorize automatic replay or queue draining. The gRPC status
+// code is the primary signal, with vocabulary fallback for older servers.
 func TransientStreamErr(err error) bool {
 	if err == nil {
 		return false
