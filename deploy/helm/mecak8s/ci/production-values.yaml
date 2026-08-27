@@ -22,3 +22,10 @@ topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: kubernetes.io/hostname
     whenUnsatisfiable: DoNotSchedule
+extraEnv:
+  # The chart references this operator-provisioned Secret; it never creates it.
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: provider-credentials
+        key: openrouter-api-key

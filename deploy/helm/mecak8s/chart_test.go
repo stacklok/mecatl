@@ -195,6 +195,28 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 	}
 }
 
+func TestMecak8sHelmChart_ProductionFixturesReferenceProviderCredential(t *testing.T) {
+	for _, fixture := range []string{"ci/production-values.yaml", "ci/production-oidc-values.yaml"} {
+		t.Run(fixture, func(t *testing.T) {
+			rendered, err := helm(t, "template", ".", "-f", fixture)
+			if err != nil {
+				t.Fatalf("render production fixture: %v", err)
+			}
+			container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+			if !slices.Contains(container.Args, "--default-provider=openrouter") || !slices.Contains(container.Args, "--model=anthropic/claude-sonnet-4-6") {
+				t.Fatalf("production provider selection = %q", container.Args)
+			}
+			if len(container.Env) != 1 {
+				t.Fatalf("provider environment = %#v, want one SecretKeyRef", container.Env)
+			}
+			env := container.Env[0]
+			if env.Name != "OPENROUTER_API_KEY" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil || env.ValueFrom.SecretKeyRef.Name != "provider-credentials" || env.ValueFrom.SecretKeyRef.Key != "openrouter-api-key" {
+				t.Fatalf("provider environment = %#v", env)
+			}
+		})
+	}
+}
+
 func TestMecak8sValuesSchemaIndependentlyEnforcesProviderSecurity(t *testing.T) {
 	schemaJSON, err := os.ReadFile("values.schema.json")
 	if err != nil {

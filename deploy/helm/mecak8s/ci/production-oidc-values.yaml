@@ -2,6 +2,15 @@
 # trust for Redis and the minimum in-pod TLS + OIDC controls.
 image:
   tag: v0.0.0
+defaultProvider: openrouter
+model: anthropic/claude-sonnet-4-6
+extraEnv:
+  # The chart references this operator-provisioned Secret; it never creates it.
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: provider-credentials
+        key: openrouter-api-key
 redis:
   endpoint: redis.example.internal:6379
   caKey: ""
