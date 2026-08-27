@@ -95,14 +95,18 @@ func TestWatcherSeesProjectedSymlinkSwap(t *testing.T) {
 	}
 }
 
-func TestWatcherCloseIsIdempotentAndCancelsPendingCallback(t *testing.T) {
+func TestWatcherCloseCancelsArmedCallback(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "value")
 	mustWrite(t, path, "initial")
 	var calls atomic.Int32
-	w := newTestWatcher(t, []string{path}, 200*time.Millisecond, 400*time.Millisecond, func() { calls.Add(1) })
+	armed := make(chan struct{}, 1)
+	w, err := newWatcher([]string{path}, 200*time.Millisecond, 400*time.Millisecond, func() { calls.Add(1) }, func(err error) { t.Errorf("watch error: %v", err) }, armed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustWrite(t, path, "changed")
-	time.Sleep(20 * time.Millisecond)
+	awaitChange(t, armed)
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +117,32 @@ func TestWatcherCloseIsIdempotentAndCancelsPendingCallback(t *testing.T) {
 	if got := calls.Load(); got != 0 {
 		t.Fatalf("callback count after shutdown = %d, want 0", got)
 	}
+}
+
+func TestWatcherCloseJoinsInFlightCallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "value")
+	mustWrite(t, path, "initial")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	w := newTestWatcher(t, []string{path}, 10*time.Millisecond, 20*time.Millisecond, func() {
+		close(started)
+		<-release
+	})
+	mustWrite(t, path, "changed")
+	awaitChange(t, started)
+	closed := make(chan struct{})
+	go func() {
+		_ = w.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while callback was still running")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	awaitChange(t, closed)
 }
 
 func newTestWatcher(t *testing.T, paths []string, debounce, maxDebounce time.Duration, onChange func()) *Watcher {

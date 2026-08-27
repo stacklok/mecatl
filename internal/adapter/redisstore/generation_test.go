@@ -8,9 +8,11 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	tcredis "github.com/stacklok/toolhive-core/redis"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/filewatch"
 )
 
 func newGenerationTestStore(t *testing.T) (*Store, *miniredis.Miniredis) {
@@ -37,6 +39,76 @@ func TestNoConfiguredFilesRemainWatcherFree(t *testing.T) {
 	store, _ := newGenerationTestStore(t)
 	if store.reload != nil {
 		t.Fatal("plaintext/file-free store unexpectedly started reload lifecycle")
+	}
+}
+
+func TestNewWithConfigMetadataFailureReleasesInitialLeaseBeforeCleanup(t *testing.T) {
+	server := miniredis.RunT(t)
+	tracked := &closeTrackingClient{UniversalClient: redis.NewClient(&redis.Options{Addr: server.Addr()})}
+	cfg := Config{
+		Addr:           server.Addr(),
+		AllowPlaintext: true,
+		initialClientFactory: func(context.Context, *tcredis.Config) (redis.UniversalClient, error) {
+			return &metadataFailClient{closeTrackingClient: tracked}, nil
+		},
+	}
+	err := boundedConstructorError(t, cfg)
+	if err == nil {
+		t.Fatal("NewWithConfig succeeded with metadata initialization failure")
+	}
+	if tracked.closes.Load() != 1 {
+		t.Fatalf("initial client closes = %d, want 1", tracked.closes.Load())
+	}
+}
+
+type metadataFailClient struct {
+	*closeTrackingClient
+}
+
+func (*metadataFailClient) Get(context.Context, string) *redis.StringCmd {
+	return redis.NewStringResult("", errors.New("metadata initialization failed"))
+}
+
+func TestNewWithConfigWatcherFailureReleasesInitialLeaseBeforeCleanup(t *testing.T) {
+	server := miniredis.RunT(t)
+	_, ca := reloadTLSFixture(t)
+	caFile := reloadWrite(t, t.TempDir(), "ca.pem", ca)
+	tracked := &closeTrackingClient{UniversalClient: redis.NewClient(&redis.Options{Addr: server.Addr()})}
+	cfg := Config{
+		Addr:   server.Addr(),
+		CAFile: caFile,
+		initialClientFactory: func(context.Context, *tcredis.Config) (redis.UniversalClient, error) {
+			return tracked, nil
+		},
+		watcherFactory: func([]string, time.Duration, time.Duration, func(), func(error)) (*filewatch.Watcher, error) {
+			return nil, errors.New("watcher startup failed")
+		},
+	}
+	err := boundedConstructorError(t, cfg)
+	if err == nil {
+		t.Fatal("NewWithConfig succeeded with watcher startup failure")
+	}
+	if tracked.closes.Load() != 1 {
+		t.Fatalf("initial client closes = %d, want 1", tracked.closes.Load())
+	}
+}
+
+func boundedConstructorError(t *testing.T, cfg Config) error {
+	t.Helper()
+	result := make(chan error, 1)
+	go func() {
+		store, err := NewWithConfig(cfg)
+		if store != nil {
+			_ = store.Close()
+		}
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("NewWithConfig deadlocked during startup cleanup")
+		return nil
 	}
 }
 

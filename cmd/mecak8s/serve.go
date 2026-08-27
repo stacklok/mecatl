@@ -285,8 +285,8 @@ func newCertificateReloader(certFile, keyFile string) (*certificateReloader, err
 		tlsReloadDebounce,
 		tlsReloadMaxDebounce,
 		r.reload(certFile, keyFile),
-		func(err error) {
-			slog.Warn("TLS certificate watch error", "component", "tls_certificate", "operation", "watch", "outcome", "failure", "err", err)
+		func(error) {
+			slog.Warn("TLS certificate watch error", "component", "tls_certificate", "operation", "watch", "outcome", "failure", "reason", "watch_error")
 		},
 	)
 	if err != nil {
@@ -300,7 +300,7 @@ func (r *certificateReloader) reload(certFile, keyFile string) func() {
 	return func() {
 		cert, err := loadServerCertificate(certFile, keyFile)
 		if err != nil {
-			slog.Warn("TLS certificate reload rejected; retaining last valid certificate", "component", "tls_certificate", "operation", "reload", "outcome", "failure", "err", err)
+			slog.Warn("TLS certificate reload rejected; retaining last valid certificate", "component", "tls_certificate", "operation", "reload", "outcome", "failure", "reason", "invalid_candidate")
 			return
 		}
 		r.cert.Store(cert)
@@ -321,7 +321,7 @@ func closeTLSLifecycle(reloader *certificateReloader) {
 		return
 	}
 	if err := reloader.Close(); err != nil {
-		slog.Warn("TLS certificate watcher shutdown failed", "component", "tls_certificate", "operation", "shutdown", "err", err)
+		slog.Warn("TLS certificate watcher shutdown failed", "component", "tls_certificate", "operation", "shutdown", "reason", "shutdown_error")
 	}
 }
 
@@ -333,9 +333,14 @@ func loadServerCertificate(certFile, keyFile string) (*tls.Certificate, error) {
 	if len(cert.Certificate) == 0 {
 		return nil, errors.New("load TLS keypair: certificate chain is empty")
 	}
-	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		return nil, fmt.Errorf("parse TLS leaf certificate: %w", err)
+	for i, der := range cert.Certificate {
+		parsed, parseErr := x509.ParseCertificate(der)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse TLS certificate %d: %w", i, parseErr)
+		}
+		if i == 0 {
+			cert.Leaf = parsed
+		}
 	}
 	return &cert, nil
 }

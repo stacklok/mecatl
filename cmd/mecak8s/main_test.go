@@ -122,9 +122,6 @@ func TestAppConfigMapsK8sFields(t *testing.T) {
 	if !ac.RedisTLS {
 		t.Error("app.Config RedisTLS = false after --redis-tls")
 	}
-	if !ac.RedisReload {
-		t.Error("app.Config RedisReload = false with file-backed Redis security")
-	}
 	if ac.SessionLeaseK8sNamespace != "myns" {
 		t.Errorf("app.Config SessionLeaseK8sNamespace = %q, want myns", ac.SessionLeaseK8sNamespace)
 	}

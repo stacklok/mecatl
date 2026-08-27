@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -8,10 +9,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,6 +48,15 @@ func TestTLSCertificateReloadLastValid(t *testing.T) {
 	writeTestKeyPair(t, certPath, keyPath, two)
 	awaitSerial(t, tlsCfg, 2)
 
+	malformedChain := append(append([]byte{}, two.cert...), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("malformed DER")})...)
+	if err := os.WriteFile(certPath, malformedChain, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * tlsReloadDebounce)
+	if got := currentSerial(t, tlsCfg); got != 2 {
+		t.Fatalf("serial after malformed additional chain entry = %d, want last valid 2", got)
+	}
+
 	if err := os.WriteFile(certPath, []byte("not a certificate"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +80,41 @@ func TestTLSCertificateReloadLastValid(t *testing.T) {
 		writeTestKeyPair(t, certPath, keyPath, one)
 	}
 	awaitSerial(t, tlsCfg, 1)
+}
+
+func TestTLSReloadDiagnosticsUseBoundedReasonCodes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "secret-path-marker")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	pair := makeTestKeyPair(t, 41)
+	writeTestKeyPair(t, certPath, keyPath, pair)
+	reloader, err := newCertificateReloader(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloader.Close()
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	secret := "secret-pem-marker"
+	if err := os.WriteFile(certPath, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloader.reload(certPath, keyPath)()
+	text := logs.String()
+	if !strings.Contains(text, `"reason":"invalid_candidate"`) {
+		t.Fatalf("reload diagnostic missing reason code: %s", text)
+	}
+	for _, forbidden := range []string{secret, certPath, keyPath, "BEGIN CERTIFICATE"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("reload diagnostic leaked %q: %s", forbidden, text)
+		}
+	}
 }
 
 func TestTLSCertificateReloadInitialValidationAndShutdown(t *testing.T) {
@@ -145,6 +193,86 @@ func TestTLSHandshakeReloadsAcrossProjectedSecretSwap(t *testing.T) {
 	newSerial, newFingerprint := handshakeCertificate(t, tlsCfg)
 	if newSerial != 22 || newFingerprint == fingerprint {
 		t.Fatalf("reloaded handshake = serial %d fingerprint %x; want changed serial/fingerprint", newSerial, newFingerprint)
+	}
+}
+
+func TestEstablishedTLSConnectionSurvivesCertificateRotation(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	one := makeTestKeyPair(t, 31)
+	two := makeTestKeyPair(t, 32)
+	writeTestKeyPair(t, certPath, keyPath, one)
+	tlsCfg, lifecycle, err := buildTLSConfig(config{tlsCert: certPath, tlsKey: keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lifecycle.Close()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsListener := tls.NewListener(listener, tlsCfg)
+	defer tlsListener.Close()
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		for {
+			conn, acceptErr := tlsListener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+
+	clientCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // self-signed test certificates
+	established, err := tls.Dial("tcp", listener.Addr().String(), clientCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer established.Close()
+	assertTLSEcho(t, established, "before rotation")
+	initial := established.ConnectionState().PeerCertificates[0]
+
+	writeTestKeyPair(t, certPath, keyPath, two)
+	awaitSerial(t, tlsCfg, 32)
+	assertTLSEcho(t, established, "after rotation")
+	if got := established.ConnectionState().PeerCertificates[0].SerialNumber.Int64(); got != 31 {
+		t.Fatalf("established connection peer serial changed to %d, want 31", got)
+	}
+
+	fresh, err := tls.Dial("tcp", listener.Addr().String(), clientCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	peer := fresh.ConnectionState().PeerCertificates[0]
+	if peer.SerialNumber.Int64() != 32 || sha256.Sum256(peer.Raw) == sha256.Sum256(initial.Raw) {
+		t.Fatalf("fresh connection did not observe rotated certificate: serial=%d", peer.SerialNumber.Int64())
+	}
+	_ = tlsListener.Close()
+	<-serveDone
+}
+
+func assertTLSEcho(t *testing.T, conn net.Conn, text string) {
+	t.Helper()
+	if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte(text)); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len(text))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != text {
+		t.Fatalf("echo = %q, want %q", got, text)
 	}
 }
 

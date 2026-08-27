@@ -1,13 +1,19 @@
 package mecak8s_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/yaml"
 )
 
 func chartDir(t *testing.T) string {
@@ -24,6 +30,25 @@ func helm(t *testing.T, args ...string) (string, error) {
 	cmd.Dir = chartDir(t)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
+	t.Helper()
+	for _, document := range strings.Split(rendered, "\n---") {
+		var meta struct {
+			Kind string `yaml:"kind"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &meta); err != nil || meta.Kind != "Deployment" {
+			continue
+		}
+		var deployment appsv1.Deployment
+		if err := yaml.Unmarshal([]byte(document), &deployment); err != nil {
+			t.Fatal(err)
+		}
+		return &deployment
+	}
+	t.Fatal("rendered chart has no Deployment")
+	return nil
 }
 
 func productionArgs() []string {
@@ -87,6 +112,103 @@ func TestMecak8sHelmChart_RuntimeArgsAreOptIn(t *testing.T) {
 	}
 }
 
+func TestMecak8sHelmChart_OpaqueModelArgumentIsYAMLSafe(t *testing.T) {
+	model := "vendor/model: tier #stable"
+	args := append(secureProductionArgs(), "--set", "defaultProvider=openrouter", "--set-string", "model="+model)
+	rendered, err := helm(t, args...)
+	if err != nil {
+		t.Fatalf("render opaque model: %v", err)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	if got := deployment.Spec.Template.Spec.Containers[0].Args; !slices.Contains(got, "--model="+model) || !slices.Contains(got, "--default-provider=openrouter") {
+		t.Fatalf("decoded args lost opaque values: %q", got)
+	}
+}
+
+func TestMecak8sHelmChart_ProductionFixtureExactRuntimeAndSpread(t *testing.T) {
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-values.yaml")
+	if err != nil {
+		t.Fatalf("render production fixture: %v", err)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	wantArgs := []string{
+		"--grpc-addr=0.0.0.0:8080",
+		"--http-addr=0.0.0.0:8081",
+		"--redis-url=redis.example.internal:6379",
+		"--session-lease-k8s-namespace=default",
+		"--headless=true",
+		"--posture=auto",
+		"--default-provider=openrouter",
+		"--model=anthropic/claude-sonnet-4-6",
+		"--max-run-tokens=200000",
+		"--max-team-tokens=800000",
+		"--redis-tls-ca=/var/run/secrets/redis/ca.pem",
+		"--oidc-issuer=https://idp.example.com",
+		"--oidc-audience=mecatl",
+		"--oidc-max-jwks-staleness=1h",
+		"--tls-cert=/var/run/secrets/tls/tls.crt",
+		"--tls-key=/var/run/secrets/tls/tls.key",
+	}
+	if got := deployment.Spec.Template.Spec.Containers[0].Args; !reflect.DeepEqual(got, wantArgs) {
+		t.Fatalf("production args = %#v, want %#v", got, wantArgs)
+	}
+	constraints := deployment.Spec.Template.Spec.TopologySpreadConstraints
+	if len(constraints) != 1 {
+		t.Fatalf("topology spread constraints = %d, want 1", len(constraints))
+	}
+	constraint := constraints[0]
+	if constraint.MaxSkew != 1 || constraint.TopologyKey != "kubernetes.io/hostname" || constraint.WhenUnsatisfiable != "DoNotSchedule" {
+		t.Fatalf("unexpected production topology spread: %+v", constraint)
+	}
+	wantLabels := map[string]string{
+		"app.kubernetes.io/name":      "mecak8s",
+		"app.kubernetes.io/instance":  "production",
+		"app.kubernetes.io/component": "agent",
+	}
+	if constraint.LabelSelector == nil || !reflect.DeepEqual(constraint.LabelSelector.MatchLabels, wantLabels) {
+		t.Fatalf("spread selector = %#v, want %#v", constraint.LabelSelector, wantLabels)
+	}
+	for key, value := range constraint.LabelSelector.MatchLabels {
+		if deployment.Spec.Template.Labels[key] != value {
+			t.Fatalf("spread selector %s=%s does not match pod labels %#v", key, value, deployment.Spec.Template.Labels)
+		}
+	}
+}
+
+func TestMecak8sValuesSchemaIndependentlyEnforcesProviderSecurity(t *testing.T) {
+	schemaJSON, err := os.ReadFile("values.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesYAML, err := os.ReadFile("values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesJSON, err := yaml.YAMLToJSON(valuesYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(valuesJSON, &values); err != nil {
+		t.Fatal(err)
+	}
+	values["mockProvider"] = false
+	values["security"].(map[string]any)["allowUnsafeRealProvider"] = false
+	values["tls"].(map[string]any)["enabled"] = false
+	values["oidc"].(map[string]any)["enabled"] = false
+	if err := resolved.Validate(values); err == nil {
+		t.Fatal("values.schema.json accepted a real provider without TLS and OIDC")
+	}
+}
+
 func TestMecak8sHelmChart_RuntimeSchemaRejectsInvalidValues(t *testing.T) {
 	for _, set := range []string{
 		"maxRunTokens=0",
@@ -120,7 +242,9 @@ func TestMecak8sHelmChart_SchedulingControls(t *testing.T) {
 		"--set", "topologySpreadConstraints[0].maxSkew=1",
 		"--set", "topologySpreadConstraints[0].topologyKey=kubernetes.io/hostname",
 		"--set", "topologySpreadConstraints[0].whenUnsatisfiable=DoNotSchedule",
-		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app=agent",
+		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app\\.kubernetes\\.io/name=mecak8s",
+		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app\\.kubernetes\\.io/instance=production",
+		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app\\.kubernetes\\.io/component=agent",
 		"--set", "nodeSelector.kubernetes\\.io/os=linux",
 		"--set", "tolerations[0].key=dedicated,tolerations[0].operator=Equal,tolerations[0].value=agents,tolerations[0].effect=NoSchedule",
 		"--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=kubernetes.io/arch",

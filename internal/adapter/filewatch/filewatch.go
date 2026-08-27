@@ -26,6 +26,10 @@ type Watcher struct {
 // its first event. onError receives watcher errors; it must not assume an error is
 // fatal. Paths are used only to select and deduplicate their parent directories.
 func New(paths []string, debounce, maxDebounce time.Duration, onChange func(), onError func(error)) (*Watcher, error) {
+	return newWatcher(paths, debounce, maxDebounce, onChange, onError, nil)
+}
+
+func newWatcher(paths []string, debounce, maxDebounce time.Duration, onChange func(), onError func(error), armed chan<- struct{}) (*Watcher, error) {
 	if len(paths) == 0 {
 		return nil, errors.New("filewatch: at least one path is required")
 	}
@@ -61,11 +65,11 @@ func New(paths []string, debounce, maxDebounce time.Duration, onChange func(), o
 	}
 
 	w := &Watcher{watcher: fw, stop: make(chan struct{}), done: make(chan struct{})}
-	go w.run(debounce, maxDebounce, onChange, onError)
+	go w.run(debounce, maxDebounce, onChange, onError, armed)
 	return w, nil
 }
 
-func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onError func(error)) {
+func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onError func(error), armed chan<- struct{}) {
 	defer close(w.done)
 	defer func() { _ = w.watcher.Close() }()
 
@@ -112,6 +116,12 @@ func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onEr
 				timer.Reset(wait)
 			}
 			timerC = timer.C
+			if armed != nil {
+				select {
+				case armed <- struct{}{}:
+				default:
+				}
+			}
 		case <-timerC:
 			timerC = nil
 			firstAt = time.Time{}

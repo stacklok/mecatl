@@ -66,10 +66,10 @@ spec:
             - --headless=true
             - --posture=auto
             {{- if .Values.defaultProvider }}
-            - --default-provider={{ .Values.defaultProvider }}
+            - {{ printf "--default-provider=%s" .Values.defaultProvider | quote }}
             {{- end }}
             {{- if .Values.model }}
-            - --model={{ .Values.model }}
+            - {{ printf "--model=%s" .Values.model | quote }}
             {{- end }}
             {{- if ne .Values.maxRunTokens nil }}
             - --max-run-tokens={{ .Values.maxRunTokens }}

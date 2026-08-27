@@ -124,12 +124,11 @@ type Config struct {
 	// takes precedence when both are set.
 	TLS            bool
 	AllowPlaintext bool
-	// Reload enables transactional hot reload when at least one CA or credential
-	// file is configured. The zero value preserves watcher-free behavior.
-	Reload      bool
-	Diagnostics port.Diagnostics
+	Diagnostics    port.Diagnostics
 
-	candidateFactory func(context.Context, *tcredis.Config) (redis.UniversalClient, error)
+	initialClientFactory func(context.Context, *tcredis.Config) (redis.UniversalClient, error)
+	candidateFactory     func(context.Context, *tcredis.Config) (redis.UniversalClient, error)
+	watcherFactory       watcherFactory
 }
 
 // New connects to a plaintext, unauthenticated Redis broker. It is retained for
@@ -155,7 +154,13 @@ func NewWithConfig(cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := tcredis.NewClient(context.Background(), &conn)
+	factory := cfg.initialClientFactory
+	if factory == nil {
+		factory = func(ctx context.Context, conn *tcredis.Config) (redis.UniversalClient, error) {
+			return tcredis.NewClient(ctx, conn)
+		}
+	}
+	client, err := factory(context.Background(), &conn)
 	if err != nil {
 		// cfg.Addr is safe to name here: validateAddr has already rejected every
 		// URL-shaped value that could carry a credential in its userinfo.
@@ -167,11 +172,12 @@ func NewWithConfig(cfg Config) (*Store, error) {
 		_ = client.Close()
 		return nil, err
 	}
-	defer release()
 	if err := st.initializeMetadataIndex(initCtx); err != nil {
+		release()
 		_ = st.clients.close()
 		return nil, err
 	}
+	release()
 	if cfg.reloadEnabled() {
 		lifecycle, err := startReloadLifecycle(st, cfg)
 		if err != nil {
@@ -217,7 +223,11 @@ func connectionConfig(cfg Config) (tcredis.Config, error) {
 	if cfg.UsernameFile != "" && cfg.PasswordFile == "" {
 		return tcredis.Config{}, errors.New("redisstore: a Redis username requires a password")
 	}
-	username, password, err := readCredentials(cfg)
+	files, err := readConnectionFiles(cfg)
+	if err != nil {
+		return tcredis.Config{}, err
+	}
+	username, password, err := credentialsFromFiles(cfg, files)
 	if err != nil {
 		return tcredis.Config{}, err
 	}
@@ -226,32 +236,48 @@ func connectionConfig(cfg Config) (tcredis.Config, error) {
 	// BuildTLSConfig, before any network I/O.
 	tlsCfg := &tcredis.TLSConfig{}
 	if cfg.CAFile != "" {
-		caPEM, err := os.ReadFile(cfg.CAFile)
-		if err != nil {
-			return tcredis.Config{}, fmt.Errorf("redisstore: read Redis CA bundle: %w", err)
-		}
-		tlsCfg.CACert = caPEM
+		tlsCfg.CACert = files[cfg.CAFile]
 	}
 	return tcredis.Config{Addr: cfg.Addr, Username: username, Password: password, TLS: tlsCfg}, nil
 }
 
-func readCredentials(cfg Config) (string, string, error) {
-	username, password := "", ""
-	var err error
-	if cfg.UsernameFile != "" {
-		username, err = readSecretFile(cfg.UsernameFile)
+func readConnectionFiles(cfg Config) (map[string][]byte, error) {
+	paths := cfg.reloadPaths()
+	before := make(map[string]os.FileInfo, len(paths))
+	for _, path := range paths {
+		info, err := os.Stat(path)
 		if err != nil {
-			return "", "", fmt.Errorf("redisstore: read Redis username file: %w", err)
+			return nil, errors.New("redisstore: inspect configured Redis file")
 		}
+		before[path] = info
+	}
+	files := make(map[string][]byte, len(paths))
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return nil, errors.New("redisstore: read configured Redis file")
+		}
+		files[path] = body
+	}
+	for _, path := range paths {
+		after, err := os.Stat(path)
+		if err != nil || !os.SameFile(before[path], after) {
+			return nil, errors.New("redisstore: configured Redis files changed while being read")
+		}
+	}
+	return files, nil
+}
+
+func credentialsFromFiles(cfg Config, files map[string][]byte) (string, string, error) {
+	username, password := "", ""
+	if cfg.UsernameFile != "" {
+		username = secretFileValue(files[cfg.UsernameFile])
 		if username == "" {
 			return "", "", errors.New("redisstore: Redis username file is empty")
 		}
 	}
 	if cfg.PasswordFile != "" {
-		password, err = readSecretFile(cfg.PasswordFile)
-		if err != nil {
-			return "", "", fmt.Errorf("redisstore: read Redis password file: %w", err)
-		}
+		password = secretFileValue(files[cfg.PasswordFile])
 		if password == "" {
 			return "", "", errors.New("redisstore: Redis password file is empty")
 		}
@@ -259,12 +285,8 @@ func readCredentials(cfg Config) (string, string, error) {
 	return username, password, nil
 }
 
-func readSecretFile(path string) (string, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSuffix(strings.TrimSuffix(string(body), "\r\n"), "\n"), nil
+func secretFileValue(body []byte) string {
+	return strings.TrimSuffix(strings.TrimSuffix(string(body), "\r\n"), "\n")
 }
 
 // Save stores a sessnap-encoded snapshot of s under the session key, stamping

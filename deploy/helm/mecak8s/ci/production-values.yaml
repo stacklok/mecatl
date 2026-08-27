@@ -25,3 +25,5 @@ topologySpreadConstraints:
     labelSelector:
       matchLabels:
         app.kubernetes.io/name: mecak8s
+        app.kubernetes.io/instance: production
+        app.kubernetes.io/component: agent

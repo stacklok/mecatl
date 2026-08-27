@@ -22,6 +22,8 @@ const (
 	reloadMaxBackoff     = 2 * time.Second
 )
 
+type watcherFactory func([]string, time.Duration, time.Duration, func(), func(error)) (*filewatch.Watcher, error)
+
 type reloadLifecycle struct {
 	watcher *filewatch.Watcher
 	cancel  context.CancelFunc
@@ -30,7 +32,7 @@ type reloadLifecycle struct {
 }
 
 func (cfg Config) reloadEnabled() bool {
-	return cfg.Reload && (cfg.CAFile != "" || cfg.UsernameFile != "" || cfg.PasswordFile != "")
+	return cfg.CAFile != "" || cfg.UsernameFile != "" || cfg.PasswordFile != ""
 }
 
 func (cfg Config) reloadPaths() []string {
@@ -51,13 +53,17 @@ func startReloadLifecycle(st *Store, cfg Config) (*reloadLifecycle, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan struct{}, 1)
 	lifecycle := &reloadLifecycle{cancel: cancel, done: make(chan struct{})}
-	watcher, err := filewatch.New(cfg.reloadPaths(), reloadDebounce, reloadMaxDebounce, func() {
+	newWatcher := cfg.watcherFactory
+	if newWatcher == nil {
+		newWatcher = filewatch.New
+	}
+	watcher, err := newWatcher(cfg.reloadPaths(), reloadDebounce, reloadMaxDebounce, func() {
 		select {
 		case events <- struct{}{}:
 		default:
 		}
-	}, func(err error) {
-		diagnostics.Log(context.Background(), port.LevelWarn, "redis credential reload", "component", "redis", "operation", "watch", "outcome", "failed", "err", err.Error())
+	}, func(error) {
+		diagnostics.Log(context.Background(), port.LevelWarn, "redis credential reload", "component", "redis", "operation", "watch", "outcome", "failed", "reason", "watch_error")
 	})
 	if err != nil {
 		cancel()

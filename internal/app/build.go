@@ -168,11 +168,8 @@ type Config struct {
 	RedisTLSCAFile      string
 	RedisTLS            bool
 	RedisAllowPlaintext bool
-	// RedisReload enables transactional reload of configured CA and credential
-	// files. With no configured files it remains watcher-free.
-	RedisReload bool
-	Shell       string
-	NoBash      bool
+	Shell               string
+	NoBash              bool
 	// AuthorityEvaluator selects the authority evaluator adapter: "local" enforces
 	// minted sets, while "noop" deliberately disables enforcement. "cedar" loads
 	// CedarAuthorityPolicy at startup and fails closed when it cannot be loaded.
@@ -3192,7 +3189,6 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 			CAFile:         cfg.RedisTLSCAFile,
 			TLS:            cfg.RedisTLS,
 			AllowPlaintext: cfg.RedisAllowPlaintext,
-			Reload:         cfg.RedisReload,
 			Diagnostics:    cfg.diag(),
 		})
 		if err != nil {
