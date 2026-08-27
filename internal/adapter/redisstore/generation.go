@@ -47,28 +47,33 @@ func (m *clientGenerations) acquire() (*clientGeneration, error) {
 	return m.current, nil
 }
 
+func (m *clientGenerations) finishClose(generation *clientGeneration) {
+	_ = generation.client.Close()
+	close(generation.closedCh)
+	m.mu.Lock()
+	delete(m.all, generation)
+	m.mu.Unlock()
+}
+
 func (m *clientGenerations) release(generation *clientGeneration) {
-	var closeClient redis.UniversalClient
+	var closeGeneration *clientGeneration
 	m.mu.Lock()
 	if generation.refs > 0 {
 		generation.refs--
 	}
 	if generation.retired && generation.refs == 0 && !generation.closed {
 		generation.closed = true
-		delete(m.all, generation)
-		closeClient = generation.client
+		closeGeneration = generation
 	}
 	m.mu.Unlock()
-	if closeClient != nil {
-		_ = closeClient.Close()
-		close(generation.closedCh)
+	if closeGeneration != nil {
+		m.finishClose(closeGeneration)
 	}
 }
 
 func (m *clientGenerations) swap(client redis.UniversalClient) error {
 	candidate := &clientGeneration{owner: m, client: client, closedCh: make(chan struct{})}
-	var closeClient redis.UniversalClient
-	var closeCh chan struct{}
+	var closeGeneration *clientGeneration
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -80,14 +85,11 @@ func (m *clientGenerations) swap(client redis.UniversalClient) error {
 	old.retired = true
 	if old.refs == 0 && !old.closed {
 		old.closed = true
-		delete(m.all, old)
-		closeClient = old.client
-		closeCh = old.closedCh
+		closeGeneration = old
 	}
 	m.mu.Unlock()
-	if closeClient != nil {
-		_ = closeClient.Close()
-		close(closeCh)
+	if closeGeneration != nil {
+		m.finishClose(closeGeneration)
 	}
 	return nil
 }
@@ -106,14 +108,12 @@ func (m *clientGenerations) close() error {
 			generations = append(generations, generation)
 			if generation.retired && generation.refs == 0 && !generation.closed {
 				generation.closed = true
-				delete(m.all, generation)
 				ready = append(ready, generation)
 			}
 		}
 		m.mu.Unlock()
 		for _, generation := range ready {
-			_ = generation.client.Close()
-			close(generation.closedCh)
+			m.finishClose(generation)
 		}
 		for _, generation := range generations {
 			<-generation.closedCh

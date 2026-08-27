@@ -3,6 +3,7 @@ package redisstore
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
@@ -156,6 +157,59 @@ func TestRetiredGenerationClosesAfterLeaseRelease(t *testing.T) {
 	if err := old.Ping(context.Background()).Err(); err == nil {
 		t.Fatal("retired client remained open after its last lease released")
 	}
+}
+
+func TestStoreCloseWaitsForRetiredGenerationClose(t *testing.T) {
+	server := miniredis.RunT(t)
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	old := &blockingCloseClient{
+		UniversalClient: redis.NewClient(&redis.Options{Addr: server.Addr()}),
+		started:         started,
+		unblock:         unblock,
+	}
+	manager := newClientGenerations(old)
+	candidate := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	swapDone := make(chan error, 1)
+	go func() { swapDone <- manager.swap(candidate) }()
+	<-started
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.close() }()
+	for {
+		manager.mu.Lock()
+		closed := manager.closed
+		manager.mu.Unlock()
+		if closed {
+			break
+		}
+		runtime.Gosched()
+	}
+	select {
+	case err := <-closeDone:
+		t.Fatalf("store close returned before retired client Close completed: %v", err)
+	default:
+	}
+
+	close(unblock)
+	if err := <-swapDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type blockingCloseClient struct {
+	redis.UniversalClient
+	started chan struct{}
+	unblock chan struct{}
+}
+
+func (c *blockingCloseClient) Close() error {
+	close(c.started)
+	<-c.unblock
+	return c.UniversalClient.Close()
 }
 
 func TestCloseRejectsAcquisitionAndSwap(t *testing.T) {

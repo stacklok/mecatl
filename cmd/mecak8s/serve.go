@@ -333,15 +333,24 @@ func loadServerCertificate(certFile, keyFile string) (*tls.Certificate, error) {
 	if len(cert.Certificate) == 0 {
 		return nil, errors.New("load TLS keypair: certificate chain is empty")
 	}
+	now := time.Now()
+	parsed := make([]*x509.Certificate, 0, len(cert.Certificate))
 	for i, der := range cert.Certificate {
-		parsed, parseErr := x509.ParseCertificate(der)
+		certificate, parseErr := x509.ParseCertificate(der)
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse TLS certificate %d: %w", i, parseErr)
 		}
-		if i == 0 {
-			cert.Leaf = parsed
+		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+			return nil, fmt.Errorf("validate TLS certificate %d: certificate is not currently valid", i)
+		}
+		parsed = append(parsed, certificate)
+	}
+	for i := 1; i < len(parsed); i++ {
+		if err := parsed[i-1].CheckSignatureFrom(parsed[i]); err != nil {
+			return nil, fmt.Errorf("validate TLS certificate chain %d: %w", i, err)
 		}
 	}
+	cert.Leaf = parsed[0]
 	return &cert, nil
 }
 

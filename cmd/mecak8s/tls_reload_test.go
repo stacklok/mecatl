@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -114,6 +115,46 @@ func TestTLSReloadDiagnosticsUseBoundedReasonCodes(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("reload diagnostic leaked %q: %s", forbidden, text)
 		}
+	}
+}
+
+func TestTLSCertificateReloadRejectsInvalidChains(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	initial := makeTestKeyPair(t, 40)
+	valid := makeTestChain(t, 41, false, false)
+	unrelated := makeTestChain(t, 42, false, false)
+	expiredIntermediate := makeTestChain(t, 43, false, true)
+	expiredLeaf := makeTestChain(t, 44, true, false)
+	writeTestKeyPair(t, certPath, keyPath, initial)
+	reloader, err := newCertificateReloader(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloader.Close()
+
+	writeTestKeyPair(t, certPath, keyPath, testKeyPair{cert: valid.pem(), key: valid.key})
+	reloader.reload(certPath, keyPath)()
+	if got := reloader.cert.Load().Leaf.SerialNumber.Int64(); got != 41 {
+		t.Fatalf("valid chain serial = %d, want 41", got)
+	}
+	for _, tc := range []struct {
+		name string
+		pair testKeyPair
+	}{
+		{name: "unrelated", pair: testKeyPair{cert: concatPEM(valid.leaf, unrelated.intermediate, unrelated.root), key: valid.key}},
+		{name: "reordered", pair: testKeyPair{cert: concatPEM(valid.leaf, valid.root, valid.intermediate), key: valid.key}},
+		{name: "expired intermediate", pair: testKeyPair{cert: expiredIntermediate.pem(), key: expiredIntermediate.key}},
+		{name: "expired leaf", pair: testKeyPair{cert: expiredLeaf.pem(), key: expiredLeaf.key}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeTestKeyPair(t, certPath, keyPath, tc.pair)
+			reloader.reload(certPath, keyPath)()
+			if got := reloader.cert.Load().Leaf.SerialNumber.Int64(); got != 41 {
+				t.Fatalf("rejected chain displaced last valid certificate: serial=%d", got)
+			}
+		})
 	}
 }
 
@@ -319,6 +360,79 @@ func handshakeCertificate(t *testing.T, serverCfg *tls.Config) (int64, [32]byte)
 		t.Fatal(err)
 	}
 	return peer.SerialNumber.Int64(), sha256.Sum256(peer.Raw)
+}
+
+type testChain struct {
+	leaf         []byte
+	intermediate []byte
+	root         []byte
+	key          []byte
+}
+
+func (c testChain) pem() []byte {
+	return concatPEM(c.leaf, c.intermediate, c.root)
+}
+
+func concatPEM(certificates ...[]byte) []byte {
+	var chain []byte
+	for _, certificate := range certificates {
+		chain = append(chain, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate})...)
+	}
+	return chain
+}
+
+func makeTestChain(t *testing.T, serial int64, expiredLeaf, expiredIntermediate bool) testChain {
+	t.Helper()
+	now := time.Now()
+	validity := func(expired bool) (time.Time, time.Time) {
+		if expired {
+			return now.Add(-2 * time.Hour), now.Add(-time.Hour)
+		}
+		return now.Add(-time.Hour), now.Add(time.Hour)
+	}
+	rootPublic, rootKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootBefore, rootAfter := validity(false)
+	rootTemplate := &x509.Certificate{SerialNumber: big.NewInt(serial + 2000), Subject: pkix.Name{CommonName: "root"}, NotBefore: rootBefore, NotAfter: rootAfter, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, rootPublic, rootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootCert, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intermediatePublic, intermediateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intermediateBefore, intermediateAfter := validity(expiredIntermediate)
+	intermediateTemplate := &x509.Certificate{SerialNumber: big.NewInt(serial + 1000), Subject: pkix.Name{CommonName: "intermediate"}, NotBefore: intermediateBefore, NotAfter: intermediateAfter, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	intermediateDER, err := x509.CreateCertificate(rand.Reader, intermediateTemplate, rootCert, intermediatePublic, rootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intermediateCert, err := x509.ParseCertificate(intermediateDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafPublic, leafKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafBefore, leafAfter := validity(expiredLeaf)
+	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"}, NotBefore: leafBefore, NotAfter: leafAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, intermediateCert, leafPublic, intermediateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(leafKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testChain{leaf: leafDER, intermediate: intermediateDER, root: rootDER, key: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}
 }
 
 func makeTestKeyPair(t *testing.T, serial int64) testKeyPair {

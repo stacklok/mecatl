@@ -425,6 +425,53 @@ func TestRejectedCandidateIsClosed(t *testing.T) {
 	}
 }
 
+func TestReloadExhaustionWaitsForNewFileEvent(t *testing.T) {
+	store, _ := newGenerationTestStore(t)
+	var attempts atomic.Int32
+	nextAttempt := make(chan struct{})
+	cfg := Config{
+		Addr:           "127.0.0.1:1",
+		AllowPlaintext: true,
+		reloadBackoff:  func(int) time.Duration { return 0 },
+		candidateFactory: func(ctx context.Context, _ *tcredis.Config) (redis.UniversalClient, error) {
+			attempt := attempts.Add(1)
+			if attempt <= reloadMaxAttempts {
+				return nil, errors.New("candidate rejected")
+			}
+			close(nextAttempt)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	diagnostics := &capturedDiagnostics{}
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go runReload(ctx, done, events, store, cfg, diagnostics)
+	events <- struct{}{}
+	awaitDiagnostic(t, diagnostics, "outcome failed attempts 8 reason candidate_rejected")
+	if got := attempts.Load(); got != reloadMaxAttempts {
+		t.Fatalf("attempts after exhaustion = %d, want %d", got, reloadMaxAttempts)
+	}
+	select {
+	case <-nextAttempt:
+		t.Fatal("reload attempted again without a new file event")
+	default:
+	}
+
+	events <- struct{}{}
+	select {
+	case <-nextAttempt:
+	case <-time.After(2 * time.Second):
+		t.Fatal("new file event did not reset exhausted attempts")
+	}
+	cancel()
+	<-done
+	if got := attempts.Load(); got != reloadMaxAttempts+1 {
+		t.Fatalf("attempts after reset event = %d, want %d", got, reloadMaxAttempts+1)
+	}
+}
+
 func TestReloadEventsStaySingleFlightAndShutdownCancelsCandidate(t *testing.T) {
 	store, _ := newGenerationTestStore(t)
 	_, ca := reloadTLSFixture(t)

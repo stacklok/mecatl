@@ -125,8 +125,28 @@ func TestMecak8sHelmChart_OpaqueModelArgumentIsYAMLSafe(t *testing.T) {
 	}
 }
 
-func TestMecak8sHelmChart_ProductionFixtureExactRuntimeAndSpread(t *testing.T) {
-	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-values.yaml")
+func TestMecak8sHelmChart_ValueDerivedArgumentsAreYAMLSafe(t *testing.T) {
+	audience := "api:agents # primary"
+	workspace := "/workspaces/team: alpha #1"
+	args := append(secureProductionArgs(),
+		"--set-string", "oidc.audience="+audience,
+		"--set-string", "workspace="+workspace,
+	)
+	rendered, err := helm(t, args...)
+	if err != nil {
+		t.Fatalf("render opaque arguments: %v", err)
+	}
+	got := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+	for _, want := range []string{"--oidc-audience=" + audience, "--workspace=" + workspace} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("decoded args lost %q: %q", want, got)
+		}
+	}
+}
+
+func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testing.T) {
+	// Match task deploy:check exactly: no explicit release name is supplied.
+	rendered, err := helm(t, "template", ".", "-f", "ci/production-values.yaml")
 	if err != nil {
 		t.Fatalf("render production fixture: %v", err)
 	}
@@ -162,7 +182,7 @@ func TestMecak8sHelmChart_ProductionFixtureExactRuntimeAndSpread(t *testing.T) {
 	}
 	wantLabels := map[string]string{
 		"app.kubernetes.io/name":      "mecak8s",
-		"app.kubernetes.io/instance":  "production",
+		"app.kubernetes.io/instance":  "release-name",
 		"app.kubernetes.io/component": "agent",
 	}
 	if constraint.LabelSelector == nil || !reflect.DeepEqual(constraint.LabelSelector.MatchLabels, wantLabels) {
@@ -841,6 +861,27 @@ func TestMecak8sHelmChart_ImagePullSecrets(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "imagePullSecrets:") || !strings.Contains(rendered, "- name: ghcr-pull-secret") {
 		t.Fatal("render with imagePullSecrets set missing the projected pull secret")
+	}
+}
+
+func TestMecak8sHelmChart_KindLiveProviderDisablesMock(t *testing.T) {
+	args := append(kindVMCPArgs(),
+		"--set", "mockProvider=false",
+		"--set", "security.allowUnsafeRealProvider=true",
+		"--set", "extraEnv[0].name=OPENROUTER_API_KEY",
+		"--set", "extraEnv[0].valueFrom.secretKeyRef.name=mecak8s-live-provider",
+		"--set", "extraEnv[0].valueFrom.secretKeyRef.key=OPENROUTER_API_KEY",
+	)
+	rendered, err := helm(t, args...)
+	if err != nil {
+		t.Fatalf("render Kind live-provider profile: %v", err)
+	}
+	container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+	if slices.Contains(container.Args, "--mock") {
+		t.Fatal("Kind live-provider profile retained --mock")
+	}
+	if len(container.Env) != 1 || container.Env[0].Name != "OPENROUTER_API_KEY" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "mecak8s-live-provider" {
+		t.Fatalf("Kind live-provider environment = %#v", container.Env)
 	}
 }
 

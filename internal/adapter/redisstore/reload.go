@@ -115,7 +115,11 @@ func runReload(ctx context.Context, done chan<- struct{}, events <-chan struct{}
 				break
 			}
 			diagnostics.Log(context.Background(), port.LevelInfo, "redis credential reload", "component", "redis", "operation", "reload", "outcome", "retrying", "attempt", attempt, "reason", "candidate_rejected")
-			timer := time.NewTimer(backoff)
+			delay := backoff
+			if cfg.reloadBackoff != nil {
+				delay = cfg.reloadBackoff(attempt)
+			}
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
 				if !timer.Stop() {

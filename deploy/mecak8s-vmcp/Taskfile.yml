@@ -241,7 +241,7 @@ tasks:
           if [ -n "${OPENROUTER_API_KEY:-}" ]; then
             echo "OPENROUTER_API_KEY is set -- wiring a real provider via extraEnv"
             kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create secret generic {{.LIVE_PROVIDER_SECRET}} --from-literal=OPENROUTER_API_KEY="$OPENROUTER_API_KEY" --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
-            set -- "$@" --set 'extraEnv[0].name=OPENROUTER_API_KEY' --set 'extraEnv[0].valueFrom.secretKeyRef.name={{.LIVE_PROVIDER_SECRET}}' --set 'extraEnv[0].valueFrom.secretKeyRef.key=OPENROUTER_API_KEY'
+            set -- "$@" --set 'mockProvider=false' --set 'security.allowUnsafeRealProvider=true' --set 'extraEnv[0].name=OPENROUTER_API_KEY' --set 'extraEnv[0].valueFrom.secretKeyRef.name={{.LIVE_PROVIDER_SECRET}}' --set 'extraEnv[0].valueFrom.secretKeyRef.key=OPENROUTER_API_KEY'
           else
             echo "OPENROUTER_API_KEY is not set -- mock provider only"
           fi

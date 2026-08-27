@@ -129,6 +129,7 @@ type Config struct {
 	initialClientFactory func(context.Context, *tcredis.Config) (redis.UniversalClient, error)
 	candidateFactory     func(context.Context, *tcredis.Config) (redis.UniversalClient, error)
 	watcherFactory       watcherFactory
+	reloadBackoff        func(int) time.Duration
 }
 
 // New connects to a plaintext, unauthenticated Redis broker. It is retained for
