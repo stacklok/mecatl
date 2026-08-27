@@ -16,7 +16,7 @@ if ! grep -Fq 'race_vet_off:' "$workflow"; then
   fail 'missing manual race_vet_off input'
 fi
 
-for job in test-race-root-a test-race-root-b test-race-ui test-race-modules; do
+for job in test-race-root-a test-race-root-b test-race-ui; do
   block="$(awk -v job="$job" '
     $0 == "  " job ":" { in_job = 1 }
     in_job && $0 ~ /^  [[:alnum:]_-]+:$/ && $0 != "  " job ":" { exit }
@@ -27,8 +27,8 @@ for job in test-race-root-a test-race-root-b test-race-ui test-race-modules; do
   fi
 
   case "$job" in
-    test-race-root-a|test-race-root-b|test-race-ui) expected_wrappers=1 ;;
-    test-race-modules) expected_wrappers=6 ;;
+    test-race-root-a) expected_wrappers=7 ;;
+    test-race-root-b|test-race-ui) expected_wrappers=1 ;;
   esac
   wrapper_calls="$(grep -Fc 'race-test.sh' <<<"$block")"
   if [[ "$wrapper_calls" -ne "$expected_wrappers" ]]; then
@@ -41,8 +41,8 @@ for job in test-race-root-a test-race-root-b test-race-ui test-race-modules; do
   fi
 done
 
-if [[ "$(grep -Fc "$forward" "$workflow")" -ne 4 ]]; then
-  fail 'race_vet_off forwarding is not limited to the four race jobs'
+if [[ "$(grep -Fc "$forward" "$workflow")" -ne 3 ]]; then
+  fail 'race_vet_off forwarding is not limited to the three race jobs'
 fi
 
 if [[ "$failures" -ne 0 ]]; then

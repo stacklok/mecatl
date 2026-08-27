@@ -38,30 +38,35 @@ User docs, and Domain model jobs. Their aggregate is `Test (docs-only)`; this ke
 
 Draft PRs run complete root and module test coverage without the race detector under
 `Test (non-race draft)`. Non-draft PRs, pushes to `main`, and manual dispatches run
-all four race jobs and aggregate them as `Test (race)` (or the dispatch-only `Test
+all three race jobs and aggregate them as `Test (race)` (or the dispatch-only `Test
 (race experiment)`). The existing ref-scoped concurrency group cancels the superseded
 mode when a PR changes state. This remains `pull_request`, never `pull_request_target`, so untrusted PR
 code has no secrets or elevated permissions.
 
-Root-module race testing has three shards: `root-a`, `root-b`, and UI. `root-a` is a
-small, maintained static list of expensive packages; `root-b` is automatically every
-other discovered root package except UI. This means new tests in an existing package
-stay in its shard and a new root package automatically runs in `root-b`. The engine,
-OIDC, and provider modules run once in the separate modules shard.
+Full-race testing has three shards: `root-a`, `root-b`, and UI. `root-a` is a small,
+maintained static list of expensive root packages and also runs the engine, OIDC, and
+provider module sweeps. `root-b` is automatically every other discovered root package
+except UI. This means new tests in an existing package stay in its shard and a new root
+package automatically runs in `root-b`.
 `.github/scripts/root-race-packages.sh` validates that every root-a entry exists, UI
 is not duplicated, all groups are disjoint, and their union exactly equals `go list
 ./...`. Run its fixtures and live check with `task test:root-race-partition`; local
 root commands are `task test:race-root-a`, `task test:race-root-b`, and
 `task test:race-ui`. `task test` remains the full unsharded local suite.
 
+All Go test jobs in this design use the same explicit multi-module `setup-go` cache key:
+the root, engine, OIDC, and four provider `go.sum` files. This lets a draft's complete
+non-race coverage reuse the same module cache as its full-race successor rather than
+missing dependencies owned by a nested module.
+
 Normal full-race runs execute those race commands directly: they do not add `-json`,
 redirect output, create timing files, or upload artifacts. To investigate CI duration,
 open **Actions → CI → Run workflow**, enable `race_timing`, and dispatch the desired
-ref. The four race jobs upload independently named 3-day JSONL artifacts:
-`race-timing-root-a`, `race-timing-root-b`, `race-timing-ui`, and
-`race-timing-modules`. The modules artifact contains one file per module command.
-Failures still fail the command and job; uploads run afterward with `always()` so
-records produced before a failure remain available.
+ref. The three race jobs upload independently named 3-day JSONL artifacts:
+`race-timing-root-a`, `race-timing-root-b`, and `race-timing-ui`. The root-a artifact
+contains the root-a and module-command records. Failures still fail the command and job;
+uploads run afterward with `always()` so records produced before a failure remain
+available.
 
 ### Rebalancing the static root shards
 
@@ -87,9 +92,9 @@ per-command JSONL artifacts are available:
    for the baseline.
 2. Dispatch CI again for that exact ref with `race_timing=true` and
    `race_vet_off=true`.
-3. Download the `race-timing-root-a`, `race-timing-root-b`, `race-timing-ui`, and
-   `race-timing-modules` artifacts from each run and compare matching command/package
-   totals, not just the overall job time.
+3. Download the `race-timing-root-a`, `race-timing-root-b`, and `race-timing-ui`
+   artifacts from each run and compare matching command/package totals, not just the
+   overall job time. The root-a artifact also contains the module-command records.
 4. Repeat both configurations enough times to distinguish runner variance
    (at least several paired runs) before drawing a conclusion.
 
@@ -116,10 +121,9 @@ tests (including subtests). Sort the latter by elapsed time, for example, with
 |-----|--------------|
 | `changes` | Fail-closed changed-path classification for docs-only optimization |
 | `build` | `go build ./...` |
-| `test-race-root-a` | Maintained expensive root-package race shard |
+| `test-race-root-a` | Maintained expensive root-package race shard plus engine, OIDC, and provider module sweeps |
 | `test-race-root-b` | Automatic race shard for every other non-UI root package |
 | `test-race-ui` | `go test -race -count=1 ./cmd/mecatui/ui` |
-| `test-race-modules` | Engine, OIDC, and provider module race sweeps |
 | `test-non-race-draft` | Complete non-race coverage for draft PRs |
 | `test` | Context-selecting aggregate: stable `Test (race)` only for full-race non-draft PR/push runs |
 | `lint` | `golangci-lint` (v2) + `go vet ./...` + `actionlint` (workflow lint, pinned via `go run`) + the reusable-workflow pin check + the empty-expression (action-templates) check + the mecatequi composite-action shell tests |

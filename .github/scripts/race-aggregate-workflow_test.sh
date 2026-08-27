@@ -20,11 +20,10 @@ if grep -Eq '^[[:space:]]+name:[[:space:]]+Test \(race\)[[:space:]]*$' "$workflo
 fi
 
 for contract in \
-  'needs: [changes, test-race-root-a, test-race-root-b, test-race-ui, test-race-modules, test-non-race-draft]' \
+  'needs: [changes, test-race-root-a, test-race-root-b, test-race-ui, test-non-race-draft]' \
   'ROOT_A_RESULT: ${{ needs.test-race-root-a.result }}' \
   'ROOT_B_RESULT: ${{ needs.test-race-root-b.result }}' \
   'UI_RESULT: ${{ needs.test-race-ui.result }}' \
-  'MODULES_RESULT: ${{ needs.test-race-modules.result }}' \
   'DRAFT_RESULT: ${{ needs.test-non-race-draft.result }}' \
   'IS_DRAFT: ${{ github.event_name == '\''pull_request'\'' && github.event.pull_request.draft }}' \
   'Test (non-race draft coverage)' \
@@ -34,7 +33,7 @@ for contract in \
   fi
 done
 
-for job in test-race-root-a test-race-root-b test-race-ui test-race-modules; do
+for job in test-race-root-a test-race-root-b test-race-ui; do
   block="$(awk -v job="$job" '
     $0 == "  " job ":" { in_job = 1 }
     in_job && $0 ~ /^  [[:alnum:]_-]+:$/ && $0 != "  " job ":" { exit }
@@ -48,6 +47,19 @@ done
 if ! grep -Fq 'github.event.pull_request.draft == true' "$workflow"; then
   fail 'draft coverage job must be draft-gated'
 fi
+
+cache_dependencies=$'cache-dependency-path: |\n            go.sum\n            engine/go.sum\n            authn/oidc/go.sum\n            provider/ssefilter/go.sum\n            provider/anthropic/go.sum\n            provider/openai/go.sum\n            provider/openaichat/go.sum'
+for job in test-race-root-a test-race-root-b test-race-ui test-non-race-draft; do
+  block="$(awk -v job="$job" '
+    $0 == "  " job ":" { in_job = 1 }
+    in_job && $0 ~ /^  [[:alnum:]_-]+:$/ && $0 != "  " job ":" { exit }
+    in_job { print }
+  ' "$workflow")"
+  if ! grep -Fq "$cache_dependencies" <<<"$block"; then
+    fail "$job must use the shared multi-module Go cache key"
+  fi
+done
+
 if ! grep -Fq 'types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]' "$workflow"; then
   fail 'pull-request transitions must trigger the applicable coverage mode'
 fi
