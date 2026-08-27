@@ -243,6 +243,10 @@ func (f *jwksFixture) validator(t *testing.T) *Validator {
 }
 
 func (f *jwksFixture) token(t *testing.T, audience string) string {
+	return f.tokenWithIssuer(t, f.srv.URL, audience)
+}
+
+func (f *jwksFixture) tokenWithIssuer(t *testing.T, issuer, audience string) string {
 	t.Helper()
 	header, err := json.Marshal(map[string]string{"alg": "RS256", "kid": testKID, "typ": "JWT"})
 	if err != nil {
@@ -250,7 +254,7 @@ func (f *jwksFixture) token(t *testing.T, audience string) string {
 	}
 	now := time.Now()
 	claims, err := json.Marshal(map[string]any{
-		"iss": f.srv.URL, "sub": "alice-uid", "aud": audience,
+		"iss": issuer, "sub": "alice-uid", "aud": audience,
 		"iat": now.Unix(), "exp": now.Add(time.Minute).Unix(),
 	})
 	if err != nil {
@@ -274,6 +278,67 @@ func TestCallerIdentityE2E_Scenario2_WrongAudienceRejected(t *testing.T) {
 	principal, err := validator.Validate(context.Background(), fixture.token(t, "another-service"))
 	if principal != nil || !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("Validate(wrong audience) = (%#v, %v), want nil ErrInvalidToken", principal, err)
+	}
+}
+
+func TestMecak8sKindFixture_Scenario3_AuthenticatedRequest(t *testing.T) {
+	fixture := newJWKSFixture(t)
+	validator, err := NewValidator(context.Background(), Config{
+		Issuer: fixture.srv.URL, JWKSURI: fixture.srv.URL + "/keys", Audience: "mecak8s",
+		HTTPClient: fixture.srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	t.Cleanup(func() { _ = validator.Close() })
+
+	valid := fixture.token(t, "mecak8s")
+	principal, err := validator.Validate(context.Background(), valid)
+	if err != nil || principal == nil || principal.Subject != "alice-uid" {
+		t.Fatalf("Validate(valid mecak8s access token) = (%#v, %v), want alice", principal, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		bearer string
+	}{
+		{name: "absent", bearer: ""},
+		{name: "forged", bearer: valid[:len(valid)-1] + "x"},
+		{name: "wrong issuer", bearer: fixture.tokenWithIssuer(t, "https://wrong-issuer.example", "mecak8s")},
+		{name: "wrong audience", bearer: fixture.token(t, "another-service")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			principal, err := validator.Validate(context.Background(), tc.bearer)
+			if principal != nil || !errors.Is(err, ErrInvalidToken) {
+				t.Fatalf("Validate(%s) = (%#v, %v), want nil ErrInvalidToken", tc.name, principal, err)
+			}
+		})
+	}
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.srv.Certificate().Raw})
+	wrongCA := append([]byte(nil), caPEM...)
+	wrongCAIndex := len(wrongCA) * 3 / 4
+	if wrongCA[wrongCAIndex] == 'A' {
+		wrongCA[wrongCAIndex] = 'B'
+	} else {
+		wrongCA[wrongCAIndex] = 'A'
+	}
+	for _, tc := range []struct {
+		name   string
+		issuer string
+		caPEM  []byte
+	}{
+		{name: "wrong hostname", issuer: strings.Replace(fixture.srv.URL, "127.0.0.1", "localhost", 1), caPEM: caPEM},
+		{name: "untrusted CA", issuer: fixture.srv.URL, caPEM: wrongCA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			validator, err := NewValidator(context.Background(), Config{
+				Issuer: tc.issuer, JWKSURI: tc.issuer + "/keys", Audience: "mecak8s",
+				AllowPrivateHTTPSIssuer: true, TrustedCAFile: "/run/oidc/ca.pem", TrustedCAPEM: tc.caPEM,
+			})
+			if validator != nil || !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("NewValidator(%s) = (%#v, %v), want nil ErrInvalidConfig", tc.name, validator, err)
+			}
+		})
 	}
 }
 

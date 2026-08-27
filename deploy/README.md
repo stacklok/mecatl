@@ -197,6 +197,24 @@ The JWKS cache is process-local and is not persisted. Restarting fetches current
 keys again; if the IdP is still unavailable, an identity-enabled process cannot
 start.
 
+### Disposable Keycloak validation fixture
+
+`deploy/mecak8s-kind/` layers a private Keycloak issuer over its otherwise
+unauthenticated Kind baseline for local validation only. Run
+`task mecak8s:kind-keycloak-setup`, then use its explicit loopback-only
+port-forward; mecak8s stays a `ClusterIP` Service with no Ingress, NodePort,
+LoadBalancer, or wildcard host binding. Its fixture certificate covers
+`localhost` and `127.0.0.1`, and clients must verify both the hostname and the
+fixture CA.
+
+The normal client login is Authorization Code + PKCE using Keycloak's public
+client and an access token with the `mecak8s` audience. A password grant is a
+narrow test helper, not a normal client flow. The fixture demonstrates the
+same fail-closed boundary: initial JWKS unavailability prevents startup; once
+keys have been fetched, an outage beyond `oidc.maxJWKSStaleness` returns 503,
+not an unauthenticated fallback or a 401 token result. It is not a production
+IdP configuration and does not relax the chart's external-IdP protections.
+
 ### Trying it locally by hand
 
 The same flags work on a plain `mecated` and are the quickest way to see

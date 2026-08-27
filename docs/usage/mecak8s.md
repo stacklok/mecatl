@@ -159,6 +159,28 @@ a `raw-driver` NetworkPolicy scoping ingress on a `app.kubernetes.io/component:
 raw-driver`-labelled pod to the mecak8s agent pod only — trusted-infrastructure
 raw gRPC drivers are not yet caller-enforced (ADR 0213).
 
+#### Local optional Keycloak fixture
+
+The disposable `deploy/mecak8s-kind/` fixture keeps its base profile unauthenticated
+and `ClusterIP`. Its optional Keycloak layer is an explicit local validation aid:
+`task mecak8s:kind-keycloak-setup` installs it;
+`task mecak8s:kind-keycloak-port-forward` is the issuer's loopback-only browser
+path, and `task mecak8s:kind-port-forward` is the sole mecak8s host path, bound
+to `127.0.0.1`. Map `keycloak.mecatl.svc.cluster.local` to `127.0.0.1` locally
+before the browser flow so the configured issuer hostname and certificate remain
+intact.
+The mecak8s certificate covers `localhost` and `127.0.0.1`; verify the fixture
+CA and hostname when connecting to `https://localhost:18081`, rather than
+weakening TLS verification.
+
+The normal fixture login is Authorization Code + PKCE for the public
+`mecatui-kind` client, requesting the `mecak8s:access` scope. A password grant
+is only a non-browser test helper, never the normal client journey. The server
+accepts only a Keycloak access token with `aud: mecak8s`; absent, forged,
+wrong-issuer, or wrong-audience tokens fail before authenticated API handling.
+The fixture's in-cluster issuer is deliberately private and CA-scoped. It does
+not change the production chart's external-IdP security defaults.
+
 #### Kind e2e (`task e2e:k8s`)
 
 A kind-based e2e suite lives under `e2e/k8s/` (build tag `kind_e2e` — `task build`/`task

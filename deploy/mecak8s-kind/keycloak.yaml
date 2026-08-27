@@ -486,8 +486,9 @@ spec:
             - --import-realm
             # Keycloak builds EVERY url it emits -- issuer, token endpoint, login form
             # action, redirects -- from this value. It must be the one name that
-            # resolves both from the host (/etc/hosts alias + kind port mapping) and
-            # in-cluster (service DNS), or the browser leg breaks in confusing ways.
+            # resolves both from the host (a loopback hosts alias + explicit
+            # port-forward) and in-cluster (service DNS), or the browser leg breaks
+            # in confusing ways.
             - --hostname=https://keycloak.mecatl.svc.cluster.local:8443
             - --https-certificate-file=/etc/keycloak/tls/tls.crt
             - --https-certificate-key-file=/etc/keycloak/tls/tls.key
@@ -552,11 +553,10 @@ metadata:
     app.kubernetes.io/name: keycloak
     app.kubernetes.io/part-of: mecak8s
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: keycloak
   ports:
     - name: https
       port: 8443
       targetPort: https
-      nodePort: 30843

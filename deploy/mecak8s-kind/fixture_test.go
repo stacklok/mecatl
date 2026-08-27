@@ -63,6 +63,7 @@ func TestMecak8sKindFixture_Scenario1_DocumentationBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(body)
+	baseDocs, _, _ := strings.Cut(text, "\n## Optional Keycloak login journey")
 	for _, want := range []string{
 		"operator-run", "deploy/helm/mecak8s/", "e2e/k8s/", "no general NetworkPolicy",
 		"127.0.0.1", "port-forward",
@@ -72,7 +73,7 @@ func TestMecak8sKindFixture_Scenario1_DocumentationBoundaries(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{"production network isolation", "ToolHive", "Keycloak", "vMCP"} {
-		if strings.Contains(text, forbidden) {
+		if strings.Contains(baseDocs, forbidden) {
 			t.Fatalf("ToolHive-free fixture documentation contains %q", forbidden)
 		}
 	}
@@ -239,6 +240,99 @@ func fixtureTaskClosure(t *testing.T, roots ...string) string {
 		}
 	}
 	return out.String()
+}
+
+func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
+	task := fixtureTaskClosure(t, "kind-port-forward")
+	for _, want := range []string{
+		"--address=127.0.0.1", "svc/{{.RELEASE}}-mecak8s", "18080:8080", "18081:8081",
+	} {
+		if !strings.Contains(task, want) {
+			t.Fatalf("loopback access path missing %q", want)
+		}
+	}
+
+	keycloakTask := fixtureTaskClosure(t, "kind-keycloak-port-forward")
+	for _, want := range []string{"--address=127.0.0.1", "svc/keycloak", "8443:8443"} {
+		if !strings.Contains(keycloakTask, want) {
+			t.Fatalf("Keycloak loopback access path missing %q", want)
+		}
+	}
+
+	hostsTasks := fixtureTaskClosure(t, "kind-hosts-show", "kind-hosts-add", "kind-hosts-remove")
+	for _, want := range []string{
+		"127.0.0.1 keycloak.mecatl.svc.cluster.local",
+		"grep -Fqx", "sudo sh -c", "sudo sed -i.bak",
+		"^127\\.0\\.0\\.1 keycloak\\.mecatl\\.svc\\.cluster\\.local$",
+	} {
+		if !strings.Contains(hostsTasks, want) {
+			t.Fatalf("Keycloak hosts lifecycle missing %q", want)
+		}
+	}
+	keycloak, err := os.ReadFile("keycloak.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"NodePort", "nodePort", "LoadBalancer", "Ingress", "0.0.0.0", "*"} {
+		if strings.Contains(string(keycloak), forbidden) {
+			t.Fatalf("Keycloak Service exposes the fixture externally with %q", forbidden)
+		}
+	}
+	if !strings.Contains(string(keycloak), "type: ClusterIP") {
+		t.Fatal("Keycloak Service must be ClusterIP")
+	}
+
+	base, err := os.ReadFile("../helm/mecak8s/values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(base), "type: ClusterIP") {
+		t.Fatal("chart default Service must be ClusterIP")
+	}
+
+	overlay, err := os.ReadFile("../helm/mecak8s/values-kind-keycloak.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"NodePort", "nodePort", "LoadBalancer", "Ingress", "0.0.0.0", "*"} {
+		if strings.Contains(string(overlay), forbidden) {
+			t.Fatalf("Keycloak overlay exposes mecak8s externally with %q", forbidden)
+		}
+	}
+	if !strings.Contains(string(overlay), "type: ClusterIP") {
+		t.Fatal("Keycloak overlay must retain the ClusterIP Service")
+	}
+
+	certs, err := os.ReadFile("fixture-tls.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"- localhost", "- 127.0.0.1"} {
+		if !strings.Contains(string(certs), want) {
+			t.Fatalf("fixture certificate misses loopback client identity %q", want)
+		}
+	}
+}
+
+func TestMecak8sKindFixture_Scenario3_LoginDocumentation(t *testing.T) {
+	for _, path := range []string{
+		"README.md", "../mecak8s-vmcp/README.md", "../../docs/usage/mecak8s.md",
+		"../README.md", "../../user-docs/building/deployment/mecak8s.md",
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(body)
+		for _, want := range []string{"Authorization Code + PKCE", "password grant", "test helper"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s does not document Keycloak login boundary %q", path, want)
+			}
+		}
+		if strings.Index(text, "Authorization Code + PKCE") > strings.Index(text, "password grant") {
+			t.Fatalf("%s presents password grant before the normal PKCE journey", path)
+		}
+	}
 }
 
 // TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn pins the identity layer's

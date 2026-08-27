@@ -10,11 +10,9 @@ oidc:
   caKey: tls.crt
 
 service:
-  type: NodePort
+  type: ClusterIP
   grpcPort: 8080
   httpPort: 8081
-  nodePorts:
-    grpc: 30081
 
 tls:
   enabled: true

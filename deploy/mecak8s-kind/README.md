@@ -42,7 +42,42 @@ cluster, the generated fixture kubeconfig, and the local state.
 
 Host access is only through the explicit `kubectl port-forward` command. It
 binds both ports to `127.0.0.1`; the chart Service remains `ClusterIP` and the
-fixture creates no ingress or node-port exposure.
+fixture creates no ingress, NodePort, LoadBalancer, or wildcard host binding.
+
+## Optional Keycloak login journey
+
+Run the identity layer only when caller identity needs exercising:
+
+```sh
+task mecak8s:kind-keycloak-setup
+# Add the loopback-only issuer alias (requires sudo) before starting the browser login.
+task mecak8s:kind-hosts-add
+# In separate terminals, forward the issuer and mecak8s API.
+task mecak8s:kind-keycloak-port-forward
+task mecak8s:kind-port-forward
+# Remove the alias when the local journey is complete.
+task mecak8s:kind-hosts-remove
+```
+
+`kind-hosts-add` manages only `127.0.0.1 keycloak.mecatl.svc.cluster.local` in
+`/etc/hosts`; `kind-hosts-remove` removes only that exact entry and leaves an
+`/etc/hosts.bak` backup. The Keycloak port-forward listens on
+`127.0.0.1:8443`; it is not a NodePort or external Service. This preserves
+Keycloak's configured issuer and its certificate hostname while making the
+local browser leg reachable.
+
+The authenticated mecak8s API is still reached only through its loopback
+port-forward. Connect to `https://localhost:18081` (and gRPC at
+`localhost:18080`): `localhost` and `127.0.0.1` are certificate-covered names,
+so clients must verify the fixture CA and hostname rather than disable TLS
+verification.
+
+The normal client journey is **Authorization Code + PKCE** with the public
+`mecatui-kind` client and the optional `mecak8s:access` scope. The realm's
+fixture users and any password grant are a narrowly scoped **test helper** for
+non-browser validation only; they are not the normal login flow. Use the
+access token whose `aud` includes `mecak8s` as the bearer credential. A missing,
+forged, wrong-issuer, or wrong-audience token is rejected before API handling.
 
 ## Boundary
 

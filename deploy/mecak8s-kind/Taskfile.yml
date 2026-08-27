@@ -50,6 +50,35 @@ tasks:
       - task: cluster-ready
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/{{.RELEASE}}-mecak8s 18080:8080 18081:8081
 
+  kind-keycloak-port-forward:
+    desc: Forward Keycloak HTTPS to loopback only (Ctrl-C to stop)
+    cmds:
+      - task: cluster-ready
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/keycloak 8443:8443
+
+  kind-hosts-show:
+    desc: Show the temporary loopback alias required for the Keycloak issuer
+    cmds:
+      - cmd: printf '%s\n' '127.0.0.1 keycloak.mecatl.svc.cluster.local'
+
+  kind-hosts-add:
+    desc: Add the temporary Keycloak issuer alias to /etc/hosts (loopback only)
+    cmds:
+      - cmd: |
+          set -eu
+          entry='127.0.0.1 keycloak.mecatl.svc.cluster.local'
+          sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
+          echo 'Added (or already present):'
+          task mecak8s:kind-hosts-show
+
+  kind-hosts-remove:
+    desc: Remove only the temporary Keycloak issuer alias from /etc/hosts
+    cmds:
+      - cmd: |
+          set -eu
+          sudo sed -i.bak -e '\|^127\.0\.0\.1 keycloak\.mecatl\.svc\.cluster\.local$|d' /etc/hosts
+          echo 'Removed exact temporary entry (backup: /etc/hosts.bak).'
+
   kind-destroy:
     desc: Delete the named Kind baseline and its local state
     cmds:

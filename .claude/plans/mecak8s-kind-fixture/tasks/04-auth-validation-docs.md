@@ -2,8 +2,8 @@
 id: 04-auth-validation-docs
 title: "Keycloak journey validation and documentation"
 blocked_by: [02-provider-mode, 03-keycloak-optional]
-status: pending
-branch: ""
+status: done
+branch: "plan-mecak8s-kind-fixture/04-auth-validation-docs"
 worktree: ""
 issue: ""
 retries: 0

@@ -26,6 +26,25 @@ Kill any pod. The survivor acquires the lease and resumes interrupted sessions f
 
 For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create vMCP resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. Host access is through `task mecak8s:kind-port-forward`, which binds gRPC and HTTP to `127.0.0.1` only. See [`deploy/mecak8s-kind/README.md`](../../../deploy/mecak8s-kind/README.md) for the local workflow; it makes no production network-isolation claim and has no general NetworkPolicy.
 
+### Optional local Keycloak validation
+
+`task mecak8s:kind-keycloak-setup` adds the fixture's private Keycloak and TLS
+layer to that base. It does not expose mecak8s: the Service remains `ClusterIP`,
+and the explicit loopback port-forward is the only host path. Run
+`task mecak8s:kind-keycloak-port-forward` for the issuer's browser path and map
+`keycloak.mecatl.svc.cluster.local` to `127.0.0.1` locally; this preserves its
+certificate hostname. Connect to the certificate-covered
+hostname; do not disable TLS verification.
+
+The normal sign-in path is Authorization Code + PKCE with the public
+`mecatui-kind` client and a Keycloak access token whose audience includes
+`mecak8s`. A password grant is only a narrowly scoped test helper for
+non-browser fixture validation, not the normal login flow. The authenticated
+endpoint rejects absent, forged, wrong-issuer, and wrong-audience credentials;
+initial JWKS unavailability prevents startup, while a later outage past the
+configured staleness limit returns retryable 503. This fixture is local-only
+validation, not a production identity-provider recipe.
+
 For global MCP OAuth, use an externally provisioned read-only environment credential and
 restart pods after rotation. `mecak8s` never launches a browser; a local mutable credential
 root conflicts with the normal storage-free posture. See [MCP client](/building/what-you-get/mcp-client.md).
