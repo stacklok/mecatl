@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,9 +20,10 @@ import (
 
 func TestEventLogAppendDurabilityFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		inject func(*snapshotOps)
-		want   error
+		name      string
+		inject    func(*snapshotOps)
+		want      error
+		committed bool
 	}{
 		{
 			name: "short write",
@@ -45,25 +47,66 @@ func TestEventLogAppendDurabilityFailures(t *testing.T) {
 			inject: func(ops *snapshotOps) {
 				ops.syncFile = func(*os.File) error { return syscall.EIO }
 			},
-			want: syscall.EIO,
+			want: syscall.EIO, committed: true,
 		},
 		{
-			name: "directory sync on first creation",
+			name: "close",
+			inject: func(ops *snapshotOps) {
+				ops.closeFile = func(f *os.File) error {
+					_ = f.Close()
+					return syscall.EIO
+				}
+			},
+			want: syscall.EIO, committed: true,
+		},
+		{
+			name: "directory sync",
 			inject: func(ops *snapshotOps) {
 				ops.syncDir = func(*os.File) error { return syscall.EIO }
 			},
-			want: syscall.EIO,
+			want: syscall.EIO, committed: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newInternalStore(t)
+			original := st.snapshot
 			tc.inject(&st.snapshot)
-			err := st.Append(context.Background(), "durability-fault", session.Event{Type: session.EvResult, Seq: 1})
+			id := session.SessionID("durability-fault")
+			err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 1})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Append error = %v, want %v", err, tc.want)
 			}
+			got := collectEvents(t, st, id)
+			if tc.committed {
+				if len(got) != 1 || got[0].Seq != 1 {
+					t.Fatalf("committed prefix after %s failure = %+v, want seq 1", tc.name, got)
+				}
+			} else if len(got) != 0 {
+				t.Fatalf("uncommitted prefix after %s failure = %+v, want empty", tc.name, got)
+			}
+
+			st.snapshot = original
+			if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 2}); err != nil {
+				t.Fatalf("retry after %s failure: %v", tc.name, err)
+			}
+			got = collectEvents(t, st, id)
+			wantSeqs := []int64{2}
+			if tc.committed {
+				wantSeqs = []int64{1, 2}
+			}
+			if fmt.Sprint(eventSeqs(got)) != fmt.Sprint(wantSeqs) {
+				t.Fatalf("reopened events after retry = %v, want %v", eventSeqs(got), wantSeqs)
+			}
 		})
 	}
+}
+
+func eventSeqs(events []session.Event) []int64 {
+	seqs := make([]int64, len(events))
+	for i := range events {
+		seqs[i] = events[i].Seq
+	}
+	return seqs
 }
 
 func TestEventLogAppendRetryAfterPartialWrite(t *testing.T) {
@@ -150,6 +193,31 @@ func TestEventLogReadCommitMarker(t *testing.T) {
 			name: "newline terminated malformed final record fails",
 			contents: func(t *testing.T) []byte {
 				return append(good(t, 1), []byte("{not-json\n")...)
+			},
+			wantSeqs:  []int64{1},
+			wantError: true,
+		},
+		{
+			name: "blank final record fails",
+			contents: func(t *testing.T) []byte {
+				return append(good(t, 1), '\n')
+			},
+			wantSeqs:  []int64{1},
+			wantError: true,
+		},
+		{
+			name: "whitespace final record fails",
+			contents: func(t *testing.T) []byte {
+				return append(good(t, 1), []byte(" \t \n")...)
+			},
+			wantSeqs:  []int64{1},
+			wantError: true,
+		},
+		{
+			name: "whitespace middle record fails before later valid record",
+			contents: func(t *testing.T) []byte {
+				out := append(good(t, 1), []byte(" \t\n")...)
+				return append(out, good(t, 2)...)
 			},
 			wantSeqs:  []int64{1},
 			wantError: true,
@@ -257,6 +325,130 @@ func TestEventLogReadCapturesCoherentPrefixBeforeYield(t *testing.T) {
 	}
 }
 
+func TestEventLogRejectsSymlinkAndSpecialSidecars(t *testing.T) {
+	t.Run("outside symlink", func(t *testing.T) {
+		st := newInternalStore(t)
+		id := session.SessionID("symlink-event")
+		outside := filepath.Join(t.TempDir(), "outside")
+		writeBytes(t, outside, []byte("outside-safe"))
+		path := st.resolver.canonicalPath(id, kindEvents)
+		if err := os.Symlink(outside, path); err != nil {
+			t.Fatalf("Symlink: %v", err)
+		}
+		if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 1}); err == nil {
+			t.Fatal("Append through outside symlink succeeded")
+		}
+		assertBytes(t, outside, []byte("outside-safe"))
+		errs := readEventErrors(st, id)
+		if len(errs) == 0 {
+			t.Fatal("Read through outside symlink did not fail")
+		}
+		if errs[0] == nil {
+			t.Fatal("Read through outside symlink yielded an event")
+		}
+	})
+
+	t.Run("fifo", func(t *testing.T) {
+		st := newInternalStore(t)
+		id := session.SessionID("fifo-event")
+		path := st.resolver.canonicalPath(id, kindEvents)
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Skipf("mkfifo unavailable: %v", err)
+		}
+		assertPromptFailure(t, "Append FIFO", func() error {
+			return st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 1})
+		})
+		assertPromptFailure(t, "Read FIFO", func() error {
+			errs := readEventErrors(st, id)
+			if len(errs) == 0 {
+				return errors.New("Read FIFO returned no error")
+			}
+			return errs[0]
+		})
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove FIFO: %v", err)
+		}
+		if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 2}); err != nil {
+			t.Fatalf("family lock remained wedged after FIFO rejection: %v", err)
+		}
+	})
+}
+
+func readEventErrors(st *Store, id session.SessionID) []error {
+	var errs []error
+	for _, err := range st.Read(context.Background(), id) {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+func assertPromptFailure(t *testing.T, label string, fn func() error) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("%s succeeded", label)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s blocked", label)
+	}
+}
+
+func TestEventLogInterruptedProcessRepairsTornTailAfterOSLockRelease(t *testing.T) {
+	if os.Getenv("MECATL_JSONLSTORE_TORN_HELPER") == "1" {
+		dir := os.Getenv("MECATL_JSONLSTORE_DIR")
+		st, err := New(dir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		id := session.SessionID("interrupted-events")
+		err = st.withSnapshotFamilyLock(context.Background(), st.resolver.currentSnapshotPath(id), func() error {
+			path := st.resolver.canonicalPath(id, kindEvents)
+			f, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // helper-owned path
+			if openErr != nil {
+				return openErr
+			}
+			first := eventRecordLine(t, session.Event{Type: session.EvMessageDelta, Seq: 1})
+			if _, writeErr := f.Write(append(first, '\n')); writeErr != nil {
+				return writeErr
+			}
+			if _, writeErr := f.Write([]byte(`{"v":"eventlog-json/1","ev":`)); writeErr != nil {
+				return writeErr
+			}
+			if syncErr := f.Sync(); syncErr != nil {
+				return syncErr
+			}
+			os.Exit(0) // deliberately skips Close and flock cleanup
+			return nil
+		})
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+
+	dir := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEventLogInterruptedProcessRepairsTornTailAfterOSLockRelease$")
+	cmd.Env = append(os.Environ(), "MECATL_JSONLSTORE_TORN_HELPER=1", "MECATL_JSONLSTORE_DIR="+dir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("interrupted helper: %v: %s", err, out)
+	}
+	st, err := New(dir)
+	if err != nil {
+		t.Fatalf("reopen Store: %v", err)
+	}
+	if got := eventSeqs(collectEvents(t, st, "interrupted-events")); fmt.Sprint(got) != "[1]" {
+		t.Fatalf("prefix after interrupted process = %v, want [1]", got)
+	}
+	if err := st.Append(context.Background(), "interrupted-events", session.Event{Type: session.EvResult, Seq: 2}); err != nil {
+		t.Fatalf("Append after interrupted process: %v", err)
+	}
+	if got := eventSeqs(collectEvents(t, st, "interrupted-events")); fmt.Sprint(got) != "[1 2]" {
+		t.Fatalf("events after repair = %v, want [1 2]", got)
+	}
+}
+
 func TestEventLogAppendCrossProcess(t *testing.T) {
 	if os.Getenv("MECATL_JSONLSTORE_APPEND_HELPER") == "1" {
 		runEventLogAppendHelper(t)
@@ -267,7 +459,17 @@ func TestEventLogAppendCrossProcess(t *testing.T) {
 	const processes, perProcess = 4, 10
 	commands := make([]*exec.Cmd, 0, processes)
 	outputs := make([]bytes.Buffer, processes)
+	readyReaders := make([]*os.File, 0, processes)
+	startWriters := make([]*os.File, 0, processes)
 	for process := 0; process < processes; process++ {
+		readyR, readyW, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("ready pipe %d: %v", process, err)
+		}
+		startR, startW, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("start pipe %d: %v", process, err)
+		}
 		cmd := exec.Command(os.Args[0], "-test.run=^TestEventLogAppendCrossProcess$")
 		cmd.Env = append(os.Environ(),
 			"MECATL_JSONLSTORE_APPEND_HELPER=1",
@@ -275,12 +477,27 @@ func TestEventLogAppendCrossProcess(t *testing.T) {
 			"MECATL_JSONLSTORE_PROCESS="+strconv.Itoa(process),
 			"MECATL_JSONLSTORE_COUNT="+strconv.Itoa(perProcess),
 		)
+		cmd.ExtraFiles = []*os.File{readyW, startR}
 		cmd.Stdout = &outputs[process]
 		cmd.Stderr = &outputs[process]
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start append helper %d: %v", process, err)
 		}
+		_ = readyW.Close()
+		_ = startR.Close()
 		commands = append(commands, cmd)
+		readyReaders = append(readyReaders, readyR)
+		startWriters = append(startWriters, startW)
+	}
+	for process, ready := range readyReaders {
+		var signal [1]byte
+		if _, err := io.ReadFull(ready, signal[:]); err != nil {
+			t.Fatalf("append helper %d readiness: %v: %s", process, err, outputs[process].String())
+		}
+		_ = ready.Close()
+	}
+	for _, start := range startWriters {
+		_ = start.Close()
 	}
 	for process, cmd := range commands {
 		if err := cmd.Wait(); err != nil {
@@ -328,6 +545,19 @@ func runEventLogAppendHelper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New helper Store: %v", err)
 	}
+	ready := os.NewFile(3, "jsonlstore-append-ready")
+	start := os.NewFile(4, "jsonlstore-append-start")
+	if ready == nil || start == nil {
+		t.Fatal("append helper barrier pipes unavailable")
+	}
+	if _, err := ready.Write([]byte{1}); err != nil {
+		t.Fatalf("signal helper readiness: %v", err)
+	}
+	_ = ready.Close()
+	if _, err := io.ReadAll(start); err != nil {
+		t.Fatalf("await append start: %v", err)
+	}
+	_ = start.Close()
 	for i := 0; i < count; i++ {
 		seq := int64(process*count + i)
 		text := fmt.Sprintf("event-%d:", seq) + strings.Repeat(strconv.Itoa(process), 128*1024)
@@ -337,13 +567,34 @@ func runEventLogAppendHelper(t *testing.T) {
 	}
 }
 
-func TestEventLogDirectorySyncOnlyOnCreation(t *testing.T) {
-	st := newInternalStore(t)
-	if err := st.Append(context.Background(), "existing-sidecar", session.Event{Type: session.EvResult, Seq: 1}); err != nil {
-		t.Fatalf("seed Append: %v", err)
-	}
-	st.snapshot.syncDir = func(*os.File) error { return syscall.EIO }
-	if err := st.Append(context.Background(), "existing-sidecar", session.Event{Type: session.EvResult, Seq: 2}); err != nil {
-		t.Fatalf("Append to existing sidecar unexpectedly synced directory: %v", err)
-	}
+func TestEventLogAppendRequiresDirectorySyncOnEveryAttempt(t *testing.T) {
+	t.Run("unsupported first publication never succeeds on retry", func(t *testing.T) {
+		st := newInternalStore(t)
+		id := session.SessionID("new-sidecar")
+		st.durability.DirectorySync = false
+		for attempt := 1; attempt <= 2; attempt++ {
+			if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: int64(attempt)}); err == nil {
+				t.Fatalf("Append attempt %d without directory sync succeeded", attempt)
+			}
+		}
+		assertMissing(t, st.resolver.canonicalPath(id, kindEvents))
+	})
+
+	t.Run("existing sidecar", func(t *testing.T) {
+		st := newInternalStore(t)
+		id := session.SessionID("existing-sidecar")
+		if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 1}); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		st.durability.DirectorySync = false
+		for attempt := 1; attempt <= 2; attempt++ {
+			if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: int64(attempt + 1)}); err == nil {
+				t.Fatalf("Append attempt %d without directory sync succeeded", attempt)
+			}
+		}
+		got := collectEvents(t, st, id)
+		if fmt.Sprint(eventSeqs(got)) != "[1]" {
+			t.Fatalf("unsupported append changed committed prefix: %v", eventSeqs(got))
+		}
+	})
 }

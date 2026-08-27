@@ -187,11 +187,14 @@
   owner-only flock from inactive-temp recovery through same-directory write, file
   sync, atomic rename, and directory sync. Event and tool sidecars use the same
   flock across cooperating jsonlstore processes: newline is their commit marker,
-  append truncates only an unterminated EOF fragment before writing and file-syncing
-  one complete record, and first publication directory-syncs. Event reads capture a
-  bounded newline-terminated prefix under that lock then yield after releasing it;
-  only an unterminated final fragment is ignored. A malformed complete or middle
-  record, unknown format, malformed payload, or I/O error fails loudly. The flock
+  append opens the canonical sidecar through an `os.Root`, rejects non-regular
+  entries without blocking on FIFOs, truncates only an unterminated EOF fragment,
+  then writes and file-syncs one complete record and directory-syncs after every
+  successful append. Event reads use confined canonical/store roots, capture a
+  bounded newline-terminated prefix under that lock, then yield after releasing it
+  while retaining the bounded descriptor/section view until iteration ends; only an
+  unterminated final fragment is ignored. A blank, whitespace-only, malformed complete
+  or middle record, unknown format, malformed payload, or I/O error fails loudly. The flock
   does not coordinate arbitrary external writers. Replacement temp names carry a random process-owner token and
   monotonic generation; only names that validate against that private protocol are
   cleanup candidates. Startup skips a family whose lock is live, while the next
@@ -199,8 +202,13 @@
   before creating its own. Thus another process's active temp and the committed
   snapshot are never reaped, and repeated crashes do not accumulate an unbounded
   temp set. `Store.SnapshotDurability` exposes those three verified primitives: an unsupported
-  sync primitive is reported as weaker durability rather than overclaiming host-crash
-  safety. Failures before rename preserve the prior snapshot; a failure after rename
+  sync primitive is reported as weaker snapshot durability rather than overclaiming
+  host-crash safety. That claim also depends on an underlying filesystem/storage stack
+  that honors successful sync and atomic rename; the probe verifies syscall support,
+  not whether volatile storage such as tmpfs survives power loss. Snapshot Save retains
+  the weaker-capability behavior, EventLog append and destructive/move operations fail
+  closed when required directory sync is unavailable, and ToolCall may drop its
+  best-effort record. Failures before rename preserve the prior snapshot; a failure after rename
   is loud while the new snapshot remains authoritative.
   The logical session id is an opaque valid-UTF-8 string
   stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename token is not

@@ -243,7 +243,10 @@ a real SIGKILL would): a torn final append racing the kill and host-crash durabi
 **Superseded for the local jsonlstore by ADR 0239:** append now uses a newline commit
 marker and narrowly recovers only an unterminated EOF tail; v2 snapshots and sidecars
 sync where the filesystem supports it, while `SnapshotDurability` reports weaker
-filesystems. The process-disposability gate remains distinct from a power-loss test.
+snapshot capability. Any host/power-loss claim additionally requires an underlying
+filesystem/storage stack that honors successful sync and atomic rename; capability
+probes verify syscall support, not that volatile storage such as tmpfs survives power
+loss. The process-disposability gate remains distinct from a power-loss test.
 Child asks (subagent-surfaced asks) are documented NOT rehydratable this round
 (run-scoped by design) and, verified below, are structurally unreachable through this
 seam, an honest note rather than silence.
@@ -1202,7 +1205,9 @@ in the no-lease default:
   `Save` writes one complete same-directory temporary, syncs it, renames it over
   the authoritative v2 snapshot, then syncs the directory where supported. The
   adapter reports atomic-replace, file-sync, and directory-sync capability
-  separately; it claims host-crash safety only when all three hold. Failures before
+  separately; it claims host-crash safety only when all three hold and the underlying
+  filesystem/storage stack honors successful sync and atomic rename. The probe verifies
+  syscall support, not whether tmpfs survives power loss. Failures before
   rename leave the prior snapshot authoritative; failures after rename are loud and
   leave the new snapshot authoritative. A present v2 snapshot remains authoritative
   over coexisting v1, so failure recovery never resurrects older history. This does

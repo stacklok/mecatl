@@ -226,10 +226,14 @@ store is plaintext and its files, including sidecars, are owner-only (`0600`).
 
 Snapshot replacement uses a same-directory temporary file, full write, file sync
 where supported, atomic replacement, and directory sync where supported.
-`SnapshotDurability` reports the available primitives: only all three make a
-successful save host-crash safe. Events and tool records are newline-committed;
-an interrupted final fragment is ignored or replaced on the next append, while a
-malformed complete record fails loudly. A stable family flock coordinates
+`SnapshotDurability` reports the available primitives: only all three, on an underlying
+filesystem/storage stack that honors successful sync and atomic rename, make a successful
+save host-crash safe. The probe verifies syscall support; it does not make volatile
+storage such as tmpfs survive power loss. Event records are newline-committed and append
+fails closed when required directory sync is unavailable. Tool-call audit is best-effort
+and may drop. An interrupted final fragment is ignored or replaced on the next append,
+while a blank, whitespace-only, or otherwise malformed complete record fails loudly. A
+stable family flock coordinates
 cooperating jsonlstore processes, not arbitrary external writers. Quiesce every
 writer before copying the complete store directory for backup or restore.
 

@@ -186,7 +186,7 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 			return err
 		}
 		defer dirs.close()
-		_, info, line, found, err := st.migrationSource(expected.ID)
+		v1Path, info, line, found, err := st.migrationSource(expected.ID)
 		if err != nil {
 			reason = "invalid_snapshot"
 			return nil
@@ -222,13 +222,22 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 		} else if !os.IsNotExist(statErr) {
 			return statErr
 		}
+		// A v2 file left by a prior rename whose directory sync failed is not
+		// durable authority yet. Establish it before removing the verified v1.
+		if currentExists {
+			if err := dirs.sync(); err != nil {
+				return err
+			}
+		}
 		if err := st.advanceInventoryGeneration(); err != nil {
 			return err
 		}
 		if err := st.prepareWrite(expected.ID); err != nil {
 			return err
 		}
-		v1Path := st.resolver.canonicalPath(expected.ID, kindSnapshot)
+		if !currentExists && v1Path == st.resolver.legacyPath(expected.ID, kindSnapshot) {
+			v1Path = st.resolver.canonicalPath(expected.ID, kindSnapshot)
+		}
 		if !currentExists {
 			data, err := json.Marshal(currentSnapshot{
 				Format: currentSnapshotFormat, ModifiedAt: info.ModTime(), Metadata: metaSnapshotFromSession(sess), Snapshot: line,

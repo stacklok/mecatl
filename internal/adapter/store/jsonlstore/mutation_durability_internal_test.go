@@ -2,13 +2,16 @@ package jsonlstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -301,6 +304,55 @@ func TestExplicitMigrationFinalRemovalIsSyncedAndRetryable(t *testing.T) {
 	if err != nil || reason != "" {
 		t.Fatalf("retry MigrateSessionFamily = %q, %v", reason, err)
 	}
+}
+
+func TestExplicitMigrationSyncsExistingV2BeforeRemovingV1(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("explicit-existing-v2-sync")
+	v1Path := seedMigrationV1(t, st, id)
+	inspection, err := st.InspectSessionMigration(context.Background())
+	if err != nil || len(inspection.Families) != 1 {
+		t.Fatalf("InspectSessionMigration = %+v, %v", inspection, err)
+	}
+	info, err := os.Stat(v1Path)
+	if err != nil {
+		t.Fatalf("stat v1: %v", err)
+	}
+	line, err := os.ReadFile(v1Path)
+	if err != nil {
+		t.Fatalf("read v1: %v", err)
+	}
+	line = []byte(strings.TrimSpace(string(line)))
+	sess, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("decode v1: %v", err)
+	}
+	current, err := json.Marshal(currentSnapshot{
+		Format: currentSnapshotFormat, ModifiedAt: info.ModTime(), Metadata: metaSnapshotFromSession(sess), Snapshot: line,
+	})
+	if err != nil {
+		t.Fatalf("marshal v2: %v", err)
+	}
+	writeBytes(t, st.resolver.currentSnapshotPath(id), current) // rename visible; directory sync was interrupted
+
+	ctx, release := acquireMigrationTestContext(t, st)
+	defer release()
+	syncDir := st.snapshot.syncDir
+	st.snapshot.syncDir = func(*os.File) error { return syscall.EIO }
+	reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0])
+	if err != nil || reason != "backend_failure" {
+		t.Fatalf("MigrateSessionFamily = %q, %v", reason, err)
+	}
+	if _, err := os.Stat(v1Path); err != nil {
+		t.Fatalf("migration removed v1 before v2 directory durability: %v", err)
+	}
+
+	st.snapshot.syncDir = syncDir
+	reason, err = st.MigrateSessionFamily(ctx, inspection.Families[0])
+	if err != nil || reason != "" {
+		t.Fatalf("retry MigrateSessionFamily = %q, %v", reason, err)
+	}
+	assertMissing(t, v1Path)
 }
 
 func TestLegacyPromotionSyncsRootAndCanonicalAtEachBoundary(t *testing.T) {

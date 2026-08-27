@@ -799,13 +799,10 @@ func TestAppendLineRepairsTornTail(t *testing.T) {
 		{"empty file", "", "{\"b\":2}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "x.jsonl")
+			st := newInternalStore(t)
+			path := st.resolver.canonicalPath("append-tail", kindEvents)
 			if tc.existing != "" {
 				writeBytes(t, path, []byte(tc.existing))
-			}
-			st, err := New(filepath.Dir(path))
-			if err != nil {
-				t.Fatalf("New: %v", err)
 			}
 			if err := st.appendLine(path, []byte("{\"b\":2}")); err != nil {
 				t.Fatalf("appendLine: %v", err)

@@ -190,9 +190,14 @@ service stopped.
    family flock coordinates cooperating mecatl processes only; it cannot make an
    external copy or arbitrary writer consistent. V2 snapshots and sidecars sync where
    supported, but `SnapshotDurability` can report a weaker filesystem, so a successful
-   operation must not be advertised as host-crash safe there. An interrupted final
-   JSONL record is the only tolerated torn tail; a complete malformed record fails
-   loudly and needs operator recovery.
+   snapshot operation must not be advertised as host-crash safe there. Even when all
+   probes pass, the guarantee depends on an underlying filesystem/storage stack that
+   honors successful sync and atomic rename; a probe does not make tmpfs survive power
+   loss. Event-log append and destructive/move operations fail closed when required
+   directory sync is unavailable. Tool-call audit remains best-effort and may drop a
+   record. An interrupted final JSONL record is the only tolerated torn tail; a blank,
+   whitespace-only, or otherwise malformed complete record fails loudly and needs
+   operator recovery.
 2. **Back up.** Snapshot or copy the complete state directory—not selected globs—including current
    snapshots, legacy files, tool/event sidecars, catalog data, maintenance job state, and lock
    sentinels. Preserve ownership, mode, timestamps, and filesystem boundaries. Record the executable
