@@ -1,0 +1,4 @@
+# Fixture-owned offline default. This deliberately contains no provider Secret
+# projection, so switching from real-provider mode cannot retain a credential.
+mockProvider: true
+extraEnv: []

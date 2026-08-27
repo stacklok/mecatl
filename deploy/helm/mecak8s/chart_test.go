@@ -371,6 +371,26 @@ func TestMecak8sHelmChart_RealProviderSecurityGate(t *testing.T) {
 	}
 }
 
+// TestMecak8sHelmChart_KindFixtureRealProviderDisablesMock pins the
+// fixture-only real-provider overlay: one Secret-backed env projection and no
+// mock flag. The key itself is created by the fixture, not chart values.
+func TestMecak8sHelmChart_KindFixtureRealProviderDisablesMock(t *testing.T) {
+	rendered, err := helm(t, "template", "kind", ".", "-f", "values-kind.yaml", "-f", "../../mecak8s-kind/kind-provider-real.yaml")
+	if err != nil {
+		t.Fatalf("render real-provider fixture: %v", err)
+	}
+	if strings.Contains(rendered, "- --mock") {
+		t.Fatal("real-provider fixture still enables mock mode")
+	}
+	const projection = "name: OPENROUTER_API_KEY\n              valueFrom:\n                secretKeyRef:\n                  key: OPENROUTER_API_KEY\n                  name: mecak8s-openrouter"
+	if count := strings.Count(rendered, projection); count != 1 {
+		t.Fatalf("expected exactly one OpenRouter Secret projection, got %d", count)
+	}
+	if strings.Contains(rendered, "OPENROUTER_API_KEY=") {
+		t.Fatal("rendered manifest contains an OpenRouter credential value")
+	}
+}
+
 func TestMecak8sHelmChart_KindNodePortAndProductionClusterIP(t *testing.T) {
 	kind, err := helm(t, kindVMCPArgs()...)
 	if err != nil {

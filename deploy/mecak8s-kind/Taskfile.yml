@@ -11,6 +11,7 @@ vars:
   KUBECONFIG: deploy/mecak8s-kind/kconfig.yaml
   SETUP_LOCK: .scratch/kind/mecatl-dev.setup-lock
   IMAGE: ko.local/mecak8s:dev
+  PROVIDER_SECRET: mecak8s-openrouter
 
 tasks:
   kind-setup:
@@ -122,6 +123,13 @@ tasks:
       - cmd: |
           set -eu
           trap 'status=$?; deploy/mecak8s-kind/cleanup-on-failure.sh "$status"' EXIT
-          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --wait --timeout=4m
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            printf '%s' "$OPENROUTER_API_KEY" | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create secret generic {{.PROVIDER_SECRET}} --from-file=OPENROUTER_API_KEY=/dev/stdin --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+            provider_values=deploy/mecak8s-kind/kind-provider-real.yaml
+          else
+            kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} delete secret {{.PROVIDER_SECRET}} --namespace={{.NAMESPACE}} --ignore-not-found
+            provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml
+          fi
+          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values="$provider_values" --wait --timeout=4m
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s

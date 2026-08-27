@@ -1,0 +1,16 @@
+# Fixture-owned real-provider overlay. The Secret is created by
+# deploy/mecak8s-kind/Taskfile.yml; its credential is never a chart value.
+#
+# This fixture runs without TLS/OIDC (deploy/mecak8s-kind's base profile), so
+# values.schema.json's real-provider security gate requires an explicit,
+# visibly-annotated opt-in -- the same escape hatch deploy/mecak8s-vmcp's
+# Taskfile.yml uses for its own real-provider wiring (#800).
+mockProvider: false
+security:
+  allowUnsafeRealProvider: true
+extraEnv:
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: mecak8s-openrouter
+        key: OPENROUTER_API_KEY

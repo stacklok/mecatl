@@ -2,8 +2,8 @@
 id: 02-provider-mode
 title: "Truthful fixture provider modes"
 blocked_by: [01-kind-base]
-status: pending
-branch: ""
+status: done
+branch: "plan-mecak8s-kind-fixture/02-provider-mode"
 worktree: ""
 issue: ""
 retries: 0

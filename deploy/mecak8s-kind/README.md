@@ -6,8 +6,23 @@ the production Helm deployment in `deploy/helm/mecak8s/`, and it is not the
 `ko.local/mecak8s:dev` image, installs the chart's `values-kind.yaml` profile,
 and uses that profile's local Redis StatefulSet.
 
-It intentionally installs no optional identity or integration stack. It is a
-local mock-provider baseline only.
+It intentionally installs no optional identity or integration stack. By default it is
+a local mock-provider baseline, so setup makes no provider network request and spends
+no provider tokens.
+
+## Provider modes
+
+`task mecak8s:kind-setup` remains offline unless the operator explicitly exports
+`OPENROUTER_API_KEY`. With that variable set, setup creates the fixture-owned
+`mecak8s-openrouter` Secret from standard input, applies the real-provider overlay,
+and disables `--mock`. The credential is projected only as the container's
+`OPENROUTER_API_KEY` environment variable; it is never a Helm value or command-line
+argument. Running setup later without the variable returns to mock mode and deletes
+that fixture-owned Secret.
+
+A real-provider smoke call is a **separate, explicit billable operator action** after
+setup. It is not part of fixture setup or default tests; inspect the deployment and
+choose an intentional client request only when provider spending is desired.
 
 ## Lifecycle
 

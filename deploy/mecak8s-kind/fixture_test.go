@@ -2,6 +2,7 @@ package mecak8s_kind
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -74,6 +75,113 @@ func TestMecak8sKindFixture_Scenario1_DocumentationBoundaries(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("ToolHive-free fixture documentation contains %q", forbidden)
 		}
+	}
+}
+
+// TestMecak8sKindFixture_Scenario2_MockDefault pins the cost-free fixture
+// default: without an operator credential setup selects the canned provider and
+// never contacts a provider.
+func TestMecak8sKindFixture_Scenario2_MockDefault(t *testing.T) {
+	text := fixtureTaskClosure(t, "kind-setup")
+	for _, want := range []string{
+		`if [ -n "${OPENROUTER_API_KEY:-}" ]; then`,
+		"--values=deploy/helm/mecak8s/values-kind.yaml",
+		"kind-provider-real.yaml",
+		"kind-provider-mock.yaml",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Kind setup missing provider-mode control %q", want)
+		}
+	}
+	for _, forbidden := range []string{"curl ", "openrouter.ai", "api.openai.com", "provider smoke"} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Fatalf("mock-default setup performs provider work %q", forbidden)
+		}
+	}
+
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is required to render the mock fixture")
+	}
+	cmd := exec.Command("helm", "template", "kind", ".", "-f", "values-kind.yaml", "-f", "../../mecak8s-kind/kind-provider-mock.yaml")
+	cmd.Dir = "../helm/mecak8s"
+	rendered, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render mock fixture: %v\n%s", err, rendered)
+	}
+	if !strings.Contains(string(rendered), "- --mock") {
+		t.Fatal("mock fixture render omits the canned mock provider")
+	}
+	for _, forbidden := range []string{"OPENROUTER_API_KEY", "mecak8s-openrouter"} {
+		if strings.Contains(string(rendered), forbidden) {
+			t.Fatalf("mock fixture render retains provider Secret projection %q", forbidden)
+		}
+	}
+}
+
+// TestInvariant_credential_not_process_argument pins that the fixture's
+// operator credential crosses only kubectl's standard input as a file payload.
+func TestInvariant_credential_not_process_argument(t *testing.T) {
+	body, err := os.ReadFile(fixtureTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		`printf '%s' "$OPENROUTER_API_KEY" | kubectl`,
+		"--from-file=OPENROUTER_API_KEY=/dev/stdin",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("credential handoff missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"--from-literal=OPENROUTER_API_KEY", "echo $OPENROUTER_API_KEY", "echo \"$OPENROUTER_API_KEY\""} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("credential is exposed by fixture command %q", forbidden)
+		}
+	}
+}
+
+// TestMecak8sKindFixture_Scenario2_ResetToMock pins that a later mock setup
+// deletes the fixture-owned provider Secret before applying the mock overlay.
+func TestMecak8sKindFixture_Scenario2_ResetToMock(t *testing.T) {
+	body, err := os.ReadFile(fixtureTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"PROVIDER_SECRET: mecak8s-openrouter",
+		"delete secret {{.PROVIDER_SECRET}} --namespace={{.NAMESPACE}} --ignore-not-found",
+		"provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("mock reset missing %q", want)
+		}
+	}
+	mockValues, err := os.ReadFile("kind-provider-mock.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mockValues), "OPENROUTER_API_KEY") {
+		t.Fatal("mock overlay retains an OpenRouter credential projection")
+	}
+}
+
+// TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit pins that billing is an
+// operator decision, documented outside setup and default tests.
+func TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit(t *testing.T) {
+	body, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{"OPENROUTER_API_KEY", "billable", "A real-provider smoke call", "operator action"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("fixture instructions missing live-provider boundary %q", want)
+		}
+	}
+	if strings.Contains(fixtureTaskClosure(t, "kind-setup"), "live-smoke") {
+		t.Fatal("setup must not invoke the live-provider smoke action")
 	}
 }
 
