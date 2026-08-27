@@ -202,10 +202,12 @@ so `perf.yml` is unaffected. See `docs/adr/0019-perf-tracking.md` (Phase 4 — S
 
 ## `release.yml` — `v*` tag push (+ `workflow_dispatch` with a `tag` input, for idempotently re-publishing an existing tag's artifacts)
 
-Builds and publishes the `mecated` image and its supply-chain metadata, and a
-sibling `publish-mecatui` job builds/publishes/signs/attests the `mecatui`
-container image (issue #302) under `ghcr.io/<owner>/<repo>/mecatui` with the
-same supply-chain story. The workflow defaults to `contents: read`; the two
+Builds and publishes the `mecated` image and its supply-chain metadata, and two
+sibling jobs build/publish/sign/attest the `mecatui` container image (issue
+#302) under `ghcr.io/<owner>/<repo>/mecatui` and the `mecak8s` container image
+(ADR 0048) under `ghcr.io/<owner>/<repo>/mecak8s` — matching
+`deploy/helm/mecak8s/values.yaml`'s `image.repository` default — with the same
+supply-chain story. The workflow defaults to `contents: read`; the three
 publish jobs each elevate to exactly:
 
 ```yaml
@@ -303,8 +305,8 @@ with its own permission/secrets contract. See <https://slsa.dev/>.
 
 ### `publish-helm-chart` — the `deploy/helm/mecak8s` Helm chart
 
-A third job in the same workflow, independent of `publish`/`publish-mecatui`
-(no `needs:`, so it runs in parallel — the chart references either image
+A fourth job in the same workflow, independent of `publish`/`publish-mecatui`/
+`publish-mecak8s` (no `needs:`, so it runs in parallel — the chart references either image
 only by tag/digest *value*, via its `image.tag`/`image.digest` values, not by
 a build-time dependency). Publishes `deploy/helm/mecak8s` as a signed OCI
 artifact under `ghcr.io/<owner>/<repo>/charts` so `stacklok/infra`'s Flux
