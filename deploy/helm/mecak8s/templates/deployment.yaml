@@ -2,6 +2,7 @@
 {{- include "mecak8s.validateRedis" . -}}
 {{- include "mecak8s.validateOIDC" . -}}
 {{- include "mecak8s.validateTLS" . -}}
+{{- include "mecak8s.validateProviderSecurity" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,7 +18,17 @@ spec:
   template:
     metadata:
       labels: {{- include "mecak8s.selectorLabels" . | nindent 8 }}
-      annotations: {{- toYaml .Values.podAnnotations | nindent 8 }}
+      {{- if or .Values.podAnnotations (and (not .Values.mockProvider) .Values.security.allowUnsafeRealProvider) }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if and (not .Values.mockProvider) .Values.security.allowUnsafeRealProvider }}
+        mecatl.stacklok.com/unsafe-real-provider: "true"
+        {{- end }}
+      {{- else }}
+      annotations: {}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "mecak8s.fullname" . }}
       automountServiceAccountToken: true
@@ -25,6 +36,18 @@ spec:
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: 60
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -42,6 +65,18 @@ spec:
             - --session-lease-k8s-namespace={{ .Release.Namespace }}
             - --headless=true
             - --posture=auto
+            {{- if .Values.defaultProvider }}
+            - --default-provider={{ .Values.defaultProvider }}
+            {{- end }}
+            {{- if .Values.model }}
+            - --model={{ .Values.model }}
+            {{- end }}
+            {{- if ne .Values.maxRunTokens nil }}
+            - --max-run-tokens={{ .Values.maxRunTokens }}
+            {{- end }}
+            {{- if ne .Values.maxTeamTokens nil }}
+            - --max-team-tokens={{ .Values.maxTeamTokens }}
+            {{- end }}
             {{- if .Values.workspace }}
             - --workspace={{ .Values.workspace }}
             {{- end }}

@@ -289,7 +289,7 @@ return 1
 `)
 
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent Store's
-// *redis.Client. It is the MULTI-REPLICA production schedule backend
+// replaceable client-generation manager. It is the MULTI-REPLICA production schedule backend
 // (scheduled-tasks issue #189, Phase 1d): the SAME logic as
 // memschedulestore/jsonlstore.scheduleStore with Redis persistence + a Lua-script
 // atomic Claim. No client-side mutex is needed — Redis serializes commands
@@ -300,7 +300,7 @@ return 1
 // does not read ScheduleSpec.Misfire) — the same discipline as the in-memory and
 // jsonl references.
 type scheduleStore struct {
-	client redis.UniversalClient
+	clients *clientGenerations
 }
 
 // compile-time assertion that scheduleStore satisfies the port.
@@ -321,6 +321,11 @@ var _ port.ScheduleCreator = (*scheduleStore)(nil)
 // execution is the fence. A name already in use returns ErrScheduleAlreadyExists
 // (wrapped) and leaves the existing record untouched.
 func (s *scheduleStore) Create(ctx context.Context, in port.Schedule) error {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	specJSON, err := json.Marshal(cloneSpec(in.Spec))
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal schedule spec: %w", err)
@@ -331,7 +336,7 @@ func (s *scheduleStore) Create(ctx context.Context, in port.Schedule) error {
 	if in.State.NextFireAt.IsZero() && !in.State.Enabled && in.State.FireCount == 0 {
 		enabled = true
 	}
-	res, err := createScheduleScript.Run(ctx, s.client, []string{scheduleKey(in.Spec.Name)},
+	res, err := createScheduleScript.Run(ctx, s.redis(ctx), []string{scheduleKey(in.Spec.Name)},
 		fieldSpec, specJSON,
 		fieldNextFireAt, nanoStr(in.State.NextFireAt),
 		fieldLastFireAt, nanoStr(in.State.LastFireAt),
@@ -367,6 +372,11 @@ func (s *scheduleStore) Create(ctx context.Context, in port.Schedule) error {
 // state fields are seeded from in.State (with the zero-State-defaults-enabled
 // rule). Redis serializes the HSET, so no client mutex is required.
 func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	specJSON, err := json.Marshal(cloneSpec(in.Spec))
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal schedule spec: %w", err)
@@ -378,7 +388,7 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 	// of a NEW schedule could seed state twice — harmless (both write the same
 	// in.State-derived fields, and Save is caller-serialised per name per the
 	// port concurrency contract).
-	exists, err := s.client.Exists(ctx, key).Result()
+	exists, err := s.redis(ctx).Exists(ctx, key).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: save schedule %q (exists): %w", in.Spec.Name, err)
 	}
@@ -390,7 +400,7 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 		if in.State.NextFireAt.IsZero() && !in.State.Enabled && in.State.FireCount == 0 {
 			enabled = true
 		}
-		if err := s.client.HSet(ctx, key,
+		if err := s.redis(ctx).HSet(ctx, key,
 			fieldSpec, specJSON,
 			fieldNextFireAt, nanoStr(in.State.NextFireAt),
 			fieldLastFireAt, nanoStr(in.State.LastFireAt),
@@ -408,7 +418,7 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 		return nil
 	}
 	// Overwrite: replace only the spec + created_at, PRESERVE the state fields.
-	if err := s.client.HSet(ctx, key,
+	if err := s.redis(ctx).HSet(ctx, key,
 		fieldSpec, specJSON,
 		fieldCreatedAt, nanoStr(in.Spec.CreatedAt),
 	).Err(); err != nil {
@@ -425,8 +435,13 @@ func (s *scheduleStore) Save(ctx context.Context, in port.Schedule) error {
 // concurrent Delete cannot leave a zombie key and a concurrent Save cannot have
 // its enabled clobbered — the same atomic-discipline the Claim scripts uphold.
 func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled bool) error {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	key := scheduleKey(name)
-	res, err := setEnabledScript.Run(ctx, s.client, []string{key}, boolStr(enabled)).Result()
+	res, err := setEnabledScript.Run(ctx, s.redis(ctx), []string{key}, boolStr(enabled)).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: set enabled %q: %w", name, err)
 	}
@@ -445,8 +460,13 @@ func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled boo
 // not-found case (key missing → NOT_FOUND) wraps ErrScheduleNotFound. The
 // retry-budget gate is the CALLER's responsibility. One-shot-only.
 func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire time.Time) error {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	key := scheduleKey(name)
-	res, err := reArmOneShotScript.Run(ctx, s.client, []string{key}, nanoStr(nextFire)).Result()
+	res, err := reArmOneShotScript.Run(ctx, s.redis(ctx), []string{key}, nanoStr(nextFire)).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: re-arm one-shot %q: %w", name, err)
 	}
@@ -460,7 +480,12 @@ func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire 
 // redis.Nil on HGETALL of a non-existent key returns an empty map rather than
 // Nil, so an empty map is treated as not-found) wraps port.ErrScheduleNotFound.
 func (s *scheduleStore) Load(ctx context.Context, name string) (port.Schedule, error) {
-	fields, err := s.client.HGetAll(ctx, scheduleKey(name)).Result()
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return port.Schedule{}, err
+	}
+	defer release()
+	fields, err := s.redis(ctx).HGetAll(ctx, scheduleKey(name)).Result()
 	if err != nil {
 		return port.Schedule{}, fmt.Errorf("redisstore: load schedule %q: %w", name, err)
 	}
@@ -475,7 +500,12 @@ func (s *scheduleStore) Load(ctx context.Context, name string) (port.Schedule, e
 // the schedule's fire records (retention is the caller's concern via the
 // existing PrunableStore) — matching memschedulestore / jsonlstore.
 func (s *scheduleStore) Delete(ctx context.Context, name string) error {
-	if err := s.client.Del(ctx, scheduleKey(name)).Err(); err != nil {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := s.redis(ctx).Del(ctx, scheduleKey(name)).Err(); err != nil {
 		return fmt.Errorf("redisstore: delete schedule %q: %w", name, err)
 	}
 	return nil
@@ -489,10 +519,15 @@ func (s *scheduleStore) Delete(ctx context.Context, name string) error {
 // corrupt entry (missing spec, unparseable JSON) is skipped best-effort rather
 // than failing the whole inventory.
 func (s *scheduleStore) List(ctx context.Context) ([]port.Schedule, error) {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var out []port.Schedule
-	scan := s.client.Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
+	scan := s.redis(ctx).Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
 	for scan.Next(ctx) {
-		fields, err := s.client.HGetAll(ctx, scan.Val()).Result()
+		fields, err := s.redis(ctx).HGetAll(ctx, scan.Val()).Result()
 		if err != nil {
 			continue
 		}
@@ -517,11 +552,16 @@ func (s *scheduleStore) List(ctx context.Context) ([]port.Schedule, error) {
 // misfire policy is a composition concern. It SCANs + filters, the same shape as
 // List.
 func (s *scheduleStore) Due(ctx context.Context, now time.Time) ([]port.Schedule, error) {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	nowNano := now.UnixNano()
 	out := make([]port.Schedule, 0)
-	scan := s.client.Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
+	scan := s.redis(ctx).Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
 	for scan.Next(ctx) {
-		fields, err := s.client.HGetAll(ctx, scan.Val()).Result()
+		fields, err := s.redis(ctx).HGetAll(ctx, scan.Val()).Result()
 		if err != nil {
 			continue
 		}
@@ -573,8 +613,13 @@ func (s *scheduleStore) Due(ctx context.Context, now time.Time) ([]port.Schedule
 // between HGET and EVAL preserves state by contract, so only the Spec half could
 // be stale — an operator race, not an at-most-once correctness issue).
 func (s *scheduleStore) Claim(ctx context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return port.Schedule{}, err
+	}
+	defer release()
 	key := scheduleKey(name)
-	specJSON, err := s.client.HGet(ctx, key, fieldSpec).Bytes()
+	specJSON, err := s.redis(ctx).HGet(ctx, key, fieldSpec).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
@@ -588,7 +633,7 @@ func (s *scheduleStore) Claim(ctx context.Context, name string, now, nextFire ti
 	// nextFire is passed as "0" for the zero time (the sentinel the script treats
 	// as "no further fire" → disable), NOT nextFire.UnixNano() — a zero time.Time
 	// has a large NEGATIVE UnixNano, which would not match the "0" branch.
-	res, err := claimScript.Run(ctx, s.client,
+	res, err := claimScript.Run(ctx, s.redis(ctx),
 		[]string{key},
 		now.UnixNano(), nanoStr(nextFire), string(port.PendingFireSessionID), spec.MaxFires,
 	).Result()
@@ -620,8 +665,13 @@ func (s *scheduleStore) Claim(ctx context.Context, name string, now, nextFire ti
 // not-claimable case (disabled / exhausted / already-advanced → NOT_CLAIMABLE)
 // both wrap ErrScheduleNotFound. See port.ScheduleStore.ClaimNow.
 func (s *scheduleStore) ClaimNow(ctx context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return port.Schedule{}, err
+	}
+	defer release()
 	key := scheduleKey(name)
-	specJSON, err := s.client.HGet(ctx, key, fieldSpec).Bytes()
+	specJSON, err := s.redis(ctx).HGet(ctx, key, fieldSpec).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return port.Schedule{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
@@ -632,7 +682,7 @@ func (s *scheduleStore) ClaimNow(ctx context.Context, name string, now, nextFire
 	if err := json.Unmarshal(specJSON, &spec); err != nil {
 		return port.Schedule{}, fmt.Errorf("redisstore: claim-now schedule %q (decode spec): %w", name, err)
 	}
-	res, err := claimNowScript.Run(ctx, s.client,
+	res, err := claimNowScript.Run(ctx, s.redis(ctx),
 		[]string{key},
 		nanoStr(now), nanoStr(nextFire), string(port.PendingFireSessionID), spec.MaxFires,
 	).Result()
@@ -668,10 +718,15 @@ func (s *scheduleStore) ClaimNow(ctx context.Context, name string, now, nextFire
 // port.ErrScheduleNotFound. The semantics mirror memschedulestore.RecordFireStart
 // byte-for-byte, adapted to Redis's single-threaded execution (no client mutex).
 func (s *scheduleStore) RecordFireStart(ctx context.Context, name string, fire port.ScheduleFire) error {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	key := scheduleKey(name)
 	// The schedule must exist (the not-found case — the schedule was deleted
 	// between Claim and RecordFireStart). HGET the spec as a liveness probe.
-	if specRaw, err := s.client.HGet(ctx, key, fieldSpec).Result(); err != nil {
+	if specRaw, err := s.redis(ctx).HGet(ctx, key, fieldSpec).Result(); err != nil {
 		if errors.Is(err, redis.Nil) {
 			return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
 		}
@@ -683,7 +738,7 @@ func (s *scheduleStore) RecordFireStart(ctx context.Context, name string, fire p
 	// A fire id that is already terminal is not re-opened; and a re-record of the
 	// same in-flight fire (same StartedAt) is a no-op. Read the existing fire
 	// record to distinguish (best-effort under Redis's single-threaded execution).
-	if raw, err := s.client.Get(ctx, fireKey).Bytes(); err == nil {
+	if raw, err := s.redis(ctx).Get(ctx, fireKey).Bytes(); err == nil {
 		var existing scheduleFireRecord
 		if json.Unmarshal(raw, &existing) == nil && existing.V == scheduleFormat {
 			if existing.Fire.Stop != "" {
@@ -703,7 +758,7 @@ func (s *scheduleStore) RecordFireStart(ctx context.Context, name string, fire p
 	if progressAt.IsZero() {
 		progressAt = fire.StartedAt
 	}
-	if err := s.client.HSet(ctx, key,
+	if err := s.redis(ctx).HSet(ctx, key,
 		fieldLastFireSessionID, string(fire.SessionID),
 		fieldLastFireStartedAt, nanoStr(fire.StartedAt),
 		fieldLastFireProgressAt, nanoStr(progressAt),
@@ -721,7 +776,7 @@ func (s *scheduleStore) RecordFireStart(ctx context.Context, name string, fire p
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal schedule fire start: %w", err)
 	}
-	if err := s.client.Set(ctx, fireKey, fireJSON, 0).Err(); err != nil {
+	if err := s.redis(ctx).Set(ctx, fireKey, fireJSON, 0).Err(); err != nil {
 		return fmt.Errorf("redisstore: record fire start %q (set): %w", fire.ID, err)
 	}
 	return nil
@@ -746,9 +801,14 @@ func (s *scheduleStore) RecordFireStart(ctx context.Context, name string, fire p
 // changed (a terminal RecordFire landed), so a terminal record is never
 // reverted.
 func (s *scheduleStore) RecordFireProgress(ctx context.Context, name string, fireID string, at time.Time) error {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	key := scheduleKey(name)
 	// The schedule must exist (the not-found case).
-	if specRaw, err := s.client.HGet(ctx, key, fieldSpec).Result(); err != nil {
+	if specRaw, err := s.redis(ctx).HGet(ctx, key, fieldSpec).Result(); err != nil {
 		if errors.Is(err, redis.Nil) {
 			return fmt.Errorf("%w: %q", ErrScheduleNotFound, name)
 		}
@@ -761,10 +821,10 @@ func (s *scheduleStore) RecordFireProgress(ctx context.Context, name string, fir
 		// value (monotonic; never rewinds). Read-then-conditionally-write is safe
 		// here because the tick loop is single-threaded per schedule (the port
 		// concurrency contract: same-name calls are serialised by the caller).
-		if cur, err := s.client.HGet(ctx, key, fieldLastFireProgressAt).Result(); err == nil || errors.Is(err, redis.Nil) {
+		if cur, err := s.redis(ctx).HGet(ctx, key, fieldLastFireProgressAt).Result(); err == nil || errors.Is(err, redis.Nil) {
 			stored := parseNano(cur) // parseNano handles "" (redis.Nil) as zero
 			if at.After(stored) {
-				if err := s.client.HSet(ctx, key, fieldLastFireProgressAt, nanoStr(at)).Err(); err != nil {
+				if err := s.redis(ctx).HSet(ctx, key, fieldLastFireProgressAt, nanoStr(at)).Err(); err != nil {
 					return fmt.Errorf("redisstore: record fire progress %q (update state): %w", name, err)
 				}
 			}
@@ -789,7 +849,7 @@ func (s *scheduleStore) RecordFireProgress(ctx context.Context, name string, fir
 // aborts when the record changed, so a terminal record is never reverted.
 func (s *scheduleStore) advanceInFlightFireProgress(ctx context.Context, fireID string, at time.Time) error {
 	fireKey := scheduleFireKey(fireID)
-	raw, err := s.client.Get(ctx, fireKey).Bytes()
+	raw, err := s.redis(ctx).Get(ctx, fireKey).Bytes()
 	if err != nil {
 		// A missing record (no prior RecordFireStart) is best-effort: the state
 		// alone carries the progress.
@@ -821,7 +881,7 @@ func (s *scheduleStore) advanceInFlightFireProgress(ctx context.Context, fireID 
 	// RecordFireProgress that won first changes the bytes too, so a loser aborts
 	// (its `at` is lost; the next progress event re-reads and advances —
 	// best-effort, monotonic).
-	res, err := fireProgressScript.Run(ctx, s.client, []string{fireKey}, string(raw), string(newJSON)).Result()
+	res, err := fireProgressScript.Run(ctx, s.redis(ctx), []string{fireKey}, string(raw), string(newJSON)).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: record fire progress %q (cas): %w", fireID, err)
 	}
@@ -844,6 +904,11 @@ func (s *scheduleStore) advanceInFlightFireProgress(ctx context.Context, fireID 
 // memschedulestore.RecordFire byte-for-byte, adapted to Redis's single-threaded
 // execution.
 func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) error {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	fireJSON, err := json.Marshal(scheduleFireRecord{V: scheduleFormat, Fire: f})
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal schedule fire: %w", err)
@@ -852,7 +917,7 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	// Idempotent per fire id: a re-record of an already-TERMINAL fire is a no-op.
 	// (An in-flight record under the same id is overwritten with the terminal one
 	// below — the fire transitions in-flight → terminal.)
-	if raw, err := s.client.Get(ctx, fireKey).Bytes(); err == nil {
+	if raw, err := s.redis(ctx).Get(ctx, fireKey).Bytes(); err == nil {
 		var existing scheduleFireRecord
 		if json.Unmarshal(raw, &existing) == nil && existing.V == scheduleFormat && existing.Fire.Stop != "" {
 			return nil // already terminal — idempotent no-op
@@ -862,7 +927,7 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	}
 	// The schedule must still exist (it may have been deleted between Claim and
 	// RecordFire). HGET the spec as a liveness probe.
-	if specRaw, err := s.client.HGet(ctx, scheduleKey(f.ScheduleName), fieldSpec).Result(); err != nil {
+	if specRaw, err := s.redis(ctx).HGet(ctx, scheduleKey(f.ScheduleName), fieldSpec).Result(); err != nil {
 		if errors.Is(err, redis.Nil) {
 			return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
 		}
@@ -880,10 +945,10 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	// permanently (review #189). With the stamp first, a failed stamp leaves the
 	// latch unset so a retry re-runs it; a failed latch after a successful stamp
 	// simply re-stamps the same value (idempotent) and re-latches.
-	if err := s.client.HSet(ctx, scheduleKey(f.ScheduleName), fieldLastFireSessionID, string(f.SessionID)).Err(); err != nil {
+	if err := s.redis(ctx).HSet(ctx, scheduleKey(f.ScheduleName), fieldLastFireSessionID, string(f.SessionID)).Err(); err != nil {
 		return fmt.Errorf("redisstore: record fire %q (update session): %w", f.ID, err)
 	}
-	if err := s.client.HDel(ctx, scheduleKey(f.ScheduleName),
+	if err := s.redis(ctx).HDel(ctx, scheduleKey(f.ScheduleName),
 		fieldLastFireStartedAt, fieldLastFireProgressAt, fieldFireDeadline,
 	).Err(); err != nil {
 		return fmt.Errorf("redisstore: record fire %q (clear in-flight): %w", f.ID, err)
@@ -892,7 +957,7 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	// under the same id — the in-flight → terminal transition). Two concurrent
 	// RecordFire of the same fire race past the terminal-record check, but both
 	// write the identical terminal record, so the result is not consulted.
-	if err := s.client.Set(ctx, fireKey, fireJSON, 0).Err(); err != nil {
+	if err := s.redis(ctx).Set(ctx, fireKey, fireJSON, 0).Err(); err != nil {
 		return fmt.Errorf("redisstore: record fire %q (set): %w", f.ID, err)
 	}
 	return nil
@@ -901,7 +966,12 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 // LoadFire returns the fire record stored under fireID. The not-found case
 // (redis.Nil on GET) wraps port.ErrScheduleNotFound.
 func (s *scheduleStore) LoadFire(ctx context.Context, fireID string) (port.ScheduleFire, error) {
-	raw, err := s.client.Get(ctx, scheduleFireKey(fireID)).Bytes()
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return port.ScheduleFire{}, err
+	}
+	defer release()
+	raw, err := s.redis(ctx).Get(ctx, scheduleFireKey(fireID)).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return port.ScheduleFire{}, fmt.Errorf("%w: %q", ErrScheduleNotFound, fireID)
@@ -927,10 +997,15 @@ func (s *scheduleStore) LoadFire(ctx context.Context, fireID string) (port.Sched
 // per-schedule fire index. A corrupt entry (unparseable JSON) is skipped
 // best-effort rather than failing the whole list.
 func (s *scheduleStore) ListFires(ctx context.Context, scheduleName string) ([]port.ScheduleFire, error) {
+	ctx, release, err := s.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	// The schedule must exist (the not-found-for-the-schedule contract). HGETALL
 	// of a missing key returns an empty map, so an empty map is treated as
 	// not-found (the same discipline Load applies).
-	fields, err := s.client.HGetAll(ctx, scheduleKey(scheduleName)).Result()
+	fields, err := s.redis(ctx).HGetAll(ctx, scheduleKey(scheduleName)).Result()
 	if err != nil {
 		return nil, fmt.Errorf("redisstore: list fires %q (schedule): %w", scheduleName, err)
 	}
@@ -938,9 +1013,9 @@ func (s *scheduleStore) ListFires(ctx context.Context, scheduleName string) ([]p
 		return nil, fmt.Errorf("%w: %q", ErrScheduleNotFound, scheduleName)
 	}
 	out := make([]port.ScheduleFire, 0)
-	scan := s.client.Scan(ctx, 0, scheduleFireKeyPrefix+"*", 0).Iterator()
+	scan := s.redis(ctx).Scan(ctx, 0, scheduleFireKeyPrefix+"*", 0).Iterator()
 	for scan.Next(ctx) {
-		raw, err := s.client.Get(ctx, scan.Val()).Bytes()
+		raw, err := s.redis(ctx).Get(ctx, scan.Val()).Bytes()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
 				continue // raced away between SCAN and GET — skip.

@@ -22,8 +22,8 @@ import (
 )
 
 // helmTemplate renders the mecak8s chart with the given extra --set args on top
-// of the minimal production-required values (image, redis), skipping the test
-// when helm is not on PATH (mirrors deploy/helm/mecak8s/chart_test.go's helm()
+// of minimal production values plus the explicit unsafe bypass (this test needs
+// an identity-off render), skipping the test when helm is not on PATH (mirrors deploy/helm/mecak8s/chart_test.go's helm()
 // helper).
 func helmTemplate(t *testing.T, extraSet ...string) []byte {
 	t.Helper()
@@ -35,6 +35,7 @@ func helmTemplate(t *testing.T, extraSet ...string) []byte {
 		"--set", "image.tag=v0.0.0",
 		"--set", "redis.endpoint=redis.example.internal:6380",
 		"--set", "redis.credentialsSecret=redis-credentials",
+		"--set", "security.allowUnsafeRealProvider=true",
 	}
 	args = append(args, extraSet...)
 	out, err := exec.Command("helm", args...).CombinedOutput()

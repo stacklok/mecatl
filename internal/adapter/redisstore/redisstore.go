@@ -91,11 +91,11 @@ var (
 )
 
 // Store is the Redis-backed SessionStore + EventLog + PrunableStore +
-// ToolCallRecorder. It talks to a single Redis address (a managed service or an
-// in-process miniredis for tests). It is safe for concurrent use: Redis
-// serializes commands, so no client-side mutex is required.
+// ToolCallRecorder. Every operation leases one replaceable client generation;
+// the manager lock is held only for acquisition/publication, never Redis I/O.
 type Store struct {
-	client redis.UniversalClient
+	clients *clientGenerations
+	reload  *reloadLifecycle
 
 	metadataWorkObserver        func(metadataWorkKind)
 	migrationInspectionObserver func()
@@ -124,6 +124,12 @@ type Config struct {
 	// takes precedence when both are set.
 	TLS            bool
 	AllowPlaintext bool
+	// Reload enables transactional hot reload when at least one CA or credential
+	// file is configured. The zero value preserves watcher-free behavior.
+	Reload      bool
+	Diagnostics port.Diagnostics
+
+	candidateFactory func(context.Context, *tcredis.Config) (redis.UniversalClient, error)
 }
 
 // New connects to a plaintext, unauthenticated Redis broker. It is retained for
@@ -155,10 +161,24 @@ func NewWithConfig(cfg Config) (*Store, error) {
 		// URL-shaped value that could carry a credential in its userinfo.
 		return nil, fmt.Errorf("redisstore: connect %q: %w", cfg.Addr, err)
 	}
-	st := &Store{client: client}
-	if err := st.initializeMetadataIndex(context.Background()); err != nil {
+	st := &Store{clients: newClientGenerations(client)}
+	initCtx, release, err := st.pin(context.Background())
+	if err != nil {
 		_ = client.Close()
 		return nil, err
+	}
+	defer release()
+	if err := st.initializeMetadataIndex(initCtx); err != nil {
+		_ = st.clients.close()
+		return nil, err
+	}
+	if cfg.reloadEnabled() {
+		lifecycle, err := startReloadLifecycle(st, cfg)
+		if err != nil {
+			_ = st.clients.close()
+			return nil, err
+		}
+		st.reload = lifecycle
 	}
 	return st, nil
 }
@@ -253,6 +273,11 @@ func readSecretFile(path string) (string, error) {
 // HSET overwrites the blob field, so a second Save replaces the first (the
 // overwrite contract).
 func (st *Store) Save(ctx context.Context, s *session.Session) error {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if s == nil {
 		return sessnap.ErrNilSession
 	}
@@ -270,6 +295,11 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 // Create atomically publishes a snapshot and its derivative metadata only when
 // no authoritative Redis session key exists for s.ID.
 func (st *Store) Create(ctx context.Context, s *session.Session) error {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if s == nil {
 		return sessnap.ErrNilSession
 	}
@@ -290,8 +320,13 @@ func (st *Store) Create(ctx context.Context, s *session.Session) error {
 // Load reads the snapshot blob for id and restores it. A missing key (redis.Nil
 // on HGET) wraps port.ErrSessionNotFound with the id in the message.
 func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	st.observeMetadataWork(metadataWorkLoad)
-	blob, err := st.client.HGet(ctx, sessionKey(id), fieldBlob).Bytes()
+	blob, err := st.redis(ctx).HGet(ctx, sessionKey(id), fieldBlob).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
@@ -308,15 +343,20 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 // SCAN is cursor-based and non-blocking; a corrupt mtime field (absent or
 // unparseable) is skipped best-effort rather than failing the whole inventory.
 func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var out []port.StoredSession
-	scan := st.client.Scan(ctx, 0, sessionKeyPrefix+"*", 0).Iterator()
+	scan := st.redis(ctx).Scan(ctx, 0, sessionKeyPrefix+"*", 0).Iterator()
 	for scan.Next(ctx) {
 		key := scan.Val()
 		id := strings.TrimPrefix(key, sessionKeyPrefix)
 		if id == "" {
 			continue
 		}
-		mtimeRaw, err := st.client.HGet(ctx, key, fieldMtime).Result()
+		mtimeRaw, err := st.redis(ctx).HGet(ctx, key, fieldMtime).Result()
 		if err != nil {
 			// A key without an mtime field is a corrupt/partial entry; skip it
 			// best-effort (Load of that id would fail the same way) rather than
@@ -339,12 +379,22 @@ func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
 // Redis metadata index. It never reads a snapshot blob or traverses rows before
 // the cursor; legacy stores without a complete index report unsupported.
 func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return port.SessionMetadataPage{}, err
+	}
+	defer release()
 	return st.pageSessionMetadata(ctx, request)
 }
 
 // DeleteSessionIfUnchanged atomically compares the indexed durable row and
 // removes the snapshot plus sidecars in one Redis script.
 func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.SessionDiscoveryMeta) (bool, error) {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
 	deleted, err := st.deleteSessionIfMetadataUnchanged(ctx, expected)
 	if err != nil {
 		return false, fmt.Errorf("redisstore: conditional delete: %w", err)
@@ -355,6 +405,11 @@ func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.Ses
 // Delete removes the session snapshot, derivative metadata, event log, and
 // tool-call sidecar. It is idempotent and completes in one atomic script.
 func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := st.deleteSessionAndMetadata(ctx, id); err != nil {
 		return fmt.Errorf("redisstore: delete %q: %w", id, err)
 	}
@@ -368,6 +423,11 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 // can validate the format. RPUSH preserves append order, so Read returns
 // events in the exact order Append received them.
 func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	evJSON, err := json.Marshal(ev)
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal event: %w", err)
@@ -376,7 +436,7 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal event record: %w", err)
 	}
-	if err := st.client.RPush(ctx, eventsKey(id), rec).Err(); err != nil {
+	if err := st.redis(ctx).RPush(ctx, eventsKey(id), rec).Err(); err != nil {
 		return fmt.Errorf("redisstore: append event %q: %w", id, err)
 	}
 	return nil
@@ -390,7 +450,13 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 // iter.Seq2 error idiom).
 func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
-		records, err := st.client.LRange(ctx, eventsKey(id), 0, -1).Result()
+		ctx, release, err := st.pin(ctx)
+		if err != nil {
+			yield(session.Event{}, err)
+			return
+		}
+		defer release()
+		records, err := st.redis(ctx).LRange(ctx, eventsKey(id), 0, -1).Result()
 		if err != nil {
 			// A missing event key is not an error in Redis (LRANGE on a missing
 			// key returns an empty slice), so any error here is a genuine fault.
@@ -460,7 +526,12 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	// bounded ctx is the only way to keep a slow broker from piling up.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = st.client.RPush(ctx, toolsKey(id), line).Err()
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return
+	}
+	defer release()
+	_ = st.redis(ctx).RPush(ctx, toolsKey(id), line).Err()
 }
 
 // Ping checks the Redis broker is reachable. It is the readyz health probe a
@@ -468,18 +539,22 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 // endpoint controller removes the pod. It uses a short timeout so a stalled
 // broker fails the probe quickly rather than wedging readiness.
 func (st *Store) Ping(ctx context.Context) error {
-	if st.client == nil {
-		return errors.New("redisstore: store not open")
+	ctx, release, err := st.pin(ctx)
+	if err != nil {
+		return err
 	}
-	return st.client.Ping(ctx).Err()
+	defer release()
+	return st.redis(ctx).Ping(ctx).Err()
 }
 
-// Close releases the Redis connection. It is safe to call multiple times.
+// Close stops credential reload before retiring the active Redis generation. It
+// rejects new operations and swaps, waits for pinned operations and lock
+// lifecycles to finish, and is safe to call repeatedly.
 func (st *Store) Close() error {
-	if st.client == nil {
-		return nil
+	if st.reload != nil {
+		st.reload.Close()
 	}
-	return st.client.Close()
+	return st.clients.close()
 }
 
 // ScheduleStore returns a port.ScheduleStore backed by the SAME Redis client as
@@ -497,7 +572,7 @@ func (st *Store) Close() error {
 // cross-replica at-most-once fence — the multi-host counterpart of the
 // single-process mutex the jsonl schedule store carries. See schedulestore.go.
 func (st *Store) ScheduleStore() port.ScheduleStore {
-	return &scheduleStore{client: st.client}
+	return &scheduleStore{clients: st.clients}
 }
 
 func sessionKey(id session.SessionID) string { return sessionKeyPrefix + string(id) }

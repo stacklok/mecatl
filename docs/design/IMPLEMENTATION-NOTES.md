@@ -103,6 +103,23 @@ do not project to a principal, and owns an explicit `Close` for the background r
 `internal/cliconfig` adapts those errors to the unchanged server sentinels and retains
 the server-root system context and all existing flag behavior.
 
+### mecak8s projected credentials and Helm runtime contract
+
+`cmd/mecak8s` serves server certificates through an atomic last-valid pointer and watches
+projected-Secret parent directories; `internal/adapter/redisstore` similarly swaps a fully
+probed client generation for file-backed CA/ACL changes while leases keep displaced clients
+alive for in-flight work. Partial or invalid rotations retain the previous generation. The
+server client-CA pool remains static and requires restart; CA rotation should overlap old
+and new roots before removing the old root.
+
+Helm chart 0.2.0 treats `mockProvider: false` as real-provider intent and requires both
+`tls.enabled` and `oidc.enabled`, unless the visibly unsafe local/trusted-mesh bypass is
+explicit. Empty provider/model and null token ceilings emit no flags; explicit ceilings are
+positive. Scheduling controls are empty by default and map directly to pod-spec topology
+spread, affinity, node selector, and toleration fields. The comprehensive production
+fixture pins external verified Redis, TLS/OIDC, provider/model, finite run/team ceilings,
+and hostname spreading; Kind remains mock and secret-free.
+
 ---
 
 ## Domain — `engine/session/` (producer taxonomy)

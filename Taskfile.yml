@@ -355,8 +355,8 @@ tasks:
       caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
       cluster, so it runs in CI and on a laptop.
     vars:
-      PROD_SET: image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials
-      OIDC_SET: oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+      PROD_SET: image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
+      SAFE_SET: image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
     preconditions:
       - sh: command -v helm >/dev/null 2>&1
         msg: "helm is not installed (https://helm.sh/docs/intro/install/)"
@@ -388,29 +388,7 @@ tasks:
       - cmd: |
           set -eu -o pipefail
           helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' | kubeconform -strict -summary -
-          helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' --set '{{.OIDC_SET}}' | kubeconform -strict -summary -
-        silent: true
-      # The default render must stay identity-OFF: caller identity is opt-in,
-      # and the published example must keep deploying what operators already
-      # expect.
-      - cmd: |
-          set -eu -o pipefail
-          if helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' | grep -qi 'oidc'; then
-            echo "the default chart render mentions oidc — caller identity must stay opt-in"; exit 1
-          fi
-        silent: true
-      # No render, default or oidc-enabled, may ever ship SSRF relaxation: the
-      # flag that lets the validator reach a private/in-cluster or http://
-      # issuer exists for the e2e fixtures ONLY, applied there via a runtime
-      # kubectl patch, never through the chart. (--oidc-jwks-uri is a URL, not
-      # a relaxation.)
-      - cmd: |
-          set -eu -o pipefail
-          for extra in '' '--set {{.OIDC_SET}}'; do
-            if helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' $extra | grep -qiE 'insecure|allow-private'; then
-              echo "chart render ships an SSRF relaxation flag — that belongs to the e2e fixtures only"; exit 1
-            fi
-          done
+          helm template production deploy/helm/mecak8s --set '{{.SAFE_SET}}' | kubeconform -strict -summary -
         silent: true
       # The oidc-enabled render must carry every base arg alongside the oidc
       # args: Helm composes ONE args: list template-side rather than
@@ -420,7 +398,7 @@ tasks:
       - cmd: |
           set -eu -o pipefail
           missing=""
-          rendered=$(helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' --set '{{.OIDC_SET}}')
+          rendered=$(helm template production deploy/helm/mecak8s --set '{{.SAFE_SET}}')
           for arg in --grpc-addr --http-addr --redis-url --session-lease-k8s-namespace --headless --posture --oidc-issuer --oidc-audience --oidc-max-jwks-staleness=1h; do
             echo "$rendered" | grep -q -- "$arg" || missing="$missing $arg"
           done

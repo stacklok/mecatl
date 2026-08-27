@@ -123,7 +123,7 @@ func TestPageSessionMetadataUsesOneBoundedMetadataRangePerPage(t *testing.T) {
 
 	spy := &redisCommandSpy{}
 	mr.Server().SetPreHook(spy.hook)
-	if err := pageMetadataScript.Load(ctx, st.client).Err(); err != nil {
+	if err := pageMetadataScript.Load(ctx, st.testClient()).Err(); err != nil {
 		t.Fatalf("load page script: %v", err)
 	}
 	commands := spy.snapshot()

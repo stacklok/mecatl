@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/internal/adapter/filewatch"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -45,10 +47,11 @@ import (
 // for a Pinger). A non-Redis store (the in-memory fallback) has no ping, so
 // readiness is drain-gated only.
 func serve(ctx context.Context, cfg config, svc *server.Service, obs observability) error {
-	tlsCfg, err := buildTLSConfig(cfg)
+	tlsCfg, tlsLifecycle, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
 	}
+	defer closeTLSLifecycle(tlsLifecycle)
 
 	auth, err := newAuthenticator(ctx, cfg)
 	if err != nil {
@@ -258,38 +261,119 @@ func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, metricsSrv *htt
 	}
 }
 
-// buildTLSConfig assembles the *tls.Config for the gRPC + HTTP servers from the
-// TLS flags. It returns nil (plaintext) when neither --tls-cert nor --tls-key
-// is set. It mirrors cmd/mecated's buildTLSConfig (a k8s deployment typically
-// terminates TLS at the mesh/ingress, so pod-level TLS is optional).
-func buildTLSConfig(cfg config) (*tls.Config, error) {
-	if cfg.tlsCert == "" && cfg.tlsKey == "" {
-		if cfg.clientCA != "" {
-			return nil, errors.New("--client-ca requires --tls-cert/--tls-key (mTLS needs server TLS)")
+const (
+	tlsReloadDebounce    = 100 * time.Millisecond
+	tlsReloadMaxDebounce = time.Second
+)
+
+// certificateReloader publishes complete keypairs atomically. Invalid rotations
+// never displace the last certificate that passed key matching and DER parsing.
+type certificateReloader struct {
+	cert    atomic.Pointer[tls.Certificate]
+	watcher *filewatch.Watcher
+}
+
+func newCertificateReloader(certFile, keyFile string) (*certificateReloader, error) {
+	cert, err := loadServerCertificate(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	r := &certificateReloader{}
+	r.cert.Store(cert)
+	watcher, err := filewatch.New(
+		[]string{certFile, keyFile},
+		tlsReloadDebounce,
+		tlsReloadMaxDebounce,
+		r.reload(certFile, keyFile),
+		func(err error) {
+			slog.Warn("TLS certificate watch error", "component", "tls_certificate", "operation", "watch", "outcome", "failure", "err", err)
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("watch TLS keypair: %w", err)
+	}
+	r.watcher = watcher
+	return r, nil
+}
+
+func (r *certificateReloader) reload(certFile, keyFile string) func() {
+	return func() {
+		cert, err := loadServerCertificate(certFile, keyFile)
+		if err != nil {
+			slog.Warn("TLS certificate reload rejected; retaining last valid certificate", "component", "tls_certificate", "operation", "reload", "outcome", "failure", "err", err)
+			return
 		}
-		return nil, nil
+		r.cert.Store(cert)
+		slog.Info("TLS certificate reloaded", "component", "tls_certificate", "operation", "reload", "outcome", "success")
 	}
-	if cfg.tlsCert == "" || cfg.tlsKey == "" {
-		return nil, errors.New("--tls-cert and --tls-key must be supplied together")
+}
+
+func (r *certificateReloader) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return r.cert.Load(), nil
+}
+
+func (r *certificateReloader) Close() error {
+	return r.watcher.Close()
+}
+
+func closeTLSLifecycle(reloader *certificateReloader) {
+	if reloader == nil {
+		return
 	}
-	cert, err := tls.LoadX509KeyPair(cfg.tlsCert, cfg.tlsKey)
+	if err := reloader.Close(); err != nil {
+		slog.Warn("TLS certificate watcher shutdown failed", "component", "tls_certificate", "operation", "shutdown", "err", err)
+	}
+}
+
+func loadServerCertificate(certFile, keyFile string) (*tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load TLS keypair: %w", err)
 	}
-	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	if len(cert.Certificate) == 0 {
+		return nil, errors.New("load TLS keypair: certificate chain is empty")
+	}
+	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("parse TLS leaf certificate: %w", err)
+	}
+	return &cert, nil
+}
+
+// buildTLSConfig assembles the *tls.Config for the gRPC + HTTP servers from the
+// TLS flags. It returns nil (plaintext) when neither --tls-cert nor --tls-key
+// is set. The returned lifecycle owns the projected-volume watcher and must be
+// closed after both servers stop. Client CA material deliberately remains static.
+func buildTLSConfig(cfg config) (*tls.Config, *certificateReloader, error) {
+	if cfg.tlsCert == "" && cfg.tlsKey == "" {
+		if cfg.clientCA != "" {
+			return nil, nil, errors.New("--client-ca requires --tls-cert/--tls-key (mTLS needs server TLS)")
+		}
+		return nil, nil, nil
+	}
+	if cfg.tlsCert == "" || cfg.tlsKey == "" {
+		return nil, nil, errors.New("--tls-cert and --tls-key must be supplied together")
+	}
+	reloader, err := newCertificateReloader(cfg.tlsCert, cfg.tlsKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	tlsCfg := &tls.Config{GetCertificate: reloader.getCertificate, MinVersion: tls.VersionTLS12}
 	if cfg.clientCA != "" {
 		caPEM, err := os.ReadFile(cfg.clientCA)
 		if err != nil {
-			return nil, fmt.Errorf("read --client-ca: %w", err)
+			_ = reloader.Close()
+			return nil, nil, fmt.Errorf("read --client-ca: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
-			return nil, errors.New("--client-ca: no valid certificates in CA bundle")
+			_ = reloader.Close()
+			return nil, nil, errors.New("--client-ca: no valid certificates in CA bundle")
 		}
 		tlsCfg.ClientCAs = pool
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
 	}
-	return tlsCfg, nil
+	return tlsCfg, reloader, nil
 }
 
 // warnIfNonLoopback logs the API trust assumption for the given bind address.

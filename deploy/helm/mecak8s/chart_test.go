@@ -27,7 +27,11 @@ func helm(t *testing.T, args ...string) (string, error) {
 }
 
 func productionArgs() []string {
-	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "security.allowUnsafeRealProvider=true"}
+}
+
+func secureProductionArgs() []string {
+	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "tls.enabled=true,tls.secretName=mecak8s-tls", "--set", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}
 }
 
 // kindVMCPArgs renders the Kind profile with the mecak8s-vmcp fixture's own
@@ -57,6 +61,113 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 		if strings.Contains(rendered, forbidden) {
 			t.Fatalf("bare Kind render (no vmcp overlay) unexpectedly contains %q — e2e/k8s's suite creates no matching Secret and would hang", forbidden)
 		}
+	}
+}
+
+func TestMecak8sHelmChart_RuntimeArgsAreOptIn(t *testing.T) {
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render defaults: %v", err)
+	}
+	for _, absent := range []string{"--default-provider=", "--model=", "--max-run-tokens=", "--max-team-tokens="} {
+		if strings.Contains(rendered, absent) {
+			t.Fatalf("default render unexpectedly contains %q", absent)
+		}
+	}
+
+	args := append(secureProductionArgs(), "--set", "defaultProvider=openrouter,model=anthropic/claude-sonnet-4-6,maxRunTokens=1000,maxTeamTokens=4000")
+	rendered, err = helm(t, args...)
+	if err != nil {
+		t.Fatalf("render runtime selections: %v", err)
+	}
+	for _, want := range []string{"--default-provider=openrouter", "--model=anthropic/claude-sonnet-4-6", "--max-run-tokens=1000", "--max-team-tokens=4000"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("runtime render missing %q", want)
+		}
+	}
+}
+
+func TestMecak8sHelmChart_RuntimeSchemaRejectsInvalidValues(t *testing.T) {
+	for _, set := range []string{
+		"maxRunTokens=0",
+		"maxTeamTokens=-1",
+		"maxRunTokens=1.5",
+		"defaultProvider=unknown",
+	} {
+		t.Run(set, func(t *testing.T) {
+			if _, err := helm(t, append(secureProductionArgs(), "--set", set)...); err == nil {
+				t.Fatalf("render accepted invalid value %q", set)
+			}
+		})
+	}
+	if _, err := helm(t, append(secureProductionArgs(), "--set-string", "model=   ")...); err == nil {
+		t.Fatal("render accepted a whitespace-only model")
+	}
+}
+
+func TestMecak8sHelmChart_SchedulingControls(t *testing.T) {
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render defaults: %v", err)
+	}
+	for _, absent := range []string{"topologySpreadConstraints:", "affinity:", "nodeSelector:", "tolerations:"} {
+		if strings.Contains(rendered, absent) {
+			t.Fatalf("default render unexpectedly contains %q", absent)
+		}
+	}
+
+	args := append(secureProductionArgs(),
+		"--set", "topologySpreadConstraints[0].maxSkew=1",
+		"--set", "topologySpreadConstraints[0].topologyKey=kubernetes.io/hostname",
+		"--set", "topologySpreadConstraints[0].whenUnsatisfiable=DoNotSchedule",
+		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app=agent",
+		"--set", "nodeSelector.kubernetes\\.io/os=linux",
+		"--set", "tolerations[0].key=dedicated,tolerations[0].operator=Equal,tolerations[0].value=agents,tolerations[0].effect=NoSchedule",
+		"--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=kubernetes.io/arch",
+		"--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=In",
+		"--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]=amd64",
+	)
+	rendered, err = helm(t, args...)
+	if err != nil {
+		t.Fatalf("render scheduling controls: %v", err)
+	}
+	for _, want := range []string{"topologySpreadConstraints:", "topologyKey: kubernetes.io/hostname", "affinity:", "nodeSelector:", "kubernetes.io/os: linux", "tolerations:", "effect: NoSchedule"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("scheduling render missing %q", want)
+		}
+	}
+}
+
+func TestMecak8sHelmChart_RealProviderSecurityGate(t *testing.T) {
+	base := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	for _, tc := range []struct {
+		name string
+		set  []string
+		ok   bool
+	}{
+		{name: "neither"},
+		{name: "TLS only", set: []string{"tls.enabled=true,tls.secretName=mecak8s-tls"}},
+		{name: "OIDC only", set: []string{"oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}},
+		{name: "TLS and OIDC", set: []string{"tls.enabled=true,tls.secretName=mecak8s-tls", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}, ok: true},
+		{name: "explicit unsafe bypass", set: []string{"security.allowUnsafeRealProvider=true"}, ok: true},
+		{name: "mock", set: []string{"mockProvider=true"}, ok: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{}, base...)
+			for _, set := range tc.set {
+				args = append(args, "--set", set)
+			}
+			rendered, err := helm(t, args...)
+			if tc.ok && err != nil {
+				t.Fatalf("expected render to pass: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("expected render to fail")
+			}
+			if tc.name == "explicit unsafe bypass" && !strings.Contains(rendered, `mecatl.stacklok.com/unsafe-real-provider: "true"`) {
+				t.Fatal("unsafe real-provider render is not visibly annotated")
+			}
+		})
 	}
 }
 
@@ -170,7 +281,7 @@ func TestMecak8sHelmChart_SecureRedisModes(t *testing.T) {
 	}
 
 	// System-trust TLS without ACL credentials needs no Secret at all.
-	publicTLS := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.caKey="}
+	publicTLS := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.caKey=", "--set", "security.allowUnsafeRealProvider=true"}
 	rendered, err := helm(t, publicTLS...)
 	if err != nil {
 		t.Fatalf("render system-trust TLS without Secret: %v", err)

@@ -74,7 +74,7 @@ func (st *Store) observeMetadataWork(kind metadataWorkKind) {
 // but bounded inventory is honestly unavailable until an explicit migration
 // has saved every record through the current format.
 func (st *Store) initializeMetadataIndex(ctx context.Context) error {
-	state, err := st.client.Get(ctx, metadataIndexStateKey).Result()
+	state, err := st.redis(ctx).Get(ctx, metadataIndexStateKey).Result()
 	if err == nil {
 		if state != metadataIndexReady && state != metadataIndexStale {
 			return fmt.Errorf("redisstore: unknown metadata index state %q", state)
@@ -88,7 +88,7 @@ func (st *Store) initializeMetadataIndex(ctx context.Context) error {
 	state = metadataIndexReady
 	var cursor uint64
 	for {
-		keys, next, scanErr := st.client.Scan(ctx, cursor, sessionKeyPrefix+"*", 1).Result()
+		keys, next, scanErr := st.redis(ctx).Scan(ctx, cursor, sessionKeyPrefix+"*", 1).Result()
 		if scanErr != nil {
 			return fmt.Errorf("redisstore: inspect legacy metadata index: %w", scanErr)
 		}
@@ -101,7 +101,7 @@ func (st *Store) initializeMetadataIndex(ctx context.Context) error {
 		}
 		cursor = next
 	}
-	if err := st.client.SetNX(ctx, metadataIndexStateKey, state, 0).Err(); err != nil {
+	if err := st.redis(ctx).SetNX(ctx, metadataIndexStateKey, state, 0).Err(); err != nil {
 		return fmt.Errorf("redisstore: initialize metadata index state: %w", err)
 	}
 	return nil
@@ -176,7 +176,7 @@ func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session
 	if s.Owner != nil {
 		ownerScope = metadataOwnerScope(s.Owner)
 	}
-	return saveMetadataScript.Run(ctx, st.client,
+	return saveMetadataScript.Run(ctx, st.redis(ctx),
 		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey},
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
 		metadataOwnerIndexBase,
@@ -193,7 +193,7 @@ func (st *Store) createSnapshotAndMetadata(ctx context.Context, s *session.Sessi
 	if s.Owner != nil {
 		ownerScope = metadataOwnerScope(s.Owner)
 	}
-	created, err := createMetadataScript.Run(ctx, st.client,
+	created, err := createMetadataScript.Run(ctx, st.redis(ctx),
 		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey},
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
 		metadataOwnerIndexBase,
@@ -218,7 +218,7 @@ return 1
 `)
 
 func (st *Store) deleteSessionAndMetadata(ctx context.Context, id session.SessionID) error {
-	return deleteMetadataScript.Run(ctx, st.client,
+	return deleteMetadataScript.Run(ctx, st.redis(ctx),
 		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey},
 		metadataGlobalScope, metadataOwnerIndexBase,
 	).Err()
@@ -246,7 +246,7 @@ func (st *Store) deleteSessionIfMetadataUnchanged(ctx context.Context, expected 
 	if err != nil {
 		return false, err
 	}
-	result, err := conditionalDeleteMetadataScript.Run(ctx, st.client,
+	result, err := conditionalDeleteMetadataScript.Run(ctx, st.redis(ctx),
 		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey},
 		member, metadataGlobalScope, metadataOwnerIndexBase,
 	).Int()
@@ -282,7 +282,7 @@ func (st *Store) pageSessionMetadata(ctx context.Context, request port.SessionMe
 	if err != nil {
 		return port.SessionMetadataPage{}, err
 	}
-	result, err := pageMetadataScript.Run(ctx, st.client, []string{indexKey, metadataGenerationKey},
+	result, err := pageMetadataScript.Run(ctx, st.redis(ctx), []string{indexKey, metadataGenerationKey},
 		scope, expectedGeneration, minimum, request.Limit+1).Result()
 	if err != nil {
 		if strings.Contains(err.Error(), "MECATL_METADATA_CURSOR_RESTART") {
@@ -294,7 +294,7 @@ func (st *Store) pageSessionMetadata(ctx context.Context, request port.SessionMe
 }
 
 func (st *Store) requireMetadataIndex(ctx context.Context) error {
-	state, err := st.client.Get(ctx, metadataIndexStateKey).Result()
+	state, err := st.redis(ctx).Get(ctx, metadataIndexStateKey).Result()
 	if err == nil && state == metadataIndexReady {
 		return nil
 	}

@@ -519,6 +519,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		RedisTLSCAFile:         cfg.redisTLSCAFile,
 		RedisTLS:               cfg.redisTLS,
 		RedisAllowPlaintext:    cfg.redisAllowPlaintext,
+		RedisReload:            cfg.redisTLSCAFile != "" || cfg.redisUsernameFile != "" || cfg.redisPasswordFile != "",
 		// OwnershipEnforced mirrors cmd/mecated's wiring: the OIDC verifier being
 		// enabled IS the caller-isolation on-switch (ADR 0212). Without this line
 		// mecak8s attributes ownership correctly but never enforces it — every

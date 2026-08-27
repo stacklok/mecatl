@@ -15,7 +15,19 @@ and `cmd/mecated` wires the knobs:
   constant-time compared) enforced by a gRPC interceptor + HTTP middleware
   (`internal/adapter/server/authn.go`); optional **TLS / mTLS** (`--tls-cert` / `--tls-key` /
   `--client-ca`). The server still **warns loudly** if it binds a non-loopback
-  address with no auth configured.
+  address with no auth configured. `mecak8s` watches the parent directories of
+  its server cert/key paths so Kubernetes projected-Secret `..data` swaps are
+  observed. It publishes only a fully parsed, matching pair through
+  `tls.Config.GetCertificate`; a bad rotation retains the last valid pair, while
+  the client CA remains restart-required ([ADR 0239](../adr/0239-mecak8s-credential-reload-and-chart-security.md)).
+- **Redis credential reload** — when mecak8s receives any Redis CA, username, or
+  password file, it watches the lexical parent directories and transactionally re-reads
+  the complete configured set. A bounded single-flight worker constructs and probes a
+  candidate through the normal verified toolhive-core Redis path, then atomically publishes
+  it. Every store/schedule/migration operation leases one client generation, so displaced
+  clients close only after in-flight work and migration locks release them. Invalid
+  candidates retain the last valid generation; no configured files means no watcher or
+  reload goroutine ([ADR 0239](../adr/0239-mecak8s-credential-reload-and-chart-security.md)).
 - **Rate limiting** — per-client + global token-bucket (`--rate-limit` /
   `--rate-burst`), bounded and idle-evicting. With OIDC enabled, a separate
   pre-validation rejected-token bucket protects JWT/JWKS validation. It is keyed
