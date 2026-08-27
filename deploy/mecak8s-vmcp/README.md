@@ -209,6 +209,11 @@ port-forward for vMCP:
 kubectl -n mecatl-vmcp port-forward svc/vmcp-vmcp 18080:4483
 ```
 
+The normal client login is Authorization Code + PKCE, as used by the browser
+PKCE client in [Scope](#scope). The password grant call below is a narrow,
+non-browser test helper for scripting this walkthrough, not the normal login
+flow.
+
 Then two calls. First, the caller authenticates at Keycloak:
 
 ```sh
