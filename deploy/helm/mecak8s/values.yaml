@@ -15,6 +15,19 @@ image:
 # Empty by default: a public image needs none.
 imagePullSecrets: []
 
+# extraEnv appends raw Kubernetes EnvVar entries to the agent container.
+# Without mockProvider or a real LLM provider credential, the binary
+# hard-fails at startup (no provider configured) — this is how a real
+# deployment supplies one: project a Secret holding e.g. OPENROUTER_API_KEY /
+# ANTHROPIC_API_KEY / OPENAI_API_KEY via valueFrom.secretKeyRef. cliconfig
+# (the same provider-resolution path mecated uses) detects the env var
+# directly and, with only one key present, selects that provider as the
+# default automatically — no --default-provider flag needed. The Secret
+# itself can come from anywhere (a `kubectl create secret` in Kind, an
+# ExternalSecret in a real cluster, ...); this values shape is identical
+# either way.
+extraEnv: []
+
 replicaCount: 2
 mockProvider: false
 

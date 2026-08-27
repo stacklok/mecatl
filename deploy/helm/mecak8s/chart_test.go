@@ -530,3 +530,32 @@ func TestMecak8sHelmChart_ImagePullSecrets(t *testing.T) {
 		t.Fatal("render with imagePullSecrets set missing the projected pull secret")
 	}
 }
+
+func TestMecak8sHelmChart_ExtraEnv(t *testing.T) {
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render production values: %v", err)
+	}
+	if strings.Contains(rendered, "\n          env:") {
+		t.Fatal("default render (extraEnv unset) unexpectedly contains an env: block")
+	}
+
+	args := append(productionArgs(),
+		"--set", "extraEnv[0].name=OPENROUTER_API_KEY",
+		"--set", "extraEnv[0].valueFrom.secretKeyRef.name=openrouter-key",
+		"--set", "extraEnv[0].valueFrom.secretKeyRef.key=api-key",
+	)
+	rendered, err = helm(t, args...)
+	if err != nil {
+		t.Fatalf("render with extraEnv: %v", err)
+	}
+	for _, want := range []string{
+		"name: OPENROUTER_API_KEY",
+		"name: openrouter-key",
+		"key: api-key",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("render with extraEnv set missing %q", want)
+		}
+	}
+}
