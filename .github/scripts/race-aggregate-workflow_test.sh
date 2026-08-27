@@ -60,6 +60,13 @@ for job in test-race-root-a test-race-root-b test-race-ui test-non-race-draft; d
   fi
 done
 
+if ! grep -Fq 'GOPROXY: https://proxy.golang.org|direct' "$workflow"; then
+  fail 'workflow must fall back to direct VCS when the public module proxy fails'
+fi
+if ! grep -Fq 'name: Download Go modules' "$workflow" || ! grep -Fq 'go mod download' "$workflow"; then
+  fail 'build job must resolve the complete module graph before compiling'
+fi
+
 if ! grep -Fq 'types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]' "$workflow"; then
   fail 'pull-request transitions must trigger the applicable coverage mode'
 fi

@@ -55,9 +55,10 @@ root commands are `task test:race-root-a`, `task test:race-root-b`, and
 `task test:race-ui`. `task test` remains the full unsharded local suite.
 
 All Go test jobs in this design use the same explicit multi-module `setup-go` cache key:
-the root, engine, OIDC, and four provider `go.sum` files. This lets a draft's complete
-non-race coverage reuse the same module cache as its full-race successor rather than
-missing dependencies owned by a nested module.
+the root, engine, OIDC, and four provider `go.sum` files. On a cache miss, the
+Build job resolves all seven declared module graphs before compiling, so the cache it
+saves is complete for later PR jobs. The workflow normally uses the checksum-backed
+public Go proxy and falls back to the module VCS origin on a proxy transport error.
 
 Normal full-race runs execute those race commands directly: they do not add `-json`,
 redirect output, create timing files, or upload artifacts. To investigate CI duration,

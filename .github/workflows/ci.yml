@@ -47,6 +47,9 @@ env:
   # the right version; this keeps the build deterministic against that pin.
   GOTOOLCHAIN: local
   GOFLAGS: -mod=readonly
+  # Prefer the checksum-backed public proxy, but use the module's VCS origin if
+  # its transport fails. `|` (unlike `,`) permits fallback on any proxy error.
+  GOPROXY: https://proxy.golang.org|direct
 
 jobs:
   # Do not use workflow-level path filters: required checks must exist on every
@@ -131,6 +134,31 @@ jobs:
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
+
+      # Resolve the declared dependency graphs before compiling. A successful main
+      # run then saves a complete shared module cache for later PR jobs. Retry only
+      # network resolution, never build or test execution.
+      - name: Download Go modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if (
+              go mod download all
+              cd engine && go mod download all
+              cd ../authn/oidc && go mod download all
+              cd ../../provider/ssefilter && go mod download all
+              cd ../anthropic && go mod download all
+              cd ../openai && go mod download all
+              cd ../openaichat && go mod download all
+            ); then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
 
       - name: go build
         run: go build ./...
