@@ -120,7 +120,8 @@ type fakeConv struct {
 	// is on its way to the reducer (so a follow-up prompt won't be dropped by the
 	// sessionID == "" guard in submitPrompt). See fakeRecver's doc for why the
 	// teatest cases sequence on signals like this rather than on rendered output.
-	sessionReady chan struct{}
+	sessionReady     chan struct{}
+	sessionReadyOnce sync.Once
 
 	// recvers, when non-nil, makes OpenConverse hand a FRESH scripted fakeRecver per
 	// call, round-robin over this slice (the last entry repeats once exhausted). The
@@ -329,6 +330,7 @@ func (c *fakeConv) CreateSession(ctx context.Context, sel client.ModelSelection,
 // threaded into the create, then delegates to the shared create body.
 func (c *fakeConv) CreateSessionInWorkspace(_ context.Context, workspace string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.createdSel = sel
 	c.createdWksp = workspace
 	if mode != "" {
@@ -337,7 +339,6 @@ func (c *fakeConv) CreateSessionInWorkspace(_ context.Context, workspace string,
 	c.createCount++
 	c.operations = append(c.operations, "create")
 	n := c.createCount
-	c.mu.Unlock()
 	if c.created != nil {
 		c.createdOnce.Do(func() { close(c.created) })
 	}
@@ -345,11 +346,7 @@ func (c *fakeConv) CreateSessionInWorkspace(_ context.Context, workspace string,
 		c.recreatedOnce.Do(func() { close(c.recreated) })
 	}
 	if c.sessionReady != nil {
-		select {
-		case <-c.sessionReady:
-		default:
-			close(c.sessionReady)
-		}
+		c.sessionReadyOnce.Do(func() { close(c.sessionReady) })
 	}
 	// A selector rejection fails only a NON-ZERO selection (the issue #41
 	// server-rejection path). Checked FIRST so a test can pair it with createErr

@@ -426,6 +426,7 @@ func TestSteer_BrakeTerminalKeepsRecorded(t *testing.T) {
 	// but preTurnTerminal trips the recorded MaxTurns limit first, terminating the
 	// run. The steer must STILL be on durable history.
 	gate := newFirstTurnGate()
+	t.Cleanup(gate.release)
 	llm := mockllm.NewWith(
 		[]mockllm.Option{mockllm.WithRequestObserver(gate.observe)},
 		mockllm.ToolCallTurn(toolCall("c1", "Probe", `{}`)),
