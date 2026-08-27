@@ -30,6 +30,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Run-owned attempt correlation context** (issue #409) —
+  `port.WithRunAttemptContext` installs one independent session/run/turn carrier
+  and `port.SetAttemptTurnIndex` updates its atomic turn across an engine run,
+  without changing the immutable derivation semantics of the public
+  `WithRunSerial` and `WithTurnIndex` helpers. Added (minor).
+
 - **`session.EvModelRetry` and `session.ModelRetryPayload`** (issue #409) — mark a failed-step retry after `session.init` with typed disposition/progress for event-source reconstruction plus client-visible advisory text.
 
 - **Structured provider attempt-error metadata** (issue #409) —

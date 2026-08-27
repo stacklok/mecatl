@@ -1001,7 +1001,8 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 // entry seams cannot drift in their concurrency setup.
 func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
-	ctx = port.WithSessionID(ctx, sess.ID)
+	serial := runSerial.Add(1)
+	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
 	ctx = withSessionOrigin(ctx, sess.ID)
 	attribution, _ := tool.MemoryAttributionFromContext(ctx)
 	if attribution.Writer == "" {
@@ -1021,7 +1022,7 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 		ctx:       ctx,
 		req:       req,
 		hardAbort: make(chan struct{}),
-		serial:    runSerial.Add(1),
+		serial:    serial,
 		// Bind the run-scoped diagnostics ONCE here, where the live session is in
 		// scope: correlate every emitted line to this session id, and (for a child
 		// engine, Role != "") to its agent role too. The main engine has Role=="" so
@@ -1233,6 +1234,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			return
 		}
 		turnIdx := sess.Counters.Turns - 1
+		port.SetAttemptTurnIndex(ctx, turnIdx)
 		e.emit(r, session.Event{Type: session.EvTurnStart, Turn: turnIdx})
 
 		// Snapshot the turn start for the turn.end elapsed measurement. When no
@@ -1909,8 +1911,7 @@ func (l *turnLatency) summary() turnTiming {
 // streaming content deltas reports no inter-token summary (there is no gap).
 func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
 	req := e.buildRequest(ctx, r, sess, env)
-	attemptCtx := port.WithTurnIndex(port.WithRunSerial(ctx, r.serial), turnIdx)
-	seq, err := e.deps.LLM.Stream(attemptCtx, req)
+	seq, err := e.deps.LLM.Stream(ctx, req)
 	if err != nil {
 		return session.Message{}, session.Usage{}, session.StopNone, turnTiming{}, fmt.Errorf("agent: start stream: %w", err)
 	}

@@ -628,7 +628,8 @@ type attemptResult struct {
 	buffered       []port.Chunk
 	discardedUsage session.Usage
 	remaining      iter.Seq2[port.Chunk, error]
-	abort          func()
+	stop           func()
+	cancel         context.CancelFunc
 }
 
 func terminalWithUsage(usage session.Usage, err error) (iter.Seq2[port.Chunk, error], error) {
@@ -931,12 +932,8 @@ func (p *resilientProvider) pumpAttempt(
 		result.progress = port.StreamProgressVisible
 		result.chunk = chunk
 		result.remaining = p.restSeq(diagnostic, next, stop, cancel)
-		result.abort = func() {
-			if cancel != nil {
-				cancel()
-			}
-			stop()
-		}
+		result.stop = stop
+		result.cancel = cancel
 		return result, nil
 	}
 }
@@ -1133,8 +1130,11 @@ func attemptError(cause, err error) error {
 func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[port.Chunk, error] {
 	return func(yield func(port.Chunk, error) bool) {
 		cleanupRemaining := func() {
-			if result.abort != nil {
-				result.abort()
+			if result.cancel != nil {
+				result.cancel()
+			}
+			if result.stop != nil {
+				result.stop()
 			}
 		}
 		for _, buffered := range result.buffered {

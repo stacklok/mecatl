@@ -158,6 +158,36 @@ func TestSemanticAttemptFlushesEveryTentativeKindInExactOrder(t *testing.T) {
 	}
 }
 
+func TestSemanticAttemptFirstVisibleTextHasNoTentativeBuffer(t *testing.T) {
+	provider := &resilientProvider{cfg: Config{MaxAttempts: 1, Clock: time.Now}}
+	inner := func(yield func(port.Chunk, error) bool) {
+		yield(port.Chunk{Kind: port.ChunkText, Text: "visible"}, nil)
+	}
+	result, err := provider.pumpAttempt(
+		context.Background(),
+		attemptDiagnostic{},
+		inner,
+		func() bool { return false },
+		nil,
+		func(err error) error { return err },
+	)
+	if err != nil {
+		t.Fatalf("pumpAttempt: %v", err)
+	}
+	defer func() {
+		if result.cancel != nil {
+			result.cancel()
+		}
+		result.stop()
+	}()
+	if result.progress != port.StreamProgressVisible || result.chunk.Text != "visible" {
+		t.Fatalf("result = %+v, want directly visible text", result)
+	}
+	if result.buffered != nil {
+		t.Fatalf("first visible text allocated a tentative buffer: %+v", result.buffered)
+	}
+}
+
 func TestSemanticAttemptCleanCompletionFlushesTentativeTurn(t *testing.T) {
 	call := session.ToolCall{ID: "call-1", Name: "Read"}
 	tests := []struct {

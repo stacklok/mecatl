@@ -117,7 +117,9 @@ func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []se
 func RunSerialFromContext(ctx context.Context) (int64, bool)
 func SessionDiscoveryMetaEqual(a SessionDiscoveryMeta, b SessionDiscoveryMeta) bool
 func SessionIDFromContext(ctx context.Context) (session.SessionID, bool)
+func SetAttemptTurnIndex(ctx context.Context, index int) bool
 func TurnIndexFromContext(ctx context.Context) (int, bool)
+func WithRunAttemptContext(ctx context.Context, id session.SessionID, serial int64) context.Context
 func WithRunSerial(ctx context.Context, serial int64) context.Context
 func WithSessionID(ctx context.Context, id session.SessionID) context.Context
 func WithTurnIndex(ctx context.Context, index int) context.Context
