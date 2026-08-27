@@ -517,10 +517,13 @@ type AgentMeta struct {
 	// explorer. A zero Limits value is treated as "no per-def override" — Execute
 	// then uses the Subagent tool's default limits, exactly as the no-`agent` path does.
 	Limits session.Limits
-	// AuthorityCeiling is the resolved definition tool ceiling. It is honoured only
-	// when Managed is true; lower tiers can never establish a ceiling.
+	// AuthorityCeiling is the resolved read-only definition tool ceiling. It is
+	// honoured only when Managed is true; lower tiers can never establish a ceiling.
 	AuthorityCeiling governance.CapabilitySet
-	Managed          bool
+	// WritableAuthorityCeiling is the corresponding direct-write ceiling used only
+	// for a fresh mode:"read-write" delegation to this definition.
+	WritableAuthorityCeiling governance.CapabilitySet
+	Managed                  bool
 }
 
 // subagentSchema is the JSON schema the model sees for the Subagent tool's arguments. The
@@ -660,9 +663,12 @@ type SubagentTool struct {
 	// name absent from the map (or a zero Limits) means "use t.limits" — the same
 	// default the no-`agent` explorer path uses.
 	agentLimits map[string]session.Limits
-	// agentCeilings is populated only from operator-managed definitions. A missing
-	// entry deliberately means no specialist ceiling.
-	agentCeilings map[string]governance.CapabilitySet
+	// agentCeilings and writableAgentCeilings are populated only from
+	// operator-managed definitions. A missing entry deliberately means no specialist
+	// ceiling. Keeping the modes separate prevents a read-only child from persisting
+	// mutating authority that a later writable resume could activate.
+	agentCeilings         map[string]governance.CapabilitySet
+	writableAgentCeilings map[string]governance.CapabilitySet
 
 	// limits bound a single child run. Defaults to defaultChildLimits.
 	limits session.Limits
@@ -745,9 +751,10 @@ type SubagentTool struct {
 
 	// routableAgents is the composition-computed SET of agent-def names that expressed NO
 	// model intent (absent `model:` — issue #286) and are therefore eligible for the OPT-IN
-	// model router: an `agent`-named delegation to one of these, read-only and with the
-	// agent+model factory wired, is CLASSIFIED and the def's SCOPED engine is rebuilt on the
-	// routed model (via agentModelFactory), fail-soft to the pre-built def engine on a miss.
+	// model router: an `agent`-named delegation to one of these, with the applicable routed
+	// factory wired, is CLASSIFIED and the def's SCOPED engine is rebuilt on the routed model
+	// (via agentModelFactory for read-only or agentWritableModelFactory for writable), fail-soft
+	// to the pre-built read-only def engine or freshly-built ordinary writable specialist.
 	// A def that expressed model intent (ANY def.Model — `inherit`, a built-in alias, an
 	// unknown alias, a concrete id) is PINNED and NEVER in this set. Composition ALSO
 	// excludes a def whose `provider:` switches away from the parent (routed ids are
@@ -763,6 +770,12 @@ type SubagentTool struct {
 	// routableAgents: provider-switched and inline-MCP defs are also unroutable, but
 	// they did not pin a model and must not be attributed as if they had.
 	pinnedAgents map[string]struct{}
+
+	// agentWritableModelFactory is agentWritableFactory's routed-model sibling. For an
+	// unpinned writable named specialist, it rebuilds the same writable scoped engine on
+	// the router-selected model. A decline falls back to agentWritableFactory; the router
+	// remains fail-soft and reconcileRoutedModel reports the unavailable target truthfully.
+	agentWritableModelFactory func(agentName, model string) (*Engine, bool)
 
 	// agentWritableFactory, when non-nil, mints a WRITABLE child engine for a
 	// mode:"read-write"+`agent` call: the named specialist's scoped engine
@@ -1198,13 +1211,23 @@ func WithAgentModelEngineFactory(f func(agentName, model string) (*Engine, bool)
 //
 // nil (the default, and ALWAYS on the no-FS path) leaves Subagent without writable-
 // specialist support: a mode:"read-write"+`agent` call then errors with a clear "not
-// supported in this deployment" message from validateMode. read-write+`agent`+`model`
-// together is OUT OF SCOPE for v1 (validateMode rejects it before this factory is ever
-// consulted — a writable specialist runs on its own resolved model). It is layering-
+// supported in this deployment" message from validateMode. Explicit read-write+`agent`+
+// `model` arguments together are OUT OF SCOPE for v1 (validateMode rejects them before this
+// factory is ever consulted); a router-selected model is handled by the separate
+// WithAgentWritableModelEngineFactory. It is layering-
 // clean: the closure takes a string and returns *Engine — both agent-layer types —
 // and no adapter/proto/server type crosses (same shape as WithAgentModelEngineFactory).
 func WithAgentWritableEngineFactory(f func(agentName string) (*Engine, bool)) SubagentOption {
 	return func(t *SubagentTool) { t.agentWritableFactory = f }
+}
+
+// WithAgentWritableModelEngineFactory injects the composition-supplied factory that
+// rebuilds a WRITABLE named specialist on a router-selected model. It is distinct from
+// WithAgentModelEngineFactory because the resulting engine retains mutating tools and
+// runs directly in the parent environment. A declined routed target falls back to the
+// ordinary writable specialist minted by WithAgentWritableEngineFactory.
+func WithAgentWritableModelEngineFactory(f func(agentName, model string) (*Engine, bool)) SubagentOption {
+	return func(t *SubagentTool) { t.agentWritableModelFactory = f }
 }
 
 // WithWritableChildEngine injects the child *Engine a mode:"read-write" Subagent
@@ -1265,12 +1288,15 @@ func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOpti
 		// t.limits in Execute, identical to the no-`agent` path.
 		t.agentLimits = nil
 		t.agentCeilings = nil
+		t.writableAgentCeilings = nil
 		for _, m := range meta {
 			if m.Managed {
 				if t.agentCeilings == nil {
 					t.agentCeilings = make(map[string]governance.CapabilitySet, len(meta))
+					t.writableAgentCeilings = make(map[string]governance.CapabilitySet, len(meta))
 				}
 				t.agentCeilings[m.Name] = m.AuthorityCeiling
+				t.writableAgentCeilings[m.Name] = m.WritableAuthorityCeiling
 			}
 			if m.Limits == (session.Limits{}) {
 				continue
@@ -1283,11 +1309,15 @@ func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOpti
 	}
 }
 
-func (t *SubagentTool) agentCeiling(name string) (*governance.CapabilitySet, bool) {
-	if name == "" || t.agentCeilings == nil {
+func (t *SubagentTool) agentCeiling(name string, writable bool) (*governance.CapabilitySet, bool) {
+	ceilings := t.agentCeilings
+	if writable {
+		ceilings = t.writableAgentCeilings
+	}
+	if name == "" || ceilings == nil {
 		return nil, false
 	}
-	ceiling, ok := t.agentCeilings[name]
+	ceiling, ok := ceilings[name]
 	if !ok {
 		return nil, false
 	}
@@ -1615,13 +1645,9 @@ func (t *SubagentTool) ExecuteWithParent(ctx context.Context, call session.ToolC
 //     unknown agent or an unroutable model are model-addressable errors. (Unreachable
 //     with writable=true — validateMode rejects read-write+agent+model first.)
 //   - `agent` only + writable: routes through agentWritableFactory (a WRITABLE
-//     specialist, ADR 0058 — the def's scoped engine is rebuilt with allowMutating=true
-//     on the def's resolved model, using the MAIN runner for direct-write parity). The
-//     pre-built agentEngines map is read for the name-truth check only; a fresh engine
-//     is minted per call, never inserted. Without a wired factory the combination is
-//     "not supported in this deployment" (validateMode catches this first, but the
-//     defensive guard here is belt-and-suspenders); an inline-MCP def is a v1 scope
-//     limit (the factory returns (nil,false) and a model-addressable error surfaces).
+//     specialist, ADR 0058) on its resolved model, or through agentWritableModelFactory
+//     when the OPT-IN router selects a model for an unpinned def. A routed construction
+//     decline falls back to agentWritableFactory; per-def limits remain untouched.
 //   - `agent` only (read-only): routes to the pre-built specialist engine (agentEngines)
 //     via selectReadOnlyAgentEngine — which, for a ROUTABLE def (issue #286), applies the
 //     OPT-IN router's routedModel by rebuilding the def's scoped engine on it (fail-soft to
@@ -1674,8 +1700,7 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 	// those helpers; it never silently falls back to the wrong scope/prompt.
 	if wantAgent != "" {
 		if writable {
-			eng, lim, errRes, found := t.selectWritableSpecialistEngine(callID, wantAgent)
-			return eng, lim, errRes, false, found
+			return t.selectWritableSpecialistEngine(callID, wantAgent, routedModel)
 		}
 		return t.selectReadOnlyAgentEngine(callID, wantAgent, routedModel)
 	}
@@ -1798,36 +1823,35 @@ func (t *SubagentTool) selectWritableExplorerEngine(callID session.ToolCallID, w
 }
 
 // selectWritableSpecialistEngine resolves a mode:"read-write"+`agent` call to a WRITABLE
-// specialist engine via agentWritableFactory (ADR 0058): the def's scoped engine is REBUILT
-// with allowMutating=true (Edit/Write survive scoping) on the def's resolved model, using
-// the MAIN session's command runner (direct-write parity — no fork, no merge-back; the child
-// mutates the real parent tree in place, dispatch-serial via MutatesParent). The name-truth
-// check fires BEFORE the factory (an unknown name is the same model-addressable error the
-// read-only path returns, never a factory call). validateMode already rejected the unwired
-// case (agentWritableFactory==nil), so reaching here with a nil factory is a defensive
-// belt-and-suspenders "not supported in this deployment" error. The pre-built agentEngines
-// map is read for the name-truth check ONLY; a fresh engine is minted per call, never
-// inserted (no map reuse — a writable specialist never accidentally runs the read-only
-// pre-built engine). An inline-MCP def is a v1 scope limit: the factory returns (nil,false)
-// and a model-addressable error surfaces. Per-def limits still bind.
-func (t *SubagentTool) selectWritableSpecialistEngine(callID session.ToolCallID, wantAgent string) (*Engine, session.Limits, session.ToolResult, bool) {
+// specialist. A router-selected model first mints through agentWritableModelFactory; when
+// that target is unavailable it falls back to agentWritableFactory, keeping routing
+// fail-soft while allowing reconcileRoutedModel to expose truthful fallback metadata. Both
+// factories rebuild the def's scoped engine with allowMutating=true and the MAIN session's
+// runner, so the child mutates the parent environment directly. The name-truth check fires
+// before either factory, and the def's limits bind whichever engine is selected.
+func (t *SubagentTool) selectWritableSpecialistEngine(callID session.ToolCallID, wantAgent, routedModel string) (*Engine, session.Limits, session.ToolResult, bool, bool) {
 	if t.agentWritableFactory == nil {
 		return nil, session.Limits{}, session.NewToolError(callID,
-			"Subagent: mode:\"read-write\" with `agent` is not supported in this deployment"), false
+			"Subagent: mode:\"read-write\" with `agent` is not supported in this deployment"), false, false
 	}
 	if _, found := t.agentEngines[wantAgent]; !found {
-		return nil, session.Limits{}, session.NewToolError(callID, "Subagent: "+t.unknownAgentHint(wantAgent)), false
-	}
-	eng, found := t.agentWritableFactory(wantAgent)
-	if !found || eng == nil {
-		return nil, session.Limits{}, session.NewToolError(callID,
-			fmt.Sprintf("Subagent: writable specialist %q is unavailable (the def may have inline MCP servers, a v1 scope limit); omit `mode` to run it read-only, or omit `agent` for a writable explorer", wantAgent)), false
+		return nil, session.Limits{}, session.NewToolError(callID, "Subagent: "+t.unknownAgentHint(wantAgent)), false, false
 	}
 	limits := t.limits
 	if l, found := t.agentLimits[wantAgent]; found {
 		limits = l
 	}
-	return eng, limits, session.ToolResult{}, true
+	if routedModel != "" && t.agentWritableModelFactory != nil {
+		if eng, found := t.agentWritableModelFactory(wantAgent, routedModel); found && eng != nil {
+			return eng, limits, session.ToolResult{}, true, true
+		}
+	}
+	eng, found := t.agentWritableFactory(wantAgent)
+	if !found || eng == nil {
+		return nil, session.Limits{}, session.NewToolError(callID,
+			fmt.Sprintf("Subagent: writable specialist %q is unavailable (the def may have inline MCP servers, a v1 scope limit); omit `mode` to run it read-only, or omit `agent` for a writable explorer", wantAgent)), false, false
+	}
+	return eng, limits, session.ToolResult{}, false, true
 }
 
 // resolveMaxRunTokens resolves the per-call cumulative token budget from the two aliases:
@@ -2098,12 +2122,11 @@ func (t *SubagentTool) validatePreconditions(callID session.ToolCallID, args sub
 //     selectChildEngine's writable arm, so don't spend the classifier). That gate reports
 //     RoutingReasonRouterDisabled: the pick could not be consumed, as if no router existed.
 //   - a NAMED `agent` (issue #286): routes ONLY a ROUTABLE def — one that expressed NO model
-//     intent (composition put it in t.routableAgents) — and only READ-ONLY with the
-//     agent+model factory wired (the pick is consumed by rebuilding the def's SCOPED engine
-//     on the routed model). A pinned def (ANY def.Model, incl. explicit `inherit`) reports
-//     RoutingReasonAgentDefPinned; a routable def that is writable or whose agent+model
-//     factory is unwired reports RoutingReasonRouterDisabled (the pick could not be
-//     consumed — as good as no router — NOT a def-pinned model the def never expressed).
+//     intent (composition put it in t.routableAgents) — with the applicable model factory
+//     wired. A writable named def additionally requires agentWritableFactory as its fail-soft
+//     fallback. A pinned def (ANY def.Model, incl. explicit `inherit`) reports
+//     RoutingReasonAgentDefPinned; an incomplete factory set reports
+//     RoutingReasonRouterDisabled (the pick could not be consumed — as good as no router).
 //
 // It is a method (not a free func) to read t.writableEngineFactory / t.agentModelFactory /
 // t.routableAgents. The ctx is the run's ctx, threaded to routeTask so a Run.Cancel
@@ -2123,18 +2146,20 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 		return "", "", session.RoutingReasonPinnedModel
 	}
 	if wantAgent := strings.TrimSpace(args.Agent); wantAgent != "" {
-		// A NAMED agent: a def that expressed model intent (recorded explicitly in pinnedAgents)
-		// attributes to its own gate. A ROUTABLE def (no model intent) that still cannot be
-		// routed — writable, or the agent+model factory unwired — attributes to
-		// router-disabled: the pick could not be consumed, as good as no router, and the def
-		// never pinned a model. Only then does the router-absent gate apply.
+		// A NAMED agent: a def that expressed model intent attributes to its own gate. A
+		// ROUTABLE def needs the applicable routed factory plus its ordinary writable
+		// fallback when writable; an incomplete factory set cannot consume a pick.
 		if _, pinned := t.pinnedAgents[wantAgent]; pinned {
 			return "", "", session.RoutingReasonAgentDefPinned
 		}
 		if _, routable := t.routableAgents[wantAgent]; !routable {
 			return "", "", session.RoutingReasonRouterDisabled
 		}
-		if writable || t.agentModelFactory == nil {
+		if writable {
+			if t.agentWritableFactory == nil || t.agentWritableModelFactory == nil {
+				return "", "", session.RoutingReasonRouterDisabled
+			}
+		} else if t.agentModelFactory == nil {
 			return "", "", session.RoutingReasonRouterDisabled
 		}
 	} else if writable && t.writableEngineFactory == nil {
@@ -2306,6 +2331,10 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if strings.TrimSpace(args.Prompt) == "" {
 		return session.NewToolError(call.ID, "Subagent: 'prompt' is required and must be non-empty"), nil
 	}
+	// Agent selection, limits, routing, and managed authority ceilings all use the
+	// same canonical lookup key. Normalize once so whitespace cannot select an
+	// engine while bypassing its authority ceiling or changing its identity.
+	args.Agent = strings.TrimSpace(args.Agent)
 
 	// max_run_tokens / max_tokens are the SAME cumulative run budget (the latter is the
 	// deprecated, misleadingly-named alias). Supplying both with different positive values
@@ -2335,6 +2364,9 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			return resumeResult, nil
 		}
 		persistedAuthority, bound := persisted.BoundAuthority()
+		if writable && bound && !persistedAuthority.CapabilitySet.DirectWrite {
+			return session.NewToolError(call.ID, "Subagent: resume authority refused: persisted child authority does not permit direct write"), nil
+		}
 		if authorityErr := validateResumedAuthority(caps.authority, persistedAuthority, bound); authorityErr != nil {
 			return session.NewToolError(call.ID, "Subagent: resume authority refused: "+authorityErr.Error()), nil
 		}
@@ -2343,7 +2375,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	if !resuming && caps.authorityBound {
 		candidate := caps.authority.CapabilitySet
 		candidate.DirectWrite = writable
-		ceiling, managed := t.agentCeiling(args.Agent)
+		ceiling, managed := t.agentCeiling(args.Agent, writable)
 		var authorityErr error
 		delegatedAuthority, authorityErr = deriveDelegatedAuthority(caps.authority, candidate, ceiling, args.Authority)
 		if authorityErr != nil {

@@ -133,6 +133,7 @@ func TightenTeamTokenBudget(serverBudget int, request int) int
 func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOption
 func WithAgentModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
 func WithAgentWritableEngineFactory(f func(agentName string) (*Engine, bool)) SubagentOption
+func WithAgentWritableModelEngineFactory(f func(agentName string, model string) (*Engine, bool)) SubagentOption
 func WithAskReviewPolicy(p string) EngineAskReviewerOption
 func WithAutoMerge(m tool.EnvironmentMerger) ParallelOption
 func WithChildForker(f tool.EnvironmentForker) SubagentOption
@@ -187,7 +188,7 @@ func WithUntrustedGoal(untrusted bool) SupervisorOption
 func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
-type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; Managed bool}
+type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
 type BashStatusTool struct{}
 type BashTool struct{}
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}

@@ -57,7 +57,7 @@ func managedDefinitionAuthority(def tool.AgentDef) bool {
 // into the authority representation. Explicit definitions alone may establish this
 // ceiling; callers enforce that tier bit independently so a lower tier cannot gain
 // one by choosing a colliding name.
-func agentDefinitionAuthorityCeiling(def tool.AgentDef, resolved, resources []string) governance.CapabilitySet {
+func agentDefinitionAuthorityCeiling(def tool.AgentDef, resolved, resources []string, directWrite bool) governance.CapabilitySet {
 	disallowed := make(map[string]struct{}, len(def.DisallowedTools))
 	for _, name := range def.DisallowedTools {
 		disallowed[name] = struct{}{}
@@ -81,7 +81,7 @@ func agentDefinitionAuthorityCeiling(def tool.AgentDef, resolved, resources []st
 		seen[capability] = struct{}{}
 		tools = append(tools, capability)
 	}
-	return governance.CapabilitySet{Tools: tools, RemainingDelegationDepth: rootDelegationDepth, FileSystem: true, DirectWrite: true}
+	return governance.CapabilitySet{Tools: tools, RemainingDelegationDepth: rootDelegationDepth, FileSystem: true, DirectWrite: directWrite}
 }
 
 func mcpResourceCapabilities(manager *mcp.Manager) []string {

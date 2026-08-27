@@ -44,9 +44,13 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly
 
 func TestAgentDefinitionAuthorityCeilingUsesResolvedToolsAndMCP(t *testing.T) {
 	def := tool.AgentDef{Origin: tool.AgentOriginExplicit, DisallowedTools: []string{"Write"}}
-	got := agentDefinitionAuthorityCeiling(def, []string{"Read", "Write", "mcp__github__issues", "mcp__github__issues"}, []string{governance.MCPResourceCapability("github")})
-	if got.AllowsTool("Write") || !got.AllowsTool("Read") || !got.AllowsTool("mcp__github__issues") || !got.AllowsTool(governance.MCPResourceCapability("github")) || len(got.Tools) != 3 {
-		t.Fatalf("ceiling = %+v", got)
+	got := agentDefinitionAuthorityCeiling(def, []string{"Read", "Write", "mcp__github__issues", "mcp__github__issues"}, []string{governance.MCPResourceCapability("github")}, false)
+	if got.DirectWrite || got.AllowsTool("Write") || !got.AllowsTool("Read") || !got.AllowsTool("mcp__github__issues") || !got.AllowsTool(governance.MCPResourceCapability("github")) || len(got.Tools) != 3 {
+		t.Fatalf("read-only ceiling = %+v", got)
+	}
+	writable := agentDefinitionAuthorityCeiling(def, []string{"Read", "Write"}, nil, true)
+	if !writable.DirectWrite || writable.AllowsTool("Write") {
+		t.Fatalf("writable ceiling = %+v; disallowed Write must stay excluded while direct-write posture is true", writable)
 	}
 }
 

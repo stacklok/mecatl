@@ -221,7 +221,7 @@ func resolveDefaultChildModel(cfg Config, provReg *providerRegistry, parentProvi
 //     PINNED, never routed (resolution behaviour untouched — the def's own model wins);
 //   - its `provider:` does NOT switch away from the parent (providerSwitchesAway) — a routed
 //     id is a PARENT-provider id, so a def on a different provider could not consume it;
-//   - it has NO INLINE MCP servers (defHasInlineMCP) — the agent+model factory declines
+//   - it has NO INLINE MCP servers (defInlineMCPServer) — the agent+model factory declines
 //     inline-MCP defs (a v1 scope limit), so routing one would spend the classifier for a
 //     pick that can never be minted (it falls back to the pre-built def engine anyway).
 //
@@ -242,7 +242,7 @@ func routableAgentNames(provReg *providerRegistry, reg *agents.Registry, parentP
 		if providerSwitchesAway(provReg, def, parentProviderID) {
 			continue // routed ids are parent-provider ids; a switched def can't consume one.
 		}
-		if defHasInlineMCP(def) {
+		if _, inline := defInlineMCPServer(def); inline {
 			continue // the agent+model factory declines inline-MCP defs — no classifier spend.
 		}
 		if n := strings.TrimSpace(def.Name); n != "" {
@@ -288,16 +288,17 @@ func providerSwitchesAway(provReg *providerRegistry, def agents.AgentDef, parent
 	return known
 }
 
-// defHasInlineMCP reports whether a def declares any INLINE MCP server (URL set — an entry
-// the def would connect on its own). Reference entries (URL empty, borrowing a configured
-// server's tools) do NOT count. It mirrors defMCPTools' reference/inline split.
-func defHasInlineMCP(def agents.AgentDef) bool {
+// defInlineMCPServer reports the first INLINE MCP server (URL set — an entry the def
+// would connect on its own). Reference entries (URL empty, borrowing a configured server's
+// tools) do NOT count. Returning the entry keeps decline diagnostics specific while giving
+// every routing/factory gate one shared classifier.
+func defInlineMCPServer(def agents.AgentDef) (agents.AgentMCPServer, bool) {
 	for _, e := range def.MCPServers {
 		if !e.IsReference() {
-			return true
+			return e, true
 		}
 	}
-	return false
+	return agents.AgentMCPServer{}, false
 }
 
 // resolveAlias maps sel through the operator aliases then the built-in aliases,
@@ -794,15 +795,24 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		engines[def.Name] = eng
 		closeFn = composeCloseErr(mcpClose, closeFn)
 
-		// Per-def limits ride on AgentMeta so the Subagent tool bounds THIS def's child
-		// session by them (per-field falling back to the Subagent default child limits for
-		// any zero field). A def that sets neither yields the default, unchanged.
+		// Authority ceilings are mode-specific. A read-only child must never persist
+		// mutating tool names or DirectWrite=true merely because the same definition can
+		// also be rebuilt by the writable factory on another call. The writable ceiling
+		// adds the MCP tools that were successfully registered in the read-only engine;
+		// writable core scoping alone does not include definition-provided tools.
+		writableNames, _ := scopedToolNamesMode(def, base, true, runner != nil, bashScopeMissReason(cfg))
+		for _, name := range names {
+			if strings.HasPrefix(name, "mcp__") {
+				writableNames = append(writableNames, name)
+			}
+		}
 		meta = append(meta, agent.AgentMeta{
-			Name:             def.Name,
-			Description:      def.Description,
-			Limits:           defLimits(def, agent.DefaultChildLimits()),
-			AuthorityCeiling: agentDefinitionAuthorityCeiling(def, names, resources),
-			Managed:          managedDefinitionAuthority(def),
+			Name:                     def.Name,
+			Description:              def.Description,
+			Limits:                   defLimits(def, agent.DefaultChildLimits()),
+			AuthorityCeiling:         agentDefinitionAuthorityCeiling(def, names, resources, false),
+			WritableAuthorityCeiling: agentDefinitionAuthorityCeiling(def, writableNames, resources, true),
+			Managed:                  managedDefinitionAuthority(def),
 		})
 
 		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine built",

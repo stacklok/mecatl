@@ -144,9 +144,10 @@ These mechanisms are independent:
   `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
   slot can use a stronger model while a plan is being written; compaction and
   checker slots can use cheaper models.
-- **Router categories** select a model for a plain delegated Subagent, Parallel
-  branch, or undefined team member from the task description. A taxonomy enables
-  the router; with no taxonomy, delegation keeps its inherited/default model.
+- **Router categories** select a model for a plain delegated Subagent, an unpinned
+  named specialist (including `mode: "read-write"`), a Parallel branch, or an undefined
+  team member from the task description. A taxonomy enables the router; with no taxonomy,
+  delegation keeps its inherited/default model.
 
 With the example above, routing resolves as:
 
@@ -158,9 +159,11 @@ image  → image  → gpt-5.6-terra
 ```
 
 Resolution is fail-soft: an invalid alias, slot, or route target warns and falls
-back to the session model. Explicit per-call models, named-agent models, fork or
-resume choices, and other higher-precedence selectors are not overridden by the
-router. Model slots and router taxonomies are operator decisions; project model
+back to the session model. Explicit per-call models, model-pinned named agents, fork or
+resume choices, and other higher-precedence selectors are not overridden by the router. A
+named definition with no `model:` is routable; `model: inherit` is an explicit pin. Writable
+named routing keeps the specialist's direct-write scope, while explicit
+`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies are operator decisions; project model
 settings are ignored unless the operator explicitly allows the relevant model
 set on a trusted project.
 

@@ -91,10 +91,12 @@ func TestEventToMsg(t *testing.T) {
 			HookMsg{Text: "ran hook", Decision: HookInfo},
 		},
 		{
-			"subagent.start",
+			"subagent.start routed",
 			&mecatlv1.Event{Type: "subagent.start", Subagent: &mecatlv1.Subagent{
-				ParentCallId: "p1", ChildId: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5"}},
-			SubagentMsg{Kind: SubagentStart, ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5"},
+				ParentCallId: "p1", ChildId: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5",
+				RoutedCategory: "large", RoutedModel: "openai/gpt-4.5"}},
+			SubagentMsg{Kind: SubagentStart, ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go", Model: "openai/gpt-4.5",
+				RoutedCategory: "large", RoutedModel: "openai/gpt-4.5"},
 		},
 		{
 			"subagent.start routing miss reason",

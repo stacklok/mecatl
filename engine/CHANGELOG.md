@@ -13,6 +13,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **`agent.AgentMeta.WritableAuthorityCeiling`** (issue #517, [ADR 0242](../docs/adr/0242-route-unpinned-writable-named-specialists.md)) — adds the exported mode-specific managed-authority ceiling used when a fresh named specialist runs with direct write. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+
 - **`agent.SteerOutcome` enum: superseded/slot_full dropped, appended added**
   (issue #512, the landed steer-while-running contract). The round-2/task-13
   rework replaced `SteerSuperseded` with `SteerSlotFull`, and the round-3
@@ -38,6 +40,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   equivalents listed below. `agent.StripLoneCodeFence` remains in agent.
 
 ### Added
+
+- **`agent.WithAgentWritableModelEngineFactory`** (issue #517, [ADR 0242](../docs/adr/0242-route-unpinned-writable-named-specialists.md)) — a `SubagentOption` factory that rebuilds an unpinned named `mode:"read-write"` specialist on the semantic router's selected model while preserving its specialist scope, direct-write environment, same-provider boundary, and per-definition limits. A declined target falls back to the ordinary writable specialist. Added (minor).
 
 - **Canonical governance untrusted-content fencing** (issue #380,
   [ADR 0241](../docs/adr/0241-governance-fence-ownership.md)) —

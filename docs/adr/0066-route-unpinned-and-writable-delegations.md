@@ -4,7 +4,7 @@
 - Date: 2026-07-21
 - Scope: `engine/agent` (the `Subagent` tool's engine-selection + router gate) + `internal/app` (the composition factories + the routable-def set). No `port.LLMRequest`, proto, or wire-contract change; the classifier/breaker/observability of [ADR 0031](./0031-subagent-model-router.md) are REUSED unchanged.
 - Supersedes: NARROWLY — (a) the "the per-call `model` arg does not re-engine a writable explorer, an accepted v1 residual" sentence of [ADR 0077](./0077-direct-write-subagent.md) ONLY (everything else in 0077 — direct-write, no-fork/no-merge, the `parentMutatingCaller` dispatch-serial seam, the writable specialist of [ADR 0058](./0058-writable-named-specialist-subagent.md) — stands); (b) the agent-gating rule of [ADR 0031](./0031-subagent-model-router.md) that a named `agent` is NEVER routed (0031's engine half, breaker, precedence spine, fail-soft posture, and observability are otherwise unchanged; this AMENDS the gate, mirroring how [ADR 0042](./0042-taxonomy-gated-model-router.md) narrowly superseded 0031's enable-model).
-- Superseded by: none
+- Superseded by: [ADR 0242](./0242-route-unpinned-writable-named-specialists.md) — ONLY the exclusion of writable named specialists from semantic routing; the absent-versus-explicit model-intent rule, writable explorer routing, precedence, and fail-soft posture remain authoritative
 
 ## Context
 

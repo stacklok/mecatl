@@ -683,6 +683,172 @@ func TestRunWritableRoutedFactoryMissFailSoft(t *testing.T) {
 	}
 }
 
+func writableRoutableAgentTool(routeFound, wireRouteFactory bool, limits session.Limits) *SubagentTool {
+	opts := []SubagentOption{
+		WithAgentEngines(map[string]*Engine{"reviewer": markerEngine("READ-ONLY-SPECIALIST")},
+			[]AgentMeta{{Name: "reviewer", Description: "reviews", Limits: limits}}),
+		WithRoutableAgents([]string{"reviewer"}),
+		WithAgentWritableEngineFactory(func(string) (*Engine, bool) {
+			return markerEngine("WRITABLE-SPECIALIST"), true
+		}),
+	}
+	if wireRouteFactory {
+		opts = append(opts, WithAgentWritableModelEngineFactory(func(agentName, model string) (*Engine, bool) {
+			if !routeFound {
+				return nil, false
+			}
+			return markerEngine("WRITABLE-AGENTMODEL:" + agentName + ":" + model), true
+		}))
+	}
+	return NewSubagentTool(markerEngine("DEFAULT"), opts...).(*SubagentTool)
+}
+
+func TestRunWritableRoutableAgentRoutesViaFactory(t *testing.T) {
+	tl := writableRoutableAgentTool(true, true, session.Limits{})
+	var calls int
+	var start *session.SubagentPayload
+	res, err := tl.ExecuteWithParent(context.Background(),
+		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"fix it","mode":"read-write","agent":"reviewer"}`)),
+		memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvSubagentStart {
+				start = ev.Subagent
+			}
+		}, parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")})
+	if err != nil || res.IsError {
+		t.Fatalf("routed writable specialist failed: %v %+v", err, res)
+	}
+	if calls != 1 {
+		t.Fatalf("classifier calls = %d, want 1", calls)
+	}
+	if !strings.Contains(res.Content, "WRITABLE-AGENTMODEL:reviewer:router-model") {
+		t.Fatalf("routed writable specialist did not run: %q", res.Content)
+	}
+	if start == nil || start.RoutedCategory != "large" || start.RoutedModel != "router-model" || start.RoutingReason != "" || start.Model != "WRITABLE-AGENTMODEL:reviewer:router-model" {
+		t.Fatalf("routed writable specialist start metadata = %+v", start)
+	}
+}
+
+func TestRunWritableRoutableAgentMissUsesOrdinarySpecialist(t *testing.T) {
+	tl := writableRoutableAgentTool(true, true, session.Limits{})
+	var calls int
+	var start *session.SubagentPayload
+	res, err := tl.ExecuteWithParent(context.Background(),
+		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"fix it","mode":"read-write","agent":"reviewer"}`)),
+		memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvSubagentStart {
+				start = ev.Subagent
+			}
+		}, parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+			calls++
+			return "", "", RouterMissBadVerdict, false
+		}})
+	if err != nil || res.IsError || !strings.Contains(res.Content, "WRITABLE-SPECIALIST") {
+		t.Fatalf("router miss did not use ordinary writable specialist: %v %+v", err, res)
+	}
+	if calls != 1 || start == nil || start.RoutedModel != "" || start.RoutingReason != RouterMissBadVerdict || start.Model != "WRITABLE-SPECIALIST" {
+		t.Fatalf("router-miss calls/start = %d/%+v", calls, start)
+	}
+}
+
+func TestRunWritableRoutableAgentUnavailableTargetFallsBack(t *testing.T) {
+	tl := writableRoutableAgentTool(false, true, session.Limits{})
+	var start *session.SubagentPayload
+	res, err := tl.ExecuteWithParent(context.Background(),
+		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"fix it","mode":"read-write","agent":"reviewer"}`)),
+		memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvSubagentStart {
+				start = ev.Subagent
+			}
+		}, parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(new(int), "missing-model")})
+	if err != nil || res.IsError || !strings.Contains(res.Content, "WRITABLE-SPECIALIST") {
+		t.Fatalf("unavailable routed target did not fall back: %v %+v", err, res)
+	}
+	if start == nil || start.RoutedCategory != "" || start.RoutedModel != "" || start.RoutingReason != session.RoutingReasonTargetUnavailable || start.Model != "WRITABLE-SPECIALIST" {
+		t.Fatalf("unavailable-target start metadata = %+v", start)
+	}
+}
+
+func TestRunWritableRoutableAgentMissingFactoryBypassesClassifier(t *testing.T) {
+	tl := writableRoutableAgentTool(true, false, session.Limits{})
+	var calls int
+	res, err := tl.ExecuteWithParent(context.Background(),
+		session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"fix it","mode":"read-write","agent":"reviewer"}`)),
+		memEnv("/ws"), nil, parentCaps{children: newChildRunRegistry(), routeTask: hitRoute(&calls, "router-model")})
+	if err != nil || res.IsError || !strings.Contains(res.Content, "WRITABLE-SPECIALIST") {
+		t.Fatalf("missing routed factory did not use ordinary writable specialist: %v %+v", err, res)
+	}
+	if calls != 0 {
+		t.Fatalf("classifier called %d times with no writable named-model factory", calls)
+	}
+}
+
+func TestWritableRoutableAgentRequiresBothFactories(t *testing.T) {
+	var calls int
+	route := hitRoute(&calls, "router-model")
+	base := []SubagentOption{
+		WithAgentEngines(map[string]*Engine{"reviewer": markerEngine("SPECIALIST")}, nil),
+		WithRoutableAgents([]string{"reviewer"}),
+	}
+	cases := []struct {
+		name string
+		opt  SubagentOption
+	}{
+		{"missing routed factory", WithAgentWritableEngineFactory(func(string) (*Engine, bool) { return markerEngine("WRITABLE"), true })},
+		{"missing fallback factory", WithAgentWritableModelEngineFactory(func(string, string) (*Engine, bool) { return markerEngine("ROUTED"), true })},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := append(append([]SubagentOption{}, base...), tc.opt)
+			tl := NewSubagentTool(markerEngine("DEFAULT"), opts...).(*SubagentTool)
+			_, model, reason := tl.maybeRouteModel(context.Background(), subagentArgs{Prompt: "x", Agent: "reviewer"}, false, true, parentCaps{routeTask: route})
+			if model != "" || reason != session.RoutingReasonRouterDisabled {
+				t.Fatalf("routing = (model=%q reason=%q), want disabled", model, reason)
+			}
+		})
+	}
+	if calls != 0 {
+		t.Fatalf("incomplete writable named factory sets consulted classifier %d times", calls)
+	}
+}
+
+func TestWritableRoutableAgentPreservesLimits(t *testing.T) {
+	want := session.Limits{MaxTurns: 3, MaxToolCalls: 5}
+	tl := writableRoutableAgentTool(true, true, want)
+	eng, got, _, routed, ok := tl.selectWritableSpecialistEngine("p1", "reviewer", "router-model")
+	if !ok || !routed || eng == nil || eng.Model() != "WRITABLE-AGENTMODEL:reviewer:router-model" || got != want {
+		t.Fatalf("selection = (engine=%v limits=%+v routed=%v ok=%v), want routed engine and limits %+v", eng, got, routed, ok, want)
+	}
+}
+
+func TestWritableNamedRoutingPrecedenceBypassesClassifier(t *testing.T) {
+	var calls int
+	route := hitRoute(&calls, "router-model")
+	tl := writableRoutableAgentTool(true, true, session.Limits{})
+	tl.pinnedAgents = map[string]struct{}{"reviewer": {}}
+	cases := []struct {
+		name     string
+		args     subagentArgs
+		resuming bool
+		want     string
+	}{
+		{"pinned def", subagentArgs{Prompt: "x", Agent: "reviewer"}, false, session.RoutingReasonAgentDefPinned},
+		{"explicit model", subagentArgs{Prompt: "x", Agent: "reviewer", Model: "explicit"}, false, session.RoutingReasonPinnedModel},
+		{"fork", subagentArgs{Prompt: "x", Agent: "reviewer", Fork: true}, false, session.RoutingReasonFork},
+		{"resume", subagentArgs{Prompt: "x", Agent: "reviewer", Resume: "subagent-p1"}, true, session.RoutingReasonResume},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, model, reason := tl.maybeRouteModel(context.Background(), tc.args, tc.resuming, true, parentCaps{routeTask: route})
+			if model != "" || reason != tc.want {
+				t.Fatalf("routing = (model=%q reason=%q), want empty model and %q", model, reason, tc.want)
+			}
+		})
+	}
+	if calls != 0 {
+		t.Fatalf("higher-precedence choices consulted classifier %d times", calls)
+	}
+}
+
 func startReason(p *session.SubagentPayload) string {
 	if p == nil {
 		return ""

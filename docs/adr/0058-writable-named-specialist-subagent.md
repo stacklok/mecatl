@@ -4,7 +4,7 @@
 - Date: 2026-06-29
 - Scope: `engine/agent` (the Subagent tool's `validateMode` / `selectChildEngine` / `resolveEngineAndLimits` / `MutatesParent` + the new `WithAgentWritableEngineFactory` Option and `selectWritableSpecialistEngine` helper), `internal/app` (`buildAgentWritableEngineFactory`, the `allowMutating` plumb in `buildAgentDefEngine`)
 - Supersedes: the named-specialists-run-read-only v1 scope restriction shipped alongside ADR 0077's direct-write explorer (lived in `validateMode`, not 0077's prose) — NOT 0077's direct-write mechanics, the `parentMutatingCaller` dispatch-serial seam, or the `isolated:false` posture, all of which are REUSED
-- Superseded by: none
+- Superseded by: [ADR 0242](./0242-route-unpinned-writable-named-specialists.md) — ONLY the fixed-model selection for an unpinned writable named specialist; direct-write execution, scoped writable catalog, and mutate-serial posture remain authoritative
 
 ## Context
 

@@ -93,7 +93,14 @@ prefix the feature relies on) and SAME-PROVIDER only (mutually exclusive with
 the REAL parent workspace with Edit/Write — NO fork, NO copy, NO merge-back. Its
 Edit/Write/Bash mutate the real tree IN PLACE, exactly as the main agent does, and
 git is the rollback layer — the "delegate one task and land its edits" path
-(default-wired, no flag; rejected with `background`, with `agent`+`model` together (v1 scope limit), and under the no-FS profile; `read-write`+`agent` alone runs the named specialist WRITABLE (its scoped catalog + Edit/Write via the MAIN runner, direct-write — ADR 0058) when the deployment wires the writable-specialist factory). The result text honestly notes the edits landed directly (review with `git
+(default-wired, no flag; rejected with `background`, with explicit `agent`+`model` together
+(v1 scope limit), and under the no-FS profile; `read-write`+`agent` alone runs the named
+specialist WRITABLE when the deployment wires the writable-specialist factory). An unpinned,
+same-provider named specialist is eligible for semantic routing: the routed engine preserves
+its scoped catalog/prompt/skills, Edit/Write authority, MAIN runner, and per-definition limits.
+Pinned definitions, `fork`, and `resume` bypass routing; inline MCP remains unsupported on
+this per-call writable path, and an unavailable routed target falls back to the ordinary
+writable specialist with truthful routing metadata (ADR 0242). The result text honestly notes the edits landed directly (review with `git
 diff`/`git status`); a crashed/cancelled child can leave PARTIAL edits behind
 (recoverable via git — the accepted direct-write trade-off). When
 neither `agent` nor `model` pins one, a def-less child runs on the global
@@ -153,10 +160,14 @@ security boundary:
   **Edit/Write**, over the REAL parent workspace + the MAIN session's command runner
   `buildCommandRunner` — main-session parity, NO fork — ADR 0077); it is NOT isolated
   (`isolated:false`, so the A2 isolation auto-approve does not apply to its Bash) and
-  git is the rollback. A `read-write`+`agent` call instead routes through
-  `agentWritableFactory` (`buildAgentWritableEngineFactory`): the specialist's scoped
-  engine rebuilt with `allowMutating=true` over the MAIN runner — same direct-write
-  posture, but the specialist's prompt/skills/catalog (ADR 0058). Per-def Subagent engines keep Bash via `scopedToolNamesMode`'s
+  git is the rollback. A `read-write`+`agent` call routes through
+  `agentWritableFactory` (`buildAgentWritableEngineFactory`) on the definition's resolved
+  model, or—when the definition is unpinned and same-provider—through
+  `agentWritableModelFactory` (the routed half of `buildAgentWritableEngineFactories`) on the semantic
+  router's pick. Both rebuild the specialist with `allowMutating=true` over the MAIN runner,
+  preserving its prompt/skills/catalog and per-def limits (ADR 0058/0239). A routed factory
+  decline falls back to the ordinary writable specialist and reports the unavailable target
+  rather than claiming the routed model ran. Per-def Subagent engines keep Bash via `scopedToolNamesMode`'s
   `allowShell` and share the one read-only `SubagentTool` forker. With no runner
   (`--no-bash`) the child is a Bash-less read-only explorer and no forker is wired — the
   original behaviour. The policy is **allow-all** so the child never prompts a human

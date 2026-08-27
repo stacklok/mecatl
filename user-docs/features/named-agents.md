@@ -141,10 +141,18 @@ resume when child persistence is configured. A named specialist is still a
 child run: its workspace, shell, limits, and mutability follow the selected
 mode and deployment posture.
 
-A per-call `model` override can rebuild a named specialist on another model when
+A per-call `model` override can rebuild a named read-only specialist on another model when
 the deployment supports the agent model factory. A named `agent` and `model`
 combination is a scoped specialist override, not a change to the parent's
 session model.
+
+For a `mode: "read-write"` named specialist, omit the call's `model`. If the definition also
+omits its frontmatter `model:`, an enabled semantic router may choose the model while retaining
+the specialist's scoped tools and instructions and its direct-write access to the parent
+workspace. Set `model: inherit` (or another definition model) to pin it and bypass routing.
+An unavailable routed target falls back to the specialist's ordinary resolved model; a
+definition that switches provider or uses inline MCP is not eligible for this routed writable
+path. Explicit `read-write` + `agent` + `model` remains invalid.
 
 ### Use in a team
 

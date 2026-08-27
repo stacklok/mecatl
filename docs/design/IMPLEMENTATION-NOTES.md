@@ -775,14 +775,25 @@ explorer set; the override runs on the def's resolved provider (cross-provider o
 stays out of scope), the model taken verbatim (no alias resolution — parity with the model-only path's opaque-string posture);
 the pre-built `agentEngines` map is never mutated (fresh engine per call); per-def limits still bind. A def with INLINE MCP
 servers is declined on the agent+model path (v1 scope limit — the inline manager's live session has no process-lifetime owner
-on a per-call engine); reference-only MCP is supported (borrows `mainMgr`). `read-write`+`agent` is SUPPORTED via `WithAgentWritableEngineFactory` (`buildAgentWritableEngineFactory`): the named specialist's scoped engine is rebuilt WRITABLE (allowMutating=true, Edit/Write survive) on the def's resolved provider/model, using the MAIN command runner (direct-write parity, ADR 0077/0058); the factory returns (nil,false) for an unknown agent or an inline-MCP def (v1 scope limit); reference-only MCP is supported. `read-write`+`agent`+`model` stays REJECTED (v1 scope limit — a writable specialist runs on its own resolved model). Reasoning-effort stays an
+on a per-call engine); reference-only MCP is supported (borrows `mainMgr`). `read-write`+`agent` is SUPPORTED through two
+composition closures. `WithAgentWritableEngineFactory` (`internal/app/build.go` (`buildAgentWritableEngineFactory`)) rebuilds
+the named specialist WRITABLE (`allowMutating=true`, Edit/Write survive) on the def's resolved provider/model, using the MAIN
+command runner (direct-write parity, ADR 0077/0058). For an unpinned, same-provider def, the semantic router may instead select
+a model and `WithAgentWritableModelEngineFactory` (the routed closure from `internal/app/build.go`
+(`buildAgentWritableEngineFactories`)) rebuilds
+the SAME writable specialist scope on that routed model (ADR 0242). Both preserve per-def limits; a routed decline falls back
+to the ordinary writable specialist and is reconciled as `route-target-unavailable`. Unknown agents and inline-MCP defs remain
+unsupported; reference-only MCP remains supported. Explicit `read-write`+`agent`+`model` stays REJECTED — a router-selected
+model is an internal routing decision, not an explicit all-three call. Reasoning-effort stays an
 adapter-construction Option (the factory owns adapter construction), never a `subagentArgs`/`port.LLMRequest` field. Guards:
 `agent.TestSubagentPerCallModelRoutesToFactory`, `agent.TestSubagentPerCallModelUnknownErrors`,
 `agent.TestSubagentAgentAndModelTogetherSupported`, `agent.TestSubagentAgentPlusModelRunsScopedChildOnOverrideModel`,
 `agent.TestSubagentAgentPlusModelPerDefLimitsBind`, `app.TestBuildAgentModelEngineFactoryRebuildsDefScopeOnOverrideModel`,
 `app.TestBuildAgentModelEngineFactoryDeclinesInlineMCP`, `app.TestBuildSubagentEngineFactoryReDerivesForOverrideModel`,
 `agent.TestSubagentWritableAgentRoutesToFactoryEngine`, `agent.TestSubagentWritableAgentPerDefLimitsBind`,
-`app.TestBuildAgentWritableEngineFactoryRebuildsDefScopeWritable`, `app.TestBuildAgentWritableEngineFactoryDeclinesInlineMCP`.
+`app.TestBuildAgentWritableEngineFactoryRebuildsDefScopeWritable`, `app.TestBuildAgentWritableEngineFactoryDeclinesInlineMCP`,
+`agent.TestRunWritableRoutableAgentRoutesViaFactory`, `agent.TestRunWritableRoutableAgentUnavailableTargetFallsBack`,
+`app.TestWritableRoutableDefFullBuildE2E`.
 
 **Def-less child default model (`Config.SubagentModel` everywhere — issue #35).** `SubagentModel`
 (`--subagent-model`, mecated AND mecatui) used to reach only the def-RESOLVED child paths
@@ -1054,7 +1065,7 @@ a def that expressed NO model intent (`TrimSpace(def.Model)==""`) is eligible fo
 non-empty `def.Model` (`inherit`/alias/concrete/unknown) PINS it (explicit `inherit` is the opt-out).
 Composition computes the set via `routableAgentNames` (`internal/app/agentdefs.go`) — a def is
 included iff unpinned AND `!providerSwitchesAway` (routed ids are parent-provider ids) AND
-`!defHasInlineMCP` (the agent+model factory declines inline-MCP defs) — sorted, SIDE-EFFECT-FREE
+`defInlineMCPServer` reports no inline server (the agent+model factory declines inline-MCP defs) — sorted, SIDE-EFFECT-FREE
 (the per-def WARNs are the real engine build's job), wired via `agent.WithRoutableAgents`.
 Composition separately wires `pinnedAgentNames` through `agent.WithPinnedAgents`; this
 narrower set contains ONLY defs with non-empty `model:` and prevents provider-switched or
@@ -1075,11 +1086,18 @@ WRITABLE parity (issue #285): a `mode:"read-write"` explorer (no `agent`) honour
 writable arm returns BEFORE the read-only `model`/router arms (the pre-#285 bug: the
 unconditional writable clobber in `resolveEngineAndLimits` discarded a read-only per-model
 engine and ran the DEFAULT writable model), so `resolveEngineAndLimits` now only swaps for a
-writable RESUME. `validateMode` rejects `read-write`+`model` with no writable factory (a LOUD
-error, never a silent inherit), and `maybeRouteModel` is now a METHOD gated on `!writable ||
-writableEngineFactory != nil` so a writable delegation whose routed pick would be discarded
-(factory unwired) never spends the classifier. `read-write`+`agent` (a writable specialist) and
-`read-write`+`resume` keep their own engines, unchanged. `EvSubagentStart` carries `RoutedCategory`/`RoutedModel` (bare
+writable RESUME. `validateMode` rejects explicit `read-write`+`model` with no writable factory (a LOUD
+error, never a silent inherit), and `maybeRouteModel` requires a factory set able to consume
+the selected shape, so a delegation whose routed pick would be discarded never spends the
+classifier. For a writable named specialist this means BOTH
+`WithAgentWritableEngineFactory` (the truthful fallback) and
+`WithAgentWritableModelEngineFactory` (the routed-model rebuild) must be wired. A hit rebuilds
+the same specialist scope with mutating tools and the MAIN runner on the routed same-provider
+model; per-def limits still bind. A routed decline falls back to the ordinary writable
+specialist, and `reconcileRoutedModel` clears the hit fields and reports
+`route-target-unavailable`. Explicit `read-write`+`agent`+`model`, `fork`, `resume`, pinned
+definitions, provider-switched definitions, and inline-MCP definitions bypass this path.
+`EvSubagentStart` carries `RoutedCategory`/`RoutedModel` (bare
 metadata: a category label + a model id, gauntlet-#7 safe), surfaced end-to-end —
 the session struct + a per-classification INFO + the proto/client wire
 (`routed_category`/`routed_model` on the `Subagent` event payload, relayed through
@@ -1105,8 +1123,10 @@ the explicit CHOICE gates (resume / fork / per-call `model` / agent-def pin) BEF
 the router-absent gate, so a pinned delegation is never mislabeled `router-disabled`
 when no router is wired; only names in `t.pinnedAgents` report
 `agent-def-pinned-model`. A def excluded for a provider switch or inline MCP, and a
-ROUTABLE def that still cannot be routed (writable, or the agent+model factory unwired),
-report `router-disabled`. If classification hits but the selected factory declines,
+ROUTABLE def whose applicable model factory is incomplete, report `router-disabled`. Writable
+named routing requires both the ordinary writable-specialist factory and its routed-model
+sibling: the first is the fail-soft fallback, so classifying without it could not preserve the
+specialist/direct-write contract. If classification hits but the selected factory declines,
 `reconcileRoutedModel` clears the routed fields and reports `route-target-unavailable`,
 so the start event names the fallback engine rather than a model that never ran. Every emit site
 projects via `routingReasonPayload` (whitespace-collapse + 200-rune cap, mirroring

@@ -43,7 +43,7 @@ Every Subagent result carries an `agentId: <id>` trailer, whatever the outcome (
 
 Set `mode: "read-write"` and the subagent gets `Edit`/`Write` and works **directly against your real workspace** — no fork, no copy, no merge step. Its changes land immediately, exactly as if you'd made them yourself. There's no isolation here: a crash or a bad edit can leave partial changes behind, the same risk as an interrupted edit of your own. Your git history is the safety net (`git diff` / `git checkout` / `git stash`).
 
-Because it mutates your workspace directly, a `read-write` call always runs serially. It never overlaps your other tool calls, even though the same `Subagent` tool is otherwise read-parallel. `read-write` composes with `fork`, `resume`, and `output_schema`; it's mutually exclusive with `background` and with `agent`+`model` together (a writable named specialist runs on its own resolved model instead).
+Because it mutates your workspace directly, a `read-write` call always runs serially. It never overlaps your other tool calls, even though the same `Subagent` tool is otherwise read-parallel. `read-write` composes with `fork`, `resume`, and `output_schema`; it's mutually exclusive with `background` and with an explicit `agent`+`model` pair. A named specialist with no definition `model:` can still be selected by the semantic router: the router's model choice preserves the specialist's direct-write tools and instructions. This is not an explicit all-three call. Pinned definitions, `fork`, and `resume` bypass routing; inline-MCP definitions remain unsupported on the writable routed path.
 
 ### Background subagents
 
@@ -118,7 +118,7 @@ models:
         model: big
 ```
 
-**It only fills a gap — it never overrides pinned intent.** It's consulted last, after everything that could already decide the model on its own: your own per-call `model`, a named specialist agent definition that already has its own `model:` set, or `fork`/`resume` (which already run on a fixed engine). Once none of those apply, it can route a plain Subagent call, an undefined team member, or a Parallel branch — never the Parallel **judge**, which always stays on your session's own model, since it's comparing your branches rather than doing delegated work itself.
+**It only fills a gap — it never overrides pinned intent.** It's consulted last, after everything that could already decide the model on its own: your own per-call `model`, a named specialist agent definition that already has its own `model:` set, or `fork`/`resume` (which already run on a fixed engine). Once none of those apply, it can route a plain or `mode: "read-write"` Subagent, including a named specialist whose definition has no `model:`, an undefined team member, or a Parallel branch — never the Parallel **judge**, which always stays on your session's own model, since it's comparing your branches rather than doing delegated work itself.
 
 :::note[The one gotcha: `model: inherit` is not the same as no `model:` key]
 
@@ -126,7 +126,12 @@ If a named specialist agent definition has no `model:` key at all, it's eligible
 
 :::
 
-**It never blocks a delegation.** A classifier failure, a hallucinated category, or an unresolvable target model all fail the same way: the delegation just runs on the model it would have used anyway. A run-scoped breaker gives up on the classifier for the rest of that run after 3 consecutive misses (a hit resets the count), rather than keep paying for a classifier call that keeps failing.
+**It never blocks a delegation.** A classifier failure or hallucinated category falls back to
+the engine the delegation would otherwise use. If the selected routed model cannot be built,
+the ordinary model still runs and `routing_reason` reports `route-target-unavailable`; for a
+writable named specialist this fallback keeps its scoped direct-write engine. A run-scoped
+breaker gives up on the classifier for the rest of that run after 3 consecutive misses (a hit
+resets the count), rather than keep paying for a classifier call that keeps failing.
 
 **You can see *why* a delegation wasn't routed.** Every delegation-start event carries a short `routing_reason`: empty when the router picked and successfully built a model, otherwise a plain label like `router-disabled`, `pinned-model`, `agent-def-pinned-model`, `route-target-unavailable`, `resume`, `fork`, or `breaker-open`. mecatui shows it on the delegation's model line as ` · not routed: <reason>`, so you can tell "the router is off" apart from "this agent pinned its own model" apart from "the classifier kept failing" or "the selected target was unavailable" at a glance.
 

@@ -173,18 +173,26 @@ models:
   `inherit`) > fork/resume > **router** > `--subagent-model` default > session model.
 - **Per-category `model`** is an alias / slot / concrete id, resolved through the same
   alias map (operator targets are **uncapped** — the operator is authoritative).
-- **Unpinned agent-defs route too** (issue #286): a delegation to a named `agent` that
-  declared **no `model:`** is classified and its scoped engine rebuilt on the routed model.
+- **Unpinned agent-defs route too** (issue #286, writable parity issue #517): a delegation
+  to a named `agent` that declared **no `model:`** is classified and its scoped engine rebuilt
+  on the routed model in either read-only or `mode:"read-write"`. The writable form remains
+  direct-write and preserves the specialist's tools, prompt, provider, and per-def limits.
   To keep a def on a fixed model — i.e. to opt it OUT of routing — set its `model:`
   explicitly; **`model: inherit`** pins it to the session model without routing. (A def that
-  switches `provider:` or declares inline MCP servers is never routed.)
-- **Writable delegations route too** (issue #285): a `mode:"read-write"` explorer picks its
-  model from the same taxonomy, running the WRITABLE engine on the routed model (direct-write
-  against your workspace). A writable specialist (`agent`) or a `resume` keeps its own model.
-- **Fail-soft + breaker**: any classifier failure, an unknown/hallucinated category, or
-  an unresolvable target → the inherited default model; a per-run breaker (3 consecutive
-  misses) skips the classifier for the rest of the run. **OFF (no taxonomy, or the
-  kill-switch) is byte-identical** to no router.
+  switches `provider:` or declares inline MCP servers is never routed.) An unavailable
+  writable routed target falls back to the ordinary writable specialist and reports
+  `route-target-unavailable`.
+- **Writable delegations route too** (issues #285 and #517): a `mode:"read-write"` explorer
+  or unpinned named specialist picks its model from the same taxonomy, running the WRITABLE
+  engine on the routed model directly against your workspace. An explicit
+  `read-write`+`agent`+`model` call remains invalid; that explicit override is not the same as
+  the router selecting a model. A pinned specialist or a `resume` keeps its own model.
+- **Fail-soft + breaker**: any classifier failure or unknown/hallucinated category keeps the
+  engine that the delegation would otherwise use: a named delegation keeps its ordinary
+  specialist (read-only or writable), while an anonymous/default delegation keeps its inherited
+  explorer engine. An unresolvable routed target falls back on the same shape and reports
+  `route-target-unavailable`. A per-run breaker (3 consecutive misses) skips the classifier for
+  the rest of the run. **OFF (no taxonomy, or the kill-switch) is byte-identical** to no router.
 - It runs in **both** interactive and headless deployments, and the gRPC `RunTeam`-direct
   path is excluded (zero-caps). See [ADR 0031](../adr/0031-subagent-model-router.md) (the
   router) and [ADR 0042](../adr/0042-taxonomy-gated-model-router.md) (the taxonomy-gated

@@ -6553,16 +6553,17 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// does not falsely call every ineligible def model-pinned (provider-switched and
 	// inline-MCP defs are also unroutable, but expressed no model intent).
 	opts = append(opts, agent.WithPinnedAgents(pinnedAgentNames(reg)))
-	// WRITABLE named specialist (mode:"read-write"+`agent`, ADR 0058): a factory that
-	// REBUILDS the named specialist's scoped engine with allowMutating=true on the def's
-	// resolved model, using the MAIN session's command runner (direct-write parity, ADR
-	// 0041 — no fork, no merge-back). The closure hands engine/agent only
-	// func(string)(*Engine,bool); the registry never crosses (same shape/spirit as
-	// WithAgentEngines). A def with inline MCP servers is a v1 scope limit (the factory
-	// declines; selectChildEngine surfaces the error). Skipped under no-FS
-	// (buildNoFSSubagentTool wires no writable path).
-	opts = append(opts, agent.WithAgentWritableEngineFactory(
-		buildAgentWritableEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, mainMgr)))
+	// WRITABLE named specialist (mode:"read-write"+`agent`, ADR 0058): factories that
+	// REBUILD the named specialist's scoped engine with allowMutating=true, using the MAIN
+	// session's command runner (direct-write parity, ADR 0041 — no fork/merge-back). The
+	// routed sibling keeps the def scope but replaces an unpinned same-provider def's model
+	// with the router-selected bare model. Both are skipped under no-FS.
+	writableAgentFactory, writableAgentModelFactory := buildAgentWritableEngineFactories(
+		ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, mainMgr)
+	opts = append(opts,
+		agent.WithAgentWritableEngineFactory(writableAgentFactory),
+		agent.WithAgentWritableModelEngineFactory(writableAgentModelFactory),
+	)
 	// WRITABLE subagent (mode:"read-write", ADR 0041): a child engine whose catalog
 	// adds Edit/Write over the read-only explorer surface and runs DIRECTLY against
 	// the PARENT workspace — no fork, no copy, no merge-back. Its Edit/Write/Bash
@@ -6727,12 +6728,10 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 		}
 		// Risk-1 (Option B): inline MCP servers are a v1 scope limit on the agent+model
 		// path. The factory declines; selectChildEngine surfaces the model-addressable error.
-		for _, entry := range def.MCPServers {
-			if !entry.IsReference() {
-				cfg.diag().Log(ctx, port.LevelInfo, "agent+model override declined: def has inline MCP servers (v1 scope limit)",
-					"agent", def.Name, "model", model, "server", entry.Name)
-				return nil, false
-			}
+		if inline, found := defInlineMCPServer(def); found {
+			cfg.diag().Log(ctx, port.LevelInfo, "agent+model override declined: def has inline MCP servers (v1 scope limit)",
+				"agent", def.Name, "model", model, "server", inline.Name)
+			return nil, false
 		}
 		// Provider selection via the REAL def (def.Provider pinned-and-known → that provider;
 		// else parent). The override model is set VERBATIM (no alias resolution — parity with
@@ -6765,42 +6764,16 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 	}
 }
 
-// buildAgentWritableEngineFactory returns the per-call writable-specialist factory the
-// Subagent tool invokes when a call sets mode:"read-write"+`agent` (ADR 0058). Given an
-// agent name it REBUILDS the named specialist's scoped engine (catalog/prompt/hooks/
-// memory) with allowMutating=true on the def's resolved provider/model — the SAME
-// buildAgentDefEngine step the startup path uses — so the writable specialist keeps the
-// specialist's tools/playbook (NOT the generic explorer set), while Edit/Write/Bash
-// SURVIVE scoping (allowMutating=true keeps them over the real workspace) and run on the
-// MAIN session's command runner (buildCommandRunner — direct-write parity, ADR 0041: no
-// fork, no copy, no merge-back; the child's edits land in the real parent tree in place).
-// The pre-built agentEngines map is NEVER mutated (a fresh engine is minted per call).
-//
-// It mirrors buildAgentModelEngineFactory with two differences: allowMutating=true (so
-// Edit/Write survive scoping) and the MAIN runner (buildCommandRunner) instead of the
-// sandboxed subagent runner (a writable specialist mutates the real tree at main-session
-// parity, so its Bash resolves exactly as the main session's does under the operator's
-// posture/policy). NO per-call model override is applied (validateMode rejects
-// read-write+agent+model before this factory is consulted — a writable specialist runs on
-// its own resolved model); the def's resolved provider/model are used verbatim.
-//
-// INLINE MCP v1 LIMIT (same as buildAgentModelEngineFactory): a def with INLINE MCP
-// servers (any entry where !IsReference()) is unsupported on the writable-specialist
-// path. The inline managers' live sessions must outlive a per-call engine, but the
-// per-call factory has no process-lifetime owner for a freshly-built manager. The factory
-// returns (nil, false) and selectChildEngine surfaces the model-addressable error.
-// REFERENCE-only MCP servers ARE supported (they borrow the process-lifetime mainMgr).
-//
-// The returned inline-MCP close func (from buildAgentDefEngine) is invoked immediately
-// (safe close) — a reference-only def borrows mainMgr (closing is a no-op), and an inline
-// def was already rejected above, so the close func is always nil by the time it could
-// matter. mainRunner is captured ONCE outside the closure (the MAIN session's command
-// runner — buildCommandRunner) so every writable-specialist engine shares the one runner
-// the main session uses.
-func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(agentName string) (*agent.Engine, bool) {
+// buildAgentWritableEngineFactories returns the ordinary and routed-model factories for
+// writable named specialists. Both share one MAIN-bound runner and one construction path,
+// so routing can change only the model tuple: the def prompt, scoped mutating catalog,
+// preloaded skills, hooks, memory head, reference MCP tools, and direct-write semantics
+// remain identical. Inline MCP defs decline before buildAgentDefEngine can open resources.
+func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) (func(string) (*agent.Engine, bool), func(string, string) (*agent.Engine, bool)) {
 	mainRunner := buildCommandRunner(cfg)
-	return func(agentName string) (*agent.Engine, bool) {
+	build := func(agentName, routedModel string) (*agent.Engine, bool) {
 		agentName = strings.TrimSpace(agentName)
+		routedModel = strings.TrimSpace(routedModel)
 		if reg == nil || agentName == "" {
 			return nil, false
 		}
@@ -6808,39 +6781,59 @@ func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *p
 		if !ok {
 			return nil, false
 		}
-		// Inline MCP servers are a v1 scope limit on the writable-specialist path (same
-		// rationale as the agent+model path). The factory declines; selectChildEngine
-		// surfaces the model-addressable error.
-		for _, entry := range def.MCPServers {
-			if !entry.IsReference() {
-				cfg.diag().Log(ctx, port.LevelInfo, "writable-specialist override declined: def has inline MCP servers (v1 scope limit)",
-					"agent", def.Name, "server", entry.Name)
+		if inline, found := defInlineMCPServer(def); found {
+			cfg.diag().Log(ctx, port.LevelInfo, "writable-specialist override declined: def has inline MCP servers (v1 scope limit)",
+				"agent", def.Name, "server", inline.Name)
+			return nil, false
+		}
+
+		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
+		role := "task:" + def.Name + ":writable"
+		if routedModel != "" {
+			// A routed model is a bare id in the parent/session provider's namespace. The
+			// public router gate already excludes pinned and provider-switched defs; repeat
+			// those checks here so a future direct caller cannot cross providers or override
+			// expressed model intent. Unknown providers preserve resolveProviderModel's
+			// established loud fallback to the parent and are therefore still routable.
+			if strings.TrimSpace(def.Model) != "" || pid != parentProviderID {
 				return nil, false
 			}
+			childProvider = provider
+			pid = parentProviderID
+			model = routedModel
+			windowFn = childWindowFor(cfg, provReg, parentProviderID, model)
+			role += ":model=" + model
 		}
-		// Resolve the def's (provider, model, window) — the writable specialist runs on the
-		// DEF's resolved provider/model (NO per-call model override; validateMode rejected
-		// read-write+agent+model first). childProvider is the def's resolved provider entry
-		// (or the parent's when the def pins none/unknown).
-		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
 
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable", reg.Detail(def.Name), childProvider, model, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, role, reg.Detail(def.Name), childProvider, model, windowFn,
 			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil /*allowShell*/, skillIdx, defaultHooks, mainRunner, mainMgr)
-		// The def has no inline servers (rejected above), so mcpClose is nil; call it
-		// defensively in case a future reference-only path ever returns one (a reference
-		// borrows mainMgr, so closing is a no-op). Never closes mainMgr.
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
 				cfg.diag().Log(ctx, port.LevelWarn, "writable-specialist engine inline MCP close",
-					"agent", def.Name, "err", err)
+					"agent", def.Name, "model", model, "err", err)
 			}
 		}
-
 		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt writable",
 			"agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model,
 			"preloaded_skills", skillCount, "source", reg.Detail(def.Name))
 		return eng, true
 	}
+	return func(agentName string) (*agent.Engine, bool) {
+			return build(agentName, "")
+		}, func(agentName, model string) (*agent.Engine, bool) {
+			if strings.TrimSpace(model) == "" {
+				return nil, false
+			}
+			return build(agentName, model)
+		}
+}
+
+// buildAgentWritableEngineFactory is the ordinary writable-specialist half retained for
+// direct composition tests and callers. buildSubagentTool obtains both halves together so
+// they share the same MAIN-bound runner.
+func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(agentName string) (*agent.Engine, bool) {
+	ordinary, _ := buildAgentWritableEngineFactories(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, defaultHooks, mainMgr)
+	return ordinary
 }
 
 // buildTeamWiring constructs the agent-team dependencies — the unified per-member

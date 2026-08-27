@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,93 @@ func TestADR_0233_AuthorityEvaluator_Scenario4_ChildGetsIntersectionOnEverySeam(
 	assertDerivedAuthority(t, sup.members["member"].sess, parent, []string{})
 }
 
+func TestManagedSpecialistAuthorityCeilingIsModeSpecific(t *testing.T) {
+	store := memstore.New()
+	readOnlyEngine := NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("read done")), Catalog: tool.NewCatalog()})
+	writableEngine := NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("write done")), Catalog: tool.NewCatalog()})
+	subagent := NewSubagentTool(readOnlyEngine,
+		WithSubagentStore(store),
+		WithAgentEngines(map[string]*Engine{"managed": readOnlyEngine}, []AgentMeta{{
+			Name: "managed", Managed: true,
+			AuthorityCeiling:         governance.CapabilitySet{Tools: []string{"Read"}, RemainingDelegationDepth: 9, FileSystem: true},
+			WritableAuthorityCeiling: governance.CapabilitySet{Tools: []string{"Read", "Write"}, RemainingDelegationDepth: 9, FileSystem: true, DirectWrite: true},
+		}}),
+		WithAgentWritableEngineFactory(func(string) (*Engine, bool) { return writableEngine, true }),
+	).(*SubagentTool)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent"}, memfs.NewWorkspace("/ws"), nil)
+	caps := parentCaps{authority: authorityParent(), authorityBound: true, parentSessionID: "parent"}
+
+	for _, tc := range []struct {
+		id       session.ToolCallID
+		args     string
+		writable bool
+	}{
+		{id: "read", args: `{"prompt":"inspect","agent":" managed "}`},
+		{id: "write", args: `{"prompt":"change","agent":"managed","mode":"read-write"}`, writable: true},
+	} {
+		if result, err := subagent.ExecuteWithParent(context.Background(), session.ToolCall{ID: tc.id, Name: subagentToolName, Args: []byte(tc.args)}, env, nil, caps); err != nil || result.IsError {
+			t.Fatalf("ExecuteWithParent(%s) = (%+v, %v)", tc.id, result, err)
+		}
+		child, err := store.Load(context.Background(), session.SessionID("subagent-parent-"+string(tc.id)))
+		if err != nil {
+			t.Fatalf("load %s: %v", tc.id, err)
+		}
+		authority, bound := child.BoundAuthority()
+		if !bound || authority.CapabilitySet.DirectWrite != tc.writable || !authority.CapabilitySet.AllowsTool("Read") || authority.CapabilitySet.AllowsTool("mcp__github__issues") {
+			t.Fatalf("%s authority = %+v, bound=%t", tc.id, authority, bound)
+		}
+		if authority.CapabilitySet.AllowsTool("Write") != tc.writable {
+			t.Fatalf("%s Write authority = %t, want %t", tc.id, authority.CapabilitySet.AllowsTool("Write"), tc.writable)
+		}
+		if authority.DefinitionIdentity != "explicit:managed" {
+			t.Fatalf("%s definition identity = %q, want canonical managed identity", tc.id, authority.DefinitionIdentity)
+		}
+	}
+}
+
+func TestWritableResumeRefusesPersistedReadOnlyAuthorityBeforeDrive(t *testing.T) {
+	store := memstore.New()
+	seed := session.New("subagent-old", session.ModeDefault, "/discarded-worktree", session.Limits{}, time.Now())
+	if err := seed.BindAuthority(session.Authority{
+		CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}, FileSystem: true},
+		Provenance:    "delegated", DefinitionIdentity: "explicit:managed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.RecordAssistant(session.NewAssistantMessage("done", "", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Complete(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), seed); err != nil {
+		t.Fatal(err)
+	}
+
+	writableLLM := mockllm.New(mockllm.TextTurn("must not run"))
+	subagent := NewSubagentTool(NewEngine(Deps{Catalog: tool.NewCatalog()}),
+		WithSubagentStore(store),
+		WithWritableChildEngine(NewEngine(Deps{LLM: writableLLM, Catalog: tool.NewCatalog()})),
+	).(*SubagentTool)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent"}, memfs.NewWorkspace("/ws"), nil)
+	result, err := subagent.ExecuteWithParent(context.Background(), session.ToolCall{
+		ID: "resume", Name: subagentToolName,
+		Args: []byte(`{"prompt":"now edit","resume":"subagent-old","mode":"read-write"}`),
+	}, env, nil, parentCaps{authority: authorityParent(), authorityBound: true, parentSessionID: "parent"})
+	if err != nil {
+		t.Fatalf("ExecuteWithParent: %v", err)
+	}
+	if !result.IsError || !strings.Contains(result.Content, "persisted child authority does not permit direct write") {
+		t.Fatalf("resume result = %+v", result)
+	}
+	if writableLLM.Calls() != 0 {
+		t.Fatalf("writable engine calls = %d, want 0", writableLLM.Calls())
+	}
+}
+
 func assertDerivedAuthority(t *testing.T, child *session.Session, parent session.Authority, absent []string) {
 	t.Helper()
 	got, bound := child.BoundAuthority()
@@ -93,15 +181,21 @@ func (f *authorityCountingForker) Fork(_ context.Context, base tool.Environment,
 func TestADR_0233_AuthorityEvaluator_Scenario4_OnlyManagedTierSuppliesACeiling(t *testing.T) {
 	child := NewEngine(Deps{Catalog: tool.NewCatalog()})
 	subagent := NewSubagentTool(child, WithAgentEngines(map[string]*Engine{"managed": child, "project": child}, []AgentMeta{
-		{Name: "managed", Managed: true, AuthorityCeiling: governance.CapabilitySet{Tools: []string{"Read", "mcp__github__issues"}, RemainingDelegationDepth: 9, FileSystem: true}},
+		{Name: "managed", Managed: true,
+			AuthorityCeiling:         governance.CapabilitySet{Tools: []string{"Read", "mcp__github__issues"}, RemainingDelegationDepth: 9, FileSystem: true},
+			WritableAuthorityCeiling: governance.CapabilitySet{Tools: []string{"Read", "Write"}, RemainingDelegationDepth: 9, FileSystem: true, DirectWrite: true}},
 		{Name: "project", AuthorityCeiling: governance.CapabilitySet{Tools: []string{"Read"}, RemainingDelegationDepth: 9, FileSystem: true}},
 	})).(*SubagentTool)
-	managed, ok := subagent.agentCeiling("managed")
+	managed, ok := subagent.agentCeiling("managed", false)
 	if !ok || !managed.AllowsTool("mcp__github__issues") {
 		t.Fatalf("managed ceiling = %+v, ok=%t", managed, ok)
 	}
-	if _, ok := subagent.agentCeiling("project"); ok {
+	if _, ok := subagent.agentCeiling("project", false); ok {
 		t.Fatal("non-managed definition established a specialist ceiling")
+	}
+	writable, ok := subagent.agentCeiling("managed", true)
+	if !ok || !writable.DirectWrite || !writable.AllowsTool("Write") || writable.AllowsTool("mcp__github__issues") {
+		t.Fatalf("managed writable ceiling = %+v, ok=%t", writable, ok)
 	}
 	got, err := deriveDelegatedAuthority(authorityParent(), authorityParent().CapabilitySet, managed, nil)
 	if err != nil || got.CapabilitySet.AllowsTool("Write") || !got.CapabilitySet.AllowsTool("mcp__github__issues") {
