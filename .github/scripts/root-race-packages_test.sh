@@ -51,15 +51,18 @@ run_failure() {
 }
 
 ui='github.com/stacklok/mecatl/cmd/mecatui/ui'
-fixture=$'github.com/stacklok/mecatl/zeta\n'"$ui"$'\ngithub.com/stacklok/mecatl/alpha\n'
-run_success 'all set is sorted' all "$fixture" $'github.com/stacklok/mecatl/alpha\ngithub.com/stacklok/mecatl/cmd/mecatui/ui\ngithub.com/stacklok/mecatl/zeta'
+root_a=$'github.com/stacklok/mecatl/docs/lint\ngithub.com/stacklok/mecatl/internal/adapter/acp\ngithub.com/stacklok/mecatl/internal/adapter/grpcdriver\ngithub.com/stacklok/mecatl/internal/adapter/mcp\ngithub.com/stacklok/mecatl/internal/adapter/mcp/jq\ngithub.com/stacklok/mecatl/internal/adapter/redisstore\ngithub.com/stacklok/mecatl/internal/adapter/server\ngithub.com/stacklok/mecatl/internal/adapter/store/jsonlstore\ngithub.com/stacklok/mecatl/internal/apicheck\ngithub.com/stacklok/mecatl/internal/app'
+fixture=$'github.com/stacklok/mecatl/zeta\n'"$ui"$'\ngithub.com/stacklok/mecatl/alpha\n'"$root_a"$'\n'
+run_success 'all set is sorted' all "$fixture" $'github.com/stacklok/mecatl/alpha\ngithub.com/stacklok/mecatl/cmd/mecatui/ui\ngithub.com/stacklok/mecatl/docs/lint\ngithub.com/stacklok/mecatl/internal/adapter/acp\ngithub.com/stacklok/mecatl/internal/adapter/grpcdriver\ngithub.com/stacklok/mecatl/internal/adapter/mcp\ngithub.com/stacklok/mecatl/internal/adapter/mcp/jq\ngithub.com/stacklok/mecatl/internal/adapter/redisstore\ngithub.com/stacklok/mecatl/internal/adapter/server\ngithub.com/stacklok/mecatl/internal/adapter/store/jsonlstore\ngithub.com/stacklok/mecatl/internal/apicheck\ngithub.com/stacklok/mecatl/internal/app\ngithub.com/stacklok/mecatl/zeta'
 run_success 'UI set is exactly one package' ui "$fixture" "$ui"
-run_success 'complement excludes only exact UI package' complement "$fixture" $'github.com/stacklok/mecatl/alpha\ngithub.com/stacklok/mecatl/zeta'
+run_success 'root-a is the maintained explicit set' root-a "$fixture" "$root_a"
+run_success 'root-b automatically includes every other non-UI package' root-b "$fixture" $'github.com/stacklok/mecatl/alpha\ngithub.com/stacklok/mecatl/zeta'
 run_success 'valid partition validates silently' validate "$fixture" ''
 
-run_failure 'missing expected UI package fails loudly' $'github.com/stacklok/mecatl/alpha\n' 'expected UI package exactly once'
-run_failure 'duplicate package fails loudly' $'github.com/stacklok/mecatl/alpha\n'"$ui"$'\ngithub.com/stacklok/mecatl/alpha\n' 'duplicate package in all set'
-run_failure 'empty complement fails loudly' "$ui"$'\n' 'complement set is empty'
+run_failure 'missing expected UI package fails loudly' "$root_a"$'\ngithub.com/stacklok/mecatl/alpha\n' 'expected UI package exactly once'
+run_failure 'missing root-a package fails loudly' "$ui"$'\ngithub.com/stacklok/mecatl/alpha\n' 'root-a package is not in go list ./...'
+run_failure 'duplicate package fails loudly' "$fixture"$'github.com/stacklok/mecatl/alpha\n' 'duplicate package in all set'
+run_failure 'empty root-b fails loudly' "$ui"$'\n'"$root_a"$'\n' 'root-b set is empty'
 run_failure 'empty package listing fails loudly' '' 'returned no packages'
 
 if [[ "$fails" -ne 0 ]]; then

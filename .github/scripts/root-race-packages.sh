@@ -1,22 +1,35 @@
 #!/usr/bin/env bash
 # Produce and validate the root-module race-test package partition.
 #
-# Usage: root-race-packages.sh {all|ui|complement|validate}
-# Package discovery is always dynamic via `go list ./...`. Output modes print one
-# sorted import path per line; validate prints nothing on success.
+# Usage: root-race-packages.sh {all|ui|root-a|root-b|validate}
+# Package discovery is always dynamic via `go list ./...`. root-a is the
+# deliberately maintained expensive-package shard; root-b automatically gets
+# every other non-UI root package, including newly added packages.
 set -euo pipefail
 
 readonly ui_package='github.com/stacklok/mecatl/cmd/mecatui/ui'
+readonly -a root_a_packages=(
+  'github.com/stacklok/mecatl/docs/lint'
+  'github.com/stacklok/mecatl/internal/adapter/acp'
+  'github.com/stacklok/mecatl/internal/adapter/grpcdriver'
+  'github.com/stacklok/mecatl/internal/adapter/mcp'
+  'github.com/stacklok/mecatl/internal/adapter/mcp/jq'
+  'github.com/stacklok/mecatl/internal/adapter/server'
+  'github.com/stacklok/mecatl/internal/adapter/store/jsonlstore'
+  'github.com/stacklok/mecatl/internal/adapter/redisstore'
+  'github.com/stacklok/mecatl/internal/apicheck'
+  'github.com/stacklok/mecatl/internal/app'
+)
 
 usage() {
-  printf 'usage: %s {all|ui|complement|validate}\n' "${0##*/}" >&2
+  printf 'usage: %s {all|ui|root-a|root-b|validate}\n' "${0##*/}" >&2
   exit 2
 }
 
 [[ "$#" -eq 1 ]] || usage
 mode="$1"
 case "$mode" in
-  all|ui|complement|validate) ;;
+  all|ui|root-a|root-b|validate) ;;
   *) usage ;;
 esac
 
@@ -30,52 +43,66 @@ if [[ -z "$listed" ]]; then
 fi
 
 mapfile -t all_packages < <(printf '%s\n' "$listed" | LC_ALL=C sort)
-declare -A seen=()
-ui_count=0
+declare -A discovered=()
 for package in "${all_packages[@]}"; do
   if [[ -z "$package" ]]; then
     printf 'root race partition: go list ./... returned an empty package path\n' >&2
     exit 1
   fi
-  if [[ -n "${seen[$package]+present}" ]]; then
+  if [[ -n "${discovered[$package]+present}" ]]; then
     printf 'root race partition: duplicate package in all set: %s\n' "$package" >&2
     exit 1
   fi
-  seen["$package"]=1
-  if [[ "$package" == "$ui_package" ]]; then
-    ui_count=$((ui_count + 1))
-  fi
+  discovered["$package"]=1
 done
 
-if [[ "$ui_count" -ne 1 ]]; then
-  printf 'root race partition: expected UI package exactly once, found %d: %s\n' "$ui_count" "$ui_package" >&2
+if [[ -z "${discovered[$ui_package]+present}" ]]; then
+  printf 'root race partition: expected UI package exactly once: %s\n' "$ui_package" >&2
   exit 1
 fi
 
 ui_packages=("$ui_package")
-complement_packages=()
-for package in "${all_packages[@]}"; do
-  if [[ "$package" != "$ui_package" ]]; then
-    complement_packages+=("$package")
+declare -A root_a_seen=()
+for package in "${root_a_packages[@]}"; do
+  if [[ -n "${root_a_seen[$package]+present}" ]]; then
+    printf 'root race partition: duplicate root-a package: %s\n' "$package" >&2
+    exit 1
+  fi
+  root_a_seen["$package"]=1
+  if [[ "$package" == "$ui_package" ]]; then
+    printf 'root race partition: UI package must not be in root-a: %s\n' "$package" >&2
+    exit 1
+  fi
+  if [[ -z "${discovered[$package]+present}" ]]; then
+    printf 'root race partition: root-a package is not in go list ./...: %s\n' "$package" >&2
+    exit 1
   fi
 done
-if [[ "${#complement_packages[@]}" -eq 0 ]]; then
-  printf 'root race partition: complement set is empty\n' >&2
+
+root_b_packages=()
+for package in "${all_packages[@]}"; do
+  if [[ "$package" != "$ui_package" && -z "${root_a_seen[$package]+present}" ]]; then
+    root_b_packages+=("$package")
+  fi
+done
+if [[ "${#root_b_packages[@]}" -eq 0 ]]; then
+  printf 'root race partition: root-b set is empty\n' >&2
   exit 1
 fi
 
-# The sets are derived by exact equality above, but validate the partition
-# independently so later edits cannot silently introduce overlap or omissions.
+# Check the three sets independently so later edits cannot silently overlap or
+# omit a package. This exact union also makes newly discovered packages fail
+# validation unless they land automatically in root-b.
 declare -A union=()
-for package in "${ui_packages[@]}"; do
-  union["$package"]=1
-done
-for package in "${complement_packages[@]}"; do
-  if [[ -n "${union[$package]+present}" ]]; then
-    printf 'root race partition: UI/complement intersection at %s\n' "$package" >&2
-    exit 1
-  fi
-  union["$package"]=1
+for group in ui_packages root_a_packages root_b_packages; do
+  declare -n packages="$group"
+  for package in "${packages[@]}"; do
+    if [[ -n "${union[$package]+present}" ]]; then
+      printf 'root race partition: group intersection at %s\n' "$package" >&2
+      exit 1
+    fi
+    union["$package"]=1
+  done
 done
 mapfile -t sorted_union < <(printf '%s\n' "${!union[@]}" | LC_ALL=C sort)
 if [[ "${#sorted_union[@]}" -ne "${#all_packages[@]}" ]]; then
@@ -90,15 +117,9 @@ for i in "${!all_packages[@]}"; do
 done
 
 case "$mode" in
-  all)
-    printf '%s\n' "${all_packages[@]}"
-    ;;
-  ui)
-    printf '%s\n' "${ui_packages[@]}"
-    ;;
-  complement)
-    printf '%s\n' "${complement_packages[@]}"
-    ;;
-  validate)
-    ;;
+  all) printf '%s\n' "${all_packages[@]}" ;;
+  ui) printf '%s\n' "${ui_packages[@]}" ;;
+  root-a) printf '%s\n' "${root_a_packages[@]}" | LC_ALL=C sort ;;
+  root-b) printf '%s\n' "${root_b_packages[@]}" ;;
+  validate) ;;
 esac
