@@ -1,0 +1,11 @@
+# task deploy:check fixture: production server TLS from an operator-created
+# Secret. Helm and kubeconform validate the reference only; the Secret is not
+# rendered or looked up by the chart.
+image:
+  tag: v0.0.0
+redis:
+  endpoint: redis.example.internal:6379
+  credentialsSecret: redis-credentials
+tls:
+  enabled: true
+  secretName: mecak8s-tls

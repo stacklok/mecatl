@@ -74,8 +74,10 @@ oidc:
   caKey: ""
 
 tls:
-  # Server TLS is opt-in for general deployments. Enabling it requires an exact
-  # Secret projection for both PEM inputs; it never falls back to plaintext.
+  # Server TLS is disabled by default. To enable it, create the named Secret in
+  # this release namespace; the chart projects only certKey and keyKey read-only
+  # (0440). Those keys default to the PEM data keys tls.crt and tls.key. Both the
+  # gRPC and HTTP/SSE listeners use the pair when TLS is enabled.
   enabled: false
   secretName: ""
   certKey: tls.crt
