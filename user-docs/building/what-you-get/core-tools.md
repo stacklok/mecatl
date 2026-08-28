@@ -59,7 +59,7 @@ A session can be created with `profile: "no-fs"` — for a workspace that has no
 
 ## Memory tools
 
-Six base memory tools are registered when the two stores are configured. A lifecycle-capable store adds `InspectMemory`, `ForgetMemory`, and `UndoMemory` for project scope plus `InspectUserMemory`, `ForgetUserMemory`, and `UndoUserMemory` for user scope. Remember/Recall/Search/Inspect/Undo are **floor-scoped allows**; Forget is a **floor-scoped ask**. Forget requires an expected_version copied exactly from InspectMemory (project scope) or InspectUserMemory (user/user-model scope) — it is an opaque revision token; never guess or interpret. Every default is operator-overridable.
+Six base memory tools are registered when the two stores are configured. A lifecycle-capable store adds `InspectMemory`, `ForgetMemory`, and `UndoMemory` for project scope plus `InspectUserMemory`, `ForgetUserMemory`, and `UndoUserMemory` for user scope. Remember/Recall/Search/Inspect/Undo are **floor-scoped allows**; Forget is a **floor-scoped ask**. Forget and Undo require an expected_version copied exactly from an exact Recall result, Inspect result, or mutation receipt in the same scope. If none is available or it may be stale, use InspectMemory (project scope) or InspectUserMemory (user/user-model scope) first. The token is opaque, so never guess or interpret it. Every default is operator-overridable.
 
 | Catalog name | Scope | What it does |
 |---|---|---|

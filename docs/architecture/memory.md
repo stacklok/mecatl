@@ -83,8 +83,7 @@ already-authorized user-model surface and does not widen its callers.
 `tool.MemoryLifecycleStore` is an additive capability beside the unchanged six-method
 `tool.MemoryStore`. Revisions have opaque versions and active/superseded/deleted
 states. Remember with no expected version remains unconditional last-write-wins; a
-non-empty expected_version enables CAS (copy the opaque token verbatim from InspectMemory for project scope or InspectUserMemory for user/user-model scope; never guess or interpret); stale versions conflict. Forget appends a
-tombstone, and Undo appends compensation. The local adapter lazily materializes legacy `memory.json`
+non-empty expected_version enables CAS. Forget and Undo require it: copy the opaque current token verbatim from an exact Recall result, Inspect result, or mutation receipt in the same scope. If none is available or it may be stale, use InspectMemory for project scope or InspectUserMemory for user/user-model scope first. Never guess or interpret. Forget appends a tombstone, and Undo appends compensation. The local adapter lazily materializes legacy `memory.json`
 entries and commits current state plus history under the same flock and atomic rename
 (no sidecar transaction). Driver lifecycle RPCs are additive and advertised through
 a one-time capability negotiation bounded by a fixed five-second ceiling (shorter caller

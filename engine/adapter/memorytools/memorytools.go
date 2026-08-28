@@ -112,15 +112,15 @@ func (t rememberTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	entry := tool.MemoryEntry{Key: key, Value: args.Value, Description: args.Description}
 	attribution, _ := tool.MemoryAttributionFromContext(ctx)
 	if err := tool.ValidateMemoryContentWrite(key, args.Value, args.Description, attribution); err != nil {
-		return storeFailure(call, "remember", key, err), nil
+		return storeFailure(call, t.scope, "remember", key, err), nil
 	}
 	if t.lifecycle != nil {
 		if err := tool.ValidateMemoryEntryWrite(entry, attribution); err != nil {
-			return storeFailure(call, "remember", key, err), nil
+			return storeFailure(call, t.scope, "remember", key, err), nil
 		}
 		record, err := t.lifecycle.RememberVersioned(ctx, entry, args.ExpectedVersion)
 		if err != nil {
-			return storeFailure(call, "remember", key, err), nil
+			return storeFailure(call, t.scope, "remember", key, err), nil
 		}
 		return receipt(call, t.scope, "remembered", key, record.Current), nil
 	}
@@ -128,7 +128,7 @@ func (t rememberTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		return failure(call, `"expected_version" requires lifecycle-capable memory storage`), nil
 	}
 	if err := t.store.RememberEntry(ctx, tool.MemoryEntry{Key: key, Value: args.Value, Description: args.Description}); err != nil {
-		return storeFailure(call, "remember", key, err), nil
+		return storeFailure(call, t.scope, "remember", key, err), nil
 	}
 	return session.NewToolResult(call.ID, fmt.Sprintf("Memory scope=%s key=%q remembered.", t.scope, key)), nil
 }
@@ -163,12 +163,12 @@ func (t recallTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 	key := t.names.key(args.Key)
 	entry, found, err := t.store.Recall(ctx, key)
 	if err != nil {
-		return storeFailure(call, "recall", key, err), nil
+		return storeFailure(call, t.scope, "recall", key, err), nil
 	}
 	if found {
 		revision, inspectErr := recallRevision(ctx, t.store, entry)
 		if inspectErr != nil {
-			return storeFailure(call, "inspect", key, inspectErr), nil
+			return storeFailure(call, t.scope, "inspect", key, inspectErr), nil
 		}
 		value := memoryValue{Scope: t.scope}
 		value.from(revision)
@@ -176,7 +176,7 @@ func (t recallTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 	}
 	entries, err := t.store.List(ctx, key)
 	if err != nil {
-		return storeFailure(call, "recall", key, err), nil
+		return storeFailure(call, t.scope, "recall", key, err), nil
 	}
 	if len(entries) == 0 {
 		return session.NewToolResult(call.ID, fmt.Sprintf("No memory found in %s scope for %q.", t.scope, key)), nil
@@ -188,7 +188,7 @@ func (t recallTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 	for _, entry := range entries {
 		revision, inspectErr := recallRevision(ctx, t.store, entry)
 		if inspectErr != nil {
-			return storeFailure(call, "inspect", entry.Key, inspectErr), nil
+			return storeFailure(call, t.scope, "inspect", entry.Key, inspectErr), nil
 		}
 		value := memoryValue{Scope: t.scope}
 		value.from(revision)
@@ -276,7 +276,7 @@ func (t inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool.
 	key := t.names.key(args.Key)
 	record, found, err := t.store.Inspect(ctx, key)
 	if err != nil {
-		return storeFailure(call, "inspect", key, err), nil
+		return storeFailure(call, t.scope, "inspect", key, err), nil
 	}
 	if !found {
 		return session.NewToolResult(call.ID, fmt.Sprintf("No memory found in %s scope for %q.", t.scope, key)), nil
@@ -307,7 +307,7 @@ type forgetTool struct {
 }
 
 func (t forgetTool) Spec() tool.ToolSpec {
-	return spec(t.names.forget, fmt.Sprintf("Forget a %s-scoped memory (use InspectMemory for project scope, InspectUserMemory for user/user-model scope before calling). expected_version must be the opaque current token copied verbatim from that matching inspect result — never guess or interpret. Mutation requires approval.", t.scope), `{"type":"object","properties":{"key":{"type":"string"},"expected_version":{"type":"string","description":"Opaque revision token; must be copied verbatim from the matching InspectMemory (project) or InspectUserMemory (user/user-model) result. Never guess or interpret."}}},"required":["key","expected_version"]}`)
+	return spec(t.names.forget, fmt.Sprintf("Forget a %s-scoped memory. %s Mutation requires approval.", t.scope, mutationTokenGuidance(t.scope)), mutationSchema(t.scope))
 }
 func (forgetTool) ReadOnly() bool { return false }
 func (t forgetTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
@@ -324,7 +324,7 @@ func (t forgetTool) Execute(ctx context.Context, call session.ToolCall, _ tool.E
 	key := t.names.key(args.Key)
 	record, err := t.store.ForgetVersioned(ctx, key, args.ExpectedVersion)
 	if err != nil {
-		return storeFailure(call, "forget", key, err), nil
+		return storeFailure(call, t.scope, "forget", key, err), nil
 	}
 	return receipt(call, t.scope, "forgotten", key, record.Current), nil
 }
@@ -336,7 +336,15 @@ type undoTool struct {
 }
 
 func (t undoTool) Spec() tool.ToolSpec {
-	return spec(t.names.undo, "Undo the latest memory change only if expected_version is current.", `{"type":"object","properties":{"key":{"type":"string"},"expected_version":{"type":"string"}},"required":["key","expected_version"]}`)
+	return spec(t.names.undo, fmt.Sprintf("Undo the latest %s-scoped memory change. %s", t.scope, mutationTokenGuidance(t.scope)), mutationSchema(t.scope))
+}
+
+func mutationTokenGuidance(scope Scope) string {
+	return fmt.Sprintf("expected_version must be the opaque current token copied verbatim from this scope's exact Recall result, Inspect result, or mutation receipt (Remember, Forget, or Undo). If no current token is available or it may be stale, use %s first; never guess or interpret.", namesFor(scope).inspect)
+}
+
+func mutationSchema(scope Scope) string {
+	return fmt.Sprintf(`{"type":"object","properties":{"key":{"type":"string"},"expected_version":{"type":"string","description":"Opaque current token for this scope. Copy it verbatim from an exact Recall result, Inspect result, or mutation receipt. If unavailable or stale, use %s first; never guess or interpret."}},"required":["key","expected_version"]}`, namesFor(scope).inspect)
 }
 func (undoTool) ReadOnly() bool { return false }
 func (t undoTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
@@ -353,7 +361,7 @@ func (t undoTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Env
 	key := t.names.key(args.Key)
 	record, err := t.store.UndoLatest(ctx, key, args.ExpectedVersion)
 	if err != nil {
-		return storeFailure(call, "undo", key, err), nil
+		return storeFailure(call, t.scope, "undo", key, err), nil
 	}
 	return receipt(call, t.scope, "undone", key, record.Current), nil
 }
@@ -407,23 +415,23 @@ func decode(call session.ToolCall, dst any) (session.ToolResult, bool) {
 func failure(call session.ToolCall, message string) session.ToolResult {
 	return session.NewToolError(call.ID, message)
 }
-func storeFailure(call session.ToolCall, operation, key string, err error) session.ToolResult {
+func storeFailure(call session.ToolCall, scope Scope, operation, key string, err error) session.ToolResult {
 	var conflict *tool.MemoryVersionConflictError
 	if errors.As(err, &conflict) {
-		scopeName := "project"
-		if strings.HasPrefix(key, "user/") {
+		scopeName := string(scope)
+		if scope == ScopeUser {
 			scopeName = "user/user-model"
 		}
-		inspectRef := "InspectMemory (for project scope) / InspectUserMemory (for user/user-model scope)"
-		if conflict.Actual == "" {
-			msg := fmt.Sprintf("could not %s %q: no current record exists in %s scope (re-inspect with %s to retrieve the opaque version token); expected_version was %q but there is nothing to compare.", operation, key, scopeName, inspectRef, conflict.Expected)
-			return failure(call, msg)
-		} else {
-			msg := fmt.Sprintf("could not %s %q: stale version in %s scope — expected_version=%q does not match current actual=%q; copy the opaque token exactly from %s (never guess/interpret).", operation, key, scopeName, conflict.Expected, conflict.Actual, inspectRef)
-			return failure(call, msg)
+		inspectRef := "InspectMemory"
+		if scope == ScopeUser {
+			inspectRef = "InspectUserMemory"
 		}
+		if conflict.Actual == "" {
+			return failure(call, fmt.Sprintf("could not %s %q: no current record exists in %s scope (re-inspect with %s to retrieve the opaque version token); expected_version was %q but there is nothing to compare.", operation, key, scopeName, inspectRef, conflict.Expected))
+		}
+		return failure(call, fmt.Sprintf("could not %s %q: stale version in %s scope — expected_version=%q does not match current actual=%q; copy the opaque token exactly from %s (never guess/interpret).", operation, key, scopeName, conflict.Expected, conflict.Actual, inspectRef))
 	}
-	return failure(call, fmt.Sprintf("could not %s %q: memory operation error (no version conflict; store unavailable or key invalid)", operation, key))
+	return failure(call, fmt.Sprintf("could not %s %q in %s scope: %v", operation, key, scope, err))
 }
 func receipt(call session.ToolCall, scope Scope, action, key string, revision tool.MemoryRevision) session.ToolResult {
 	return session.NewToolResult(call.ID, fmt.Sprintf("Memory scope=%s key=%q %s; version=%q status=%s.", scope, key, action, revision.Version, revision.Status))

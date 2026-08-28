@@ -216,8 +216,7 @@ It surfaces three ways:
   lifecycle support is held to that protocol: a missing/failing lifecycle RPC is an
   operation error and never falls back to an unconditional legacy write or read. Remember,
   Recall, Search, Inspect, and Undo
-  are floor Allows; Forget requires an expected_version copied verbatim from the matching InspectMemory (project scope) or InspectUserMemory (user/user-model scope) result — it is an opaque revision token, never guess or interpret. Forget is a floor Ask. Any configured Ask/Deny/Allow at a higher
-  scope overrides these built-in floors.
+  are floor Allows; Forget and Undo require an expected_version copied verbatim from an exact Recall result, Inspect result, or mutation receipt in the same scope. If none is available or it may be stale, use InspectMemory (project scope) or InspectUserMemory (user/user-model scope) first. The token is opaque, so never guess or interpret it. Forget is a floor Ask. Any configured Ask/Deny/Allow at a higher scope overrides these built-in floors.
 - **Staged reflection (`learning.mode`):** `off` is the default and attaches no
   automatic completion observer; explicit reflection remains available through its lazy path.
   `review` and `auto` share the configurable threshold admission policy: balanced is the

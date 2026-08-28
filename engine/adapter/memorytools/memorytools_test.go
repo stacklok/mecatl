@@ -3,6 +3,7 @@ package memorytools_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -13,6 +14,15 @@ import (
 )
 
 type legacyStore struct{ entries map[string]tool.MemoryEntry }
+
+type failingRecallStore struct {
+	*legacyStore
+	err error
+}
+
+func (s failingRecallStore) Recall(context.Context, string) (tool.MemoryEntry, bool, error) {
+	return tool.MemoryEntry{}, false, s.err
+}
 
 type inspectCountingStore struct {
 	*memmemory.Store
@@ -279,26 +289,59 @@ func TestUserScopeNamesAndPrefix(t *testing.T) {
 	}
 }
 
-func TestForgetScopeDescriptionsAndExpectedVersionSchema(t *testing.T) {
+func TestMutationScopeDescriptionsAndExpectedVersionSchemas(t *testing.T) {
 	store := memmemory.New()
 	projectTools := memorytools.ProjectTools(store)
 	userTools := memorytools.UserTools(store)
-	projectForget := named(t, projectTools, "ForgetMemory")
-	userForget := named(t, userTools, "ForgetUserMemory")
+	for _, family := range [][]tool.Tool{projectTools, userTools} {
+		for _, candidate := range family {
+			if !json.Valid(candidate.Spec().Schema) {
+				t.Errorf("%s schema is invalid JSON: %s", candidate.Spec().Name, candidate.Spec().Schema)
+			}
+		}
+	}
 
-	// Scope-specific descriptions
-	projectDesc := projectForget.Spec().Description
-	userDesc := userForget.Spec().Description
-	if !strings.Contains(projectDesc, "project") {
-		t.Errorf("project forget description missing scope: %q", projectDesc)
+	for _, test := range []struct {
+		name, projectPrefix, userPrefix string
+	}{
+		{"Forget", "Forget a project-scoped memory", "Forget a user-scoped memory"},
+		{"Undo", "Undo the latest project-scoped memory", "Undo the latest user-scoped memory"},
+	} {
+		project := named(t, projectTools, test.name+"Memory")
+		user := named(t, userTools, test.name+"UserMemory")
+		if !strings.HasPrefix(project.Spec().Description, test.projectPrefix) {
+			t.Errorf("%s project description = %q, want prefix %q", test.name, project.Spec().Description, test.projectPrefix)
+		}
+		if !strings.HasPrefix(user.Spec().Description, test.userPrefix) {
+			t.Errorf("%s user description = %q, want prefix %q", test.name, user.Spec().Description, test.userPrefix)
+		}
+		for _, candidate := range []tool.Tool{project, user} {
+			if !strings.Contains(candidate.Spec().Description, "exact Recall result, Inspect result, or mutation receipt") {
+				t.Errorf("%s description lacks current-token guidance: %q", candidate.Spec().Name, candidate.Spec().Description)
+			}
+		}
 	}
-	if !strings.Contains(userDesc, "user") {
-		t.Errorf("user forget description missing scope: %q", userDesc)
+
+	for _, test := range []struct {
+		candidate tool.Tool
+		inspect   string
+	}{
+		{named(t, projectTools, "ForgetMemory"), "InspectMemory"},
+		{named(t, userTools, "ForgetUserMemory"), "InspectUserMemory"},
+		{named(t, projectTools, "UndoMemory"), "InspectMemory"},
+		{named(t, userTools, "UndoUserMemory"), "InspectUserMemory"},
+	} {
+		if !strings.Contains(string(test.candidate.Spec().Schema), test.inspect) {
+			t.Errorf("%s schema lacks matching inspector %q: %s", test.candidate.Spec().Name, test.inspect, test.candidate.Spec().Schema)
+		}
 	}
-	// Schema-level expected_version description
-	schemaRaw := string(projectForget.Spec().Schema)
-	if !strings.Contains(schemaRaw, "Opaque revision token") || !strings.Contains(schemaRaw, "InspectMemory") {
-		t.Errorf("project forget schema missing expected_version description: %s", schemaRaw)
+}
+
+func TestStoreFailurePreservesUnderlyingError(t *testing.T) {
+	store := failingRecallStore{legacyStore: &legacyStore{}, err: errors.New("remote memory RPC unavailable")}
+	result := execute(t, named(t, memorytools.ProjectTools(store), "Recall"), map[string]any{"key": "profile/editor"})
+	if !result.IsError || !strings.Contains(result.Content, "remote memory RPC unavailable") {
+		t.Fatalf("store failure = %#v", result)
 	}
 }
 
@@ -356,4 +399,3 @@ func TestStaleVersionConflictMessages(t *testing.T) {
 		t.Errorf("user missing message incorrect: %s", userMissingMsg)
 	}
 }
-
