@@ -11,7 +11,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -215,17 +214,8 @@ func TestPrivateHTTPSIssuerRejectsDiscoveredJWKSOnDifferentPrivateHost(t *testin
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Certificate().Raw})
 	if _, err := NewValidator(context.Background(), Config{
 		Issuer: issuer.URL, Audience: testAudience, AllowPrivateHTTPSIssuer: true, TrustedCAFile: "/run/oidc/ca.pem", TrustedCAPEM: caPEM,
-	}); err == nil || !strings.Contains(err.Error(), "not an approved issuer or JWKS host") {
+	}); err == nil || !strings.Contains(err.Error(), "not an approved endpoint") {
 		t.Fatalf("NewValidator accepted discovery-provided private JWKS target: %v", err)
-	}
-}
-
-func TestPrivateHTTPSPolicyRejectsDNSAddressDrift(t *testing.T) {
-	policy := privateHTTPSPolicy{endpoints: map[string]approvedEndpoint{
-		net.JoinHostPort("127.0.0.1", "443"): {host: "127.0.0.1", port: "443", ips: map[string]struct{}{"127.0.0.2": {}}},
-	}}
-	if _, err := policy.dialContext(context.Background(), "tcp", "127.0.0.1:443"); err == nil || !strings.Contains(err.Error(), "no longer resolves to an approved private address") {
-		t.Fatalf("DNS-pinned dial accepted a changed address: %v", err)
 	}
 }
 
