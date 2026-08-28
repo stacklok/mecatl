@@ -145,6 +145,8 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | `--tls-cert` | `""` | PEM server certificate; enables TLS on both listeners when paired with `--tls-key` |
 | `--tls-key` | `""` | PEM server private key |
 | `--client-ca` | `""` | PEM client-CA bundle; enables mTLS (requires `--tls-cert`/`--tls-key`) |
+| `--cors-origins` | `""` (off) | Allow a browser at this **exact** origin to call the HTTP API; repeatable. Local development only — see [Browsers and CORS](#browsers-and-cors) |
+| `--deployment-id` | `""` | Optional opaque label for this deployment, echoed on `GetServerInfo`. Never inferred from the host |
 | `--rate-limit` | `0` (off) | Sustained per-client request rate in req/s; with OIDC, also limits rejected bearer validation per direct transport peer IP |
 | `--rate-burst` | `0` (derived) | Token-bucket burst; zero derives a sane default from `--rate-limit`, including the OIDC rejected-token bucket |
 | `--oidc-issuer` | `""` (off) | OIDC issuer URL whose tokens identify callers; setting it turns caller identity on. See [Caller identity](#caller-identity-oidc) |
@@ -705,3 +707,29 @@ recoverable from the snapshot.
 - [Permissions & guardrails](/building/what-you-get/permissions.md) — the rule engine, posture ladder, and guardrail checker in detail.
 - [mecak8s — cloud-native k8s](/building/deployment/mecak8s.md) — the no-PVC Kubernetes peer with Redis + coordination.k8s.io Leases baked in.
 - [The agent loop](/building/what-you-get/agent-loop.md) — what mecated is serving: the streaming loop, tool dispatch, and the permission handshake.
+
+## Browsers and CORS
+
+A browser will not call `mecated` cross-origin unless the server says the origin
+is allowed. `--cors-origins` grants that, one **exact** origin at a time:
+
+```sh
+mecated --http-addr 127.0.0.1:8081 \
+  --cors-origins http://localhost:5173 \
+  --cors-origins https://app.internal.example.com
+```
+
+Matching is exact — scheme, host, and port must all agree. There is no wildcard,
+no suffix match, and no subdomain match. `mecated`'s HTTP API can start agent
+runs, so a loose match is not an information leak but arbitrary action taken with
+a user's credentials; `--cors-origins '*'` and `--cors-origins null` are refused
+at startup, as is any origin carrying a path, query, fragment, or wildcard.
+
+With no `--cors-origins` no CORS middleware is installed at all and responses are
+unchanged.
+
+> **This is the local-development path.** In production, put a same-origin
+> backend-for-frontend in front of `mecated`: it holds the bearer token
+> server-side, enforces its own Origin/CSRF policy, and never ships a credential
+> to the browser. A token that reaches JavaScript is a token an XSS can take.
+

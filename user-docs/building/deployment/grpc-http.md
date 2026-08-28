@@ -102,6 +102,11 @@ configuration before clients connect. See [Run mecated standalone](./mecated.md)
 for bearer authentication, TLS/mTLS, OIDC caller identity, rate limits, and
 health endpoints.
 
+Calling the HTTP API **from a browser** additionally needs the origin allowed:
+see [Browsers and CORS](./mecated.md#browsers-and-cors). For production, front
+`mecated` with a same-origin backend-for-frontend rather than shipping a bearer
+token to JavaScript.
+
 ## Related information
 
 - [Run mecated standalone](./mecated.md)

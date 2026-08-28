@@ -58,7 +58,7 @@ func TestCallerIdentity_Scenario1_MisconfiguredOIDCFailsToStart(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := config{oidc: tc.oidc}
-			_, auth, err := buildEdge(context.Background(), cfg)
+			_, auth, _, err := buildEdge(context.Background(), cfg)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("buildEdge err = nil, want a startup failure (silent fail-open)")
