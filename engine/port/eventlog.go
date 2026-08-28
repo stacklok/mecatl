@@ -19,8 +19,10 @@ import (
 // The log stores ALREADY-REDACTED events: the event stream is itself the
 // redaction boundary (Subagent/Parallel payloads are metadata-only, Team
 // previews are capped, surfaced child asks are clamped — gauntlet #7), so the
-// log inherits that discipline and adds no new redaction code. Whatever crosses
-// the relay is what the log records, verbatim.
+// log inherits that discipline and adds no new redaction code. The relay may
+// coalesce same-turn message/reasoning deltas into one event of each kind before
+// calling Append; their text and first-observed kind ordering remain exact, while
+// the live client still receives every original delta unchanged.
 //
 // Both the local JSONL adapter (3a) and the gRPC driver (3c) implement this one
 // contract; a remote driver maps Read 1:1 onto a server-streaming RPC.
@@ -36,11 +38,14 @@ type EventLog interface {
 	// DURABILITY OBLIGATION: Append must be durable before it returns nil — the
 	// record is on stable storage (or committed to the backing service) by the
 	// time nil is returned. An implementation that CANNOT guarantee that returns
-	// an error rather than buffering silently; the caller treats a non-nil error
-	// as "not recorded". (The relay logs a WARN on failure and never aborts the
-	// run — a broken log must not break the live stream — but it relies on nil
-	// meaning durable, so a silent in-memory buffer that may lose the record on
-	// crash is a contract violation, not a valid optimisation.)
+	// an error rather than buffering silently. A non-nil error may have happened
+	// before OR after the record committed (for example, a post-write sync can
+	// fail), so the commit outcome is indeterminate to the caller. The caller
+	// therefore MUST NOT retry: retrying could duplicate a committed event. (The
+	// relay logs a WARN on failure and never aborts the run — a broken log must not
+	// break the live stream — but it relies on nil meaning durable, so a silent
+	// in-memory buffer that may lose the record on crash is a contract violation,
+	// not a valid optimisation.)
 	//
 	// AT-MOST-ONCE / NO DEDUP: the caller appends each event AT MOST ONCE and
 	// never retries, so implementations need NOT deduplicate. The log is keyed by

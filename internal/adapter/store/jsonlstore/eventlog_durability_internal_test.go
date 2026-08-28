@@ -65,13 +65,240 @@ func TestEventLogAppendRequiresAllSyncCapabilitiesBeforeMutatingSidecar(t *testi
 	}
 }
 
-func TestEventLogAppendDurabilityFailures(t *testing.T) {
+func TestEventLogAppendRejectsOversizedRecordBeforeMutation(t *testing.T) {
+	escaped := strings.Repeat("\x00", maxEventRecordSize/6+1)
 	for _, tc := range []struct {
-		name      string
-		inject    func(*snapshotOps)
-		want      error
-		committed bool
+		name string
+		ev   session.Event
 	}{
+		{
+			name: "result payload",
+			ev: session.Event{Type: session.EvResult, Result: &session.ResultPayload{
+				Stop: session.StopEndTurn,
+				Text: escaped,
+			}},
+		},
+		{
+			name: "tool result payload",
+			ev: session.Event{Type: session.EvToolResult, ToolResult: func() *session.ToolResult {
+				result := session.NewToolResult("call-1", escaped)
+				return &result
+			}()},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newInternalStore(t)
+			id := session.SessionID("oversized-event")
+			path := st.resolver.canonicalPath(id, kindEvents)
+
+			err := st.Append(context.Background(), id, tc.ev)
+			if err == nil || !strings.Contains(err.Error(), "including newline") || !strings.Contains(err.Error(), "exceeds") {
+				t.Fatalf("oversized Append error = %v, want clear newline-inclusive size error", err)
+			}
+			if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+				t.Fatalf("event sidecar after oversized Append: stat error = %v, want absent", statErr)
+			}
+
+			normal := session.Event{Type: session.EvResult, Seq: 2, Result: &session.ResultPayload{Stop: session.StopEndTurn, Text: "ok"}}
+			if err := st.Append(context.Background(), id, normal); err != nil {
+				t.Fatalf("normal Append after rejection: %v", err)
+			}
+			got := collectEvents(t, st, id)
+			if len(got) != 1 || got[0].Seq != normal.Seq || got[0].Result == nil || got[0].Result.Text != "ok" {
+				t.Fatalf("events after rejection and normal Append = %+v, want only normal event", got)
+			}
+		})
+	}
+}
+
+func TestToolCallBestEffortAppendUsesAvailableSyncCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		fileSync      bool
+		directorySync bool
+	}{
+		{name: "file sync only", fileSync: true},
+		{name: "directory sync only", directorySync: true},
+		{name: "no sync capability"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newInternalStore(t)
+			st.durability.FileSync = tc.fileSync
+			st.durability.DirectorySync = tc.directorySync
+			var fileSyncs, directorySyncs int
+			st.snapshot.syncFile = func(*os.File) error {
+				fileSyncs++
+				return nil
+			}
+			st.snapshot.syncDir = func(*os.File) error {
+				directorySyncs++
+				return nil
+			}
+			id := session.SessionID("best-effort-tool-call")
+			st.ToolCall(id, session.NewToolCall("call-1", "Read", nil), session.NewToolResult("call-1", "ok"), 0, 0)
+			data, err := os.ReadFile(st.resolver.canonicalPath(id, kindTools))
+			if err != nil || !bytes.Contains(data, []byte(`"call_id":"call-1"`)) {
+				t.Fatalf("best-effort tool record = %q, %v", data, err)
+			}
+			if fileSyncs != boolInt(tc.fileSync) || directorySyncs != boolInt(tc.directorySync) {
+				t.Fatalf("sync calls = file %d, directory %d; want file %d, directory %d", fileSyncs, directorySyncs, boolInt(tc.fileSync), boolInt(tc.directorySync))
+			}
+		})
+	}
+}
+
+func TestToolCallBestEffortLegacyFamilySurvivesWeakFilesystemAndLaterMigration(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("legacy-best-effort-tool-call")
+	writeBytes(t, st.resolver.legacyPath(id, kindSnapshot), append(snapshotLine(t, id, "legacy"), '\n'))
+	legacyTools := st.resolver.legacyPath(id, kindTools)
+	old := []byte("legacy audit record\n")
+	writeBytes(t, legacyTools, old)
+	if err := os.Chmod(legacyTools, 0o644); err != nil {
+		t.Fatalf("Chmod legacy tools: %v", err)
+	}
+
+	st.durability.DirectorySync = false
+	st.ToolCall(id, session.NewToolCall("call-weak", "Read", nil), session.NewToolResult("call-weak", "ok"), 0, 0)
+	weakData, err := os.ReadFile(legacyTools)
+	if err != nil {
+		t.Fatalf("Read weak-filesystem tool log: %v", err)
+	}
+	if !bytes.HasPrefix(weakData, old) || !bytes.Contains(weakData, []byte(`"call_id":"call-weak"`)) {
+		t.Fatalf("weak-filesystem tool log = %q, want old and new records", weakData)
+	}
+	info, err := os.Stat(legacyTools)
+	if err != nil {
+		t.Fatalf("Stat legacy tool log: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("legacy tool mode = %04o, want 0600", info.Mode().Perm())
+	}
+	if _, err := os.Stat(st.resolver.canonicalPath(id, kindTools)); !os.IsNotExist(err) {
+		t.Fatalf("canonical tool log before capable migration: %v", err)
+	}
+
+	st.durability.DirectorySync = true
+	st.ToolCall(id, session.NewToolCall("call-capable", "Write", nil), session.NewToolResult("call-capable", "ok"), 0, 0)
+	canonicalTools := st.resolver.canonicalPath(id, kindTools)
+	migrated, err := os.ReadFile(canonicalTools)
+	if err != nil {
+		t.Fatalf("Read migrated tool log: %v", err)
+	}
+	if !bytes.HasPrefix(migrated, old) || !bytes.Contains(migrated, []byte(`"call_id":"call-weak"`)) ||
+		!bytes.Contains(migrated, []byte(`"call_id":"call-capable"`)) {
+		t.Fatalf("migrated tool log = %q, want legacy, weak, and capable records", migrated)
+	}
+	if _, err := os.Stat(legacyTools); !os.IsNotExist(err) {
+		t.Fatalf("legacy tool log after migration: %v", err)
+	}
+	migratedInfo, err := os.Stat(canonicalTools)
+	if err != nil {
+		t.Fatalf("Stat migrated tool log: %v", err)
+	}
+	if migratedInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("migrated tool mode = %04o, want 0600", migratedInfo.Mode().Perm())
+	}
+}
+
+func TestEventLogAppendOperationOrder(t *testing.T) {
+	for _, torn := range []bool{false, true} {
+		t.Run("torn="+strconv.FormatBool(torn), func(t *testing.T) {
+			st := newInternalStore(t)
+			id := session.SessionID("append-order")
+			path := st.resolver.canonicalPath(id, kindEvents)
+			line := append(eventRecordLine(t, session.Event{Type: session.EvResult, Seq: 1}), '\n')
+			if torn {
+				line = append(line, []byte("TORN")...)
+			}
+			writeBytes(t, path, line)
+
+			var order []string
+			original := st.snapshot
+			st.snapshot.truncate = func(f *os.File, n int64) error { order = append(order, "truncate"); return original.truncate(f, n) }
+			st.snapshot.seek = func(f *os.File, off int64, whence int) (int64, error) {
+				order = append(order, "seek")
+				return original.seek(f, off, whence)
+			}
+			st.snapshot.write = func(f *os.File, p []byte) (int, error) { order = append(order, "write"); return original.write(f, p) }
+			st.snapshot.syncFile = func(f *os.File) error { order = append(order, "file-sync"); return original.syncFile(f) }
+			st.snapshot.closeFile = func(f *os.File) error { order = append(order, "close"); return original.closeFile(f) }
+			st.snapshot.openDir = func(path string) (*os.File, error) { order = append(order, "open-dir"); return original.openDir(path) }
+			st.snapshot.syncDir = func(f *os.File) error { order = append(order, "directory-sync"); return original.syncDir(f) }
+
+			if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 2}); err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+			want := []string{"seek", "write", "file-sync", "close", "open-dir", "directory-sync"}
+			if torn {
+				want = append([]string{"truncate"}, want...)
+			}
+			if fmt.Sprint(order) != fmt.Sprint(want) {
+				t.Fatalf("operation order = %v, want %v", order, want)
+			}
+		})
+	}
+}
+
+func TestToolCallAbsentSidecarFollowsAuthoritativeFamilyOnWeakFilesystem(t *testing.T) {
+	for _, canonical := range []bool{false, true} {
+		t.Run("canonical="+strconv.FormatBool(canonical), func(t *testing.T) {
+			st := newInternalStore(t)
+			st.durability.DirectorySync = false
+			id := session.SessionID("absent-tool-sidecar")
+			snapshot := append(snapshotLine(t, id, "authoritative"), '\n')
+			if canonical {
+				writeBytes(t, st.resolver.canonicalPath(id, kindSnapshot), snapshot)
+			} else {
+				writeBytes(t, st.resolver.legacyPath(id, kindSnapshot), snapshot)
+			}
+
+			st.ToolCall(id, session.NewToolCall("call", "Read", nil), session.NewToolResult("call", "ok"), 0, 0)
+			chosen := st.resolver.legacyPath(id, kindTools)
+			opposite := st.resolver.canonicalPath(id, kindTools)
+			if canonical {
+				chosen, opposite = opposite, chosen
+			}
+			data, err := os.ReadFile(chosen)
+			if err != nil || !bytes.Contains(data, []byte(`"call_id":"call"`)) {
+				t.Fatalf("chosen family tool log = %q, %v", data, err)
+			}
+			if _, err := os.Stat(opposite); !os.IsNotExist(err) {
+				t.Fatalf("opposite family sidecar was created: %v", err)
+			}
+		})
+	}
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func TestEventLogAppendDurabilityFailuresPreserveCommittedPrefixAndConverge(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		inject     func(*snapshotOps)
+		want       error
+		committed  bool
+		wantCloses int
+	}{
+		{
+			name: "truncate",
+			inject: func(ops *snapshotOps) {
+				ops.truncate = func(*os.File, int64) error { return syscall.EIO }
+			},
+			want: syscall.EIO,
+		},
+		{
+			name: "seek",
+			inject: func(ops *snapshotOps) {
+				ops.seek = func(*os.File, int64, int) (int64, error) { return 0, syscall.EIO }
+			},
+			want: syscall.EIO,
+		},
 		{
 			name: "short write",
 			inject: func(ops *snapshotOps) {
@@ -104,47 +331,87 @@ func TestEventLogAppendDurabilityFailures(t *testing.T) {
 					return syscall.EIO
 				}
 			},
-			want: syscall.EIO, committed: true,
+			want: syscall.EIO, committed: true, wantCloses: 1,
+		},
+		{
+			name: "directory open",
+			inject: func(ops *snapshotOps) {
+				ops.openDir = func(string) (*os.File, error) { return nil, syscall.EIO }
+			},
+			want: syscall.EIO, committed: true, wantCloses: 1,
 		},
 		{
 			name: "directory sync",
 			inject: func(ops *snapshotOps) {
 				ops.syncDir = func(*os.File) error { return syscall.EIO }
 			},
-			want: syscall.EIO, committed: true,
+			want: syscall.EIO, committed: true, wantCloses: 1,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newInternalStore(t)
 			original := st.snapshot
-			tc.inject(&st.snapshot)
 			id := session.SessionID("durability-fault")
-			err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 1})
+			path := st.resolver.canonicalPath(id, kindEvents)
+			prefix := append(eventRecordLine(t, session.Event{Type: session.EvResult, Seq: 1}), '\n')
+			writeBytes(t, path, append(prefix, []byte("TORN-FRAGMENT")...))
+
+			tc.inject(&st.snapshot)
+			closeFile := st.snapshot.closeFile
+			closes := 0
+			st.snapshot.closeFile = func(f *os.File) error {
+				closes++
+				return closeFile(f)
+			}
+			err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 2})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Append error = %v, want %v", err, tc.want)
 			}
+			if closes != tc.wantCloses {
+				t.Fatalf("close calls = %d, want %d", closes, tc.wantCloses)
+			}
 			got := collectEvents(t, st, id)
+			wantSeqs := []int64{1}
 			if tc.committed {
-				if len(got) != 1 || got[0].Seq != 1 {
-					t.Fatalf("committed prefix after %s failure = %+v, want seq 1", tc.name, got)
-				}
-			} else if len(got) != 0 {
-				t.Fatalf("uncommitted prefix after %s failure = %+v, want empty", tc.name, got)
+				wantSeqs = append(wantSeqs, 2)
+			}
+			if fmt.Sprint(eventSeqs(got)) != fmt.Sprint(wantSeqs) {
+				t.Fatalf("events after failure = %v, want %v", eventSeqs(got), wantSeqs)
 			}
 
 			st.snapshot = original
-			if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 2}); err != nil {
+			if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 3}); err != nil {
 				t.Fatalf("retry after %s failure: %v", tc.name, err)
 			}
-			got = collectEvents(t, st, id)
-			wantSeqs := []int64{2}
-			if tc.committed {
-				wantSeqs = []int64{1, 2}
-			}
-			if fmt.Sprint(eventSeqs(got)) != fmt.Sprint(wantSeqs) {
-				t.Fatalf("reopened events after retry = %v, want %v", eventSeqs(got), wantSeqs)
+			wantSeqs = append(wantSeqs, 3)
+			if got := eventSeqs(collectEvents(t, st, id)); fmt.Sprint(got) != fmt.Sprint(wantSeqs) {
+				t.Fatalf("events after retry = %v, want %v", got, wantSeqs)
 			}
 		})
+	}
+}
+
+func TestEventLogAppendDoesNotLaunderCompleteCorruption(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("complete-corruption")
+	path := st.resolver.canonicalPath(id, kindEvents)
+	prefix := append(eventRecordLine(t, session.Event{Type: session.EvResult, Seq: 1}), '\n')
+	writeBytes(t, path, append(prefix, []byte("{not-json\n")...))
+
+	if err := st.Append(context.Background(), id, session.Event{Type: session.EvResult, Seq: 2}); err != nil {
+		t.Fatalf("Append after complete corruption: %v", err)
+	}
+	var seqs []int64
+	var sawErr bool
+	for ev, err := range st.Read(context.Background(), id) {
+		if err != nil {
+			sawErr = true
+			break
+		}
+		seqs = append(seqs, ev.Seq)
+	}
+	if fmt.Sprint(seqs) != "[1]" || !sawErr {
+		t.Fatalf("Read after append = seqs %v, error %v; want committed prefix and loud corruption", seqs, sawErr)
 	}
 }
 
@@ -209,6 +476,31 @@ func TestEventLogAppendRepairsTornTailAndCreatesPrivateSidecar(t *testing.T) {
 	}
 	if gotMode := info.Mode().Perm(); gotMode != 0o600 {
 		t.Fatalf("sidecar mode = %04o, want 0600", gotMode)
+	}
+
+	existingID := session.SessionID("restrict-existing-sidecar")
+	existingPath := st.resolver.canonicalPath(existingID, kindEvents)
+	existingLine := append(eventRecordLine(t, session.Event{Type: session.EvMessageDelta, Seq: 1, Text: "preserved"}), '\n')
+	writeBytes(t, existingPath, existingLine)
+	if err := os.Chmod(existingPath, 0o644); err != nil {
+		t.Fatalf("Chmod existing sidecar: %v", err)
+	}
+	if err := st.Append(context.Background(), existingID, session.Event{Type: session.EvResult, Seq: 2}); err != nil {
+		t.Fatalf("Append existing sidecar: %v", err)
+	}
+	existingInfo, err := os.Stat(existingPath)
+	if err != nil {
+		t.Fatalf("Stat existing sidecar: %v", err)
+	}
+	if existingInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("existing sidecar mode = %04o, want 0600", existingInfo.Mode().Perm())
+	}
+	existingData, err := os.ReadFile(existingPath)
+	if err != nil {
+		t.Fatalf("Read existing sidecar: %v", err)
+	}
+	if !bytes.HasPrefix(existingData, existingLine) || len(collectEvents(t, st, existingID)) != 2 {
+		t.Fatalf("existing sidecar data not preserved: %q", existingData)
 	}
 }
 

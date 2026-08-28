@@ -324,7 +324,6 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"MaintenanceMutationAvailable": {KindDerived, "read-only capability truth consumed by composition before scheduling automatic retention"},
 	"FinishRun":                    {KindDerived, "deregisters an id the wire adapter already finished draining from its own authorized run"},
 	"PublishSessionEvent":          {KindDerived, "publishes to subscribers already registered via the (caller-owned) Subscribe for this id; PublishSessionEvent itself takes no ctx and makes no independent decision"},
-	"AppendRunEvent":               {KindDerived, "durable-append passthrough to the single appendEvent chokepoint for an id the in-process caller (the scheduler fire loop) already owns via its own run"},
 	"RecoverNotice":                {KindDerived, "pops a notice keyed by id that only the relay's own immediately-preceding, already-authorized StartRunContent call could have set"},
 	"LookupSteerMessageID":         {KindDerived, "pops a steer message-id correlation only the relay's own already-authorized Steer call could have parked; consumed by the gRPC relay's EvSteer echo stamp on the same stream"},
 	"SetSessionEnvironment":        {KindDerived, "called only with the id CreateSession* just returned to the same caller (internal/adapter/acp); renamed from SetSessionWorkspace by the execution-environments refactor"},

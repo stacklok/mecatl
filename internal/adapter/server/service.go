@@ -584,20 +584,21 @@ type Config struct {
 	// nil-safe.
 	OnCloseSession func(session.SessionID)
 
-	// EventLog durably records the relayed event stream per session (cloud-native
-	// Phase 3a). The gRPC/HTTP relay loops Append every HEALTHY-PATH event to it,
-	// beside the existing awaiting-ask Persist; the loop itself stays
-	// storage-agnostic (it only emits). Optional and nil-safe: when nil the relay
-	// records nothing (byte-identical to the pre-3a behaviour). The composition
-	// root wires the durable jsonlstore Store (which also implements EventLog) or
-	// an in-memory sibling when no store dir is configured.
+	// EventLog durably records the relay-side event projection per session
+	// (cloud-native Phase 3a). Relays observe every event, including the
+	// drain-to-discard tail, while their run-scoped recorders coalesce streaming
+	// text deltas before Append; the loop itself stays storage-agnostic (it only
+	// emits). Optional and nil-safe: when nil the relay records nothing
+	// (byte-identical to the pre-3a behaviour). The composition root wires the
+	// durable jsonlstore Store (which also implements EventLog) or an in-memory
+	// sibling when no store dir is configured.
 	EventLog port.EventLog
 
-	// Diagnostics is the operational logging sink the relay uses to WARN on an
-	// EventLog.Append failure (a best-effort durable log must not break the live
-	// stream). Optional and nil-safe: when nil, Append failures are silently
-	// tolerated (the durability gap is the only effect). The composition root
-	// supplies the same sink the rest of the build uses.
+	// Diagnostics is the operational logging sink the relay uses to WARN once per
+	// recorder after EventLog.Append failures (a best-effort durable log must not
+	// break the live stream). Optional and nil-safe: when nil, Append failures are
+	// silently tolerated (the durability gap is the only effect). The composition
+	// root supplies the same sink the rest of the build uses.
 	Diagnostics port.Diagnostics
 
 	// ReplayApprovals repopulates the in-memory learned-rule store (permstore) for a
@@ -4822,13 +4823,10 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	}
 }
 
-// appendEvent durably records one relayed event to the configured EventLog
-// (cloud-native Phase 3a). It is called by the gRPC/HTTP relay loops for every
-// HEALTHY-PATH event, beside the existing awaiting-ask Persist; it is NOT called
-// on the drain-to-discard path after a dead client (the relays gate it the same
-// way they gate Persist). A nil EventLog is a no-op (byte-identical to pre-3a).
-// An Append failure is best-effort: it WARNs and never aborts the run (a broken
-// durable log must not break the live stream).
+// appendEvent durably records one projected relay event to the configured
+// EventLog. A nil EventLog is a no-op. The caller owns failure diagnostics so a
+// run-scoped recorder can make the warning sticky while continuing later
+// attempts.
 //
 // It is ALSO the SINGLE site that stamps session.Event.Actor (ADR 0204 decision
 // 5): the attribution is derive-at-append, read from the CONTEXT PRINCIPAL — the
@@ -4837,9 +4835,9 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 // cancel-detached ctx (context.WithoutCancel), which preserves the context VALUES
 // and therefore the caller. A request with no verified caller leaves it nil —
 // absence is never fabricated. Do not add a second stamping path.
-func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev session.Event) {
+func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev session.Event) error {
 	if s.cfg.EventLog == nil {
-		return
+		return nil
 	}
 	// The actor is the verified caller who ACTED, NOT the session's owner. The two
 	// are different questions and routinely different values: this phase ships no
@@ -4850,22 +4848,7 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 	// actor answers "who did this?". PrincipalFromContext returns a COPY, so a
 	// later mutation cannot rewrite an already-recorded event.
 	ev.Actor = session.PrincipalFromContext(ctx)
-	if err := s.cfg.EventLog.Append(ctx, id, ev); err != nil {
-		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "event log append failed",
-			"session", string(id), "event", string(ev.Type), "err", err.Error())
-	}
-}
-
-// AppendRunEvent durably records one event of an in-process run through the
-// SINGLE appendEvent path — the same durability, best-effort and Actor-stamping
-// contract (never a second stamping path). It exists for the IN-PROCESS
-// consumers of a run that are not wire relays: the scheduler's fire loop
-// (internal/app) drives its "sched--" session's events itself, so without this
-// seam a scheduled fire would be the one run whose events never reach the
-// durable log. Pass a cancel-detached ctx (context.WithoutCancel), exactly as
-// the relays do, so a finished run cannot abort the write.
-func (s *Service) AppendRunEvent(ctx context.Context, id session.SessionID, ev session.Event) {
-	s.appendEvent(ctx, id, ev)
+	return s.cfg.EventLog.Append(ctx, id, ev)
 }
 
 // relayEvent applies the SHARED per-event relay discipline (cloud-native Phase
@@ -4876,11 +4859,12 @@ func (s *Service) AppendRunEvent(ctx context.Context, id session.SessionID, ev s
 // client wire, forward=false when it is log-only (consumed by the durable log
 // ONLY, NOT relayed to the client). It performs, in order:
 //
-//  1. appendEvent on a cancel-detached ctx (logCtx) — the durable log records
-//     EVERY event regardless of client liveness (it must survive a dead client
-//     and record the post-disconnect tail, including the terminal EvResult).
+//  1. Observe the event through the run-scoped durable recorder. It buffers
+//     streaming deltas and durably flushes them before this event when it is a
+//     boundary; client liveness never gates observation, so the post-disconnect
+//     tail still includes the terminal EvResult.
 //  2. skip the client wire for the three log-only kinds (EvApproval,
-//     EvCompactionArchive, EvUserPrompt) — appended above but NOT forwarded.
+//     EvCompactionArchive, EvUserPrompt) — recorded above but NOT forwarded.
 //  3. on EvPermissionAsk: Persist (snapshot semantics, gated to the healthy
 //     path — the passed ctx, NOT the cancel-detached one) and — when autoApprove
 //     is true — MaybeAutoApprovePlan (the headless auto-approve observer).
@@ -4891,8 +4875,8 @@ func (s *Service) AppendRunEvent(ctx context.Context, id session.SessionID, ev s
 // plan ask — running auto-approve inside the ApprovePlan stream would recurse).
 // Each call site retains its OWN wire framing (gRPC Send vs SSE Write), its
 // cancel-on-error, and its drain-to-discard guard.
-func (s *Service) relayEvent(ctx context.Context, logCtx context.Context, id session.SessionID, ev session.Event, autoApprove bool) (forward bool) {
-	s.appendEvent(logCtx, id, ev)
+func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev session.Event, autoApprove bool, recorder *RunEventRecorder) (forward bool) {
+	recorder.Observe(ev)
 	// A non-ask event means the run is PROGRESSING (a tool result, a turn end, a
 	// verdict, the terminal EvResult) — it is no longer parked awaiting. Clear the
 	// runState.awaiting flag so Close's cancel loop does not skip a resumed-mid-
@@ -5012,10 +4996,13 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	// the ORIGINAL run; this goroutine only ensures the auto-approve continuation
 	// is not orphaned.
 	go func() {
-		for range events {
+		recorder := NewRunEventRecorder(context.WithoutCancel(ctx), s, id)
+		defer recorder.Close()
+		for ev := range events {
 			// Drain to completion — the continuation run's events are not relayed
 			// to a client here (the client's stream is the original run's), but
 			// the run must not wedge behind a full channel.
+			recorder.Observe(ev)
 		}
 	}()
 }
@@ -5078,9 +5065,11 @@ func (s *Service) autoApproveContinuation(ctx context.Context, id session.Sessio
 			"session", string(id), "err", cerr.Error())
 		return
 	}
+	recorder := NewRunEventRecorder(logCtx, s, id)
 	for ev := range cont.Events() {
-		s.appendEvent(logCtx, id, ev)
+		recorder.Observe(ev)
 	}
+	recorder.Close()
 	s.deregister(id, cont)
 }
 

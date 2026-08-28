@@ -157,7 +157,7 @@ type EventLog interface {
 }
 ```
 
-**`Append`** durably records `ev` under the session id. The durability obligation is strict: `Append` must return nil only after the record is on stable storage or committed to the backing service. An implementation that buffers without guaranteeing durability violates the contract. The relay calls `Append` for every observed event, on a cancel-detached context, so a dead client's cancelled context cannot abort the durable write; a failure warns and never aborts the live run.
+**`Append`** durably records `ev` under the session id. The durability obligation is strict: `Append` must return nil only after the record is on stable storage or committed to the backing service. For local jsonlstore that means both the file and its directory have synced; without either capability append fails. An implementation that buffers without guaranteeing durability violates the contract. Callers must attempt each event at most once because an error may arrive after the write committed. The relay uses a cancel-detached context so a dead client's cancellation cannot abort it. Clients still receive every original chunk, while the run-scoped recorder coalesces message and reasoning into UTF-8-safe chunks capped at 1 MiB—small enough for the JSONL reader under worst-case escaping. Normal turns use one record per present kind; oversized turns use the minimum bounded count. Every chunk is cleared after its single attempt, append failure warns once per recorder, and later boundary/result events continue. A crash or failed append can leave a log gap; the completed session snapshot remains authoritative.
 
 **`Read`** returns the session's events in append order as a lazy `iter.Seq2[session.Event, error]`, following the same streaming idiom as `port.LLMProvider.Stream`. Streaming matters: a long session log can exceed a gRPC message limit if read as a single unary response; `Read` maps 1:1 to a server-streaming RPC and avoids the size cap. Key contract points:
 
@@ -189,7 +189,7 @@ The loop never imports `port.EventLog` or calls `Append`. Persistence is a relay
 | Backend | Package | Notes |
 |---|---|---|
 | In-memory | `engine/adapter/memstore` | Default; test/single-process; implements `SessionStore` + `PrunableStore` + `EventLog` as siblings |
-| JSONL on disk | `internal/adapter/store/jsonlstore` | Default for `mecated`; triples as `SessionStore` + `EventLog` + `ToolCallRecorder` |
+| JSONL on disk | `internal/adapter/store/jsonlstore` | Default for `mecated`; triples as `SessionStore` + `EventLog` + `ToolCallRecorder`. The configured path and every ancestor must be physical non-symlink directories (use macOS `/private/...`, not a `/var/...` symlink path). Existing canonical snapshot Save may retain weaker capability; first legacy-family Save, EventLog append, Delete, retention, and migration fail closed when their required sync is unavailable. ToolCall audit is best-effort and may be unsynced or partially synced. Capability probes establish syscall support, not media persistence. |
 | Redis | `internal/adapter/redisstore` | Used by `mecak8s`; validated by conformance suites over miniredis |
 
 ### engine/adapter/memstore — in-memory

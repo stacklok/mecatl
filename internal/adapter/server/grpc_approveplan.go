@@ -12,9 +12,9 @@ import (
 
 // grpc_approveplan.go implements the ApprovePlan streaming RPC (issue #206,
 // Wave 4) over the shared Service. It mirrors the Converse/RunTeam event-relay
-// discipline: range the Service-returned event channel, appendEvent per event,
-// skip the three log-only kinds on the client wire, Persist on EvPermissionAsk,
-// and Send toProto(ev); on the first Send error cancel the ctx so the Service's
+// discipline: range the Service-returned event channel, observe each event through
+// the durable recorder, skip the three log-only kinds on the client wire, Persist
+// on EvPermissionAsk, and Send toProto(ev); on the first Send error cancel the ctx so the Service's
 // internal ctx-watcher cancels the LIVE run (the run is registered in s.runs and
 // the Service deregisters it after drain). The Service owns run lifecycle
 // (resume + continuation); this handler owns the wire.
@@ -41,17 +41,19 @@ func (h *HarnessServer) ApprovePlan(req *mecatlv1.ApprovePlanRequest, stream mec
 	// durable log (it must record the post-disconnect tail, including the terminal
 	// EvResult) — the same discipline as the Converse relay.
 	logCtx := context.WithoutCancel(ctx)
+	recorder := NewRunEventRecorder(logCtx, h.svc, session.SessionID(req.GetSessionId()))
+	defer recorder.Close()
 	var sendErr error
 	for ev := range events {
 		if sendErr != nil {
 			// drain-to-discard: the client is gone. Still append to the durable
 			// log, but skip Persist / the client send.
-			h.svc.appendEvent(logCtx, session.SessionID(req.GetSessionId()), ev)
+			recorder.Observe(ev)
 			continue
 		}
 		// autoApprove=false: this path IS the plan-approval resolution — running
 		// the auto-approve observer inside it would recurse.
-		if !h.svc.relayEvent(ctx, logCtx, session.SessionID(req.GetSessionId()), ev, false) {
+		if !h.svc.relayEvent(ctx, session.SessionID(req.GetSessionId()), ev, false, recorder) {
 			continue // log-only event: consumed by the durable log, not relayed to the client wire
 		}
 		if e := stream.Send(toProto(ev)); e != nil {

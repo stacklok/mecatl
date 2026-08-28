@@ -165,8 +165,9 @@ func migrationOwnerKey(owner *session.Principal) string {
 }
 
 // MigrateSessionFamily holds the stable family flock across revalidation,
-// promotion, v2 verification, and v1 removal. Item failures are returned as a
-// closed reason code; raw backend errors never cross the maintenance boundary.
+// promotion, v2 verification, and v1 removal. Expected item outcomes return a
+// closed reason code; operational failures are wrapped for the server boundary to
+// sanitize as backend_failure.
 //
 //nolint:gocyclo // the linear crash-safety transaction keeps every fail-closed checkpoint explicit.
 func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.SessionMigrationFamily) (string, error) {
@@ -181,7 +182,7 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 	path := st.resolver.currentSnapshotPath(expected.ID)
 	var reason string
 	err = st.withSnapshotFamilyLock(ctx, path, func() error {
-		dirs, err := st.openDurableDirectories(st.resolver.canonicalDir())
+		dirs, err := st.openDurableDirectories(st.resolver.dir, st.resolver.canonicalDir())
 		if err != nil {
 			return err
 		}
@@ -269,7 +270,7 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 		return nil
 	})
 	if err != nil {
-		return "backend_failure", nil
+		return "", fmt.Errorf("jsonlstore: migrate session family: %w", err)
 	}
 	return reason, nil
 }

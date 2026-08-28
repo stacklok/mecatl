@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -41,6 +42,77 @@ func readEventLog(t *testing.T, log port.EventLog, id session.SessionID) []sessi
 		out = append(out, ev)
 	}
 	return out
+}
+
+func TestGRPCRelayStreamsOriginalChunksAndDurablyCoalesces(t *testing.T) {
+	log := memstore.NewEventLog()
+	llm := mockllm.New(mockllm.ChunksTurn(
+		mockllm.TextChunk("alpha"), mockllm.TextChunk("-"), mockllm.TextChunk("雪"),
+		mockllm.DoneChunk(session.StopEndTurn),
+	))
+	engine := agent.NewEngine(agent.Deps{
+		LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
+	})
+	svc, err := server.NewService(server.Config{
+		Engine: engine, Store: memstore.New(), EventLog: log,
+		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:        func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+	stream, err := client.Converse(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{
+		Prompt: &mecatlv1.Prompt{SessionId: string(sess.ID), Text: "go"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.CloseSend()
+	var wire []string
+	for {
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			t.Fatal(recvErr)
+		}
+		if ev := resp.GetEvent(); ev.GetType() == string(session.EvMessageDelta) {
+			wire = append(wire, ev.GetText())
+		}
+	}
+	if got := strings.Join(wire, "|"); got != "alpha|-|雪" {
+		t.Fatalf("wire chunks = %q, want original chunk boundaries", got)
+	}
+
+	logged := readEventLog(t, log, sess.ID)
+	var durable []string
+	for _, ev := range logged {
+		if ev.Type == session.EvMessageDelta {
+			durable = append(durable, ev.Text)
+		}
+	}
+	if len(durable) != 1 || durable[0] != "alpha-雪" {
+		t.Fatalf("durable delta chunks = %q, want one bounded coalesced chunk", durable)
+	}
+	folded, err := eventsource.Fold(eventsource.SessionMeta{
+		ID: sess.ID, Mode: session.ModeDefault, Workspace: "/ws", CreatedAt: time.Unix(0, 0),
+	}, log.Read(context.Background(), sess.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folded.Conversation.Messages) != 2 || folded.Conversation.Messages[1].Text != "alpha-雪" {
+		t.Fatalf("folded messages = %+v, want exact assistant text", folded.Conversation.Messages)
+	}
 }
 
 // askingEventLogService builds a Service over a supplied EventLog whose engine

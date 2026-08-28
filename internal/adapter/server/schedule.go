@@ -209,10 +209,12 @@ func (s *Service) EmitScheduleEvent(ctx context.Context, payload session.Schedul
 	if payload.SessionID == "" {
 		return
 	}
-	s.appendEvent(context.WithoutCancel(ctx), payload.SessionID, session.Event{
+	recorder := NewRunEventRecorder(context.WithoutCancel(ctx), s, payload.SessionID)
+	recorder.Observe(session.Event{
 		Type:     scheduleEventType(payload.Kind),
 		Schedule: &payload,
 	})
+	recorder.Close()
 }
 
 // scheduleStore returns the ScheduleStore the capabilities gate (Scheduling)

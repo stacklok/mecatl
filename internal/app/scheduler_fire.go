@@ -195,14 +195,12 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// already be cancelled (watchdog, shutdown) when the terminal events land,
 		// and the durable log exists precisely to record that tail.
 		logCtx := context.WithoutCancel(ctx)
+		recorder := server.NewRunEventRecorder(logCtx, svc, sess.ID)
 		for ev := range run.Events() {
 			// The fire loop is this run's only consumer, so it owns the durable
-			// append the gRPC/HTTP relays do for a client-driven run. It routes
-			// through the ONE stamping path (Service.appendEvent), which attributes
-			// each event to the caller on this ctx — the scheduler's SYSTEM
-			// principal, the thing that actually acted. The schedule's owner stays
-			// on the fire SESSION (ADR 0204 decisions 5 + 6).
-			svc.AppendRunEvent(logCtx, sess.ID, ev)
+			// projection the gRPC/HTTP relays record for a client-driven run. Actor
+			// attribution remains in the server recorder's single append path.
+			recorder.Observe(ev)
 			// RecordFireProgress on turn-boundary / activity events (issue #386):
 			// NOT every chunk — once per EvToolCall / EvTurnEnd / EvResult, so a
 			// long streaming turn does not stamp a per-delta. Best-effort WARN.
@@ -213,6 +211,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 				break
 			}
 		}
+		recorder.Close()
 		// Settle the terminal session snapshot HERE, best-effort, so it is durable
 		// BEFORE the fire returns. A fire whose run was cancelled mid-flight
 		// (Service.Close → run.Cancel on shutdown, issue #388 Task #3, OR the

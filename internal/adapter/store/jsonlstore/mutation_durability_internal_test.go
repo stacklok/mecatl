@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -291,7 +292,7 @@ func TestExplicitMigrationFinalRemovalIsSyncedAndRetryable(t *testing.T) {
 		return syncDir(dir)
 	}
 	reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0])
-	if err != nil || reason != "backend_failure" {
+	if !errors.Is(err, syscall.EIO) || reason != "" {
 		t.Fatalf("MigrateSessionFamily = %q, %v", reason, err)
 	}
 	assertMissing(t, st.resolver.canonicalPath(id, kindSnapshot))
@@ -340,17 +341,24 @@ func TestExplicitMigrationSyncsExistingV2BeforeRemovingV1(t *testing.T) {
 	syncDir := st.snapshot.syncDir
 	st.snapshot.syncDir = func(*os.File) error { return syscall.EIO }
 	reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0])
-	if err != nil || reason != "backend_failure" {
+	if !errors.Is(err, syscall.EIO) || reason != "" {
 		t.Fatalf("MigrateSessionFamily = %q, %v", reason, err)
 	}
 	if _, err := os.Stat(v1Path); err != nil {
 		t.Fatalf("migration removed v1 before v2 directory durability: %v", err)
 	}
 
-	st.snapshot.syncDir = syncDir
+	var synced []string
+	st.snapshot.syncDir = func(dir *os.File) error {
+		synced = append(synced, filepath.Clean(dir.Name()))
+		return syncDir(dir)
+	}
 	reason, err = st.MigrateSessionFamily(ctx, inspection.Families[0])
 	if err != nil || reason != "" {
 		t.Fatalf("retry MigrateSessionFamily = %q, %v", reason, err)
+	}
+	if !slices.Contains(synced, st.resolver.dir) || !slices.Contains(synced, st.resolver.canonicalDir()) {
+		t.Fatalf("migration synced directories = %v, want root and canonical", synced)
 	}
 	assertMissing(t, v1Path)
 }

@@ -185,7 +185,12 @@
   sidecar-first/snapshot-last deletion therefore cannot race a same-family append,
   while unrelated families proceed independently. Snapshot replacement holds that
   owner-only flock from inactive-temp recovery through same-directory write, file
-  sync, atomic rename, and directory sync. Event and tool sidecars use the same
+  sync, atomic rename, and directory sync. An existing canonical snapshot may retain
+  weaker-capability Save behavior, but the first Save of a root-level legacy family
+  fails before migration when directory sync is unavailable. EventLog strict append
+  requires both file and directory sync. ToolCall instead attempts every available sync
+  and may leave an unsynced or partially synced best-effort audit record. Event and tool
+  sidecars use the same
   flock across cooperating jsonlstore processes: newline is their commit marker,
   append opens the canonical sidecar through an `os.Root`, rejects non-regular
   entries without blocking on FIFOs, truncates only an unterminated EOF fragment,
@@ -201,14 +206,23 @@
   successful Save waits for the lock and removes all prior inactive generations
   before creating its own. Thus another process's active temp and the committed
   snapshot are never reaped, and repeated crashes do not accumulate an unbounded
-  temp set. `Store.SnapshotDurability` exposes those three verified primitives: an unsupported
+  temp set. The configured `--store-dir` path and every ancestor must be physical,
+  non-symlink directories; on macOS use the physical `/private/...` spelling rather
+  than a `/var/...` path that traverses the `/var` symlink.
+  `Store.SnapshotDurability` exposes those three verified primitives: an unsupported
   sync primitive is reported as weaker snapshot durability rather than overclaiming
   host-crash safety. That claim also depends on an underlying filesystem/storage stack
   that honors successful sync and atomic rename; the probe verifies syscall support,
-  not whether volatile storage such as tmpfs survives power loss. Snapshot Save retains
-  the weaker-capability behavior, EventLog append and destructive/move operations fail
-  closed when required directory sync is unavailable, and ToolCall may drop its
-  best-effort record. Failures before rename preserve the prior snapshot; a failure after rename
+  not media persistence or whether volatile storage such as tmpfs survives power loss.
+  Snapshot Save retains the weaker-capability behavior for an existing canonical family;
+  EventLog append is unavailable without both file and directory sync, and Delete,
+  retention, and destructive/move operations fail closed without directory sync.
+  ToolCall avoids forcing legacy migration on such a filesystem: it appends to the
+  readable sidecar or the side matching the authoritative snapshot, attempts every
+  available sync, and may leave an unsynced or partially synced best-effort record.
+  Sidecars opened for append and legacy files selected for migration are tightened
+  through validated no-follow descriptors to `0600`. Failures before rename preserve
+  the prior snapshot; a failure after rename
   is loud while the new snapshot remains authoritative.
   The logical session id is an opaque valid-UTF-8 string
   stored inside each snapshot; the bounded hash-suffixed `sid-v1-` filename token is not
@@ -250,7 +264,16 @@
   lives at the relay (`internal/adapter/server`), which appends every observed
   event (incl. the post-disconnect tail and `EvApproval`/`EvCompactionArchive`,
   which are skipped on the client wire) on a cancel-detached context so a dead
-  client can't abort the durable write. `jsonlstore` triples as
+  client can't abort the durable write. Clients remain chunk-streamed. The run-scoped
+  durable recorder coalesces message and reasoning separately into UTF-8-safe chunks capped
+  at 1 MiB, conservatively below jsonlstore's 16 MiB record limit under worst-case JSON
+  escaping. Typical turns still produce one record of each kind; oversized turns produce
+  the minimum bounded number. A non-delta boundary flushes pending chunks before its own
+  append. Every chunk and boundary is attempted exactly once and cleared regardless of
+  error because EventLog errors can follow a durable write; retry would duplicate folded
+  text. Memory remains bounded, one warning is emitted per recorder, and later boundary/result
+  appends continue. A process crash or failed append can lose a chunk; the completed snapshot
+  remains authoritative. See [ADR 0243](../adr/0243-jsonl-durability.md). `jsonlstore` triples as
   `SessionStore`+`ToolCallRecorder`+`EventLog` (a `.events.jsonl` sidecar);
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The

@@ -23,15 +23,17 @@ A replacement process resumes from the last persisted turn boundary; it does not
 resume an in-flight goroutine or guarantee that work after the last save exists.
 Graceful shutdown cancels active runs after its bounded drain window, while a
 crash may leave a Kubernetes lease held until its TTL expires. Recovery occurs
-when a later prompt or approval re-enters the session. Local JSONL persistence is restart-safe and uses file and directory sync where the
-filesystem supports them. `SnapshotDurability` reports whether those primitives, on an
-underlying filesystem/storage stack that honors successful sync and atomic rename, make
-snapshot saves host-crash safe; the probe checks syscall support and does not make tmpfs
-survive power loss. Snapshot Save can report weaker capability, EventLog append and
-destructive/move operations fail closed without required directory sync, and ToolCall
-audit remains best-effort and may drop. A
-process crash can still lose work after the last successful save or leave an
-unterminated final sidecar record, which is safely ignored on recovery.
+when a later prompt or approval re-enters the session. Local JSONL persistence is
+restart-safe where its guarantees are met. Strict EventLog append requires file and
+directory sync; Delete, retention, and migration fail closed without directory sync,
+which can make maintenance unavailable. An existing canonical snapshot can retain a
+weaker Save capability, while the first Save of a root-level legacy family fails before
+mutation when migration cannot sync directories. ToolCall audit is best-effort and may
+leave an unsynced or partially synced record. `SnapshotDurability` probes syscall support,
+not media persistence; the storage stack must honor successful sync and atomic rename.
+A process crash can still lose buffered message/reasoning deltas from only the incomplete
+turn or leave an unterminated final sidecar record. Completed-turn deltas are coalesced
+into at most two durable appends while clients remain chunk-streamed.
 
 The harness was unusually close to this by construction: the LLM adapters keep no server-side state (`store:false`; full replay on every turn), and the session aggregate round-trips through a stable snapshot saved at every turn boundary. The remaining gaps were the snapshot missing three fields (session profile, provider/model selector, cumulative token usage), a process death while parked awaiting approval stranding the session, and the event stream being emitted and discarded rather than persisted.
 

@@ -312,6 +312,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	ct := &controlTarget{run: run}
 
 	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, snd: snd}
+	rl.recorder = NewRunEventRecorder(rl.logCtx, h.svc, id)
 
 	// Read subsequent control frames concurrently so an approval/cancel/steer
 	// can be delivered while events are still streaming. The reader exits on
@@ -331,9 +332,12 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	if notice := h.svc.RecoverNotice(id); notice != "" {
 		ev := session.Event{Type: session.EvRecoverNotice, Text: notice}
 		// Durable log first (cancel-detached, survives client disconnect).
-		h.svc.appendEvent(rl.logCtx, id, ev)
+		rl.recorder.Observe(ev)
 		// Forward to the client wire through the same serialized sender.
 		if err := snd.Send(&mecatlv1.ConverseResponse{Event: toProto(ev)}); err != nil {
+			// The relay goroutine owns Close on normal paths, but it has not been
+			// installed yet. Flush the recorder on this sole pre-flight exit.
+			rl.recorder.Close()
 			return err
 		}
 	}
@@ -362,6 +366,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		defer rl.recorder.Close()
 		pushErr(h.relayRun(rl, run))
 		if retrying {
 			h.svc.Persist(context.WithoutCancel(ctx), id)
@@ -482,12 +487,13 @@ func (s *streamSender) Send(m *mecatlv1.ConverseResponse) error {
 // on the SAME goroutine (one relayRun call at a time), so no cross-goroutine
 // access exists by construction.
 type runRelay struct {
-	ctx     context.Context
-	logCtx  context.Context
-	id      session.SessionID
-	acks    chan *mecatlv1.SteerAck
-	snd     *streamSender
-	sendErr error
+	ctx      context.Context
+	logCtx   context.Context
+	id       session.SessionID
+	acks     chan *mecatlv1.SteerAck
+	snd      *streamSender
+	recorder *RunEventRecorder
+	sendErr  error
 }
 
 // sendEvent relays one run event through the streamSender, applying the
@@ -495,13 +501,13 @@ type runRelay struct {
 // error: a client-gone relay appends to the durable log only.
 func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
 	if rl.sendErr != nil {
-		// drain-to-discard: the client is gone. Still append to the durable
-		// log (it must record the post-disconnect tail), but skip Persist /
+		// drain-to-discard: the client is gone. Still record the durable
+		// projection (it must include the post-disconnect tail), but skip Persist /
 		// auto-approve / the client send.
-		h.svc.appendEvent(rl.logCtx, rl.id, ev)
+		rl.recorder.Observe(ev)
 		return
 	}
-	if !h.svc.relayEvent(rl.ctx, rl.logCtx, rl.id, ev, true) {
+	if !h.svc.relayEvent(rl.ctx, rl.id, ev, true, rl.recorder) {
 		return // log-only event: consumed by the durable log, not relayed to the client wire
 	}
 	proto := toProto(ev)

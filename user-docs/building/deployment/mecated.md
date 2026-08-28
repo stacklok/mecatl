@@ -61,7 +61,11 @@ mecated serve \
 ```
 
 `--store-dir` enables local JSONL persistence with an authoritative v2 current
-snapshot plus readable v1 history. `--auth-token` requires the token on every
+snapshot plus readable v1 history. The configured path and every ancestor must be
+physical non-symlink directories; on macOS, use the physical `/private/...` spelling
+instead of a `/var/...` path that traverses the `/var` symlink. Startup reports the
+verified atomic-replace, file-sync, and directory-sync posture without logging the
+store path. `--auth-token` requires the token on every
 request (also readable from `MECATL_AUTH_TOKEN`). `--posture auto` sets allow-all
 for unattended runs while keeping the child substitution floor (prompt-injection
 defence) on.
@@ -461,6 +465,14 @@ mecated serve --store-dir /var/lib/mecatl/sessions
 
 Each session has an authoritative `.session.json` v2 current snapshot and
 `.tools.jsonl` audit and `.events.jsonl` durable-event sidecars under `sid-v1`.
+EventLog success requires both file and directory sync. Delete, retention, and migration
+cannot proceed without directory sync; this fail-closed durability rule can reduce
+availability. Existing canonical snapshots may still Save with a reported weaker
+capability, but the first Save of a root-level legacy family fails before mutation if its
+migration cannot sync directories. ToolCall audit remains best-effort and may leave an
+unsynced or partially synced record. Capability probes establish syscall support, not
+media persistence. Startup emits exactly one durability-posture fact (or warning for weak
+capabilities) with the capability fields and consequences, without including the path.
 Older `.session.jsonl` snapshot histories remain readable and are promoted lazily
 on the next write. The files are plaintext and owner-only; do not edit or share
 them. Completed sessions are immediately readable by the event-sourced

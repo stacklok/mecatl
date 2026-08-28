@@ -1,6 +1,7 @@
 package jsonlstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -95,7 +96,7 @@ func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailure
 	migrationCtx, releaseMigration = acquireMigrationTestContext(t, st2)
 	defer releaseMigration()
 	reason, err = st2.MigrateSessionFamily(migrationCtx, inspection.Families[0])
-	if err != nil || reason != "backend_failure" {
+	if err == nil || reason != "" {
 		t.Fatalf("post-rename failure = %q, %v", reason, err)
 	}
 	if _, err := os.Stat(st2.resolver.canonicalPath("post-rename-crash", kindSnapshot)); err != nil {
@@ -115,6 +116,70 @@ func TestSessionStorageContinuity_Scenario4_PerFamilyCrashSafety_InjectedFailure
 	matches, err := filepath.Glob(st2.resolver.currentSnapshotPath("post-rename-crash") + snapshotTempMarker + "*")
 	if err != nil || len(matches) > 1 {
 		t.Fatalf("replacement temps = %v, %v", matches, err)
+	}
+}
+
+func TestMigrateSessionFamilyRestrictsLegacyFamilyWithoutAppending(t *testing.T) {
+	st := newInternalStore(t)
+	id := session.SessionID("private-direct-migration")
+	snapshotPath := seedMigrationV1(t, st, id)
+	snapshotBytes, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBytes = bytes.TrimSuffix(snapshotBytes, []byte{'\n'})
+	legacyEvents := st.resolver.legacyPath(id, kindEvents)
+	legacyTools := st.resolver.legacyPath(id, kindTools)
+	eventBytes := []byte("legacy event bytes\n")
+	toolBytes := []byte("legacy tool bytes\n")
+	writeBytes(t, legacyEvents, eventBytes)
+	writeBytes(t, legacyTools, toolBytes)
+	for _, path := range []string{snapshotPath, legacyEvents, legacyTools} {
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatalf("Chmod %s: %v", path, err)
+		}
+	}
+
+	inspection, err := st.InspectSessionMigration(context.Background())
+	if err != nil || len(inspection.Families) != 1 {
+		t.Fatalf("InspectSessionMigration = %+v, %v", inspection, err)
+	}
+	ctx, release := acquireMigrationTestContext(t, st)
+	reason, err := st.MigrateSessionFamily(ctx, inspection.Families[0])
+	release()
+	if err != nil || reason != "" {
+		t.Fatalf("MigrateSessionFamily = %q, %v", reason, err)
+	}
+
+	canonical := map[string][]byte{
+		st.resolver.canonicalPath(id, kindEvents): eventBytes,
+		st.resolver.canonicalPath(id, kindTools):  toolBytes,
+	}
+	for path, want := range canonical {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(want) {
+			t.Fatalf("migrated %s = %q, %v; want byte-preserved %q", path, got, err, want)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("migrated %s mode = %v, %v; want 0600", path, info.Mode().Perm(), err)
+		}
+	}
+	current := st.resolver.currentSnapshotPath(id)
+	currentBytes, err := os.ReadFile(current)
+	if err != nil {
+		t.Fatalf("Read current snapshot: %v", err)
+	}
+	decoded, err := decodeCurrentSnapshot(currentBytes)
+	if err != nil || !bytes.Equal(decoded.Snapshot, snapshotBytes) {
+		t.Fatalf("current snapshot payload preserved = %v, %v", bytes.Equal(decoded.Snapshot, snapshotBytes), err)
+	}
+	info, err := os.Stat(current)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("current snapshot mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+	if loaded, err := st.Load(context.Background(), id); err != nil || loaded.ID != id {
+		t.Fatalf("Load migrated snapshot = %#v, %v", loaded, err)
 	}
 }
 

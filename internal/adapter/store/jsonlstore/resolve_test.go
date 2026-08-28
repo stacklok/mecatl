@@ -804,7 +804,7 @@ func TestAppendLineRepairsTornTail(t *testing.T) {
 			if tc.existing != "" {
 				writeBytes(t, path, []byte(tc.existing))
 			}
-			if err := st.appendLine(path, []byte("{\"b\":2}")); err != nil {
+			if err := st.appendLine(path, []byte("{\"b\":2}"), appendStrict); err != nil {
 				t.Fatalf("appendLine: %v", err)
 			}
 			assertBytes(t, path, []byte(tc.want))

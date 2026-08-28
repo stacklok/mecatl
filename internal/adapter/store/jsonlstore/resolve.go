@@ -941,7 +941,29 @@ func moveLegacyFile(move func(*os.Root, string, string) error, root *os.Root, sr
 	if present {
 		return fmt.Errorf("destination already exists: %q", dst)
 	}
+	if err := restrictRegularFile(root, src); err != nil {
+		return err
+	}
 	return move(root, src, dst)
+}
+
+func restrictRegularFile(root *os.Root, name string) error {
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("source %q is not a regular file", name)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		return fmt.Errorf("restrict source %q permissions: %w", name, err)
+	}
+	return nil
 }
 
 func sessionNotFound(id session.SessionID) error {

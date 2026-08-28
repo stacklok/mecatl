@@ -3220,9 +3220,24 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open jsonl store %q: %w", cfg.StoreDir, err)
 	}
+	logJSONLDurabilityPosture(cfg.diag(), st.SnapshotDurability())
 	cfg.diag().Log(context.Background(), port.LevelInfo, "session store: jsonl", "dir", cfg.StoreDir)
 	// The one Store also implements port.EventLog — wire it as both.
 	return st, st, func() {}, nil
+}
+
+func logJSONLDurabilityPosture(diag port.Diagnostics, capability jsonlstore.SnapshotDurabilityCapability) {
+	level := port.LevelInfo
+	posture := "host-crash primitives available; media persistence still depends on the storage stack"
+	if !capability.HostCrashSafe() {
+		level = port.LevelWarn
+		posture = "weaker snapshot durability; strict event append may be unavailable, destructive maintenance requires directory sync, and tool audit is best-effort"
+	}
+	diag.Log(context.Background(), level, "jsonl store durability posture",
+		"atomic_replace", capability.AtomicReplace,
+		"file_sync", capability.FileSync,
+		"directory_sync", capability.DirectorySync,
+		"consequences", posture)
 }
 
 // chainClose composes two close funcs into one that runs both (the second

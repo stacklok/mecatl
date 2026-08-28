@@ -45,22 +45,50 @@ func TestStoreRejectsEmptyRoot(t *testing.T) {
 	}
 }
 
-func TestStorePreservesConfiguredRootSymlink(t *testing.T) {
-	base := t.TempDir()
-	target := filepath.Join(base, "target")
-	if err := os.Mkdir(target, 0o700); err != nil {
-		t.Fatalf("Mkdir target: %v", err)
-	}
-	configured := filepath.Join(base, "configured")
-	if err := os.Symlink(target, configured); err != nil {
-		t.Fatalf("Symlink configured root: %v", err)
-	}
-	st, err := New(configured)
-	if err != nil {
-		t.Fatalf("New through configured root symlink: %v", err)
-	}
-	if st.resolver.dir != configured {
-		t.Fatalf("configured root = %q, want %q", st.resolver.dir, configured)
+func TestStoreRejectsConfiguredRootAndAncestorSymlinksWithoutTargetMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		configured func(string, string) string
+	}{
+		{
+			name: "root",
+			configured: func(base, target string) string {
+				configured := filepath.Join(base, "configured")
+				if err := os.Symlink(target, configured); err != nil {
+					t.Fatalf("Symlink configured root: %v", err)
+				}
+				return configured
+			},
+		},
+		{
+			name: "ancestor",
+			configured: func(base, target string) string {
+				ancestor := filepath.Join(base, "configured")
+				if err := os.Symlink(target, ancestor); err != nil {
+					t.Fatalf("Symlink configured ancestor: %v", err)
+				}
+				return filepath.Join(ancestor, "store")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			target := filepath.Join(base, "target")
+			if err := os.Mkdir(target, 0o700); err != nil {
+				t.Fatalf("Mkdir target: %v", err)
+			}
+			configured := tc.configured(base, target)
+			if _, err := New(configured); err == nil {
+				t.Fatal("New succeeded through configured symlink")
+			}
+			entries, err := os.ReadDir(target)
+			if err != nil {
+				t.Fatalf("ReadDir target: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("rejected symlink mutated target: %v", entries)
+			}
+		})
 	}
 }
 

@@ -31,7 +31,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0104 — Session families get a bounded, injective, non-reversible physical name](./0104-session-family-physical-naming.md)
 - [0217 — Session discovery uses durable kind metadata and an authoritative transcript](./0217-session-discovery-continuation.md)
 - [0226 — Session storage separates current state, indexed metadata, and maintenance](./0226-session-storage-maintenance.md)
-- [0239 — Local JSONL durability boundaries](./0239-jsonl-durability.md)
+- [0239 — Semantic stream retry and failed-step retry transport](./0239-semantic-stream-retry.md)
+- [0243 — Local JSONL durability boundaries](./0243-jsonl-durability.md)
 - [0229 — Redis migration uses fenced renewable ownership and indexed coverage](./0229-redis-migration-fencing.md) *(superseded by 0230)*
 - [0230 — Redis migration ownership and coverage are proved before mutation](./0230-redis-migration-atomic-ownership-and-coverage.md) *(superseded by 0231)*
 - [0231 — Redis readiness requires exact owner-index coverage](./0231-redis-owner-index-exact-coverage.md)

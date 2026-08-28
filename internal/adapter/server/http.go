@@ -653,6 +653,8 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 	logCtx := context.WithoutCancel(r.Context())
+	recorder := NewRunEventRecorder(logCtx, h.svc, id)
+	defer recorder.Close()
 	enc := json.NewEncoder(w)
 
 	// Inject a pre-flight EvRecoverNotice when the session just recovered from a
@@ -660,7 +662,7 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	// provider call. Emitted ONCE per recovery.
 	if notice != "" {
 		ev := session.Event{Type: session.EvRecoverNotice, Text: notice}
-		h.svc.appendEvent(logCtx, id, ev)
+		recorder.Observe(ev)
 		if _, err := w.Write([]byte("data: ")); err != nil {
 			return
 		}
@@ -704,10 +706,10 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 			// drain-to-discard: the client is gone. Still append to the durable
 			// log (it must record the post-disconnect tail), but skip Persist /
 			// auto-approve / the client write.
-			h.svc.appendEvent(logCtx, id, ev)
+			recorder.Observe(ev)
 			continue
 		}
-		if !h.svc.relayEvent(r.Context(), logCtx, id, ev, true) {
+		if !h.svc.relayEvent(r.Context(), id, ev, true, recorder) {
 			continue // log-only event: consumed by the durable log, not relayed to the client wire
 		}
 		if _, err := w.Write([]byte("data: ")); err != nil {
@@ -766,9 +768,11 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 		// happened regardless of whether a client consumes the stream. Use a
 		// cancel-detached context so the request returning does not abort the writes.
 		logCtx := context.WithoutCancel(r.Context())
+		recorder := NewRunEventRecorder(logCtx, h.svc, id)
 		go func() {
+			defer recorder.Close()
 			for ev := range run.Events() {
-				h.svc.appendEvent(logCtx, id, ev)
+				recorder.Observe(ev)
 			}
 			h.svc.deregister(id, run)
 		}()
@@ -864,6 +868,8 @@ func (h *HTTPHandler) relayEventsSSE(w http.ResponseWriter, r *http.Request, id 
 	// durable log (it must record the post-disconnect tail, including the terminal
 	// EvResult) — the same discipline as relayRunSSE.
 	logCtx := context.WithoutCancel(r.Context())
+	recorder := NewRunEventRecorder(logCtx, h.svc, id)
+	defer recorder.Close()
 	enc := json.NewEncoder(w)
 	failed := false
 	fail := func() {
@@ -874,12 +880,12 @@ func (h *HTTPHandler) relayEventsSSE(w http.ResponseWriter, r *http.Request, id 
 		if failed {
 			// drain-to-discard: the client is gone. Still append to the durable
 			// log, but skip Persist / the client write.
-			h.svc.appendEvent(logCtx, id, ev)
+			recorder.Observe(ev)
 			continue
 		}
 		// autoApprove=false: this path IS the plan-approval resolution — running
 		// the auto-approve observer inside it would recurse.
-		if !h.svc.relayEvent(r.Context(), logCtx, id, ev, false) {
+		if !h.svc.relayEvent(r.Context(), id, ev, false, recorder) {
 			continue // log-only event: consumed by the durable log, not relayed to the client wire
 		}
 		if _, err := w.Write([]byte("data: ")); err != nil {

@@ -185,17 +185,23 @@ It contains no destructive shell command examples; use your platform's backup to
 service stopped.
 
 1. **Stop and quiesce.** Stop the user service and confirm the daemon has exited. Confirm no other
-   process or replica points at the same local store and no maintenance job is active.
+   process or replica points at the same local store and no maintenance job is active. The
+   configured store path and every ancestor must be physical non-symlink directories; on macOS,
+   use the physical `/private/...` spelling instead of `/var/...`.
    A filesystem copy while the daemon is writing is not a supported backup. The stable
    family flock coordinates cooperating mecatl processes only; it cannot make an
    external copy or arbitrary writer consistent. V2 snapshots and sidecars sync where
    supported, but `SnapshotDurability` can report a weaker filesystem, so a successful
    snapshot operation must not be advertised as host-crash safe there. Even when all
    probes pass, the guarantee depends on an underlying filesystem/storage stack that
-   honors successful sync and atomic rename; a probe does not make tmpfs survive power
-   loss. Event-log append and destructive/move operations fail closed when required
-   directory sync is unavailable. Tool-call audit remains best-effort and may drop a
-   record. An interrupted final JSONL record is the only tolerated torn tail; a blank,
+   honors successful sync and atomic rename; a probe proves syscall support, not media
+   persistence, and does not make tmpfs survive power loss. Strict EventLog append
+   requires both file and directory sync. Delete, retention, and migration fail before
+   mutation when directory sync is unavailable, reducing maintenance availability. An
+   existing canonical snapshot can retain a weaker Save capability, but the first Save
+   of a root-level legacy family then fails before migration. Tool-call audit attempts
+   every available sync and may leave an unsynced or partially synced best-effort record.
+   An interrupted final JSONL record is the only tolerated torn tail; a blank,
    whitespace-only, or otherwise malformed complete record fails loudly and needs
    operator recovery.
 2. **Back up.** Snapshot or copy the complete state directory—not selected globs—including current
