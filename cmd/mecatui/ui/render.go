@@ -281,20 +281,24 @@ type joinRenderKey struct {
 // inputRenderKey is the validity key of the memoized input render: the complete
 // set of textarea facts renderInput's output is a pure function of — the buffer
 // content, the cursor position (logical row + soft-wrap row/column offsets, so a
-// cursor move inside an unchanged value still re-renders), the focus state (which
+// cursor move inside an unchanged value still re-renders), the selection state
+// (active plus normalized logical start/end positions), the focus state (which
 // also fully determines the virtual cursor's blink phase — mecatui never routes
 // cursor.BlinkMsg to the textarea, so the cursor is static: visible while focused,
 // hidden while blurred; if blink routing is ever added, the blink phase must join
 // this key), and the box dimensions. The theme, placeholder, and prompt are fixed
 // per process and need no key slot.
 type inputRenderKey struct {
-	value         string
-	row           int // cursor's logical line (textarea.Line)
-	rowOffset     int // cursor's soft-wrap row within that line (LineInfo.RowOffset)
-	colOffset     int // cursor's column within that soft-wrap row (LineInfo.ColumnOffset)
-	focused       bool
-	width, height int
-	mode          string
+	value                              string
+	row                                int // cursor's logical line (textarea.Line)
+	rowOffset                          int // cursor's soft-wrap row within that line (LineInfo.RowOffset)
+	colOffset                          int // cursor's column within that soft-wrap row (LineInfo.ColumnOffset)
+	selection                          bool
+	selectionFromRow, selectionFromCol int
+	selectionToRow, selectionToCol     int
+	focused                            bool
+	width, height                      int
+	mode                               string
 }
 
 // mdEntry is one memoized assistant-block render: the source text and wrap width

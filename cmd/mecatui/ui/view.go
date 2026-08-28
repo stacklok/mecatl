@@ -907,13 +907,14 @@ func (m Model) renderSteer() string {
 // textarea fact in the key changed since the previous render, the cached string is
 // returned instead of re-running textarea.View()'s full per-line re-wrap.
 //
-// Correctness of the single entry rests on two facts. (1) The textarea's only
-// state NOT in the key — its internal viewport scroll offset, and the virtual
-// cursor's blink phase — can only change as a side effect of a mutation that also
-// changes a keyed fact in the SAME reducer step (the scroll offset moves only when
-// the cursor crosses the visible window, i.e. row/rowOffset/width/height changed;
-// the blink phase flips only on Focus/Blur, since the reducer never routes
-// cursor.BlinkMsg to the textarea — the cursor is static, not blinking, today).
+// Correctness of the single entry rests on two facts. (1) Selection is keyed by
+// its active state and normalized logical endpoints. The textarea's only state NOT
+// in the key — its internal viewport scroll offset and the virtual cursor's blink
+// phase — can only change as a side effect of a mutation that also changes a keyed
+// fact in the SAME reducer step (the scroll offset moves only when the cursor
+// crosses the visible window, i.e. row/rowOffset/width/height changed; the blink
+// phase flips only on Focus/Blur, since the reducer never routes cursor.BlinkMsg to
+// the textarea — the cursor is static, not blinking, today).
 // The active permission mode is deliberately keyed because it changes the input
 // colour cue without necessarily changing any textarea-owned state.
 // (2) renderInput runs on EVERY reduced message (the relayout chokepoint's
@@ -922,15 +923,22 @@ func (m Model) renderSteer() string {
 func (m Model) renderInput() string {
 	m.applyModeInputStyle()
 	li := m.ta.LineInfo()
+	hasSelection := m.ta.HasSelection()
+	selectionFrom, selectionTo, _ := m.ta.Selection()
 	key := inputRenderKey{
-		value:     m.ta.Value(),
-		row:       m.ta.Line(),
-		rowOffset: li.RowOffset,
-		colOffset: li.ColumnOffset,
-		focused:   m.ta.Focused(),
-		width:     m.ta.Width(),
-		height:    m.ta.Height(),
-		mode:      m.inputMode(),
+		value:            m.ta.Value(),
+		row:              m.ta.Line(),
+		rowOffset:        li.RowOffset,
+		colOffset:        li.ColumnOffset,
+		selection:        hasSelection,
+		selectionFromRow: selectionFrom.Row,
+		selectionFromCol: selectionFrom.Col,
+		selectionToRow:   selectionTo.Row,
+		selectionToCol:   selectionTo.Col,
+		focused:          m.ta.Focused(),
+		width:            m.ta.Width(),
+		height:           m.ta.Height(),
+		mode:             m.inputMode(),
 	}
 	if m.rend.inputValid && m.rend.inputKey == key {
 		return m.rend.inputView

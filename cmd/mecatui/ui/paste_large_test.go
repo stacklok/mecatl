@@ -637,6 +637,32 @@ func TestRenderInputInvalidatedByCursorMove(t *testing.T) {
 	}
 }
 
+// TestRenderInputInvalidatedBySelection proves Ctrl+G's real Update route busts
+// the cache even though it changes only the textarea's selection rendering state.
+func TestRenderInputInvalidatedBySelection(t *testing.T) {
+	m, _ := newQueueModel(t)
+	m = typeText(t, m, "select this draft")
+
+	unselected := m.renderInput()
+	pokeInputCache(t, m, "SENTINEL")
+
+	// Drive the real prompt-selection route. Ctrl+G changes only textarea
+	// selection state, leaving the value, cursor, focus, and dimensions intact.
+	mm, _ := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if !m.ta.HasSelection() {
+		t.Fatal("ctrl+g did not select the prompt")
+	}
+
+	got := m.renderInput()
+	if got == "SENTINEL" {
+		t.Fatal("selection did not invalidate the input render cache")
+	}
+	if got == unselected {
+		t.Fatal("selected input render is byte-identical to the unselected render")
+	}
+}
+
 // TestRenderInputInvalidatedByFocusChange: focus/blur flips the virtual cursor's
 // visibility, so it must miss the cache too (focused is part of the key).
 func TestRenderInputInvalidatedByFocusChange(t *testing.T) {
