@@ -95,7 +95,18 @@ task mecak8s:kind-keycloak-setup
 task mecak8s:kind-hosts-add
 ```
 
-In separate terminals, forward both services:
+For the recommended quickstart, run this in one terminal and leave it running while
+using the client in another:
+
+```sh
+task mecak8s:kind-keycloak-demo
+```
+
+It keeps both loopback-only forwards supervised, writes the fixture CA under
+`.scratch/`, and prints ready-to-copy `mecatui login` and `mecatui connect` commands.
+It deliberately does not rerun setup or invoke `sudo`; `Ctrl-C` stops both forwards.
+
+To manage the forwards independently instead:
 
 ```sh
 task mecak8s:kind-keycloak-port-forward

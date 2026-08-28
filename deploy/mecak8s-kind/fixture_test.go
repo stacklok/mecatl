@@ -368,6 +368,27 @@ func TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn(t *testing.T) {
 	}
 }
 
+func TestMecak8sKindFixture_Scenario3_KeycloakDemoQuickstart(t *testing.T) {
+	text := fixtureTaskClosure(t, "kind-keycloak-demo")
+	for _, want := range []string{
+		"kind-keycloak-demo:", "task: cluster-ready", "nc -z 127.0.0.1", "trap cleanup EXIT INT TERM",
+		"svc/keycloak 8443:8443", "svc/{{.RELEASE}}-mecak8s 18080:8080 18081:8081",
+		"--address=127.0.0.1", "get secret fixture-ca", "fixture-ca.crt",
+		"wait_port Keycloak 8443", "wait_port mecak8s-gRPC 18080", "wait_port mecak8s-HTTPS 18081",
+		"mecatui login localhost:18081", "--client-id mecatui-kind", "--audience mecak8s",
+		"--scopes openid,profile,mecak8s:access,offline_access", "mecatui connect localhost:18081 --tls",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Keycloak demo quickstart missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"task: kind-keycloak-setup", "task: kind-hosts-add", "sudo", "extraPortMappings", "NodePort", "--address=0.0.0.0"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Keycloak demo quickstart violates fixture boundary with %q", forbidden)
+		}
+	}
+}
+
 // TestMecak8sKindFixture_Scenario3_KeycloakOIDCOverlay pins the disposable
 // private-HTTPS OIDC shape. The CA is narrowly mounted for the validator and
 // no process-wide or deprecated insecure escape hatch is admitted.

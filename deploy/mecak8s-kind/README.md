@@ -77,6 +77,21 @@ task mecak8s:kind-hosts-remove
 Keycloak's configured issuer and its certificate hostname while making the
 local browser leg reachable.
 
+### Supervised remote-client quickstart
+
+After `kind-keycloak-setup` and the explicit `kind-hosts-add` step above, run:
+
+```sh
+task mecak8s:kind-keycloak-demo
+```
+
+This task deliberately does **not** recreate the cluster or invoke `sudo`. It
+supervises both loopback-only port-forwards, waits for them to accept connections,
+exports the fixture CA to `.scratch/kind/mecatl-dev/fixture-ca.crt`, and prints the
+exact `mecatui login` and `mecatui connect` commands. Leave it running while using
+the client; `Ctrl-C` tears down both forwards. The existing individual forward tasks
+remain available when you need to manage them separately.
+
 The authenticated mecak8s API is still reached only through its loopback
 port-forward. Connect to `https://localhost:18081` (and gRPC at
 `localhost:18080`): `localhost` and `127.0.0.1` are certificate-covered names,
