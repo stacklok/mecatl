@@ -827,3 +827,11 @@ Practical notes for such an adapter:
 - **The adapter holds its own forge credential** and never exposes it
   to the calling session — the delegation posture of §9.6, applied to
   a non-Fabric backend.
+
+---
+
+## See also
+
+- [Mecatl extensibility](architecture/extensibility.md) — the current MCP and
+  engine-extension surface this draft complements; Fabric is not implemented by
+  mecatl.
