@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"errors"
+
+	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
 var (
@@ -12,12 +14,17 @@ var (
 	ErrOAuthUnavailable = errors.New("mcp oauth: unavailable")
 )
 
-// OAuthError exposes only a stable safe category and never retains its cause.
+// OAuthError exposes a stable safe category and may retain only a sanitized,
+// closed OAuth callback diagnostic.
 type OAuthError struct {
-	kind error
+	kind       error
+	diagnostic error
 }
 
 func (e *OAuthError) Error() string {
+	if e.diagnostic != nil {
+		return e.diagnostic.Error()
+	}
 	if errors.Is(e.kind, ErrOAuthLoginRequired) {
 		return "mcp OAuth login required"
 	}
@@ -29,6 +36,8 @@ func (e *OAuthError) Is(target error) bool {
 	return target == e.kind
 }
 
+func (e *OAuthError) Unwrap() error { return e.diagnostic }
+
 func projectOAuthError(err error) error {
 	if err == nil {
 		return nil
@@ -38,6 +47,14 @@ func projectOAuthError(err error) error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
+	}
+	var provider *oauthlogin.AuthorizationErrorResponse
+	if errors.As(err, &provider) {
+		return &OAuthError{kind: ErrOAuthUnavailable, diagnostic: provider.Sanitized()}
+	}
+	var rejected *oauthlogin.CallbackRejectedError
+	if errors.As(err, &rejected) {
+		return &OAuthError{kind: ErrOAuthUnavailable, diagnostic: rejected.Sanitized()}
 	}
 	if errors.Is(err, ErrOAuthLoginRequired) {
 		return &OAuthError{kind: ErrOAuthLoginRequired}

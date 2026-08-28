@@ -29,6 +29,36 @@ type mcpLoginCategory string
 func (e mcpLoginCategory) Error() string      { return string(e) }
 func (mcpLoginCategory) Is(target error) bool { return target == ErrMCPLoginFailed }
 
+type mcpLoginDiagnostic struct {
+	category   error
+	diagnostic error
+}
+
+func (e *mcpLoginDiagnostic) Error() string {
+	return e.category.Error() + ": " + e.diagnostic.Error()
+}
+
+func (e *mcpLoginDiagnostic) Unwrap() []error {
+	return []error{e.category, e.diagnostic}
+}
+
+func loginDiagnostic(category, diagnostic error) error {
+	var provider *oauthlogin.AuthorizationErrorResponse
+	var rejected *oauthlogin.CallbackRejectedError
+	var bind *oauthlogin.CallbackBindError
+	switch {
+	case errors.As(diagnostic, &provider):
+		diagnostic = provider.Sanitized()
+	case errors.As(diagnostic, &rejected):
+		diagnostic = rejected.Sanitized()
+	case errors.As(diagnostic, &bind):
+		diagnostic = &oauthlogin.CallbackBindError{Reason: bind.Reason}
+	default:
+		return category
+	}
+	return &mcpLoginDiagnostic{category: category, diagnostic: diagnostic}
+}
+
 // LoginMCP runs one host-authorized OAuth login against an already-resolved MCP
 // server configuration. The runtime and credential store are borrowed. A nil
 // error means the authenticated MCP initialize and initial tool listing
@@ -75,10 +105,10 @@ func LoginMCP(ctx context.Context, cfg mcp.ServerConfig, runtime *oauthlogin.Run
 		return err
 	}
 	if operationCategory != nil {
-		return operationCategory
+		return loginDiagnostic(operationCategory, err)
 	}
 	if errors.Is(err, oauthlogin.ErrAuthorizationFailed) {
-		return ErrMCPLoginAuthorization
+		return loginDiagnostic(ErrMCPLoginAuthorization, err)
 	}
 	return ErrMCPLoginCleanup
 }

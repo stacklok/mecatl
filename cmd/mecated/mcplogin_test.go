@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -123,6 +124,36 @@ func TestMCPLoginSelectionAndRemedies(t *testing.T) {
 			t.Errorf("remedy for %v = %q", category, got)
 		}
 	}
+
+	provider := errors.Join(app.ErrMCPLoginAuthorization, &oauthlogin.AuthorizationErrorResponse{Code: "invalid_scope", Description: "requested scope disabled"})
+	if got := mcpLoginRemedy(provider).Error(); !strings.Contains(got, "invalid_scope") || !strings.Contains(got, "requested scopes") {
+		t.Errorf("provider remedy = %q", got)
+	}
+	rejected := errors.Join(app.ErrMCPLoginAuthorization, &oauthlogin.CallbackRejectedError{Reason: "nested-token-code-state-path-body-canary\nInjected"})
+	if got := mcpLoginRemedy(rejected).Error(); strings.Contains(got, "canary") || !strings.Contains(got, "browser callback was rejected") {
+		t.Errorf("callback remedy = %q", got)
+	}
+	for name, bind := range map[string]*oauthlogin.CallbackBindError{
+		"occupied":    {Reason: oauthlogin.CallbackBindAddressInUse},
+		"unavailable": {Reason: oauthlogin.CallbackBindUnavailable},
+	} {
+		const bindCanary = "nested-network-endpoint-token-state-path-canary"
+		got := mcpLoginRemedy(errors.Join(app.ErrMCPLoginAuthorization, fmt.Errorf("%s: %w", bindCanary, bind))).Error()
+		if strings.Contains(got, bindCanary) {
+			t.Errorf("%s bind remedy leaked detail: %q", name, got)
+		}
+		if name == "occupied" && (!strings.Contains(got, "already in use") || !strings.Contains(got, "other login process")) {
+			t.Errorf("occupied bind remedy = %q", got)
+		}
+		if name == "unavailable" && !strings.Contains(got, "local callback permissions") {
+			t.Errorf("unavailable bind remedy = %q", got)
+		}
+	}
+	const nestedCanary = "nested-network-provider-endpoint-token-code-state-path-body-canary"
+	unknown := fmt.Errorf("%w: %s", app.ErrMCPLoginAuthorization, nestedCanary)
+	if got := mcpLoginRemedy(unknown).Error(); strings.Contains(got, nestedCanary) {
+		t.Errorf("generic remedy leaked nested cause: %q", got)
+	}
 }
 
 type loginReaderStub struct{}
@@ -159,7 +190,7 @@ func TestMCPLoginUsesExplicitOperatorPrecedence(t *testing.T) {
 	}
 }
 
-func TestRunMCPLoginExecutionPath(t *testing.T) {
+func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	t.Setenv("MECATL_LOGIN_KEY", key)
 	t.Setenv("MECATL_LOGIN_CREDENTIAL", base64.StdEncoding.EncodeToString([]byte("opaque")))
@@ -176,8 +207,8 @@ func TestRunMCPLoginExecutionPath(t *testing.T) {
 		if server.Name != "GitHub" || server.OAuth == nil || server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
 			t.Fatalf("selected server = %#v", server)
 		}
-		if !opts.NoBrowser || opts.URLWriter == nil {
-			t.Fatalf("runtime options = %#v; no-browser was not forwarded", opts)
+		if !opts.NoBrowser || opts.URLWriter == nil || opts.RedirectURL != "" {
+			t.Fatalf("runtime options = %#v; no-browser or random-path default was not forwarded", opts)
 		}
 		return nil
 	}

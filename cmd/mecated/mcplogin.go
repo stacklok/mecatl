@@ -87,7 +87,19 @@ func selectMCPLoginServer(profiles *cliconfig.MCPProfiles, name string) (mcp.Ser
 }
 
 func mcpLoginRemedy(err error) error {
+	var provider *oauthlogin.AuthorizationErrorResponse
+	var rejected *oauthlogin.CallbackRejectedError
+	var bind *oauthlogin.CallbackBindError
 	switch {
+	case errors.As(err, &provider) && errors.Is(err, app.ErrMCPLoginAuthorization):
+		return fmt.Errorf("MCP OAuth authorization server rejected login (%s); review the requested scopes and provider policy", provider.Sanitized())
+	case errors.As(err, &rejected) && errors.Is(err, app.ErrMCPLoginAuthorization):
+		return fmt.Errorf("MCP OAuth browser callback was rejected (%s); retry login and complete the newest browser flow", rejected.Sanitized())
+	case errors.As(err, &bind) && errors.Is(err, app.ErrMCPLoginAuthorization):
+		if bind.Reason == oauthlogin.CallbackBindAddressInUse {
+			return errors.New("MCP OAuth callback listener is already in use; stop the other login process and retry")
+		}
+		return errors.New("MCP OAuth callback listener is unavailable; check local callback permissions and retry")
 	case errors.Is(err, app.ErrMCPLoginConfig):
 		return errors.New("MCP OAuth login configuration is invalid; verify auth.mode: oauth and credentials.mode: local")
 	case errors.Is(err, app.ErrMCPLoginAuthorization):
