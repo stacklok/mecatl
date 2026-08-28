@@ -22,30 +22,113 @@ flowchart TD
 
 Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
 
+## Try mecak8s locally with Kind
+
+Mecatl includes a disposable Kind fixture for local exploration of mecak8s. It is
+intended for local use, not production deployment. The fixture recreates a disposable
+cluster and uses a fixture-specific kubeconfig; it does not use your ambient
+kubeconfig. Do not run it against a cluster containing work you want to keep.
+
+### Prerequisites
+
+Install these tools and ensure they are on `PATH`:
+
+- [Kind](https://kind.sigs.k8s.io/), `kubectl`, and [Helm](https://helm.sh/);
+- [Task](https://taskfile.dev/); and
+- [ko](https://ko.build/) plus Docker or Podman, for building and loading the local
+  mecak8s image.
+
+The fixture uses the mock provider by default, so it does not make provider requests
+or use provider credentials.
+
+### Basic local fixture
+
+From a clone of the mecatl repository:
+
+```sh
+task mecak8s:kind-setup
+task mecak8s:kind-status
+```
+
+Setup creates the `mecatl-dev` Kind cluster, builds and loads `mecak8s`, installs the
+local chart and Redis, and selects the mock provider. Forward the API in a separate
+terminal:
+
+```sh
+task mecak8s:kind-port-forward
+```
+
+The forward binds to loopback only: gRPC is at `127.0.0.1:18080` and HTTPS is at
+`https://127.0.0.1:18081`. The chart Service remains `ClusterIP`; no ingress,
+NodePort, or wildcard host binding is created. Use the normal gRPC/HTTP clients
+described in [Drive via gRPC / HTTP](grpc-http.md) to send a request, or point a
+local client at these forwarded ports. The mock provider is useful for exploring the
+wire protocol, session lifecycle, and Kubernetes-backed deployment shape without
+spending provider tokens.
+
+When finished, remove the cluster and fixture-owned local state:
+
+```sh
+task mecak8s:kind-destroy
+```
+
+To make one intentional, billable OpenRouter request, export `OPENROUTER_API_KEY`
+only for setup:
+
+```sh
+OPENROUTER_API_KEY='...' task mecak8s:kind-setup
+```
+
+The task sends the value to `kubectl` over standard input and projects it through a
+fixture-owned Secret; it is not placed in Helm values or command-line arguments.
+Running setup without the variable returns the fixture to mock mode and removes that
+Secret. Treat this as a real provider deployment: choose the client request
+intentionally and never commit or log the key.
+
+### Optional local Keycloak layer
+
+To try authenticated mecak8s requests, recreate the basic fixture with its optional
+private Keycloak and TLS layer:
+
+```sh
+task mecak8s:kind-keycloak-setup
+task mecak8s:kind-hosts-add
+```
+
+In separate terminals, forward both services:
+
+```sh
+task mecak8s:kind-keycloak-port-forward
+task mecak8s:kind-port-forward
+```
+
+The Keycloak issuer is available at `https://keycloak.mecatl.svc.cluster.local:8443`;
+the mecak8s API remains at `https://localhost:18081` (gRPC at `localhost:18080`).
+Keep TLS verification enabled and trust the fixture CA; do not disable certificate
+verification. The normal login flow is Authorization Code + PKCE with the public
+`mecatui-kind` client and a token whose audience includes `mecak8s`. The fixture's
+password-grant users are only a test helper for non-browser validation.
+
+Remove the temporary hostname entry after the journey, then destroy the fixture:
+
+```sh
+task mecak8s:kind-hosts-remove
+task mecak8s:kind-destroy
+```
+
+---
+
 ## Local ToolHive-free Kind profile
 
-For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create vMCP resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. Host access is through `task mecak8s:kind-port-forward`, which binds gRPC and HTTP to `127.0.0.1` only. See the repository's
-`deploy/mecak8s-kind/README.md` for the local workflow; it makes no production
-network-isolation claim and has no general NetworkPolicy.
+For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create integration resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. Host access is through `task mecak8s:kind-port-forward`, which binds gRPC and HTTP to `127.0.0.1` only. The local workflow above is the recommended user path; it makes no production network-isolation claim and has no general NetworkPolicy.
 
 ### Optional local Keycloak validation
 
 `task mecak8s:kind-keycloak-setup` adds the fixture's private Keycloak and TLS
 layer to that base. It does not expose mecak8s: the Service remains `ClusterIP`,
-and the explicit loopback port-forward is the only host path. Run
-`task mecak8s:kind-keycloak-port-forward` for the issuer's browser path and map
-`keycloak.mecatl.svc.cluster.local` to `127.0.0.1` locally; this preserves its
-certificate hostname. Connect to the certificate-covered
-hostname; do not disable TLS verification.
-
-The normal sign-in path is Authorization Code + PKCE with the public
-`mecatui-kind` client and a Keycloak access token whose audience includes
-`mecak8s`. A password grant is only a narrowly scoped test helper for
-non-browser fixture validation, not the normal login flow. The authenticated
-endpoint rejects absent, forged, wrong-issuer, and wrong-audience credentials;
-initial JWKS unavailability prevents startup, while a later outage past the
-configured staleness limit returns retryable 503. This fixture is local-only
-validation, not a production identity-provider recipe.
+and the explicit loopback port-forward is the only host path. The authenticated
+workflow above covers the issuer forwarding, hostname mapping, PKCE client, and
+TLS requirements.
 
 For global MCP OAuth, use an externally provisioned read-only environment credential and
 restart pods after rotation. `mecak8s` never launches a browser; a local mutable credential
