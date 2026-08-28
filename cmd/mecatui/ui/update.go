@@ -509,6 +509,35 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// under the cyclomatic cap.
 		mm, cmd := m.updateReconnectMsg(msg)
 		return mm, cmd, true
+	case modelSwitchReadyMsg:
+		// The target's authoritative transcript is already complete and correlated.
+		// Only now may we discard the source projection or arm target interaction.
+		if msg.token != m.modelSwitchToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
+			return m, nil, true
+		}
+		m = m.resetSession()
+		m.conv = conversationFromTranscript(msg.transcript.Messages)
+		mm, cmd, handled := m.applySessionReady(msg.ready)
+		m = mm.(Model)
+		m.refreshView()
+		// The source close is deliberately scheduled only after the target
+		// projection and metadata are installed. Its best-effort result cannot
+		// roll back the target.
+		return m, tea.Batch(cmd, m.closeSessionCmd(msg.sourceID)), handled
+	case modelSwitchFailedMsg:
+		// The source was deliberately left bound and open. Restore only its live feed;
+		// no reset or rebind is permitted on this path, so its transcript and metadata
+		// remain exactly as they were before selection.
+		if msg.token != m.modelSwitchToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
+			return m, nil, true
+		}
+		m.phase = phaseIdle
+		m.pendingModelSwitchNote = ""
+		m.statusMsg = m.deps.Theme.Style("errorText").Render(
+			"could not switch to " + sanitizeTerminal(msg.model) + ": " + sanitizeTerminal(msg.err.Error()))
+		focusCmd := m.ta.Focus()
+		m.refreshView()
+		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
 	case client.SessionReadyMsg:
 		return m.applySessionReady(msg)
 	case clearSessionReadyMsg:

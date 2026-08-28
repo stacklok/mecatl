@@ -601,7 +601,10 @@ workspaces inherit). `↑`/`↓` move the cursor over the **filtered** set, `pgu
 `pgdown` page, `home`/`end` jump. (`j`/`k` type into the filter — they do **not**
 navigate here, unlike the read-only overlays — so a name like `kimi`/`jamba` filters
 as typed.) `esc` is **two-stage**: with a non-empty filter it clears the filter (the
-picker stays open); with an empty filter it closes the picker.
+picker stays open); with an empty filter it closes the picker. Before selection, the
+picker states that choosing creates a new session, keeps visible conversation/context,
+may make a long history costly to replay, and drops private reasoning/cache state on a
+cross-provider switch.
 
 For `openai-codex`, the rows are the account's live entitlements, not public
 OpenAI catalog guesses. A rejected token, unreachable private service, or
@@ -611,25 +614,28 @@ remain visible during a later refresh failure, but that does not hide an inferen
 failure. Codex rows never receive ToolHive's `org` intent label.
 
 `enter` on the cursor row **switches immediately** — the conversation is ALWAYS kept.
-Because the provider is FIXED per session, switching live means a real handoff: the
-old session is closed (`CloseSession`) and a fresh one is created on the picked model
-**seeded with the current session's conversation** via `source_session_id` on the
-`CreateSessionRequest` (`CreateSessionWithCarryover`). The server snapshots the source
-conversation and seeds it into the new session, so the model sees the full prior
-context. The header rebinds to the NEW session's effective model and a transient status
-note reads **`switched to <model> — conversation kept`**. For a **cross-provider**
-switch the server strips the prior model's provider-private state (reasoning cache,
-provider phase, item ids) and replays the text/roles/tool calls to the new provider, so
-the note honestly adds **`(prior reasoning cache dropped)`** — the conversation still
-carries. (There is no confirm overlay and no same-provider gate: the server accepts
-carryover for any provider.) If no live session exists yet (pre-first-connect, or a
-failure left no session), the pick falls back to a plain `CreateSession` — there's no
-source to carry from. **Dropping the conversation is a separate action**: run `/clear`
-to reset the transcript and create a fresh empty session on the current workspace
-and effective model. Creation is **create-first**: the old transcript and session
-stay active while the new session is pending, then the TUI rebinds and clears its
-local session state before it best-effort closes the old session. A create failure
-leaves the old chat untouched; a close failure leaves the new chat active.
+Because the provider is FIXED per session, switching live means a real handoff: a fresh
+session on the picked model is **seeded with the current session's conversation** via
+`source_session_id` on the `CreateSessionRequest` (`CreateSessionWithCarryover`). The
+server snapshots the source conversation and seeds it into the new session, so the model
+sees the full prior context. While the target is being created and hydrated, mecatui
+keeps the source ID, metadata, and visible projection but disarms its old live feed; the
+input remains non-interactive. It then loads and validates the target's complete,
+matching authoritative transcript, adopts that transcript (rather than retaining its
+local projection), and only then best-effort closes the source. The header rebinds to the
+NEW session's effective model and the transient status note reads **`switched to
+<model> — conversation kept`**. For a **cross-provider** switch the server strips the
+prior model's provider-private state (reasoning cache, provider phase, item ids) and
+replays the text/roles/tool calls to the new provider, so the note honestly adds
+**`(prior reasoning cache dropped)`** — the conversation still carries. (There is no
+confirm overlay and no same-provider gate: the server accepts carryover for any
+provider.) Creation or transcript-hydration failure preserves the open source session,
+restores its live feed, and returns to idle without claiming carryover; an unused target
+is best-effort closed after hydration failure. A source-close error does not undo a
+hydrated target. If no live session exists yet (pre-first-connect, or a failure left no
+session), the pick falls back to a plain `CreateSession` — there's no source to carry
+from. **Dropping the conversation is a separate action**: run `/clear` to reset the
+transcript and create a fresh empty session on the current workspace and effective model.
 
 `ctrl+g` sets the cursor row as the **client global default** (the `★` row) — used
 by new/unseen workspaces; it is control-modified so a bare `g` stays typeable in the

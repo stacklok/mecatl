@@ -82,7 +82,7 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 		filtered: models,
 		deps:     surfaceDeps{keys: defaultKeys(), theme: theme.New("aztec", theme.AztecPalette())},
 	}
-	_, _ = s.Render(100, modelsChrome+4)
+	_, _ = s.Render(100, modelsPanelFixedRows(*s, "", defaultHelpKeys())+4)
 	if s.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want Render-derived 4", s.rowBudget)
 	}

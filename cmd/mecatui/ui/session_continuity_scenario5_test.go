@@ -120,6 +120,7 @@ func driveSessionRebindJourney(t *testing.T, journey string, cb client.Clipboard
 		return m, id
 	case "model carryover":
 		conv.createCount = 1
+		m.deps.Transcript = modelSwitchTranscriptLoader{}
 		mm, cmd, handled := m.restartOnModelWithCarryover(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"})
 		if !handled || cmd == nil {
 			t.Fatal("model carryover did not issue its create command")

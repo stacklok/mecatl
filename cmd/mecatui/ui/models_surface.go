@@ -20,7 +20,6 @@ type modelsView int
 const (
 	modelsNone modelsView = iota
 	modelsPanel
-	modelsChrome  = 9
 	modelsMinRows = 3
 )
 
@@ -61,14 +60,14 @@ type modelsGlobalDefaultIntent struct {
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
 func (s *modelsState) Render(_ int, height int) (string, []ClickableRegion) {
-	s.rowBudget = modelsRowBudgetFor(height)
+	s.rowBudget = modelsRowBudgetFor(height, modelsPanelFixedRows(*s, s.provenance, s.deps.marks))
 	return renderModelsPanel(s.deps.theme, s.catalog, *s, s.deps.caps, s.provenance, s.deps.marks, s.rowBudget), nil
 }
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	budget := s.rowBudget
 	if budget == 0 {
-		budget = modelsRowBudgetFor(0)
+		budget = modelsMinRows
 	}
 	switch {
 	case key.Matches(msg, s.deps.keys.Close):
@@ -173,11 +172,33 @@ func filterModels(models []client.ModelInfo, q string) []client.ModelInfo {
 	return out
 }
 
-func modelsRowBudgetFor(height int) int {
-	if b := height - modelsChrome; b >= modelsMinRows {
+const modelSwitchDisclosure = "Selecting a model creates a new session.\nVisible conversation and context carry over; long histories may be costly to replay.\nCross-provider switches lose private reasoning/cache state."
+
+func modelsRowBudgetFor(height, fixedRows int) int {
+	if b := height - fixedRows; b >= modelsMinRows {
 		return b
 	}
 	return modelsMinRows
+}
+
+// modelsPanelFixedRows derives the list's viewport budget from the same variable
+// content rendered around it, including the switch disclosure and provider status.
+func modelsPanelFixedRows(picker modelsState, prov string, hk helpKeys) int {
+	var b strings.Builder
+	b.WriteString("Models\n")
+	if prov != "" {
+		b.WriteString(prov + "\n")
+	}
+	b.WriteString(picker.filter.View() + "\n\n")
+	b.WriteString(modelSwitchDisclosure + "\n\n")
+	for range renderProviderStatusLines(picker.catalog.statuses, len(picker.catalog.models) == 0) {
+		b.WriteString("status\n")
+	}
+	b.WriteString("row\n\n")
+	b.WriteString("type to filter · ↑/↓/" + hk.scrollUp + " move · " + hk.choose + " use · " + hk.setGlobalDefault + " set global default · " + hk.closeOnly + " clear filter / close\n")
+	b.WriteString("● current  ★ global default\n")
+	b.WriteString("reason = emits reasoning · set its effort tier with /effort")
+	return strings.Count(b.String(), "\n")
 }
 
 const modelsDisabledNote = "Model selection is not available on this server.\nConfigure a provider on the server, then reconnect."
@@ -247,6 +268,7 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 		b.WriteString(th.Style("muted").Render(prov) + "\n")
 	}
 	b.WriteString(picker.filter.View() + "\n\n")
+	b.WriteString(th.Style("muted").Render(modelSwitchDisclosure) + "\n\n")
 	switch {
 	case picker.loading:
 		b.WriteString(th.Style("muted").Render("loading…") + "\n")

@@ -394,6 +394,7 @@ func TestCarryoverHandoff(t *testing.T) {
 		Session:     conv,
 		Conv:        conv,
 		Models:      &fakeModels{models: models},
+		Transcript:  modelSwitchTranscriptLoader{},
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Server:      "127.0.0.1:8080",
 		Workspace:   "/workspace",
@@ -452,10 +453,11 @@ func TestCarryoverHandoff(t *testing.T) {
 	if fm.resolvedSessionModel != want {
 		t.Fatalf("final resolvedSessionModel = %+v, want %+v (rebound from the carryover session)", fm.resolvedSessionModel, want)
 	}
-	// (e) the carryover handoff reset the LOCAL transcript (the server carries the
-	// history; the client rebuilds from the seeded session).
-	if !fm.conv.isEmpty() {
-		t.Fatalf("local conversation transcript should be reset after the carryover handoff (server carries history)")
+	// (e) the adopted projection comes from the authoritative target snapshot,
+	// not the source's locally accumulated transcript.
+	visible := stripANSIstr(fm.View().Content)
+	if strings.Contains(visible, "hello there") || strings.Contains(visible, "first") {
+		t.Fatalf("target adoption must not retain source projection:\n%s", visible)
 	}
 	if !fm.restartedThisRun {
 		t.Fatalf("restartedThisRun should be set after a carryover handoff")
@@ -465,12 +467,8 @@ func TestCarryoverHandoff(t *testing.T) {
 	// FinalModel without output-flush sequencing).
 }
 
-// TestCarryoverHandoffFailure asserts a FAILED CreateSessionWithCarryover surfaces
-// through the SAME recoverable path as a plain restart failure (restartFailedMsg),
-// NOT a new failure type: the reducer drives idle + restartFailed armed + a loud
-// status naming the model. Mirrors the TestRestartFailedRecoverable shape over the
-// carryover cmd. The source session is NOT closed on the failure path (the carryover
-// cmd closes the source only AFTER a successful create).
+// TestCarryoverHandoffFailure asserts a failed CreateSessionWithCarryover leaves
+// the source session bound and recoverable; the handoff must not reconstruct it.
 func TestCarryoverHandoffFailure(t *testing.T) {
 	conv := &fakeConv{
 		recv:      &fakeRecver{},
@@ -508,10 +506,10 @@ func TestCarryoverHandoffFailure(t *testing.T) {
 		t.Fatalf("phase mid-handoff = %v, want phaseConnecting", m.phase)
 	}
 
-	// Drive the carryover cmd → the failing create → restartFailedMsg, then reduce it.
-	failMsg := m.carryoverCmd("sess-test-0001", sel)()
-	if _, ok := failMsg.(restartFailedMsg); !ok {
-		t.Fatalf("a failed carryover create must produce restartFailedMsg, got %T (NOT a new failure type)", failMsg)
+	// Drive the carryover cmd → the failing create → source-preserving failure.
+	failMsg := m.carryoverCmd("sess-test-0001", sel, m.modelSwitchToken)()
+	if _, ok := failMsg.(modelSwitchFailedMsg); !ok {
+		t.Fatalf("a failed carryover create must preserve its source, got %T", failMsg)
 	}
 	mm2, _ := m.Update(failMsg)
 	m = mm2.(Model)
@@ -528,11 +526,11 @@ func TestCarryoverHandoffFailure(t *testing.T) {
 	if m.phase != phaseIdle {
 		t.Fatalf("phase after a failed carryover create = %v, want phaseIdle (recoverable)", m.phase)
 	}
-	if m.sessionID != "" {
-		t.Fatalf("sessionID after a failed carryover create = %q, want empty (no session)", m.sessionID)
+	if m.sessionID != "sess-test-0001" {
+		t.Fatalf("sessionID after a failed carryover create = %q, want source session", m.sessionID)
 	}
-	if !m.restartFailed {
-		t.Fatalf("restartFailed should be set after a failed carryover create (arms enter-to-retry)")
+	if m.restartFailed {
+		t.Fatal("restartFailed must remain false when the source session survives")
 	}
 	// A visible error status names the model that failed.
 	st := stripANSIstr(m.statusMsg)
@@ -573,6 +571,7 @@ func TestSeamlessSwitchCrossProviderCarriesProgram(t *testing.T) {
 		Session:     conv,
 		Conv:        conv,
 		Models:      &fakeModels{models: models},
+		Transcript:  modelSwitchTranscriptLoader{},
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Server:      "127.0.0.1:8080",
 		Workspace:   "/workspace",
@@ -585,6 +584,9 @@ func TestSeamlessSwitchCrossProviderCarriesProgram(t *testing.T) {
 
 	waitClosed(t, "startup CreateSession", conv.created, 5*time.Second)
 	prog.wait(t, phaseIdle, 5*time.Second)
+	tm.Type("cross-provider visible user")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	prog.waitRunComplete(t, 1, 5*time.Second)
 
 	// Open /models, filter to claude (cross-provider), enter — seamless switch.
 	for _, r := range "/models" {
@@ -620,6 +622,10 @@ func TestSeamlessSwitchCrossProviderCarriesProgram(t *testing.T) {
 	want := client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	if fm.resolvedSessionModel != want {
 		t.Fatalf("final resolvedSessionModel = %+v, want %+v (rebound from the carryover session)", fm.resolvedSessionModel, want)
+	}
+	visible := stripANSIstr(fm.View().Content)
+	if strings.Contains(visible, "cross-provider visible user") || strings.Contains(visible, "first") {
+		t.Fatalf("cross-provider target must not retain local source projection:\n%s", visible)
 	}
 	// The cross-provider strip caveat is unit-tested in TestModelsChooseSwitchArmsStatusNote
 	// (the double-ctrl+c quit overwrites statusMsg here, so it can't be asserted at

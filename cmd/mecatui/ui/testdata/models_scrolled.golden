@@ -6,6 +6,10 @@
 ┃  current: gpt-5 (server default)                                                                    ┃
 ┃  > filter models…                                                                                   ┃
 ┃                                                                                                     ┃
+┃  Selecting a model creates a new session.                                                           ┃
+┃  Visible conversation and context carry over; long histories may be costly to replay.               ┃
+┃  Cross-provider switches lose private reasoning/cache state.                                        ┃
+┃                                                                                                     ┃
 ┃       prov · model-027                                                                              ┃
 ┃       prov · model-028                                                                              ┃
 ┃  ╭─────────────────────────╮                                                                        ┃

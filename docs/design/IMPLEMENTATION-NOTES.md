@@ -214,9 +214,21 @@ provider is the point of the switch. Running/awaiting source → `FailedPrecondi
 missing → `NotFound`. The snapshot is seeded into the new session with
 `Session.SeedHistory` before the first save — zero `engine/`/domain change. Turn-zero
 compaction is free via the existing `maybeCompact`. The client surfaces a transient
-`switched to <model> — conversation kept` status note on the rebind, appending
-`(prior reasoning cache dropped)` for a cross-provider switch (the strip). With no live
-session the pick falls back to a plain `CreateSession` (no source to carry from).
+`switched to <model> — conversation kept` status note only after the target's
+**authoritative transcript** is loaded and adopted, appending
+`(prior reasoning cache dropped)` for a cross-provider switch (the strip). The picker
+also gives this non-blocking disclosure before `enter`: selection creates a new session,
+visible conversation/context carries over, long history may be costly to replay, and a
+cross-provider transition loses private reasoning/cache state. During target creation
+and hydration the client keeps the source ID, metadata, and local projection on screen,
+but disarms its live feed. It validates that the target transcript is complete and for
+the created target ID, then replaces the local projection with that server-authoritative
+transcript and rebinds the target. Only after hydration does it best-effort close the
+source. Creation or hydration failure leaves the source open, restores its live feed,
+and returns to idle without claiming that conversation was kept; a failed hydration also
+best-effort closes its unused target. A source-close failure cannot roll back a hydrated
+target. With no live session the pick falls back to a plain `CreateSession` (no source to
+carry from).
 
 ---
 

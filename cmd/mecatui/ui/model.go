@@ -530,6 +530,9 @@ type Model struct {
 	// created at Open and lives ONLY inside this interface field — never a
 	// pre-declared tombstone field (surface.go).
 	modal surface
+	// modelSwitchToken correlates the create-and-hydrate handoff. A stale result must
+	// not replace a session selected by a later lifecycle action.
+	modelSwitchToken uint64
 	// createModelSelection is the client selection for future CreateSession calls. Zero uses the server default.
 	createModelSelection client.ModelSelection
 	// resolvedSessionModel is the server-resolved model for the bound session.
@@ -977,39 +980,15 @@ func (m *Model) recordFileChange(path string) {
 // it zeroes (see the Model struct above) so that ANY future session-derived field
 // added there has an obvious, single place to be reset — keeping /clear honest
 // without each call site re-listing fields.
-//
-// It deliberately does NOT touch the per-RUN transport teardown (stream /
-// streamCh / cancelRun / phase / textarea focus) — that is endRun's concern and
-// its semantics are relied on by the idle-guard. The only overlap is the in-flight
-// tool affordances (activeTool/toolProgress), which are genuinely both
-// "session-derived display state" and "cleared at run end"; resetSession owns
-// them here, endRun continues to clear activeTool on its own teardown path. The
-// caller is responsible for re-rendering (refreshView) after calling this.
-//
-// It also drops any staged follow-up prompts (queued): /clear wipes the
-// session-derived state, and a queue of as-yet-unsent follow-ups is part of that
-// state — leaving them to drain into a freshly-cleared transcript would surprise.
-//
-// It deliberately does NOT clear the picker/inventory overlay state (models/
-// worktrees/schedule/sessions) — those are transport/compose state like
-// createModelSelection/caps, NOT session-derived transcript state, so a /clear or a
-// session switch must not dismiss an open picker. Transcript and replay state
-// belong to the dynamically-owned sessionsState and are torn down by its Close
-// or transcript-to-picker transition; m.conv remains the authoritative live
-// conversation adopted by Model.
 func (m Model) resetSession() Model {
 	m.conv = conversation{}
-	// Drop the renderer's per-block caches (blockCache AND blockMD) alongside the
-	// conversation: both key on the block's conversation INDEX, and the rebuilt
-	// conversation reuses indices 0..n for entirely different blocks whose
-	// rev/src could coincidentally match a stale entry — which would alias an old
-	// block's render onto the new transcript. Covers /clear and the /models
-	// restart-now handoff (both funnel through here).
+	return m.resetSessionDerived()
+}
+
+func (m Model) resetSessionDerived() Model {
+	// Drop renderer caches before installing the target's authoritative transcript.
 	m.rend.resetBlockCaches()
-	// An empty conversation is at-bottom by definition, so auto-follow must be
-	// re-armed: without this a /clear issued while scrolled up (stuck=false) would
-	// strand stuck false, and refreshView (re-pins only if stuck) would silently
-	// fail to tail the NEXT run's streaming deltas until the user manually hit End.
+	// Reset auto-follow for the next session's transcript.
 	m.stuck = true
 	m.filesChanged = nil
 	m.filesSeen = nil
@@ -1019,8 +998,8 @@ func (m Model) resetSession() Model {
 	m.toolProgress = ""
 	m.providerRoute = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
-	// / adopted from the stored session on a switch), so a /clear or a /models
-	// restart-now must not leave a stale label on the freshly-cleared session.
+	// / adopted from the stored session), so a /clear or fresh /models restart
+	// must not leave a stale label on its new session.
 	m.sessionTitle = ""
 	// Drop any pending permission modal — and the FIFO queue behind it plus the
 	// answered-set dedupe: an ask is session-derived in-flight state (its AskID

@@ -22,10 +22,12 @@ For the rest of the terminal workflow, see [Use mecatui](./use-mecatui.md).
 ## Mecatui journey
 
 When the connected server advertises model selection, type `/models` in
-mecatui. Filter the server's inventory, select a model, and press `enter`.
-Mecatui keeps the visible conversation by creating a peer session seeded with
-its history; it does not change the provider or base model of the existing
-session in place.
+mecatui. Filter the server's inventory, select a model, and press `enter`. The picker
+non-blockingly explains that the choice creates a new session, carries visible
+conversation/context, may make a long history costly to replay, and drops private
+reasoning/cache state for a cross-provider change. Mecatui keeps the visible
+conversation by creating a peer session seeded with its history; it does not change the
+provider or base model of the existing session in place.
 
 A switch across providers keeps the visible conversation but drops provider-
 private replay state, such as reasoning state that the new provider cannot
@@ -270,9 +272,12 @@ session as authoritative.
   connected mecatui cannot use credentials configured only on the TUI host.
 - Model IDs are provider- and deployment-specific opaque strings.
 - Listing a model does not guarantee that a later provider request will succeed.
-- In mecatui, changing the provider or base model creates a peer session with
-  carried-over visible history. API clients must implement history carryover
-  themselves when they create a new session.
+- In mecatui, changing the provider or base model creates a peer session. The
+  client adopts the peer's complete authoritative transcript before making it
+  interactive, then closes the source best-effort; if creation or transcript
+  hydration fails, the open source chat remains available. API clients must
+  implement equivalent history carryover themselves when they create a new
+  session.
 - Provider/model selection flags configure an embedded or server deployment;
   they do not override a remote server reached with `connect`.
 

@@ -40,6 +40,7 @@ func newModelsModelSized(t *testing.T, fm *fakeModels, store SelectionStore, cap
 		Session:        conv,
 		Conv:           conv,
 		Models:         fm,
+		Transcript:     modelSwitchTranscriptLoader{},
 		SelectionStore: store,
 		InitialModel:   initial,
 		Theme:          theme.New("aztec", theme.AztecPalette()),
@@ -64,7 +65,28 @@ func newModelsModelSized(t *testing.T, fm *fakeModels, store SelectionStore, cap
 	return m
 }
 
-// sampleModels is a 2-provider list exercising the glyph matrix: both caps, reason-
+type modelSwitchTranscriptLoader struct{}
+
+func (modelSwitchTranscriptLoader) GetSessionTranscript(_ context.Context, id string) (client.SessionTranscript, error) {
+	return client.SessionTranscript{SessionID: id, Complete: true}, nil
+}
+
+type handoffTranscriptLoader struct {
+	conv       *fakeConv
+	transcript client.SessionTranscript
+	err        error
+}
+
+func (f *handoffTranscriptLoader) GetSessionTranscript(_ context.Context, _ string) (client.SessionTranscript, error) {
+	f.conv.mu.Lock()
+	f.conv.operations = append(f.conv.operations, "transcript")
+	f.conv.mu.Unlock()
+	if f.err != nil {
+		return client.SessionTranscript{}, f.err
+	}
+	return f.transcript, nil
+}
+
 // only, neither, and a context-limit-absent row.
 func sampleModels() *fakeModels {
 	return &fakeModels{models: []client.ModelInfo{
@@ -112,6 +134,11 @@ func TestRunModelsOpensPicker(t *testing.T) {
 	}
 	if !strings.Contains(m.View().Content, "GPT-5") {
 		t.Errorf("picker missing a model label:\n%s", m.View().Content)
+	}
+	for _, line := range strings.Split(modelSwitchDisclosure, "\n") {
+		if !strings.Contains(stripANSIstr(m.View().Content), line) {
+			t.Errorf("picker missing model-switch disclosure line %q:\n%s", line, m.View().Content)
+		}
 	}
 }
 
@@ -249,6 +276,36 @@ func TestModelsFilterNarrows(t *testing.T) {
 	m = feedCmd(t, m, cmd)
 	if got := conv(m).carryoverCalls(); got != 1 {
 		t.Errorf("CreateSessionWithCarryover calls = %d, want 1 (seamless carryover switch)", got)
+	}
+}
+
+// TestModelsCarryoverKeepsVisibleProjection verifies the source projection remains
+// visible and intact while the authoritative target transcript is loading.
+func TestModelsCarryoverKeepsVisibleProjection(t *testing.T) {
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.conv.addUser("visible user")
+	m.conv.startAssistant()
+	m.conv.appendAssistant("visible assistant")
+	m.refreshView()
+	if len(m.rend.blockCache) == 0 || len(m.rend.blockMD) == 0 {
+		t.Fatal("precondition: visible conversation should populate renderer caches")
+	}
+
+	sel := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"}
+	mm, cmd, handled := m.chooseModel(sel, "")
+	m = mm.(Model)
+	if !handled || m.phase != phaseConnecting {
+		t.Fatalf("chooseModel = handled:%t phase:%v, want connecting handoff", handled, m.phase)
+	}
+	for _, want := range []string{"visible user", "visible assistant"} {
+		if !strings.Contains(stripANSIstr(m.View().Content), want) {
+			t.Fatalf("connecting source projection missing %q:\n%s", want, m.View().Content)
+		}
+	}
+
+	m = feedCmd(t, m, cmd)
+	if m.phase != phaseIdle {
+		t.Fatalf("phase after target transcript adoption = %v, want idle", m.phase)
 	}
 }
 
@@ -641,6 +698,7 @@ func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 				Session:        conv,
 				Conv:           conv,
 				Models:         sampleModels(),
+				Transcript:     modelSwitchTranscriptLoader{},
 				SelectionStore: store,
 				Theme:          theme.New("aztec", theme.AztecPalette()),
 				Server:         "127.0.0.1:8080",
@@ -1162,7 +1220,7 @@ func TestModelsPickerNoActiveMarkerWhenSelectionAbsent(t *testing.T) {
 	if m.modelCatalog.active != kept {
 		t.Fatalf("models.active = %+v, want the kept %+v", m.modelCatalog.active, kept)
 	}
-	panel := renderModelsPanel(m.deps.Theme, m.modelCatalog, *modelsSurface(t, m), m.caps, "", defaultHelpKeys(), modelsRowBudgetFor(30))
+	panel := renderModelsPanel(m.deps.Theme, m.modelCatalog, *modelsSurface(t, m), m.caps, "", defaultHelpKeys(), modelsRowBudgetFor(30, modelsPanelFixedRows(*modelsSurface(t, m), "", defaultHelpKeys())))
 	rows := strings.Split(stripANSIstr(panel), "\n")
 	for _, row := range rows {
 		if strings.Contains(row, "●") && !strings.Contains(row, "● current") {

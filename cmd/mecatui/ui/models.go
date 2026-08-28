@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"errors"
+
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
@@ -131,27 +133,13 @@ func (m Model) restartOnModelCmd(oldID string, sel client.ModelSelection) tea.Cm
 	}
 }
 
-// restartOnModelWithCarryover is the seamless-switch handoff (issue #20): it
-// mirrors restartOnModel (end the run, persist the pick, reset session state,
-// phaseConnecting) but seeds the NEW session with the current session's
-// conversation via carryoverCmd → CreateSessionWithCarryover. Reached for ANY
-// pick with a live session (same- AND cross-provider) — the confirm overlay and
-// its [c] key are gone, so chooseModel calls this unconditionally when a session
-// exists. The server is the authority on same-vs-cross (validateCarryover): a
-// same-provider carryover replays the history VERBATIM, a cross-provider
-// carryover strips the provider-private replay blobs via StripProviderState
-// (both adapters omit empty blobs, so a stripped history replays safely to any
-// provider). Like restartOnModel it resetSession()s the LOCAL transcript — the
-// server-side seed is what carries the history, NOT the client's m.conv (which
-// is wiped so stale per-block renderer caches never key into a dead
-// conversation); the new SessionReadyMsg + the next turn rebuild it from the
-// seeded server history. The old session id is captured BEFORE the reset as the
-// carryover source.
+// restartOnModelWithCarryover creates a target session from the server-owned source
+// transcript, then adopts the target's authoritative transcript before it rebinds
+// the UI. The old session remains fully projected while the handoff is connecting:
+// only its live feed is disarmed, preventing old-session events from entering the
+// target transition. This makes failed creation or hydration recoverable without
+// reconstructing local state.
 func (m Model) restartOnModelWithCarryover(sel client.ModelSelection) (tea.Model, tea.Cmd, bool) {
-	// Cancel any in-flight run FIRST (same endRun rationale as restartOnModel: bump
-	// streamGen + tear down the stream so nothing stays subscribed to the
-	// soon-to-be-closed source session). Pass "" so endRun sets no stop-status (we set
-	// the "carrying over" status below). Safe even when idle (endRun is a no-op then).
 	m = m.endRun("")
 
 	oldID := m.sessionID
@@ -159,53 +147,62 @@ func (m Model) restartOnModelWithCarryover(sel client.ModelSelection) (tea.Model
 	m.createModelSelection = sel
 	m.pickedThisSession = sel
 	m.restartedThisRun = true
-
-	// Reset the LOCAL conversation/transcript + stream-accumulated state (same
-	// rationale as restartOnModel): the server carries the history, the client
-	// rebuilds it from the seeded session. Stale per-block caches would otherwise key
-	// into the dead conversation.
-	m = m.resetSession()
-
-	// Rebind the rest of the per-session client state to "no session yet": the new
-	// values arrive on the new session's SessionReadyMsg.
-	m = m.bindSessionID("")
-	m.resolvedSessionModel = client.ResolvedModel{}
-	m.caps = client.Capabilities{}
 	m.restartFailed = false
 	m.restartFailedForkID = ""
+	m.modelSwitchToken++
+	m.disarmLiveFeed()
 	m.phase = phaseConnecting
-	m.statusMsg = "switching model — carrying over conversation…"
-
+	m.statusMsg = "switching model — adopting server transcript…"
 	m.refreshView()
-	return m, tea.Batch(m.carryoverCmd(oldID, sel), m.saveSelectionCmd(sel), m.sp.Tick), true
+	return m, tea.Batch(m.carryoverCmd(oldID, sel, m.modelSwitchToken), m.saveSelectionCmd(sel), m.sp.Tick), true
 }
 
-// carryoverCmd mirrors restartOnModelCmd but calls CreateSessionWithCarryover so the
-// server seeds the new session's history from oldID's conversation. On SUCCESS it
-// closes the OLD session best-effort AFTER the new one is ready (the server already
-// snapshotted it at create time, so a late close is safe) and returns the SAME
-// SessionReadyMsg the connect path uses (the reducer rebinds uniformly — no second
-// code path). On FAILURE it returns restartFailedMsg (reuse the recoverable reducer
-// path — NOT a new failure type): like a plain restart failure the local transcript
-// is already gone, so the app stays idle + retryable. The retry re-creates FRESH
-// (CreateSession, not carryover): the source session was closed below only on the
-// SUCCESS path, so on failure oldID is still live — but a retry via enter-to-r
-// re-fires restartOnModelCmd (create-fresh), which is the honest recoverable
-// behaviour (the carryover affordance is re-offered on the next confirm, not
-// auto-retried as carryover).
-func (m Model) carryoverCmd(oldID string, sel client.ModelSelection) tea.Cmd {
+type modelSwitchReadyMsg struct {
+	token      uint64
+	sourceID   string
+	ready      client.SessionReadyMsg
+	transcript client.SessionTranscript
+}
+
+type modelSwitchFailedMsg struct {
+	token    uint64
+	sourceID string
+	model    string
+	err      error
+}
+
+// carryoverCmd keeps the source open until the target transcript has been loaded
+// and validated. The transcript is the server's post-carryover truth (including
+// cross-provider provider-state stripping), not the old local projection.
+func (m Model) carryoverCmd(oldID string, sel client.ModelSelection, token uint64) tea.Cmd {
 	deps := m.deps
+	mode := m.desiredMode()
 	return func() tea.Msg {
-		id, caps, resolved, err := deps.Session.CreateSessionWithCarryover(deps.Ctx, oldID, sel, m.desiredMode())
+		id, caps, resolved, err := deps.Session.CreateSessionWithCarryover(deps.Ctx, oldID, sel, mode)
 		if err != nil {
-			return restartFailedMsg{err: err, model: modelSelLabel(sel)}
+			return modelSwitchFailedMsg{token: token, sourceID: oldID, model: modelSelLabel(sel), err: err}
 		}
-		// Close the source AFTER the new session is ready — the server snapshotted it
-		// at create time, so a late close can't orphan the seed. Best-effort (swallowed).
-		if oldID != "" {
-			_ = deps.Session.CloseSession(deps.Ctx, oldID)
+		if deps.Transcript == nil {
+			_ = deps.Session.CloseSession(deps.Ctx, id)
+			return modelSwitchFailedMsg{token: token, sourceID: oldID, model: modelSelLabel(sel), err: errors.New("authoritative target transcript is unavailable")}
 		}
-		return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
+		transcript, err := deps.Transcript.GetSessionTranscript(deps.Ctx, id)
+		if err != nil || !transcript.Complete || transcript.SessionID != id {
+			if err == nil {
+				if !transcript.Complete {
+					err = errIncompleteTranscript
+				} else {
+					err = errors.New("authoritative transcript target does not match created session")
+				}
+			}
+			_ = deps.Session.CloseSession(deps.Ctx, id)
+			return modelSwitchFailedMsg{token: token, sourceID: oldID, model: modelSelLabel(sel), err: err}
+		}
+		return modelSwitchReadyMsg{
+			token: token, sourceID: oldID,
+			ready:      client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: mode},
+			transcript: transcript,
+		}
 	}
 }
 

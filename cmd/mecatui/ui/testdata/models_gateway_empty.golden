@@ -1,13 +1,15 @@
  mecatui  ·  session #b9ba2286  ·  gpt-5  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-
-
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                     ┃
 ┃  Models                                                                                             ┃
 ┃  current: gpt-5 (server default)                                                                    ┃
 ┃  > filter models…                                                                                   ┃
+┃                                                                                                     ┃
+┃  Selecting a model creates a new session.                                                           ┃
+┃  Visible conversation and context carry over; long histories may be costly to replay.               ┃
+┃  Cross-provider switches lose private reasoning/cache state.                                        ┃
 ┃                                                                                                     ┃
 ┃  your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`        ┃
 ┃                                                                                                     ┃
@@ -16,8 +18,6 @@
 ┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
 ┃                                                                                                     ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
 
 
 
