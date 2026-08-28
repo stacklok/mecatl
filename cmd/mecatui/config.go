@@ -46,6 +46,7 @@ type config struct {
 	useTLS            bool
 	tlsCA             string
 	insecure          bool
+	noSavedAuth       bool
 	listThemes        bool
 
 	// noAltScreen renders mecatui INLINE in the terminal's normal buffer instead
@@ -359,8 +360,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.themeDir, "theme-dir", "", "extra directory of *.json themes to load")
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token for an external server (or MECATL_AUTH_TOKEN)")
 	fs.BoolVar(&cfg.useTLS, "tls", false, "use TLS transport when dialling an external server")
-	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "PEM CA bundle for external-server verification")
+	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "path to a PEM CA bundle for external-server verification")
 	fs.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (testing only)")
+	fs.BoolVar(&cfg.noSavedAuth, "no-saved-auth", false, "ignore saved remote login credentials")
 	fs.BoolVar(&cfg.listThemes, "list-themes", false, "list available themes and exit")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")

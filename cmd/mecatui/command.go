@@ -7,10 +7,10 @@
 // Final grammar (ADR 0089): bare `mecatui [flags]` is the canonical default — it
 // ALWAYS hosts an embedded server and NEVER probes loopback. `mecatui connect
 // ADDRESS` ALWAYS dials ADDRESS and NEVER probes/embeds. `sessions` opens the
-// embedded session browser, and `login` runs the ToolHive OIDC flow without a
-// transport. There is no compatibility path: `mecatui local` is an unknown
-// command (fail-closed, the error names `connect`) and `--server` is an unknown
-// flag.
+// embedded session browser. ToolHive LLM login is `mecatui llm login`; the
+// top-level `login ADDRESS` is reserved for remote login. There is no
+// compatibility path: `mecatui local` is an unknown command (fail-closed, the
+// error names `connect`) and `--server` is an unknown flag.
 //
 // The pure shape (resolveInvocation + writeTopLevelHelp) is what the tests
 // exercise; main wires the io/os.Exit side effects around it. This mirrors the
@@ -33,11 +33,14 @@ type transportMode string
 const (
 	modeLocal   transportMode = "local"
 	modeConnect transportMode = "connect"
-	// modeLogin (issue #265) is the CLI-only `mecatui login` subcommand: it runs
-	// the interactive ToolHive LLM OIDC browser flow in-process (no session, no
-	// server). It is a peer of connect (a leading command word) but owns no
-	// transport — run() branches it BEFORE any TUI/server construction.
-	modeLogin transportMode = "login"
+	// modeLogin is the CLI-only `mecatui llm login` subcommand.
+	modeLogin transportMode = "llm-login"
+	// modeRemoteLogout removes one saved remote enrolment without starting a transport.
+	modeRemoteLogout transportMode = "remote-logout"
+	// modeRemoteLogin is the reserved remote-login route. It must remain
+	// distinct from modeLogin so an address can never accidentally invoke the
+	// ToolHive browser flow.
+	modeRemoteLogin transportMode = "remote-login"
 )
 
 // topLevelCommand is the single catalog for named entry points. Resolution,
@@ -67,22 +70,32 @@ var topLevelCommands = []topLevelCommand{
 	},
 	{
 		name:     "login",
-		synopsis: "login",
+		synopsis: "login ADDRESS",
+		purpose:  "log in to a remote mecated at ADDRESS using OIDC",
+		resolve:  resolveRemoteLoginCommand,
+	},
+	{
+		name:     "logout",
+		synopsis: "logout ADDRESS",
+		purpose:  "remove a saved remote OIDC login and best-effort revoke its tokens",
+		resolve:  resolveRemoteLogoutCommand,
+	},
+	{
+		name:     "llm",
+		synopsis: "llm login [--skip-browser]",
 		purpose:  "run the ToolHive LLM gateway OIDC browser flow (no session)",
-		resolve: func(args []string) invocationResolution {
-			return invocationResolution{mode: modeLogin, remaining: args}
-		},
+		resolve:  resolveLLMCommand,
 	},
 }
 
 // invocationResolution is the pure classification of a complete CLI invocation:
 // bare/default mode, a named command, top-level help, or a leading-word usage
 // error. mode + remaining drive run()'s transport path when applicable; address
-// is the connect target ("" for bare/local). run preparation handles the help
-// output and error wrapping after this resolver returns.
+// is the connect or remote-login target ("" for bare/local or login help). run
+// preparation handles the help output and error wrapping after this resolver returns.
 type invocationResolution struct {
 	mode           transportMode
-	address        string // connect target; "" for the bare/local mode
+	address        string // connect or remote-login target; empty for local/login help
 	browseSessions bool   // launch directly into the shared stored-session inventory
 	helpIndex      bool   // render the top-level command index
 	remaining      []string
@@ -100,11 +113,16 @@ type invocationResolution struct {
 //   - `help` and help meta-flags select top-level or command-specific help.
 //   - invalid forms return usage errors before run preparation has side effects.
 //
-// connect REQUIRES an ADDRESS immediately after the command word: a missing
-// ADDRESS or a flag-first token (--x) is a usage error. Unknown leading commands
-// fail closed.
+// connect and top-level login REQUIRE an ADDRESS immediately after the command
+// word: a missing ADDRESS or a flag-first token (--x) is a usage error. Unknown
+// leading commands fail closed.
 func resolveInvocation(argv []string) invocationResolution {
 	args := argv
+	if len(args) == 0 {
+		// A nil/empty argv is still the bare embedded invocation. Keep this
+		// seam total for callers that construct argv rather than using os.Args.
+		return invocationResolution{mode: modeLocal, remaining: args}
+	}
 	if len(args) < 2 {
 		// Bare `mecatui` with no args: the canonical embedded invocation.
 		return invocationResolution{mode: modeLocal, remaining: args[1:]}
@@ -176,7 +194,46 @@ func hasUnexpectedHelpOperands(command string, args []string) bool {
 	if command == "connect" && len(args) > 2 && isHelpMetaFlag(args[1]) {
 		return true
 	}
+	if command == "llm" && len(args) == 2 && args[0] == "login" && isHelpMetaFlag(args[1]) {
+		return false
+	}
 	return len(args) > 1 && isHelpMetaFlag(args[0])
+}
+
+func resolveRemoteLoginCommand(args []string) invocationResolution {
+	if len(args) == 1 && isHelpMetaFlag(args[0]) {
+		return invocationResolution{mode: modeRemoteLogin, remaining: args}
+	}
+	if len(args) == 0 {
+		return invocationResolution{err: errors.New("login: missing ADDRESS; usage: mecatui login ADDRESS")}
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return invocationResolution{err: fmt.Errorf("login: ADDRESS must immediately follow 'login' (got flag %q); usage: mecatui login ADDRESS", args[0])}
+	}
+	return invocationResolution{mode: modeRemoteLogin, address: args[0], remaining: args[1:]}
+}
+
+func resolveRemoteLogoutCommand(args []string) invocationResolution {
+	if len(args) == 1 && isHelpMetaFlag(args[0]) {
+		return invocationResolution{mode: modeRemoteLogout, remaining: args}
+	}
+	if len(args) == 0 {
+		return invocationResolution{err: errors.New("logout: missing ADDRESS; usage: mecatui logout ADDRESS")}
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return invocationResolution{err: fmt.Errorf("logout: ADDRESS must immediately follow 'logout' (got flag %q); usage: mecatui logout ADDRESS", args[0])}
+	}
+	return invocationResolution{mode: modeRemoteLogout, address: args[0], remaining: args[1:]}
+}
+
+func resolveLLMCommand(args []string) invocationResolution {
+	if len(args) == 1 && isHelpMetaFlag(args[0]) {
+		return invocationResolution{mode: modeLogin, remaining: args}
+	}
+	if len(args) == 0 || args[0] != "login" {
+		return invocationResolution{err: errors.New("llm: usage: mecatui llm login [--skip-browser]")}
+	}
+	return invocationResolution{mode: modeLogin, remaining: args[1:]}
 }
 
 // resolveConnectCommand preserves connect's special grammar: ADDRESS must

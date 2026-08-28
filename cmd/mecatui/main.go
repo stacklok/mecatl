@@ -40,6 +40,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/clientauth"
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
@@ -97,13 +99,28 @@ func prepareRun(argv []string) (invocationResolution, error) {
 }
 
 func run(argv []string) error {
-	// Test seam: MECATUI_TEST_SIGNAL_HANDLER makes run() enter a minimal
-	// signal-handler path with no TUI or server — used by the subprocess-signal
-	// test harness in main_test.go. Valid values: "first" (block until one signal,
-	// return nil) and "second" (block forever; the goroutine fires os.Exit(130) on
-	// the second signal).
-	if v := os.Getenv("MECATUI_TEST_SIGNAL_HANDLER"); v != "" {
-		return testSignalHandler(v)
+	return runWithOptions(argv, runOptions{})
+}
+
+type restartTransport struct {
+	Target    string
+	TLSCAFile string
+}
+
+type runOptions struct {
+	connectOpen            bool
+	connectError           string
+	connectReason          client.AuthReason
+	connectTarget          string
+	connectResumeSessionID string
+	connectTransport       restartTransport
+	recoveryOnly           bool
+}
+
+//nolint:gocyclo // composition root sequences transport, safe auth recovery, and Bubble Tea lifecycle.
+func runWithOptions(argv []string, options runOptions) error {
+	if err := runTestSignalHandler(); err != nil {
+		return err
 	}
 
 	// Resolve the full CLI invocation through the PURE resolveInvocation seam
@@ -115,12 +132,8 @@ func run(argv []string) error {
 		return err
 	}
 
-	// `mecatui login` (issue #265) is CLI-only: it runs the interactive ToolHive
-	// LLM OIDC browser flow in-process and exits — no TUI, no server, no session.
-	// Branch it BEFORE parseTransportFlags (login shares no transport flags) and
-	// BEFORE the baseline-slog/alt-screen setup (it runs in the normal buffer).
-	if res.mode == modeLogin {
-		return runLogin(res.remaining)
+	if handled, err := runSpecialMode(res); handled {
+		return err
 	}
 
 	cfg, err := parseRunConfig(res)
@@ -143,20 +156,7 @@ func run(argv []string) error {
 	// mecatui.log file writer. See docs/adr/0020-diagnostics.md.
 	installBaselineSlog(cfg.quiet)
 
-	// Operator-posture WARN: mecatui has no slog and runs on the alt screen, so emit a
-	// single pre-TUI stderr line (it lands in scrollback before the alt screen takes
-	// over). Only meaningful for paths that may embed (see config.mayEmbed); connect
-	// owns its own posture and skips this. Refusal already handled in validate().
-	// The line is tier-specific: strict/trusted are silent, auto/yolo each warn
-	// (yolo names the child-defense-OFF behaviour change).
-	if cfg.mayEmbed() {
-		switch embeddedAuthoritativePosture(cfg) {
-		case app.PostureAuto:
-			fmt.Fprintln(os.Stderr, "mecatui: WARNING: posture auto is active; allow-all is ON for the embedded server (the built-in mutate-ask floor + the MAIN agent's substitution floor are waived). A Deny in any scope and any configured Ask still apply. The CHILD prompt-injection defense stays ON. For unattended single-tenant use.")
-		case app.PostureYolo:
-			fmt.Fprintln(os.Stderr, "mecatui: WARNING: posture yolo is active; allow-all is ON AND the CHILD prompt-injection defense is OFF — $()/backtick/heredoc commands AUTO-RUN in subagents/branches. A Deny in any scope and any configured Ask still apply. ISOLATED, SINGLE-TENANT use ONLY. NOTE: --yolo now ALSO loosens the child substitution floor.")
-		}
-	}
+	warnEmbeddedPosture(cfg)
 
 	reg := buildRegistry(cfg.workspace, cfg.themeDir)
 	if cfg.listThemes {
@@ -169,6 +169,9 @@ func run(argv []string) error {
 	if !ok {
 		fmt.Fprintf(os.Stderr, "mecatui: unknown theme %q, using %q\n", cfg.theme, th.Name)
 	}
+	if options.recoveryOnly {
+		return runDisconnectedRecovery(context.Background(), argv, th, options)
+	}
 
 	// Manual two-signal handler: first signal = graceful shutdown (cancels ctx →
 	// Bubble Tea quits); second signal during cleanup = immediate hard os.Exit(130).
@@ -178,6 +181,13 @@ func run(argv []string) error {
 	// running on the loopback default, or an embedded server we host in-process.
 	target, dial, transCleanup, err := resolveTransport(ctx, cfg)
 	if err != nil {
+		if reason, ok := client.AuthFailure(err, cfg.authToken != ""); ok {
+			recoveryTarget := target
+			if recoveryTarget == "" {
+				recoveryTarget = cfg.connectAddress
+			}
+			return runWithOptions([]string{argv[0]}, authRecoveryOptions(reason, recoveryTarget, "Authentication needs attention.", options.connectResumeSessionID, restartTransport{Target: recoveryTarget, TLSCAFile: cfg.tlsCA}))
+		}
 		return err
 	}
 
@@ -191,8 +201,32 @@ func run(argv []string) error {
 		return err
 	}
 
-	resume, uiWorkspace, err := startupResumeConfig(ctx, cl, cfg)
+	resumeCfg := cfg
+	if options.connectResumeSessionID != "" {
+		// This candidate originated from an interrupted auth stream, not an
+		// explicit --resume. GetSession/transcript remain the server's ownership
+		// proof; only a terminal turn boundary can be adopted automatically.
+		resumeCfg.resumeID = options.connectResumeSessionID
+		resumeCfg.resumeLatest = false
+	}
+	resume, uiWorkspace, err := startupResumeConfig(ctx, cl, resumeCfg)
+	if options.connectResumeSessionID != "" {
+		// An auth-recovery candidate is opportunistic. Only a verified terminal
+		// boundary is adopted; every other state and every ambiguous verification
+		// failure is discarded. The authenticated connection then proceeds to its
+		// ordinary fresh CreateSession, whose own error remains authoritative.
+		if !shouldAdoptAuthRecoveryCandidate(resume, err) {
+			resume = nil
+			uiWorkspace = cfg.workspace
+			err = nil
+		}
+	}
 	if err != nil {
+		if reason, ok := client.AuthFailure(err, dial.AuthToken != "" || dial.TokenSource != nil); ok {
+			_ = cl.Close()
+			transCleanup()
+			return runWithOptions([]string{argv[0]}, authRecoveryOptions(reason, target, "Authentication needs attention.", options.connectResumeSessionID, restartTransport{Target: target, TLSCAFile: cfg.tlsCA}))
+		}
 		_ = cl.Close()
 		transCleanup()
 		return err
@@ -212,37 +246,44 @@ func run(argv []string) error {
 	globalDefault := store.LoadGlobalDefault()
 
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:             &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode},
-		Conv:                cl,
-		MCP:                 cl,
-		Cmds:                cl,
-		Skills:              cl,
-		Agents:              cl,
-		Soul:                cl,
-		UserModel:           cl,
-		Reflections:         cl,
-		Dream:               cl,
-		Models:              cl,
-		Worktrees:           cl,
-		Sched:               cl,
-		Sessions:            cl,
-		StorageHealth:       cl,
-		Migration:           cl,
-		Cleanup:             cl,
-		SessionManagement:   cl,
-		Adoption:            cl,
-		Transcript:          cl,
-		Replayer:            cl,
-		LiveStream:          cl,
-		SelectionStore:      store,
-		Learning:            learningSettingsForConfig(cfg),
-		InitialModel:        initialSel,
-		WorkspaceDefault:    wsDefault,
-		WorkspaceDefaultSet: wsDefaultSet,
-		GlobalDefault:       globalDefault,
-		Clipboard:           client.NewClipboard(),
-		Theme:               th,
-		Server:              target,
+		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode},
+		Conv:                   cl,
+		MCP:                    cl,
+		Cmds:                   cl,
+		Skills:                 cl,
+		Agents:                 cl,
+		Soul:                   cl,
+		UserModel:              cl,
+		Reflections:            cl,
+		Dream:                  cl,
+		Models:                 cl,
+		Worktrees:              cl,
+		Sched:                  cl,
+		Sessions:               cl,
+		StorageHealth:          cl,
+		Migration:              cl,
+		Cleanup:                cl,
+		SessionManagement:      cl,
+		Adoption:               cl,
+		Transcript:             cl,
+		Replayer:               cl,
+		LiveStream:             cl,
+		SelectionStore:         store,
+		Learning:               learningSettingsForConfig(cfg),
+		Connect:                savedConnectController{},
+		ConnectOpen:            options.connectOpen,
+		ConnectError:           options.connectError,
+		ConnectReason:          options.connectReason,
+		ConnectTarget:          options.connectTarget,
+		ConnectResumeSessionID: options.connectResumeSessionID,
+		BearerBacked:           dial.AuthToken != "" || dial.TokenSource != nil,
+		InitialModel:           initialSel,
+		WorkspaceDefault:       wsDefault,
+		WorkspaceDefaultSet:    wsDefaultSet,
+		GlobalDefault:          globalDefault,
+		Clipboard:              client.NewClipboard(),
+		Theme:                  th,
+		Server:                 target,
 		// Model is best-effort display only. For an EXTERNAL --server it reflects
 		// the locally-configured --model flag and may NOT match the server's actual
 		// model (the server owns provider config); for an embedded server it is
@@ -303,7 +344,12 @@ func run(argv []string) error {
 		_ = cl.Close()
 		transCleanup()
 	})
-	maybeWriteFinalSessionHandoff(os.Stderr, finalModel, runErr, interrupted)
+	if intent, ok := connectRestartIntent(finalModel); ok {
+		return restartFromConnectIntent(argv, intent, restartTransport{Target: target, TLSCAFile: cfg.tlsCA})
+	}
+	if shouldWriteFinalSessionHandoff(finalModel, runErr, interrupted) {
+		writeFinalSessionHandoff(os.Stderr, finalModel)
+	}
 	return runErr
 }
 
@@ -319,6 +365,160 @@ func parseRunConfig(res invocationResolution) (config, error) {
 		return config{}, err
 	}
 	return cfg, nil
+}
+
+func runTestSignalHandler() error {
+	if v := os.Getenv("MECATUI_TEST_SIGNAL_HANDLER"); v != "" {
+		return testSignalHandler(v)
+	}
+	return nil
+}
+
+func runSpecialMode(res invocationResolution) (bool, error) {
+	// Login routes are intentionally separate from transport setup.
+	switch res.mode {
+	case modeLogin:
+		return true, runLogin(res.remaining)
+	case modeRemoteLogin:
+		return true, runRemoteLogin(res.address, res.remaining)
+	case modeRemoteLogout:
+		return true, runRemoteLogout(res.address, res.remaining)
+	default:
+		return false, nil
+	}
+}
+
+func warnEmbeddedPosture(cfg config) {
+	if !cfg.mayEmbed() {
+		return
+	}
+	switch embeddedAuthoritativePosture(cfg) {
+	case app.PostureAuto:
+		fmt.Fprintln(os.Stderr, "mecatui: WARNING: posture auto is active; allow-all is ON for the embedded server (the built-in mutate-ask floor + the MAIN agent's substitution floor are waived). A Deny in any scope and any configured Ask still apply. The CHILD prompt-injection defense stays ON. For unattended single-tenant use.")
+	case app.PostureYolo:
+		fmt.Fprintln(os.Stderr, "mecatui: WARNING: posture yolo is active; allow-all is ON AND the CHILD prompt-injection defense is OFF — $()/backtick/heredoc commands AUTO-RUN in subagents/branches. A Deny in any scope and any configured Ask still apply. ISOLATED, SINGLE-TENANT use ONLY. NOTE: --yolo now ALSO loosens the child substitution floor.")
+	}
+}
+
+func shouldWriteFinalSessionHandoff(final tea.Model, runErr error, interrupted bool) bool {
+	if _, restarting := connectRestartIntent(final); restarting {
+		return false
+	}
+	return runErr == nil && !interrupted
+}
+
+func connectRestartIntent(final tea.Model) (ui.ConnectRestartIntent, bool) {
+	reporter, ok := final.(interface {
+		ConnectRestartIntent() (ui.ConnectRestartIntent, bool)
+	})
+	if !ok {
+		return ui.ConnectRestartIntent{}, false
+	}
+	return reporter.ConnectRestartIntent()
+}
+
+func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, options runOptions) error {
+	deps := ui.Deps{Ctx: ctx, Theme: th, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
+	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
+	finalModel, runErr := prog.Run()
+	if intent, ok := connectRestartIntent(finalModel); ok {
+		return restartFromConnectIntent(argv, intent, options.connectTransport)
+	}
+	return runErr
+}
+
+func shouldAdoptAuthRecoveryCandidate(resume *client.ResumeSelection, err error) bool {
+	return err == nil && resume != nil && safeAuthRecoveryState(resume.Snapshot.State)
+}
+
+func safeAuthRecoveryState(state string) bool {
+	switch state {
+	case "completed", "cancelled", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func authRecoveryOptions(reason client.AuthReason, target, message, candidate string, transport restartTransport) runOptions {
+	return runOptions{connectOpen: true, connectError: message, connectReason: reason, connectTarget: target, connectResumeSessionID: candidate, connectTransport: transport, recoveryOnly: true}
+}
+
+type connectRestartOps struct {
+	run          func([]string, runOptions) error
+	connection   func(string) (clientauth.Connection, error)
+	login        func(context.Context, clientauth.Connection, bool) error
+	loginContext func(time.Duration) (context.Context, context.CancelFunc)
+}
+
+func restartFromConnectIntent(argv []string, intent ui.ConnectRestartIntent, transport restartTransport) error {
+	return restartFromConnectIntentWith(argv, intent, transport, connectRestartOps{
+		run:          runWithOptions,
+		connection:   savedConnection,
+		login:        runSavedRemoteLogin,
+		loginContext: newSavedLoginContext,
+	})
+}
+
+func connectRecoveryReason(action ui.ConnectAction) client.AuthReason {
+	switch action {
+	case ui.RetryAfterCleanup:
+		return client.AuthCredentialCleanup
+	case ui.Reauthenticate:
+		return client.AuthSessionExpired
+	default:
+		return ""
+	}
+}
+
+func restartFromConnectIntentWith(argv []string, intent ui.ConnectRestartIntent, transport restartTransport, ops connectRestartOps) error {
+	resumeSessionID := ""
+	recoveryReason := connectRecoveryReason(intent.Action)
+	sameTarget := transport.Target != "" && transport.Target == intent.Target
+	selectedTransport := restartTransport{Target: intent.Target}
+	if sameTarget {
+		selectedTransport.TLSCAFile = transport.TLSCAFile
+	}
+	// Recovery authority is target-bound at composition, independently of the UI.
+	// A malformed reporter cannot carry recovery semantics or a session candidate
+	// onto a different target; treat it as an ordinary saved connection instead.
+	if !sameTarget && (intent.Action == ui.RetryAfterCleanup || intent.Action == ui.Reauthenticate) {
+		intent.Action = ui.ConnectSaved
+		recoveryReason = ""
+	}
+	switch intent.Action {
+	case ui.AddTarget:
+		return ops.run([]string{argv[0]}, runOptions{connectOpen: true, connectError: "Add a target with mecatui login ADDRESS, then select it here.", recoveryOnly: true})
+	case ui.ConnectSaved:
+		// Ordinary saved connects are intentionally browser-free and never carry a
+		// recovery candidate, even if a malformed reporter supplied one.
+	case ui.RetryAfterCleanup:
+		// Cleanup retries are browser-free but retain the same-target candidate.
+		resumeSessionID = intent.ResumeSessionID
+	case ui.Reauthenticate:
+		resumeSessionID = intent.ResumeSessionID
+		conn, err := ops.connection(intent.Target)
+		if err == nil {
+			ctx, cancel := ops.loginContext(savedLoginCallbackTimeout)
+			err = ops.login(ctx, conn, false)
+			cancel()
+		}
+		if err != nil {
+			return ops.run([]string{argv[0]}, runOptions{connectOpen: true, connectError: "Sign in failed; check the saved target and try again.", connectReason: recoveryReason, connectTarget: intent.Target, connectResumeSessionID: resumeSessionID, connectTransport: selectedTransport, recoveryOnly: true})
+		}
+	default:
+		return fmt.Errorf("invalid connect action %d", intent.Action)
+	}
+
+	connectArgv := []string{argv[0], "connect", intent.Target, "--tls"}
+	if selectedTransport.TLSCAFile != "" {
+		connectArgv = append(connectArgv, "--tls-ca", selectedTransport.TLSCAFile)
+	}
+	err := ops.run(connectArgv, runOptions{connectResumeSessionID: resumeSessionID})
+	if err != nil {
+		return ops.run([]string{argv[0]}, runOptions{connectOpen: true, connectError: "Connection failed; check the saved target and try again.", connectReason: recoveryReason, connectTarget: intent.Target, connectResumeSessionID: resumeSessionID, connectTransport: selectedTransport, recoveryOnly: true})
+	}
+	return nil
 }
 
 // applyLaunchIntent threads command-derived launch state into the ui at the
@@ -480,6 +680,8 @@ func keyOverridesFromConfig(cfg config) map[string][]string {
 //     probes, never embeds).
 //   - bare `mecatui` (modeLocal): host an embedded server over a UNIX socket
 //     (never probes loopback).
+//
+//nolint:gocyclo // composition root resolves the mutually exclusive remote and embedded transports.
 func resolveTransport(ctx context.Context, cfg config) (target string, dial client.DialConfig, cleanup func(), err error) {
 	noop := func() {}
 
@@ -487,15 +689,71 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
-		// connect takes its target from the command-word ADDRESS. It carries the
-		// TLS/auth flags. No probe, no embed fallback.
-		return cfg.connectAddress, client.DialConfig{
-			Server:    cfg.connectAddress,
-			AuthToken: cfg.authToken,
-			UseTLS:    cfg.useTLS,
-			TLSCAFile: cfg.tlsCA,
-			Insecure:  cfg.insecure,
-		}, noop, nil
+		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure}
+		if cfg.authToken == "" && !cfg.noSavedAuth {
+			root := filepath.Join(xdg.ConfigHome, "mecatl")
+			registry, regErr := clientauth.OpenRegistry(root)
+			if regErr != nil {
+				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+			}
+			conn, findErr := registry.FindTarget(cfg.connectAddress)
+			if findErr == nil {
+				target = conn.Identity.Target
+				dial.Server = target
+				if !cfg.useTLS || cfg.insecure {
+					return target, client.DialConfig{}, noop, errors.New("saved remote authentication requires TLS; remove --insecure and use --tls")
+				}
+				ca, readErr := os.ReadFile(conn.IssuerCAFile)
+				if readErr != nil {
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				}
+				keys, keyErr := clientauth.NewKeyringProvider(root)
+				if keyErr != nil {
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				}
+				store, storeErr := clientauth.OpenStore(ctx, root, keys)
+				if storeErr != nil {
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				}
+				creds, credsErr := clientauth.NewCredentials(store)
+				if credsErr != nil {
+					_ = store.Close()
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				}
+				if _, loadErr := creds.Load(ctx, conn.Identity); loadErr != nil {
+					_ = store.Close()
+					if errors.Is(loadErr, credentialstore.ErrNotFound) {
+						// The registry entry above proves this target IS enrolled, so an
+						// absent credential means the stored one is gone -- typically
+						// deleted after a provider rejected its refresh. NotEnrolled
+						// belongs to the FindTarget miss below, not here. clientauth
+						// remaps this within one process lifetime; across a restart that
+						// memory is gone and only the registry can tell them apart.
+						return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthSessionExpired}
+					}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				}
+				source, sourceErr := clientauth.NewRefreshSource(ctx, creds, clientauth.LoginConfig{Identity: conn.Identity, PrivateHTTPS: true, TrustedCAPEM: ca, Registry: registry})
+				if sourceErr != nil {
+					_ = store.Close()
+					// NewRefreshSource fails with ErrDiscovery when the issuer is
+					// unreachable, its TLS is untrusted, or JWKS will not load. None of
+					// those is broken local storage, and saying so would send the
+					// operator to fix a keyring while the provider is down. Leave it
+					// unclassified so the CLI surfaces the real cause.
+					if errors.Is(sourceErr, clientauth.ErrDiscovery) {
+						return target, client.DialConfig{}, noop, sourceErr
+					}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				}
+				dial.TokenSource = mapAuthTokenSource(source)
+				return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
+			}
+			if !errors.Is(findErr, credentialstore.ErrNotFound) {
+				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+			}
+		}
+		return cfg.connectAddress, dial, noop, nil
 	}
 
 	// We are about to HOST an embedded server (the bare/local mode).
@@ -538,7 +796,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	srv, err := embed.Start(ctx, composition, perfConfig(cfg, perfLogger))
 	if err != nil {
 		_ = diagCloser.Close()
-		return "", client.DialConfig{}, noop, fmt.Errorf("start embedded server: %w", err)
+		return target, client.DialConfig{}, noop, fmt.Errorf("start embedded server: %w", err)
 	}
 	if toFile {
 		// One line, written to the FILE sink (never the TUI), so an operator can find

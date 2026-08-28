@@ -191,3 +191,19 @@ func TestResumeLatest_ListFailureStillErrors(t *testing.T) {
 		t.Fatal("resume-latest must surface a list failure, not fall back to a new session")
 	}
 }
+
+func TestResumeLatestPreservesTypedAuthListFailure(t *testing.T) {
+	for _, reason := range []client.AuthReason{client.AuthSessionExpired, client.AuthCredentialUnusable, client.AuthCredentialCleanup} {
+		t.Run(string(reason), func(t *testing.T) {
+			cause := &client.AuthError{Reason: reason}
+			source := &fakeStartupResumeSource{listErr: cause}
+			_, _, err := startupResumeConfig(t.Context(), source, config{resumeLatest: true})
+			if !errors.Is(err, cause) {
+				t.Fatalf("resume error = %v, want wrapped typed cause", err)
+			}
+			if got, ok := client.AuthFailure(err, true); !ok || got != reason {
+				t.Fatalf("AuthFailure = %q, %v; want %q, true", got, ok, reason)
+			}
+		})
+	}
+}

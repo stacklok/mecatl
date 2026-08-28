@@ -23,7 +23,23 @@ import (
 // tests exercise the REAL production invocation-resolution logic directly. They
 // do not mutate global state, prepare a run, or call os.Exit.
 
-// --- Requirement 1: pure resolution seam (mode + remaining + address) -------
+func TestResolveEmptyArgvIsSafeBareInvocation(t *testing.T) {
+	cases := []struct {
+		name string
+		argv []string
+	}{
+		{name: "nil", argv: nil},
+		{name: "empty", argv: []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := resolveInvocation(tc.argv)
+			if res.err != nil || res.mode != modeLocal || len(res.remaining) != 0 {
+				t.Fatalf("resolution = %+v, want local with no remaining args", res)
+			}
+		})
+	}
+}
 
 func TestResolveLocalWordIsUnknownCommand(t *testing.T) {
 	res := resolveInvocation([]string{"mecatui", "local", "--workspace", "/tmp/w"})
@@ -307,29 +323,36 @@ func TestResolveUnknownCommandFailsClosed(t *testing.T) {
 	}
 }
 
-// TestResolveLoginCommand is AC #8 (issue #265): `mecatui login` resolves to
-// the login transport mode (CLI-only, no ADDRESS), passing the flag tail
-// through. It is the smoke pin that the subcommand parses; the actual OIDC
-// flow is manual-verified (AC #8).
-func TestResolveLoginCommand(t *testing.T) {
-	res := resolveInvocation([]string{"mecatui", "login", "--skip-browser"})
-	if res.err != nil {
-		t.Fatalf("login must resolve: %v", res.err)
+// TestResolveLoginCommands pins the split login grammar: the top-level login is
+// reserved for remote addresses, while ToolHive login is explicitly nested under
+// llm.
+func TestResolveLoginCommands(t *testing.T) {
+	remote := resolveInvocation([]string{"mecatui", "login", "https://gateway.example"})
+	if remote.err != nil || remote.mode != modeRemoteLogin || remote.address != "https://gateway.example" {
+		t.Fatalf("remote login resolution = %+v, want remote address route", remote)
 	}
-	if res.mode != modeLogin {
-		t.Errorf("mode = %q, want %q", res.mode, modeLogin)
+	if got := resolveInvocation([]string{"mecatui", "login"}); got.err == nil || !strings.Contains(got.err.Error(), "mecatui login ADDRESS") {
+		t.Fatalf("bare login must fail with remote usage, got %+v", got)
 	}
-	if len(res.remaining) != 1 || res.remaining[0] != "--skip-browser" {
-		t.Errorf("remaining = %v, want [--skip-browser]", res.remaining)
+	logout := resolveInvocation([]string{"mecatui", "logout", "gateway.example:443"})
+	if logout.err != nil || logout.mode != modeRemoteLogout || logout.address != "gateway.example:443" {
+		t.Fatalf("remote logout resolution = %+v", logout)
 	}
-
-	// `mecatui login --help` should ALSO resolve (help passes through).
-	resHelp := resolveInvocation([]string{"mecatui", "login", "--help"})
-	if resHelp.err != nil {
-		t.Fatalf("login --help must resolve: %v", resHelp.err)
+	if got := resolveInvocation([]string{"mecatui", "logout"}); got.err == nil || !strings.Contains(got.err.Error(), "mecatui logout ADDRESS") {
+		t.Fatalf("bare logout must fail with remote usage, got %+v", got)
 	}
-	if resHelp.mode != modeLogin {
-		t.Errorf("login --help mode = %q, want %q", resHelp.mode, modeLogin)
+	if got := resolveInvocation([]string{"mecatui", "logout", "--issuer=x"}); got.err == nil {
+		t.Fatal("logout with a flag-first address must fail closed")
+	}
+	llm := resolveInvocation([]string{"mecatui", "llm", "login", "--skip-browser"})
+	if llm.err != nil || llm.mode != modeLogin || len(llm.remaining) != 1 || llm.remaining[0] != "--skip-browser" {
+		t.Fatalf("llm login resolution = %+v", llm)
+	}
+	if got := resolveInvocation([]string{"mecatui", "llm"}); got.err == nil || !strings.Contains(got.err.Error(), "llm login") {
+		t.Fatalf("bare llm must fail with llm-login usage, got %+v", got)
+	}
+	if got := resolveInvocation([]string{"mecatui", "mcp", "login"}); got.err == nil {
+		t.Fatal("mcp login must remain unknown")
 	}
 }
 
@@ -983,7 +1006,8 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 	for _, want := range []string{
 		"  sessions\n    browse stored sessions before creating or continuing a chat\n",
 		"  connect ADDRESS [sessions]\n    dial a running mecated at ADDRESS (host:port); append sessions to browse\n    stored sessions\n",
-		"  login\n    run the ToolHive LLM gateway OIDC browser flow (no session)\n",
+		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
+		"  llm login [--skip-browser]\n    run the ToolHive LLM gateway OIDC browser flow (no session)\n",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("command summary missing indented, wrapped description %q:\n%s", want, summary)
@@ -1109,7 +1133,8 @@ func TestRunHelpCommandAliasesMatchDirectHelp(t *testing.T) {
 	}{
 		{"sessions", []string{"mecatui", "sessions", "--help"}, []string{"mecatui", "help", "sessions"}, "Usage: mecatui sessions [flags]"},
 		{"connect", []string{"mecatui", "connect", "--help"}, []string{"mecatui", "help", "connect"}, "Usage: mecatui connect ADDRESS [flags]"},
-		{"login", []string{"mecatui", "login", "--help"}, []string{"mecatui", "help", "login"}, "Usage: mecatui login [flags]"},
+		{"login", []string{"mecatui", "login", "--help"}, []string{"mecatui", "help", "login"}, "Usage: mecatui login ADDRESS"},
+		{"logout", []string{"mecatui", "logout", "--help"}, []string{"mecatui", "help", "logout"}, "Usage: mecatui logout ADDRESS"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			want := runHelpCase(t, tc.direct, tc.want)
@@ -1201,7 +1226,7 @@ func TestRunHelpReturnsErrHelpAndWritesHelp(t *testing.T) {
 		{"connect-no-addr", []string{"mecatui", "connect", "--help"}, "Usage: mecatui connect ADDRESS [flags]"},
 		{"connect-with-addr", []string{"mecatui", "connect", "127.0.0.1:8080", "--help"}, "Usage: mecatui connect ADDRESS [flags]"},
 		{"sessions", []string{"mecatui", "sessions", "--help"}, "Usage: mecatui sessions [flags]"},
-		{"login", []string{"mecatui", "login", "--help"}, "Usage: mecatui login [flags]"},
+		{"login", []string{"mecatui", "login", "--help"}, "Usage: mecatui login ADDRESS"},
 		{"short-h", []string{"mecatui", "-h"}, "Usage: mecatui [flags]"},
 	}
 	for _, tc := range cases {
