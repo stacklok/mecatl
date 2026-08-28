@@ -302,12 +302,37 @@ func TestSteer_PromotedRelaySequential(t *testing.T) {
 			break
 		}
 	}
+	// Capture the terminal original before sending the steer, mirroring
+	// TestSteer_ControlTargetsPromotedRun: observing a different registered
+	// run pointer afterward proves the handoff actually promoted, rather than
+	// guessing at a fixed sleep (which raced the internal closeSteerDrained
+	// transition under load and could classify the steer as live-accepted,
+	// merging it into the original run instead of promoting a new one).
+	original, ok := svc.LookupRun(session.SessionID(cs.GetSessionId()))
+	if !ok {
+		t.Fatal("original run is not registered in its terminal drain window")
+	}
 	if err := stream.Send(&mecatlv1.ConverseRequest{
 		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "late steer", MessageId: "m-late"}},
 	}); err != nil {
 		t.Fatalf("Send steer: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond) // let the steer land + the promote grace start
+	// The test context is the sole timeout budget. Keep the original stalled
+	// until the replacement pointer is observable, proving the handoff
+	// registered the promoted run before it can be allowed to drive.
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		if promoted, ok := svc.LookupRun(session.SessionID(cs.GetSessionId())); ok && promoted != original {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			current, registered := svc.LookupRun(session.SessionID(cs.GetSessionId()))
+			t.Fatalf("promoted run was not registered before test context expired: original=%p current=%p registered=%t: %v", original, current, registered, ctx.Err())
+		case <-poll.C:
+		}
+	}
 	close(stallRelease)
 
 	// Read the stream to EOF (the server returns AFTER everything below is
