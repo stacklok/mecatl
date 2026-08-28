@@ -40,19 +40,24 @@ var (
 // InspectSessionMigration explicitly inventories legacy Redis snapshots for the
 // authenticated maintenance workflow. Inventory pages never call this path.
 func (st *Store) InspectSessionMigration(ctx context.Context) (port.SessionMigrationInspection, error) {
+	client, release, err := st.migrationClient(ctx, "")
+	if err != nil {
+		return port.SessionMigrationInspection{}, err
+	}
+	defer release()
 	for range migrationInspectionMaxRetries {
-		generation, err := st.rebuildGeneration(ctx)
+		generation, err := rebuildGeneration(ctx, client)
 		if err != nil {
 			return port.SessionMigrationInspection{}, err
 		}
-		inspection, err := st.inspectSessionMigrationGeneration(ctx, generation)
+		inspection, err := inspectSessionMigrationGeneration(ctx, client, generation)
 		if err != nil {
 			return port.SessionMigrationInspection{}, err
 		}
 		if st.migrationInspectionObserver != nil {
 			st.migrationInspectionObserver()
 		}
-		after, err := st.rebuildGeneration(ctx)
+		after, err := rebuildGeneration(ctx, client)
 		if err != nil {
 			return port.SessionMigrationInspection{}, err
 		}
@@ -61,7 +66,7 @@ func (st *Store) InspectSessionMigration(ctx context.Context) (port.SessionMigra
 			return inspection, nil
 		}
 	}
-	after, err := st.rebuildGeneration(ctx)
+	after, err := rebuildGeneration(ctx, client)
 	if err != nil {
 		return port.SessionMigrationInspection{}, err
 	}
@@ -72,12 +77,12 @@ func (st *Store) InspectSessionMigration(ctx context.Context) (port.SessionMigra
 }
 
 //nolint:gocyclo // Stable inspection keeps snapshot validation and repair classification in one pass.
-func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generation int64) (port.SessionMigrationInspection, error) {
-	state, err := st.client.Get(ctx, metadataIndexStateKey).Result()
+func inspectSessionMigrationGeneration(ctx context.Context, client redis.UniversalClient, generation int64) (port.SessionMigrationInspection, error) {
+	state, err := client.Get(ctx, metadataIndexStateKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return port.SessionMigrationInspection{}, fmt.Errorf("redisstore: inspect metadata state: %w", err)
 	}
-	keys, err := st.snapshotKeys(ctx)
+	keys, err := snapshotKeys(ctx, client)
 	if err != nil {
 		return port.SessionMigrationInspection{}, err
 	}
@@ -88,7 +93,7 @@ func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generati
 		inspection.UnavailableReason = "already_current"
 	}
 	for _, key := range keys {
-		values, readErr := st.client.HMGet(ctx, key, fieldBlob, fieldMtime, fieldMetadataEntry, fieldMetadataOwner).Result()
+		values, readErr := client.HMGet(ctx, key, fieldBlob, fieldMtime, fieldMetadataEntry, fieldMetadataOwner).Result()
 		if readErr != nil {
 			return port.SessionMigrationInspection{}, fmt.Errorf("redisstore: inspect snapshot: %w", readErr)
 		}
@@ -132,13 +137,13 @@ func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generati
 		if values[3] != nil {
 			storedOwner = toString(values[3])
 		}
-		globalScoreErr := st.client.ZScore(ctx, metadataGlobalIndexKey, expectedMember).Err()
+		globalScoreErr := client.ZScore(ctx, metadataGlobalIndexKey, expectedMember).Err()
 		if globalScoreErr != nil && !errors.Is(globalScoreErr, redis.Nil) {
 			return port.SessionMigrationInspection{}, fmt.Errorf("redisstore: inspect global metadata coverage: %w", globalScoreErr)
 		}
 		ownerCovered := true
 		if ownerScope != "" {
-			ownerScoreErr := st.client.ZScore(ctx, metadataOwnerIndexBase+ownerScope, expectedMember).Err()
+			ownerScoreErr := client.ZScore(ctx, metadataOwnerIndexBase+ownerScope, expectedMember).Err()
 			if ownerScoreErr != nil && !errors.Is(ownerScoreErr, redis.Nil) {
 				return port.SessionMigrationInspection{}, fmt.Errorf("redisstore: inspect owner metadata coverage: %w", ownerScoreErr)
 			}
@@ -151,11 +156,11 @@ func (st *Store) inspectSessionMigrationGeneration(ctx context.Context, generati
 	return inspection, nil
 }
 
-func (st *Store) snapshotKeys(ctx context.Context) ([]string, error) {
+func snapshotKeys(ctx context.Context, client redis.UniversalClient) ([]string, error) {
 	seen := make(map[string]struct{})
 	var cursor uint64
 	for {
-		batch, next, err := st.client.Scan(ctx, cursor, sessionKeyPrefix+"*", migrationScanBatchSize).Result()
+		batch, next, err := client.Scan(ctx, cursor, sessionKeyPrefix+"*", migrationScanBatchSize).Result()
 		if err != nil {
 			return nil, fmt.Errorf("redisstore: scan legacy snapshots: %w", err)
 		}
@@ -175,8 +180,8 @@ func (st *Store) snapshotKeys(ctx context.Context) ([]string, error) {
 	return keys, nil
 }
 
-func (st *Store) rebuildGeneration(ctx context.Context) (int64, error) {
-	raw, err := st.client.Get(ctx, metadataRebuildGenerationKey).Result()
+func rebuildGeneration(ctx context.Context, client redis.UniversalClient) (int64, error) {
+	raw, err := client.Get(ctx, metadataRebuildGenerationKey).Result()
 	if errors.Is(err, redis.Nil) {
 		return 0, nil
 	}
@@ -253,8 +258,9 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 	if !ok || acquisition.lost.Load() {
 		return "", errors.New("redisstore: migration job lock lost")
 	}
+	client := acquisition.client
 	key := sessionKey(expected.ID)
-	values, err := st.client.HMGet(ctx, key, fieldBlob, fieldMtime).Result()
+	values, err := client.HMGet(ctx, key, fieldBlob, fieldMtime).Result()
 	if err != nil || len(values) != 2 || values[0] == nil || values[1] == nil {
 		return "changed", nil
 	}
@@ -282,7 +288,7 @@ func (st *Store) MigrateSessionFamily(ctx context.Context, expected port.Session
 	if st.migrationMutationObserver != nil {
 		st.migrationMutationObserver()
 	}
-	result, err := adoptMetadataScript.Run(ctx, st.client,
+	result, err := adoptMetadataScript.Run(ctx, client,
 		[]string{key, metadataGlobalIndexKey, metadataGenerationKey, acquisition.key},
 		acquisition.token, blob, mtimeRaw, member, ownerScope, metadataGlobalScope, metadataOwnerIndexBase,
 	).Int()
@@ -304,33 +310,33 @@ type expectedMetadataIndexes struct {
 	owners map[string]map[string]struct{}
 }
 
-func (st *Store) verifyMetadataIndexCoverage(ctx context.Context, generation int64, expectedFamilies int64) (bool, error) {
-	before, err := st.rebuildGeneration(ctx)
+func verifyMetadataIndexCoverage(ctx context.Context, client redis.UniversalClient, generation int64, expectedFamilies int64) (bool, error) {
+	before, err := rebuildGeneration(ctx, client)
 	if err != nil || before != generation {
 		return false, err
 	}
-	expected, err := st.expectedMetadataIndexes(ctx)
+	expected, err := deriveExpectedMetadataIndexes(ctx, client)
 	if err != nil {
 		return false, err
 	}
 	if int64(len(expected.global)) != expectedFamilies {
 		return false, errMetadataIndexCoverage
 	}
-	if err := st.verifySortedSetCoverage(ctx, metadataGlobalIndexKey, expected.global); err != nil {
+	if err := verifySortedSetCoverage(ctx, client, metadataGlobalIndexKey, expected.global); err != nil {
 		return false, err
 	}
-	if err := st.verifyOwnerIndexCoverage(ctx, expected.owners); err != nil {
+	if err := verifyOwnerIndexCoverage(ctx, client, expected.owners); err != nil {
 		return false, err
 	}
-	after, err := st.rebuildGeneration(ctx)
+	after, err := rebuildGeneration(ctx, client)
 	if err != nil {
 		return false, err
 	}
 	return after == generation, nil
 }
 
-func (st *Store) expectedMetadataIndexes(ctx context.Context) (expectedMetadataIndexes, error) {
-	keys, err := st.snapshotKeys(ctx)
+func deriveExpectedMetadataIndexes(ctx context.Context, client redis.UniversalClient) (expectedMetadataIndexes, error) {
+	keys, err := snapshotKeys(ctx, client)
 	if err != nil {
 		return expectedMetadataIndexes{}, err
 	}
@@ -339,7 +345,7 @@ func (st *Store) expectedMetadataIndexes(ctx context.Context) (expectedMetadataI
 		owners: make(map[string]map[string]struct{}),
 	}
 	for _, key := range keys {
-		member, ownerScope, deriveErr := st.expectedMetadataMember(ctx, key)
+		member, ownerScope, deriveErr := expectedMetadataMember(ctx, client, key)
 		if deriveErr != nil {
 			return expectedMetadataIndexes{}, deriveErr
 		}
@@ -357,8 +363,8 @@ func (st *Store) expectedMetadataIndexes(ctx context.Context) (expectedMetadataI
 	return expected, nil
 }
 
-func (st *Store) expectedMetadataMember(ctx context.Context, key string) (string, string, error) {
-	values, err := st.client.HMGet(ctx, key, fieldBlob, fieldMtime, fieldMetadataEntry, fieldMetadataOwner).Result()
+func expectedMetadataMember(ctx context.Context, client redis.UniversalClient, key string) (string, string, error) {
+	values, err := client.HMGet(ctx, key, fieldBlob, fieldMtime, fieldMetadataEntry, fieldMetadataOwner).Result()
 	if err != nil {
 		return "", "", fmt.Errorf("redisstore: verify metadata snapshot: %w", err)
 	}
@@ -390,11 +396,11 @@ func (st *Store) expectedMetadataMember(ctx context.Context, key string) (string
 	return member, ownerScope, nil
 }
 
-func (st *Store) verifyOwnerIndexCoverage(ctx context.Context, expected map[string]map[string]struct{}) error {
+func verifyOwnerIndexCoverage(ctx context.Context, client redis.UniversalClient, expected map[string]map[string]struct{}) error {
 	seen := make(map[string]struct{})
 	var cursor uint64
 	for {
-		keys, next, err := st.client.Scan(ctx, cursor, metadataOwnerIndexBase+"*", migrationScanBatchSize).Result()
+		keys, next, err := client.Scan(ctx, cursor, metadataOwnerIndexBase+"*", migrationScanBatchSize).Result()
 		if err != nil {
 			return fmt.Errorf("redisstore: scan owner metadata indexes: %w", err)
 		}
@@ -408,7 +414,7 @@ func (st *Store) verifyOwnerIndexCoverage(ctx context.Context, expected map[stri
 			if !ok {
 				return errMetadataIndexCoverage
 			}
-			if err := st.verifySortedSetCoverage(ctx, key, members); err != nil {
+			if err := verifySortedSetCoverage(ctx, client, key, members); err != nil {
 				return err
 			}
 			delete(expected, scope)
@@ -424,7 +430,7 @@ func (st *Store) verifyOwnerIndexCoverage(ctx context.Context, expected map[stri
 	return nil
 }
 
-func (st *Store) verifySortedSetCoverage(ctx context.Context, key string, expected map[string]struct{}) error {
+func verifySortedSetCoverage(ctx context.Context, client redis.UniversalClient, key string, expected map[string]struct{}) error {
 	remaining := make(map[string]struct{}, len(expected))
 	for member := range expected {
 		remaining[member] = struct{}{}
@@ -432,7 +438,7 @@ func (st *Store) verifySortedSetCoverage(ctx context.Context, key string, expect
 	seen := make(map[string]struct{}, len(expected))
 	var cursor uint64
 	for {
-		values, next, err := st.client.ZScan(ctx, key, cursor, "*", migrationScanBatchSize).Result()
+		values, next, err := client.ZScan(ctx, key, cursor, "*", migrationScanBatchSize).Result()
 		if err != nil {
 			return fmt.Errorf("redisstore: scan metadata index: %w", err)
 		}
@@ -485,22 +491,23 @@ return 1
 // constant-work Redis CAS. The CAS rechecks the generation, so a concurrent
 // Save or Delete cannot invalidate the proof before publication.
 func (st *Store) FinalizeSessionMigrationCoverage(ctx context.Context, generation string, expectedFamilies int64) (bool, error) {
-	generationNumber, err := strconv.ParseInt(generation, 10, 64)
-	if err != nil || expectedFamilies < 0 {
-		return false, errors.New("redisstore: invalid migration coverage")
-	}
 	acquisition, ok := migrationAcquisitionFromContext(ctx, "")
 	if !ok || acquisition.lost.Load() {
 		return false, errors.New("redisstore: migration job lock lost")
 	}
-	covered, err := st.verifyMetadataIndexCoverage(ctx, generationNumber, expectedFamilies)
+	client := acquisition.client
+	generationNumber, err := strconv.ParseInt(generation, 10, 64)
+	if err != nil || expectedFamilies < 0 {
+		return false, errors.New("redisstore: invalid migration coverage")
+	}
+	covered, err := verifyMetadataIndexCoverage(ctx, client, generationNumber, expectedFamilies)
 	if err != nil || !covered {
 		return false, err
 	}
 	if st.migrationMutationObserver != nil {
 		st.migrationMutationObserver()
 	}
-	result, err := publishMetadataReadyScript.Run(ctx, st.client,
+	result, err := publishMetadataReadyScript.Run(ctx, client,
 		[]string{metadataRebuildGenerationKey, metadataIndexStateKey, metadataGlobalIndexKey, acquisition.key},
 		acquisition.token, generation, metadataIndexReady, expectedFamilies,
 	).Int()
@@ -533,7 +540,7 @@ return 1
 `)
 
 // SaveSessionMigrationJob durably checkpoints a caller-bound adoption job.
-func (st *Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMigrationJob) error {
+func (*Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMigrationJob) error {
 	key, err := migrationJobKey(job.ID)
 	if err != nil {
 		return err
@@ -545,11 +552,12 @@ func (st *Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMi
 	if acquisition.lost.Load() {
 		return errors.New("redisstore: migration job lock lost")
 	}
+	client := acquisition.client
 	data, err := json.Marshal(job)
 	if err != nil {
 		return fmt.Errorf("redisstore: encode migration job: %w", err)
 	}
-	saved, err := saveMigrationJobScript.Run(ctx, st.client,
+	saved, err := saveMigrationJobScript.Run(ctx, client,
 		[]string{acquisition.key, key}, acquisition.token, data,
 	).Int()
 	if err != nil {
@@ -564,11 +572,16 @@ func (st *Store) SaveSessionMigrationJob(ctx context.Context, job port.SessionMi
 
 // LoadSessionMigrationJob reloads one validated durable adoption checkpoint.
 func (st *Store) LoadSessionMigrationJob(ctx context.Context, id string) (port.SessionMigrationJob, error) {
+	client, release, err := st.migrationClient(ctx, id)
+	if err != nil {
+		return port.SessionMigrationJob{}, err
+	}
+	defer release()
 	key, err := migrationJobKey(id)
 	if err != nil {
 		return port.SessionMigrationJob{}, err
 	}
-	data, err := st.client.Get(ctx, key).Bytes()
+	data, err := client.Get(ctx, key).Bytes()
 	if err != nil {
 		return port.SessionMigrationJob{}, err
 	}
@@ -608,6 +621,7 @@ type migrationLockAcquisition struct {
 	id              string
 	key             string
 	token           string
+	client          redis.UniversalClient
 	renewCancel     context.CancelFunc
 	operationCancel context.CancelFunc
 	done            chan struct{}
@@ -625,6 +639,13 @@ func migrationAcquisitionFromContext(ctx context.Context, id string) (*migration
 	return acquisition, ok && acquisition != nil && (id == "" || acquisition.id == id)
 }
 
+func (st *Store) migrationClient(ctx context.Context, id string) (redis.UniversalClient, func(), error) {
+	if acquisition, ok := migrationAcquisitionFromContext(ctx, id); ok && !acquisition.lost.Load() {
+		return acquisition.client, func() {}, nil
+	}
+	return st.clients.acquire()
+}
+
 // AcquireSessionMigrationJob binds one fenced acquisition to the returned
 // context. Renewal and every checkpoint/release use that exact acquisition.
 func (st *Store) AcquireSessionMigrationJob(ctx context.Context, id string) (context.Context, func() error, error) {
@@ -636,28 +657,35 @@ func (st *Store) AcquireSessionMigrationJob(ctx context.Context, id string) (con
 		return nil, nil, err
 	}
 	key := migrationLockKeyBase + id
-	token, err := acquireMigrationLockScript.Run(ctx, st.client,
+	client, generationRelease, err := st.clients.acquire()
+	if err != nil {
+		return nil, nil, err
+	}
+	token, err := acquireMigrationLockScript.Run(ctx, client,
 		[]string{key, migrationFenceKeyBase + id}, hex.EncodeToString(nonce), migrationLockTTL.Milliseconds(),
 	).Text()
 	if err != nil {
+		generationRelease()
 		return nil, nil, fmt.Errorf("redisstore: acquire migration job lock: %w", err)
 	}
 	if token == "" {
+		generationRelease()
 		return nil, nil, errors.New("redisstore: migration job lock not acquired")
 	}
-	renewCtx, renewCancel := context.WithCancel(context.Background())
+	renewCtx, renewCancel := context.WithCancel(context.WithoutCancel(ctx))
 	operationCtx, operationCancel := context.WithCancel(ctx)
 	acquisition := &migrationLockAcquisition{
-		id: id, key: key, token: token, renewCancel: renewCancel, operationCancel: operationCancel, done: make(chan struct{}),
+		id: id, key: key, token: token, client: client, renewCancel: renewCancel, operationCancel: operationCancel, done: make(chan struct{}),
 	}
-	go st.renewMigrationLock(renewCtx, acquisition)
+	go renewMigrationLock(renewCtx, client, acquisition)
 	bound := context.WithValue(operationCtx, migrationAcquisitionContextKey{}, acquisition)
 	release := func() error {
 		var releaseErr error
 		acquisition.once.Do(func() {
+			defer generationRelease()
 			acquisition.renewCancel()
 			<-acquisition.done
-			result, err := releaseMigrationLockScript.Run(context.WithoutCancel(bound), st.client, []string{key}, token).Int()
+			result, err := releaseMigrationLockScript.Run(context.WithoutCancel(bound), client, []string{key}, token).Int()
 			acquisition.operationCancel()
 			if err != nil {
 				releaseErr = err
@@ -673,7 +701,7 @@ func (st *Store) AcquireSessionMigrationJob(ctx context.Context, id string) (con
 	return bound, release, nil
 }
 
-func (st *Store) renewMigrationLock(ctx context.Context, acquisition *migrationLockAcquisition) {
+func renewMigrationLock(ctx context.Context, client redis.UniversalClient, acquisition *migrationLockAcquisition) {
 	defer close(acquisition.done)
 	ticker := time.NewTicker(migrationRenewInterval)
 	defer ticker.Stop()
@@ -682,7 +710,7 @@ func (st *Store) renewMigrationLock(ctx context.Context, acquisition *migrationL
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			renewed, err := renewMigrationLockScript.Run(ctx, st.client,
+			renewed, err := renewMigrationLockScript.Run(ctx, client,
 				[]string{acquisition.key}, acquisition.token, migrationLockTTL.Milliseconds(),
 			).Int()
 			if err != nil || renewed != 1 {
@@ -694,12 +722,12 @@ func (st *Store) renewMigrationLock(ctx context.Context, acquisition *migrationL
 }
 
 // CheckSessionMigrationJobOwnership fails closed once this acquisition is lost.
-func (st *Store) CheckSessionMigrationJobOwnership(ctx context.Context) error {
+func (*Store) CheckSessionMigrationJobOwnership(ctx context.Context) error {
 	acquisition, ok := ctx.Value(migrationAcquisitionContextKey{}).(*migrationLockAcquisition)
 	if !ok || acquisition == nil || acquisition.lost.Load() {
 		return errors.New("redisstore: migration job lock lost")
 	}
-	value, err := st.client.Get(ctx, acquisition.key).Result()
+	value, err := acquisition.client.Get(ctx, acquisition.key).Result()
 	if err != nil || value != acquisition.token {
 		acquisition.markLost()
 		return errors.New("redisstore: migration job lock lost")

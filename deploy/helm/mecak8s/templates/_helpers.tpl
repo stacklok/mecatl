@@ -85,3 +85,13 @@ mounted
 {{- $_ := required "tls.keyKey is required when tls.enabled is true" .Values.tls.keyKey -}}
 {{- end -}}
 {{- end -}}
+{{- define "mecak8s.validateProviderSecurity" -}}
+{{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) -}}
+{{- if not .Values.tls.enabled -}}
+{{- fail "mockProvider=false requires tls.enabled=true (TLS protects transport); set security.allowUnsafeRealProvider=true only for local or trusted-mesh deployments" -}}
+{{- end -}}
+{{- if not .Values.oidc.enabled -}}
+{{- fail "mockProvider=false requires oidc.enabled=true (OIDC authenticates callers); set security.allowUnsafeRealProvider=true only for local or trusted-mesh deployments" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

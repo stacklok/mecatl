@@ -103,6 +103,37 @@ do not project to a principal, and owns an explicit `Close` for the background r
 `internal/cliconfig` adapts those errors to the unchanged server sentinels and retains
 the server-root system context and all existing flag behavior.
 
+### mecak8s projected credentials and Helm runtime contract
+
+`internal/adapter/tlsreload` owns mecak8s server-certificate loading, complete-chain
+validation, atomic last-valid publication, projected-Secret watching, and a fixed periodic
+leaf-expiry observer. Both gRPC and HTTP use its `GetCertificate` callback; cmd composition
+retains only static client-CA loading and lifecycle closure. Invalid rotations retain the
+prior generation. Expiry diagnostics warn once per published generation with only an
+`expiring`/`expired` reason and rounded remaining duration; they never disable the published
+certificate or expose paths, subjects, serials, or PEM. Close joins watcher and observer.
+`internal/adapter/redisstore` similarly swaps a fully probed client generation for file-backed
+CA/ACL changes while leases keep displaced clients alive for in-flight work. Acquisition returns
+the concrete client explicitly through every helper and iterator; only the migration acquisition
+identity remains in context. A followed credential target must be regular. Shutdown rejects new
+work first, closes the watcher, cancels reload, and separately bounds the worker join; an
+uncancellable late read cannot publish into the closed generation manager. Generation retirement
+claims close once and executes it asynchronously. One fixed generation grace bounds both live
+leases and close completion without force-closing active clients; a timeout emits one count-only
+warning and eventual releases/closes continue. Reload retries use bounded jittered exponential
+delay, with a newer projection event explicitly restarting at attempt one. Partial or invalid
+rotations retain the previous generation. The
+server client-CA pool remains static and requires restart; CA rotation should overlap old
+and new roots before removing the old root.
+
+Helm chart 0.2.0 treats `mockProvider: false` as real-provider intent and requires both
+`tls.enabled` and `oidc.enabled`, unless the visibly unsafe local/trusted-mesh bypass is
+explicit. Empty provider/model and null token ceilings emit no flags; explicit ceilings are
+positive. Scheduling controls are empty by default and map directly to pod-spec topology
+spread, affinity, node selector, and toleration fields. The comprehensive production
+fixture pins external verified Redis, TLS/OIDC, provider/model, finite run/team ceilings,
+and hostname spreading; Kind remains mock and secret-free.
+
 ---
 
 ## Domain — `engine/session/` (producer taxonomy)

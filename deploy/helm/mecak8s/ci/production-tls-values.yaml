@@ -1,8 +1,10 @@
-# task deploy:check fixture: production server TLS from an operator-created
-# Secret. Helm and kubeconform validate the reference only; the Secret is not
-# rendered or looked up by the chart.
+# task deploy:check fixture: server TLS from an operator-created Secret. The mock
+# provider isolates the TLS rendering contract; production real-provider posture
+# is covered by production-values.yaml. Helm and kubeconform validate the
+# reference only; the Secret is not rendered or looked up by the chart.
 image:
   tag: v0.0.0
+mockProvider: true
 redis:
   endpoint: redis.example.internal:6379
   credentialsSecret: redis-credentials

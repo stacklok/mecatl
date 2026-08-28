@@ -4,19 +4,132 @@
   "additionalProperties": false,
   "required": ["image", "redis"],
   "properties": {
-    "image": {"type": "object", "additionalProperties": false, "required": ["repository", "digest", "tag", "pullPolicy"], "properties": {"repository": {"type": "string", "minLength": 1}, "digest": {"type": "string"}, "tag": {"type": "string"}, "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}}},
-    "redis": {"type": "object", "additionalProperties": false, "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "local"], "properties": {"endpoint": {"type": "string"}, "credentialsSecret": {"type": "string"}, "passwordKey": {"type": "string"}, "caKey": {"type": "string"}, "usernameKey": {"type": "string"}, "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}}},
-    "oidc": {"type": "object", "additionalProperties": false, "required": ["enabled", "issuer", "audience", "jwksURI", "maxJWKSStaleness", "allowPrivateHTTPSIssuer", "caSecret", "caKey"], "properties": {"enabled": {"type": "boolean"}, "issuer": {"type": "string"}, "audience": {"type": "string"}, "jwksURI": {"type": "string"}, "maxJWKSStaleness": {"type": "string"}, "allowPrivateHTTPSIssuer": {"type": "boolean"}, "caSecret": {"type": "string"}, "caKey": {"type": "string"}}},
-    "tls": {"type": "object", "additionalProperties": false, "required": ["enabled", "secretName", "certKey", "keyKey"], "properties": {"enabled": {"type": "boolean"}, "secretName": {"type": "string"}, "certKey": {"type": "string"}, "keyKey": {"type": "string"}}},
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "tag", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "digest": {"type": "string"},
+        "tag": {"type": "string"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint", "credentialsSecret", "passwordKey", "caKey", "usernameKey", "local"],
+      "properties": {
+        "endpoint": {"type": "string"},
+        "credentialsSecret": {"type": "string"},
+        "passwordKey": {"type": "string"},
+        "caKey": {"type": "string"},
+        "usernameKey": {"type": "string"},
+        "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}
+      }
+    },
+    "oidc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "issuer", "audience", "jwksURI", "maxJWKSStaleness", "allowPrivateHTTPSIssuer", "caSecret", "caKey"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "issuer": {"type": "string"},
+        "audience": {"type": "string"},
+        "jwksURI": {"type": "string"},
+        "maxJWKSStaleness": {"type": "string"},
+        "allowPrivateHTTPSIssuer": {"type": "boolean"},
+        "caSecret": {"type": "string"},
+        "caKey": {"type": "string"}
+      }
+    },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "secretName", "certKey", "keyKey"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "secretName": {"type": "string"},
+        "certKey": {"type": "string"},
+        "keyKey": {"type": "string"}
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowUnsafeRealProvider"],
+      "properties": {"allowUnsafeRealProvider": {"type": "boolean"}}
+    },
     "replicaCount": {"type": "integer", "minimum": 2},
     "mockProvider": {"type": "boolean"},
+    "defaultProvider": {"type": "string", "enum": ["", "openai", "openai-codex", "openrouter", "anthropic", "opencode", "toolhive"]},
+    "model": {
+      "type": "string",
+      "anyOf": [
+        {"const": ""},
+        {"pattern": "^\\S(?:.*\\S)?$"}
+      ]
+    },
+    "maxRunTokens": {"type": ["integer", "null"], "minimum": 1},
+    "maxTeamTokens": {"type": ["integer", "null"], "minimum": 1},
     "workspace": {"type": "string"},
     "imagePullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
     "extraEnv": {"type": "array", "items": {"type": "object"}},
     "resources": {"type": "object"},
+    "topologySpreadConstraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["maxSkew", "topologyKey", "whenUnsatisfiable"],
+        "properties": {
+          "maxSkew": {"type": "integer", "minimum": 1},
+          "topologyKey": {"type": "string", "minLength": 1},
+          "whenUnsatisfiable": {"type": "string", "enum": ["DoNotSchedule", "ScheduleAnyway"]},
+          "labelSelector": {"type": "object"},
+          "minDomains": {"type": "integer", "minimum": 1},
+          "nodeAffinityPolicy": {"type": "string", "enum": ["Honor", "Ignore"]},
+          "nodeTaintsPolicy": {"type": "string", "enum": ["Honor", "Ignore"]},
+          "matchLabelKeys": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": true
+      }
+    },
+    "affinity": {"type": "object"},
+    "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {"type": "string"},
+          "operator": {"type": "string", "enum": ["Exists", "Equal"]},
+          "value": {"type": "string"},
+          "effect": {"type": "string", "enum": ["", "NoSchedule", "PreferNoSchedule", "NoExecute"]},
+          "tolerationSeconds": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": true
+      }
+    },
     "service": {"type": "object", "additionalProperties": false, "required": ["type", "grpcPort", "httpPort", "nodePorts"], "properties": {"type": {"type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"]}, "grpcPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "httpPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "nodePorts": {"type": "object", "additionalProperties": false, "properties": {"grpc": {"type": "integer", "minimum": 30000, "maximum": 32767}, "http": {"type": "integer", "minimum": 30000, "maximum": 32767}}}}},
     "nameOverride": {"type": "string"},
     "fullnameOverride": {"type": "string"},
     "podAnnotations": {"type": "object"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mockProvider": {"const": false},
+          "security": {"properties": {"allowUnsafeRealProvider": {"const": false}}}
+        },
+        "required": ["mockProvider", "security"]
+      },
+      "then": {
+        "properties": {
+          "tls": {"properties": {"enabled": {"const": true}}},
+          "oidc": {"properties": {"enabled": {"const": true}}}
+        }
+      }
+    }
+  ]
 }

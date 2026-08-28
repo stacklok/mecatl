@@ -1,13 +1,23 @@
-# task deploy:check fixture: the production profile with caller identity
-# (oidc.*) enabled, so the render also exercises the raw-driver NetworkPolicy
-# and the oidc.* validation path (mirrors Taskfile.yml's deploy:check
-# OIDC_SET).
+# task deploy:check fixture: a second secure real-provider profile using system
+# trust for Redis and the minimum in-pod TLS + OIDC controls.
 image:
   tag: v0.0.0
+defaultProvider: openrouter
+model: anthropic/claude-sonnet-4-6
+extraEnv:
+  # The chart references this operator-provisioned Secret; it never creates it.
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: provider-credentials
+        key: openrouter-api-key
 redis:
   endpoint: redis.example.internal:6379
-  credentialsSecret: redis-credentials
+  caKey: ""
 oidc:
   enabled: true
   issuer: https://idp.example.com
   audience: mecatl
+tls:
+  enabled: true
+  secretName: mecak8s-tls

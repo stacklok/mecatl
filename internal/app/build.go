@@ -3189,6 +3189,7 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 			CAFile:         cfg.RedisTLSCAFile,
 			TLS:            cfg.RedisTLS,
 			AllowPlaintext: cfg.RedisAllowPlaintext,
+			Diagnostics:    cfg.diag(),
 		})
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("redis store: %w", err)

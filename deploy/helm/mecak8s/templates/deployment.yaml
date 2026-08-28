@@ -2,6 +2,7 @@
 {{- include "mecak8s.validateRedis" . -}}
 {{- include "mecak8s.validateOIDC" . -}}
 {{- include "mecak8s.validateTLS" . -}}
+{{- include "mecak8s.validateProviderSecurity" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,7 +18,17 @@ spec:
   template:
     metadata:
       labels: {{- include "mecak8s.selectorLabels" . | nindent 8 }}
-      annotations: {{- toYaml .Values.podAnnotations | nindent 8 }}
+      {{- if or .Values.podAnnotations (and (not .Values.mockProvider) .Values.security.allowUnsafeRealProvider) }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if and (not .Values.mockProvider) .Values.security.allowUnsafeRealProvider }}
+        mecatl.stacklok.com/unsafe-real-provider: "true"
+        {{- end }}
+      {{- else }}
+      annotations: {}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "mecak8s.fullname" . }}
       automountServiceAccountToken: true
@@ -25,6 +36,25 @@ spec:
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: 60
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        {{- $constraint := deepCopy . }}
+        {{- if not (hasKey $constraint "labelSelector") }}
+        {{- $_ := set $constraint "labelSelector" (dict "matchLabels" (include "mecak8s.selectorLabels" $ | fromYaml)) }}
+        {{- end }}
+        - {{ toYaml $constraint | nindent 10 | trim }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -38,12 +68,24 @@ spec:
           args:
             - --grpc-addr=0.0.0.0:8080
             - --http-addr=0.0.0.0:8081
-            - --redis-url={{ .Values.redis.endpoint }}
-            - --session-lease-k8s-namespace={{ .Release.Namespace }}
+            - {{ printf "--redis-url=%s" .Values.redis.endpoint | quote }}
+            - {{ printf "--session-lease-k8s-namespace=%s" .Release.Namespace | quote }}
             - --headless=true
             - --posture=auto
+            {{- if .Values.defaultProvider }}
+            - {{ printf "--default-provider=%s" .Values.defaultProvider | quote }}
+            {{- end }}
+            {{- if .Values.model }}
+            - {{ printf "--model=%s" .Values.model | quote }}
+            {{- end }}
+            {{- if ne .Values.maxRunTokens nil }}
+            - {{ printf "--max-run-tokens=%v" .Values.maxRunTokens | quote }}
+            {{- end }}
+            {{- if ne .Values.maxTeamTokens nil }}
+            - {{ printf "--max-team-tokens=%v" .Values.maxTeamTokens | quote }}
+            {{- end }}
             {{- if .Values.workspace }}
-            - --workspace={{ .Values.workspace }}
+            - {{ printf "--workspace=%s" .Values.workspace | quote }}
             {{- end }}
             {{- if .Values.mockProvider }}
             - --mock
@@ -52,34 +94,34 @@ spec:
             - --redis-allow-plaintext
             {{- else }}
             {{- if .Values.redis.usernameKey }}
-            - --redis-username-file=/var/run/secrets/redis/{{ .Values.redis.usernameKey }}
+            - {{ printf "--redis-username-file=/var/run/secrets/redis/%s" .Values.redis.usernameKey | quote }}
             {{- end }}
             {{- if .Values.redis.passwordKey }}
-            - --redis-password-file=/var/run/secrets/redis/{{ .Values.redis.passwordKey }}
+            - {{ printf "--redis-password-file=/var/run/secrets/redis/%s" .Values.redis.passwordKey | quote }}
             {{- end }}
             {{- if .Values.redis.caKey }}
-            - --redis-tls-ca=/var/run/secrets/redis/{{ .Values.redis.caKey }}
+            - {{ printf "--redis-tls-ca=/var/run/secrets/redis/%s" .Values.redis.caKey | quote }}
             {{- else }}
             - --redis-tls
             {{- end }}
             {{- end }}
             {{- if .Values.oidc.enabled }}
-            - --oidc-issuer={{ .Values.oidc.issuer }}
-            - --oidc-audience={{ .Values.oidc.audience }}
+            - {{ printf "--oidc-issuer=%s" .Values.oidc.issuer | quote }}
+            - {{ printf "--oidc-audience=%s" .Values.oidc.audience | quote }}
             {{- if .Values.oidc.jwksURI }}
-            - --oidc-jwks-uri={{ .Values.oidc.jwksURI }}
+            - {{ printf "--oidc-jwks-uri=%s" .Values.oidc.jwksURI | quote }}
             {{- end }}
             {{- if .Values.oidc.caSecret }}
-            - --oidc-ca-cert-file=/var/run/secrets/oidc-ca/{{ .Values.oidc.caKey }}
+            - {{ printf "--oidc-ca-cert-file=/var/run/secrets/oidc-ca/%s" .Values.oidc.caKey | quote }}
             {{- end }}
             {{- if .Values.oidc.allowPrivateHTTPSIssuer }}
             - --oidc-allow-private-https-issuer
             {{- end }}
-            - --oidc-max-jwks-staleness={{ .Values.oidc.maxJWKSStaleness }}
+            - {{ printf "--oidc-max-jwks-staleness=%s" .Values.oidc.maxJWKSStaleness | quote }}
             {{- end }}
             {{- if .Values.tls.enabled }}
-            - --tls-cert=/var/run/secrets/tls/{{ .Values.tls.certKey }}
-            - --tls-key=/var/run/secrets/tls/{{ .Values.tls.keyKey }}
+            - {{ printf "--tls-cert=/var/run/secrets/tls/%s" .Values.tls.certKey | quote }}
+            - {{ printf "--tls-key=/var/run/secrets/tls/%s" .Values.tls.keyKey | quote }}
             {{- end }}
           {{- with .Values.extraEnv }}
           env: {{- toYaml . | nindent 12 }}

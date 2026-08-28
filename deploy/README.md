@@ -100,7 +100,15 @@ static base), `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`,
 
 ## Caller identity (OIDC) — the opt-in chart values
 
-`deploy/helm/mecak8s/`'s `oidc.*` values turn on **caller identity and
+`deploy/helm/mecak8s/` treats `mockProvider: false` as a real-provider deployment and
+fails closed unless **both** `tls.enabled` and `oidc.enabled` are true. TLS encrypts the
+server transport; OIDC authenticates callers, and neither substitutes for the other.
+Existing real-provider installs upgrading to chart 0.2.0 must add both controls. For a
+local-only deployment or a trusted mesh that supplies both controls externally, the
+explicit `security.allowUnsafeRealProvider=true` escape hatch bypasses the gate and adds
+`mecatl.stacklok.com/unsafe-real-provider: "true"` to the pod template.
+
+The `oidc.*` values turn on **caller identity and
 ownership isolation** for the mecak8s agent: a real IdP authenticates each
 caller, and every new session and schedule records the verified `(issuer,
 subject)` that owns it. With the verifier enabled, callers can access only
@@ -113,18 +121,33 @@ helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-n
   --set image.tag=v<release-version> \
   --set redis.endpoint=redis.example.internal:6379 \
   --set redis.credentialsSecret=mecak8s-redis \
+  --set tls.enabled=true \
+  --set tls.secretName=mecak8s-tls \
   --set oidc.enabled=true \
   --set oidc.issuer=https://idp.example.com/realms/mecatl \
   --set oidc.audience=mecatl
 ```
+
+`defaultProvider` and `model` are optional and become `--default-provider` and
+`--model` only when non-empty. `maxRunTokens` and `maxTeamTokens` default to `null`
+(unset/unlimited at the runtime); if supplied, each must be a positive integer. Optional
+`topologySpreadConstraints`, `affinity`, `nodeSelector`, and `tolerations` values are
+passed through under the pod spec and omitted when empty. For two replicas, a hostname
+spread constraint is recommended where the cluster has multiple eligible nodes.
+
+During Secret rotation, keep old and new issuing CAs together in the Redis/OIDC bundles
+for an overlap window, rotate leaf credentials, then remove the old CA. mecak8s reloads
+server certificate/key and file-backed Redis CA/ACL material transactionally and retains
+the last valid generation when an intermediate projection or probe fails. The server
+`client-ca` trust pool is static: changing it requires a rolling pod restart.
 
 Enabling `oidc.enabled` appends four flags to the agent — `--oidc-issuer`,
 `--oidc-audience` (required whenever the issuer is set), the optional
 `--oidc-jwks-uri` (pin the signing-key endpoint and skip discovery, for an
 air-gapped or pinned-key deployment; set via `oidc.jwksURI`), and
 `--oidc-max-jwks-staleness` (`oidc.maxJWKSStaleness`, default `1h`). The
-default is identity **off**, byte-identically to a mecak8s without it, so
-nothing changes for existing installs of this chart.
+`oidc.enabled` itself defaults off for the mock fixture and explicit unsafe-bypass
+profiles; a real-provider chart render cannot leave it off under the secure default.
 
 **This is an isolation cutover, not an ownerless-data migration.** Before
 enabling it, inventory and back up ownerless sessions and schedules from the

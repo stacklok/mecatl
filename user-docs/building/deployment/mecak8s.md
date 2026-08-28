@@ -110,15 +110,33 @@ The `redisstore` adapter reuses `sessnap.Marshal`/`Unmarshal` — the same snaps
 
 ## Production Helm chart
 
-`deploy/helm/mecak8s/` is the production deployment contract. It creates no Redis StatefulSet and will not render until the operator supplies an external Redis endpoint, a credentials Secret reference when a configured key needs reading, and exactly one image selector: a signed release tag or a digest. The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, exact namespaced Lease RBAC, and no agent PVC. It ships no general NetworkPolicy — the agent's egress set depends on your provider, MCP, and API-server endpoints, so network isolation belongs to the cluster's own policy layer rather than to a chart that cannot know them. The `oidc.*` values (see [Multi-user: caller identity](#multi-user-caller-identity-and-ownership-isolation-opt-in) below) additionally render a narrow raw-driver NetworkPolicy when caller identity is enabled.
+`deploy/helm/mecak8s/` is the production deployment contract. It creates no Redis StatefulSet and will not render until the operator supplies an external Redis endpoint, a credentials Secret reference when a configured key needs reading, and exactly one image selector: a signed release tag or a digest. A real-provider deployment (`mockProvider: false`) also fails closed unless both server TLS and OIDC caller authentication are enabled. TLS protects transport but does not identify callers; OIDC identifies callers but does not encrypt transport. For local-only or trusted-mesh deployments that provide both controls externally, the deliberately conspicuous `security.allowUnsafeRealProvider: true` bypass is available and annotates the pod as unsafe. The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, exact namespaced Lease RBAC, and no agent PVC. It ships no general NetworkPolicy — the agent's egress set depends on your provider, MCP, and API-server endpoints, so network isolation belongs to the cluster's own policy layer rather than to a chart that cannot know them. The `oidc.*` values additionally render a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
   --set image.tag=v<release-version> \
   --set redis.endpoint=redis.example.internal:6379 \
-  --set redis.credentialsSecret=mecak8s-redis
+  --set redis.credentialsSecret=mecak8s-redis \
+  --set tls.enabled=true \
+  --set tls.secretName=mecak8s-tls \
+  --set oidc.enabled=true \
+  --set oidc.issuer=https://idp.example.com \
+  --set oidc.audience=mecatl
 ```
+
+Chart 0.2.0 is a secure-default compatibility break for existing real-provider releases:
+add both in-pod controls before upgrading, or explicitly select the unsafe trusted-mesh
+bypass. `defaultProvider` and `model` render only when non-empty. Nullable
+`maxRunTokens`/`maxTeamTokens` pass no ceiling when unset and accept positive integers
+only. Optional `topologySpreadConstraints`, `affinity`, `nodeSelector`, and `tolerations`
+map to the pod spec and stay absent by default; hostname spreading is recommended for the
+two replicas when multiple nodes are available.
+
+Server cert/key and file-backed Redis CA/ACL Secret rotations are transactional and keep
+the last valid generation if projection is partial or validation fails. Keep old and new
+CAs together for an overlap period, then remove the old one after leaves have rotated.
+The server client-CA trust pool remains static and changing it requires a rolling restart.
 
 The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exactly the configured CA and ACL keys; unrelated Secret keys are not exposed. A password key alone uses Redis's default ACL user, while a username key requires a password key. `caKey` is optional: leaving it empty selects system-trust TLS, so an install against a publicly-rooted managed Redis with no ACL renders `--redis-tls` and no Secret volume at all. `credentialsSecret` is required exactly when some key needs reading. TLS-without-ACL external deployments are valid. The rendered command receives paths only, never Secret values. `values-kind.yaml` is deliberately the only profile that permits `ko.local` and plaintext Redis, and it passes `--redis-allow-plaintext` explicitly. It is not a production configuration.
 
@@ -147,8 +165,8 @@ when your Secret uses different PEM key names. The container receives the
 fixed mounted paths `/var/run/secrets/tls/<certKey>` and
 `/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`, enabling TLS
 for both gRPC and HTTP/SSE. The chart also changes health, readiness, and drain
-requests to HTTPS. Rotated certificate material requires a rollout/restart
-until the in-process reload work in issue #789 is available.
+requests to HTTPS. Rotated certificate/key pairs are loaded transactionally for new
+handshakes without a rollout; invalid candidates retain the last valid generation.
 
 ---
 
@@ -169,10 +187,27 @@ Before installing the chart you need:
      --set image.repository=registry.example/mecak8s/mecak8s \
      --set image.tag=v<release-version> \
      --set redis.endpoint=redis.example.internal:6379 \
-     --set redis.credentialsSecret=mecak8s-redis
+     --set redis.credentialsSecret=mecak8s-redis \
+     --set tls.enabled=true \
+     --set tls.secretName=mecak8s-tls \
+     --set oidc.enabled=true \
+     --set oidc.issuer=https://idp.example.com \
+     --set oidc.audience=mecatl
    ```
 
 ---
+
+## Server TLS certificate rotation
+
+When `--tls-cert` and `--tls-key` point into a Kubernetes projected Secret,
+`mecak8s` watches their parent directories and reloads a complete matching pair
+after the projection settles. A malformed or mismatched intermediate generation
+is rejected and the last valid certificate continues serving. Existing
+connections are unaffected; new TLS handshakes use the replacement without a pod
+restart. A fixed internal observer emits a bounded warning once for a certificate generation
+that becomes expiring or expired; observation does not disable the last-valid certificate.
+`--client-ca` is intentionally static and still requires a pod restart to change the trusted
+client identities.
 
 ## Secure Redis credentials and TLS
 
@@ -188,7 +223,17 @@ Redis credentials reach `mecak8s` as **paths to files** projected from a Kuberne
 
 Every credential requires verified TLS, from one of two sources: the host's system trust store (`--redis-tls`) for a managed Redis whose certificate chains to a public CA, or a mounted PEM CA bundle (`--redis-tls-ca`) for a private one. `--redis-tls-ca` **replaces** the system trust store rather than adding to it. Both modes verify the server certificate against the hostname in `--redis-url` (including IP SAN rules); hostname verification is never disabled and TLS 1.2 or newer is required. TLS with no ACL is valid. ACL is optional: a password without a username uses Redis's default ACL user, while a username requires a password.
 
-`mecak8s` reads credential values only from these mounted files at startup, so rotating the Secret needs a pod restart to take effect. Credential files may end in one newline, as Kubernetes Secret projections commonly do; other whitespace remains part of the credential.
+`mecak8s` watches the lexical parent directories of every configured Redis CA,
+username, and password file, so Kubernetes projected-Secret `..data` swaps are observed.
+One coalesced event re-reads the **complete** configured file set. The process builds a fresh
+client through the same validation and verified-TLS path, and publishes it only after a
+bounded successful PING/TLS/auth probe. Invalid or partially projected material leaves the
+last valid client active; bounded single-flight retries cover the window where the Secret
+projection and Redis-side ACL/trust update settle in different orders. New operations use
+the replacement, while in-flight operations and migration locks finish on their original
+client before it closes. No Redis files configured means no reload watcher. Credential
+files may end in one newline, as Kubernetes Secret projections commonly do; other
+whitespace remains part of the credential.
 
 `--redis-url` takes a bare `host:port`. A `redis://` or `rediss://` URL is rejected on every path, plaintext included, and the rejection never repeats the address back — a URL's userinfo can carry a password, and these errors land in the operator's log.
 
@@ -237,7 +282,7 @@ The PDB ensures that voluntary disruptions (node drains, cluster autoscaler) nev
 ```sh
 # 1. Build and push the mecak8s image with ko.
 export KO_DOCKER_REPO=registry.example/mecatl
-ko build --bare --tags=v0.1.0 ./cmd/mecak8s
+ko build --bare --tags=v0.2.0 ./cmd/mecak8s
 
 # 2. Create the API key secret. This example uses --openai; swap the env
 #    var name and Secret key if you are using a different provider.
@@ -248,25 +293,23 @@ kubectl create secret generic mecak8s-openai \
 # 3. Install the chart against your external Redis.
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecatl/mecak8s \
-  --set image.tag=v0.1.0 \
+  --set image.tag=v0.2.0 \
   --set redis.endpoint=redis.example.internal:6379 \
-  --set redis.credentialsSecret=mecak8s-redis
+  --set redis.credentialsSecret=mecak8s-redis \
+  --set tls.enabled=true \
+  --set tls.secretName=mecak8s-tls \
+  --set oidc.enabled=true \
+  --set oidc.issuer=https://idp.example.com \
+  --set oidc.audience=mecatl \
+  --set defaultProvider=openai \
+  --set model=gpt-5
 ```
 
-The chart's `mockProvider` value only wires `--mock` (the offline fixture the
-Kind profile and `task e2e:k8s` use); it has no `values.yaml` knob yet for a
-real provider's flag or its API-key Secret. Until that lands, wire a real
-provider by patching the installed Deployment — the same mechanism the kind
-e2e suite's live-provider journey uses:
-
-```sh
-kubectl patch deployment/mecak8s-mecak8s -n mecatl --type=json -p '[
-  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--openai"},
-  {"op": "add", "path": "/spec/template/spec/containers/0/env", "value": [
-    {"name": "OPENAI_API_KEY", "valueFrom": {"secretKeyRef": {"name": "mecak8s-openai", "key": "OPENAI_API_KEY"}}}
-  ]}
-]'
-```
+`mockProvider: true` wires `--mock` for the offline Kind fixture. For a real
+provider, set `defaultProvider`/`model` as above and project its API key with
+`extraEnv[].valueFrom.secretKeyRef`; the key stays in a Secret and never appears in
+container arguments. Prefer a values file for this structured `extraEnv` entry rather
+than a long `--set` expression. No Deployment patch is required.
 
 `mecak8s-mecak8s` is the chart's default `<release>-<chart>` Deployment name
 (the `helm upgrade --install mecak8s` above); pass `--set

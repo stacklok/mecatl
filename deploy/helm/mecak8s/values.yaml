@@ -31,6 +31,26 @@ extraEnv: []
 replicaCount: 2
 mockProvider: false
 
+# Runtime provider selection and spend ceilings. Empty/null means that the chart
+# does not pass the corresponding flag; the runtime/provider default applies.
+defaultProvider: ""
+model: ""
+maxRunTokens: null
+maxTeamTokens: null
+
+# A real provider (mockProvider: false) is accepted only with both encrypted
+# server transport and OIDC caller authentication. This conspicuous bypass is
+# for local development or a trusted mesh that supplies both controls outside
+# the pod; selecting it is annotated on the rendered pod.
+security:
+  allowUnsafeRealProvider: false
+
+# Optional Kubernetes scheduling controls. Empty values render no pod fields.
+topologySpreadConstraints: []
+affinity: {}
+nodeSelector: {}
+tolerations: []
+
 # workspace is the operator-mounted agent filesystem root (e.g. a PVC mount
 # path). Empty (the default) is a FILE-LESS deployment: every session is no-FS.
 # A non-empty ABSOLUTE path makes the deployment server-assigned filesystem
@@ -55,8 +75,8 @@ redis:
     enabled: false
 
 oidc:
-  # Caller identity (ADR 0204/0205). Off by default — the byte-identical
-  # no-auth posture. Enabling it requires issuer + audience.
+  # Caller identity (ADR 0204/0205). Off for mock and explicit unsafe-bypass
+  # profiles; required for a real provider under the secure default.
   enabled: false
   issuer: ""
   audience: ""
@@ -74,10 +94,12 @@ oidc:
   caKey: ""
 
 tls:
-  # Server TLS is disabled by default. To enable it, create the named Secret in
-  # this release namespace; the chart projects only certKey and keyKey read-only
-  # (0440). Those keys default to the PEM data keys tls.crt and tls.key. Both the
-  # gRPC and HTTP/SSE listeners use the pair when TLS is enabled.
+  # Server TLS is optional for mock and explicit unsafe-bypass profiles, but
+  # required for a real provider under the secure default. To enable it, create
+  # the named Secret in this release namespace; the chart projects only certKey
+  # and keyKey read-only (0440). Those keys default to tls.crt and tls.key. Both
+  # gRPC and HTTP/SSE use the pair and reload valid rotations in process; an
+  # invalid replacement retains the last valid certificate.
   enabled: false
   secretName: ""
   certKey: tls.crt

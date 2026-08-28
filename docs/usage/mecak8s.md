@@ -49,9 +49,9 @@ $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-
 | --- | --- | --- |
 | `--redis-url` | `""` | Redis address (`host:port`) for the session store + durable event log (ADRs 0048 and [0233](../adr/0233-secure-external-redis.md), storage-free). The `redisstore` `Store` doubles as its own `EventLog` (like `jsonlstore`). **Mutually exclusive with `--store-dir` / `--session-store-url`** (rejected at `Build`). Takes a bare `host:port`: a `redis://` or `rediss://` URL is rejected. An address alone is not a plaintext opt-in — see `--redis-allow-plaintext`. |
 | `--redis-allow-plaintext` | `false` | Explicitly allow unauthenticated plaintext Redis; disposable local/Kind use only. Without it an address-only `--redis-url` is **rejected at `Build`**. Never set it for a production external Redis. |
-| `--redis-username-file` / `--redis-password-file` | `""` | Paths to optional Redis ACL credentials in a mounted Kubernetes Secret. A password without a username authenticates as Redis's default ACL user; a username requires a password. Credential values are never accepted as command arguments. Any credential requires verified TLS — `--redis-tls` or `--redis-tls-ca`. |
+| `--redis-username-file` / `--redis-password-file` | `""` | Paths to optional Redis ACL credentials in a mounted Kubernetes Secret. A password without a username authenticates as Redis's default ACL user; a username requires a password. Credential values are never accepted as command arguments. Any credential requires verified TLS — `--redis-tls` or `--redis-tls-ca`. When either file is configured, mecak8s watches its lexical parent and transactionally hot-reloads the complete configured Redis file set after a bounded successful probe. |
 | `--redis-tls` | `false` | Verify Redis TLS against the host system trust store. Use for a managed Redis whose certificate chains to a public CA (Azure Cache for Redis, ElastiCache in-transit encryption). |
-| `--redis-tls-ca` | `""` | Path to a PEM CA bundle from a mounted Secret used to verify Redis TLS, **replacing** the system trust store. Use for a private CA; takes precedence over `--redis-tls`. Either flag is mandatory whenever ACL credentials are configured. Client-certificate (mTLS) authentication is not supported — see [ADR 0233](../adr/0233-secure-external-redis.md). |
+| `--redis-tls-ca` | `""` | Path to a PEM CA bundle from a mounted Secret used to verify Redis TLS, **replacing** the system trust store. Use for a private CA; takes precedence over `--redis-tls`. Either flag is mandatory whenever ACL credentials are configured. The file is included in the same automatic transactional reload as Redis credential files. Client-certificate (mTLS) authentication is not supported — see [ADR 0233](../adr/0233-secure-external-redis.md). |
 | `--session-lease-k8s-namespace` | `mecatl` | Kubernetes namespace for `coordination.k8s.io` Lease-backed session leasing (the in-cluster multi-replica single-writer path). Uses in-cluster config (or the default kubeconfig out-of-cluster). The ServiceAccount needs `get,create,update,delete` on `leases` in `coordination.k8s.io` for this namespace. Empty = no leasing. |
 | `--session-lease-ttl` | `30s` | session-lease lifetime; a crashed/killed holder's lease becomes claimable after this long. |
 | `--session-lease-renew-interval` | `0` | how often the per-session renewer refreshes a held lease; `0` = `--session-lease-ttl` / 3. |
@@ -86,15 +86,34 @@ all identical to `mecated`'s (see §3).
 
 #### Production Helm chart (`deploy/helm/mecak8s/`)
 
-The production contract is the Helm chart. It never installs Redis: an install must provide an externally managed Redis endpoint and a Secret reference when any Secret key is configured. The CA-bundle Secret key is optional: leaving `redis.caKey` empty selects system-trust TLS and mounts no Secret unless an ACL key is also set. ACL password/username Secret keys are optional; a username key requires a password key. Supply exactly one agent image selector: a signed release tag (the enterprise distribution model) or a digest. The chart preserves the storage-free restricted workload, bounded resources, rolling update, probes, PDB, and namespaced Lease RBAC. It ships **no** general NetworkPolicy: network isolation is the cluster's job, and a policy the chart cannot keep complete (the agent's egress depends on the operator's provider, MCP, and API-server endpoints) is worse than none. The `oidc.*` values (below) additionally render a narrow raw-driver NetworkPolicy when caller identity is enabled.
+The production contract is the Helm chart. It never installs Redis: an install must provide an externally managed Redis endpoint and a Secret reference when any Secret key is configured. A real-provider install (`mockProvider: false`) also requires both server TLS and OIDC caller authentication; TLS alone is not caller auth and OIDC alone is not transport encryption. Chart 0.2.0 makes this fail closed. The visibly unsafe `security.allowUnsafeRealProvider: true` bypass is limited to local or trusted-mesh deployments and stamps the pod template with `mecatl.stacklok.com/unsafe-real-provider: "true"`. The CA-bundle Secret key is optional: leaving `redis.caKey` empty selects system-trust TLS and mounts no Secret unless an ACL key is also set. ACL password/username Secret keys are optional; a username key requires a password key. Supply exactly one agent image selector: a signed release tag (the enterprise distribution model) or a digest. The chart preserves the storage-free restricted workload, bounded resources, rolling update, probes, PDB, and namespaced Lease RBAC. It ships **no** general NetworkPolicy: network isolation is the cluster's job, and a policy the chart cannot keep complete (the agent's egress depends on the operator's provider, MCP, and API-server endpoints) is worse than none. The `oidc.*` values additionally render a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
   --set image.tag=v<release-version> \
   --set redis.endpoint=redis.example.internal:6379 \
-  --set redis.credentialsSecret=mecak8s-redis
+  --set redis.credentialsSecret=mecak8s-redis \
+  --set tls.enabled=true \
+  --set tls.secretName=mecak8s-tls \
+  --set oidc.enabled=true \
+  --set oidc.issuer=https://idp.example.com \
+  --set oidc.audience=mecatl
 ```
+
+`defaultProvider` and `model` are empty by default and render only when set; provider IDs
+must be built-in CLI IDs and model IDs are opaque but non-blank. `maxRunTokens` and
+`maxTeamTokens` are nullable: `null` passes no flag (the runtime remains unlimited), while
+an explicit value must be a positive integer. Empty `topologySpreadConstraints`,
+`affinity`, `nodeSelector`, and `tolerations` render no scheduling fields. Supply normal
+Kubernetes pod-spec shapes when setting them; a `kubernetes.io/hostname` spread constraint
+keeps replicas apart where enough nodes are eligible.
+
+For certificate/credential rotation, overlap old and new CAs in bundles until all leaves
+and pods have moved, then remove the old CA. Projected server cert/key and file-backed
+Redis CA/ACL changes are transactional and last-valid: malformed intermediate generations
+stay rejected while the prior generation remains active. The server client-CA pool is
+static and requires a rolling restart when it changes.
 
 The Secret is mounted read-only at `/var/run/secrets/redis` with `defaultMode: 0440`; the chart projects exactly the configured CA and ACL keys, not the whole Secret. Their values are never chart values or command arguments. The external chart passes the CA path when `redis.caKey` is set and `--redis-tls` otherwise, and conditionally passes configured password and username paths. Both TLS modes verify the Redis certificate against the hostname from `redis.endpoint` (including IP SAN rules); hostname verification is never disabled. TLS with no ACL is valid, and a system-trust install with no ACL renders no Secret volume at all. `values-kind.yaml` is a separate disposable-only profile for the local `ko.local` image and plaintext Redis fixture, and its rendered command includes the explicit `--redis-allow-plaintext` opt-in. It must not be used for a production install.
 
@@ -122,8 +141,11 @@ both the gRPC and HTTP/SSE listeners. It projects only `tls.certKey` and
 `tls.keyKey` (defaulting to `tls.crt` and `tls.key`) from the pre-created Secret
 as a read-only `0440` volume; custom data-key names are supported. The chart
 creates no Secret. When enabled, the health, readiness, and drain requests use
-HTTPS. Certificate rotation still requires a rollout/restart until the reload
-work tracked by issue #789 lands.
+HTTPS. Projected certificate/key rotations are loaded transactionally and become visible to
+new gRPC and HTTP handshakes without a rollout; malformed or expired candidates retain the
+last valid certificate, and existing connections continue unchanged. A fixed internal
+observer warns once for each certificate generation that becomes expiring or expired. The
+client-CA bundle remains static and requires a rollout when it changes.
 
 #### Caller identity (`oidc.*` chart values)
 

@@ -36,6 +36,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -91,11 +93,14 @@ var (
 )
 
 // Store is the Redis-backed SessionStore + EventLog + PrunableStore +
-// ToolCallRecorder. It talks to a single Redis address (a managed service or an
-// in-process miniredis for tests). It is safe for concurrent use: Redis
-// serializes commands, so no client-side mutex is required.
+// ToolCallRecorder. Every operation leases one replaceable client generation;
+// the manager lock is held only for acquisition/publication, never Redis I/O.
 type Store struct {
-	client redis.UniversalClient
+	clients     *clientGenerations
+	reload      *reloadLifecycle
+	diagnostics port.Diagnostics
+	closeGrace  time.Duration
+	closeOnce   sync.Once
 
 	metadataWorkObserver        func(metadataWorkKind)
 	migrationInspectionObserver func()
@@ -124,6 +129,7 @@ type Config struct {
 	// takes precedence when both are set.
 	TLS            bool
 	AllowPlaintext bool
+	Diagnostics    port.Diagnostics
 }
 
 // New connects to a plaintext, unauthenticated Redis broker. It is retained for
@@ -142,23 +148,55 @@ func New(addr string) (*Store, error) {
 // callers: reading credentials from mounted files, and the policy that a
 // credential implies verified TLS.
 func NewWithConfig(cfg Config) (*Store, error) {
+	return newWithConfig(cfg, defaultStoreDependencies())
+}
+
+func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 	if err := validateAddr(cfg.Addr); err != nil {
 		return nil, err
 	}
-	conn, err := connectionConfig(cfg)
+	conn, err := connectionConfigWithReader(cfg, deps.readFile)
 	if err != nil {
 		return nil, err
 	}
-	client, err := tcredis.NewClient(context.Background(), &conn)
+	factory := deps.initialClient
+	if factory == nil {
+		factory = func(ctx context.Context, conn *tcredis.Config) (redis.UniversalClient, error) {
+			return tcredis.NewClient(ctx, conn)
+		}
+	}
+	client, err := factory(context.Background(), &conn)
 	if err != nil {
 		// cfg.Addr is safe to name here: validateAddr has already rejected every
 		// URL-shaped value that could carry a credential in its userinfo.
 		return nil, fmt.Errorf("redisstore: connect %q: %w", cfg.Addr, err)
 	}
-	st := &Store{client: client}
-	if err := st.initializeMetadataIndex(context.Background()); err != nil {
+	diagnostics := cfg.Diagnostics
+	if diagnostics == nil {
+		diagnostics = port.NopDiagnostics{}
+	}
+	st := &Store{
+		clients: newClientGenerations(client), diagnostics: diagnostics,
+		closeGrace: deps.closeGrace,
+	}
+	initClient, release, err := st.clients.acquire()
+	if err != nil {
 		_ = client.Close()
 		return nil, err
+	}
+	if err := initializeMetadataIndex(context.Background(), initClient); err != nil {
+		release()
+		st.clients.close(deps.closeGrace)
+		return nil, err
+	}
+	release()
+	if cfg.reloadEnabled() {
+		lifecycle, err := startReloadLifecycle(st, cfg, deps)
+		if err != nil {
+			st.clients.close(deps.closeGrace)
+			return nil, err
+		}
+		st.reload = lifecycle
 	}
 	return st, nil
 }
@@ -180,9 +218,9 @@ func validateAddr(addr string) error {
 	return nil
 }
 
-// connectionConfig folds this adapter's file-and-policy layer into the shared
-// toolhive-core connection config.
-func connectionConfig(cfg Config) (tcredis.Config, error) {
+// connectionConfigWithReader folds this adapter's file-and-policy layer into the shared
+// toolhive-core connection config. The reader seam keeps a descriptor read block testable.
+func connectionConfigWithReader(cfg Config, readFile credentialFileReader) (tcredis.Config, error) {
 	verifiedTLS := cfg.TLS || cfg.CAFile != ""
 	hasCredentials := cfg.UsernameFile != "" || cfg.PasswordFile != ""
 	if !verifiedTLS && !hasCredentials {
@@ -197,7 +235,11 @@ func connectionConfig(cfg Config) (tcredis.Config, error) {
 	if cfg.UsernameFile != "" && cfg.PasswordFile == "" {
 		return tcredis.Config{}, errors.New("redisstore: a Redis username requires a password")
 	}
-	username, password, err := readCredentials(cfg)
+	files, err := readConnectionFiles(cfg, readFile)
+	if err != nil {
+		return tcredis.Config{}, err
+	}
+	username, password, err := credentialsFromFiles(cfg, files)
 	if err != nil {
 		return tcredis.Config{}, err
 	}
@@ -206,32 +248,87 @@ func connectionConfig(cfg Config) (tcredis.Config, error) {
 	// BuildTLSConfig, before any network I/O.
 	tlsCfg := &tcredis.TLSConfig{}
 	if cfg.CAFile != "" {
-		caPEM, err := os.ReadFile(cfg.CAFile)
-		if err != nil {
-			return tcredis.Config{}, fmt.Errorf("redisstore: read Redis CA bundle: %w", err)
-		}
-		tlsCfg.CACert = caPEM
+		tlsCfg.CACert = files.ca
 	}
 	return tcredis.Config{Addr: cfg.Addr, Username: username, Password: password, TLS: tlsCfg}, nil
 }
 
-func readCredentials(cfg Config) (string, string, error) {
-	username, password := "", ""
-	var err error
-	if cfg.UsernameFile != "" {
-		username, err = readSecretFile(cfg.UsernameFile)
+const maxCredentialFileSize int64 = 1 << 20
+
+type credentialSnapshot struct {
+	ca       []byte
+	username []byte
+	password []byte
+}
+
+type credentialFile struct {
+	path   string
+	before os.FileInfo
+	body   []byte
+}
+
+func readConnectionFiles(cfg Config, readFile credentialFileReader) (credentialSnapshot, error) {
+	paths := cfg.reloadPaths()
+	files := make([]credentialFile, len(paths))
+	for i, path := range paths {
+		file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		if err != nil {
-			return "", "", fmt.Errorf("redisstore: read Redis username file: %w", err)
+			return credentialSnapshot{}, errors.New("redisstore: open configured Redis file")
 		}
+		info, statErr := file.Stat()
+		if statErr != nil {
+			_ = file.Close()
+			return credentialSnapshot{}, errors.New("redisstore: inspect configured Redis file")
+		}
+		if !info.Mode().IsRegular() {
+			_ = file.Close()
+			return credentialSnapshot{}, errors.New("redisstore: configured Redis file is not regular")
+		}
+		if info.Size() > maxCredentialFileSize {
+			_ = file.Close()
+			return credentialSnapshot{}, errors.New("redisstore: configured Redis file is too large")
+		}
+		body, readErr := readFile(file, maxCredentialFileSize)
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil {
+			return credentialSnapshot{}, errors.New("redisstore: read configured Redis file")
+		}
+		if int64(len(body)) > maxCredentialFileSize {
+			return credentialSnapshot{}, errors.New("redisstore: configured Redis file is too large")
+		}
+		files[i] = credentialFile{path: path, before: info, body: body}
+	}
+	for _, file := range files {
+		after, err := os.Stat(file.path)
+		if err != nil || !after.Mode().IsRegular() || !os.SameFile(file.before, after) {
+			return credentialSnapshot{}, errors.New("redisstore: configured Redis files changed while being read")
+		}
+	}
+	var snapshot credentialSnapshot
+	for _, file := range files {
+		if file.path == cfg.CAFile {
+			snapshot.ca = file.body
+		}
+		if file.path == cfg.UsernameFile {
+			snapshot.username = file.body
+		}
+		if file.path == cfg.PasswordFile {
+			snapshot.password = file.body
+		}
+	}
+	return snapshot, nil
+}
+
+func credentialsFromFiles(cfg Config, files credentialSnapshot) (string, string, error) {
+	username, password := "", ""
+	if cfg.UsernameFile != "" {
+		username = secretFileValue(files.username)
 		if username == "" {
 			return "", "", errors.New("redisstore: Redis username file is empty")
 		}
 	}
 	if cfg.PasswordFile != "" {
-		password, err = readSecretFile(cfg.PasswordFile)
-		if err != nil {
-			return "", "", fmt.Errorf("redisstore: read Redis password file: %w", err)
-		}
+		password = secretFileValue(files.password)
 		if password == "" {
 			return "", "", errors.New("redisstore: Redis password file is empty")
 		}
@@ -239,12 +336,8 @@ func readCredentials(cfg Config) (string, string, error) {
 	return username, password, nil
 }
 
-func readSecretFile(path string) (string, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSuffix(strings.TrimSuffix(string(body), "\r\n"), "\n"), nil
+func secretFileValue(body []byte) string {
+	return strings.TrimSuffix(strings.TrimSuffix(string(body), "\r\n"), "\n")
 }
 
 // Save stores a sessnap-encoded snapshot of s under the session key, stamping
@@ -253,6 +346,11 @@ func readSecretFile(path string) (string, error) {
 // HSET overwrites the blob field, so a second Save replaces the first (the
 // overwrite contract).
 func (st *Store) Save(ctx context.Context, s *session.Session) error {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if s == nil {
 		return sessnap.ErrNilSession
 	}
@@ -261,7 +359,7 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 		return err
 	}
 	modifiedAt := time.Now().UTC()
-	if err := st.saveSnapshotAndMetadata(ctx, s, blob, modifiedAt); err != nil {
+	if err := saveSnapshotAndMetadata(ctx, client, s, blob, modifiedAt); err != nil {
 		return fmt.Errorf("redisstore: save %q: %w", s.ID, err)
 	}
 	return nil
@@ -270,6 +368,11 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 // Create atomically publishes a snapshot and its derivative metadata only when
 // no authoritative Redis session key exists for s.ID.
 func (st *Store) Create(ctx context.Context, s *session.Session) error {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if s == nil {
 		return sessnap.ErrNilSession
 	}
@@ -277,7 +380,7 @@ func (st *Store) Create(ctx context.Context, s *session.Session) error {
 	if err != nil {
 		return err
 	}
-	created, err := st.createSnapshotAndMetadata(ctx, s, blob, time.Now().UTC())
+	created, err := createSnapshotAndMetadata(ctx, client, s, blob, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("redisstore: create %q: %w", s.ID, err)
 	}
@@ -290,8 +393,13 @@ func (st *Store) Create(ctx context.Context, s *session.Session) error {
 // Load reads the snapshot blob for id and restores it. A missing key (redis.Nil
 // on HGET) wraps port.ErrSessionNotFound with the id in the message.
 func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	st.observeMetadataWork(metadataWorkLoad)
-	blob, err := st.client.HGet(ctx, sessionKey(id), fieldBlob).Bytes()
+	blob, err := client.HGet(ctx, sessionKey(id), fieldBlob).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
@@ -308,15 +416,20 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 // SCAN is cursor-based and non-blocking; a corrupt mtime field (absent or
 // unparseable) is skipped best-effort rather than failing the whole inventory.
 func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var out []port.StoredSession
-	scan := st.client.Scan(ctx, 0, sessionKeyPrefix+"*", 0).Iterator()
+	scan := client.Scan(ctx, 0, sessionKeyPrefix+"*", 0).Iterator()
 	for scan.Next(ctx) {
 		key := scan.Val()
 		id := strings.TrimPrefix(key, sessionKeyPrefix)
 		if id == "" {
 			continue
 		}
-		mtimeRaw, err := st.client.HGet(ctx, key, fieldMtime).Result()
+		mtimeRaw, err := client.HGet(ctx, key, fieldMtime).Result()
 		if err != nil {
 			// A key without an mtime field is a corrupt/partial entry; skip it
 			// best-effort (Load of that id would fail the same way) rather than
@@ -339,13 +452,23 @@ func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
 // Redis metadata index. It never reads a snapshot blob or traverses rows before
 // the cursor; legacy stores without a complete index report unsupported.
 func (st *Store) PageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
-	return st.pageSessionMetadata(ctx, request)
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return port.SessionMetadataPage{}, err
+	}
+	defer release()
+	return st.pageSessionMetadata(ctx, client, request)
 }
 
 // DeleteSessionIfUnchanged atomically compares the indexed durable row and
 // removes the snapshot plus sidecars in one Redis script.
 func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.SessionDiscoveryMeta) (bool, error) {
-	deleted, err := st.deleteSessionIfMetadataUnchanged(ctx, expected)
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	deleted, err := deleteSessionIfMetadataUnchanged(ctx, client, expected)
 	if err != nil {
 		return false, fmt.Errorf("redisstore: conditional delete: %w", err)
 	}
@@ -355,7 +478,12 @@ func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.Ses
 // Delete removes the session snapshot, derivative metadata, event log, and
 // tool-call sidecar. It is idempotent and completes in one atomic script.
 func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
-	if err := st.deleteSessionAndMetadata(ctx, id); err != nil {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := deleteSessionAndMetadata(ctx, client, id); err != nil {
 		return fmt.Errorf("redisstore: delete %q: %w", id, err)
 	}
 	return nil
@@ -368,6 +496,11 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 // can validate the format. RPUSH preserves append order, so Read returns
 // events in the exact order Append received them.
 func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return err
+	}
+	defer release()
 	evJSON, err := json.Marshal(ev)
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal event: %w", err)
@@ -376,7 +509,7 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal event record: %w", err)
 	}
-	if err := st.client.RPush(ctx, eventsKey(id), rec).Err(); err != nil {
+	if err := client.RPush(ctx, eventsKey(id), rec).Err(); err != nil {
 		return fmt.Errorf("redisstore: append event %q: %w", id, err)
 	}
 	return nil
@@ -390,7 +523,13 @@ func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Ev
 // iter.Seq2 error idiom).
 func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
-		records, err := st.client.LRange(ctx, eventsKey(id), 0, -1).Result()
+		client, release, err := st.clients.acquire()
+		if err != nil {
+			yield(session.Event{}, err)
+			return
+		}
+		defer release()
+		records, err := client.LRange(ctx, eventsKey(id), 0, -1).Result()
 		if err != nil {
 			// A missing event key is not an error in Redis (LRANGE on a missing
 			// key returns an empty slice), so any error here is a genuine fault.
@@ -460,7 +599,12 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 	// bounded ctx is the only way to keep a slow broker from piling up.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = st.client.RPush(ctx, toolsKey(id), line).Err()
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return
+	}
+	defer release()
+	_ = client.RPush(ctx, toolsKey(id), line).Err()
 }
 
 // Ping checks the Redis broker is reachable. It is the readyz health probe a
@@ -468,18 +612,29 @@ func (st *Store) ToolCall(id session.SessionID, call session.ToolCall, result se
 // endpoint controller removes the pod. It uses a short timeout so a stalled
 // broker fails the probe quickly rather than wedging readiness.
 func (st *Store) Ping(ctx context.Context) error {
-	if st.client == nil {
-		return errors.New("redisstore: store not open")
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return err
 	}
-	return st.client.Ping(ctx).Err()
+	defer release()
+	return client.Ping(ctx).Err()
 }
 
-// Close releases the Redis connection. It is safe to call multiple times.
+// Close stops credential reload, rejects new work, and gives pinned operations a
+// fixed grace interval to finish. It never force-closes a client still in use;
+// that client closes exactly once when its final lease is released.
 func (st *Store) Close() error {
-	if st.client == nil {
-		return nil
-	}
-	return st.client.Close()
+	st.closeOnce.Do(func() {
+		st.clients.rejectNew()
+		if st.reload != nil {
+			st.reload.Close()
+		}
+		if pending := st.clients.close(st.closeGrace); pending > 0 {
+			st.diagnostics.Log(context.Background(), port.LevelWarn, "redis store shutdown",
+				"component", "redis", "outcome", "timed_out", "reason", "active_operations", "count", pending)
+		}
+	})
+	return nil
 }
 
 // ScheduleStore returns a port.ScheduleStore backed by the SAME Redis client as
@@ -497,7 +652,7 @@ func (st *Store) Close() error {
 // cross-replica at-most-once fence — the multi-host counterpart of the
 // single-process mutex the jsonl schedule store carries. See schedulestore.go.
 func (st *Store) ScheduleStore() port.ScheduleStore {
-	return &scheduleStore{client: st.client}
+	return &scheduleStore{clients: st.clients}
 }
 
 func sessionKey(id session.SessionID) string { return sessionKeyPrefix + string(id) }
