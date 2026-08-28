@@ -105,6 +105,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0079 — Converge delegation observability on two tiers (bounded previews for Subagent/Parallel)](./0079-delegation-observability-convergence.md)
 - [0200 — A failed delegated child is resumable (Recover, not refuse)](./0200-resume-a-failed-subagent.md)
 - [0242 — Route unpinned writable named specialists](./0242-route-unpinned-writable-named-specialists.md)
+- [0243 — SDK compatibility discovery and the typed error contract](./0243-sdk-compatibility-and-error-contract.md)
+- [0244 — Durable run identity: a host-minted `run_id`](./0244-durable-run-identity.md)
+- [0245 — Durable cursors and the session watch transport](./0245-durable-cursors-and-watch.md)
 
 ### Providers & APIs
 - [0016 — Multi-provider](./0016-multi-provider.md)
