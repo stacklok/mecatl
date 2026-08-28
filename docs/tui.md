@@ -624,10 +624,10 @@ local projection), and only then best-effort closes the source. The header rebin
 NEW session's effective model and the transient status note reads **`switched to
 <model> — conversation kept`**. For a **cross-provider** switch the server strips the
 prior model's provider-private state (reasoning cache, provider phase, item ids) and
-replays the text/roles/tool calls to the new provider, so the note honestly adds
-**`(prior reasoning cache dropped)`** — the conversation still carries. (There is no
-confirm overlay and no same-provider gate: the server accepts carryover for any
-provider.) Creation or transcript-hydration failure preserves the open source session,
+replays the text/roles/tool calls to the new provider. The picker provides the single
+cache warning before the switch. There is no confirm overlay and no same-provider gate:
+the server accepts carryover for any provider. Creation or transcript-hydration failure
+preserves the open source session,
 restores its live feed, and returns to idle without claiming carryover; an unused target
 is best-effort closed after hydration failure. A source-close error does not undo a
 hydrated target. If no live session exists yet (pre-first-connect, or a failure left no

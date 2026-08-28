@@ -665,8 +665,7 @@ type Model struct {
 
 	// pendingModelSwitchNote is the transient status note armed by chooseModel when the
 	// user picks a model — surfaced on the SessionReadyMsg rebind as "switched to
-	// <model> — conversation kept" (or, for a cross-provider switch, the honest caveat
-	// that the prior model's reasoning cache was stripped). It is a one-shot: a single
+	// <model> — conversation kept". It is a one-shot: a single
 	// non-empty value is consumed by applySessionReady and cleared, so a later
 	// connect/reconnect that happens to pass through applySessionReady (e.g. the
 	// startup create) never echoes a stale model-switch note. Empty ⇒ the rebind falls

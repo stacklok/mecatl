@@ -215,10 +215,9 @@ missing → `NotFound`. The snapshot is seeded into the new session with
 `Session.SeedHistory` before the first save — zero `engine/`/domain change. Turn-zero
 compaction is free via the existing `maybeCompact`. The client surfaces a transient
 `switched to <model> — conversation kept` status note only after the target's
-**authoritative transcript** is loaded and adopted, appending
-`(prior reasoning cache dropped)` for a cross-provider switch (the strip). The picker
-instead gives one non-blocking warning before `enter`: `Switching models is expensive as
-it clears caches.` During target creation
+**authoritative transcript** is loaded and adopted. The picker gives the single
+non-blocking warning before `enter`: `Switching models is expensive as it clears
+caches.` During target creation
 and hydration the client keeps the source ID, metadata, and local projection on screen,
 but disarms its live feed. It validates that the target transcript is complete and for
 the created target ID, then replaces the local projection with that server-authoritative

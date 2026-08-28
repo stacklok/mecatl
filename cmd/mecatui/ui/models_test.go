@@ -653,7 +653,7 @@ func TestModelsChooseNoSessionUsesPlainCreate(t *testing.T) {
 		t.Errorf("status = %q, want it to contain \"conversation kept\" (no live session ⇒ no strip caveat)", st)
 	}
 	if strings.Contains(st, "prior reasoning cache dropped") {
-		t.Errorf("status = %q, must NOT carry the cross-provider strip caveat with no live session", st)
+		t.Errorf("status = %q, must NOT include a second cache warning", st)
 	}
 	if m.pendingModelSwitchNote != "" {
 		t.Errorf("the note should be consumed (one-shot) after the rebind, got %q", m.pendingModelSwitchNote)
@@ -662,8 +662,7 @@ func TestModelsChooseNoSessionUsesPlainCreate(t *testing.T) {
 
 // TestModelsChooseSwitchArmsStatusNote asserts the seamless switch arms the transient
 // "switched to <model> — conversation kept" status note, surfaced on the SessionReadyMsg
-// rebind (NOT a blocking modal). Same-provider: the simple form. Cross-provider: the
-// honest caveat that the prior reasoning cache was dropped (the server-side strip).
+// rebind. The picker is the only cache-warning surface.
 func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -681,7 +680,7 @@ func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 			name:           "cross-provider",
 			live:           client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"},
 			pickDowns:      3, // anthropic/claude, openrouter
-			wantNoteSubstr: "switched to Claude — conversation kept (prior reasoning cache dropped)",
+			wantNoteSubstr: "switched to Claude — conversation kept",
 		},
 	}
 	for _, tc := range cases {
@@ -1761,11 +1760,11 @@ func TestModelsChooseCrossProviderStillCarries(t *testing.T) {
 	if srcs := conv(m).carryoverSources(); len(srcs) != 1 || srcs[0] != "sess-test-0001" {
 		t.Fatalf("carryover source ids = %v, want [sess-test-0001] (the old session)", srcs)
 	}
-	// The cross-provider caveat surfaced on the rebind (the note is armed at chooseModel
-	// time and consumed by applySessionReady into statusMsg).
+	// The normal receipt is the only post-switch status; the picker already showed
+	// the one cache warning before selection.
 	st := stripANSIstr(m.statusMsg)
-	if !strings.Contains(st, "switched to Claude — conversation kept (prior reasoning cache dropped)") {
-		t.Fatalf("cross-provider switch should surface the strip caveat, got %q", st)
+	if !strings.Contains(st, "switched to Claude — conversation kept") || strings.Contains(st, "prior reasoning cache dropped") {
+		t.Fatalf("cross-provider switch should surface only the normal success receipt, got %q", st)
 	}
 }
 

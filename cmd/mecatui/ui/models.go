@@ -42,11 +42,10 @@ func (m Model) openModels() (tea.Model, tea.Cmd) {
 
 // chooseModel applies a surface selection through the existing restart path.
 func (m Model) chooseModel(sel client.ModelSelection, label string) (tea.Model, tea.Cmd, bool) {
-	crossProvider := m.resolvedSessionModel.ProviderID != "" && sel.ProviderID != m.resolvedSessionModel.ProviderID
 	if label == "" {
 		label = modelSelLabel(sel)
 	}
-	m.pendingModelSwitchNote = modelSwitchNote(label, crossProvider)
+	m.pendingModelSwitchNote = modelSwitchNote(label)
 	if m.sessionID != "" {
 		return m.restartOnModelWithCarryover(sel)
 	}
@@ -54,14 +53,9 @@ func (m Model) chooseModel(sel client.ModelSelection, label string) (tea.Model, 
 }
 
 // modelSwitchNote is the transient status note armed at chooseModel time and surfaced
-// on the SessionReadyMsg rebind. Same-provider: "switched to <model> — conversation
-// kept". Cross-provider: the honest caveat that the conversation carried but the
-// prior model's provider-private reasoning cache was stripped (the server-side
-// StripProviderState path). Kept as a helper so the wording is testable in isolation.
-func modelSwitchNote(label string, crossProvider bool) string {
-	if crossProvider {
-		return "switched to " + label + " — conversation kept (prior reasoning cache dropped)"
-	}
+// on the SessionReadyMsg rebind. The picker owns the single cache warning; this
+// receipt only confirms that the server-authoritative conversation was adopted.
+func modelSwitchNote(label string) string {
 	return "switched to " + label + " — conversation kept"
 }
 

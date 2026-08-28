@@ -33,7 +33,12 @@ func newModelSwitchHandoff(t *testing.T, loader client.SessionTranscripter) (Mod
 func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 	loader := &handoffTranscriptLoader{transcript: client.SessionTranscript{
 		SessionID: "sess-test-0002", Complete: true,
-		Messages: []client.ConversationMessage{{Role: "user", Text: "target user"}, {Role: "assistant", Text: "target assistant"}},
+		Messages: []client.ConversationMessage{
+			{Role: "user", Text: "target user"},
+			{Role: "assistant", Text: "target assistant before tool", ToolCalls: []client.ConvToolCall{{ID: "call-1", Name: "Read", Args: `{"path":"target.txt"}`}}},
+			{Role: "tool", ToolResult: &client.ConvToolResult{CallID: "call-1", Content: "target tool result"}},
+			{Role: "assistant", Text: "target assistant after tool"},
+		},
 	}}
 	m, conv := newModelSwitchHandoff(t, loader)
 	loader.conv = conv
@@ -59,8 +64,23 @@ func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 		t.Fatalf("adopted state = phase:%v session:%q, want idle target", m.phase, m.sessionID)
 	}
 	view := stripANSIstr(m.View().Content)
-	if !strings.Contains(view, "target user") || !strings.Contains(view, "target assistant") || strings.Contains(view, "local source only") {
+	for _, text := range []string{"target user", "target assistant before tool", "Read", "target tool result", "target assistant after tool"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("adopted transcript omitted %q:\n%s", text, view)
+		}
+	}
+	if strings.Contains(view, "local source only") {
 		t.Fatalf("conversation must be target-authoritative:\n%s", view)
+	}
+	if len(m.conv.blocks) != 4 {
+		t.Fatalf("adopted transcript blocks = %d, want user, assistant, tool, assistant", len(m.conv.blocks))
+	}
+	tool := m.conv.blocks[2]
+	if m.conv.blocks[0].kind != blockUser || m.conv.blocks[1].kind != blockAssistant || tool.kind != blockTool || m.conv.blocks[3].kind != blockAssistant {
+		t.Fatalf("adopted block order = %#v", m.conv.blocks)
+	}
+	if tool.toolName != "Read" || tool.toolArgs != `{"path":"target.txt"}` || !tool.resolved || tool.resultBody != "target tool result" {
+		t.Fatalf("adopted tool block = %#v", tool)
 	}
 	if got, want := conv.ops(), []string{"create", "transcript", "close"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("handoff operation order = %v, want %v", got, want)
@@ -122,5 +142,41 @@ func TestModelSwitchIgnoresStaleHandoffResult(t *testing.T) {
 	m = mm.(Model)
 	if m.sessionID != "source" || m.phase != phaseIdle {
 		t.Fatalf("stale handoff result mutated source: phase:%v id:%q", m.phase, m.sessionID)
+	}
+}
+
+func TestModelSwitchIgnoresStaleHandoffFailure(t *testing.T) {
+	m, _ := newModelSwitchHandoff(t, modelSwitchTranscriptLoader{})
+	m.modelSwitchRequestToken = 2
+	m.phase = phaseConnecting
+	m.statusMsg = "current handoff"
+	m.pendingModelSwitchNote = "current receipt"
+
+	mm, cmd := m.Update(modelSwitchFailedMsg{token: 1, sourceID: "source", model: "stale", err: errors.New("stale failure")})
+	m = mm.(Model)
+	if cmd != nil {
+		t.Fatal("stale failure must not rearm the source live feed")
+	}
+	if m.phase != phaseConnecting || m.sessionID != "source" || m.statusMsg != "current handoff" || m.pendingModelSwitchNote != "current receipt" {
+		t.Fatalf("stale failure altered current handoff: phase:%v id:%q status:%q note:%q", m.phase, m.sessionID, m.statusMsg, m.pendingModelSwitchNote)
+	}
+}
+
+func TestModelSwitchWithoutTranscriptRetainsSourceAndCleansTarget(t *testing.T) {
+	m, conv := newModelSwitchHandoff(t, nil)
+	mm, cmd, _ := m.chooseModel(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"}, "GPT-5 mini")
+	m = feedCmd(t, mm.(Model), cmd)
+
+	if m.phase != phaseIdle || m.sessionID != "source" || m.sessionTitle != "Source title" || m.sessionState != "completed" || m.sessionCreatedAt != 42 {
+		t.Fatalf("missing transcript must retain source exactly: phase:%v id:%q title:%q state:%q created:%d", m.phase, m.sessionID, m.sessionTitle, m.sessionState, m.sessionCreatedAt)
+	}
+	if !strings.Contains(stripANSIstr(m.View().Content), "local source only") || strings.Contains(stripANSIstr(m.statusMsg), "conversation kept") {
+		t.Fatalf("missing transcript must preserve source without a success receipt: view=%q status=%q", m.View().Content, m.statusMsg)
+	}
+	if got, want := conv.ops(), []string{"create", "close"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("missing transcript operations = %v, want target-only cleanup %v", got, want)
+	}
+	if got, want := conv.closed(), []string{"sess-test-0002"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("missing transcript closed sessions = %v, want only unused target %v", got, want)
 	}
 }
