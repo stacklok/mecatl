@@ -65,6 +65,13 @@ flag. `mecatui login` supports only standard help and `--skip-browser`; it opens
 the ToolHive LLM gateway OIDC flow only—it does not authenticate to a remote
 `mecated`; use that server's credentials with `mecatui connect ADDRESS` instead.
 
+Inside the TUI, `/retry` manually repeats the last typed `retryable` failed model
+step when it is still retry-pending. Mecatui automatically retries
+`retryable + precommit` only once; a second precommit failure or any
+`retryable + visible` failure requires `/retry`. The command sends no new prompt,
+preserves the textarea and queued prompts, and reports a harmless status when no
+eligible failure exists. Historical transcript replay never triggers automatic retry.
+
 ## mecatui session identity
 
 The TUI header shows a compact `#<digest>` for the active session rather than a long

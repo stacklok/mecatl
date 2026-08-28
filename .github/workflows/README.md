@@ -31,37 +31,56 @@ Markdown under `docs/` or `user-docs/`, `user-docs/**/_category_.json`, root
 and every unknown path always receive full validation. Rename detection is
 disabled for the comparison so both sides of a rename are classified.
 
-Docs-only runs skip the expensive build/race-shard/lint/fuzz/standalone/API/vulnerability
+Docs-only runs skip the expensive build/test/lint/fuzz/standalone/API/vulnerability
 jobs via job-level conditions, while retaining the documentation-relevant Docs,
-User docs, and Domain model jobs. The aggregate gate is named `Test (race)` on
-push and pull-request runs: it passes directly for docs-only changes, and for
-every other change passes only when both parallel race shards succeed (failure,
-cancellation, or skipping either shard fails the gate). Manual dispatches use
-the distinct `Test (race experiment)` context with the same shard-outcome logic,
-so an experiment can never satisfy the stable required check. The Docs job also runs
-`go test ./docs/lint` and the executable session-storage operations-guide contract
-in `cmd/mecated`. The classifier has offline NUL-delimited fixtures:
-`task test:docs-only-classifier`.
+User docs, and Domain model jobs. Their aggregate is `Test (docs-only)`; this keeps
+`Test (race)` reserved for actual full-race validation.
 
-The race partition is derived from `go list ./...`, never a maintained package
-list. One shard runs exactly `./cmd/mecatui/ui`; the root-complement shard excludes
-that exact import path and also runs the engine, OIDC, and provider module race
-sweeps. `.github/scripts/root-race-packages.sh` validates that UI and complement
-are disjoint, nonempty where required, and their sorted union is the complete
-root-module package set. Run its fixtures and live partition check with
-`task test:root-race-partition`; the individual local shards are
-`task test:race-ui` and `task test:race-root-complement`. `task test` remains the
-full unsharded local suite.
+Draft PRs run complete root and module test coverage without the race detector under
+`Test (non-race draft)`. Non-draft PRs, pushes to `main`, and manual dispatches run
+all three race jobs and aggregate them as `Test (race)` (or the dispatch-only `Test
+(race experiment)`). The existing ref-scoped concurrency group cancels the superseded
+mode when a PR changes state. This remains `pull_request`, never `pull_request_target`, so untrusted PR
+code has no secrets or elevated permissions.
 
-Normal push and pull-request runs execute those race commands directly: they do
-not add `-json`, redirect output, create timing files, or upload artifacts. To
-investigate CI duration, open **Actions → CI → Run workflow**, enable
-`race_timing`, and dispatch the desired ref. The two race jobs then keep their
-normal human-readable console output while also uploading `race-timing-root`
-and `race-timing-ui` JSONL artifacts for 3 days. Each file corresponds to one
-race command (`root-complement`, `engine`, `oidc`, each provider, or `ui`). Test
-failures still fail the command and job; the upload step runs afterward with
-`always()` so records produced before a failure remain available.
+Full-race testing has three shards: `root-a`, `root-b`, and UI. `root-a` is a small,
+maintained static list of expensive root packages and also runs the engine, OIDC, and
+provider module sweeps. `root-b` is automatically every other discovered root package
+except UI. This means new tests in an existing package stay in its shard and a new root
+package automatically runs in `root-b`.
+`.github/scripts/root-race-packages.sh` validates that every root-a entry exists, UI
+is not duplicated, all groups are disjoint, and their union exactly equals `go list
+./...`. Run its fixtures and live check with `task test:root-race-partition`; local
+root commands are `task test:race-root-a`, `task test:race-root-b`, and
+`task test:race-ui`. `task test` remains the full unsharded local suite.
+
+All Go test jobs in this design use the same explicit multi-module `setup-go` cache key:
+the root, engine, OIDC, and four provider `go.sum` files. On a cache miss, the
+Build job resolves all seven declared module graphs before compiling, so the cache it
+saves is complete for later PR jobs. The workflow normally uses the checksum-backed
+public Go proxy and falls back to the module VCS origin on a proxy transport error.
+
+Normal full-race runs execute those race commands directly: they do not add `-json`,
+redirect output, create timing files, or upload artifacts. To investigate CI duration,
+open **Actions → CI → Run workflow**, enable `race_timing`, and dispatch the desired
+ref. The three race jobs upload independently named 3-day JSONL artifacts:
+`race-timing-root-a`, `race-timing-root-b`, and `race-timing-ui`. The root-a artifact
+contains the root-a and module-command records. Failures still fail the command and job;
+uploads run afterward with `always()` so records produced before a failure remain
+available.
+
+### Rebalancing the static root shards
+
+1. Dispatch CI for a fixed ref with `race_timing=true` and download the root-a and
+   root-b artifacts. Compare package totals and slow tests, not only job elapsed time.
+2. Move an existing expensive package between the explicit `root_a_packages` list in
+   `.github/scripts/root-race-packages.sh` and automatic root-b to make the two root
+   jobs reasonably balanced. Update the matching fixture list in
+   `.github/scripts/root-race-packages_test.sh` in the same change. Do not add a
+   timing-data file or a weighted allocator.
+3. Run `task test:root-race-partition`, then both local root shard tasks.
+4. Dispatch another `race_timing=true` run for the same ref and verify the artifact
+   measurements. Repeat measurements when runner variance makes a move unclear.
 
 ### Experimental race vet A/B
 
@@ -74,8 +93,9 @@ per-command JSONL artifacts are available:
    for the baseline.
 2. Dispatch CI again for that exact ref with `race_timing=true` and
    `race_vet_off=true`.
-3. Download the `race-timing-root` and `race-timing-ui` artifacts from each run
-   and compare matching command/package totals, not just the overall job time.
+3. Download the `race-timing-root-a`, `race-timing-root-b`, and `race-timing-ui`
+   artifacts from each run and compare matching command/package totals, not just the
+   overall job time. The root-a artifact also contains the module-command records.
 4. Repeat both configurations enough times to distinguish runner variance
    (at least several paired runs) before drawing a conclusion.
 
@@ -102,9 +122,11 @@ tests (including subtests). Sort the latter by elapsed time, for example, with
 |-----|--------------|
 | `changes` | Fail-closed changed-path classification for docs-only optimization |
 | `build` | `go build ./...` |
+| `test-race-root-a` | Maintained expensive root-package race shard plus engine, OIDC, and provider module sweeps |
+| `test-race-root-b` | Automatic race shard for every other non-UI root package |
 | `test-race-ui` | `go test -race -count=1 ./cmd/mecatui/ui` |
-| `test-race-root` | Dynamic root complement plus engine/OIDC/provider race sweeps |
-| `test` | Aggregate over both race shards: stable `Test (race)` on push/PR, isolated `Test (race experiment)` on dispatch |
+| `test-non-race-draft` | Complete non-race coverage for draft PRs |
+| `test` | Context-selecting aggregate: stable `Test (race)` only for full-race non-draft PR/push runs |
 | `lint` | `golangci-lint` (v2) + `go vet ./...` + `actionlint` (workflow lint, pinned via `go run`) + the reusable-workflow pin check + the empty-expression (action-templates) check + the mecatequi composite-action shell tests |
 | `fuzz-smoke` | `task fuzz FUZZTIME=300000x` — short coverage-guided pass over the security-critical parsers (not the nightly deep fuzz); an iteration count, not a duration, so it can't race the fuzz coordinator's own deadline |
 
@@ -202,10 +224,12 @@ so `perf.yml` is unaffected. See `docs/adr/0019-perf-tracking.md` (Phase 4 — S
 
 ## `release.yml` — `v*` tag push (+ `workflow_dispatch` with a `tag` input, for idempotently re-publishing an existing tag's artifacts)
 
-Builds and publishes the `mecated` image and its supply-chain metadata, and a
-sibling `publish-mecatui` job builds/publishes/signs/attests the `mecatui`
-container image (issue #302) under `ghcr.io/<owner>/<repo>/mecatui` with the
-same supply-chain story. The workflow defaults to `contents: read`; the two
+Builds and publishes the `mecated` image and its supply-chain metadata, and two
+sibling jobs build/publish/sign/attest the `mecatui` container image (issue
+#302) under `ghcr.io/<owner>/<repo>/mecatui` and the `mecak8s` container image
+(ADR 0048) under `ghcr.io/<owner>/<repo>/mecak8s` — matching
+`deploy/helm/mecak8s/values.yaml`'s `image.repository` default — with the same
+supply-chain story. The workflow defaults to `contents: read`; the three
 publish jobs each elevate to exactly:
 
 ```yaml
@@ -303,8 +327,8 @@ with its own permission/secrets contract. See <https://slsa.dev/>.
 
 ### `publish-helm-chart` — the `deploy/helm/mecak8s` Helm chart
 
-A third job in the same workflow, independent of `publish`/`publish-mecatui`
-(no `needs:`, so it runs in parallel — the chart references either image
+A fourth job in the same workflow, independent of `publish`/`publish-mecatui`/
+`publish-mecak8s` (no `needs:`, so it runs in parallel — the chart references either image
 only by tag/digest *value*, via its `image.tag`/`image.digest` values, not by
 a build-time dependency). Publishes `deploy/helm/mecak8s` as a signed OCI
 artifact under `ghcr.io/<owner>/<repo>/charts` so `stacklok/infra`'s Flux

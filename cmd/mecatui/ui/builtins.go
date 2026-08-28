@@ -105,6 +105,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "show active session details and copy its exact ID",
 			run:  Model.runSessionDetails,
 		},
+		{
+			name: "retry",
+			desc: "retry the last eligible failed model step without resending its prompt",
+			run:  Model.runFailedStepRetry,
+		},
 	}
 	if caps.MCP && w.MCP {
 		out = append(out, builtin{
@@ -338,6 +343,19 @@ func (m Model) runHelp() (tea.Model, tea.Cmd) {
 
 func (m Model) runSessionDetails() (tea.Model, tea.Cmd) {
 	return m.openSessionDetails()
+}
+
+func (m Model) runFailedStepRetry() (tea.Model, tea.Cmd) {
+	if m.phase != phaseIdle {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot retry while a run is active")
+		return m, nil
+	}
+	if m.sessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("no session is available to retry")
+		return m, nil
+	}
+	m.failedStepRetryTried = true
+	return m.startFailedStepRetry()
 }
 
 // runAgentsInv opens the agent-definition inventory panel. Only registered when

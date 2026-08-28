@@ -3,29 +3,21 @@
 // a consecutive-failure circuit breaker, per-attempt timeouts, and pluggable
 // error classification.
 //
-// The single load-bearing correctness rule is no-replay-after-first-committing-chunk:
-// once any chunk that mutates session state has been observed, the turn cannot be
-// safely replayed. ChunkText, ChunkToolCall, ChunkUsage, ChunkDone, and ChunkPhase
-// are committing (assembled into session.Message or trigger dispatch). ChunkReasoning
-// and ChunkReasoningItem are NOT committing — they are opaque blobs replayed verbatim
-// on the NEXT turn's context and carry no partial session state mid-stream.
-// ChunkProviderRoute is likewise NOT committing — a display-only routing notice
-// (issue #480) relayed onto an event, mutating no session state. This layer
-// therefore retries failures that arrive before the first committing chunk: it buffers
-// any leading non-committing chunks across a failed attempt and only promotes to the
-// no-retry zone when a committing chunk is in hand. Once any committing chunk has been
-// emitted to the caller, a subsequent mid-stream error is surfaced verbatim and never
-// retried.
+// The load-bearing correctness rule is no replay after semantic visibility.
+// Leading whitespace-only text, reasoning/replay metadata, phase, provider route,
+// and tool calls are tentative and remain buffered in wire order. Usage is also
+// buffered but is accounting, not semantic visibility: discarded attempts add it
+// to the eventual success or terminal error without exposing their content. The
+// first text delta that makes cumulative text non-whitespace flushes the semantic
+// buffer and commits the attempt; after it escapes, a failure is terminal. A clean
+// ChunkDone instead flushes the whole tentative turn, including pure-tool-call
+// and whitespace-only turns. A retryable failure before either boundary discards
+// the tentative attempt and may be replayed within the configured attempt limit.
 //
-// Post-first-chunk reads are additionally bounded by StreamIdleTimeout: the gap
-// between consecutive chunks AFTER the first is bounded so a mid-stream upstream
-// stall cannot wedge the caller forever (the underlying adapters' stream.Next()
-// blocks indefinitely on a stalled SSE connection). When a read exceeds the idle
-// budget the wrapper cancels the per-attempt context and SYNTHESIZES a terminal
-// *StreamIdleError — it cannot rely on the adapter to surface one, because the
-// openai/anthropic adapters SWALLOW the ctx error on cancel (they yield nothing).
-// A StreamIdleError is terminal and never retried: no-replay-after-first-chunk
-// holds, so a mid-stream idle stall ends the turn as an error.
+// Establishment ends on the first RAW chunk, independently of semantic progress.
+// Subsequent raw chunk activity resets StreamIdleTimeout even while all chunks
+// remain tentative, so active reasoning or tool assembly cannot trip either
+// watchdog merely because it is not yet model-visible.
 //
 // The breaker counts consecutive TRANSIENT establishment failures across calls
 // (HTTP 429/408/5xx, network errors, per-attempt timeouts — see
@@ -50,15 +42,16 @@ import (
 	"iter"
 	"math/rand/v2"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	oai "github.com/openai/openai-go/v3"
 	"golang.org/x/net/http2"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // Config tunes the resilience decorator. The zero value is usable but inert
@@ -72,23 +65,22 @@ type Config struct {
 	BaseBackoff time.Duration
 	// MaxBackoff caps the per-attempt backoff. 0 means no cap.
 	MaxBackoff time.Duration
-	// PerAttemptTimeout bounds each attempt's establishment (connect + first
-	// committing chunk). 0 disables it. It never overrides a shorter caller deadline.
+	// PerAttemptTimeout bounds each attempt's establishment (connect + first raw
+	// chunk). 0 disables it. It never overrides a shorter caller deadline.
 	PerAttemptTimeout time.Duration
-	// StreamIdleTimeout bounds the gap between consecutive chunks AFTER the first
-	// chunk has been observed. 0 disables it. A longer stall terminates the stream
-	// with a classified *StreamIdleError (errors.Is(_, context.DeadlineExceeded)),
-	// which is TERMINAL and never retried — no-replay-after-first-chunk holds. It
-	// is distinct from PerAttemptTimeout, which bounds only establishment and the
-	// FIRST chunk (and is retryable).
+	// StreamIdleTimeout bounds the gap between consecutive raw chunks AFTER the
+	// first chunk has been observed. 0 disables it. A longer stall is retryable
+	// while semantic progress remains precommit and terminal after visible output.
 	StreamIdleTimeout time.Duration
 	// BreakerThreshold is the number of consecutive failed attempts that opens
 	// the breaker. Values < 1 disable the breaker.
 	BreakerThreshold int
 	// BreakerCooldown is how long the breaker stays open before half-opening.
 	BreakerCooldown time.Duration
-	// Classifier reports whether an error is retryable. nil selects
-	// DefaultClassifier.
+	// Classifier is a legacy tighten-only retry-policy veto. Typed causal
+	// classification runs first; Classifier is consulted only for errors already
+	// classified retryable and can refuse another attempt. It cannot upgrade an
+	// unknown or permanent error. nil selects DefaultClassifier.
 	Classifier func(error) bool
 	// Clock returns the current time; injectable for tests. nil selects
 	// time.Now.
@@ -187,13 +179,11 @@ func (e *ExhaustedError) Error() string {
 // Unwrap exposes the final underlying error to errors.Is/As.
 func (e *ExhaustedError) Unwrap() error { return e.Err }
 
-// StreamIdleError is the terminal error synthesized when a stream stalls
-// mid-flight: no chunk arrived within StreamIdleTimeout AFTER the first chunk was
-// already observed. The wrapper synthesizes it because the underlying adapters
-// swallow the ctx error on cancel (they yield nothing once the context is done),
-// so cancelling the per-attempt context unblocks the inner stream.Next() but
-// surfaces no error of its own. It is TERMINAL and never retried
-// (no-replay-after-first-chunk).
+// StreamIdleError is synthesized when no raw chunk arrives within
+// StreamIdleTimeout after activity began. The wrapper must synthesize it because
+// providers may swallow the context error used to unblock their stream. It is a
+// retryable transport failure while the semantic attempt is precommit, and
+// terminal after visible output has escaped.
 type StreamIdleError struct {
 	// Idle is the configured idle budget that elapsed without a chunk.
 	Idle time.Duration
@@ -216,17 +206,22 @@ func (*StreamIdleError) Unwrap() error { return context.DeadlineExceeded }
 // instead of a phantom empty-success completion. See establish's empty branch.
 var errFirstChunkTimeout = errors.New("llmresilience: per-attempt timeout before first chunk")
 
-// permanentError wraps a provider error as port.PermanentError when the
-// resilience layer surfaces a non-retryable, non-transient rejection (a 4xx
-// other than 408/429 where the classifier already decided non-retryable). The
-// Unwrap chain passes through to the inner error so errors.As reaches it.
-type permanentError struct {
-	err error
+// dispositionError projects a known causal classification through errors.As.
+// Permanent classifications retain the older port.PermanentError projection.
+type dispositionError struct {
+	err         error
+	disposition port.RetryDisposition
+	progress    port.StreamProgress
 }
 
-func (e *permanentError) Error() string { return e.err.Error() }
-func (e *permanentError) Unwrap() error { return e.err }
-func (*permanentError) Permanent() bool { return true }
+func (e *dispositionError) Error() string                           { return e.err.Error() }
+func (e *dispositionError) Unwrap() error                           { return e.err }
+func (e *dispositionError) RetryDisposition() port.RetryDisposition { return e.disposition }
+func (e *dispositionError) StreamProgress() port.StreamProgress     { return e.progress }
+
+type permanentDispositionError struct{ *dispositionError }
+
+func (*permanentDispositionError) Permanent() bool { return true }
 
 func explicitRetryDecision(err error) (retryable, explicit bool) {
 	var decision interface{ Retryable() bool }
@@ -236,28 +231,55 @@ func explicitRetryDecision(err error) (retryable, explicit bool) {
 	return decision.Retryable(), true
 }
 
-// asPermanent wraps a mid-stream error as port.PermanentError when the
-// classifier says non-retryable AND the error is not a caller cancellation
-// (context.Canceled). Mid-stream errors are never retried regardless, but a
-// non-retryable client rejection (400/401/403/404) carries the
-// port.PermanentError signal so callers can distinguish a permanent rejection
-// from a transient mid-stream failure (e.g. 429/503). Fail-open: any other
-// error (nil, cancellation, retryable/transient) is returned unchanged.
-func (p *resilientProvider) asPermanent(err error) error {
-	if err == nil || errors.Is(err, context.Canceled) {
-		return err
+func dispositionOf(err error) port.RetryDisposition {
+	if err == nil {
+		return port.RetryDispositionUnknown
 	}
-	// A provider-private repair may deliberately exhaust its one safe replay
-	// while retaining a transient unwrap-visible cause. That is terminal for this
-	// Stream invocation, but it is not a claim that a future user retry cannot
-	// succeed (port.PermanentError). Mid-stream replay is already impossible.
-	if retryable, explicit := explicitRetryDecision(err); explicit && !retryable {
-		return err
+	var classified port.RetryDispositionError
+	if errors.As(err, &classified) {
+		disposition := classified.RetryDisposition()
+		if disposition.Valid() {
+			return disposition
+		}
+		return port.RetryDispositionUnknown
 	}
-	if p.cfg.Classifier(err) {
-		return err
+	var permanent port.PermanentError
+	if errors.As(err, &permanent) && permanent.Permanent() {
+		return port.RetryDispositionPermanent
 	}
-	return &permanentError{err: err}
+	return defaultDisposition(err)
+}
+
+func classifiedProgressError(err error, progress port.StreamProgress) error {
+	d := dispositionOf(err)
+	if err == nil {
+		return nil
+	}
+	var classified port.RetryDispositionError
+	var progressed port.StreamProgressError
+	if errors.As(err, &classified) && errors.As(err, &progressed) && progressed.StreamProgress() == progress {
+		if d != port.RetryDispositionPermanent {
+			return err
+		}
+		var permanent port.PermanentError
+		if errors.As(err, &permanent) && permanent.Permanent() {
+			return err
+		}
+	}
+	base := &dispositionError{err: err, disposition: d, progress: progress}
+	if d == port.RetryDispositionPermanent {
+		return &permanentDispositionError{dispositionError: base}
+	}
+	return base
+}
+
+// classifyVisibleError preserves the causal classification of a terminal
+// mid-stream failure while attaching its visible progress.
+func classifyVisibleError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return classifiedProgressError(err, port.StreamProgressVisible)
 }
 
 // breakerState is the closed/open/half-open state machine, guarded by mu.
@@ -290,71 +312,207 @@ func (p *resilientProvider) diag() port.Diagnostics {
 	return p.cfg.Diagnostics
 }
 
-// logMidStreamError records the OTHER path that ends a turn terminally: an error
-// chunk yielded AFTER the first committing chunk. It is never retried (the
-// no-replay-after-first-chunk rule), so it is the end of the turn — and, like the
-// non-retryable establishment error above, it previously logged at NO level (issue #319 /
-// #318 diagnosis).
-//
-// The blind spot was exactly THREE emissions wide, and this comment used to describe it
-// loosely enough to contradict its sibling 180 lines below. What WAS already observable
-// pre-#319: the per-attempt retry (Debug), exhausted attempts (Info), the idle stall (Info)
-// and the breaker's own state TRANSITIONS (Info). What was silent: this mid-stream error,
-// the non-retryable establishment error, and the breaker REJECTION — the three paths that
-// actually kill a turn. All three log at Info now.
-//
-// It is called from BOTH restSeq variants (idle-bounded and not) so disabling
-// StreamIdleTimeout cannot silently re-open the blind spot.
-//
-// The ctx is deliberately context.Background(), mirroring the sibling idle-stall site:
-// the request ctx may already be done by the time a mid-stream error surfaces, and a
-// slog handler that honours ctx cancellation would drop the line.
-//
-// The model is CORRELATION, not decoration: on a busy server "llm stream failed
-// mid-stream" alone tells an operator that *a* turn died, not whose — half of what issue
-// #319 asked for. It is threaded down from establish's port.LLMRequest (Stream → establish
-// → pullToCommit → restSeq) rather than read off a wider port: LLMRequest.Model is a bare
-// opaque string and must stay so, and the wrapper deliberately sees no session/run
-// identity at all (it is a provider decorator, not a run-scoped sink), so the model id is
-// the finest correlation reachable here without widening port.LLMRequest.
-// A CALLER CANCEL is not a failure and must not be logged as one. An operator pressing
-// ctrl+c (or a client disconnecting) surfaces here as context.Canceled, and reporting
-// "llm stream failed mid-stream" for it mislabels the single most common way a turn ends
-// early — the same accuracy defect as the "denied by user" message that was never a user's
-// decision. It is still logged, because "the turn ended and nothing else will arrive" is
-// worth one line either way; only the wording (and the absence of an err= arg, which would
-// just read "context canceled") changes.
-func (p *resilientProvider) logMidStreamError(model string, err error) {
-	if errors.Is(err, context.Canceled) {
-		p.diag().Log(context.Background(), port.LevelInfo, "llm stream cancelled mid-stream; ending turn",
-			"model", model)
-		return
-	}
-	p.diag().Log(context.Background(), port.LevelInfo, "llm stream failed mid-stream; ending turn",
-		"model", model,
-		"err", clampErr(err))
+type attemptDecision string
+
+const (
+	decisionRetry    attemptDecision = "retry"
+	decisionTerminal attemptDecision = "terminal"
+)
+
+type replaySuppressedReason string
+
+const (
+	replayVisibleOutput        replaySuppressedReason = "visible_output"
+	replayAttemptsExhausted    replaySuppressedReason = "attempts_exhausted"
+	replayPermanent            replaySuppressedReason = "permanent"
+	replayUnknown              replaySuppressedReason = "unknown"
+	replayClassifierVeto       replaySuppressedReason = "classifier_veto"
+	replayProviderInternalVeto replaySuppressedReason = "provider_internal_veto"
+	replayBreakerOpen          replaySuppressedReason = "breaker_open"
+)
+
+type attemptDiagnostic struct {
+	ctx         context.Context
+	model       string
+	attempt     int
+	maxAttempts int
+	started     time.Time
 }
 
-// clampErr renders an error to a length-bounded string for a diagnostics arg.
-// The wrapper sees only port.LLMRequest + errors, never prompt text, but a
-// provider error body can still be large — clamp it so a single log line stays
-// bounded.
-func clampErr(err error) string {
-	if err == nil {
-		return ""
+// logAttemptDecision is the single failed-attempt decision log path. It records
+// causal classification and sanitized errors.As metadata without rendering the
+// raw error, which may contain response bodies, URLs, headers, or credentials.
+func (p *resilientProvider) logAttemptDecision(
+	attempt attemptDiagnostic,
+	err error,
+	decision attemptDecision,
+	progress port.StreamProgress,
+	reason replaySuppressedReason,
+	backoff time.Duration,
+) {
+	elapsed := p.cfg.Clock().Sub(attempt.started)
+	if elapsed < 0 {
+		elapsed = 0
 	}
-	const maxLen = 256
-	s := err.Error()
-	if len(s) > maxLen {
-		// Back off to the nearest rune boundary so we never split a multi-byte
-		// UTF-8 rune (which would render as a replacement char in the log line).
-		cut := maxLen
-		for cut > 0 && !utf8.RuneStart(s[cut]) {
-			cut--
+	args := []any{
+		"model", attempt.model,
+		"attempt", attempt.attempt,
+		"max_attempts", attempt.maxAttempts,
+		"elapsed", elapsed,
+		"retry_disposition", retryDispositionDiagnostic(dispositionOf(err)),
+		"stream_progress", streamProgressDiagnostic(progress),
+		"decision", string(decision),
+	}
+	if id, ok := port.SessionIDFromContext(attempt.ctx); ok && id != "" {
+		args = append(args, "session", id)
+	}
+	if serial, ok := port.RunSerialFromContext(attempt.ctx); ok {
+		args = append(args, "run_serial", serial)
+	}
+	if turn, ok := port.TurnIndexFromContext(attempt.ctx); ok {
+		args = append(args, "turn", turn)
+	}
+	if decision == decisionRetry {
+		args = append(args, "backoff", backoff)
+	} else {
+		args = append(args, "replay_suppressed_reason", string(reason))
+	}
+	args = append(args, attemptMetadataArgs(err)...)
+
+	level := port.LevelInfo
+	message := "llm stream attempt failed; retrying"
+	if decision == decisionTerminal {
+		switch reason {
+		case replayVisibleOutput:
+			message = "llm stream failed mid-stream; ending turn"
+		case replayAttemptsExhausted:
+			message = "llm stream not established after all attempts"
+		case replayPermanent:
+			message = "llm stream failed with a non-retryable provider error; ending turn"
+		case replayProviderInternalVeto:
+			message = "llm provider recovery retry budget exhausted; ending turn"
+		case replayBreakerOpen:
+			message = "llm stream rejected by the open circuit breaker; ending turn"
+		default:
+			message = "llm stream failed without a safe retry; ending turn"
 		}
-		return s[:cut] + "…"
+	} else {
+		level = port.LevelDebug
 	}
-	return s
+	p.diag().Log(attempt.ctx, level, message, args...)
+}
+
+func retryDispositionDiagnostic(disposition port.RetryDisposition) string {
+	switch disposition {
+	case port.RetryDispositionRetryable:
+		return "retryable"
+	case port.RetryDispositionPermanent:
+		return "permanent"
+	default:
+		return "unknown"
+	}
+}
+
+func streamProgressDiagnostic(progress port.StreamProgress) string {
+	switch progress {
+	case port.StreamProgressPrecommit:
+		return "precommit"
+	case port.StreamProgressVisible:
+		return "visible"
+	case port.StreamProgressComplete:
+		return "complete"
+	default:
+		return "unknown"
+	}
+}
+
+type attemptErrorMetadata struct {
+	httpStatus      int
+	inBandStatus    int
+	providerCode    string
+	correlationKind string
+	correlationID   string
+}
+
+func (m attemptErrorMetadata) valid() bool {
+	if !validOptionalStatus(m.httpStatus) || !validOptionalStatus(m.inBandStatus) {
+		return false
+	}
+	if m.providerCode != "" && !validPrintableToken(m.providerCode, 128) {
+		return false
+	}
+	if (m.correlationKind == "") != (m.correlationID == "") {
+		return false
+	}
+	switch m.correlationKind {
+	case "":
+		return true
+	case "request", "response", "trace", "completion", "message":
+		return validPrintableToken(m.correlationID, 256)
+	default:
+		return false
+	}
+}
+
+func validOptionalStatus(status int) bool {
+	return status == 0 || status >= 100 && status <= 599
+}
+
+func validPrintableToken(value string, limit int) bool {
+	if value == "" || len(value) > limit {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x21 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func attemptMetadataArgs(err error) []any {
+	var carrier port.ProviderErrorMetadataError
+	if !errors.As(err, &carrier) {
+		return nil
+	}
+	metadata := attemptErrorMetadata{
+		httpStatus:      carrier.ProviderHTTPStatus(),
+		inBandStatus:    carrier.ProviderInBandStatus(),
+		providerCode:    carrier.ProviderErrorCode(),
+		correlationKind: carrier.ProviderErrorCorrelationKind(),
+		correlationID:   carrier.ProviderErrorCorrelationID(),
+	}
+	if !metadata.valid() {
+		return nil
+	}
+	args := make([]any, 0, 10)
+	if metadata.httpStatus != 0 {
+		args = append(args, "http_status", metadata.httpStatus)
+	}
+	if metadata.inBandStatus != 0 {
+		args = append(args, "in_band_status", metadata.inBandStatus)
+	}
+	if metadata.providerCode != "" {
+		args = append(args, "provider_code", metadata.providerCode)
+	}
+	if metadata.correlationKind != "" {
+		args = append(args,
+			"correlation_kind", metadata.correlationKind,
+			"correlation_id", metadata.correlationID)
+	}
+	return args
+}
+
+// logMidStreamError records a failure after semantic visibility. Cancellation
+// keeps its pre-existing non-failure diagnostic; every actual failure uses the
+// centralized attempt-decision path.
+func (p *resilientProvider) logMidStreamError(attempt attemptDiagnostic, err error) {
+	if errors.Is(err, context.Canceled) {
+		p.diag().Log(context.Background(), port.LevelInfo, "llm stream cancelled mid-stream; ending turn",
+			"model", attempt.model)
+		return
+	}
+	p.logAttemptDecision(attempt, err, decisionTerminal, port.StreamProgressVisible, replayVisibleOutput, 0)
 }
 
 // Capabilities forwards the wrapped provider's capabilities unchanged: the
@@ -443,77 +601,90 @@ func (p *resilientProvider) recordFailure(now time.Time) {
 	}
 }
 
-// isCommitting reports whether a ChunkKind mutates session state. Once a
-// committing chunk has been observed the stream cannot be safely retried.
-// Non-committing kinds (ChunkReasoning, ChunkReasoningItem) carry opaque blobs
-// replayed on the NEXT turn and are safe to discard on retry. ChunkProviderRoute
-// is likewise non-committing: it is a display-only routing notice relayed onto an
-// event (issue #480), mutates no session state, and in practice only ever
-// arrives at the terminal response.completed (post-commit by definition) — but
-// classifying it non-committing keeps the pre-commit buffer honest.
-// Default: true — any unrecognised future kind is conservatively committing.
-func isCommitting(kind port.ChunkKind) bool {
-	switch kind {
-	case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkProviderRoute:
+// advancesVisible reports whether a chunk crosses the semantic commit boundary.
+// Only meaningful assistant text becomes visible before clean completion. Every
+// other current chunk is tentative: tool calls are dispatched only after a clean
+// ChunkDone, and metadata/replay/accounting chunks can be discarded with a
+// failed precommit attempt. Unknown future kinds are conservative and visible.
+func advancesVisible(chunk port.Chunk) bool {
+	switch chunk.Kind {
+	case port.ChunkText:
+		return strings.TrimSpace(chunk.Text) != ""
+	case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkToolCall,
+		port.ChunkUsage, port.ChunkPhase, port.ChunkProviderRoute, port.ChunkDone:
 		return false
 	default:
 		return true
 	}
 }
 
-// firstChunk is the buffered head of an attempt's stream: the first committing
-// chunk the inner iterator produced, whether the stream was empty, any
-// non-committing chunks buffered before that first committing chunk, and a
-// continuation iterator (restSeq) that yields the remainder and performs cleanup.
-type firstChunk struct {
-	chunk     port.Chunk
-	empty     bool
-	noCommit  bool         // true when pre-commit chunks were buffered but no committing chunk arrived (clean close)
-	preCommit []port.Chunk // non-committing chunks buffered before the first committing chunk
-	restSeq   iter.Seq2[port.Chunk, error]
+// attemptResult is the result of pumping one attempt to a semantic boundary.
+// progress is the single state model used by the pump and the relay: tentative
+// chunks remain buffered at Precommit, Visible carries the first committed chunk
+// and a continuation, and Complete flushes a clean buffered turn.
+type attemptResult struct {
+	progress       port.StreamProgress
+	chunk          port.Chunk
+	buffered       []port.Chunk
+	discardedUsage session.Usage
+	remaining      iter.Seq2[port.Chunk, error]
+	stop           func()
+	cancel         context.CancelFunc
 }
 
-// Stream establishes the inner stream with retries and breaker protection, then
-// returns an iterator that replays the buffered first chunk followed by the rest
-// of the inner stream. Mid-stream errors (after the first chunk) are surfaced,
-// never retried.
+func terminalWithUsage(usage session.Usage, err error) (iter.Seq2[port.Chunk, error], error) {
+	if usage == (session.Usage{}) {
+		return nil, err
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		if !yield(port.Chunk{Kind: port.ChunkUsage, Usage: &usage}, nil) {
+			return
+		}
+		yield(port.Chunk{}, err)
+	}, nil
+}
+
+// Stream pumps attempts under retry and breaker policy. Failed precommit
+// attempts never escape; visible attempts return a continuation and are never
+// replayed.
 func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	var lastErr error
+	var lastDiagnostic attemptDiagnostic
+	var discardedUsage session.Usage
 	for attempt := 0; attempt < p.cfg.MaxAttempts; attempt++ {
 		// Honour caller cancellation before doing any work.
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return terminalWithUsage(discardedUsage, classifiedProgressError(err, port.StreamProgressPrecommit))
 		}
-		// The THIRD of the five paths that end a turn terminally (and one of the two where the
-		// provider is never called at all): the shared breaker is OPEN, so the request is
-		// rejected outright. It logged at NO level, so an operator reading the log saw a turn
-		// die with nothing at all in it — the exact blind spot issue #319 is about, whose
-		// acceptance is that no terminal stream failure ends a turn without at least one
-		// Info-level diagnostic. It was one of exactly THREE silent emissions, with the
-		// non-retryable establishment error and the mid-stream error below; exhausted
-		// attempts, the idle stall and the breaker's own state transitions were already
-		// observable (see logMidStreamError for the full pre-#319 ledger). It carries the
-		// model for the same correlation reason, and the error names the cooldown.
-		if err := p.allow(p.cfg.Clock()); err != nil {
-			p.diag().Log(ctx, port.LevelInfo, "llm stream rejected by the open circuit breaker; ending turn",
-				"model", req.Model,
-				"attempt", attempt+1,
-				"err", clampErr(err))
-			return nil, err
+		started := p.cfg.Clock()
+		diagnostic := attemptDiagnostic{
+			ctx: ctx, model: req.Model, attempt: attempt + 1,
+			maxAttempts: p.cfg.MaxAttempts, started: started,
+		}
+		lastDiagnostic = diagnostic
+		if err := p.allow(started); err != nil {
+			p.logAttemptDecision(diagnostic, err, decisionTerminal, port.StreamProgressPrecommit, replayBreakerOpen, 0)
+			return terminalWithUsage(discardedUsage, classifiedProgressError(err, port.StreamProgressPrecommit))
 		}
 
-		head, err := p.establish(ctx, req)
+		head, err := p.establish(ctx, req, diagnostic)
 		if err == nil {
-			// Stream established and (if non-empty) first chunk in hand.
-			p.recordSuccess()
-			return wrap(head), nil
+			// Stream reached a semantic boundary. Breaker success is recorded only by
+			// wrap after clean completion; visible output alone is not provider health.
+			if discardedUsage != (session.Usage{}) {
+				head.buffered = append([]port.Chunk{{Kind: port.ChunkUsage, Usage: &discardedUsage}}, head.buffered...)
+			}
+			return p.wrap(head, diagnostic), nil
+		}
+		if head != nil {
+			discardedUsage = discardedUsage.Add(head.discardedUsage)
 		}
 
 		lastErr = err
 
 		// Caller cancellation is never retried and is breaker-neutral.
 		if isCallerCanceled(ctx, err) {
-			return nil, err
+			return terminalWithUsage(discardedUsage, classifiedProgressError(err, port.StreamProgressPrecommit))
 		}
 		// Only TRANSIENT failures count toward the shared breaker; permanent
 		// client errors (4xx) and caller cancels leave its counters untouched.
@@ -525,93 +696,61 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 		}
 		// A per-attempt timeout (establishment deadline) is a distinct, diagnosable
 		// stall signal — surface it before backing off / retrying.
-		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		if errors.Is(err, errFirstChunkTimeout) && ctx.Err() == nil {
 			p.diag().Log(ctx, port.LevelDebug, "llm stream per-attempt timeout fired",
 				"per_attempt_timeout", p.cfg.PerAttemptTimeout,
 				"attempt", attempt+1,
 				"max_attempts", p.cfg.MaxAttempts)
 		}
 		// A provider adapter may already have spent one narrowly safe internal
-		// repair. Its explicit no-retry decision is stronger than even an
-		// operator-supplied classifier: replaying the outer request would repeat
-		// the rejected request plus the exhausted repair. Keep the causal error
-		// unwrapped by permanentError; a future user retry may still succeed.
+		// repair. Its explicit no-retry decision is a policy veto, not a rewrite of
+		// the causal disposition.
 		if retryable, explicit := explicitRetryDecision(err); explicit && !retryable {
-			p.diag().Log(ctx, port.LevelInfo, "llm provider recovery retry budget exhausted; ending turn",
-				"model", req.Model,
-				"attempt", attempt+1,
-				"err", clampErr(err))
-			return nil, err
+			p.logAttemptDecision(diagnostic, err, decisionTerminal, port.StreamProgressPrecommit, replayProviderInternalVeto, 0)
+			return terminalWithUsage(discardedUsage, classifiedProgressError(err, port.StreamProgressPrecommit))
 		}
-		// Permanent (non-retryable) errors are surfaced verbatim, not retried. This
-		// TERMINALLY ends the turn, so it is logged at Info: the recoverable lifecycle
-		// (retry, exhaustion, idle stall, breaker transitions) was already observable
-		// while this — one of the THREE silent paths that actually kill a turn, with the
-		// mid-stream error and the breaker rejection — logged at NO level, so an operator
-		// reading mecatui.log could not tell a permanent 4xx from a run that never called
-		// the provider at all (issue #319 / #318 diagnosis).
-		//
-		// It carries the model for the same correlation reason logMidStreamError does:
-		// on a busy server the bare message identifies that A turn died, not whose, and
-		// the model id is the finest correlation this decorator can reach without
-		// widening port.LLMRequest (which must stay provider-neutral).
+
+		disposition := dispositionOf(err)
+		if disposition != port.RetryDispositionRetryable {
+			reason := replayUnknown
+			if disposition == port.RetryDispositionPermanent {
+				reason = replayPermanent
+			}
+			p.logAttemptDecision(diagnostic, err, decisionTerminal, port.StreamProgressPrecommit, reason, 0)
+			return terminalWithUsage(discardedUsage, classifiedProgressError(err, port.StreamProgressPrecommit))
+		}
 		if !p.cfg.Classifier(err) {
-			p.diag().Log(ctx, port.LevelInfo, "llm stream failed with a non-retryable provider error; ending turn",
-				"model", req.Model,
-				"attempt", attempt+1,
-				"err", clampErr(err))
-			return nil, &permanentError{err: err}
+			p.logAttemptDecision(diagnostic, err, decisionTerminal, port.StreamProgressPrecommit, replayClassifierVeto, 0)
+			return terminalWithUsage(discardedUsage, classifiedProgressError(err, port.StreamProgressPrecommit))
 		}
 		// Backoff before the next attempt, unless this was the last one.
 		if attempt < p.cfg.MaxAttempts-1 {
 			d := p.backoffDuration(attempt)
-			p.diag().Log(ctx, port.LevelDebug, "llm stream attempt failed; retrying",
-				"attempt", attempt+1,
-				"max_attempts", p.cfg.MaxAttempts,
-				"backoff", d,
-				"err", clampErr(err))
+			p.logAttemptDecision(diagnostic, err, decisionRetry, port.StreamProgressPrecommit, "", d)
 			if berr := p.backoffWith(ctx, d); berr != nil {
-				return nil, berr
+				return terminalWithUsage(discardedUsage, classifiedProgressError(berr, port.StreamProgressPrecommit))
 			}
 		}
 	}
-	// The FOURTH of the FIVE terminal paths (the fifth is the post-first-chunk idle stall in
-	// the stream watchdog below — a distinct emission on a distinct code path, and the shape
-	// operators actually report as "thinking, then nothing"). It carries model + err for the
-	// same correlation reason as its siblings: an operator who has learned to grep the log by
-	// model must get every way a turn dies, not some of them, and the last attempt's error is
-	// the only clue to WHY establishment never succeeded.
-	p.diag().Log(ctx, port.LevelInfo, "llm stream not established after all attempts",
-		"model", req.Model,
-		"attempts", p.cfg.MaxAttempts,
-		"err", clampErr(lastErr))
-	return nil, &ExhaustedError{Attempts: p.cfg.MaxAttempts, Err: lastErr, PerAttempt: p.cfg.PerAttemptTimeout}
+	p.logAttemptDecision(lastDiagnostic, lastErr, decisionTerminal, port.StreamProgressPrecommit, replayAttemptsExhausted, 0)
+	exhausted := &ExhaustedError{Attempts: p.cfg.MaxAttempts, Err: classifiedProgressError(lastErr, port.StreamProgressPrecommit), PerAttempt: p.cfg.PerAttemptTimeout}
+	return terminalWithUsage(discardedUsage, exhausted)
 }
 
-// establish performs a single attempt: it bounds ESTABLISHMENT (connect + the
-// first committing chunk) by PerAttemptTimeout, calls the inner Stream, and pulls
-// chunks until the first COMMITTING chunk is in hand so that a pre-committing-chunk
-// error is observed here (and thus retryable). Non-committing chunks (ChunkReasoning,
-// ChunkReasoningItem) are buffered and replayed on success. On success it returns the
-// buffered head and a nil error. On failure it returns the error and cancels the
-// per-attempt context.
+// establish performs a single attempt. PerAttemptTimeout bounds connect plus the
+// first raw chunk; pumpAttempt then continues under the idle watchdog until the
+// attempt becomes semantically visible, completes, or fails.
 //
-// The per-attempt budget is enforced by a SEPARATE establishment time.Timer, NOT
-// by an absolute context deadline: the inner stream rides a deadline-free
-// context.WithCancel(ctx), and the timer's goroutine calls cancel() ONLY if the
-// first committing chunk has not been pulled by PerAttemptTimeout. The timer stays
-// live through any leading non-committing (reasoning) prefix. The timer is stopped
-// and its goroutine fully joined the instant the first committing chunk is in hand
-// (and on every failure exit). After that the streaming phase is governed solely by
-// the idle watchdog (StreamIdleTimeout, run in restSeq on the same cancel handle)
-// plus the parent ctx — so an actively-streaming long turn is NEVER cut at the
-// per-attempt deadline (the bug an absolute deadline used to cause: the deadline
-// stayed live through the whole stream and silently truncated a slow reasoning turn).
+// The establishment budget is enforced by a separate timer, not an absolute
+// context deadline. The timer cancels a blocked first raw read, and is stopped
+// and joined as soon as any chunk arrives. The deadline-free attempt context then
+// remains governed by StreamIdleTimeout and the parent context, so a long active
+// stream is never truncated by its establishment budget.
 //
 // The deadline-free ctx is intentionally left live on success: it is cancelled
 // when the returned iterator finishes or the caller stops early (handled in
 // wrap/restSeq).
-func (p *resilientProvider) establish(ctx context.Context, req port.LLMRequest) (*firstChunk, error) {
+func (p *resilientProvider) establish(ctx context.Context, req port.LLMRequest, diagnostic attemptDiagnostic) (*attemptResult, error) {
 	attemptCtx := ctx
 	var cancel context.CancelFunc
 	if p.cfg.PerAttemptTimeout > 0 || p.cfg.StreamIdleTimeout > 0 {
@@ -690,80 +829,147 @@ func (p *resilientProvider) establish(ctx context.Context, req port.LLMRequest) 
 		return nil, failure
 	}
 
-	// Pull chunks until the first COMMITTING chunk is in hand. Non-committing
-	// chunks (ChunkReasoning, ChunkReasoningItem) are buffered. The establishment
-	// timer stays live through the reasoning prefix.
-	return p.pullToCommit(ctx, req.Model, seq, stopEstTimer, cancel, establishmentFailure)
+	// Pump raw chunks to the semantic boundary. The establishment timer is stopped
+	// by pumpAttempt on the first raw chunk, including tentative metadata.
+	return p.pumpAttempt(ctx, diagnostic, seq, stopEstTimer, cancel, establishmentFailure)
 }
 
-// pullToCommit drives the pull iterator from seq until the first COMMITTING chunk
-// is available, buffering any non-committing prefix. It is split from establish()
-// to keep establish's cyclomatic complexity within the lint budget.
-func (p *resilientProvider) pullToCommit(
+func discardedChunkUsage(chunk port.Chunk) session.Usage {
+	if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
+		return *chunk.Usage
+	}
+	return session.Usage{}
+}
+
+// pumpAttempt drives one semantic attempt. It observes raw transport activity
+// separately from semantic visibility, buffers tentative chunks in wire order,
+// and returns only after meaningful text becomes visible or the attempt cleanly
+// completes. A failure before either boundary returns no chunks, allowing the
+// caller to discard the attempt and retry.
+func (p *resilientProvider) pumpAttempt(
 	ctx context.Context,
-	model string,
+	diagnostic attemptDiagnostic,
 	seq iter.Seq2[port.Chunk, error],
 	stopEstTimer func() bool,
 	cancel context.CancelFunc,
 	establishmentFailure func(error) error,
-) (*firstChunk, error) {
+) (*attemptResult, error) {
 	next, stop := iter.Pull2(seq)
-	var preCommit []port.Chunk
+	result := &attemptResult{progress: port.StreamProgressUnknown}
+	rawSeen := false
+	pull := func() (port.Chunk, bool, error) {
+		if rawSeen && p.cfg.StreamIdleTimeout > 0 {
+			return p.pullTentativeWithIdle(diagnostic.model, next, cancel)
+		}
+		chunk, err, ok := next()
+		return chunk, ok, err
+	}
 	for {
-		chunk, cerr, ok := next()
+		chunk, ok, cerr := pull()
 		if !ok {
-			// Stream ended (no committing chunk arrived — clean end or timer fired).
 			timedOut := stopEstTimer()
+			cause := ctx.Err()
 			stop()
 			if cancel != nil {
 				cancel()
 			}
-			if timedOut && ctx.Err() == nil {
-				return nil, attemptError(context.DeadlineExceeded, errFirstChunkTimeout)
+			// Providers commonly swallow context cancellation and end their iterator.
+			// Cancellation is not clean completion: discard every tentative chunk and
+			// surface it without retrying or affecting the breaker.
+			if cause != nil {
+				return result, cause
 			}
-			// If non-committing chunks arrived before the clean close, forward them
-			// rather than silently discarding them (empty = true short-circuits wrap).
-			if len(preCommit) > 0 {
-				return &firstChunk{preCommit: preCommit, noCommit: true}, nil
+			if timedOut {
+				return result, attemptError(context.DeadlineExceeded, errFirstChunkTimeout)
 			}
-			return &firstChunk{empty: true}, nil
+			result.progress = port.StreamProgressComplete
+			return result, nil
 		}
 		if cerr != nil {
-			// Error before any committing chunk: retryable establishment failure.
 			failure := establishmentFailure(cerr)
 			stopEstTimer()
 			stop()
 			if cancel != nil {
 				cancel()
 			}
-			return nil, failure
+			return result, failure
 		}
 
-		if !isCommitting(chunk.Kind) {
-			// Non-committing chunk: buffer it and keep pulling.
-			preCommit = append(preCommit, chunk)
-			continue
+		if !rawSeen {
+			rawSeen = true
+			if stopEstTimer() {
+				stop()
+				if cancel != nil {
+					cancel()
+				}
+				return result, attemptError(context.DeadlineExceeded, errFirstChunkTimeout)
+			}
 		}
 
-		// First committing chunk in hand. The establishment budget is over: stop
-		// and JOIN the timer goroutine NOW (before building rest) so it cannot fire
-		// mid-stream and cannot leak. The streaming phase is governed by restSeq's
-		// idle watchdog (StreamIdleTimeout) + the parent ctx only.
-		if stopEstTimer() {
-			// Late-fire race: the timer fired in the narrow window between pulling
-			// this committing chunk and stopping the timer. It has already called
-			// cancel(), so attemptCtx is dead and the streaming phase cannot proceed.
-			// Treat it as a retryable establishment timeout. SAFE: the committing
-			// chunk has NOT been yielded to the caller yet (we only buffered it here),
-			// so no-replay-after-first-committing-chunk still holds.
+		if cause := ctx.Err(); cause != nil {
 			stop()
 			if cancel != nil {
 				cancel()
 			}
-			return nil, attemptError(context.DeadlineExceeded, errFirstChunkTimeout)
+			return result, cause
 		}
-		rest := p.restSeq(model, next, stop, cancel)
-		return &firstChunk{chunk: chunk, preCommit: preCommit, restSeq: rest}, nil
+		result.discardedUsage = result.discardedUsage.Add(discardedChunkUsage(chunk))
+		if chunk.Kind == port.ChunkDone {
+			result.buffered = append(result.buffered, chunk)
+			result.progress = port.StreamProgressComplete
+			stop()
+			if cancel != nil {
+				cancel()
+			}
+			return result, nil
+		}
+		if !advancesVisible(chunk) {
+			result.buffered = append(result.buffered, chunk)
+			result.progress = port.StreamProgressPrecommit
+			continue
+		}
+
+		result.progress = port.StreamProgressVisible
+		result.chunk = chunk
+		result.remaining = p.restSeq(diagnostic, next, stop, cancel)
+		result.stop = stop
+		result.cancel = cancel
+		return result, nil
+	}
+}
+
+// pullTentativeWithIdle bounds one raw read while the attempt is still
+// semantically precommit. Every successfully received chunk resets the budget
+// because this helper is called anew for each pull.
+func (p *resilientProvider) pullTentativeWithIdle(
+	model string,
+	next func() (port.Chunk, error, bool),
+	cancel context.CancelFunc,
+) (port.Chunk, bool, error) {
+	type result struct {
+		chunk port.Chunk
+		err   error
+		ok    bool
+	}
+	results := make(chan result, 1)
+	go func() {
+		chunk, err, ok := next()
+		results <- result{chunk: chunk, err: err, ok: ok}
+	}()
+	timer := time.NewTimer(p.cfg.StreamIdleTimeout)
+	defer timer.Stop()
+	select {
+	case r := <-results:
+		return r.chunk, r.ok, r.err
+	case <-timer.C:
+		if cancel != nil {
+			cancel()
+		}
+		<-results
+		p.diag().Log(context.Background(), port.LevelInfo, "llm stream stalled (idle timeout) before semantic commit",
+			"model", model,
+			"idle", p.cfg.StreamIdleTimeout)
+		return port.Chunk{}, true, &StreamIdleError{Idle: p.cfg.StreamIdleTimeout}
 	}
 }
 
@@ -778,15 +984,15 @@ func (p *resilientProvider) pullToCommit(
 // cancels the per-attempt context (unblocking the inner stream.Next()) and yields
 // a terminal *StreamIdleError. The helper goroutine is always drained after a
 // cancel so it cannot leak.
-func (p *resilientProvider) restSeq(model string, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
+func (p *resilientProvider) restSeq(diagnostic attemptDiagnostic, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
 	if p.cfg.StreamIdleTimeout <= 0 {
-		return p.restSeqUnbounded(model, next, stop, cancel)
+		return p.restSeqUnbounded(diagnostic, next, stop, cancel)
 	}
-	return p.restSeqIdleBounded(model, next, stop, cancel)
+	return p.restSeqIdleBounded(diagnostic, next, stop, cancel)
 }
 
 // restSeqUnbounded is the restSeq variant with no idle timeout.
-func (p *resilientProvider) restSeqUnbounded(model string, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
+func (p *resilientProvider) restSeqUnbounded(diagnostic attemptDiagnostic, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
 	return func(yield func(port.Chunk, error) bool) {
 		defer stop()
 		if cancel != nil {
@@ -801,8 +1007,8 @@ func (p *resilientProvider) restSeqUnbounded(model string, next func() (port.Chu
 				// Logged BEFORE the yield: an ordinary consumer BREAKS its range loop on
 				// the error, which makes yield return false — so a log placed after the
 				// yield-false return is unreachable on the very path that matters.
-				p.logMidStreamError(model, e)
-				e = p.asPermanent(e)
+				p.logMidStreamError(diagnostic, e)
+				e = classifyVisibleError(e)
 			}
 			if !yield(c, e) {
 				return
@@ -817,7 +1023,7 @@ func (p *resilientProvider) restSeqUnbounded(model string, next func() (port.Chu
 // restSeqIdleBounded is the restSeq variant bounded by the stream-idle
 // watchdog. A real time.NewTimer is used (NOT cfg.Clock — that drives breaker
 // math only, consistent with backoff()).
-func (p *resilientProvider) restSeqIdleBounded(model string, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
+func (p *resilientProvider) restSeqIdleBounded(diagnostic attemptDiagnostic, next func() (port.Chunk, error, bool), stop func(), cancel context.CancelFunc) iter.Seq2[port.Chunk, error] {
 	return func(yield func(port.Chunk, error) bool) {
 		defer stop()
 		if cancel != nil {
@@ -858,8 +1064,8 @@ func (p *resilientProvider) restSeqIdleBounded(model string, next func() (port.C
 				if r.e != nil {
 					// See the non-idle variant above: logged BEFORE the yield because a
 					// consumer that breaks on the error makes yield return false.
-					p.logMidStreamError(model, r.e)
-					r.e = p.asPermanent(r.e)
+					p.logMidStreamError(diagnostic, r.e)
+					r.e = classifyVisibleError(r.e)
 				}
 				if !yield(r.c, r.e) {
 					return
@@ -882,9 +1088,11 @@ func (p *resilientProvider) restSeqIdleBounded(model string, next func() (port.C
 				// have completed first.
 				<-results
 				p.diag().Log(context.Background(), port.LevelInfo, "llm stream stalled (idle timeout); ending turn",
-					"model", model,
+					"model", diagnostic.model,
 					"idle", p.cfg.StreamIdleTimeout)
-				yield(port.Chunk{}, &StreamIdleError{Idle: p.cfg.StreamIdleTimeout})
+				idleErr := &StreamIdleError{Idle: p.cfg.StreamIdleTimeout}
+				p.logAttemptDecision(diagnostic, idleErr, decisionTerminal, port.StreamProgressVisible, replayVisibleOutput, 0)
+				yield(port.Chunk{}, classifiedProgressError(idleErr, port.StreamProgressVisible))
 				return
 			}
 		}
@@ -916,41 +1124,58 @@ func attemptError(cause, err error) error {
 	return err
 }
 
-// wrap composes the buffered pre-commit chunks and the first committing chunk
-// with the remainder of the inner stream.
-func wrap(head *firstChunk) iter.Seq2[port.Chunk, error] {
+// wrap flushes tentative chunks at their semantic boundary and then relays the
+// visible stream continuation, if any. A breaker success is recorded only after
+// clean completion; a visible transient failure remains terminal and unhealthy.
+func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[port.Chunk, error] {
 	return func(yield func(port.Chunk, error) bool) {
-		if head.empty {
-			return
+		cleanupRemaining := func() {
+			if result.cancel != nil {
+				result.cancel()
+			}
+			if result.stop != nil {
+				result.stop()
+			}
 		}
-		// Replay non-committing chunks buffered before the first committing chunk.
-		for _, pc := range head.preCommit {
-			if !yield(pc, nil) {
-				if head.restSeq != nil {
-					for range head.restSeq {
-						break
-					}
-				}
+		for _, buffered := range result.buffered {
+			if !yield(buffered, nil) {
+				cleanupRemaining()
 				return
 			}
 		}
-		// noCommit: only non-committing chunks were present (clean end before any
-		// committing chunk) — do not yield the zero-value head.chunk.
-		if head.noCommit {
+		switch result.progress {
+		case port.StreamProgressComplete:
+			p.recordSuccess()
 			return
-		}
-		if !yield(head.chunk, nil) {
-			// Caller stopped after the first committing chunk; drain the rest to
-			// trigger its cleanup (stop + cancel) without yielding further.
-			if head.restSeq != nil {
-				for range head.restSeq {
-					break
-				}
+		case port.StreamProgressVisible:
+			if !yield(result.chunk, nil) {
+				cleanupRemaining()
+				return
 			}
-			return
-		}
-		if head.restSeq != nil {
-			head.restSeq(yield)
+			if result.remaining == nil {
+				p.recordSuccess()
+				return
+			}
+			clean := true
+			consumed := true
+			result.remaining(func(chunk port.Chunk, err error) bool {
+				if err != nil {
+					clean = false
+					if !isCallerCanceled(diagnostic.ctx, err) && isTransientForBreaker(err) {
+						p.recordFailure(p.cfg.Clock())
+					}
+				}
+				if !yield(chunk, err) {
+					consumed = false
+					return false
+				}
+				return err == nil
+			})
+			if clean && consumed {
+				p.recordSuccess()
+			}
+		case port.StreamProgressUnknown, port.StreamProgressPrecommit:
+			cleanupRemaining()
 		}
 	}
 }
@@ -1013,108 +1238,69 @@ func isCallerCanceled(ctx context.Context, err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// DefaultClassifier is the default retry policy. It retries:
-//   - net errors and timeouts (net.Error, os timeouts),
-//   - HTTP 408, 409, 429, and any 5xx from *openai.Error,
-//   - context.DeadlineExceeded NOT tied to the caller (per-attempt timeouts),
-//   - HTTP/2 stream errors (http2.StreamError — a peer RST_STREAM /
-//     INTERNAL_ERROR transport reset, e.g. "stream error: stream ID 45;
-//     INTERNAL_ERROR; received from peer").
-//
-// It does not retry:
-//   - context.Canceled / context.DeadlineExceeded from the caller (handled
-//     earlier in Stream, but also reported non-retryable here for safety),
-//   - 4xx other than 408/429.
-//
-// Unknown errors are treated as non-retryable to avoid replaying ambiguous
-// failures.
+// DefaultClassifier is the legacy compatibility retry-policy projection of the
+// provider-neutral tri-state classification. It returns true only for causally
+// retryable failures. Config.Classifier is invoked after that classification as a
+// tighten-only veto, so neither this function nor a custom classifier can upgrade
+// unknown or permanent failures in Stream.
 func DefaultClassifier(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Caller-style context cancellation is never retryable.
-	if errors.Is(err, context.Canceled) {
-		return false
-	}
-
-	// A credential we could not mint or load is never fixed by replaying the
-	// request: the token source already tried, and the remediation is a human
-	// re-authenticating. Checked BEFORE the transport arms below because
-	// net/http's *url.Error wrapper satisfies net.Error, so leaving it to them
-	// would classify every credential failure as a retryable network blip.
-	if errors.Is(err, ErrCredentials) {
-		return false
-	}
-
-	// Provider adapters may spend a bounded, protocol-private recovery attempt
-	// inside one Stream call. Honour that explicit outcome before unwrapping to a
-	// retryable HTTP status, or the generic wrapper would replay the entire pair.
 	if retryable, explicit := explicitRetryDecision(err); explicit {
 		return retryable
 	}
-
-	// HTTP/2 stream resets (peer RST_STREAM / INTERNAL_ERROR) are transient
-	// transport-level failures — the bounded retry invariant caps the blast
-	// radius. All http2.StreamError codes are treated as retryable, matching
-	// net/http's own behaviour.
-	var h2Err *http2.StreamError
-	if errors.As(err, &h2Err) {
-		return true
-	}
-
-	// OpenAI typed API error: classify on HTTP status.
-	var apiErr *oai.Error
-	if errors.As(err, &apiErr) {
-		return retryableStatus(apiErr.StatusCode)
-	}
-
-	// Generic status-bearing errors (interface escape hatch for non-openai
-	// providers that expose a StatusCode).
-	var sc interface{ StatusCode() int }
-	if errors.As(err, &sc) {
-		return retryableStatus(sc.StatusCode())
-	}
-
-	// Network errors and timeouts are retryable.
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-
-	// A bare DeadlineExceeded (e.g. a per-attempt timeout surfaced without a
-	// net.Error wrapper) is retryable.
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-
-	// A truncated or malformed payload surfaces as a JSON syntax error or an
-	// unexpected EOF: a partial SSE frame (the openai-go ssestream decoder parses
-	// each frame with encoding/json), or an empty/garbled error body some
-	// OpenAI-compatible gateways return on a transient 5xx (the SDK's error path
-	// then discards the status and hands back the raw json error, so it never
-	// reaches the *oai.Error / StatusCode arms above). At establishment this is a
-	// transient transport/proxy truncation, not a stable client error, so it is
-	// retryable — bounded by MaxAttempts + the breaker.
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) {
-		return true
-	}
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-
-	return false
+	return DefaultDisposition(err) == port.RetryDispositionRetryable
 }
 
-// retryableStatus reports whether an HTTP status code is retryable.
-func retryableStatus(code int) bool {
+// DefaultDisposition classifies the causal provider failure without deciding
+// whether policy permits another attempt. Unknown is conservative and is never
+// promoted to permanent.
+func DefaultDisposition(err error) port.RetryDisposition {
+	return dispositionOf(err)
+}
+
+func defaultDisposition(err error) port.RetryDisposition {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return port.RetryDispositionUnknown
+	}
+	if errors.Is(err, ErrCredentials) {
+		return port.RetryDispositionPermanent
+	}
+
+	var h2Err *http2.StreamError
+	if errors.As(err, &h2Err) {
+		return port.RetryDispositionRetryable
+	}
+	var apiErr *oai.Error
+	if errors.As(err, &apiErr) {
+		return statusDisposition(apiErr.StatusCode)
+	}
+	var sc interface{ StatusCode() int }
+	if errors.As(err, &sc) {
+		return statusDisposition(sc.StatusCode())
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return port.RetryDispositionRetryable
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return port.RetryDispositionRetryable
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return port.RetryDispositionRetryable
+	}
+	return port.RetryDispositionUnknown
+}
+
+func statusDisposition(code int) port.RetryDisposition {
 	switch {
 	case code == 408 || code == 409 || code == 429:
-		return true
+		return port.RetryDispositionRetryable
 	case code >= 500 && code <= 599:
-		return true
+		return port.RetryDispositionRetryable
+	case code >= 400 && code <= 499:
+		return port.RetryDispositionPermanent
 	default:
-		return false
+		return port.RetryDispositionUnknown
 	}
 }
 

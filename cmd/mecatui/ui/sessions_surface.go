@@ -323,7 +323,7 @@ func (s *sessionsState) applyReplayEventSecondary(msg tea.Msg) {
 		c.addNotice(approvalNotice(msg))
 	case client.CompactionArchiveMsg:
 		c.addNotice(compactionArchiveNotice(msg))
-	case client.CompactionMsg, client.NoProgressMsg:
+	case client.ModelRetryMsg, client.CompactionMsg, client.NoProgressMsg:
 		c.addNotice(noticeLine(msg))
 	case client.ProviderRouteMsg:
 		c.addNotice("via " + msg.Text)

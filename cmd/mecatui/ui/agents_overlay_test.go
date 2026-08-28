@@ -689,6 +689,98 @@ func TestSubagentRosterWindowed(t *testing.T) {
 	}
 }
 
+// TestRosterRouteNavigation verifies each top-level roster delegates navigation
+// to navigateRosterCursor, including live key overrides and page-sized movement.
+func TestRosterRouteNavigation(t *testing.T) {
+	rosters := []struct {
+		name    string
+		seed    func(Model) Model
+		cursor  func(Model) int
+		wantTab agentsTab
+	}{
+		{
+			name: "team",
+			seed: func(m Model) Model {
+				return seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+			},
+			cursor:  func(m Model) int { return m.team.cursor },
+			wantTab: tabTeams,
+		},
+		{
+			name: "subagent",
+			seed: func(m Model) Model {
+				return seedSubagents(m, "p1", startSub("p1", "c1", "first"), startSub("p1", "c2", "second"))
+			},
+			cursor:  func(m Model) int { return m.subagents.cursor },
+			wantTab: tabSubagents,
+		},
+		{
+			name: "parallel",
+			seed: func(m Model) Model {
+				return seedParallel(m, "p1", startPar("p1", "all", 1), startPar("p2", "all", 1))
+			},
+			cursor:  func(m Model) int { return m.parallel.cursor },
+			wantTab: tabParallel,
+		},
+	}
+
+	for _, tc := range rosters {
+		t.Run(tc.name+" custom down", func(t *testing.T) {
+			m := tc.seed(newMCPModel(t, aztec(), nil))
+			m.keys = applyKeyOverrides(m.keys, map[string][]string{"Down": {"n"}})
+			mm, _ := m.Update(ctrlKey('a'))
+			m = mm.(Model)
+			if m.agentsTab != tc.wantTab {
+				t.Fatalf("tab = %v, want %v", m.agentsTab, tc.wantTab)
+			}
+
+			mm, _ = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+			m = mm.(Model)
+			if got := tc.cursor(m); got != 1 {
+				t.Fatalf("custom Down cursor = %d, want 1", got)
+			}
+			mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+			m = mm.(Model)
+			if got := tc.cursor(m); got != 1 {
+				t.Errorf("default Down cursor = %d after override, want 1", got)
+			}
+		})
+	}
+
+	for _, tc := range rosters[1:] { // Team already has route-level page coverage.
+		t.Run(tc.name+" page down", func(t *testing.T) {
+			const n = 20
+			m := resize(newMCPModel(t, aztec(), nil), 100, 24)
+			if tc.name == "subagent" {
+				msgs := make([]client.SubagentMsg, 0, n)
+				for i := 0; i < n; i++ {
+					child := "child-" + string(rune('a'+i))
+					msgs = append(msgs, startSub("p1", child, child))
+				}
+				m = seedSubagents(m, "p1", msgs...)
+			} else {
+				msgs := make([]client.ParallelMsg, 0, n)
+				for i := 0; i < n; i++ {
+					parent := "p" + string(rune('a'+i))
+					msgs = append(msgs, startPar(parent, "all", 1))
+				}
+				m = seedParallel(m, "p1", msgs...)
+			}
+			mm, _ := m.Update(ctrlKey('a'))
+			m = mm.(Model)
+			page := teamRosterRows(m.vp.Height())
+			if page >= n {
+				t.Fatalf("test premise broken: page %d must be < roster %d", page, n)
+			}
+			mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+			m = mm.(Model)
+			if got := tc.cursor(m); got != page {
+				t.Errorf("pgdown cursor = %d, want page-sized move %d", got, page)
+			}
+		})
+	}
+}
+
 // --- footer goldens -------------------------------------------------------
 
 // TestFooterFleetGolden locks the three footer fleet states (no subagents / N running

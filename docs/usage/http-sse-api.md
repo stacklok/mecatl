@@ -5,8 +5,9 @@ entry point, shared event lifecycle, and gRPC comparison, start with [Drive via
 gRPC / HTTP](https://github.com/stacklok/mecatl/blob/main/user-docs/building/deployment/grpc-http.md).
 
 The HTTP adapter wraps the same service. Every event is emitted as one SSE
-`data:` line carrying the proto `Event` marshalled to JSON — so HTTP and gRPC
-share one event shape.
+`data:` line carrying the generated proto Go value marshalled by `encoding/json`
+— so field names match the gRPC event shape, while protobuf enums are JSON
+numbers rather than protojson enum names.
 
 **Sessions & runs:**
 
@@ -19,7 +20,8 @@ share one event shape.
 | `POST /v1/sessions/{id}/rename` | `{title}` | `200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease |
 | `POST /v1/sessions/{id}/delete` | — | `204` after permanently removing the snapshot and store-managed sidecars; `412` when the target is active, awaiting, or not a main chat, `409` when another replica holds the session lease, `501` when the configured store cannot physically delete |
 | `DELETE /v1/sessions/{id}` | — | `204` — close the session, releasing its per-session resources (not physical stored-session deletion) |
-| `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events |
+| `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events; rejected while failed-step retry intent is pending |
+| `POST /v1/sessions/{id}/retry` | no body | `200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible |
 | `POST /v1/sessions/{id}/approve` | `{ask_id, allow}` | `204` |
 | `POST /v1/sessions/{id}/plan:approve` | `{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}` | `200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](../adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session |
 | `POST /v1/sessions/{id}/cancel` | — | `204` |
@@ -171,6 +173,35 @@ data: {"type":"result","seq":3,"result":{"stop":"end_turn","text":"Mock provider
 
 Disconnecting the client (closing the curl connection) cancels the run.
 `text` is required — omitting it returns `400` `{"error":"text is required"}`.
+
+### Retry the failed model step
+
+When a terminal result explicitly carries `retry_disposition: 2` (retryable)
+and `stream_progress: 2` (precommit) or `3` (visible), repeat that exact model
+step without submitting another prompt. The concrete SSE mappings are
+`retry_disposition`: `0` unspecified, `1` unknown, `2` retryable, `3` permanent;
+and `stream_progress`: `0` unspecified, `1` unknown, `2` precommit, `3` visible,
+`4` complete. For example, an automatically safe retry result contains
+`"retry_disposition":2,"stream_progress":2`.
+
+```console
+$ curl -s -N -X POST http://127.0.0.1:8081/v1/sessions/<id>/retry
+data: {"type":"session.init","seq":1}
+
+# model events follow, ending with a terminal result
+```
+
+The route has no request body. It persists failed-step retry intent before launch and
+adds no user message. Persisted conversation/tool state is reused while live turn-0
+instructions, operator profile, and system-prompt sources are re-resolved. Normal
+`/prompt` requests are rejected while intent is pending. A clean pre-turn brake leaves
+it pending; cancellation clears it. A `409` means the server rejected eligibility. Retrying after `VISIBLE` output is an
+explicit operator choice; automated clients should use the narrower typed
+`RETRYABLE + PRECOMMIT` case and a finite retry bound.
+
+The terminal Result fields are optional for wire compatibility. Presence with
+`UNKNOWN` is an explicit conservative answer from a new server. Absence means the
+server predates typed semantic retry and is not evidence that replay is safe.
 
 ### Approve / deny a pending ask
 

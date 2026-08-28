@@ -3278,6 +3278,93 @@ func (s *Service) StartScheduledRunContent(ctx context.Context, id session.Sessi
 	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler)
 }
 
+// RetryFailedRun resumes the failed model step from the persisted conversation state
+// without submitting another prompt. Live system instructions and operator context are
+// resolved again for the retry. The caller owns draining the returned run and calling
+// FinishRun, exactly as for StartRunContent. Eligibility is derived exclusively from the
+// persisted typed terminal metadata and is consumed only after every fallible setup step
+// has succeeded and the recovered idle snapshot has been saved.
+func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*agent.Run, error) {
+	if s.cfg.OwnershipEnforced {
+		if _, err := s.GetSession(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return nil, err
+	}
+	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
+		return nil, fmt.Errorf("%w: session %q is not eligible for chat retry", ErrFailedStepRetryIneligible, id)
+	}
+	if registered, ok := s.LookupRun(id); ok {
+		if !sess.State.IsTerminal() {
+			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedStepRetryIneligible, id)
+		}
+		s.deregister(id, registered)
+	}
+	eligibleFailure, err := failedStepRetryEligibility(sess)
+	if err != nil {
+		return nil, fmt.Errorf("%w: session %q: %v", ErrFailedStepRetryIneligible, id, err)
+	}
+
+	if err := s.acquireLease(ctx, id); err != nil {
+		return nil, err
+	}
+	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	// Approval replay reads the still-failed conversation and must complete before
+	// preparation clears failed-state metadata.
+	s.maybeReplayApprovals(ctx, sess)
+	if err := s.prepareFailedStepRetry(ctx, sess, eligibleFailure); err != nil {
+		return nil, err
+	}
+
+	ctx = memory.WithWorkspace(ctx, sess.Workspace)
+	run := engine.RetryFailedStep(ctx, sess, env)
+	s.register(id, run, sess)
+	return run, nil
+}
+
+func failedStepRetryEligibility(sess *session.Session) (bool, error) {
+	disposition, progress := sess.FailureMetadata()
+	pendingDisposition, pendingProgress, pending := sess.FailedStepRetryPending()
+	failed := sess.State == session.StateFailed && disposition == session.RetryDispositionRetryable &&
+		(progress == session.StreamProgressPrecommit || progress == session.StreamProgressVisible)
+	prepared := pending && (sess.State == session.StateIdle || sess.State == session.StateRunning) &&
+		pendingDisposition == session.RetryDispositionRetryable &&
+		(pendingProgress == session.StreamProgressPrecommit || pendingProgress == session.StreamProgressVisible)
+	if failed || prepared {
+		return failed, nil
+	}
+	return false, fmt.Errorf("state=%q disposition=%q progress=%q retry_pending=%t", sess.State, disposition, progress, pending)
+}
+
+func (s *Service) prepareFailedStepRetry(ctx context.Context, sess *session.Session, failed bool) error {
+	if failed {
+		if err := sess.PrepareFailedStepRetry(); err != nil {
+			return fmt.Errorf("server: prepare failed-step retry session: %w", err)
+		}
+	} else if sess.State == session.StateRunning {
+		// Lease ownership and runEntryMu prove a persisted running retry is orphaned.
+		if err := sess.Abandon(); err != nil {
+			return fmt.Errorf("server: abandon crashed failed-step retry: %w", err)
+		}
+	}
+	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+		return fmt.Errorf("server: persist failed-step retry preparation: %w", err)
+	}
+	return nil
+}
+
 type runPurpose uint8
 
 const (
@@ -3322,6 +3409,9 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	}
 	if err := admitRunPurpose(sess, purpose); err != nil {
 		return nil, err
+	}
+	if _, _, pending := sess.FailedStepRetryPending(); pending {
+		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)
 	}
 	// The run registry is the authoritative same-process single-run gate while the
 	// loaded aggregate is non-terminal. A terminal snapshot means the registered

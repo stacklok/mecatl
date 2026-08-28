@@ -154,24 +154,12 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 	case key.Matches(msg, m.keys.Findings):
 		m.team.view = teamFindings
 		return m, nil
-	case key.Matches(msg, m.keys.Up):
-		m.team.cursor = clampCursor(m.team.cursor-1, n)
+	}
+	if next, handled := navigateRosterCursor(msg, m.keys, m.team.cursor, n, page); handled {
+		m.team.cursor = next
 		return m, nil
-	case key.Matches(msg, m.keys.Down):
-		m.team.cursor = clampCursor(m.team.cursor+1, n)
-		return m, nil
-	case key.Matches(msg, m.keys.ScrollU):
-		m.team.cursor = clampCursor(m.team.cursor-page, n)
-		return m, nil
-	case key.Matches(msg, m.keys.ScrollD):
-		m.team.cursor = clampCursor(m.team.cursor+page, n)
-		return m, nil
-	case key.Matches(msg, m.keys.JumpTop):
-		m.team.cursor = 0
-		return m, nil
-	case key.Matches(msg, m.keys.JumpEnd):
-		m.team.cursor = clampCursor(n-1, n)
-		return m, nil
+	}
+	switch {
 	case key.Matches(msg, m.keys.Choose):
 		order := teamLaneOrder(b.teamLanes)
 		if m.team.cursor < 0 || m.team.cursor >= len(order) {
@@ -188,6 +176,25 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 		return m.cancelTeamLane(b, &b.teamLanes[order[m.team.cursor]])
 	}
 	return m, nil
+}
+
+// navigateRosterCursor applies the shared roster navigation keys to cursor.
+func navigateRosterCursor(msg tea.KeyPressMsg, keys keyMap, cursor, total, page int) (next int, handled bool) {
+	switch {
+	case key.Matches(msg, keys.Up):
+		return clampCursor(cursor-1, total), true
+	case key.Matches(msg, keys.Down):
+		return clampCursor(cursor+1, total), true
+	case key.Matches(msg, keys.ScrollU):
+		return clampCursor(cursor-page, total), true
+	case key.Matches(msg, keys.ScrollD):
+		return clampCursor(cursor+page, total), true
+	case key.Matches(msg, keys.JumpTop):
+		return clampCursor(0, total), true
+	case key.Matches(msg, keys.JumpEnd):
+		return clampCursor(total-1, total), true
+	}
+	return cursor, false
 }
 
 // cancelTeamLane sends a CancelChild frame for one team member's session id (the

@@ -195,7 +195,7 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			if ctx.Err() != nil {
 				return
 			}
-			yield(port.Chunk{}, openaichatStreamErr(err, err.Error()))
+			yield(port.Chunk{}, openaichatStreamErr(err, err.Error(), st.completionID))
 			return
 		}
 		if !st.finished {
@@ -237,13 +237,30 @@ var _ port.LLMProvider = (*Provider)(nil)
 // other than 408/429) from transient failures. It carries the SDK error for
 // Unwrap and a human-readable message for Error().
 type openaichatStreamError struct {
-	err    error  // original SDK/transport error (for Unwrap)
-	msg    string // human-readable Error() string
-	status int    // HTTP-status equivalent; 0 = unknown
+	err      error  // original SDK/transport error (for Unwrap)
+	msg      string // human-readable Error() string
+	status   int    // HTTP-status equivalent; 0 = unknown
+	metadata providerErrorMetadata
 }
 
-func (e *openaichatStreamError) Error() string { return e.msg }
-func (e *openaichatStreamError) Unwrap() error { return e.err }
+type providerErrorMetadata struct {
+	httpStatus      int
+	inBandStatus    int
+	providerCode    string
+	correlationKind string
+	correlationID   string
+}
+
+func (e *openaichatStreamError) Error() string             { return e.msg }
+func (e *openaichatStreamError) Unwrap() error             { return e.err }
+func (e *openaichatStreamError) StatusCode() int           { return e.status }
+func (e *openaichatStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
+func (e *openaichatStreamError) ProviderInBandStatus() int { return e.metadata.inBandStatus }
+func (e *openaichatStreamError) ProviderErrorCode() string { return e.metadata.providerCode }
+func (e *openaichatStreamError) ProviderErrorCorrelationKind() string {
+	return e.metadata.correlationKind
+}
+func (e *openaichatStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
 // Permanent implements port.PermanentError. The error is permanent when the
 // message signals a context-window overflow, or when the status is a known
@@ -278,14 +295,44 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
-// openaichatStreamErr wraps the given error as an openaichatStreamError, probing
-// the error chain for an OpenAI SDK Error to extract an HTTP-status equivalent.
-// If no SDK error is found, status is 0 (unknown / fail-open).
-func openaichatStreamErr(err error, msg string) *openaichatStreamError {
+// openaichatStreamErr wraps the given error as an openaichatStreamError while
+// retaining the SDK error in the chain and projecting only typed provider fields.
+func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamError {
 	var sdkErr *oai.Error
 	status := 0
+	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
-		status = sdkErr.StatusCode
+		metadata.providerCode = sdkErr.Code
+		if sdkErr.StatusCode != 0 {
+			status = sdkErr.StatusCode
+			metadata.httpStatus = sdkErr.StatusCode
+		} else {
+			status = openaichatErrorCodeToStatus(sdkErr.Code)
+			metadata.inBandStatus = status
+		}
+		if sdkErr.Response != nil {
+			if requestID := sdkErr.Response.Header.Get("X-Request-ID"); requestID != "" {
+				metadata.correlationKind = "request"
+				metadata.correlationID = requestID
+			}
+		}
 	}
-	return &openaichatStreamError{err: err, msg: msg, status: status}
+	if metadata.correlationID == "" && completionID != "" {
+		metadata.correlationKind = "completion"
+		metadata.correlationID = completionID
+	}
+	return &openaichatStreamError{err: err, msg: msg, status: status, metadata: metadata}
+}
+
+func openaichatErrorCodeToStatus(code string) int {
+	switch code {
+	case "rate_limit_exceeded":
+		return http.StatusTooManyRequests
+	case "server_error", "engine_overloaded", "service_unavailable":
+		return http.StatusServiceUnavailable
+	case "gateway_timeout", "timeout":
+		return http.StatusGatewayTimeout
+	default:
+		return 0
+	}
 }

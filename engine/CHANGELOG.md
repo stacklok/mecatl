@@ -24,10 +24,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   in a tagged release, the net public change over the pre-steer baseline is a
   breaking `Changed` only for the enum vocabulary (pre-v1 a minor bump).
 
+- **`session.ResultPayload` semantic retry fields** (issue #409) — adds exported
+  `RetryDisposition` and `StreamProgress` fields. Struct field additions are
+  breaking under `COMPATIBILITY.md` (pre-v1 a minor bump).
+
 ### Removed
 
 - **Agent untrusted-content fencing APIs** (issue #380,
-  [ADR 0239](../docs/adr/0239-governance-fence-ownership.md)) — removed
+  [ADR 0240](../docs/adr/0240-governance-fence-ownership.md)) — removed
   `agent.UntrustedFence`, `agent.WriteUntrustedBlock`, `agent.FenceUntrusted`, and
   `agent.NeutraliseFraming` as part of their clean relocation to governance. This
   is a breaking API change (pre-v1 a minor bump); callers must use the governance
@@ -36,7 +40,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 ### Added
 
 - **Canonical governance untrusted-content fencing** (issue #380,
-  [ADR 0239](../docs/adr/0239-governance-fence-ownership.md)) —
+  [ADR 0240](../docs/adr/0240-governance-fence-ownership.md)) —
   `governance.UntrustedFence`, `governance.WriteUntrustedBlock`,
   `governance.FenceUntrusted`, `governance.NeutraliseFraming`, and
   `governance.NeutraliseDelegationResult` are the five canonical public APIs for
@@ -44,6 +48,36 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `NeutraliseDelegationResult` is exported so delegation result renderers can use
   the canonical neutralisation policy without duplicating the marker logic. This
   addition is paired with the breaking removal of the former agent APIs above.
+
+- **Run-owned attempt correlation context** (issue #409) —
+  `port.WithRunAttemptContext` installs one independent session/run/turn carrier
+  and `port.SetAttemptTurnIndex` updates its atomic turn across an engine run,
+  without changing the immutable derivation semantics of the public
+  `WithRunSerial` and `WithTurnIndex` helpers. Added (minor).
+
+- **`session.EvModelRetry` and `session.ModelRetryPayload`** (issue #409) — mark a failed-step retry after `session.init` with typed disposition/progress for event-source reconstruction plus client-visible advisory text.
+
+- **Structured provider attempt-error metadata** (issue #409) —
+  `port.ProviderErrorMetadataError` lets provider failures expose HTTP status,
+  in-band status, provider code, and correlation kind/ID through primitive getter
+  methods and `errors.As` without widening `LLMRequest`. The structural shape lets
+  independently released provider modules compile against older engine versions;
+  root composition validates the closed correlation vocabulary and bounded tokens
+  before logging. Added (minor).
+
+- **Failed-step retry entry** (issue #409) —
+  `agent.Engine.RetryFailedStep` resumes an aggregate carrying durably prepared
+  retry intent through the normal run lifecycle and turn loop without recording
+  another user prompt. Persisted conversation/tool state is reused while live
+  instruction and system-prompt sources are re-resolved. Added (minor).
+
+- **Typed semantic retry metadata and persisted intent** (issue #409) —
+  `session.RetryDisposition` and `session.StreamProgress` classify failed model
+  streams and expose closed-vocabulary `Valid` checks; aggregate methods prepare,
+  inspect and restore snapshot-persisted failed-step retry intent. `port` exposes
+  aliases, `errors.As` interfaces, and process-local run/turn context helpers for
+  attempt diagnostics without widening `LLMRequest`. New types and methods are
+  Added (minor).
 
 - **`session.Principal.IdentityWellFramed`** (issue #368) — the EXPORTED form of
   the owner-key delimiter-safety rule: reports whether a principal's

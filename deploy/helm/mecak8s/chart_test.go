@@ -458,6 +458,84 @@ func TestMecak8sHelmChart_OIDC_PrivateHTTPSIssuer(t *testing.T) {
 	}
 }
 
+func TestMecak8sHelmChart_ServerTLS(t *testing.T) {
+	base := productionArgs()
+	defaultRender, err := helm(t, base...)
+	if err != nil {
+		t.Fatalf("render default production values: %v", err)
+	}
+	falseRender, err := helm(t, append(append([]string{}, base...), "--set", "tls.enabled=false")...)
+	if err != nil {
+		t.Fatalf("render tls.enabled=false production values: %v", err)
+	}
+	if defaultRender != falseRender {
+		t.Fatal("tls.enabled=false changed the default production render")
+	}
+	for _, forbidden := range []string{"--tls-cert", "--tls-key", "/var/run/secrets/tls", "name: tls", "scheme: HTTPS"} {
+		if strings.Contains(defaultRender, forbidden) {
+			t.Fatalf("default production render unexpectedly contains %q", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"startupProbe:\n            httpGet:\n              scheme: HTTP\n              path: /readyz\n              port: http",
+		"readinessProbe:\n            httpGet:\n              scheme: HTTP\n              path: /readyz\n              port: http",
+		"livenessProbe:\n            httpGet:\n              scheme: HTTP\n              path: /healthz\n              port: http",
+		"preStop:\n              httpGet:\n                scheme: HTTP\n                path: /drain\n                port: http",
+	} {
+		if !strings.Contains(defaultRender, want) {
+			t.Fatalf("default production render missing HTTP endpoint block %q", want)
+		}
+	}
+
+	fixtureArgs := []string{"template", "production", ".", "-f", "ci/production-tls-values.yaml"}
+	rendered, err := helm(t, fixtureArgs...)
+	if err != nil {
+		t.Fatalf("render TLS production fixture: %v", err)
+	}
+	for _, want := range []string{
+		"--tls-cert=/var/run/secrets/tls/tls.crt",
+		"--tls-key=/var/run/secrets/tls/tls.key",
+		"- {name: tls, mountPath: /var/run/secrets/tls, readOnly: true}",
+		"- name: tls\n          secret:\n            secretName: mecak8s-tls\n            defaultMode: 0440\n            items:\n              - {key: \"tls.crt\", path: \"tls.crt\"}\n              - {key: \"tls.key\", path: \"tls.key\"}",
+		"startupProbe:\n            httpGet:\n              scheme: HTTPS\n              path: /readyz\n              port: http",
+		"readinessProbe:\n            httpGet:\n              scheme: HTTPS\n              path: /readyz\n              port: http",
+		"livenessProbe:\n            httpGet:\n              scheme: HTTPS\n              path: /healthz\n              port: http",
+		"preStop:\n              httpGet:\n                scheme: HTTPS\n                path: /drain\n                port: http",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("TLS production fixture missing %q", want)
+		}
+	}
+
+	enabled := append(append([]string{}, base...), "--set", "tls.enabled=true,tls.secretName=mecak8s-tls")
+	customKeys := append(append([]string{}, enabled...), "--set", "tls.certKey=server.crt,tls.keyKey=server.key")
+	rendered, err = helm(t, customKeys...)
+	if err != nil {
+		t.Fatalf("render TLS production values with custom keys: %v", err)
+	}
+	for _, want := range []string{
+		"--tls-cert=/var/run/secrets/tls/server.crt",
+		"--tls-key=/var/run/secrets/tls/server.key",
+		"- name: tls\n          secret:\n            secretName: mecak8s-tls\n            defaultMode: 0440\n            items:\n              - {key: \"server.crt\", path: \"server.crt\"}\n              - {key: \"server.key\", path: \"server.key\"}",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("TLS custom-key render missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{`- {key: "tls.crt", path: "tls.crt"}`, `- {key: "tls.key", path: "tls.key"}`} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("TLS custom-key render unexpectedly retained %q", forbidden)
+		}
+	}
+
+	for _, set := range []string{"tls.secretName=", "tls.certKey=", "tls.keyKey=", "tls.clientCA=ca.pem"} {
+		args := append(append([]string{}, enabled...), "--set", set)
+		if _, err := helm(t, args...); err == nil {
+			t.Fatalf("render accepted invalid TLS configuration %q", set)
+		}
+	}
+}
+
 func TestMecak8sVMCPPOC_Scenario3_ChartTLSContract(t *testing.T) {
 	args := kindVMCPArgs()
 	rendered, err := helm(t, args...)
@@ -528,5 +606,34 @@ func TestMecak8sHelmChart_ImagePullSecrets(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "imagePullSecrets:") || !strings.Contains(rendered, "- name: ghcr-pull-secret") {
 		t.Fatal("render with imagePullSecrets set missing the projected pull secret")
+	}
+}
+
+func TestMecak8sHelmChart_ExtraEnv(t *testing.T) {
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render production values: %v", err)
+	}
+	if strings.Contains(rendered, "\n          env:") {
+		t.Fatal("default render (extraEnv unset) unexpectedly contains an env: block")
+	}
+
+	args := append(productionArgs(),
+		"--set", "extraEnv[0].name=OPENROUTER_API_KEY",
+		"--set", "extraEnv[0].valueFrom.secretKeyRef.name=openrouter-key",
+		"--set", "extraEnv[0].valueFrom.secretKeyRef.key=api-key",
+	)
+	rendered, err = helm(t, args...)
+	if err != nil {
+		t.Fatalf("render with extraEnv: %v", err)
+	}
+	for _, want := range []string{
+		"name: OPENROUTER_API_KEY",
+		"name: openrouter-key",
+		"key: api-key",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("render with extraEnv set missing %q", want)
+		}
 	}
 }

@@ -254,17 +254,20 @@ func TestReplayReadLoopCancelUnblocks(t *testing.T) {
 }
 
 // fakeStreamSessionEventsClient is a scripted HarnessServiceClient for the
-// StreamSessionEvents wrapper test: it overrides only the one server-streaming
-// RPC under test, returning a scripted fakeEventStream (an EventRecver, but the
-// real wrapper only needs Recv, so it doubles as the ServerStreamingClient via
-// the embedded ClientStream no-op below). The proto→plain mapping runs offline.
+// StreamSessionEvents and StreamSessionLive wrapper tests. It returns a scripted
+// fakeEventStream (an EventRecver, but the real wrappers only need Recv, so it
+// doubles as the ServerStreamingClient via the embedded ClientStream no-op
+// below). The proto→plain mapping runs offline.
 type fakeStreamSessionEventsClient struct {
 	mecatlv1.HarnessServiceClient
 
 	stream *fakeEventStream
 	err    error
 
-	lastReq *mecatlv1.StreamSessionEventsRequest
+	lastReq     *mecatlv1.StreamSessionEventsRequest
+	liveStream  *fakeEventStream
+	liveErr     error
+	lastLiveReq *mecatlv1.StreamSessionLiveRequest
 }
 
 // fakeServerStreamingClient is a minimal grpc.ServerStreamingClient[Event] stand-in:
@@ -290,206 +293,158 @@ func (f *fakeStreamSessionEventsClient) StreamSessionEvents(_ context.Context, i
 	return fakeServerStreamingClient{f.stream}, nil
 }
 
-// TestStreamSessionEventsCmd asserts the cmd opens the replay stream + runs
-// ReadLoop, that the channel yields the scripted msgs then closes, and that
-// stop() cancels (idempotent + no panic).
-func TestStreamSessionEventsCmd(t *testing.T) {
-	// fakeServerStreamingClient's RecvMsg returns io.EOF (unused by the wrapper);
-	// its Recv (via embedded fakeEventStream) drives the loop.
-	fake := &fakeStreamSessionEventsClient{
-		stream: newFakeEventStream(eventsFromScript(scriptedRunResult())...),
+func (f *fakeStreamSessionEventsClient) StreamSessionLive(_ context.Context, in *mecatlv1.StreamSessionLiveRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[mecatlv1.Event], error) {
+	f.lastLiveReq = in
+	if f.liveErr != nil {
+		return nil, f.liveErr
 	}
-	cl := newFakeClient(fake)
-
-	ch, stop := StreamSessionEventsCmd(context.Background(), cl, "sess-replay")
-	defer stop()
-
-	msgs := drain(ch)
-	if len(msgs) == 0 {
-		t.Fatal("no msgs")
-	}
-	if fake.lastReq.GetSessionId() != "sess-replay" {
-		t.Errorf("request session_id = %q, want sess-replay", fake.lastReq.GetSessionId())
-	}
-	if _, ok := msgs[0].(SessionInitMsg); !ok {
-		t.Errorf("first msg = %T, want SessionInitMsg", msgs[0])
-	}
-	if _, ok := msgs[len(msgs)-1].(StreamClosedMsg); !ok {
-		t.Errorf("last msg = %T, want StreamClosedMsg", msgs[len(msgs)-1])
-	}
-	// stop is idempotent and never panics.
-	stop()
-	stop()
+	return fakeServerStreamingClient{f.liveStream}, nil
 }
 
-// blockingEventStream is a grpc.ServerStreamingClient[mecatlv1.Event] stand-in
-// whose Recv BLOCKS until the context captured at open time is cancelled — it
-// never returns on its own. It proves the cmd's own context.WithCancel
-// propagates to an IN-FLIGHT Recv (the no-leak guarantee the Cmd owns that the
-// EventStream.ReadLoop-level tests don't; a real gRPC Recv respects ctx the same
-// way). The non-Recv ClientStream methods are no-ops like fakeServerStreamingClient.
-type blockingEventStream struct {
-	ctx context.Context // set by the fake client at StreamSessionEvents time
+type liveCmdResult struct {
+	ch   chan tea.Msg
+	stop func()
 }
 
-func (b *blockingEventStream) Recv() (*mecatlv1.Event, error) {
-	<-b.ctx.Done()
-	return nil, b.ctx.Err()
-}
-func (*blockingEventStream) Header() (metadata.MD, error) { return nil, nil }
-func (*blockingEventStream) Trailer() metadata.MD         { return nil }
-func (*blockingEventStream) CloseSend() error             { return nil }
-func (*blockingEventStream) Context() context.Context     { return context.Background() }
-func (*blockingEventStream) SendMsg(_ interface{}) error  { return nil }
-func (*blockingEventStream) RecvMsg(_ interface{}) error  { return io.EOF }
-
-// blockingStreamSessionEventsClient captures the ctx the cmd derived (via
-// StreamSessionEvents) into a blockingEventStream so Recv blocks on the SAME ctx
-// the stop() func cancels.
-type blockingStreamSessionEventsClient struct {
-	mecatlv1.HarnessServiceClient
-
-	stream *blockingEventStream
+type gatedLiveStreamer struct {
+	entered chan struct{}
+	release chan struct{}
 }
 
-func (f *blockingStreamSessionEventsClient) StreamSessionEvents(ctx context.Context, _ *mecatlv1.StreamSessionEventsRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[mecatlv1.Event], error) {
-	f.stream = &blockingEventStream{ctx: ctx}
-	return f.stream, nil
+func (s *gatedLiveStreamer) StreamSessionLive(_ context.Context, _ string) (*EventStream, error) {
+	close(s.entered)
+	<-s.release
+	return NewEventStream(newFakeEventStream()), nil
 }
 
-// TestStreamSessionEventsCmdStopCancelsInProgress proves the one no-leak
-// guarantee the Cmd owns: stop() cancels an IN-FLIGHT ReadLoop blocked in Recv.
-// A real gRPC Recv respects ctx; the blockingEventStream fakes that (it blocks
-// until the captured ctx is cancelled, never returning on its own). The key
-// assertion is the goroutine exits (the channel closes) within a bounded time
-// after stop() — a cancel that did NOT propagate to a blocked Recv would hang.
-// Mirrors TestReplayReadLoopCancelUnblocks's done/select shape.
-func TestStreamSessionEventsCmdStopCancelsInProgress(t *testing.T) {
-	fake := &blockingStreamSessionEventsClient{}
-	cl := newFakeClient(fake)
+func TestLiveStreamCmdOpensSynchronously(t *testing.T) {
+	live := &gatedLiveStreamer{entered: make(chan struct{}), release: make(chan struct{})}
+	returned := make(chan liveCmdResult, 1)
 
-	ch, stop := StreamSessionEventsCmd(context.Background(), cl, "sess-blocked")
-	defer stop()
-
-	// The reader goroutine: ReadLoop runs on its own goroutine, blocks in Recv,
-	// and closes ch when it exits. We range ch to detect the close.
-	done := make(chan struct{})
 	go func() {
-		for range ch {
-		}
-		close(done)
+		ch, stop := LiveStreamCmd(context.Background(), live, "sess-live")
+		returned <- liveCmdResult{ch: ch, stop: stop}
 	}()
 
-	// Make sure the goroutine has actually entered the blocking Recv before we
-	// cancel: stream is set during the open call, so once it's non-nil the
-	// ReadLoop goroutine is in (or heading to) Recv.
-	waitFor := func(cond func() bool) {
-		deadline := time.Now().Add(2 * time.Second)
-		for !cond() {
-			if time.Now().After(deadline) {
-				t.Fatal("timed out waiting for the ReadLoop goroutine to enter the blocked Recv")
-			}
-			time.Sleep(time.Millisecond)
-		}
+	<-live.entered
+	select {
+	case <-returned:
+		t.Fatal("LiveStreamCmd returned before its opener was released")
+	default:
 	}
-	waitFor(func() bool { return fake.stream != nil })
-	// One more tick so the goroutine is parked in <-ctx.Done() inside Recv, not
-	// still between open and Recv.
-	time.Sleep(50 * time.Millisecond)
+
+	close(live.release)
+	select {
+	case result := <-returned:
+		result.stop()
+		for range result.ch {
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LiveStreamCmd did not return after its opener was released")
+	}
+}
+
+type contextEventStream struct {
+	ctx     context.Context
+	entered chan struct{}
+}
+
+func (s *contextEventStream) Recv() (*mecatlv1.Event, error) {
+	close(s.entered)
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+type blockingLiveStreamer struct {
+	entered chan struct{}
+}
+
+func (s *blockingLiveStreamer) StreamSessionLive(ctx context.Context, _ string) (*EventStream, error) {
+	return NewEventStream(&contextEventStream{ctx: ctx, entered: s.entered}), nil
+}
+
+func TestLiveStreamCmdStopCancelsReadLoop(t *testing.T) {
+	live := &blockingLiveStreamer{entered: make(chan struct{})}
+	ch, stop := LiveStreamCmd(context.Background(), live, "sess-live")
+	<-live.entered
 
 	stop()
-
+	stop()
 	select {
-	case <-done:
-		// The channel closed — ReadLoop exited because the blocked Recv returned a
-		// ctx-cancelled error and readEventLoop terminated (emit may have lost the
-		// race to ctx.Done and emitted nothing, or emitted a StreamErrMsg; either
-		// way the channel closed = no goroutine leak). Good.
+	case _, ok := <-ch:
+		for ok {
+			_, ok = <-ch
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("stop() did not unblock the in-flight ReadLoop (goroutine leak: cancel did not propagate to the blocked Recv)")
+		t.Fatal("channel did not close after stop")
 	}
 }
 
-// midStreamErrorStream returns one event, then a non-EOF error on the next Recv.
-type midStreamErrorStream struct {
-	first  *mecatlv1.Event
-	err    error
-	called bool
-}
+func TestLiveStreamCmdOpenError(t *testing.T) {
+	boom := errors.New("live RPC unavailable")
+	live := &fakeLiveStreamer{err: boom}
 
-func (m *midStreamErrorStream) Recv() (*mecatlv1.Event, error) {
-	if !m.called {
-		m.called = true
-		return m.first, nil
+	ch, stop := LiveStreamCmd(context.Background(), live, "sess-live-error")
+	msgs := drain(ch)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d msgs, want one StreamErrMsg: %#v", len(msgs), msgs)
 	}
-	return nil, m.err
-}
-func (*midStreamErrorStream) Header() (metadata.MD, error) { return nil, nil }
-func (*midStreamErrorStream) Trailer() metadata.MD         { return nil }
-func (*midStreamErrorStream) CloseSend() error             { return nil }
-func (*midStreamErrorStream) Context() context.Context     { return context.Background() }
-func (*midStreamErrorStream) SendMsg(_ interface{}) error  { return nil }
-func (*midStreamErrorStream) RecvMsg(_ interface{}) error  { return io.EOF }
-
-// midStreamErrorClient serves a midStreamErrorStream as the server stream so the
-// mid-stream-error test can drive the wrapper with a one-event-then-error Recv.
-type midStreamErrorClient struct {
-	mecatlv1.HarnessServiceClient
-	stream *midStreamErrorStream
-}
-
-func (m *midStreamErrorClient) StreamSessionEvents(_ context.Context, _ *mecatlv1.StreamSessionEventsRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[mecatlv1.Event], error) {
-	return m.stream, nil
-}
-
-// TestStreamSessionEventsCmdMidStreamErrorClosesChannel (S1): a stream that
-// returns one event then a non-EOF error emits a StreamErrMsg wrapping the
-// error as its LAST msg AND closes the channel (drain returns). The error msg
-// must be the terminal one — no trailing StreamClosedMsg (readEventLoop returns
-// after the StreamErrMsg, so close(ch) fires but StreamClosedMsg does not).
-func TestStreamSessionEventsCmdMidStreamErrorClosesChannel(t *testing.T) {
-	boom := errors.New("rpc gone")
-	ms := &midStreamErrorStream{
-		first: &mecatlv1.Event{Type: "session.init", Seq: 1},
-		err:   boom,
-	}
-	cl := newFakeClient(&midStreamErrorClient{stream: ms})
-
-	ch, stop := StreamSessionEventsCmd(context.Background(), cl, "sess-mid")
-	defer stop()
-
-	msgs := drain(ch) // returns (channel closed) — proves readEventLoop terminated
-	if len(msgs) < 2 {
-		t.Fatalf("got %d msgs, want >=2 (event + error): %#v", len(msgs), msgs)
-	}
-	last := msgs[len(msgs)-1]
-	se, ok := last.(StreamErrMsg)
+	se, ok := msgs[0].(StreamErrMsg)
 	if !ok {
-		t.Fatalf("last msg = %T, want StreamErrMsg: %#v", last, msgs)
+		t.Fatalf("msg = %T, want StreamErrMsg: %#v", msgs[0], msgs)
 	}
 	if !errors.Is(se.Err, boom) {
-		t.Errorf("err = %v, want boom", se.Err)
+		t.Errorf("error = %v, want wrapping %v", se.Err, boom)
 	}
-	// The channel closing (drain returned) is itself the assertion that the loop
-	// terminated; assert the first msg is the event we scripted.
-	if _, ok := msgs[0].(SessionInitMsg); !ok {
-		t.Errorf("first msg = %T, want SessionInitMsg", msgs[0])
+	if se.Transient != TransientStreamErr(boom) {
+		t.Errorf("transient = %t, want %t", se.Transient, TransientStreamErr(boom))
+	}
+	stop()
+	stop()
+}
+
+func TestClientStreamSessionLive(t *testing.T) {
+	fake := &fakeStreamSessionEventsClient{liveStream: newFakeEventStream()}
+	es, err := newFakeClient(fake).StreamSessionLive(context.Background(), "sess-live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if es == nil || fake.lastLiveReq.GetSessionId() != "sess-live" {
+		t.Fatalf("stream/request = %v/%v", es, fake.lastLiveReq)
+	}
+
+	boom := errors.New("live RPC unavailable")
+	_, err = newFakeClient(&fakeStreamSessionEventsClient{liveErr: boom}).StreamSessionLive(context.Background(), "sess-live")
+	if !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want wrapping %v", err, boom)
 	}
 }
 
-// fakeSessionReplayer is a scripted client.SessionReplayer for the
-// ReplayStreamCmd test: it returns a *EventStream over a fakeEventStream (an
-// EventRecver) or a configured open error, recording the id it was called with.
-// It mirrors the ui package's fakeSessionReplayer but lives here so the client
-// test stays self-contained.
-type fakeSessionReplayer struct {
+func TestClientStreamSessionEvents(t *testing.T) {
+	fake := &fakeStreamSessionEventsClient{stream: newFakeEventStream()}
+	es, err := newFakeClient(fake).StreamSessionEvents(context.Background(), "sess-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if es == nil || fake.lastReq.GetSessionId() != "sess-replay" {
+		t.Fatalf("stream/request = %v/%v", es, fake.lastReq)
+	}
+
+	boom := errors.New("replay RPC unavailable")
+	_, err = newFakeClient(&fakeStreamSessionEventsClient{err: boom}).StreamSessionEvents(context.Background(), "sess-replay")
+	if !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want wrapping %v", err, boom)
+	}
+}
+
+type fakeLiveStreamer struct {
 	stream *fakeEventStream
 	err    error
 	calls  int
 	lastID string
 }
 
-func (f *fakeSessionReplayer) StreamSessionEvents(_ context.Context, id string) (*EventStream, error) {
+func (f *fakeLiveStreamer) StreamSessionLive(_ context.Context, id string) (*EventStream, error) {
 	f.calls++
 	f.lastID = id
 	if f.err != nil {
@@ -498,28 +453,26 @@ func (f *fakeSessionReplayer) StreamSessionEvents(_ context.Context, id string) 
 	return NewEventStream(f.stream), nil
 }
 
-// TestReplayStreamCmd asserts the interface variant of StreamSessionEventsCmd:
-// ReplayStreamCmd opens the replay stream via a SessionReplayer + runs ReadLoop,
-// that the channel yields the scripted msgs then closes, and that stop() cancels
-// (idempotent + no panic). Mirrors TestStreamSessionEventsCmd but over the
-// SessionReplayer interface (the seam the ui's /sessions transcript viewer holds).
-func TestReplayStreamCmd(t *testing.T) {
-	fr := &fakeSessionReplayer{
+// TestLiveStreamCmd asserts the interface live wrapper routes to the
+// LiveStreamer, yields the scripted messages, closes its channel, and has an
+// idempotent stop.
+func TestLiveStreamCmd(t *testing.T) {
+	live := &fakeLiveStreamer{
 		stream: newFakeEventStream(eventsFromScript(scriptedRunResult())...),
 	}
 
-	ch, stop := ReplayStreamCmd(context.Background(), fr, "sess-replay")
+	ch, stop := LiveStreamCmd(context.Background(), live, "sess-live")
 	defer stop()
 
+	if cap(ch) != 64 {
+		t.Errorf("channel capacity = %d, want 64", cap(ch))
+	}
 	msgs := drain(ch)
+	if live.calls != 1 || live.lastID != "sess-live" {
+		t.Errorf("StreamSessionLive calls/id = %d/%q, want 1/sess-live", live.calls, live.lastID)
+	}
 	if len(msgs) == 0 {
 		t.Fatal("no msgs")
-	}
-	if fr.calls != 1 {
-		t.Errorf("StreamSessionEvents calls = %d, want 1", fr.calls)
-	}
-	if fr.lastID != "sess-replay" {
-		t.Errorf("replayer called with id %q, want sess-replay", fr.lastID)
 	}
 	if _, ok := msgs[0].(SessionInitMsg); !ok {
 		t.Errorf("first msg = %T, want SessionInitMsg", msgs[0])
@@ -527,30 +480,6 @@ func TestReplayStreamCmd(t *testing.T) {
 	if _, ok := msgs[len(msgs)-1].(StreamClosedMsg); !ok {
 		t.Errorf("last msg = %T, want StreamClosedMsg", msgs[len(msgs)-1])
 	}
-	// stop is idempotent and never panics.
 	stop()
 	stop()
-}
-
-// TestReplayStreamCmdOpenError asserts an open-error emits a StreamErrMsg wrapping
-// the error as its LAST msg AND closes the channel (so WaitForMsg terminates),
-// mirroring the concrete cmd's open-error path.
-func TestReplayStreamCmdOpenError(t *testing.T) {
-	boom := errors.New("rpc gone")
-	fr := &fakeSessionReplayer{err: boom}
-
-	ch, stop := ReplayStreamCmd(context.Background(), fr, "sess-err")
-	defer stop()
-
-	msgs := drain(ch)
-	if len(msgs) != 1 {
-		t.Fatalf("got %d msgs, want 1 (the open-error StreamErrMsg): %#v", len(msgs), msgs)
-	}
-	se, ok := msgs[0].(StreamErrMsg)
-	if !ok {
-		t.Fatalf("msg = %T, want StreamErrMsg: %#v", msgs[0], msgs)
-	}
-	if !errors.Is(se.Err, boom) {
-		t.Errorf("err = %v, want boom", se.Err)
-	}
 }

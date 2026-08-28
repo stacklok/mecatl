@@ -65,11 +65,17 @@ Each turn follows a fixed sequence:
 
 1. **Check stop conditions.** Before calling the model, the loop checks whether the run should end: a prior stop reason, context cancellation, or the token budget (see below). If any condition is met, the run terminates cleanly.
 2. **Maybe compact.** If the conversation is approaching the model's context limit, the loop compresses it before making the next call (see [Context limits & compaction](#context-limits--compaction)).
-3. **Call the model.** The loop streams chunks from the LLM provider — text deltas, reasoning, tool calls, and usage metadata. Each text chunk emits a `message.delta` event.
+3. **Call the model.** The resilience adapter streams provider chunks under semantic retry. Reasoning, replay metadata, whitespace, usage, phase, route, and tool calls remain tentative until meaningful text appears or the stream completes cleanly. Only typed retryable failures before that boundary are retried transparently.
 4. **Dispatch tools.** If the model emitted tool calls, they are dispatched (see below). The results are recorded, and the loop continues to the next turn.
 5. **End or continue.** If the model returned no tool calls and meaningful text, the run completes. A benign empty or reasoning-only turn receives a bounded continuation nudge, up to `MaxNoProgressNudges`; each nudge emits `EvNoProgress`. Exhaustion ends cleanly with `StopNoProgress`. A real terminal stop such as cancellation, refusal, truncation, or failure is reported as-is and is never nudged.
 
-A tool error does not abort the run — it becomes an error result fed back to the model. The model can retry or choose a different path.
+A tool error does not abort the run. It becomes an error result fed back to the model, which can retry or choose a different path.
+
+### Retrying a failed model step
+
+A terminal result reports two independent facts when the server supports semantic retry: `retry_disposition` (`unknown`, `retryable`, or `permanent`) and `stream_progress` (`unknown`, `precommit`, `visible`, or `complete`). Field absence means an older server, not permission to retry.
+
+Use gRPC `RetryStart` or `POST /v1/sessions/{id}/retry` to repeat an eligible retryable step without adding another user message. The server persists the retry intent and prevents a normal prompt from overtaking it. Automatic clients should retry only typed `retryable + precommit` with a finite bound. A visible failure requires an explicit decision because some output already escaped.
 
 ---
 

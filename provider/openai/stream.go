@@ -3,10 +3,12 @@ package openai
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
+	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -32,6 +34,10 @@ type streamState struct {
 	// errTruncatedStream rather than letting the engine promote partial text to a
 	// successful StopEndTurn.
 	done bool
+
+	// responseID is learned only from a typed Responses event and lets a later
+	// top-level error correlate with the response it terminated.
+	responseID string
 
 	// The identity (item_id, output_index, content_index) of the single visible
 	// assistant text part currently being assembled. The harness's domain
@@ -126,6 +132,12 @@ var errTruncatedStream = fmt.Errorf("openai: responses stream ended without a te
 // summary_index (not content_index), and multiple summary parts legitimately
 // concatenate.
 func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]port.Chunk, error) {
+	// Response IDs only enter state from a known Responses lifecycle event's typed
+	// Response field; raw SSE fields and arbitrary metadata are never inspected.
+	if responseID := observedResponseID(event); responseID != "" {
+		st.responseID = responseID
+	}
+
 	switch event.Type {
 	case "response.output_text.delta":
 		return translateTextDelta(event, st)
@@ -224,8 +236,9 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 		st.done = true
 		return nil, &responseStreamError{
-			msg:    "response failed: " + responseErrorString(event.Response.Error),
-			status: providerErrorStatus(string(event.Response.Error.Code), event.Response.Error.Message),
+			msg:      "response failed: " + responseErrorString(event.Response.Error),
+			status:   providerErrorStatus(string(event.Response.Error.Code), event.Response.Error.Message),
+			metadata: responseErrorMetadata(event.Response.Error, event.Response.ID),
 		}
 
 	case "error":
@@ -236,8 +249,9 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 		}
 		st.done = true
 		return nil, &responseStreamError{
-			msg:    "stream error: " + streamErrorString(event),
-			status: providerErrorStatus(event.Code, event.Message),
+			msg:      "stream error: " + streamErrorString(event),
+			status:   providerErrorStatus(event.Code, event.Message),
+			metadata: streamErrorMetadata(event.Code, event.Message, st.responseID),
 		}
 
 	default:
@@ -324,6 +338,31 @@ func responseErrorString(e responses.ResponseError) string {
 	}
 }
 
+func observedResponseID(event responses.ResponseStreamEventUnion) string {
+	switch event.Type {
+	case "response.created", "response.in_progress", "response.completed", "response.incomplete", "response.failed", "response.queued":
+		return event.Response.ID
+	default:
+		return ""
+	}
+}
+
+func responseErrorMetadata(e responses.ResponseError, responseID string) providerErrorMetadata {
+	return streamErrorMetadata(string(e.Code), e.Message, responseID)
+}
+
+func streamErrorMetadata(code, message, responseID string) providerErrorMetadata {
+	metadata := providerErrorMetadata{
+		inBandStatus: providerErrorStatus(code, message),
+		providerCode: code,
+	}
+	if responseID != "" {
+		metadata.correlationKind = "response"
+		metadata.correlationID = responseID
+	}
+	return metadata
+}
+
 // streamErrorString renders a top-level "error" event union as "code: message",
 // optionally appending the offending param, tolerating absent parts.
 func streamErrorString(event responses.ResponseStreamEventUnion) string {
@@ -350,12 +389,61 @@ func streamErrorString(event responses.ResponseStreamEventUnion) string {
 //
 // The human-readable Error() string is identical to what a plain fmt.Errorf
 // would have produced, so existing user-facing output is unchanged.
-type responseStreamError struct {
-	msg    string // human-readable, e.g. "response failed: rate_limit_exceeded: Too Many Requests"
-	status int    // HTTP-status equivalent; 0 means unknown/non-retryable
+type providerErrorMetadata struct {
+	httpStatus      int
+	inBandStatus    int
+	providerCode    string
+	correlationKind string
+	correlationID   string
 }
 
-func (e *responseStreamError) Error() string { return e.msg }
+type responseStreamError struct {
+	msg      string // human-readable, e.g. "response failed: rate_limit_exceeded: Too Many Requests"
+	status   int    // HTTP-status equivalent; 0 means unknown/non-retryable
+	metadata providerErrorMetadata
+}
+
+func (e *responseStreamError) Error() string             { return e.msg }
+func (e *responseStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
+func (e *responseStreamError) ProviderInBandStatus() int { return e.metadata.inBandStatus }
+func (e *responseStreamError) ProviderErrorCode() string { return e.metadata.providerCode }
+func (e *responseStreamError) ProviderErrorCorrelationKind() string {
+	return e.metadata.correlationKind
+}
+func (e *responseStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
+
+// httpMetadataError keeps the SDK error unwrap-visible while exposing only its
+// typed code, status, and the documented request correlation header.
+type httpMetadataError struct {
+	err      error
+	metadata providerErrorMetadata
+}
+
+func (e *httpMetadataError) Error() string                        { return e.err.Error() }
+func (e *httpMetadataError) Unwrap() error                        { return e.err }
+func (e *httpMetadataError) ProviderHTTPStatus() int              { return e.metadata.httpStatus }
+func (e *httpMetadataError) ProviderInBandStatus() int            { return e.metadata.inBandStatus }
+func (e *httpMetadataError) ProviderErrorCode() string            { return e.metadata.providerCode }
+func (e *httpMetadataError) ProviderErrorCorrelationKind() string { return e.metadata.correlationKind }
+func (e *httpMetadataError) ProviderErrorCorrelationID() string   { return e.metadata.correlationID }
+
+func withHTTPErrorMetadata(err error) error {
+	var apiErr *oai.Error
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	metadata := providerErrorMetadata{
+		httpStatus:   apiErr.StatusCode,
+		providerCode: apiErr.Code,
+	}
+	if apiErr.Response != nil {
+		if requestID := apiErr.Response.Header.Get("X-Request-ID"); requestID != "" {
+			metadata.correlationKind = "request"
+			metadata.correlationID = requestID
+		}
+	}
+	return &httpMetadataError{err: err, metadata: metadata}
+}
 
 // StatusCode returns the HTTP-status equivalent of the provider error code. The
 // llmresilience DefaultClassifier recognises this interface and routes retryable

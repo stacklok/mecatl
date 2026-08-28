@@ -104,11 +104,16 @@ type loginFixture struct {
 	acceptedBearer string
 	initialExpiry  int
 	failClose      bool
-	blockMCP       <-chan struct{}
-	blockMCPMethod string
-	mcpBlocked     chan<- struct{}
-	blockOnce      sync.Once
+	mcpBlockState  *loginMCPBlockState
 	redirectURL    string
+}
+
+type loginMCPBlockState struct {
+	method       string
+	release      <-chan struct{}
+	notification chan<- struct{}
+	onceHold     <-chan struct{}
+	once         sync.Once
 }
 
 type loginCode struct {
@@ -184,13 +189,18 @@ func (f *loginFixture) sessionCounts() (opened, closed int) {
 	return f.sessionsOpened, f.sessionsClosed
 }
 
-func (f *loginFixture) blockAuthenticatedMCP(method string, block <-chan struct{}, blocked chan<- struct{}) {
+func (f *loginFixture) blockAuthenticatedMCP(method string, release <-chan struct{}, notification chan<- struct{}) {
+	f.blockAuthenticatedMCPWithOnceHold(method, release, notification, nil)
+}
+
+func (f *loginFixture) blockAuthenticatedMCPWithOnceHold(method string, release <-chan struct{}, notification chan<- struct{}, onceHold <-chan struct{}) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.blockMCPMethod = method
-	f.blockMCP = block
-	f.mcpBlocked = blocked
-	f.blockOnce = sync.Once{}
+	if release == nil {
+		f.mcpBlockState = nil
+		return
+	}
+	f.mcpBlockState = &loginMCPBlockState{method: method, release: release, notification: notification, onceHold: onceHold}
 }
 
 func (f *loginFixture) callbackAddress() string {
@@ -243,14 +253,17 @@ func (f *loginFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.mu.Lock()
 		f.authorized++
-		block := f.blockMCP
-		blockMethod := f.blockMCPMethod
-		blocked := f.mcpBlocked
+		blockState := f.mcpBlockState
 		f.mu.Unlock()
-		if block != nil && (blockMethod == "" || blockMethod == rpcRequest.Method) {
-			f.blockOnce.Do(func() { blocked <- struct{}{} })
+		if blockState != nil && (blockState.method == "" || blockState.method == rpcRequest.Method) {
+			blockState.once.Do(func() {
+				blockState.notification <- struct{}{}
+				if blockState.onceHold != nil {
+					<-blockState.onceHold
+				}
+			})
 			select {
-			case <-block:
+			case <-blockState.release:
 			case <-r.Context().Done():
 				return
 			}
@@ -464,8 +477,18 @@ func TestLoginMCPCancellationAfterCallbackReleasesRuntime(t *testing.T) {
 	}
 	block := make(chan struct{})
 	blocked := make(chan struct{}, 1)
-	fixture.blockAuthenticatedMCP("tools/list", block, blocked)
+	onceHold := make(chan struct{})
+	fixture.blockAuthenticatedMCPWithOnceHold("tools/list", block, blocked, onceHold)
 	ctx, cancel := context.WithCancel(context.Background())
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			cancel()
+			close(onceHold)
+			close(block)
+		})
+	}
+	t.Cleanup(release)
 	result := make(chan error, 1)
 	go func() { result <- app.LoginMCP(ctx, loginConfig(t, fixture, store), runtime) }()
 
@@ -474,8 +497,10 @@ func TestLoginMCPCancellationAfterCallbackReleasesRuntime(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("MCP initialize did not block after the OAuth callback")
 	}
-	cancel()
-	close(block)
+	// Reconfiguration while the request is inside Once.Do must leave its captured
+	// state intact; it only affects subsequent requests.
+	fixture.blockAuthenticatedMCP("", nil, nil)
+	release()
 	var loginErr error
 	select {
 	case loginErr = <-result:
@@ -495,7 +520,6 @@ func TestLoginMCPCancellationAfterCallbackReleasesRuntime(t *testing.T) {
 	}
 	_ = listener.Close()
 
-	fixture.blockAuthenticatedMCP("", nil, nil)
 	if err := app.LoginMCP(context.Background(), loginConfig(t, fixture, store), runtime); err != nil {
 		t.Fatalf("subsequent login after cancellation: %v", err)
 	}

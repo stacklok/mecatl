@@ -185,7 +185,7 @@ tasks:
           ./cmd/mecatui
 
   test:root-race-partition:
-    desc: Test and validate the dynamic root-module race package partition
+    desc: Test and validate the static root-module race package partition
     cmds:
       - bash .github/scripts/root-race-packages_test.sh
       - bash .github/scripts/root-race-packages.sh validate
@@ -200,10 +200,26 @@ tasks:
     cmds:
       - go test -race -count=1 ./cmd/mecatui/ui
 
-  test:race-root-complement:
-    desc: Run the root-module race-test shard excluding only cmd/mecatui/ui
+  test:race-root-a:
+    desc: Run the maintained root-a race-test shard
     cmds:
-      - bash -c 'set -euo pipefail; output="$(bash .github/scripts/root-race-packages.sh complement)"; mapfile -t packages <<<"$output"; go test -race -count=1 "${packages[@]}"'
+      - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-a); go test -race -count=1 "${packages[@]}"'
+
+  test:race-root-b:
+    desc: Run the automatic root-b race-test shard (all non-UI, non-root-a packages)
+    cmds:
+      - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b); go test -race -count=1 "${packages[@]}"'
+
+  test:non-race:
+    desc: Run complete root + module test coverage without the race detector
+    cmds:
+      - go test ./...
+      - cd engine && go test ./...
+      - cd authn/oidc && go test ./...
+      - cd provider/ssefilter && go test ./...
+      - cd provider/anthropic && go test ./...
+      - cd provider/openai && go test ./...
+      - cd provider/openaichat && go test ./...
 
   test:
     desc: Run unit tests with the race detector (root + engine + authn/oidc + provider modules + standalone hygiene proofs)

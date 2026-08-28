@@ -80,6 +80,16 @@ type Snapshot struct {
 	// snapshot with no "permanent" key decoding to false — purely additive, no
 	// format-tag bump.
 	Permanent bool `json:"permanent,omitempty"`
+	// RetryDisposition and StreamProgress are the typed terminal facts for a failed
+	// model stream. Missing legacy fields decode conservatively to unknown.
+	RetryDisposition session.RetryDisposition `json:"retry_disposition,omitempty"`
+	StreamProgress   session.StreamProgress   `json:"stream_progress,omitempty"`
+	// RetryPending persists the consumed failed-step retry intent across the crash window
+	// between preparation and terminal completion. Its metadata remains separate
+	// from failed-state metadata because the prepared aggregate is idle/running.
+	RetryPending            bool                     `json:"retry_pending,omitempty"`
+	RetryPendingDisposition session.RetryDisposition `json:"retry_pending_disposition,omitempty"`
+	RetryPendingProgress    session.StreamProgress   `json:"retry_pending_progress,omitempty"`
 	// LastError records a StateFailed session's terminal failure CAUSE
 	// (session.RecordLastError, the Permanent-analog for the failure detail).
 	// omitempty keeps a pre-#332 snapshot with no "last_error" key decoding to ""
@@ -214,6 +224,8 @@ func Of(s *session.Session) (Snapshot, error) {
 		snap.StopReason = r
 	}
 	snap.Permanent = s.FailurePermanence()
+	snap.RetryDisposition, snap.StreamProgress = s.FailureMetadata()
+	snap.RetryPendingDisposition, snap.RetryPendingProgress, snap.RetryPending = s.FailedStepRetryPending()
 	snap.LastError = s.LastError()
 	return snap, nil
 }
@@ -266,6 +278,20 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
 	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
 		return nil, err
+	}
+	if snap.State == session.StateFailed {
+		disposition := snap.RetryDisposition
+		if disposition == session.RetryDispositionUnknown && snap.Permanent {
+			disposition = session.RetryDispositionPermanent
+		}
+		if err := s.RecordFailureMetadata(disposition, snap.StreamProgress); err != nil {
+			return nil, fmt.Errorf("sessnap: restore failure metadata: %w", err)
+		}
+	}
+	if snap.RetryPending {
+		if err := s.RestoreFailedStepRetryPending(snap.RetryPendingDisposition, snap.RetryPendingProgress); err != nil {
+			return nil, fmt.Errorf("sessnap: restore failed-step retry intent: %w", err)
+		}
 	}
 	return s, nil
 }

@@ -98,6 +98,33 @@ helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-n
 
 The Secret is mounted read-only at `/var/run/secrets/redis` with `defaultMode: 0440`; the chart projects exactly the configured CA and ACL keys, not the whole Secret. Their values are never chart values or command arguments. The external chart passes the CA path when `redis.caKey` is set and `--redis-tls` otherwise, and conditionally passes configured password and username paths. Both TLS modes verify the Redis certificate against the hostname from `redis.endpoint` (including IP SAN rules); hostname verification is never disabled. TLS with no ACL is valid, and a system-trust install with no ACL renders no Secret volume at all. `values-kind.yaml` is a separate disposable-only profile for the local `ko.local` image and plaintext Redis fixture, and its rendered command includes the explicit `--redis-allow-plaintext` opt-in. It must not be used for a production install.
 
+#### Server TLS (`tls.*` chart values)
+
+Server TLS is separate from `redis.*` TLS and is disabled by default. Create the
+certificate Secret in the release namespace, then enable the chart values:
+
+```sh
+kubectl create secret tls mecak8s-tls --namespace mecatl \
+  --cert=server.crt --key=server.key
+
+helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl \
+  --set image.repository=registry.example/mecak8s \
+  --set image.tag=v<release-version> \
+  --set redis.endpoint=redis.example.internal:6379 \
+  --set redis.credentialsSecret=mecak8s-redis \
+  --set tls.enabled=true \
+  --set tls.secretName=mecak8s-tls
+```
+
+The chart passes `/var/run/secrets/tls/tls.crt` and
+`/var/run/secrets/tls/tls.key` to `--tls-cert` and `--tls-key`, enabling TLS on
+both the gRPC and HTTP/SSE listeners. It projects only `tls.certKey` and
+`tls.keyKey` (defaulting to `tls.crt` and `tls.key`) from the pre-created Secret
+as a read-only `0440` volume; custom data-key names are supported. The chart
+creates no Secret. When enabled, the health, readiness, and drain requests use
+HTTPS. Certificate rotation still requires a rollout/restart until the reload
+work tracked by issue #789 lands.
+
 #### Caller identity (`oidc.*` chart values)
 
 The chart's `oidc.*` values wire the same four flags the legacy kustomize overlay

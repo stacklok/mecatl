@@ -183,6 +183,17 @@ func (s *Stream) SendPrompt(sessionID, text string, parts []*mecatlv1.Content) e
 	})
 }
 
+// SendRetryStart sends the mandatory first frame for a failed-step retry. It
+// contains no prompt text: the server reuses persisted conversation/tool state while
+// resolving live instruction and system-prompt sources for the new model attempt.
+func (s *Stream) SendRetryStart(sessionID string) error {
+	return s.sendFrame(&mecatlv1.ConverseRequest{
+		Kind: &mecatlv1.ConverseRequest_Retry{
+			Retry: &mecatlv1.RetryStart{SessionId: sessionID},
+		},
+	})
+}
+
 // Verdict is the client-local three-way resolution of a permission.ask. It keeps
 // the proto ApprovalVerdict enum out of the ui package (which never imports
 // contracts/gen): the ui chooses a Verdict, SendApproval translates it. The zero

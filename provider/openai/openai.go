@@ -382,7 +382,7 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 		if ctx.Err() != nil {
 			return emitted, false, nil
 		}
-		return emitted, false, streamErr
+		return emitted, false, withHTTPErrorMetadata(streamErr)
 	}
 	if !st.done && ctx.Err() == nil {
 		// Clean EOF but NO terminal Responses event: the SDK's ssestream

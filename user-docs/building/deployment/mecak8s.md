@@ -122,6 +122,34 @@ helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-n
 
 The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exactly the configured CA and ACL keys; unrelated Secret keys are not exposed. A password key alone uses Redis's default ACL user, while a username key requires a password key. `caKey` is optional: leaving it empty selects system-trust TLS, so an install against a publicly-rooted managed Redis with no ACL renders `--redis-tls` and no Secret volume at all. `credentialsSecret` is required exactly when some key needs reading. TLS-without-ACL external deployments are valid. The rendered command receives paths only, never Secret values. `values-kind.yaml` is deliberately the only profile that permits `ko.local` and plaintext Redis, and it passes `--redis-allow-plaintext` explicitly. It is not a production configuration.
 
+### Server TLS
+
+Server TLS is independent of Redis TLS. It is off by default and uses an
+operator-created, same-namespace `kubernetes.io/tls` Secret:
+
+```sh
+kubectl create secret tls mecak8s-tls --namespace mecatl \
+  --cert=server.crt --key=server.key
+
+helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl \
+  --set image.repository=registry.example/mecatl/mecak8s \
+  --set image.tag=v<release-version> \
+  --set redis.endpoint=redis.example.internal:6379 \
+  --set redis.credentialsSecret=mecak8s-redis \
+  --set tls.enabled=true \
+  --set tls.secretName=mecak8s-tls
+```
+
+The chart creates no Secret. With `tls.enabled=true`, it projects only
+`tls.certKey` and `tls.keyKey` from that Secret, read-only with mode `0440`.
+They default to the standard `tls.crt` and `tls.key` data keys; set the values
+when your Secret uses different PEM key names. The container receives the
+fixed mounted paths `/var/run/secrets/tls/<certKey>` and
+`/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`, enabling TLS
+for both gRPC and HTTP/SSE. The chart also changes health, readiness, and drain
+requests to HTTPS. Rotated certificate material requires a rollout/restart
+until the in-process reload work in issue #789 is available.
+
 ---
 
 ## Prerequisites

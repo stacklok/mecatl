@@ -53,6 +53,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/sessions/{id}/rename", h.renameSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/delete", h.deleteSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/prompt", h.prompt)
+	h.mux.HandleFunc("POST /v1/sessions/{id}/retry", h.retry)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/approve", h.approve)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/plan:approve", h.approvePlan)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel", h.cancel)
@@ -607,7 +608,24 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	h.relayRunSSE(w, r, id, run, flusher, h.svc.RecoverNotice(id))
+	h.relayRunSSE(w, r, id, run, flusher, h.svc.RecoverNotice(id), false)
+}
+
+// retry handles POST /v1/sessions/{id}/retry. It has no request body and streams
+// the failed-step retry through the same SSE relay and terminal cleanup as /prompt.
+func (h *HTTPHandler) retry(w http.ResponseWriter, r *http.Request) {
+	id := session.SessionID(r.PathValue("id"))
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	run, err := h.svc.RetryFailedRun(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	h.relayRunSSE(w, r, id, run, flusher, "", true)
 }
 
 // relayRunSSE streams run's Events to w as Server-Sent Events until the channel
@@ -621,8 +639,13 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 // notice, when non-empty, is a pre-flight EvRecoverNotice message emitted BEFORE
 // the main event loop — the prompt run-entry path passes it; the approve handler
 // path passes "".
-func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id session.SessionID, run *agent.Run, flusher http.Flusher, notice string) {
-	defer h.svc.deregister(id, run)
+func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id session.SessionID, run *agent.Run, flusher http.Flusher, notice string, persistAtEnd bool) {
+	defer func() {
+		if persistAtEnd {
+			h.svc.Persist(context.WithoutCancel(r.Context()), id)
+		}
+		h.svc.deregister(id, run)
+	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -752,7 +775,7 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	h.relayRunSSE(w, r, id, run, flusher, "")
+	h.relayRunSSE(w, r, id, run, flusher, "", false)
 }
 
 // verdictFromHTTP maps the HTTP approve body's string verdict to the domain
@@ -2097,6 +2120,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusGatewayTimeout, ErrDreamDeadline.Error())
 	case errors.Is(err, ErrDreamRequestFailed):
 		writeError(w, http.StatusInternalServerError, ErrDreamRequestFailed.Error())
+	case errors.Is(err, ErrFailedStepRetryIneligible):
+		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrFailedPrecondition):
 		writeError(w, http.StatusPreconditionFailed, err.Error())
 	case errors.Is(err, ErrTeamsDisabled):

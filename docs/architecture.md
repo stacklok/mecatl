@@ -182,13 +182,52 @@ and [ADR 0215](adr/0215-openai-subscription-manual-token.md).
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:
-**reliability** (`llmresilience` retry/breaker decorator), **observability**
+**reliability** (`llmresilience` semantic retry/breaker decorator), **observability**
 (`telemetry`: OTel metrics + runtime collector via a Prometheus exporter, OTel
 spans over OTLP), **security** (server auth/mTLS, rate
 limiting, the `permclassify` model-based risk classifier), **context management**
 (`tokenizer` + the `CascadeCompactor`), **memory** (`memory` + `dream`),
 **parallelism** (`forker` fork-join), and **extensibility** (the `mcp`
 streaming-HTTP client). Each is detailed below.
+
+### Semantic stream retry
+
+Provider failures carry two independent typed facts: causal retry disposition
+(`unknown`, `retryable`, `permanent`) and semantic stream progress (`unknown`,
+`precommit`, `visible`, `complete`). Retry policy and circuit-breaker health remain
+separate decisions. A configured classifier, attempt limit, provider-internal veto,
+or cancellation may suppress replay without changing the cause; permanent and
+caller-cancelled failures do not count against provider health.
+
+`llmresilience` buffers leading whitespace, display reasoning, opaque replay state,
+phase, downstream route, usage, and tool calls. The first meaningful assistant text
+commits and flushes those chunks in wire order. A clean done chunk also flushes a
+wholly tentative turn. Only a retryable failure that is still precommit is discarded
+and transparently retried. After visible output, the failure is terminal. This delays
+tentative reasoning display, but prevents a retry from exposing two attempts or
+executing a tentative tool call twice.
+
+The terminal `result` event carries both facts, and snapshots plus event-sourced
+reconstruction preserve them. Optional protobuf presence distinguishes explicit
+`unknown` from an older server that did not send typed metadata. The legacy
+`permanent` boolean remains a compatibility projection. Failed incomplete assistant
+deltas stay in the event log for audit but do not enter reconstructed conversation
+history; a clean text-bearing error stop is complete and remains `StateCompleted`.
+See [ADR 0239](adr/0239-semantic-stream-retry.md).
+
+A retryable failed step can be repeated without another prompt through a first-frame
+`Converse.RetryStart` or bodyless `POST /v1/sessions/{id}/retry`. The aggregate first
+persists failed-step retry intent and blocks normal prompts until it resolves. Persisted
+conversation, user prompt, and tool state are reused; live turn-0 instructions, operator
+profile, and system-prompt inputs are re-resolved. This is not byte-exact request replay.
+A retry stopped by a clean pre-turn brake remains idle+pending, while cancellation clears
+intent. Every retry run emits a durable `model.retry` event whose structured disposition
+and progress let event-source folding reconstruct idle/running retry state without parsing
+Text; partial unterminated retry deltas never become conversation history.
+Structured attempt diagnostics record the
+attempt, elapsed time, disposition, progress, decision, and safe optional status/code
+or correlation metadata. They never record raw provider error bodies, prompts,
+headers, or credentials.
 
 
 ## 2. The big picture
@@ -299,13 +338,17 @@ per-package `doc.go` files and honoured by the code:
 `NeutraliseDelegationResult`. Prompt bodies use the matched-block APIs; delegation
 results use the narrower result neutraliser. The former `engine/agent` exports were
 removed as an intentional pre-v1 clean break, with no aliases or duplicate matcher.
-See [ADR 0239](adr/0239-governance-fence-ownership.md).
+See [ADR 0240](adr/0240-governance-fence-ownership.md).
 
 **mecatui — the terminal UI (`cmd/mecatui`).** An optional gRPC *client*. It dials
 the `HarnessService`, creates a session, opens the bidi `Converse` stream, and
 renders the streamed `Event` envelopes (glamour markdown for assistant text,
 themed lipgloss cards for user prompts and tool I/O), resolving permission asks
-inline by sending `ResumeApproval` on the same stream. The server it talks to is
+inline by sending `ResumeApproval` on the same stream. Terminal results carry
+presence-aware retry disposition and stream progress. Mecatui performs at most one
+automatic prompt-free failed-step retry, and only for typed `retryable` plus `precommit`;
+it preserves queued future prompts while retrying and pauses them after ambiguity or
+a second failure. Visible failures require an explicit retry. The server it talks to is
 either one it **hosts in-process** over a UNIX socket (`cmd/mecatui/embed` →
 `app.Build`, the default — bare `mecatui` always embeds, never probes) or an
 external `mecated` it dials via `mecatui connect ADDRESS` — so a single binary

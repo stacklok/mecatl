@@ -10,10 +10,14 @@ vars:
   KUBECONFIG: deploy/mecak8s-vmcp/kconfig.yaml
   SETUP_LOCK: .scratch/kind/mecatl-dev.setup-lock
   IMAGE: ko.local/mecak8s:dev
+  LIVE_PROVIDER_SECRET: mecak8s-live-provider
 
 tasks:
   kind-setup:
-    desc: Recreate the named mecak8s + Dex Kind fixture from the local Helm chart
+    desc: |
+      Recreate the named mecak8s + Dex Kind fixture from the local Helm chart.
+      Export OPENROUTER_API_KEY first to wire a real provider via extraEnv
+      instead of the mock provider (same convention as `task e2e:k8s`).
     cmds:
       - task: reset-state
       - task: cluster-create
@@ -217,7 +221,12 @@ tasks:
           rm -f "$archive"
 
   chart-apply:
-    internal: true
+    desc: |
+      (Re)install the mecak8s chart on the running fixture. Export
+      OPENROUTER_API_KEY first to wire a real provider via extraEnv (upserts
+      a Secret and re-installs with it); omit it to stay on the mock
+      provider. Safe to re-run standalone against an already-running
+      cluster to flip a live key without redoing kind-setup's whole pipeline.
     preconditions:
       - sh: command -v helm >/dev/null 2>&1
         msg: helm is required
@@ -228,7 +237,15 @@ tasks:
           trap 'status=$?; deploy/mecak8s-vmcp/cleanup-on-failure.sh "$status"' EXIT
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} label namespace {{.NAMESPACE}} pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/audit=restricted pod-security.kubernetes.io/warn=restricted --overwrite
-          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/helm/mecak8s/values-kind-vmcp.yaml --wait --timeout=4m
+          set -- helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/helm/mecak8s/values-kind-vmcp.yaml --wait --timeout=4m
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            echo "OPENROUTER_API_KEY is set -- wiring a real provider via extraEnv"
+            kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create secret generic {{.LIVE_PROVIDER_SECRET}} --from-literal=OPENROUTER_API_KEY="$OPENROUTER_API_KEY" --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+            set -- "$@" --set 'extraEnv[0].name=OPENROUTER_API_KEY' --set 'extraEnv[0].valueFrom.secretKeyRef.name={{.LIVE_PROVIDER_SECRET}}' --set 'extraEnv[0].valueFrom.secretKeyRef.key=OPENROUTER_API_KEY'
+          else
+            echo "OPENROUTER_API_KEY is not set -- mock provider only"
+          fi
+          "$@"
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
   dex-apply:

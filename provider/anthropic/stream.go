@@ -83,7 +83,8 @@ type streamState struct {
 	textBlockIndex int64
 	textIndexSet   bool
 
-	done bool
+	done      bool
+	messageID string // typed message_start message.id; stream-error correlation fallback
 }
 
 func (s *streamState) block(index int64) *blockState {
@@ -125,6 +126,7 @@ func (s *streamState) block(index int64) *blockState {
 func translate(event sdk.MessageStreamEventUnion, st *streamState) ([]port.Chunk, error) {
 	switch event.Type {
 	case "message_start":
+		st.messageID = event.Message.ID
 		st.inputTokens = event.Message.Usage.InputTokens
 		st.cacheReadTokens = event.Message.Usage.CacheReadInputTokens
 		st.cacheWriteTokens = event.Message.Usage.CacheCreationInputTokens
@@ -168,11 +170,24 @@ func translate(event sdk.MessageStreamEventUnion, st *streamState) ([]port.Chunk
 			return nil, nil
 		}
 		st.done = true
-		inner := fmt.Errorf("stream error: %s", eventErrorString(event))
+		data := parseEventError(event)
+		inner := fmt.Errorf("stream error: %s", data.String())
+		metadata := providerErrorMetadata{
+			inBandStatus: anthropicErrorTypeToStatus(data.typ),
+			providerCode: data.typ,
+		}
+		if data.requestID != "" {
+			metadata.correlationKind = "request"
+			metadata.correlationID = data.requestID
+		} else if st.messageID != "" {
+			metadata.correlationKind = "message"
+			metadata.correlationID = st.messageID
+		}
 		return nil, &anthropicStreamError{
-			err:    inner,
-			msg:    inner.Error(),
-			status: eventErrorStatus(event),
+			err:      inner,
+			msg:      inner.Error(),
+			status:   metadata.inBandStatus,
+			metadata: metadata,
 		}
 
 	default:
@@ -349,46 +364,45 @@ func mapStop(reason sdk.StopReason) session.StopReason {
 	}
 }
 
-// eventErrorString renders a top-level "error" event. The SDK's flattened union
-// does not surface the nested error payload on MessageStreamEventUnion, so the
-// raw JSON is parsed for the message/type.
-func eventErrorString(event sdk.MessageStreamEventUnion) string {
+type eventErrorData struct {
+	typ       string
+	message   string
+	requestID string
+}
+
+func (e eventErrorData) String() string {
+	switch {
+	case e.typ != "" && e.message != "":
+		return fmt.Sprintf("%s: %s", e.typ, e.message)
+	case e.message != "":
+		return e.message
+	case e.typ != "":
+		return e.typ
+	default:
+		return "unknown error"
+	}
+}
+
+// parseEventError reads only the documented structured fields from an error
+// event. In particular, no arbitrary body fields are copied into metadata.
+func parseEventError(event sdk.MessageStreamEventUnion) eventErrorData {
 	var payload struct {
-		Error struct {
+		RequestID string `json:"request_id"`
+		Error     struct {
 			Type    string `json:"type"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if raw := event.RawJSON(); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
-			switch {
-			case payload.Error.Type != "" && payload.Error.Message != "":
-				return fmt.Sprintf("%s: %s", payload.Error.Type, payload.Error.Message)
-			case payload.Error.Message != "":
-				return payload.Error.Message
-			case payload.Error.Type != "":
-				return payload.Error.Type
+			return eventErrorData{
+				typ:       payload.Error.Type,
+				message:   payload.Error.Message,
+				requestID: payload.RequestID,
 			}
 		}
 	}
-	return "unknown error"
-}
-
-// eventErrorStatus extracts the error type from a top-level "error" stream event
-// and maps it to an HTTP-status equivalent for Permanent() classification.
-// Unknown types map to 0 (fail-open — not permanent).
-func eventErrorStatus(event sdk.MessageStreamEventUnion) int {
-	var payload struct {
-		Error struct {
-			Type string `json:"type"`
-		} `json:"error"`
-	}
-	if raw := event.RawJSON(); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &payload); err == nil && payload.Error.Type != "" {
-			return anthropicErrorTypeToStatus(payload.Error.Type)
-		}
-	}
-	return 0
+	return eventErrorData{}
 }
 
 // anthropicErrorTypeToStatus maps an Anthropic API error type string to an

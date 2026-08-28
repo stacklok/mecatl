@@ -18,6 +18,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
       race_timing:
@@ -46,6 +47,9 @@ env:
   # the right version; this keeps the build deterministic against that pin.
   GOTOOLCHAIN: local
   GOFLAGS: -mod=readonly
+  # Prefer the checksum-backed public proxy, but use the module's VCS origin if
+  # its transport fails. `|` (unlike `,`) permits fallback on any proxy error.
+  GOPROXY: https://proxy.golang.org|direct
 
 jobs:
   # Do not use workflow-level path filters: required checks must exist on every
@@ -131,6 +135,31 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
+      # Resolve the declared dependency graphs before compiling. A successful main
+      # run then saves a complete shared module cache for later PR jobs. Retry only
+      # network resolution, never build or test execution.
+      - name: Download Go modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if (
+              go mod download all
+              cd engine && go mod download all
+              cd ../authn/oidc && go mod download all
+              cd ../../provider/ssefilter && go mod download all
+              cd ../anthropic && go mod download all
+              cd ../openai && go mod download all
+              cd ../openaichat && go mod download all
+            ); then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
+
       - name: go build
         run: go build ./...
 
@@ -151,13 +180,11 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
-  test-race-root:
-    name: Test (race root complement)
+  test-race-root-a:
+    name: Test (race root-a)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
-    # The root race sweep previously hugged the 15m cap. Keep its 20m headroom
-    # while moving the UI package onto a parallel runner.
     timeout-minutes: 20
     env:
       RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
@@ -165,7 +192,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -178,55 +204,73 @@ jobs:
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
-
-      - name: Validate root race package partition and timing wrapper
+      - name: Validate race workflow contracts
         run: |
           bash .github/scripts/root-race-packages_test.sh
+          bash .github/scripts/root-race-packages.sh validate
           bash .github/scripts/race-test_test.sh
           bash .github/scripts/race-vet-off-workflow_test.sh
           bash .github/scripts/race-aggregate-workflow_test.sh
           bash .github/scripts/docs-only-changes_test.sh
           bash .github/scripts/docs-only-workflow_test.sh
-
-      - name: go test -race (root complement)
+      - name: go test -race (root-a and modules)
         env:
           RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
         run: |
           set -euo pipefail
-          package_output="$(bash .github/scripts/root-race-packages.sh complement)"
-          mapfile -t packages <<<"$package_output"
-          bash .github/scripts/race-test.sh root-complement -count=1 "${packages[@]}"
-
-      # engine/ is a separate module — `./...` from the root does NOT cross the
-      # module boundary, so its tests are a second invocation.
-      - name: go test -race (engine module)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...
-        working-directory: engine
-
-      - name: go test -race (OIDC authn module)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...
-        working-directory: authn/oidc
-
-      # provider/ submodules (ADR 0093) — each its own module under the workspace.
-      - name: go test -race (provider modules)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: |
-          set -euo pipefail
+          mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-a)
+          bash .github/scripts/race-test.sh root-a -count=1 "${packages[@]}"
+          (cd engine && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...)
+          (cd authn/oidc && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...)
           (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
           (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
           (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
           (cd provider/openaichat && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openaichat ./...)
-
-      - name: Upload root race timing records
+      - name: Upload root-a race timing records
         if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: race-timing-root
+          name: race-timing-root-a
+          path: .scratch/race-timing/*.jsonl
+          if-no-files-found: warn
+          retention-days: 3
+
+  test-race-root-b:
+    name: Test (race root-b)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            authn/oidc/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
+      - name: go test -race (root-b)
+        env:
+          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b)
+          bash .github/scripts/race-test.sh root-b -count=1 "${packages[@]}"
+      - name: Upload root-b race timing records
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: race-timing-root-b
           path: .scratch/race-timing/*.jsonl
           if-no-files-found: warn
           retention-days: 3
@@ -234,7 +278,7 @@ jobs:
   test-race-ui:
     name: Test (race UI)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -243,7 +287,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -256,12 +299,10 @@ jobs:
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
-
       - name: go test -race (UI)
         env:
           RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
         run: bash .github/scripts/race-test.sh ui -count=1 ./cmd/mecatui/ui
-
       - name: Upload UI race timing records
         if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -271,23 +312,62 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-  # One aggregate job keeps shard reporting identical for every trigger. Manual
-  # experiments use a distinct context so they can never satisfy the stable
-  # push/PR required check.
+  test-non-race-draft:
+    name: Test (non-race draft coverage)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            authn/oidc/go.sum
+            provider/ssefilter/go.sum
+            provider/anthropic/go.sum
+            provider/openai/go.sum
+            provider/openaichat/go.sum
+      - name: Complete test coverage without race detector
+        run: |
+          set -euo pipefail
+          mapfile -t root_a < <(bash .github/scripts/root-race-packages.sh root-a)
+          mapfile -t root_b < <(bash .github/scripts/root-race-packages.sh root-b)
+          go test -count=1 "${root_a[@]}"
+          go test -count=1 "${root_b[@]}"
+          go test -count=1 ./cmd/mecatui/ui
+          (cd engine && go test ./...)
+          (cd authn/oidc && go test ./...)
+          (cd provider/ssefilter && go test ./...)
+          (cd provider/anthropic && go test ./...)
+          (cd provider/openai && go test ./...)
+          (cd provider/openaichat && go test ./...)
+
+  # The stable required context is emitted only by full-race push/non-draft PR
+  # runs. Draft coverage and docs-only runs use distinct contexts.
   test:
-    name: ${{ github.event_name == 'workflow_dispatch' && 'Test (race experiment)' || 'Test (race)' }}
-    needs: [changes, test-race-root, test-race-ui]
+    name: ${{ needs.changes.outputs.docs_only == 'true' && 'Test (docs-only)' || github.event_name == 'pull_request' && github.event.pull_request.draft && 'Test (non-race draft)' || github.event_name == 'workflow_dispatch' && 'Test (race experiment)' || 'Test (race)' }}
+    needs: [changes, test-race-root-a, test-race-root-b, test-race-ui, test-non-race-draft]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Require successful race shards
+      - name: Require the applicable test coverage
         shell: bash
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
-          ROOT_RESULT: ${{ needs.test-race-root.result }}
+          ROOT_A_RESULT: ${{ needs.test-race-root-a.result }}
+          ROOT_B_RESULT: ${{ needs.test-race-root-b.result }}
           UI_RESULT: ${{ needs.test-race-ui.result }}
+          DRAFT_RESULT: ${{ needs.test-non-race-draft.result }}
+          IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
         run: |
           set -euo pipefail
           if [[ "$CHANGES_RESULT" != success ]]; then
@@ -297,8 +377,12 @@ jobs:
           if [[ "$DOCS_ONLY" == true ]]; then
             exit 0
           fi
-          if [[ "$ROOT_RESULT" != success || "$UI_RESULT" != success ]]; then
-            echo "race shard failure: root=$ROOT_RESULT ui=$UI_RESULT" >&2
+          if [[ "$IS_DRAFT" == true ]]; then
+            [[ "$DRAFT_RESULT" == success ]] || { echo "draft non-race coverage failed: $DRAFT_RESULT" >&2; exit 1; }
+            exit 0
+          fi
+          if [[ "$ROOT_A_RESULT" != success || "$ROOT_B_RESULT" != success || "$UI_RESULT" != success ]]; then
+            echo "race shard failure: root-a=$ROOT_A_RESULT root-b=$ROOT_B_RESULT ui=$UI_RESULT" >&2
             exit 1
           fi
 

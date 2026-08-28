@@ -18,7 +18,7 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `ForkSession(ForkSessionRequest) → ForkSessionResponse` | unary | create a new peer session whose conversation history is a snapshot of an existing session's, inheriting the source's mode, workspace, limits, and provider/model/profile labels (same provider and model only; ADR 0065). An optional `reasoning_effort` override changes ONLY the fork's effort tier — provider/model always inherit (ADR 0068). The source must be at a turn boundary (idle/terminal); a running/awaiting source is `FAILED_PRECONDITION`. No streaming — returns the new session id |
 | `PreflightSessionAdoption(PreflightSessionAdoptionRequest) → PreflightSessionAdoptionResponse` | unary | authenticate and authorize one legacy `unknown` source, then return stable eligibility/binding reason codes. Workspace/environment and provider/model are mandatory explicit bindings; no omitted binding falls back to the current default |
 | `AdoptSession(AdoptSessionRequest) → AdoptSessionResponse` | unary | revalidate the source under run-entry serialization and its mutation lease, then atomically publish one new explicit-main copy. `idempotency_key` is bound to caller+source; retries return the same complete target, while foreign/absent sources are both `NOT_FOUND`. The source is unchanged |
-| `Converse(stream ConverseRequest) → stream ConverseResponse` | bidi | drive one agent run |
+| `Converse(stream ConverseRequest) → stream ConverseResponse` | bidi | drive one agent run; the first frame is either a new `Prompt` or prompt-free `RetryStart` |
 | `ApprovePlan(ApprovePlanRequest) → stream Event` | server-stream | atomically resolve a parked **plan-approval** ask (a `PresentPlan` call surfaced in plan mode, issue #206 / [ADR 0069](../adr/0069-plan-approval-gate.md)) and — on an ALLOW verdict — start a FRESH continuation run carrying the proceed message, streaming BOTH runs' events on one stream. `target_mode` selects the verdict: `DEFAULT` → allow-once (flip to default), `ACCEPT_EDITS` → allow-always (flip to accept-edits), `PLAN`/`UNSPECIFIED` → deny (iterate, no flip, no continuation run). A live run is rejected (`FAILED_PRECONDITION` — use the `Converse` `resume_approval` frame for an in-flight run); a session not `awaiting` a `PlanOriginated` ask is `FAILED_PRECONDITION` (`ErrNotAwaitingPlan`); an unknown session is `NOT_FOUND`. |
 | `StreamSessionEvents(StreamSessionEventsRequest) → stream Event` | server-stream | replay a session's durable event log (cloud-native Phase 3a read-back); an unknown id yields an empty stream; `UNIMPLEMENTED` when no durable `EventLog` is wired. **Replays the FULL timeline, including the log-only `approval`/`compaction_archive`/`user_prompt` events a live `Converse` skips** — a client opening a past session gets the verdicts and user prompts, which ARE the transcript |
 | `ListSessions(ListSessionsRequest) → ListSessionsResponse` | unary | the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore` |
@@ -83,10 +83,12 @@ and exposes neither recall counters nor provider/model identity.
 
 The bidi stream drives exactly one run:
 
-1. The client sends the **mandatory first frame**, a
-   `Prompt{session_id, text, parts}` — `parts` optionally carries multimodal
-   media (image/audio `Content` parts, capability-gated on the session's
-   provider). (A first frame that is not a prompt → `InvalidArgument`.)
+1. The client sends the **mandatory first frame**. Use
+   `Prompt{session_id, text, parts}` for a new user message; `parts` optionally
+   carries multimodal media (image/audio `Content` parts, capability-gated on the
+   session's provider). Use `RetryStart{session_id}` to repeat an eligible failed
+   model step without adding another prompt. A first frame of any other kind is
+   `InvalidArgument`.
 2. The server streams `ConverseResponse{Event}` envelopes in sequence order.
 3. On a `permission.ask` event, the client sends a control frame
    `ResumeApproval{ask_id, verdict}` — `ask_id` echoes `Event.ask.ask_id`, and
@@ -105,13 +107,24 @@ The bidi stream drives exactly one run:
 
 | Field | When |
 | --- | --- |
-| `prompt` (`Prompt{session_id, text, parts}`) | mandatory first frame |
+| `prompt` (`Prompt{session_id, text, parts}`) | first frame for a normal run; records a new user message |
+| `retry` (`RetryStart{session_id}`) | first frame for a prompt-free failed-step retry; records no prompt, reuses conversation/tool state, re-resolves live instruction sources, and delegates eligibility to persisted server state |
 | `resume_approval` (`ResumeApproval{ask_id, verdict, allow}`) | resolve a paused ask (three-way `verdict`; the `allow` bool is the legacy fallback) |
 | `cancel` (`Cancel{}`) | abort the in-flight run |
 | `cancel_child` (`CancelChild{child_id}`) | cancel ONE child run by its id (the `agentId:` / `child_id` handle), leaving the run and sibling children untouched; unknown/finished ids are ignored on the stream |
 
-A second `prompt`, or any unknown control frame, is ignored — a single
+A second `prompt` or `retry`, or any unknown control frame, is ignored. A single
 `Converse` stream drives a single run.
+
+For a failed model stream, inspect the terminal Result's optional
+`retry_disposition` and `stream_progress`. New servers set both fields even when the
+value is `UNKNOWN`; an absent field identifies an older server and must not be treated
+as safely retryable. `RetryStart` is prompt-free: the server persists aggregate-owned
+retry intent, blocks ordinary prompts while it is pending, and skips prompt hooks and
+the first retry turn's boundary injections. This avoids duplicate prompts and tool
+effects. Clients may explicitly retry typed `retryable` failures at `precommit` or
+`visible`; automatic retry should be narrower and bounded. Mecatui performs one
+automatic retry only for typed `retryable + precommit`.
 
 ### Event envelope
 

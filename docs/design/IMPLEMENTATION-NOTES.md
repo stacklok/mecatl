@@ -410,87 +410,116 @@ in settings.yaml is a TARGETED unknown-key rejection in `internal/adapter/permco
 (the top-level decode stays deliberately lenient otherwise). Generated config artifacts omit
 the key.
 
-## Permanent provider-error signal (`port.PermanentError` → `session.ResultPayload.Permanent`, issue #346)
+## Semantic stream retry and failed-step retry transport (issue #409, ADR 0239)
 
-A neutral signal that threads from the provider adapter through the error chain to
-the terminal `EvResult` and a pre-retry advisory, so clients and operators can
-distinguish "retry may work" from "retrying can't help" without parsing
-provider-specific error text.
+ADR 0239 supersedes ADR 0203's binary retry decision. The compatibility
+`PermanentError`, `ResultPayload.Permanent`, snapshot `permanent` field, aggregate
+permanence methods, and `recover_notice` remain, but all new decisions use two typed
+facts plus two independent policy axes.
 
-**The interface.** `engine/port/llm.go` (`PermanentError`) is a new exported interface
-with a single `Permanent() bool` method. It rides the error (reachable via
-`errors.As`), NOT `port.LLMRequest` — so the domain loop stays provider-neutral
-and the LLM-request DTO is not widened. The contract is fail-open: an error that
-does not implement it (or a nil target) is treated as NOT permanent, preserving
-today's behaviour for unclassifiable errors. Provider detail (the specific status
-code, the provider's named error reason) stays in the adapter's `Error()` string
-and is never surfaced to the domain loop.
+**Four independent axes.** `engine/session/retry.go` owns the durable
+`RetryDisposition` vocabulary (`Unknown`, `Retryable`, `Permanent`) and
+`StreamProgress` vocabulary (`Unknown`, `Precommit`, `Visible`, `Complete`).
+`engine/port/llm.go` aliases those values and exposes `RetryDispositionError` and
+`StreamProgressError` for `errors.As` propagation without widening `LLMRequest`.
+`internal/adapter/llmresilience/llmresilience.go` (`Stream`) keeps causal disposition
+separate from the configured retry policy and circuit-breaker health. Attempt limits,
+the classifier, provider-internal veto, and caller cancellation can suppress replay
+without rewriting the cause. Only transient provider-health failures increment the
+breaker; permanent and caller-cancelled failures are breaker-neutral.
 
-**Provider adapters.** Each provider's stream error type implements `Permanent()`:
-`provider/anthropic/anthropic.go` (`anthropicStreamError`),
-`provider/openai/stream.go` (`responseStreamError`),
-`provider/openaichat/openaichat.go` (`openaichatStreamError`). The predicate is
-the same across all three: context-overflow-message OR (status ≠ 0 AND not
-retryable). The context-overflow discriminator (`isContextOverflowMessage`) is a
-keyword-based check (`"context window"`, `"context length"`, `"maximum context"`,
-`"exceeds the token limit"`, `"exceeded the token limit"`) duplicated across the
-three provider modules (separate Go modules — a shared dep is worse). The
-`retryableStatus` helper mirrors the llmresilience classifier: 408, 429, and 5xx
-are transient; everything else (including 0 = unknown) is permanent.
+**Semantic buffer.** `internal/adapter/llmresilience/llmresilience.go`
+(`advancesVisible`) treats leading whitespace, `ChunkReasoning`,
+`ChunkReasoningItem`, `ChunkPhase`, `ChunkProviderRoute`, `ChunkUsage`, and
+`ChunkToolCall` as tentative. `pumpAttempt` preserves their wire order in a buffer.
+The first text delta that makes cumulative text non-whitespace flushes the buffer and
+marks the attempt Visible. A clean `ChunkDone` flushes a wholly tentative turn and
+marks it Complete, including whitespace-only and tool-only turns. A retryable error
+may be transparently replayed only while progress is Precommit; Visible output is
+terminal. Visibility suppresses replay but does not call `recordSuccess`: success is
+delayed until clean continuation completion, while a visible transient failure counts
+against breaker health (including a failed half-open trial). Establishment timeout still ends at the first raw chunk, independently of
+semantic progress, and the idle watchdog continues while tentative chunks arrive.
+Unknown future chunk kinds fail safe by committing.
 
-**Resilience layer.** `internal/adapter/llmresilience/llmresilience.go` wraps
-surfaced non-retryable errors in a `permanentError` shim at two sites: (1) the
-establish path — a non-retryable classification before the first chunk becomes a
-`&permanentError{err: err}` so the caller's `errors.As` reaches it; (2) the
-mid-stream error path in `restSeq` — a non-retryable stream error that is not
-`context.Canceled` is wrapped similarly. Breaker-exhausted, idle-timeout, and
-cancellation errors are never wrapped (they are NOT permanent client rejections).
+**Typed terminal facts and reconstruction.** `engine/agent/loop.go`
+(`failureFacts`) extracts the two interfaces at the terminal choke point. `terminate`
+stamps them through `engine/session/session.go` (`RecordFailureMetadata`) and emits
+them on `engine/session/event.go` (`ResultPayload`). `Permanent` remains the
+compatibility projection of a permanent disposition. `engine/adapter/sessnap/sessnap.go`
+(`Snapshot`) persists failed-state disposition/progress and failed-step retry intent;
+missing legacy fields decode to Unknown, while a legacy `permanent=true` upgrades the
+disposition to Permanent. `internal/adapter/server/mapper.go` (`toProtoResult`) sets
+the optional proto fields on every new terminal result, so field absence means an old
+server and explicit Unknown remains conservative data.
 
-**Loop signalling.** `engine/agent/loop.go` (`permanentCause`) is a one-line helper:
-`errors.As(err, &pe) && pe.Permanent()`. The `terminate` path (all Go-error
-terminations — `runTurn` failure, `RecordUserPrompt` failure, hook failure, etc.)
-passes `permanentCause(err)`. The `terminateComplete` path (ChunkDone StopError —
-no Go error to classify) always passes `false` (honest fail-open). The bit lands
-on `engine/session/event.go` (`ResultPayload`) and is meaningful
-ONLY when `Stop == StopError`.
+`engine/adapter/eventsource/eventsource.go` (`applyResult`) now matches live snapshot
+history. A StopError whose progress is not Complete drops the incomplete assistant
+being folded from deltas. A clean `ChunkDone`, including text-bearing StopError,
+flushes the assistant and reconstructs StateCompleted, exactly matching
+`terminateComplete`; the latter intentionally remains a completed state because the
+provider delivered a clean terminal chunk rather than an interrupted iterator.
 
-**Session aggregate.** `engine/session/session.go` (`RecordFailurePermanence` /
-`FailurePermanence`) stores a boolean on the `StateFailed` aggregate. It is legal
-ONLY when `State == StateFailed` and cleared by `resetToIdle` (every transition
-out of `StateFailed`: Recover, Interrupt, Reopen), so a healed session never
-keeps a stale permanence marker.
+**Prompt-free failed-step retry.** `engine/session/session.go` (`PrepareFailedStepRetry`) accepts
+only a failed typed Retryable attempt at Precommit or Visible, repairs an interrupted
+tool tail, resets to idle, and records aggregate-owned retry intent. The intent stays
+set while the retry is running and is persisted before launch. Normal prompt entry in
+`internal/adapter/server/service.go` (`startRunContent`) rejects a pending intent.
+`RetryFailedRun` serializes entry, acquires the normal lease, restores the selected
+engine/environment, persists preparation, and calls `engine/agent/loop.go`
+(`RetryFailedStep`). A crash after launch is recognizable as running plus pending and
+can be abandoned and resumed under the newly acquired lease.
 
-**Snapshot.** `engine/adapter/sessnap/sessnap.go` (`Snapshot`) round-trips
-the flag so it survives a process restart (`omitempty` — purely additive, no
-format-tag bump). `RestoreState` re-drives `RecordFailurePermanence(true)` on
-restore when the flag was set.
+`RetryFailedStep` adds no user prompt and skips run-start/prompt hooks. Its first
+`runLoop` iteration skips boundary injections, so persisted conversation/tool state is
+not duplicated. The normal request builder still re-resolves live turn-0 instructions,
+operator profile, and system prompt; this is conversation-state retry, not byte-exact
+request replay. A pre-turn budget/clean brake emits a terminal result while the
+aggregate intentionally remains idle+pending without another transition. Cancellation
+clears intent. `ModelRetryPayload` carries disposition/progress; `eventsource.Fold`
+reconstructs idle+pending before turn.start, running+pending after it, and excludes
+unterminated retry deltas from conversation history.
+`contracts/proto/mecatl/v1/harness.proto` (`ConverseRequest`) or bodyless
+`POST /v1/sessions/{id}/retry` in `internal/adapter/server/http.go` (`retry`); both
+stream through the ordinary relays and persist the resulting terminal snapshot.
 
-**Pre-retry advisory.** `internal/adapter/server/service.go` (`recoverNotices` +
-`RecoverNotice`): `loadAndReopen` captures `FailurePermanence()` BEFORE `Recover()`
-clears it (`resetToIdle` sets `permanent = false`), and stashes a once-per-recovery
-advisory text in a `sync.Map` keyed by session id. `LoadOrStore` ensures two
-concurrent loads still emit exactly ONE notice. The relay adapters (gRPC
-`Converse`, HTTP `relayRunSSE`) call `RecoverNotice(id)` after `StartRunContent`,
-emit an `EvRecoverNotice` synthetic event BEFORE the main event loop, and consume
-the entry (`LoadAndDelete` — returned once, then deleted). The notice is an
-advisory — it does NOT block the run.
+**Mecatui.** `cmd/mecatui/client/msgs.go` (`ResultMsg`) preserves proto presence as
+well as values. `FailedStepRetryEligible` requires StopError plus present Retryable and
+present Precommit, so an old server and explicit Unknown are both non-automatic.
+`cmd/mecatui/ui/update.go` (`applyResult`) allows one automatic failed-step retry per genuine
+prompt/session via `failedStepRetryTried`; `startFailedStepRetry` opens a fresh Converse stream
+with RetryStart and does not consume textarea or queued follow-ups. Manual `/retry` is
+available for every bound idle session and lets the server decide eligibility. Transport
+failure and a retry terminal before turn.start preserve the affordance and pause the queue. A successful retry returns to the existing healthy queue drain. Visible
+Retryable remains available through the explicit transport for a client or operator
+that deliberately chooses replay.
 
-**Event.** `engine/session/event.go` (`EvRecoverNotice`): a new string-passthrough
-event type (like `EvNoProgress`), CLIENT-VISIBLE, carrying the harness-authored
-advisory text. Mapped to proto by the `toProto` passthrough.
+**Attempt diagnostics and metadata.**
+`internal/adapter/llmresilience/llmresilience.go` (`logAttemptDecision`) is the single
+failed-attempt diagnostic path. Each line carries model, session when available,
+attempt/max-attempts, elapsed time, disposition, progress, decision, and either
+backoff or a closed suppression reason. It never logs `err.Error()`. Optional metadata
+rides `engine/port/attemptmetadata.go` (`ProviderErrorMetadataError`) as primitive
+structural getters so independently versioned provider modules do not depend on a new
+engine-owned value type. `internal/adapter/llmresilience/llmresilience.go`
+(`attemptMetadataArgs`) assembles and emits it only when the whole value validates:
+HTTP/in-band status, bounded printable provider code, and one closed-kind bounded
+correlation ID. Error bodies, prompts, URLs, headers, and credentials never enter
+these fields.
 
-**proto.** `contracts/proto/mecatl/v1/harness.proto` (`Result.permanent = 5`):
-additive boolean field on the `Result` message.
+The three provider modules attach only safe facts exposed by their wire protocols:
+`provider/openai/stream.go`, `provider/openaichat/openaichat.go`, and
+`provider/anthropic/anthropic.go`. ToolHive is composed over the same OpenAI Responses
+adapter in `internal/app/registry.go` (`newGatewayEntry`), so it can report only what
+the gateway and adapter expose. Missing metadata stays missing; no text parsing or
+fabrication fills it in.
 
-**TUI.** `cmd/mecatui/client/msgs.go` (`ResultMsg`): forces
-`Transient=false` (no auto-retry; the legacy `transientVocab` heuristic stays as
-the fallback for old servers — `TODO #346`). A permanent StopError renders a
-ONE-LINE summary block (`✗ <first line, ≤120 runes> — retrying won't help; the
-request is rejected. Start a new session or /clear.`) via
-`cmd/mecatui/ui/render.go` (`renderPermanentError`), with the raw payload behind
-`ctrl+t` expand under a dim `raw payload:` header.
-`cmd/mecatui/ui/update.go` (`RecoverNoticeMsg`): renders as a transient warning
-status line BEFORE the provider call burns tokens.
+**Accepted costs.** Tentative display reasoning is delayed until meaningful text or
+clean completion. Mecatui auto-retries only once and only at typed Precommit. The
+per-attempt tentative chunk buffer remains unbounded, matching the existing stream
+assembly posture; add a separate bound if production evidence requires it. These
+costs are preferable to replaying visible output, duplicating a user prompt, or
+executing a tentative tool call twice.
 
 ---
 

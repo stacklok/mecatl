@@ -251,8 +251,37 @@ func TestMCPPromptGotClosesAndInserts(t *testing.T) {
 
 // --- panel ------------------------------------------------------------------
 
-// TestMCPPanelGolden locks the panel with NO ToolHive groups (renders the
-// "ToolHive groups: none" line).
+// TestMCPListsRenderEnabledEmptyStates covers the successful empty state of each
+// MCP list through the public Model renderer. Each caller supplies distinct copy
+// when MCP is enabled, rather than collapsing an empty response into the disabled
+// capability message.
+func TestMCPListsRenderEnabledEmptyStates(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       tea.KeyPressMsg
+		emptyNote string
+	}{
+		{"inventory", ctrlKey('o'), "No MCP sources configured on this server."},
+		{"resources", ctrlKey('r'), "No resources advertised by the connected MCP servers."},
+		{"prompts", ctrlKey('p'), "No prompts advertised by the connected MCP servers."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMCPModel(t, aztec(), &fakeMCP{})
+			m.caps.MCP = true
+			m = openOverlay(t, m, tt.key)
+			st := mcpActive(m)
+			if st == nil || st.loading || st.errMsg != "" {
+				t.Fatalf("state = %#v, want loaded without error", st)
+			}
+			got := string(stripANSI([]byte(m.View().Content)))
+			if !strings.Contains(got, tt.emptyNote) {
+				t.Errorf("View() missing empty state %q:\n%s", tt.emptyNote, got)
+			}
+		})
+	}
+}
+
 func TestMCPPanelGolden(t *testing.T) {
 	m := newMCPModel(t, aztec(), samplePanelMCP())
 	m = openOverlay(t, m, ctrlKey('o'))

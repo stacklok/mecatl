@@ -29,9 +29,14 @@ returns a capability snapshot when it creates a session.
 1. Create a session with a workspace and any desired model/provider or permission
    selection.
 2. Start a prompt. The server streams agent events until it reaches a terminal
-   result.
-3. If the run asks for permission, resolve the ask and continue the same session.
-4. Read the final result, or resume/replay a durable session when the configured
+   result. Inspect the presence-aware retry disposition and stream progress on a
+   failed result.
+3. For typed `retryable + precommit`, a client may make one bounded prompt-free
+   failed-step retry. Send `RetryStart` as the first gRPC `Converse` frame, or call
+   bodyless `POST /v1/sessions/{id}/retry`. A visible failure requires an explicit
+   retry decision; absent or unknown metadata is not safe evidence.
+4. If the run asks for permission, resolve the ask and continue the same session.
+5. Read the final result, or resume/replay a durable session when the configured
    store supports it.
 
 Use the detailed references below for exact fields, response codes, event

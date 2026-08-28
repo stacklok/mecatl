@@ -84,7 +84,7 @@ func argValue(args []any, key string) any {
 
 // TestResilienceLogsRetry asserts a transient establishment failure that succeeds
 // on retry emits exactly one DEBUG "retrying" line carrying the attempt and a
-// clamped err.
+// sanitized structured decision fields without rendering the raw error.
 func TestResilienceLogsRetry(t *testing.T) {
 	conn := &net.OpError{Op: "dial", Err: errors.New("refused")}
 	diag := &recordingDiag{}
@@ -119,8 +119,8 @@ func TestResilienceLogsRetry(t *testing.T) {
 	if got, ok := argValue(rec[0].args, "backoff").(time.Duration); !ok || got != time.Nanosecond {
 		t.Errorf("retry backoff arg = %v (%T), want 1ns", argValue(rec[0].args, "backoff"), argValue(rec[0].args, "backoff"))
 	}
-	if got, _ := argValue(rec[0].args, "err").(string); got == "" || !strings.Contains(got, "refused") {
-		t.Errorf("retry err arg = %q, want the clamped underlying error", got)
+	if got := argValue(rec[0].args, "err"); got != nil {
+		t.Errorf("retry err arg = %v, want omitted raw error", got)
 	}
 }
 
@@ -184,7 +184,7 @@ func TestResilienceLogsIdleStall(t *testing.T) {
 
 // TestResilienceLogsPermanentError asserts the FIRST of the two paths that end a turn
 // TERMINALLY — a permanent, non-retryable establishment error — emits exactly one INFO
-// carrying the attempt and a clamped err. Before issue #319 the recoverable lifecycle
+// carrying the attempt and sanitized decision metadata. Before issue #319 the recoverable lifecycle
 // (retry / exhaustion / idle stall / breaker) was fully observable while both fatal paths
 // logged at NO level, so an operator reading mecatui.log could not distinguish a
 // permanent 4xx from a run that never called the provider at all.
@@ -209,8 +209,8 @@ func TestResilienceLogsPermanentError(t *testing.T) {
 	if got := argValue(rec[0].args, "attempt"); got != 1 {
 		t.Errorf("non-retryable attempt arg = %v, want 1", got)
 	}
-	if got, _ := argValue(rec[0].args, "err").(string); got == "" {
-		t.Errorf("non-retryable line must carry the clamped err, got %q", got)
+	if got := argValue(rec[0].args, "err"); got != nil {
+		t.Errorf("non-retryable err arg = %v, want omitted raw error", got)
 	}
 	// CORRELATION (issue #319's other half): without the model an operator reading a
 	// busy server's log learns that A turn died, not whose. It is the finest correlation
@@ -261,8 +261,8 @@ func TestResilienceLogsMidStreamError(t *testing.T) {
 			if rec[0].level != port.LevelInfo {
 				t.Errorf("mid-stream line level = %v, want LevelInfo", rec[0].level)
 			}
-			if got, _ := argValue(rec[0].args, "err").(string); !strings.Contains(got, "502") {
-				t.Errorf("mid-stream line must carry the clamped err, got %q", got)
+			if got := argValue(rec[0].args, "err"); got != nil {
+				t.Errorf("mid-stream err arg = %v, want omitted raw error", got)
 			}
 			// CORRELATION: the model is threaded Stream -> establish -> pullToCommit ->
 			// restSeq for this line specifically (the mid-stream site had no request in
@@ -486,19 +486,19 @@ func TestResilienceLogsExhaustion(t *testing.T) {
 	if rec[0].level != port.LevelInfo {
 		t.Errorf("exhaustion line level = %v, want LevelInfo", rec[0].level)
 	}
-	if got := argValue(rec[0].args, "attempts"); got != 3 {
-		t.Errorf("exhaustion attempts arg = %v, want 3", got)
+	if got := argValue(rec[0].args, "attempt"); got != 3 {
+		t.Errorf("exhaustion attempt arg = %v, want 3", got)
 	}
-	// The two args this line was RETROFITTED with, neither of which had an oracle: `model`
-	// for the same correlation reason as its three sibling terminals, and `err` — the last
-	// attempt's error, which is the only clue to WHY establishment never succeeded. The old
-	// test could not even express the model assertion: it passed an empty LLMRequest, so the
-	// value was "" whether the arg was wired or not.
+	if got := argValue(rec[0].args, "max_attempts"); got != 3 {
+		t.Errorf("exhaustion max_attempts arg = %v, want 3", got)
+	}
+	// Model remains safe correlation while the raw provider error is deliberately
+	// absent; replay_suppressed_reason and optional validated metadata carry cause.
 	if got := argValue(rec[0].args, "model"); got != "claude-haiku-5" {
 		t.Errorf("exhaustion model arg = %v, want the request's model (operator correlation)", got)
 	}
-	if got, _ := argValue(rec[0].args, "err").(string); got == "" || !strings.Contains(got, "refused") {
-		t.Errorf("exhaustion err arg = %q, want the last attempt's clamped error", got)
+	if got := argValue(rec[0].args, "err"); got != nil {
+		t.Errorf("exhaustion err arg = %v, want omitted raw error", got)
 	}
 }
 
@@ -631,8 +631,8 @@ func TestResilienceLogsMidStreamCancellationAsACancellation(t *testing.T) {
 	if !strings.Contains(frec[0].msg, "failed mid-stream") {
 		t.Errorf("a genuine provider fault must still be logged as a FAILURE, got %q", frec[0].msg)
 	}
-	if got, _ := argValue(frec[0].args, "err").(string); !strings.Contains(got, "upstream 502") {
-		t.Errorf("a provider fault must still carry err=, got %q", got)
+	if got := argValue(frec[0].args, "err"); got != nil {
+		t.Errorf("provider fault err arg = %v, want omitted raw error", got)
 	}
 }
 
@@ -685,8 +685,8 @@ func TestResilienceLogsBreakerRejection(t *testing.T) {
 	if got := argValue(rec[0].args, "model"); got != "m-1" {
 		t.Errorf("model arg = %v, want m-1 (correlation must ride every terminal line)", got)
 	}
-	if got, _ := argValue(rec[0].args, "err").(string); !strings.Contains(got, "circuit breaker open") {
-		t.Errorf("the line must carry the breaker error (it names the cooldown), got %q", got)
+	if got := argValue(rec[0].args, "err"); got != nil {
+		t.Errorf("breaker-rejection err arg = %v, want omitted raw error", got)
 	}
 	// The rejected call never reached the provider — that is what makes the missing line
 	// invisible without this fix.

@@ -148,12 +148,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 		}
 		f.consume(ev)
 	}
-	// When awaiting, the trailing assistant turn (with the unanswered tool call) stays
-	// UNFLUSHED so reconstructAwaiting can drive it through the running aggregate (its
-	// dangling tool_use would fail SeedHistory's pairing guard). Otherwise flush it.
-	if f.pending == nil {
-		f.flushTurn()
-	}
+	f.finalizeOpenTurn()
 
 	s := session.New(meta.ID, meta.Mode, meta.Workspace, meta.Limits, meta.CreatedAt)
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
@@ -198,6 +193,14 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent, f.lastError); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	if s.State == session.StateFailed {
+		if err := s.RecordFailureMetadata(f.disposition, f.progress); err != nil {
+			return nil, fmt.Errorf("%w: restore failure metadata: %w", ErrReconstruct, err)
+		}
+	}
+	if err := f.restoreRetryPending(s); err != nil {
+		return nil, err
+	}
 	// Seed the session Title from the first genuine user prompt captured during the
 	// fold (set-once + clamped via SetTitle). This reuses the domain predicate + the
 	// same seam the loop uses (recordPrompt → SetTitle), so a Fold-reconstructed
@@ -206,6 +209,31 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// title survives compaction here (better than the snapshot lazy fallback).
 	s.SetTitle(f.firstGenuineText)
 	return s, nil
+}
+
+func (f *folder) finalizeOpenTurn() {
+	// Awaiting keeps a dangling tool-call turn unflushed. A crashed retry after
+	// turn.start discards partial deltas because no terminal made them history.
+	crashedRetry := f.retryPending && f.retryTurnStarted && !f.ended
+	if f.pending == nil && !crashedRetry {
+		f.flushTurn()
+		return
+	}
+	if crashedRetry {
+		f.curOpen = false
+		f.curText = ""
+		f.curCalls = nil
+	}
+}
+
+func (f *folder) restoreRetryPending(s *session.Session) error {
+	if !f.retryPending {
+		return nil
+	}
+	if err := s.RestoreFailedStepRetryPending(f.retryDisposition, f.retryProgress); err != nil {
+		return fmt.Errorf("%w: restore failed-step retry intent: %w", ErrReconstruct, err)
+	}
+	return nil
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
@@ -281,12 +309,21 @@ type folder struct {
 	firstGenuineText string
 
 	// derived lifecycle.
-	usage     session.Usage // cumulative = SUM of every EvResult.Usage
-	stop      session.StopReason
-	pending   *session.PendingAsk
-	ended     bool   // a terminal EvResult was seen
-	permanent bool   // last EvResult.Permanent (meaningful only when stop==StopError)
-	lastError string // last EvResult.Error (meaningful only when stop==StopError) — issue #332
+	usage       session.Usage // cumulative = SUM of every EvResult.Usage
+	stop        session.StopReason
+	pending     *session.PendingAsk
+	ended       bool // a terminal EvResult was seen
+	permanent   bool // compatibility projection of disposition==permanent
+	disposition session.RetryDisposition
+	progress    session.StreamProgress
+	lastError   string // last EvResult.Error (meaningful only when stop==StopError) — issue #332
+
+	// failed-step retry segment state. model.retry starts a prompt-free segment and
+	// carries the prior failure facts; turn.start proves an authoritative model attempt.
+	retryPending     bool
+	retryTurnStarted bool
+	retryDisposition session.RetryDisposition
+	retryProgress    session.StreamProgress
 
 	// counters of the CURRENT run segment (reset on each terminal, so the final
 	// values reflect the latest run — mirroring resetToIdle on Reopen).
@@ -302,35 +339,26 @@ type folder struct {
 // consume folds one event into the accumulator.
 func (f *folder) consume(ev session.Event) {
 	switch ev.Type {
-	case session.EvCompactionArchive:
-		// The pre-compaction head the snapshot would otherwise have lost. It REPLACES
-		// the history reconstructed so far (it IS the conversation up to the compaction
-		// point); the in-progress assistant turn (if any) continues accumulating ON TOP
-		// of it, so we do NOT close curOpen. Dropping this case would silently lose every
-		// turn before the last compaction.
-		if ev.CompactionArchive != nil {
-			f.messages = session.CloneMessages(ev.CompactionArchive.Replaced)
-		}
-	case session.EvUserPrompt:
-		// A user-role message was recorded (the genuine prompt OR a harness-authored
-		// continuation/notice). It is its OWN message, appended in stream order: flush any
-		// in-progress assistant turn first (the user message follows it), then append the
-		// user message verbatim (Text + Parts). This is what closes the "log can't show
-		// what the user asked" gap — without this case the fold would reconstruct only
-		// assistant/tool turns. EvUserPrompt does NOT begin a model turn (the following
-		// EvTurnStart does), so it touches no counter.
+	case session.EvCompactionArchive, session.EvUserPrompt:
+		f.consumeHistoryEvent(ev)
+	case session.EvModelRetry:
+		// A retry starts a new prompt-free run segment. The prior failed terminal is
+		// consumed into durable pending intent; advisory Text is never parsed.
 		f.flushTurn()
-		if ev.UserPrompt != nil {
-			msg := session.NewUserMessageWithParts(ev.UserPrompt.Text, ev.UserPrompt.Parts)
-			f.messages = append(f.messages, msg)
-			// Capture the first GENUINE user prompt for the session Title (Fold seeds
-			// it via SetTitle after reconstruction). A synthesised compaction summary
-			// does not capture (IsSynthesisedSummary skips it). Text-only; a
-			// multimodal-only prompt (Text=="") leaves firstGenuineText=="" — the lazy
-			// fallback applies.
-			if f.firstGenuineText == "" && session.IsGenuineUserPrompt(msg) && strings.TrimSpace(msg.Text) != "" {
-				f.firstGenuineText = msg.Text
-			}
+		f.ended = false
+		f.stop = session.StopNone
+		f.pending = nil
+		f.curTurns, f.curToolCalls, f.curConsecFail = 0, 0, 0
+		// PrepareFailedStepRetry resets per-run Counters. The previous terminal's
+		// snapshot must not win over this new prompt-free segment when a crash lands
+		// before turn.start (all zero) or while its first turn is running.
+		f.finalCnt = session.Counters{}
+		f.finalCntSet = false
+		f.retryPending = ev.ModelRetry != nil
+		f.retryTurnStarted = false
+		if ev.ModelRetry != nil {
+			f.retryDisposition = ev.ModelRetry.Disposition
+			f.retryProgress = ev.ModelRetry.Progress
 		}
 	case session.EvTurnStart:
 		// A new turn begins: flush the previous assistant turn (if any) and start a
@@ -338,6 +366,9 @@ func (f *folder) consume(ev session.Event) {
 		f.flushTurn()
 		f.curOpen = true
 		f.curTurns++
+		if f.retryPending {
+			f.retryTurnStarted = true
+		}
 	case session.EvMessageDelta:
 		f.curOpen = true
 		f.curText += ev.Text
@@ -379,6 +410,25 @@ func (f *folder) consume(ev session.Event) {
 	}
 }
 
+func (f *folder) consumeHistoryEvent(ev session.Event) {
+	switch ev.Type {
+	case session.EvCompactionArchive:
+		if ev.CompactionArchive != nil {
+			f.messages = session.CloneMessages(ev.CompactionArchive.Replaced)
+		}
+	case session.EvUserPrompt:
+		f.flushTurn()
+		if ev.UserPrompt == nil {
+			return
+		}
+		msg := session.NewUserMessageWithParts(ev.UserPrompt.Text, ev.UserPrompt.Parts)
+		f.messages = append(f.messages, msg)
+		if f.firstGenuineText == "" && session.IsGenuineUserPrompt(msg) && strings.TrimSpace(msg.Text) != "" {
+			f.firstGenuineText = msg.Text
+		}
+	}
+}
+
 // applyResult folds a terminal EvResult. EvResult.Usage is the PER-RUN figure; the
 // cumulative session usage is the SUM across every run's EvResult (a multi-run log
 // carries several), so using a single EvResult.Usage (not the sum) would undercount
@@ -389,16 +439,42 @@ func (f *folder) consume(ev session.Event) {
 // subsequent EvTurnStart (a Reopen) begins a fresh run whose Counters are per-run
 // (resetToIdle zeroes them on Reopen); the FINAL counters reflect the latest run.
 func (f *folder) applyResult(ev session.Event) {
-	f.flushTurn()
+	deferredRetry := f.retryPending && !f.retryTurnStarted && ev.Result != nil && ev.Result.Stop != session.StopCancelled
+	failedStream := ev.Result != nil && ev.Result.Stop == session.StopError && ev.Result.Progress != session.StreamProgressComplete
+	if failedStream {
+		// Deltas from a failed model stream remain in the event log for audit, but the
+		// incomplete assistant must never enter replay history.
+		f.curOpen = false
+		f.curText = ""
+		f.curCalls = nil
+	} else {
+		// A ChunkDone carrying StopError is still a clean terminal when progress is
+		// complete. The live loop records the assistant before terminateComplete, so
+		// event reconstruction must retain it too.
+		f.flushTurn()
+	}
 	if ev.Result != nil {
 		f.usage = f.usage.Add(ev.Result.Usage)
 		f.stop = ev.Result.Stop
-		f.permanent = ev.Result.Stop == session.StopError && ev.Result.Permanent
-		if ev.Result.Stop == session.StopError {
+		f.disposition = session.RetryDispositionUnknown
+		f.progress = ev.Result.Progress
+		f.permanent = false
+		f.lastError = ""
+		if failedStream {
+			f.disposition = ev.Result.Disposition
+			if f.disposition == session.RetryDispositionUnknown && ev.Result.Permanent {
+				f.disposition = session.RetryDispositionPermanent
+			}
+			f.progress = ev.Result.Progress
+			f.permanent = f.disposition == session.RetryDispositionPermanent
 			f.lastError = ev.Result.Error
 		}
 	}
-	f.ended = true
+	f.ended = !deferredRetry
+	if !deferredRetry {
+		f.retryPending = false
+		f.retryTurnStarted = false
+	}
 	f.pending = nil
 	f.finalCnt = f.curCounters()
 	f.finalCntSet = true
@@ -429,23 +505,27 @@ func (f *folder) flushTurn() {
 // in (the awaiting case is handled by reconstructAwaiting before this is reached).
 func (f *folder) restoreState() session.State {
 	if !f.ended {
-		// No terminal result and no pending ask: the stream stopped mid-run (e.g. a
-		// crash between turns). The faithful, resumable landing is IDLE — the
-		// conversation is intact and the next prompt can resume it.
+		if f.retryPending && f.retryTurnStarted {
+			return session.StateRunning
+		}
+		// No terminal result and no pending ask: an ordinary incomplete stream lands
+		// idle; a retry that has not reached turn.start stays idle-but-pending.
 		return session.StateIdle
 	}
-	return stateForStop(f.stop)
+	return stateForStop(f.stop, f.progress)
 }
 
-// stateForStop maps a recorded terminal stop reason to its terminal State, mirroring
-// the loop's terminate paths: StopCancelled→cancelled, StopError→failed, everything
-// else (the clean terminals: end_turn/budget/no_progress/limits/structured_output)→
-// completed.
-func stateForStop(stop session.StopReason) session.State {
+// stateForStop maps a recorded terminal result to its terminal State. StopError
+// with complete progress came from a clean ChunkDone and mirrors terminateComplete;
+// other StopError results came from iterator/provider errors and mirror terminate.
+func stateForStop(stop session.StopReason, progress session.StreamProgress) session.State {
 	switch stop {
 	case session.StopCancelled:
 		return session.StateCancelled
 	case session.StopError:
+		if progress == session.StreamProgressComplete {
+			return session.StateCompleted
+		}
 		return session.StateFailed
 	default:
 		return session.StateCompleted

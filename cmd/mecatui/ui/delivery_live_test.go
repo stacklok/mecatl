@@ -163,8 +163,8 @@ func TestFireDelivery_Scenario5_ConnectedTUIRendersDeliveryLive(t *testing.T) {
 
 // TestFireDelivery_Scenario6_TransportProjectionParity verifies AC6.4: the SAME
 // delivery EvUserPrompt event produces the SAME DeliveryNoteMsg/render whether it
-// arrives via the live stream (LiveStreamCmd / updateLiveMsg) or the replay stream
-// (ReplayStreamCmd / applyReplayEvent). One EventToMsg projection, two transports
+// arrives via the live stream (LiveStreamCmd / updateLiveMsg) or replay processing
+// (StreamSessionEvents / applyReplayEvent). One EventToMsg projection, two transports
 // — both paths reduce the delivery to an equivalent delivery-card block.
 func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 	deliveryEv := deliveryUserPromptEvent("nightly-sync", "sched--fire1", deliveryProvenanceText)

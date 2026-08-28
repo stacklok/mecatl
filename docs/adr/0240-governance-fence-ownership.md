@@ -1,4 +1,4 @@
-# ADR 0239 — Canonical untrusted-content fences live in governance
+# ADR 0240 — Canonical untrusted-content fences live in governance
 
 - Status: Accepted
 - Date: 2026-08-28

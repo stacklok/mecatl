@@ -11,13 +11,17 @@
     method func (*Session).Cancel() error
     method func (*Session).Complete() error
     method func (*Session).Fail() error
+    method func (*Session).FailedStepRetryPending() (RetryDisposition, StreamProgress, bool)
+    method func (*Session).FailureMetadata() (RetryDisposition, StreamProgress)
     method func (*Session).FailurePermanence() bool
     method func (*Session).Interrupt() error
     method func (*Session).LastError() string
     method func (*Session).LimitTripped() (StopReason, bool)
     method func (*Session).PauseForApproval(ask PendingAsk) error
     method func (*Session).PendingAsk() (PendingAsk, bool)
+    method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
+    method func (*Session).RecordFailureMetadata(disposition RetryDisposition, progress StreamProgress) error
     method func (*Session).RecordFailurePermanence(permanent bool) error
     method func (*Session).RecordLastError(cause string) error
     method func (*Session).RecordToolResults(results []ToolResult) error
@@ -31,6 +35,7 @@
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ResetUsage() error
+    method func (*Session).RestoreFailedStepRetryPending(disposition RetryDisposition, progress StreamProgress) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
     method func (*Session).ResumeWith() (PendingAsk, error)
@@ -44,7 +49,9 @@
     method func (GrantType).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAsk).Origin() AskOrigin
+    method func (RetryDisposition).Valid() bool
     method func (State).IsTerminal() bool
+    method func (StreamProgress).Valid() bool
     method func (Usage).Add(other Usage) Usage
     method func (Usage).CacheHitRate() float64
     method func (Usage).TotalTokens() int
@@ -66,6 +73,7 @@ const EvCompaction EventType = "compaction"
 const EvCompactionArchive EventType = "compaction.archive"
 const EvHook EventType = "hook"
 const EvMessageDelta EventType = "message.delta"
+const EvModelRetry EventType = "model.retry"
 const EvNoProgress EventType = "no_progress"
 const EvParallelBranch EventType = "parallel.branch"
 const EvParallelEnd EventType = "parallel.end"
@@ -115,6 +123,9 @@ const ModePlan PermissionMode = "plan"
 const ParallelBranchEnd ParallelEventKind = "branch_end"
 const ParallelBranchStart ParallelEventKind = "branch_start"
 const ParallelBranchTool ParallelEventKind = "branch_tool"
+const RetryDispositionPermanent RetryDisposition = 2
+const RetryDispositionRetryable RetryDisposition = 1
+const RetryDispositionUnknown RetryDisposition = 0
 const RoleAssistant Role = "assistant"
 const RoleSystem Role = "system"
 const RoleTool Role = "tool"
@@ -152,6 +163,10 @@ const StopPlanApproved StopReason = "plan_approved"
 const StopPlanIterate StopReason = "plan_iterate"
 const StopStructuredOutput StopReason = "structured_output"
 const StopTimeout StopReason = "timeout"
+const StreamProgressComplete StreamProgress = 3
+const StreamProgressPrecommit StreamProgress = 1
+const StreamProgressUnknown StreamProgress = 0
+const StreamProgressVisible StreamProgress = 2
 const Tier4SummaryMarker untyped string = "[earlier turns summarised]"
 const TitleProvenanceFirstPrompt TitleProvenance = "first-prompt"
 const TitleProvenanceOperator TitleProvenance = "operator"
@@ -220,7 +235,7 @@ type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string
 type EnvironmentRef struct{Kind EnvironmentKind; ID string}
-type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
 type EventType string
 type GrantType string
 type HookDecision string
@@ -228,12 +243,14 @@ type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID
 type Limits struct{MaxTurns int; MaxToolCalls int; MaxConsecutiveFailures int}
 type MediaKind string
 type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; ReasoningItemID string; Parts []Content}
+type ModelRetryPayload struct{Disposition RetryDisposition; Progress StreamProgress}
 type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
 type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
 type PermissionMode string
 type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}
-type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool}
+type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool; Disposition RetryDisposition; Progress StreamProgress}
+type RetryDisposition uint8
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
 type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; Adoption *AdoptionMetadata; CreatedAt time.Time}
@@ -243,6 +260,7 @@ type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitem
 type State string
 type SteerPayload struct{Text string}
 type StopReason string
+type StreamProgress uint8
 type SubagentPayload struct{ParentCallID string; ChildID string; Goal string; Background bool; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Usage Usage; Stop StopReason; Cause string; DurationMs int64}
 type TeamFindingSnapshot struct{Member string; Body string}
 type TeamMemberDisposition struct{Name string; Disposition string; Reason string; ErrorRounds int}

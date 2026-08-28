@@ -383,13 +383,30 @@ func (p *Provider) sessionCaps() port.ProviderCapabilities {
 // other than 408/429) from transient failures (5xx, rate limits, unknown). It
 // carries the SDK error for Unwrap and a human-readable message for Error().
 type anthropicStreamError struct {
-	err    error  // original SDK/transport error (for Unwrap)
-	msg    string // human-readable Error() string
-	status int    // HTTP-status equivalent; 0 = unknown
+	err      error  // original SDK/transport error (for Unwrap)
+	msg      string // human-readable Error() string
+	status   int    // HTTP-status equivalent; 0 = unknown
+	metadata providerErrorMetadata
 }
 
-func (e *anthropicStreamError) Error() string { return e.msg }
-func (e *anthropicStreamError) Unwrap() error { return e.err }
+type providerErrorMetadata struct {
+	httpStatus      int
+	inBandStatus    int
+	providerCode    string
+	correlationKind string
+	correlationID   string
+}
+
+func (e *anthropicStreamError) Error() string             { return e.msg }
+func (e *anthropicStreamError) Unwrap() error             { return e.err }
+func (e *anthropicStreamError) StatusCode() int           { return e.status }
+func (e *anthropicStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
+func (e *anthropicStreamError) ProviderInBandStatus() int { return e.metadata.inBandStatus }
+func (e *anthropicStreamError) ProviderErrorCode() string { return e.metadata.providerCode }
+func (e *anthropicStreamError) ProviderErrorCorrelationKind() string {
+	return e.metadata.correlationKind
+}
+func (e *anthropicStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
 // Permanent implements port.PermanentError. The error is permanent when the
 // message signals a context-window overflow, or when the status is a known
@@ -425,16 +442,22 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
-// anthropicStreamErr wraps the given error as an anthropicStreamError, probing
-// the error chain for an SDK Error to extract an HTTP-status equivalent.
-// If no SDK error is found, status is 0 (unknown / fail-open).
+// anthropicStreamErr wraps the given error while retaining the SDK error in the
+// chain and projecting only typed provider metadata.
 func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 	var sdkErr *sdk.Error
 	status := 0
+	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
 		status = sdkErr.StatusCode
+		metadata.httpStatus = status
+		metadata.providerCode = string(sdkErr.Type())
+		if sdkErr.RequestID != "" {
+			metadata.correlationKind = "request"
+			metadata.correlationID = sdkErr.RequestID
+		}
 	}
-	return &anthropicStreamError{err: err, msg: msg, status: status}
+	return &anthropicStreamError{err: err, msg: msg, status: status, metadata: metadata}
 }
 
 // Compile-time assertion that Provider satisfies the port.

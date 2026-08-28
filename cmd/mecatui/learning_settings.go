@@ -56,62 +56,35 @@ func (s *operatorLearningSettings) Advance() (fromLabel, toLabel, restart string
 	if s.path == "" {
 		return "", "", "", errors.New("operator settings path is unavailable")
 	}
-	if err := rejectSymlinkPath(s.path); err != nil {
-		return "", "", "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return "", "", "", fmt.Errorf("create operator settings dir: %w", err)
-	}
-	if err := rejectSymlinkPath(s.path); err != nil {
-		return "", "", "", err
-	}
-	lockPath := s.path + ".lock"
-	if err := rejectSymlinkPath(lockPath); err != nil {
-		return "", "", "", err
-	}
-	lock := flock.New(lockPath)
-	if s.beforeLock != nil {
-		s.beforeLock()
-	}
-	if err := lock.Lock(); err != nil {
-		return "", "", "", fmt.Errorf("lock operator settings: %w", err)
-	}
-	defer func() {
-		if unlockErr := lock.Unlock(); err == nil && unlockErr != nil {
-			err = fmt.Errorf("unlock operator settings: %w", unlockErr)
+	if err := s.withLockedDocument(func(doc *yaml.Node) error {
+		current, err := learningMode(doc)
+		if err != nil {
+			return err
 		}
-		_ = lock.Close()
-	}()
-
-	doc, err := s.readDocument()
-	if err != nil {
+		currentSensitivity, err := learningSensitivity(doc)
+		if err != nil {
+			return err
+		}
+		currentActivation, err := learningActivation(doc, current)
+		if err != nil {
+			return err
+		}
+		if s.afterRead != nil {
+			s.afterRead()
+		}
+		next := current.Next()
+		nextActivation, err := learningActivation(doc, next)
+		if err != nil {
+			return err
+		}
+		setLearningMode(doc, next)
+		fromLabel = learningModeLabel(current) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ", skills " + currentActivation.String() + ")"
+		toLabel = learningModeLabel(next) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ", skills " + nextActivation.String() + ")"
+		return nil
+	}); err != nil {
 		return "", "", "", err
 	}
-	current, err := learningMode(doc)
-	if err != nil {
-		return "", "", "", err
-	}
-	currentSensitivity, err := learningSensitivity(doc)
-	if err != nil {
-		return "", "", "", err
-	}
-	currentActivation, err := learningActivation(doc, current)
-	if err != nil {
-		return "", "", "", err
-	}
-	if s.afterRead != nil {
-		s.afterRead()
-	}
-	next := current.Next()
-	nextActivation, err := learningActivation(doc, next)
-	if err != nil {
-		return "", "", "", err
-	}
-	setLearningMode(doc, next)
-	if err := s.writeDocument(doc); err != nil {
-		return "", "", "", err
-	}
-	return learningModeLabel(current) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ", skills " + currentActivation.String() + ")", learningModeLabel(next) + " (sensitivity " + learningSensitivityLabel(currentSensitivity) + ", skills " + nextActivation.String() + ")", "saved; restart mecatui for it to take effect", nil
+	return fromLabel, toLabel, "saved; restart mecatui for it to take effect", nil
 }
 
 func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, restart string, err error) {
@@ -121,25 +94,54 @@ func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, res
 	if s.path == "" {
 		return "", "", "", errors.New("operator settings path is unavailable")
 	}
-	if err := rejectSymlinkPath(s.path); err != nil {
+	if err := s.withLockedDocument(func(doc *yaml.Node) error {
+		current, err := learningSensitivity(doc)
+		if err != nil {
+			return err
+		}
+		currentMode, err := learningMode(doc)
+		if err != nil {
+			return err
+		}
+		activation, err := learningActivation(doc, currentMode)
+		if err != nil {
+			return err
+		}
+		if s.afterRead != nil {
+			s.afterRead()
+		}
+		next := current.Next()
+		setLearningMode(doc, currentMode)
+		setLearningSensitivity(doc, next)
+		fromLabel = learningSensitivityLabel(current) + " (mode " + learningModeLabel(currentMode) + ", skills " + activation.String() + ")"
+		toLabel = learningSensitivityLabel(next) + " (mode " + learningModeLabel(currentMode) + ", skills " + activation.String() + ")"
+		return nil
+	}); err != nil {
 		return "", "", "", err
+	}
+	return fromLabel, toLabel, "saved; restart mecatui for it to take effect", nil
+}
+
+func (s *operatorLearningSettings) withLockedDocument(mutate func(*yaml.Node) error) (err error) {
+	if err := rejectSymlinkPath(s.path); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return "", "", "", fmt.Errorf("create operator settings dir: %w", err)
+		return fmt.Errorf("create operator settings dir: %w", err)
 	}
 	if err := rejectSymlinkPath(s.path); err != nil {
-		return "", "", "", err
+		return err
 	}
 	lockPath := s.path + ".lock"
 	if err := rejectSymlinkPath(lockPath); err != nil {
-		return "", "", "", err
+		return err
 	}
 	lock := flock.New(lockPath)
 	if s.beforeLock != nil {
 		s.beforeLock()
 	}
 	if err := lock.Lock(); err != nil {
-		return "", "", "", fmt.Errorf("lock operator settings: %w", err)
+		return fmt.Errorf("lock operator settings: %w", err)
 	}
 	defer func() {
 		if unlockErr := lock.Unlock(); err == nil && unlockErr != nil {
@@ -147,32 +149,15 @@ func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, res
 		}
 		_ = lock.Close()
 	}()
+
 	doc, err := s.readDocument()
 	if err != nil {
-		return "", "", "", err
+		return err
 	}
-	current, err := learningSensitivity(doc)
-	if err != nil {
-		return "", "", "", err
+	if err := mutate(doc); err != nil {
+		return err
 	}
-	currentMode, err := learningMode(doc)
-	if err != nil {
-		return "", "", "", err
-	}
-	activation, err := learningActivation(doc, currentMode)
-	if err != nil {
-		return "", "", "", err
-	}
-	if s.afterRead != nil {
-		s.afterRead()
-	}
-	next := current.Next()
-	setLearningMode(doc, currentMode)
-	setLearningSensitivity(doc, next)
-	if err := s.writeDocument(doc); err != nil {
-		return "", "", "", err
-	}
-	return learningSensitivityLabel(current) + " (mode " + learningModeLabel(currentMode) + ", skills " + activation.String() + ")", learningSensitivityLabel(next) + " (mode " + learningModeLabel(currentMode) + ", skills " + activation.String() + ")", "saved; restart mecatui for it to take effect", nil
+	return s.writeDocument(doc)
 }
 
 func learningSensitivityLabel(value learning.Sensitivity) string {

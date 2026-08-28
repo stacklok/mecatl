@@ -228,7 +228,8 @@ func (h *HarnessServer) AdoptSession(ctx context.Context, req *mecatlv1.AdoptSes
 	return &mecatlv1.AdoptSessionResponse{SessionId: string(sess.ID), SourceSessionId: string(adoptionSourceID(sess)), Capabilities: h.svc.capabilities(), SessionCapabilities: &mecatlv1.SessionCapabilities{Image: caps.Image, Audio: caps.Audio}, ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID))}, nil
 }
 
-// Converse drives one run over a bidi stream. The first frame MUST be a Prompt;
+// Converse drives one run over a bidi stream. The first frame MUST be a Prompt
+// or RetryStart;
 // the server then relays the run's Events while concurrently reading
 // ResumeApproval / Cancel control frames, until the events channel closes (the
 // terminal result was delivered) or the stream context is cancelled.
@@ -238,27 +239,41 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	first, err := stream.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			return status.Error(codes.InvalidArgument, "converse: stream closed before a prompt frame")
+			return status.Error(codes.InvalidArgument, "converse: stream closed before a start frame")
 		}
 		return err
 	}
-	prompt := first.GetPrompt()
-	if prompt == nil {
-		return status.Error(codes.InvalidArgument, "converse: first frame must be a prompt")
+	var (
+		id       session.SessionID
+		run      *agent.Run
+		retrying bool
+	)
+	switch {
+	case first.GetPrompt() != nil:
+		prompt := first.GetPrompt()
+		if prompt.GetSessionId() == "" {
+			return status.Error(codes.InvalidArgument, "converse: prompt session_id is required")
+		}
+		if prompt.GetText() == "" && len(prompt.GetParts()) == 0 {
+			return status.Error(codes.InvalidArgument, "converse: prompt text or parts is required")
+		}
+		parts, perr := contentFromProto(prompt.GetParts())
+		if perr != nil {
+			return status.Error(codes.InvalidArgument, perr.Error())
+		}
+		id = session.SessionID(prompt.GetSessionId())
+		run, err = h.svc.StartRunContent(ctx, id, prompt.GetText(), parts)
+	case first.GetRetry() != nil:
+		retry := first.GetRetry()
+		if retry.GetSessionId() == "" {
+			return status.Error(codes.InvalidArgument, "converse: retry session_id is required")
+		}
+		id = session.SessionID(retry.GetSessionId())
+		retrying = true
+		run, err = h.svc.RetryFailedRun(ctx, id)
+	default:
+		return status.Error(codes.InvalidArgument, "converse: first frame must be a prompt or retry")
 	}
-	if prompt.GetSessionId() == "" {
-		return status.Error(codes.InvalidArgument, "converse: prompt session_id is required")
-	}
-	if prompt.GetText() == "" && len(prompt.GetParts()) == 0 {
-		return status.Error(codes.InvalidArgument, "converse: prompt text or parts is required")
-	}
-	parts, perr := contentFromProto(prompt.GetParts())
-	if perr != nil {
-		return status.Error(codes.InvalidArgument, perr.Error())
-	}
-
-	id := session.SessionID(prompt.GetSessionId())
-	run, err := h.svc.StartRunContent(ctx, id, prompt.GetText(), parts)
 	if err != nil {
 		return toStatus(err)
 	}
@@ -348,6 +363,9 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	go func() {
 		defer close(done)
 		pushErr(h.relayRun(rl, run))
+		if retrying {
+			h.svc.Persist(context.WithoutCancel(ctx), id)
+		}
 		// The terminal original must leave the registry before a steer already
 		// being routed can reopen the session. Finish it before sealing the
 		// mailbox; a route that began before the seal is allowed to post its
@@ -1490,6 +1508,8 @@ func toStatus(err error) error {
 		return status.Error(codes.DeadlineExceeded, ErrDreamDeadline.Error())
 	case errors.Is(err, ErrDreamRequestFailed):
 		return status.Error(codes.Internal, ErrDreamRequestFailed.Error())
+	case errors.Is(err, ErrFailedStepRetryIneligible):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrFailedPrecondition):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrNoActiveRun):

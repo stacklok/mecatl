@@ -122,7 +122,7 @@ func TestPendingModeBlocksQueuedPromptUntilApplied(t *testing.T) {
 	m.pendingMode = "plan"
 	m.queued = []string{"queued follow-up"}
 
-	mm, cmd := m.drainQueue("end_turn", false)
+	mm, cmd := m.drainQueue("end_turn")
 	m = mm.(Model)
 	if cmd != nil {
 		t.Fatal("drainQueue should not submit while a mode switch is pending")

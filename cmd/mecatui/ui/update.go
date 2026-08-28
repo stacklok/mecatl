@@ -391,6 +391,7 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 // warning on top.
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
 	m = m.bindSessionID(msg.SessionID)
+	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
 	m.closeModal()
 	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
@@ -596,16 +597,23 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m = m.failStartupRunEntry()
 			return m, nil, true
 		}
-		// A HARD stream error PAUSES the queue: the staged follow-ups are kept intact
-		// and marked paused (m.queuePaused) so the queue card says why, not auto-sent
-		// into a broken run. A TRANSIENT stream error (msg.Transient — an idle/stalled
-		// stream, an overloaded/unavailable backend, a rate limit) instead AUTO-RESUMES
-		// the merged queue, since a plain retry is likely to succeed. drainQueue owns
-		// the policy in one place.
+		if m.failedStepRetryRun && !m.failedStepRetryAuthoritative {
+			// RetryStart transport/server rejection is non-destructive. The server is
+			// authoritative, so preserve textarea, transcript, queue, and /retry access.
+			m = m.endRun(stopError)
+			m.failedStepRetryRun = false
+			m.statusMsg = m.deps.Theme.Style("warning").Render("retry was not started: " + sanitizeTerminal(msg.Err.Error()) + " — resolve the condition and use /retry")
+			if len(m.queued) > 0 {
+				m.queuePaused = stopError
+			}
+			return m, tea.Batch(m.refreshCmd(), m.armLiveFeed()), true
+		}
+		// A transport error has no semantic commit fact. Always pause and preserve
+		// staged follow-ups, regardless of legacy transient-looking status text.
 		m.conv.addError("stream error: " + msg.Err.Error())
 		m = m.endRun(stopError)
 		liveCmd := m.armLiveFeed()
-		mm, drainCmd := m.drainQueue(stopError, msg.Transient)
+		mm, drainCmd := m.drainQueue(stopError)
 		return mm, tea.Batch(m.refreshCmd(), drainCmd, liveCmd), true
 	case clipboardResultMsg:
 		mm, cmd := m.onClipboardResult(msg)
@@ -629,7 +637,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m = m.endRun("closed")
 			modeCmd := m.retryPendingModeCmd()
 			liveCmd := m.armLiveFeed()
-			mm, drainCmd := m.drainQueue("closed", false)
+			mm, drainCmd := m.drainQueue("closed")
 			return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, liveCmd), true
 		}
 		return m, nil, true
@@ -739,12 +747,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitCmd()
 	case client.TurnStartMsg:
-		m.conv.startAssistant()
-		m.activeTool = ""
-		m.toolProgress = ""
-		// Routing metadata is per turn. OpenRouter omits it on cache hits, so the
-		// previous turn's downstream must not survive into a turn that reports none.
-		m.providerRoute = ""
+		m.beginTurnEvent()
 		return m.afterEvent()
 	case client.AssistantDeltaMsg:
 		// Append only; markDirty arms a one-shot frame-cadence flush. No per-token
@@ -865,6 +868,18 @@ func (m Model) applyDeliveryNote(msg client.DeliveryNoteMsg) (tea.Model, tea.Cmd
 	return m.afterEvent()
 }
 
+func (m *Model) beginTurnEvent() {
+	if m.failedStepRetryRun {
+		m.failedStepRetryAuthoritative = true
+	}
+	m.conv.startAssistant()
+	m.activeTool = ""
+	m.toolProgress = ""
+	// Routing metadata is per turn. OpenRouter omits it on cache hits, so the
+	// previous turn's downstream must not survive into a turn that reports none.
+	m.providerRoute = ""
+}
+
 // updateStreamSecondary is the back half of updateStreamEvent: the delegation
 // projections, the transient notices, and the permission retraction. Split out
 // only so neither dispatcher grows past the cyclomatic-complexity bound.
@@ -882,6 +897,12 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterEvent()
 	case client.ParallelMsg:
 		m.applyParallel(msg)
+		return m.afterEvent()
+	case client.ModelRetryMsg:
+		m.failedStepRetryRun = true
+		m.failedStepRetryAuthoritative = false
+		m.conv.addNotice(noticeLine(msg))
+		m.statusMsg = m.deps.Theme.Style("muted").Render("retrying failed model step…")
 		return m.afterEvent()
 	case client.CompactionMsg:
 		// A compaction boundary is a DURABLE fact worth keeping in the transcript, so it
@@ -1124,7 +1145,25 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 			m.conv.addError(msg.Error)
 		}
 	}
+	retryDeferred := m.failedStepRetryRun && !m.failedStepRetryAuthoritative
 	m = m.endRun(msg.Stop)
+	m.failedStepRetryRun = false
+	m.failedStepRetryAuthoritative = false
+	if retryDeferred {
+		if len(m.queued) > 0 {
+			m.queuePaused = "retry_pending"
+		}
+		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
+		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
+	}
+	if msg.FailedStepRetryEligible() && !m.failedStepRetryTried {
+		m.failedStepRetryTried = true
+		rm, retryCmd := m.startFailedStepRetry()
+		return rm, tea.Batch(m.refreshCmd(), retryCmd, m.armLiveFeed())
+	}
+	if msg.Stop == stopError && msg.RetryDispositionPresent && msg.RetryDisposition == client.RetryDispositionRetryable {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("model step failed — use /retry to retry without duplicating the prompt")
+	}
 	modeCmd := m.retryPendingModeCmd()
 	// Interactive plan-approval continuation (issue #206). A plan_approved
 	// terminal means the operator APPROVED the plan over the Converse
@@ -1148,10 +1187,10 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		// while the execution run is in progress; the ResolvedModelMsg arm
 		// applies both mode + model from the session snapshot (issue #206).
 		refresh := client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
-		dm, drainCmd := pm.drainQueue(msg.Stop, msg.Transient)
+		dm, drainCmd := pm.drainQueue(msg.Stop)
 		return dm, tea.Batch(pm.refreshCmd(), modeCmd, proceedCmd, drainCmd, refresh)
 	}
-	mm, drainCmd := m.drainQueue(msg.Stop, msg.Transient)
+	mm, drainCmd := m.drainQueue(msg.Stop)
 	var skillChanges tea.Cmd
 	if lifecycle, ok := m.deps.Skills.(client.LearnedSkillClient); ok {
 		skillChanges = client.ListSkillChangesCmd(m.deps.Ctx, lifecycle, m.deps.Workspace)
@@ -1164,6 +1203,8 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 // single muted line; this keeps updateStreamEvent's switch flat.
 func noticeLine(msg tea.Msg) string {
 	switch m := msg.(type) {
+	case client.ModelRetryMsg:
+		return "model retry" + suffix(m.Text)
 	case client.CompactionMsg:
 		return "history compacted" + suffix(m.Text)
 	case client.NoProgressMsg:
@@ -2678,6 +2719,9 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.startupRetryPrompt = m.ta.Value()
 		m.startupFirstPromptPending = true
 	}
+	// This is a genuine new user turn, so it starts a fresh one-retry budget.
+	// Automatic failed-step retry bypasses submitPrompt and therefore cannot re-arm itself.
+	m.failedStepRetryTried = false
 	if len(media.Descriptors) > 0 {
 		m.conv.addUserWithMedia(text, media.Descriptors)
 	} else {
@@ -2703,33 +2747,9 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	m.statusMsg = "running…"
 	m.refreshView()
 
-	// Open the run stream synchronously so the model can own the channel and
-	// cancel func (commands run AFTER Update returns and cannot mutate the
-	// model). The Converse open is a lazy gRPC stream create — cheap. The
-	// blocking Recv loop runs on its own goroutine via ReadLoop.
-	runCtx, cancel := context.WithCancel(m.deps.Ctx)
-	stream, err := m.deps.Conv.OpenConverse(runCtx)
-	if err != nil {
-		cancel()
-		m.conv.addError("open run: " + err.Error())
-		return m.endRun(stopError), m.armLiveFeed()
-	}
-	ch := make(chan tea.Msg, 64)
-	m.stream = stream
-	m.streamCh = ch
-	m.cancelRun = cancel
-	m.streamGen++ // open a fresh reader generation; readers of any prior run go stale
-	// ReadLoop selects on runCtx so it can never wedge if endRun stops draining
-	// ch; endRun calls cancelRun, which unblocks and exits the reader.
-	go stream.ReadLoop(runCtx, ch)
-
-	send := func() tea.Msg {
-		if err := stream.SendPrompt(m.sessionID, text, media.Parts); err != nil {
-			return client.StreamErrMsg{Err: err}
-		}
-		return nil
-	}
-	return m, tea.Batch(send, m.waitCmd(), m.sp.Tick)
+	return m.openRun(false, func(stream *client.Stream) error {
+		return stream.SendPrompt(m.sessionID, text, media.Parts)
+	})
 }
 
 // submitProceedPrompt opens a fresh Converse run carrying the plan-approved
@@ -2774,22 +2794,53 @@ func (m Model) submitProceedPrompt() (Model, tea.Cmd) {
 	m.statusMsg = "running…"
 	m.refreshView()
 
+	return m.openRun(false, func(stream *client.Stream) error {
+		return stream.SendPrompt(m.sessionID, planApprovedProceedText, nil)
+	})
+}
+
+// startFailedStepRetry opens a new Converse stream whose first frame is RetryStart.
+// It adds no user turn and consumes no queued text. Automatic retry leaves arbitrary
+// compose text untouched; the ordinary built-in dispatcher consumes a typed /retry.
+func (m Model) startFailedStepRetry() (Model, tea.Cmd) {
+	m.phase = phaseRunning
+	m.failedStepRetryRun = true
+	m.failedStepRetryAuthoritative = false
+	m.statusMsg = m.deps.Theme.Style("muted").Render("retrying failed model step…")
+	m.refreshView()
+	return m.openRun(true, func(stream *client.Stream) error {
+		return stream.SendRetryStart(m.sessionID)
+	})
+}
+
+// openRun owns the common one-Converse-run transport setup. firstFrame must send
+// exactly one Prompt or RetryStart before any control frame.
+func (m Model) openRun(retry bool, firstFrame func(*client.Stream) error) (Model, tea.Cmd) {
 	runCtx, cancel := context.WithCancel(m.deps.Ctx)
 	stream, err := m.deps.Conv.OpenConverse(runCtx)
 	if err != nil {
 		cancel()
-		m.conv.addError("open run: " + err.Error())
-		return m.endRun(stopError), m.armLiveFeed()
+		m = m.endRun(stopError)
+		if retry {
+			m.failedStepRetryRun = false
+			m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + sanitizeTerminal(err.Error()) + " — use /retry to try again")
+		} else {
+			m.conv.addError("open run: " + err.Error())
+		}
+		if len(m.queued) > 0 {
+			m.queuePaused = stopError
+		}
+		return m, m.armLiveFeed()
 	}
 	ch := make(chan tea.Msg, 64)
 	m.stream = stream
 	m.streamCh = ch
 	m.cancelRun = cancel
-	m.streamGen++ // fresh reader generation; readers of the approval run go stale
+	m.streamGen++
 	go stream.ReadLoop(runCtx, ch)
 
 	send := func() tea.Msg {
-		if err := stream.SendPrompt(m.sessionID, planApprovedProceedText, nil); err != nil {
+		if err := firstFrame(stream); err != nil {
 			return client.StreamErrMsg{Err: err}
 		}
 		return nil
@@ -2839,8 +2890,8 @@ func (m Model) waitCmd() tea.Cmd {
 	return func() tea.Msg { return streamMsg{gen: gen, msg: read()} }
 }
 
-// liveMsg wraps one message pulled from the LIVE session event feed (LiveStreamCmd
-// / LiveReplayStreamCmd) with the generation that channel belonged to when the
+// liveMsg wraps one message pulled from the LIVE session event feed
+// (LiveStreamCmd) with the generation that channel belonged to when the
 // reader was armed. It is the live-delivery analogue of streamMsg (live Converse
 // run) and replayMsg (stored-session replay): the reducer drops any liveMsg whose
 // gen no longer matches m.liveGen, so a stale reader left bound to an abandoned
@@ -3029,16 +3080,12 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 		(&m).disarmReconnect()
 		return m, nil
 	default:
-		// Catch-up event msg from the durable replay. The replay is a FULL
-		// historical scan (no cursor), so ONLY a DeliveryNoteMsg is forwarded —
-		// the live feed's sole consequential payload (turn deltas/user prompts do
-		// not flow on StreamSessionLive, and re-reducing the whole history would
-		// re-render already-visible turns). A DeliveryNoteMsg reduces through the
-		// SAME updateStreamEvent path a live event takes (addDelivery + refreshView
-		// via afterEvent, FireID-deduped against the live set so a note seen in
-		// BOTH replay and live renders exactly once). Any other replayed event is
-		// dropped. Re-arm the reconnect reader so the loop keeps draining until
-		// LiveReconnectedMsg.
+		// Catch-up is a FULL historical scan. Results never enter applyResult, so replay
+		// cannot trigger automatic retry, mutate usage, or append another error card.
+		if _, ok := msg.(client.ResultMsg); ok {
+			return m, m.waitReconnectCmd()
+		}
+		// Delivery notes reduce through the normal event path and are deduped by FireID.
 		if _, isDelivery := msg.(client.DeliveryNoteMsg); !isDelivery {
 			return m, m.waitReconnectCmd()
 		}
@@ -3082,7 +3129,7 @@ func (m *Model) armLiveFeed() tea.Cmd {
 	m.disarmLiveFeed()
 
 	m.liveGen++
-	ch, stop := client.LiveReplayStreamCmd(m.deps.Ctx, m.deps.LiveStream, m.sessionID)
+	ch, stop := client.LiveStreamCmd(m.deps.Ctx, m.deps.LiveStream, m.sessionID)
 	m.liveCh = ch
 	m.liveStop = stop
 	m.liveArmed = m.sessionID
@@ -3837,37 +3884,19 @@ func (m *Model) refreshView() {
 	}
 }
 
-// drainQueue MERGES the staged follow-ups into ONE prompt and submits it. It is
-// called on every run-completion path (ResultMsg / StreamErrMsg / StreamClosedMsg)
-// AFTER endRun has settled the model back to idle.
+// drainQueue MERGES staged follow-ups into ONE prompt only after a healthy
+// terminal. It is called after endRun has settled the model back to idle.
 //
-// It fires on a HEALTHY stop (shouldDrain): end_turn, the empty reason, or a size
-// limit (max_turns / max_tool_calls / budget) — OR on a TRANSIENT error (transient
-// true with stop==stopError), where the failure is likely to survive a plain retry
-// (an idle/stalled stream, an overloaded/unavailable backend, a rate limit) so
-// auto-resuming the merged queue continues the work the user lined up. On any other
-// non-healthy stop — a HARD error (transient false), a user-cancel ("cancelled"),
-// max_consecutive_failures, or a stream close — it does NOT fire: instead it records
-// the stop reason in m.queuePaused and KEEPS the queue, so the run that died never
-// silently fires the staged prompts. The user then resumes with enter on an empty
-// line (resumeQueue) or clears with esc — renderQueue shows that affordance. The
-// phase==phaseIdle guard is belt-and-braces (endRun always lands idle on these
-// paths) so a future caller can't drain into a still-running model.
-//
-// The submit goes through the EXISTING submitPrompt path — the same one a typed
-// prompt uses — so the queued prompt reopens the completed session server-side
-// (StartRunContent) exactly like a manual follow-up; there is no separate send path.
-func (m Model) drainQueue(stop string, transient bool) (tea.Model, tea.Cmd) {
+// Every error terminal pauses and preserves the queue. Automatic recovery from an
+// eligible failure is an exact RetryStart handled before this function; it never
+// consumes future prompts. Once that retry ends healthily, this function resumes
+// the existing FIFO drain behavior.
+func (m Model) drainQueue(stop string) (tea.Model, tea.Cmd) {
 	if len(m.queued) == 0 {
 		m.queuePaused = ""
 		return m, nil
 	}
-	if !shouldDrain(stop) && (stop != stopError || !transient) {
-		// A non-clean, non-transient stop (a hard error / user-cancel / repeated
-		// failures / stream close) with staged follow-ups: PAUSE and KEEP the queue,
-		// but record the reason so renderQueue can say so loudly (and the idle keys can
-		// resume/clear it) — a silent "N queued" after the run died reads as a hang. The
-		// user resumes with enter on an empty line (resumeQueue) or clears with esc.
+	if !shouldDrain(stop) {
 		m.queuePaused = stop
 		return m, nil
 	}

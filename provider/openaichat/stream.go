@@ -35,13 +35,14 @@ const maxToolArgsBytes = 8 << 20
 // arrives on (or alongside) the finish chunk; it is captured whenever seen so a
 // finish chunk that also carries usage emits it before the terminal ChunkDone.
 type streamState struct {
-	toolCalls map[int64]*session.ToolCall // partial calls, keyed by delta index
-	order     []int64                     // index arrival order, for deterministic flush
-	argBytes  int                         // running total of accumulated tool-arg bytes (bounded by maxToolArgsBytes)
-	usage     session.Usage
-	hasUsage  bool
-	finished  bool               // finish_reason seen; content/tool deltas stop
-	stop      session.StopReason // the mapped terminal, emitted by finalize
+	toolCalls    map[int64]*session.ToolCall // partial calls, keyed by delta index
+	order        []int64                     // index arrival order, for deterministic flush
+	argBytes     int                         // running total of accumulated tool-arg bytes (bounded by maxToolArgsBytes)
+	usage        session.Usage
+	hasUsage     bool
+	finished     bool               // finish_reason seen; content/tool deltas stop
+	stop         session.StopReason // the mapped terminal, emitted by finalize
+	completionID string             // typed chat.completion.chunk ID; stream-error correlation fallback
 }
 
 // translate converts a single chat.completion.chunk into zero or more
@@ -63,6 +64,9 @@ type streamState struct {
 // surfaced by the SDK's ssestream decoder as stream.Err() in Stream, not here.
 func translate(chunk oai.ChatCompletionChunk, st *streamState) ([]port.Chunk, error) {
 	var out []port.Chunk
+	if chunk.ID != "" {
+		st.completionID = chunk.ID
+	}
 
 	// Usage can ride the finish chunk (OpenCode Go) OR a trailing choices:[] chunk
 	// AFTER finish_reason (the standard OpenAI include_usage shape, where the finish

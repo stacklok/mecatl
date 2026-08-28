@@ -486,26 +486,29 @@ type Model struct {
 	// thus its known ~1/3 -race flake — no worse than before.
 	tickArmed bool
 
-	activeTool      string         // tool name in flight, shown beside the spinner
-	toolProgress    string         // transient progress line for the in-flight tool (cleared on result/turn boundary)
-	skillsEpoch     uint64         // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
-	skillChangeLast string         // newest bounded lifecycle receipt already announced
-	palette         paletteState   // slash-command palette (open when the input starts with "/")
-	mention         mentionState   // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
-	queued          []string       // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a clean/transient stop (see drainQueue)
-	queuePaused     string         // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
-	team            teamState      // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
-	agentsTab       agentsTab      // active tab in the unified agents overlay (Subagents | Parallel | Teams)
-	subagents       subagentState  // Subagents-tab state of the unified agents overlay (roster | focus)
-	parallel        parallelState  // Parallel-tab state of the unified agents overlay (roster | group focus)
-	agentsInv       agentsInvState // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	userModel       userModelState // user-model inspection overlay state (view==userModelNone when closed)
-	userModelGen    uint64         // monotonic request generation; invalidates delayed detail/index responses
-	reflections     reflectionsState
-	reflectionsGen  uint64
-	dream           dreamState
-	dreamGen        uint64
-	dreamRequest    uint64
+	activeTool                   string         // tool name in flight, shown beside the spinner
+	toolProgress                 string         // transient progress line for the in-flight tool (cleared on result/turn boundary)
+	skillsEpoch                  uint64         // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
+	skillChangeLast              string         // newest bounded lifecycle receipt already announced
+	palette                      paletteState   // slash-command palette (open when the input starts with "/")
+	mention                      mentionState   // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
+	queued                       []string       // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
+	queuePaused                  string         // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
+	failedStepRetryTried         bool           // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
+	failedStepRetryRun           bool           // current Converse stream was opened with RetryStart
+	failedStepRetryAuthoritative bool           // current retry emitted turn.start and therefore called the model
+	team                         teamState      // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
+	agentsTab                    agentsTab      // active tab in the unified agents overlay (Subagents | Parallel | Teams)
+	subagents                    subagentState  // Subagents-tab state of the unified agents overlay (roster | focus)
+	parallel                     parallelState  // Parallel-tab state of the unified agents overlay (roster | group focus)
+	agentsInv                    agentsInvState // agent-definition inventory overlay state (view==agentsInvNone when closed)
+	userModel                    userModelState // user-model inspection overlay state (view==userModelNone when closed)
+	userModelGen                 uint64         // monotonic request generation; invalidates delayed detail/index responses
+	reflections                  reflectionsState
+	reflectionsGen               uint64
+	dream                        dreamState
+	dreamGen                     uint64
+	dreamRequest                 uint64
 	// steer is the steer-mode (Capabilities.Steer) mid-run state: ONE bundle (the
 	// merged operator steer text + its client-minted message_id) with its
 	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,
@@ -750,8 +753,8 @@ type Model struct {
 	// next run boundary regardless of how many readers leaked.
 	streamGen uint64
 
-	// liveCh is the live session event feed's reader channel (LiveStreamCmd /
-	// LiveReplayStreamCmd); WaitForMsg drains it. Armed when the active session
+	// liveCh is the live session event feed's reader channel (LiveStreamCmd);
+	// WaitForMsg drains it. Armed when the active session
 	// settles (session create / run end) and torn down on session switch / reset.
 	liveCh    chan tea.Msg
 	liveStop  func() // idempotent teardown (context.CancelFunc via sync.Once)
@@ -1033,6 +1036,9 @@ func (m Model) resetSession() Model {
 	m.closeModal()
 	m.queued = nil
 	m.queuePaused = ""
+	m.failedStepRetryTried = false
+	m.failedStepRetryRun = false
+	m.failedStepRetryAuthoritative = false
 	// Drop staged-but-unsent media attachments: /clear wipes the session-derived
 	// state, and pasted-but-unsent images are part of that compose state.
 	m.stagedMedia = nil

@@ -20,8 +20,14 @@
     ifacemethod func (PermissionPolicy).Learn(sessionID session.SessionID, c session.ToolCall)
     ifacemethod func (PermissionStore).Record(sessionID session.SessionID, rule governance.Rule)
     ifacemethod func (PermissionStore).Rules(sessionID session.SessionID) []governance.Rule
+    ifacemethod func (ProviderErrorMetadataError).ProviderErrorCode() string
+    ifacemethod func (ProviderErrorMetadataError).ProviderErrorCorrelationID() string
+    ifacemethod func (ProviderErrorMetadataError).ProviderErrorCorrelationKind() string
+    ifacemethod func (ProviderErrorMetadataError).ProviderHTTPStatus() int
+    ifacemethod func (ProviderErrorMetadataError).ProviderInBandStatus() int
     ifacemethod func (PrunableStore).Delete(ctx context.Context, id session.SessionID) error
     ifacemethod func (PrunableStore).List(ctx context.Context) ([]StoredSession, error)
+    ifacemethod func (RetryDispositionError).RetryDisposition() session.RetryDisposition
     ifacemethod func (ScheduleCreator).Create(ctx context.Context, s Schedule) error
     ifacemethod func (ScheduleManager).CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error)
     ifacemethod func (ScheduleManager).DeleteSchedule(ctx context.Context, name string) error
@@ -63,6 +69,7 @@
     ifacemethod func (SessionStorageHealthProvider).SessionStorageHealth(ctx context.Context) (SessionStorageHealth, error)
     ifacemethod func (SessionStore).Load(ctx context.Context, id session.SessionID) (*session.Session, error)
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
+    ifacemethod func (StreamProgressError).StreamProgress() session.StreamProgress
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
     ifacemethod func (error).Error() string
     method func (NopDeliveryQueue).Enqueue(_ context.Context, origin session.SessionID, _ string) (DeliveryNote, error)
@@ -88,11 +95,18 @@ const LevelWarn Level = 2
 const MisfireFireOnceNow MisfirePolicy = 0
 const MisfireSkip MisfirePolicy = 1
 const PendingFireSessionID session.SessionID = "pending"
+const RetryDispositionPermanent session.RetryDisposition = 2
+const RetryDispositionRetryable session.RetryDisposition = 1
+const RetryDispositionUnknown session.RetryDisposition = 0
 const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
 const SessionMigrationCancelled SessionMigrationState = "cancelled"
 const SessionMigrationCompleted SessionMigrationState = "completed"
 const SessionMigrationPlanned SessionMigrationState = "planned"
 const SessionMigrationRunning SessionMigrationState = "running"
+const StreamProgressComplete session.StreamProgress = 3
+const StreamProgressPrecommit session.StreamProgress = 1
+const StreamProgressUnknown session.StreamProgress = 0
+const StreamProgressVisible session.StreamProgress = 2
 const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0
 const TriggerOneShot TriggerKind = 2
@@ -100,9 +114,15 @@ func CompareSessionMetadataOrder(a SessionDiscoveryMeta, b SessionDiscoveryMeta)
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error)
 func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content
+func RunSerialFromContext(ctx context.Context) (int64, bool)
 func SessionDiscoveryMetaEqual(a SessionDiscoveryMeta, b SessionDiscoveryMeta) bool
 func SessionIDFromContext(ctx context.Context) (session.SessionID, bool)
+func SetAttemptTurnIndex(ctx context.Context, index int) bool
+func TurnIndexFromContext(ctx context.Context) (int, bool)
+func WithRunAttemptContext(ctx context.Context, id session.SessionID, serial int64) context.Context
+func WithRunSerial(ctx context.Context, serial int64) context.Context
 func WithSessionID(ctx context.Context, id session.SessionID) context.Context
+func WithTurnIndex(ctx context.Context, index int) context.Context
 type AuthorityDecision struct{Allowed bool; Reason string}
 type AuthorityEvaluator interface{AuthorizeTool(context.Context, AuthorityRequest) (AuthorityDecision, error)}
 type AuthorityOwnerRequirement interface{RequiresOwnerIdentity() bool}
@@ -133,7 +153,10 @@ type PermanentError interface{Permanent() bool; error}
 type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
 type PermissionStore interface{Record(sessionID session.SessionID, rule governance.Rule); Rules(sessionID session.SessionID) []governance.Rule}
 type ProviderCapabilities struct{Image bool; Audio bool; EmbeddedContext bool}
+type ProviderErrorMetadataError interface{ProviderErrorCode() string; ProviderErrorCorrelationID() string; ProviderErrorCorrelationKind() string; ProviderHTTPStatus() int; ProviderInBandStatus() int; error}
 type PrunableStore interface{Delete(ctx context.Context, id session.SessionID) error; List(ctx context.Context) ([]StoredSession, error)}
+type RetryDisposition = session.RetryDisposition
+type RetryDispositionError interface{RetryDisposition() session.RetryDisposition; error}
 type Schedule struct{Spec ScheduleSpec; State ScheduleState}
 type ScheduleCreator interface{Create(ctx context.Context, s Schedule) error}
 type ScheduleFire struct{ID string; ScheduleName string; SessionID session.SessionID; FiredAt time.Time; StartedAt time.Time; ProgressAt time.Time; Deadline time.Time; Stop session.StopReason; Err string}
@@ -163,6 +186,8 @@ type SessionStorageHealth struct{Available bool; UnavailableReason string; Curre
 type SessionStorageHealthProvider interface{SessionStorageHealth(ctx context.Context) (SessionStorageHealth, error)}
 type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*session.Session, error); Save(ctx context.Context, s *session.Session) error}
 type StoredSession struct{ID session.SessionID; ModifiedAt time.Time}
+type StreamProgress = session.StreamProgress
+type StreamProgressError interface{StreamProgress() session.StreamProgress; error}
 type ToolCallRecorder interface{ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}
 type TriggerKind int
 type TriggerSpec struct{Cron string; OneShot time.Time}

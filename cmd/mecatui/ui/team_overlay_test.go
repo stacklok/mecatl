@@ -42,6 +42,37 @@ func bigRoster(n int) []client.TeamMemberSpec {
 	return r
 }
 
+func TestNavigateRosterCursor(t *testing.T) {
+	keys := defaultKeys()
+	for _, tc := range []struct {
+		name    string
+		msg     tea.KeyPressMsg
+		cursor  int
+		total   int
+		page    int
+		want    int
+		handled bool
+	}{
+		{name: "up", msg: tea.KeyPressMsg{Code: tea.KeyUp}, cursor: 3, total: 8, page: 2, want: 2, handled: true},
+		{name: "down", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 3, total: 8, page: 2, want: 4, handled: true},
+		{name: "up clamps at first", msg: tea.KeyPressMsg{Code: tea.KeyUp}, cursor: 0, total: 8, page: 2, want: 0, handled: true},
+		{name: "down clamps at last", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 7, total: 8, page: 2, want: 7, handled: true},
+		{name: "page up", msg: tea.KeyPressMsg{Code: tea.KeyPgUp}, cursor: 6, total: 12, page: 4, want: 2, handled: true},
+		{name: "page down", msg: tea.KeyPressMsg{Code: tea.KeyPgDown}, cursor: 2, total: 12, page: 4, want: 6, handled: true},
+		{name: "home", msg: tea.KeyPressMsg{Code: tea.KeyHome}, cursor: 6, total: 8, page: 2, want: 0, handled: true},
+		{name: "end", msg: tea.KeyPressMsg{Code: tea.KeyEnd}, cursor: 1, total: 8, page: 2, want: 7, handled: true},
+		{name: "empty roster", msg: tea.KeyPressMsg{Code: tea.KeyDown}, cursor: 4, total: 0, page: 2, want: 0, handled: true},
+		{name: "unhandled", msg: tea.KeyPressMsg{Code: 'z', Text: "z"}, cursor: 4, total: 8, page: 2, want: 4, handled: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, handled := navigateRosterCursor(tc.msg, keys, tc.cursor, tc.total, tc.page)
+			if got != tc.want || handled != tc.handled {
+				t.Errorf("navigateRosterCursor() = (%d, %t), want (%d, %t)", got, handled, tc.want, tc.handled)
+			}
+		})
+	}
+}
+
 // TestAgentsOpensRoster asserts ctrl+a over a populated team opens the roster.
 func TestAgentsOpensRoster(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)

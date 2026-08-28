@@ -81,6 +81,9 @@ spec:
             - --tls-cert=/var/run/secrets/tls/{{ .Values.tls.certKey }}
             - --tls-key=/var/run/secrets/tls/{{ .Values.tls.keyKey }}
             {{- end }}
+          {{- with .Values.extraEnv }}
+          env: {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - {name: grpc, containerPort: 8080}
             - {name: http, containerPort: 8081}

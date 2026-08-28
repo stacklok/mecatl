@@ -500,18 +500,27 @@ func mcpEmptyCopy(caps client.Capabilities, emptyNote string) string {
 	return emptyNote
 }
 
+// renderMCPListHeader renders the shared title, status, and empty-state fragment
+// for an MCP inventory list.
+func renderMCPListHeader(th theme.Theme, st mcpState, caps client.Capabilities, title string, empty bool, emptyNote string) string {
+	var b strings.Builder
+	b.WriteString(th.Style("askTitle").Render(title) + "\n")
+	if status := mcpStatusLine(th, st); status != "" {
+		b.WriteString(status + "\n")
+	}
+	b.WriteString("\n")
+	if empty {
+		b.WriteString(th.Style("muted").Render(mcpEmptyCopy(caps, emptyNote)) + "\n")
+	}
+	return b.String()
+}
+
 // renderMCPPanel renders the read-only inventory: sources → servers → diagnostics.
 // It also carries the startup-snapshot caveat in its footer copy.
 func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
 	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("MCP inventory") + "\n")
-	if footer := mcpStatusLine(th, st); footer != "" {
-		b.WriteString(footer + "\n")
-	}
-	b.WriteString("\n")
-	if !st.loading && len(st.sources) == 0 && st.errMsg == "" {
-		b.WriteString(th.Style("muted").Render(mcpEmptyCopy(caps, "No MCP sources configured on this server.")) + "\n")
-	}
+	empty := !st.loading && len(st.sources) == 0 && st.errMsg == ""
+	b.WriteString(renderMCPListHeader(th, st, caps, "MCP inventory", empty, "No MCP sources configured on this server."))
 	for _, s := range st.sources {
 		state := "enabled"
 		if !s.Enabled {
@@ -577,14 +586,8 @@ func renderGroupsLine(th theme.Theme, st mcpState) string {
 // renderResourceList renders the scrollable resource picker.
 func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
 	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("MCP resources") + "\n")
-	if footer := mcpStatusLine(th, st); footer != "" {
-		b.WriteString(footer + "\n")
-	}
-	b.WriteString("\n")
-	if !st.loading && len(st.resources) == 0 && st.errMsg == "" {
-		b.WriteString(th.Style("muted").Render(mcpEmptyCopy(caps, "No resources advertised by the connected MCP servers.")) + "\n")
-	}
+	empty := !st.loading && len(st.resources) == 0 && st.errMsg == ""
+	b.WriteString(renderMCPListHeader(th, st, caps, "MCP resources", empty, "No resources advertised by the connected MCP servers."))
 	for i, r := range st.resources {
 		label := r.Name
 		if label == "" {
@@ -612,14 +615,8 @@ func renderResourcePreview(th theme.Theme, st mcpState, hk helpKeys) string {
 // renderPromptList renders the scrollable prompt picker.
 func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys) string {
 	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("MCP prompts") + "\n")
-	if footer := mcpStatusLine(th, st); footer != "" {
-		b.WriteString(footer + "\n")
-	}
-	b.WriteString("\n")
-	if !st.loading && len(st.prompts) == 0 && st.errMsg == "" {
-		b.WriteString(th.Style("muted").Render(mcpEmptyCopy(caps, "No prompts advertised by the connected MCP servers.")) + "\n")
-	}
+	empty := !st.loading && len(st.prompts) == 0 && st.errMsg == ""
+	b.WriteString(renderMCPListHeader(th, st, caps, "MCP prompts", empty, "No prompts advertised by the connected MCP servers."))
 	for i, p := range st.prompts {
 		marker := ""
 		if hasRequiredArgs(p) {

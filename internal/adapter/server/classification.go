@@ -282,6 +282,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
 	// --- caller-owned: live run verbs ---
+	"RetryFailedRun":           {KindCallerOwned, "authorizes and reloads under runEntryMu before failed-step retry eligibility and launch"},
 	"StartRun":                 {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
 	"StartRunContent":          {KindCallerOwned, "authorizes before the public chat-purpose kind gate and shared run-entry path"},
 	"StartScheduledRunContent": {KindCallerOwned, "trusted scheduler-purpose entry; authorizes the schedule owner before its kind gate and shared run-entry path"},
