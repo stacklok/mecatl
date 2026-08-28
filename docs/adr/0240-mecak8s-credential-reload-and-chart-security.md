@@ -1,4 +1,4 @@
-# ADR 0239 — mecak8s credential reload and chart security
+# ADR 0240 — mecak8s credential reload and chart security
 
 - Status: Accepted
 - Date: 2026-08-27
