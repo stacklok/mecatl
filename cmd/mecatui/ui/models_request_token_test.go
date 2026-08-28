@@ -74,7 +74,9 @@ func TestModelsCatalogReopenListModelsCmdCarriesNewRequestToken(t *testing.T) {
 	}
 
 	mm, closeCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	m = feedCmd(t, mm.(Model), closeCmd)
+	m = mm.(Model)
+	// Closing synchronously restores focus; closeCmd is only the widget blink.
+	_ = closeCmd
 	if m.modal != nil {
 		t.Fatal("escape should close the first models surface")
 	}
@@ -102,7 +104,9 @@ func TestModelsCatalogRejectsStaleResultAfterPickerReopen(t *testing.T) {
 	firstToken := modelsSurface(t, m).requestToken
 
 	mm, closeCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	m = feedCmd(t, mm.(Model), closeCmd)
+	m = mm.(Model)
+	// Closing synchronously restores focus; closeCmd is only the widget blink.
+	_ = closeCmd
 	if m.modal != nil {
 		t.Fatal("escape should close the first models surface")
 	}
@@ -172,7 +176,9 @@ func TestModelsCatalogRejectsStaleErrorWithoutMutatingPickerOrClosedRoot(t *test
 	}
 
 	mm, closeCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	m = feedCmd(t, mm.(Model), closeCmd)
+	m = mm.(Model)
+	// Closing synchronously restores focus; closeCmd is only the widget blink.
+	_ = closeCmd
 	if m.modal != nil {
 		t.Fatal("escape should close the models surface")
 	}
@@ -206,7 +212,9 @@ func TestModelsCatalogRejectsStaleResultAfterPickerClose(t *testing.T) {
 	currentToken := modelsSurface(t, m).requestToken
 
 	mm, closeCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	m = feedCmd(t, mm.(Model), closeCmd)
+	m = mm.(Model)
+	// Closing synchronously restores focus; closeCmd is only the widget blink.
+	_ = closeCmd
 	if m.modal != nil {
 		t.Fatal("escape should close the models surface")
 	}

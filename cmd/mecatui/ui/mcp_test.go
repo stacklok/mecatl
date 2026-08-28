@@ -63,6 +63,24 @@ func runCmd(cmd tea.Cmd) tea.Msg {
 	return cmd()
 }
 
+// feedMCPInsertion runs the insertion marker/business command once, reduces that
+// explicitly expected message, and deliberately discards the follow-up widget blink.
+// Focus mutates synchronously; waiting for its timer adds no state relevant here.
+func feedMCPInsertion(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	msg := runCmd(cmd)
+	switch msg.(type) {
+	case client.MCPPromptGotMsg, mcpInsertResourceMsg:
+	default:
+		t.Fatalf("insertion command returned %T, want MCP prompt/resource insertion message", msg)
+	}
+	mm, followup := m.Update(msg)
+	if followup == nil {
+		t.Fatal("insertion update returned no textarea focus/blink command")
+	}
+	return mm.(Model)
+}
+
 // feedCmd runs a tea.Cmd and feeds its result back into the Model, flattening a
 // tea.BatchMsg into its constituent cmds (the panel batches sources + groups). It
 // recurses so nested batches/sequences are drained deterministically.
@@ -481,11 +499,11 @@ func TestMCPResourceInsertIntoInput(t *testing.T) {
 	if st == nil || st.view != mcpResourcePrev {
 		t.Fatalf("view = %v, want mcpResourcePrev", m.modal)
 	}
-	// enter in the preview: the surface returns the insertion marker cmd; run it so
-	// the marker msg round-trips through Update (surface closes + Model inserts).
+	// enter in the preview: run the insertion marker once. Its Update follow-up is
+	// only the textarea widget's delayed blink; focus already changed synchronously.
 	mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	m = feedCmd(t, m, cmd)
+	m = feedMCPInsertion(t, m, cmd)
 	if m.modal != nil {
 		t.Fatalf("surface still open after insert: %v", m.modal)
 	}
@@ -585,13 +603,26 @@ func TestMCPPromptSendIntoInput(t *testing.T) {
 	m = mm.(Model)
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	m = feedCmd(t, m, cmd)
+	m = feedMCPInsertion(t, m, cmd)
 	if m.modal != nil {
 		t.Fatalf("surface still open: %v", m.modal)
 	}
 	if !strings.Contains(m.ta.Value(), "Please review path X.") {
 		t.Fatalf("prompt text not in input: %q", m.ta.Value())
 	}
+}
+
+func TestFeedMCPInsertionRunsBusinessMessageWithoutBlink(t *testing.T) {
+	m := newMCPModel(t, aztec(), samplePromptMCP())
+	m.modal = &mcpState{view: mcpPrompts}
+	m = feedMCPInsertion(t, m, func() tea.Msg {
+		return client.MCPPromptGotMsg{Name: "review", Messages: samplePromptMCP().promptMsg}
+	})
+	if m.modal != nil || !strings.Contains(m.ta.Value(), "Please review") {
+		t.Fatalf("business message was not reduced: modal=%v input=%q", m.modal, m.ta.Value())
+	}
+	// feedMCPInsertion never invokes the returned focus command. Cursor lifecycle
+	// rendering remains owned by TestRenderInputInvalidatedByCursorMove.
 }
 
 // TestMCPArgsSubmitCollectsValues asserts typing into the required-arg field and
@@ -613,7 +644,7 @@ func TestMCPArgsSubmitCollectsValues(t *testing.T) {
 	// Enter on the only (last) field submits; the result closes + inserts.
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	m = feedCmd(t, m, cmd)
+	m = feedMCPInsertion(t, m, cmd)
 	if m.modal != nil || !strings.Contains(m.ta.Value(), "Please review") {
 		t.Fatalf("prompt not sent into input: modal=%v ta=%q", m.modal, m.ta.Value())
 	}

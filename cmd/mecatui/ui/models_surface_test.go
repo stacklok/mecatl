@@ -26,13 +26,15 @@ func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
 
 	mm, closeCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mm.(Model)
-	m = feedCmd(t, m, closeCmd)
+	// Filter clearing is synchronous; no command is relevant to this assertion.
+	_ = closeCmd
 	if m.modal == nil { // first esc clears the non-empty filter
 		t.Fatal("first esc should clear the surface filter, not close")
 	}
 	mm, closeCmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mm.(Model)
-	m = feedCmd(t, m, closeCmd)
+	// Closing synchronously restores focus; closeCmd is only the widget blink.
+	_ = closeCmd
 	if m.modal != nil {
 		t.Fatal("second esc should close the models surface")
 	}

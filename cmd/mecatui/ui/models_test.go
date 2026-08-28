@@ -273,7 +273,9 @@ func TestModelsFilterNarrows(t *testing.T) {
 	}
 	// Running the armed cmd fires CreateSessionWithCarryover with the live session id
 	// as the source — the seamless switch's carryover seam.
-	m = feedCmd(t, m, cmd)
+	// Run only create/carryover and persistence; spinner/focus lifecycle commands
+	// do not contribute to these assertions.
+	m = feedModelSwitchBusiness(t, m, cmd)
 	if got := conv(m).carryoverCalls(); got != 1 {
 		t.Errorf("CreateSessionWithCarryover calls = %d, want 1 (seamless carryover switch)", got)
 	}
@@ -315,6 +317,81 @@ func TestModelsCarryoverKeepsVisibleProjection(t *testing.T) {
 func conv(m Model) *fakeConv {
 	c, _ := m.deps.Session.(*fakeConv)
 	return c
+}
+
+// feedModelSwitchBusiness executes the source-known model-switch batch: create or
+// carryover, then selection persistence. Each business leaf and every reducer
+// follow-up runs through feedCmd. It deliberately skips the spinner tick and the
+// outer textarea-focus blink; both lifecycle commands are irrelevant to these
+// business assertions, and focus already mutates synchronously.
+func feedModelSwitchBusiness(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	outerMsg := runCmd(cmd)
+	outer, ok := outerMsg.(tea.BatchMsg)
+	if !ok || len(outer) != 2 {
+		t.Fatalf("model switch command = %T with %d leaves, want outer Batch(business, focus)", outerMsg, len(outer))
+	}
+	businessMsg := runCmd(outer[0])
+	business, ok := businessMsg.(tea.BatchMsg)
+	if !ok || len(business) != 3 {
+		t.Fatalf("model switch business command has %d leaves, want create/save/spinner batch", len(business))
+	}
+
+	m = feedCmd(t, m, business[0])
+	return feedCmd(t, m, business[1])
+}
+
+func TestFeedModelSwitchBusinessExecutesBusinessFollowupsWithoutLifecycle(t *testing.T) {
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.conv.addUser("source transcript")
+	conv(m).getSessionResults = []client.ResolvedModel{{ProviderID: "openrouter", ModelID: "hydrated-model"}}
+	m.phase = phaseConnecting
+	businessCalls, lifecycleCalls := 0, 0
+	cmd := tea.Batch(tea.Batch(
+		func() tea.Msg {
+			businessCalls++
+			return modelSwitchReadyMsg{
+				token:    m.modelSwitchRequestToken,
+				sourceID: m.sessionID,
+				ready: client.SessionReadyMsg{
+					SessionID:     "sess-new",
+					Capabilities:  modelsCaps(),
+					ResolvedModel: client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"},
+				},
+				transcript: client.SessionTranscript{
+					SessionID: "sess-new",
+					Complete:  true,
+					Messages:  []client.ConversationMessage{{Role: "assistant", Text: "target transcript"}},
+				},
+			}
+		},
+		func() tea.Msg {
+			businessCalls++
+			return selectionSavedMsg{err: errors.New("save failed")}
+		},
+		func() tea.Msg { lifecycleCalls++; return struct{}{} },
+	), func() tea.Msg { lifecycleCalls++; return nil })
+
+	m = feedModelSwitchBusiness(t, m, cmd)
+	if businessCalls != 2 {
+		t.Fatalf("business commands invoked = %d, want 2", businessCalls)
+	}
+	if lifecycleCalls != 0 {
+		t.Fatalf("lifecycle commands invoked = %d, want 0", lifecycleCalls)
+	}
+	if m.sessionID != "sess-new" || m.resolvedSessionModel.ModelID != "hydrated-model" || conv(m).getSessionCalls() != 1 {
+		t.Fatalf("model-switch reducer effects missing: sessionID=%q resolved=%+v refreshCalls=%d", m.sessionID, m.resolvedSessionModel, conv(m).getSessionCalls())
+	}
+	view := stripANSIstr(m.View().Content)
+	if !strings.Contains(view, "target transcript") || strings.Contains(view, "source transcript") {
+		t.Fatalf("authoritative transcript was not adopted: %q", view)
+	}
+	if got := conv(m).closed(); len(got) != 1 || got[0] != "sess-test-0001" {
+		t.Fatalf("source-close follow-up = %v, want [sess-test-0001]", got)
+	}
+	if !strings.Contains(stripANSIstr(m.statusMsg), "could not persist") {
+		t.Fatalf("selection-save reducer effect missing: status=%q", stripANSIstr(m.statusMsg))
+	}
 }
 
 // TestModelsFilterByProvider proves provider_id is a match field: "openai" → the 3
@@ -627,8 +704,8 @@ func TestModelsChooseNoSessionUsesPlainCreate(t *testing.T) {
 	if m.phase != phaseConnecting {
 		t.Fatalf("phase = %v, want phaseConnecting (seamless switch)", m.phase)
 	}
-	// Run the armed create cmd: a plain CreateSession fires (NOT carryover).
-	m = feedCmd(t, m, cmd)
+	// Run only the plain create and persistence leaves; spinner/focus are lifecycle-only.
+	m = feedModelSwitchBusiness(t, m, cmd)
 	if conv.createCount != 1 {
 		t.Fatalf("CreateSession calls = %d, want 1 (the plain create path, no source to carry from)", conv.createCount)
 	}
@@ -721,8 +798,9 @@ func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 			if m.pendingModelSwitchNote == "" {
 				t.Fatalf("enter should arm the model-switch note (pendingModelSwitchNote), got empty")
 			}
-			// Drive the carryover cmd → SessionReadyMsg → applySessionReady surfaces the note.
-			m = feedCmd(t, m, cmd)
+			// Drive only carryover + persistence. SessionReady and its resolved-model
+			// follow-up are reduced once; spinner/focus lifecycle commands are skipped.
+			m = feedModelSwitchBusiness(t, m, cmd)
 			st := stripANSIstr(m.statusMsg)
 			if !strings.Contains(st, tc.wantNoteSubstr) {
 				t.Fatalf("status = %q, want it to contain %q", st, tc.wantNoteSubstr)
@@ -881,7 +959,7 @@ func TestModelsSaveFailureFailSoft(t *testing.T) {
 	if m.createModelSelection != want {
 		t.Fatalf("active should hold for the run despite the save failure, got %+v", m.createModelSelection)
 	}
-	m = feedCmd(t, m, cmd) // runs the carryover create + the failing Save + the selectionSavedMsg reduction
+	m = feedModelSwitchBusiness(t, m, cmd) // runs carryover + failing Save, skips spinner/focus lifecycle
 	if !strings.Contains(stripANSIstr(m.statusMsg), "could not persist") {
 		t.Errorf("a persist failure should surface as a notice, got %q", stripANSIstr(m.statusMsg))
 	}
@@ -1753,7 +1831,9 @@ func TestModelsChooseCrossProviderStillCarries(t *testing.T) {
 		t.Fatalf("phase = %v, want phaseConnecting (seamless cross-provider switch)", m.phase)
 	}
 	// Run the armed cmd: the carryover method fires (NOT the plain create) — no gate.
-	m = feedCmd(t, m, cmd)
+	// Run only create/carryover and persistence; spinner/focus lifecycle commands
+	// do not contribute to these assertions.
+	m = feedModelSwitchBusiness(t, m, cmd)
 	if got := conv(m).carryoverCalls(); got != 1 {
 		t.Fatalf("CreateSessionWithCarryover calls = %d, want 1 (cross-provider still carries, no gate)", got)
 	}

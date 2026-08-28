@@ -335,9 +335,8 @@ func TestScheduleFilterModeDoesNotFireActions(t *testing.T) {
 	for _, r := range "prod" {
 		mm, cmd, _ := m.onScheduleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
 		m = mm.(Model)
-		if cmd != nil {
-			m = feedCmd(t, m, cmd)
-		}
+		// textinput mutates synchronously; cmd is only its delayed cursor blink.
+		_ = cmd
 	}
 	if m.schedule.filter.Value() != "prod" {
 		t.Fatalf("filter value = %q, want %q", m.schedule.filter.Value(), "prod")
