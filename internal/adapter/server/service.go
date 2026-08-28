@@ -3631,7 +3631,15 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 		return nil, err
 	}
 	ctx = memory.WithWorkspace(ctx, sess.Workspace)
-	run := engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts})
+	// Mint this run's identity and stamp it on the aggregate BEFORE launching, so
+	// the id is on the snapshot the moment the run can park awaiting an approval —
+	// which is what lets a cross-process resume continue THE SAME run rather than
+	// mint a second one (ADR 0249). Every prompt-entry path funnels through here
+	// (StartRun, RetryFailedRun, scheduler fires, steer promotion), so this is the
+	// one mint site for a new run.
+	runID := newRunID()
+	sess.BeginRun(runID)
+	run := engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID})
 	s.register(id, run, sess)
 	return run, nil
 }

@@ -478,6 +478,19 @@ type Session struct {
 	// meaningful ONLY when State==StateFailed; resetToIdle clears it so a recovered
 	// session never keeps a stale cause.
 	lastError string
+	// runID is the opaque, host-minted identity of the run this session is
+	// CURRENTLY driving, or most recently drove (ADR 0249). It is persisted on the
+	// snapshot, which is what makes an awaiting-approval resume continue THE SAME
+	// run across a process restart: the resume path reads this value back and
+	// reuses it instead of minting a new one, discharging ADR 0044's "stable
+	// across processes for the same attempt" obligation mechanically.
+	//
+	// It is an inert stored label, like Profile: the aggregate never interprets
+	// it, never validates its shape beyond emptiness, and no transition depends on
+	// it. Deliberately NOT cleared by resetToIdle — the id of the run that just
+	// ended stays readable until the next run replaces it, which is what lets a
+	// terminal-state session still answer "which run was that?".
+	runID string
 }
 
 // maxSnapshotErrorRunes caps how many runes of a StateFailed session's terminal
@@ -905,6 +918,30 @@ func (s *Session) RecordLastError(cause string) error {
 // cause is already normalised (one line, rune-clamped) at stamp time.
 func (s *Session) LastError() string {
 	return s.lastError
+}
+
+// BeginRun stamps the opaque, host-minted identity of the run this session is
+// about to drive (ADR 0249).
+//
+// It is an UNGUARDED setter by design. Every other run-scoped mutator on this
+// aggregate guards on State because it changes lifecycle meaning; this one
+// changes only a label, and the run-entry seams that call it legitimately do so
+// from several states (idle after a Reopen/Recover/Interrupt, or awaiting on the
+// cross-process resume path). Guarding it would force each seam to re-derive a
+// state check it has already done, for no invariant.
+//
+// An EMPTY id is accepted and clears the stamp: a host that mints no run id (an
+// in-memory embedder, a test) is byte-identical to the behaviour before ADR 0249.
+func (s *Session) BeginRun(runID string) {
+	s.runID = runID
+}
+
+// RunID reports the run identity stamped by BeginRun, or "" if none was.
+//
+// The awaiting-resume path reads it to CONTINUE a run rather than start a new
+// one; that reuse is the whole reason the value is persisted.
+func (s *Session) RunID() string {
+	return s.runID
 }
 
 // Fail transitions the session to StateFailed with StopError. It is legal from

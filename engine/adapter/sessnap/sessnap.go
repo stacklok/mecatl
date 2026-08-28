@@ -98,6 +98,17 @@ type Snapshot struct {
 	// event-side subagentCausePayload so the snapshot and the subagent.end event
 	// carry the same persisted cause.
 	LastError string `json:"last_error,omitempty"`
+	// RunID is the opaque, host-minted identity of the run this session is
+	// currently driving or most recently drove (ADR 0249). Persisting it is what
+	// makes an awaiting-approval resume continue THE SAME run across a process
+	// restart: the resume path reads it back and reuses it instead of minting a
+	// new one.
+	//
+	// omitempty keeps a pre-0245 snapshot with no "run_id" key decoding to "" —
+	// purely additive, no format-tag bump (the Profile/ProviderID/Usage
+	// precedent). A legacy session restores with no run id and is stamped on its
+	// next run; there is no migration sweep.
+	RunID string `json:"run_id,omitempty"`
 	// Owner is the verified caller the session is attributed to (ADR 0204). A
 	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
 	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
@@ -227,6 +238,7 @@ func Of(s *session.Session) (Snapshot, error) {
 	snap.RetryDisposition, snap.StreamProgress = s.FailureMetadata()
 	snap.RetryPendingDisposition, snap.RetryPendingProgress, snap.RetryPending = s.FailedStepRetryPending()
 	snap.LastError = s.LastError()
+	snap.RunID = s.RunID()
 	return snap, nil
 }
 
@@ -256,6 +268,10 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.ReasoningEffort = snap.ReasoningEffort
 	s.EnvironmentRef = snap.EnvironmentRef
 	s.Adoption = snap.Clone()
+	// RunID restores by direct assignment, like Profile/Title above: it is an
+	// inert stored label, not lifecycle state, so it does not belong in
+	// RestoreState's state-machine parameter list.
+	s.BeginRun(snap.RunID)
 	s.Title = snap.Title
 	s.TitleProvenance = snap.TitleProvenance
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a

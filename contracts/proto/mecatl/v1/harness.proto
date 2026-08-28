@@ -1578,6 +1578,23 @@ message Event {
   // model_retry carries the typed failed terminal consumed by a model.retry
   // lifecycle boundary. Clients and event-source hosts must not parse text.
   ModelRetry model_retry = 21;
+  // run_id is the opaque, server-minted identity of the run that emitted this
+  // event (ADR 0249). It is stamped by the agent loop, so every event a run
+  // emits carries it on both the gRPC and HTTP/SSE surfaces.
+  //
+  // It is OPAQUE: it encodes nothing and exists only to be compared for
+  // equality. A client uses it to know which run an event belongs to — `seq` is
+  // monotonic WITHIN a run and restarts each run, so it cannot distinguish two
+  // runs of one session — and to address controls at a specific run rather than
+  // "whatever is running now".
+  //
+  // EMPTY IS MEANINGFUL, not missing: it means the event is SESSION-scoped
+  // rather than run-scoped. The schedule.* lifecycle events are emitted outside
+  // any run and legitimately carry no id. A client following one run filters on
+  // an exact match and so never sees them; a client showing a session timeline
+  // includes them.
+  string run_id = 22;
+
 }
 
 // ModelRetry identifies the failed-step retry intent being driven.

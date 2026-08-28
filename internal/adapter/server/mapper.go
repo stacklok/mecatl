@@ -124,8 +124,15 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	out := &mecatlv1.Event{
 		Type: string(ev.Type),
 		Seq:  ev.Seq,
-		Turn: ClampInt32(ev.Turn),
-		Text: valid(ev.Text),
+		// RunId IS repaired, even though this server mints it as opaque base32.
+		// engine/agent is an importable library and RunRequest.RunID is a public
+		// field, so any embedder can supply arbitrary bytes; treating it as
+		// harness-authored would be true of this binary and false of the contract.
+		// A protobuf string field rejects invalid UTF-8 at marshal time, which is
+		// codes.Internal on a live stream — the exact issue-#402 failure mode.
+		RunId: valid(ev.RunID),
+		Turn:  ClampInt32(ev.Turn),
+		Text:  valid(ev.Text),
 	}
 	if ev.ToolCall != nil {
 		out.ToolCall = toProtoToolCall(*ev.ToolCall)

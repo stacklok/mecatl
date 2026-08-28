@@ -1235,6 +1235,34 @@ type Event struct {
 	// metadata-only observability projection of a Parallel fork-join run (group-level
 	// join/winner facts + per-branch metadata + fork paths, never branch content).
 	Parallel *ParallelPayload
+	// RunID is the opaque, host-minted identity of the run that emitted this event
+	// (ADR 0249). It is STAMPED BY THE LOOP, at Run.emit/emitOrAbort, beside the
+	// existing Seq stamp — every event a run emits carries it, so no relay,
+	// transport, or persistence path can omit it.
+	//
+	// It is NOT derive-at-append like Actor, and the difference is deliberate.
+	// Actor can be stamped at the server's appendEvent chokepoint because it is
+	// log-only; RunID must ALSO reach the client wire (an SDK resolves a started
+	// run on the first run-ID-bearing event, and a watch filters envelopes by
+	// run), and the wire path never passes through appendEvent. Stamping it "at
+	// the relay" would mean stamping it at roughly nine sites by hand.
+	//
+	// Seq is monotonic WITHIN a run and restarts every run, so it cannot
+	// distinguish two runs of one session; RunID is what makes an event
+	// attributable to a specific run across restarts and across processes.
+	//
+	// EMPTY IS MEANINGFUL, not a bug: it means "session-scoped, not run-scoped".
+	// The schedule.* lifecycle events are emitted from composition outside any
+	// loop and legitimately have no run. The set of event types permitted to carry
+	// an empty RunID is CLOSED and enforced by a test, so a new run-less emitter is
+	// a visible decision rather than a silent gap. An ergonomic attachment filters
+	// to one run and therefore never contains run-less events; a session activity
+	// stream includes them, which is why the two are separate operations.
+	//
+	// A host that supplies no RunID emits events with an empty one, byte-identical
+	// to the behaviour before ADR 0249. Like Actor, it is not a reconstruction
+	// input: eventsource.Fold ignores it.
+	RunID string
 	// Actor is the verified caller who ACTED — who drove the request this event
 	// belongs to (ADR 0204 decision 5). It is LOG-ONLY and DERIVE-AT-APPEND: every
 	// emit site — the loop included — leaves it nil (the loop is storage-agnostic

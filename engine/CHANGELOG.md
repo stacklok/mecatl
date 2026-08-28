@@ -11,6 +11,20 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ## [Unreleased]
 
+### Added
+
+- **Durable run identity: `session.Event.RunID`, `session.Session.BeginRun`/`RunID`, `agent.RunRequest.RunID`, `sessnap.Snapshot.RunID`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — a run now carries an opaque, host-minted identity that survives restart.
+
+  `agent.RunRequest.RunID` is how a host supplies it. The loop stamps every event it emits with that value at `Run.emit`/`emitOrAbort`, beside the existing `Seq` stamp — so `session.Event.RunID` is populated on every path an event can leave a run by, with no relay, transport, or persistence site able to omit it. `Seq` is monotonic WITHIN a run and restarts each run, so it cannot distinguish two runs of one session; `RunID` is what makes an event attributable to a specific run.
+
+  When `RunRequest.AskIDDiscriminator` is empty, `RunID` also SUPPLIES the ask discriminator. That is the arrangement [ADR 0044](../docs/adr/0044-host-supplied-askid-discriminator.md) described in terms of a run id that did not then exist ("a durable host passes its own RunID"): a durable host now sets ONE field and gets both a stamped identity and cross-process-reconstructable askIDs. `AskIDDiscriminator` is retained and still wins when set explicitly, so the derivation is a default, not a constraint.
+
+  `Session.BeginRun`/`RunID` store the value on the aggregate and `sessnap.Snapshot.RunID` persists it (`omitempty`, additive, no format-tag bump — the `Profile`/`ProviderID` precedent). That is what makes an awaiting-approval resume continue THE SAME run across a process restart: `Engine.ResumeApproval` reads the id back off the session rather than minting a new one. The fallback is confined to that seam — a prompt entry never reads it off the session, because a reused session still carries the id of the run that just ended.
+
+  **No behaviour change when unset.** A host that supplies no `RunID` emits events with an empty one and asks fall back to the process-global serial, byte-identical to before. An EMPTY `RunID` is meaningful rather than missing: it marks an event as session-scoped rather than run-scoped (the scheduler's `schedule.*` lifecycle events are emitted outside any loop).
+
+  All four additions are **Added = minor**. `Event` and `RunRequest` gain a field, which breaks external UNKEYED struct literals — but both are already routinely constructed keyed, and `Event` is a wide event-payload struct nobody builds positionally.
+
 ### Changed
 
 - **`agent.Run.EnqueueSteer`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
