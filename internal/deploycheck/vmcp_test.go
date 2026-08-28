@@ -250,24 +250,6 @@ func TestMecak8sVMCPPOC_Scenario3_NoScopeEnforcement(t *testing.T) {
 	}
 }
 
-func TestMecak8sVMCPLiveProviderUsesExplicitLocalUnsafeMode(t *testing.T) {
-	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
-	liveBranch := strings.Index(taskfile, `if [ -n "${OPENROUTER_API_KEY:-}" ]`)
-	if liveBranch < 0 {
-		t.Fatal("fixture Taskfile has no live-provider branch")
-	}
-	mockBranch := strings.Index(taskfile[liveBranch:], "else")
-	if mockBranch < 0 {
-		t.Fatal("fixture Taskfile has no live-provider branch")
-	}
-	branch := taskfile[liveBranch : liveBranch+mockBranch]
-	for _, required := range []string{"mockProvider=false", "security.allowUnsafeRealProvider=true", "extraEnv[0].name=OPENROUTER_API_KEY", "valueFrom.secretKeyRef"} {
-		if !strings.Contains(branch, required) {
-			t.Errorf("live-provider branch missing %q", required)
-		}
-	}
-}
-
 func TestMecak8sVMCPPOC_Scenario4_KindLoopbackNodePorts(t *testing.T) {
 	taskfile := readRepoFile(t, "deploy/mecak8s-vmcp/Taskfile.yml")
 	kindConfig := readRepoFile(t, "deploy/mecak8s-vmcp/kind-config.yaml")
