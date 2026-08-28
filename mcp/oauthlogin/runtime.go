@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -19,6 +20,11 @@ const (
 	callbackPrefix  = "/oauth/callback/"
 	callbackBytes   = 32
 	shutdownTimeout = time.Second
+
+	// ExactRedirectURL is the fixed callback URI used by clients that have a
+	// pre-registered redirect. It is deliberately IPv4-literal and must not be
+	// changed to localhost or a wildcard address.
+	ExactRedirectURL = "http://127.0.0.1:18473/oauth/callback"
 )
 
 var (
@@ -27,6 +33,30 @@ var (
 	// ErrCallbackAttempts reports exhaustion of the callback request budget.
 	ErrCallbackAttempts = errors.New("OAuth callback request limit exceeded")
 )
+
+// CallbackBindReason is the closed, safe reason a callback listener could not bind.
+type CallbackBindReason uint8
+
+const (
+	// CallbackBindUnavailable reports a bind failure with no safely actionable detail.
+	CallbackBindUnavailable CallbackBindReason = iota
+	// CallbackBindAddressInUse reports that another process owns the callback address.
+	CallbackBindAddressInUse
+)
+
+// CallbackBindError reports a callback listener bind failure without retaining the
+// operating-system error, address, or other nested network data.
+type CallbackBindError struct{ Reason CallbackBindReason }
+
+func (e *CallbackBindError) Error() string {
+	if e != nil && e.Reason == CallbackBindAddressInUse {
+		return "OAuth callback listener address is already in use"
+	}
+	return "OAuth callback listener is unavailable"
+}
+
+// Is keeps callback bind failures in the authorization-failure category.
+func (*CallbackBindError) Is(target error) bool { return target == ErrAuthorizationFailed }
 
 // BrowserLauncher opens an authorization URL according to host policy.
 type BrowserLauncher interface {
@@ -38,6 +68,11 @@ type Options struct {
 	NoBrowser bool
 	URLWriter io.Writer
 	Launcher  BrowserLauncher
+
+	// RedirectURL enables an explicitly configured callback. The only accepted
+	// value is ExactRedirectURL; empty preserves the random-path, ephemeral-port
+	// behavior used by existing callers.
+	RedirectURL string
 }
 
 // Result is the validated loopback authorization response.
@@ -65,6 +100,9 @@ type Runtime struct {
 func New(opts Options) (*Runtime, error) {
 	if opts.NoBrowser && opts.URLWriter == nil {
 		return nil, errors.New("no-browser OAuth login requires a URL writer")
+	}
+	if opts.RedirectURL != "" && !isExactRedirectURL(opts.RedirectURL) {
+		return nil, errors.New("OAuth redirect URL is invalid")
 	}
 	launcher := opts.Launcher
 	if launcher == nil {
@@ -104,21 +142,43 @@ func (r *Runtime) Authorize(ctx context.Context, expectedIssuer string, authoriz
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	path, err := randomCallbackPath(r.random)
-	if err != nil {
-		return errors.New("generate OAuth callback path: failed")
+	path := ""
+	address := "127.0.0.1:0"
+	callbackHost := ""
+	redirectURL := ""
+	attemptPolicy := attemptMatchingRoute
+	if r.opts.RedirectURL == "" {
+		path, err = randomCallbackPath(r.random)
+		if err != nil {
+			return errors.New("generate OAuth callback path: failed")
+		}
+	} else {
+		path = "/oauth/callback"
+		address = "127.0.0.1:18473"
+		callbackHost = "127.0.0.1:18473"
+		redirectURL = ExactRedirectURL
+		attemptPolicy = attemptFixedRoute
 	}
-	ln, err := r.listen(ctx, "tcp4", "127.0.0.1:0")
+	ln, err := r.listen(ctx, "tcp4", address)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		return errors.New("bind OAuth callback listener: failed")
+		bindReason := CallbackBindUnavailable
+		if errors.Is(err, syscall.EADDRINUSE) {
+			bindReason = CallbackBindAddressInUse
+		}
+		return &CallbackBindError{Reason: bindReason}
 	}
 
 	host := ln.Addr().String()
-	redirectURL := "http://" + host + path
-	flow := newCallbackFlow(path, host, issuer)
+	if callbackHost != "" {
+		host = callbackHost
+	}
+	if redirectURL == "" {
+		redirectURL = "http://" + host + path
+	}
+	flow := newCallbackFlow(path, host, issuer, attemptPolicy)
 	limited := newLimitedListener(ln, maxConcurrentConnections)
 	server := &http.Server{
 		Handler:           flow,
@@ -148,7 +208,7 @@ func (r *Runtime) Authorize(ctx context.Context, expectedIssuer string, authoriz
 	cleanupErr := stopServer(server, ln, serveDone)
 	if authorizeErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+			return flow.annotate(ctxErr)
 		}
 		return safeAuthorizeError(authorizeErr)
 	}
@@ -198,7 +258,13 @@ func (r *Runtime) presenter(flow *callbackFlow) func(context.Context, string) (R
 }
 
 func safeAuthorizeError(err error) error {
+	var rejected *CallbackRejectedError
+	var provider *AuthorizationErrorResponse
 	switch {
+	case errors.As(err, &rejected):
+		return rejected.Sanitized()
+	case errors.As(err, &provider):
+		return provider.Sanitized()
 	case errors.Is(err, context.Canceled):
 		return context.Canceled
 	case errors.Is(err, context.DeadlineExceeded):
@@ -218,6 +284,15 @@ func randomCallbackPath(reader io.Reader) (string, error) {
 		return "", err
 	}
 	return callbackPrefix + base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func isExactRedirectURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && raw == ExactRedirectURL &&
+		u.Scheme == "http" && u.Host == "127.0.0.1:18473" &&
+		u.Hostname() == "127.0.0.1" && u.Port() == "18473" &&
+		u.Path == "/oauth/callback" && u.RawPath == "" &&
+		u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
 
 func canonicalIssuer(raw string) (string, error) {

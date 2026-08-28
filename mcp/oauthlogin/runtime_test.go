@@ -142,6 +142,10 @@ func TestCallbackAcceptsAbsentIssuerAndPreservesEmptyResult(t *testing.T) {
 	}
 }
 
+// TestCallbackRejectsInvalidRequestsThenAcceptsValid covers rejections that
+// happen at or before the state compare. The sender has not proved knowledge of
+// the state secret, so it may be any local process: such a rejection records a
+// reason but must never stop the real browser callback from completing.
 func TestCallbackRejectsInvalidRequestsThenAcceptsValid(t *testing.T) {
 	tests := map[string]func(string) *http.Request{
 		"wrong path": func(redirect string) *http.Request {
@@ -168,14 +172,6 @@ func TestCallbackRejectsInvalidRequestsThenAcceptsValid(t *testing.T) {
 		},
 		"wrong state": func(redirect string) *http.Request {
 			req, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "c", "wrong-state", testIssuer), nil)
-			return req
-		},
-		"wrong issuer": func(redirect string) *http.Request {
-			req, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "c", "s", "https://other.example.test"), nil)
-			return req
-		},
-		"missing code": func(redirect string) *http.Request {
-			req, _ := http.NewRequest(http.MethodGet, redirect+"?state=s&iss="+url.QueryEscape(testIssuer), nil)
 			return req
 		},
 		"empty code": func(redirect string) *http.Request {
@@ -208,10 +204,6 @@ func TestCallbackRejectsInvalidRequestsThenAcceptsValid(t *testing.T) {
 		},
 		"duplicate OAuth error": func(redirect string) *http.Request {
 			req, _ := http.NewRequest(http.MethodGet, redirect+"?error=denied&error=denied&state=s&iss="+url.QueryEscape(testIssuer), nil)
-			return req
-		},
-		"code and OAuth error": func(redirect string) *http.Request {
-			req, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "c", "s", testIssuer)+"&error=denied", nil)
 			return req
 		},
 		"empty query value": func(redirect string) *http.Request {
@@ -270,15 +262,137 @@ func TestCallbackRejectsInvalidRequestsThenAcceptsValid(t *testing.T) {
 	}
 }
 
-func TestOAuthErrorIsTerminalAndRedacted(t *testing.T) {
-	const description = "description-secret-canary"
+// TestAuthenticatedRejectionIsTerminalAndNamesTheRule covers rejections past the
+// state compare. Only the browser that received the authorization URL knows the
+// state, so the reason is trustworthy: the flow ends immediately with the rule
+// named, rather than waiting out the callback timeout with no diagnosis.
+func TestAuthenticatedRejectionIsTerminalAndNamesTheRule(t *testing.T) {
+	tests := map[string]struct {
+		query  func(string) string
+		reason string
+	}{
+		"wrong issuer": {
+			query:  func(redirect string) string { return callbackURL(redirect, "c", "s", "https://other.example.test") },
+			reason: reasonIssuerMismatch,
+		},
+		"missing code": {
+			query: func(redirect string) string {
+				return redirect + "?state=s&iss=" + url.QueryEscape(testIssuer)
+			},
+			reason: reasonNoCode,
+		},
+		"code and OAuth error": {
+			query:  func(redirect string) string { return callbackURL(redirect, "c", "s", testIssuer) + "&error=denied" },
+			reason: reasonErrorAndCode,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var redirect string
+			launcher := launcherFunc(func(_ context.Context, _ string) error {
+				req, _ := http.NewRequest(http.MethodGet, tc.query(redirect), nil)
+				if got := request(t, req); got.status < 400 || got.body != failureHTML {
+					t.Fatalf("rejection response = %d %q", got.status, got.body)
+				}
+				// The flow is already over: a later valid callback finds it gone.
+				valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
+				if got := request(t, valid).status; got != http.StatusGone {
+					t.Fatalf("late valid status = %d, want 410", got)
+				}
+				return nil
+			})
+			err := runWithLauncher(t, launcher, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+				redirect = got
+				_, err := present(ctx, "https://as.example.test/authorize?state=s")
+				return err
+			})
+			var rejected *CallbackRejectedError
+			if !errors.As(err, &rejected) {
+				t.Fatalf("error = %v, want *CallbackRejectedError", err)
+			}
+			if rejected.Reason != tc.reason {
+				t.Fatalf("reason = %q, want %q", rejected.Reason, tc.reason)
+			}
+			// Existing callers test for the sentinel; that must keep working.
+			if !errors.Is(err, ErrAuthorizationFailed) {
+				t.Fatalf("error is not ErrAuthorizationFailed: %v", err)
+			}
+		})
+	}
+}
+
+// TestCallbackWithoutIssIsAcceptedAndReported pins RFC 9207 section 2.4 at this
+// layer: an absent iss is passed through with Result.Iss empty so the caller can
+// decide using the discovery document. A provider that does not implement
+// RFC 9207 (Dex, for one) must not be locked out by the listener.
+func TestCallbackWithoutIssIsAcceptedAndReported(t *testing.T) {
 	var redirect string
 	launcher := launcherFunc(func(_ context.Context, _ string) error {
-		values := url.Values{"error": {"access_denied"}, "error_description": {description}, "state": {"s"}, "iss": {testIssuer}}
+		req, _ := http.NewRequest(http.MethodGet, redirect+"?code=c&state=s", nil)
+		if got := request(t, req); got.status != http.StatusOK || got.body != successHTML {
+			t.Fatalf("response = %d %q", got.status, got.body)
+		}
+		return nil
+	})
+	var got Result
+	err := runWithLauncher(t, launcher, func(ctx context.Context, redirectURL string, present func(context.Context, string) (Result, error)) error {
+		redirect = redirectURL
+		var err error
+		got, err = present(ctx, "https://as.example.test/authorize?state=s")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Code != "c" || got.Iss != "" {
+		t.Fatalf("result = %#v, want code c and empty Iss", got)
+	}
+}
+
+// TestUnauthenticatedRejectionReasonSurvivesToTimeout proves the recorded
+// pre-state reason reaches the caller when no valid callback ever arrives.
+func TestUnauthenticatedRejectionReasonSurvivesToTimeout(t *testing.T) {
+	var redirect string
+	launcher := launcherFunc(func(_ context.Context, _ string) error {
+		req, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "c", "wrong-state", testIssuer), nil)
+		request(t, req)
+		return nil
+	})
+	runtime, err := New(Options{Launcher: launcher})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	err = runtime.Authorize(ctx, testIssuer, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+		redirect = got
+		_, err := present(ctx, "https://as.example.test/authorize?state=s")
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want DeadlineExceeded", err)
+	}
+	if !strings.Contains(err.Error(), reasonState) {
+		t.Fatalf("timeout error omits the last rejection reason: %v", err)
+	}
+}
+
+// TestOAuthErrorIsSurfacedAndSanitized pins that a provider's OAuth error reaches
+// the caller. Withholding it made an authorization that fails at the provider
+// undiagnosable -- Keycloak refusing a scope read as a bare "OAuth authorization
+// failed" and had to be reproduced by hand to learn it was invalid_scope. Both
+// fields are sanitized to the printable subset RFC 6749 allows and clamped, so a
+// hostile value cannot inject log lines or flood the output.
+func TestOAuthErrorIsSurfacedAndSanitized(t *testing.T) {
+	const description = "Invalid scopes: openid profile offline_access"
+	var redirect string
+	launcher := launcherFunc(func(_ context.Context, _ string) error {
+		values := url.Values{"error": {"invalid_scope"}, "error_description": {description},
+			"state": {"s"}, "iss": {testIssuer}}
 		req, _ := http.NewRequest(http.MethodGet, redirect+"?"+values.Encode(), nil)
-		response := request(t, req)
-		if response.body != failureHTML {
-			t.Fatalf("body = %q", response.body)
+		if got := request(t, req).body; got != failureHTML {
+			t.Fatalf("body = %q", got)
 		}
 		return nil
 	})
@@ -287,11 +401,70 @@ func TestOAuthErrorIsTerminalAndRedacted(t *testing.T) {
 		_, err := present(ctx, "https://as.example.test/authorize?state=s")
 		return err
 	})
-	if !errors.Is(err, ErrAuthorizationFailed) {
-		t.Fatalf("error = %v", err)
+	var provider *AuthorizationErrorResponse
+	if !errors.As(err, &provider) {
+		t.Fatalf("error = %v, want *AuthorizationErrorResponse", err)
 	}
-	if strings.Contains(err.Error(), description) || strings.Contains(err.Error(), "access_denied") {
-		t.Fatalf("error leaked provider response: %v", err)
+	if provider.Code != "invalid_scope" || provider.Description != description {
+		t.Fatalf("provider error = %#v", provider)
+	}
+	if !errors.Is(err, ErrAuthorizationFailed) {
+		t.Fatalf("error is not ErrAuthorizationFailed: %v", err)
+	}
+}
+
+// TestOAuthErrorFieldsAreBoundedAndScrubbed covers the hostile-value side: control
+// characters and non-printables are dropped rather than echoed, oversized fields
+// are clamped, and a wholly-disallowed code degrades to a placeholder instead of
+// being partially reconstructed.
+func TestOAuthErrorFieldsAreBoundedAndScrubbed(t *testing.T) {
+	tests := map[string]struct {
+		code, desc string
+		wantCode   string
+		wantDesc   string
+	}{
+		"newline injection": {
+			code: "bad\r\nSet-Cookie: x", desc: "line\r\nInjected: y",
+			wantCode: "badSet-Cookie: x", wantDesc: "lineInjected: y",
+		},
+		"non-printable code": {
+			code: "\x01\x02", desc: "fine",
+			wantCode: "unspecified", wantDesc: "fine",
+		},
+		"oversized description": {
+			code: "invalid_request", desc: strings.Repeat("d", maxOAuthErrorField*2),
+			wantCode: "invalid_request", wantDesc: strings.Repeat("d", maxOAuthErrorField),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var redirect string
+			launcher := launcherFunc(func(_ context.Context, _ string) error {
+				values := url.Values{"error": {tc.code}, "error_description": {tc.desc},
+					"state": {"s"}, "iss": {testIssuer}}
+				req, _ := http.NewRequest(http.MethodGet, redirect+"?"+values.Encode(), nil)
+				request(t, req)
+				return nil
+			})
+			err := runWithLauncher(t, launcher, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+				redirect = got
+				_, err := present(ctx, "https://as.example.test/authorize?state=s")
+				return err
+			})
+			var provider *AuthorizationErrorResponse
+			if !errors.As(err, &provider) {
+				t.Fatalf("error = %v", err)
+			}
+			if provider.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", provider.Code, tc.wantCode)
+			}
+			if provider.Description != tc.wantDesc {
+				t.Fatalf("description = %q, want %q", provider.Description, tc.wantDesc)
+			}
+			if strings.ContainsAny(provider.Code+provider.Description, "\r\n\x00") {
+				t.Fatalf("control characters survived: %#v", provider)
+			}
+		})
 	}
 }
 
@@ -394,6 +567,189 @@ func TestDuplicateCallbackOnlyOneWins(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExactRedirectUsesFixedIPv4Callback(t *testing.T) {
+	var redirect string
+	runtime, err := New(Options{
+		RedirectURL: ExactRedirectURL,
+		Launcher: launcherFunc(func(_ context.Context, _ string) error {
+			wrongHost, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "bad", "s", testIssuer), nil)
+			wrongHost.Host = "127.0.0.1:18472"
+			if got := request(t, wrongHost).status; got != http.StatusNotFound {
+				t.Fatalf("wrong-host status = %d", got)
+			}
+			wrongPath, _ := http.NewRequest(http.MethodGet, strings.Replace(callbackURL(redirect, "bad", "s", testIssuer), "/oauth/callback?", "/oauth/wrong?", 1), nil)
+			if got := request(t, wrongPath).status; got != http.StatusNotFound {
+				t.Fatalf("wrong-path status = %d", got)
+			}
+			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
+			if got := request(t, valid).status; got != http.StatusOK {
+				t.Fatalf("valid status = %d", got)
+			}
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = runtime.Authorize(ctx, testIssuer, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+		redirect = got
+		if got != ExactRedirectURL {
+			t.Fatalf("redirect = %q", got)
+		}
+		result, err := present(ctx, "https://as.example.test/authorize?state=s")
+		if err != nil {
+			return err
+		}
+		if result.Code != "good" {
+			t.Fatalf("result = %#v", result)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExactRedirectUnauthenticatedFloodDoesNotSpendAttempts(t *testing.T) {
+	var redirect string
+	runtime, err := New(Options{
+		RedirectURL: ExactRedirectURL,
+		Launcher: launcherFunc(func(_ context.Context, _ string) error {
+			for i := range 2 * maxRequestAttempts {
+				var req *http.Request
+				switch i % 3 {
+				case 0:
+					req, _ = http.NewRequest(http.MethodGet, callbackURL(redirect, "probe", "wrong-state", testIssuer), nil)
+				case 1:
+					req, _ = http.NewRequest(http.MethodPost, redirect+"?state=wrong-state", nil)
+				default:
+					req, _ = http.NewRequest(http.MethodGet, redirect+"?state=%zz", nil)
+				}
+				if got := request(t, req).status; got < 400 {
+					t.Fatalf("probe %d status = %d", i, got)
+				}
+			}
+			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "good", "s", testIssuer), nil)
+			if got := request(t, valid).status; got != http.StatusOK {
+				t.Fatalf("valid status after fixed-path flood = %d", got)
+			}
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = runtime.Authorize(ctx, testIssuer, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+		redirect = got
+		result, err := present(ctx, "https://as.example.test/authorize?state=s")
+		if err == nil && result.Code != "good" {
+			t.Fatalf("result = %#v", result)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExactRedirectAuthenticatedRejectionIsTerminal(t *testing.T) {
+	var redirect string
+	runtime, err := New(Options{
+		RedirectURL: ExactRedirectURL,
+		Launcher: launcherFunc(func(_ context.Context, _ string) error {
+			rejected, _ := http.NewRequest(http.MethodGet, redirect+"?state=s", nil)
+			if got := request(t, rejected).status; got != http.StatusBadRequest {
+				t.Fatalf("rejection status = %d", got)
+			}
+			valid, _ := http.NewRequest(http.MethodGet, callbackURL(redirect, "late", "s", testIssuer), nil)
+			if got := request(t, valid).status; got != http.StatusGone {
+				t.Fatalf("late valid status = %d", got)
+			}
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runtime.Authorize(context.Background(), testIssuer, func(ctx context.Context, got string, present func(context.Context, string) (Result, error)) error {
+		redirect = got
+		_, err := present(ctx, "https://as.example.test/authorize?state=s")
+		return err
+	})
+	var rejected *CallbackRejectedError
+	if !errors.As(err, &rejected) || rejected.Reason != reasonNoCode || !errors.Is(err, ErrAuthorizationFailed) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestExactRedirectRejectsOccupiedPort(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:18473")
+	if err != nil {
+		t.Skipf("fixed callback port unavailable for test: %v", err)
+	}
+	defer listener.Close()
+	runtime, err := New(Options{RedirectURL: ExactRedirectURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err = runtime.Authorize(context.Background(), testIssuer, func(context.Context, string, func(context.Context, string) (Result, error)) error {
+		called = true
+		return nil
+	})
+	// The closed bind reason distinguishes an occupied fixed port without retaining
+	// the nested network error or the random callback capability.
+	if err == nil || called {
+		t.Fatalf("occupied-port result = %v, authorize called=%v", err, called)
+	}
+	var bind *CallbackBindError
+	if !errors.As(err, &bind) || bind.Reason != CallbackBindAddressInUse || !errors.Is(err, ErrAuthorizationFailed) {
+		t.Fatalf("error = %v, want address-in-use CallbackBindError", err)
+	}
+	if strings.Contains(err.Error(), callbackPrefix) {
+		t.Fatalf("error leaked the callback path: %v", err)
+	}
+}
+
+func TestExactRedirectCancellationReleasesListener(t *testing.T) {
+	runtime, err := New(Options{RedirectURL: ExactRedirectURL, Launcher: launcherFunc(func(context.Context, string) error { return nil })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = runtime.Authorize(ctx, testIssuer, func(ctx context.Context, _ string, present func(context.Context, string) (Result, error)) error {
+		_, err := present(ctx, "https://as.example.test/authorize?state=s")
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v", err)
+	}
+	listener, err := net.Listen("tcp4", "127.0.0.1:18473")
+	if err != nil {
+		t.Fatalf("exact callback listener was not released: %v", err)
+	}
+	_ = listener.Close()
+}
+
+func TestExactRedirectValidationIsStrict(t *testing.T) {
+	for _, redirect := range []string{
+		"http://localhost:18473/oauth/callback",
+		"http://127.0.0.1:18473/wrong",
+		"http://127.0.0.1:18473/oauth/callback?x=1",
+		"http://user@127.0.0.1:18473/oauth/callback",
+		"https://127.0.0.1:18473/oauth/callback",
+	} {
+		if _, err := New(Options{RedirectURL: redirect}); err == nil {
+			t.Errorf("accepted redirect %q", redirect)
+		}
 	}
 }
 

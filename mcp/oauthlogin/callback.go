@@ -2,9 +2,11 @@ package oauthlogin
 
 import (
 	"crypto/subtle"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -23,28 +25,152 @@ const (
 	failureHTML = "<!doctype html><html lang=en><meta charset=utf-8><title>OAuth callback rejected</title><body><h1>Authorization could not be completed</h1><p>Return to the application and try again.</p></body></html>"
 )
 
+// Rejection reasons name the validation rule that failed. They are rule names
+// only — never a code, state, token, or any other callback value — so they are
+// safe to return to the operator.
+const (
+	reasonRoute          = "path or Host did not match the callback"
+	reasonMethod         = "callback used a method other than GET"
+	reasonBody           = "callback carried a request body"
+	reasonQuery          = "callback query was empty, oversized, or malformed"
+	reasonState          = "callback state did not match the authorization request"
+	reasonIssuerMismatch = "callback iss did not match the expected issuer"
+	reasonErrorAndCode   = "callback carried both error and code"
+	reasonNoCode         = "callback carried neither error nor code"
+)
+
+// maxOAuthErrorField bounds each surfaced field of a provider error response.
+const maxOAuthErrorField = 200
+
+// AuthorizationErrorResponse carries the provider's OAuth error response from the
+// callback. Both fields are surfaced: an authorization that fails at the provider
+// is otherwise undiagnosable without reproducing the request by hand, and the
+// operator owns the authorization server being quoted. They are sanitized, not
+// withheld -- RFC 6749 section 4.1.2.1 restricts these values to a printable
+// subset, so anything outside it is dropped rather than echoed, and each field is
+// clamped. That defeats log injection and unbounded output without hiding the one
+// thing the operator needs.
+type AuthorizationErrorResponse struct {
+	Code        string
+	Description string
+}
+
+func (e *AuthorizationErrorResponse) Error() string {
+	clean := e.Sanitized()
+	msg := "OAuth authorization failed: " + clean.Code
+	if clean.Description != "" {
+		msg += ": " + clean.Description
+	}
+	return msg
+}
+
+// Sanitized returns a bounded copy safe for crossing diagnostic boundaries.
+func (e *AuthorizationErrorResponse) Sanitized() *AuthorizationErrorResponse {
+	if e == nil {
+		return &AuthorizationErrorResponse{Code: "unspecified"}
+	}
+	code := sanitizeOAuthErrorField(e.Code)
+	if code == "" {
+		code = "unspecified"
+	}
+	return &AuthorizationErrorResponse{Code: code, Description: sanitizeOAuthErrorField(e.Description)}
+}
+
+// Is reports the sentinel this error stands in for.
+func (*AuthorizationErrorResponse) Is(target error) bool { return target == ErrAuthorizationFailed }
+
+// sanitizeOAuthErrorField keeps only the printable subset RFC 6749 allows for
+// error and error_description, then clamps. A value that is entirely disallowed
+// comes back empty, never partially reconstructed.
+func sanitizeOAuthErrorField(v string) string {
+	var b strings.Builder
+	for _, r := range v {
+		switch {
+		case r == 0x20 || r == 0x21, r >= 0x23 && r <= 0x5B, r >= 0x5D && r <= 0x7E:
+			b.WriteRune(r)
+		default:
+			// Everything else, control characters included, is dropped.
+		}
+		if b.Len() >= maxOAuthErrorField {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// CallbackRejectedError names the rule that rejected an authenticated callback.
+// It satisfies errors.Is(err, ErrAuthorizationFailed) so existing callers that
+// test for that sentinel keep working.
+type CallbackRejectedError struct{ Reason string }
+
+func (e *CallbackRejectedError) Error() string {
+	return "OAuth callback rejected: " + e.Sanitized().Reason
+}
+
+// Sanitized returns a copy containing only a callback validator's closed reason.
+func (e *CallbackRejectedError) Sanitized() *CallbackRejectedError {
+	reason := "callback did not satisfy validation requirements"
+	if e != nil {
+		switch e.Reason {
+		case reasonRoute, reasonMethod, reasonBody, reasonQuery, reasonState,
+			reasonIssuerMismatch, reasonErrorAndCode, reasonNoCode:
+			reason = e.Reason
+		}
+	}
+	return &CallbackRejectedError{Reason: reason}
+}
+
+// Is reports the sentinel this error stands in for.
+func (*CallbackRejectedError) Is(target error) bool { return target == ErrAuthorizationFailed }
+
+// rejection carries why a callback was refused. authenticated is true once the
+// sender has proved knowledge of the state secret.
+type rejection struct {
+	status        int
+	reason        string
+	authenticated bool
+}
+
+func reject(status int, reason string) rejection {
+	return rejection{status: status, reason: reason}
+}
+
+func rejectAuthenticated(reason string) rejection {
+	return rejection{status: http.StatusBadRequest, reason: reason, authenticated: true}
+}
+
 type callbackOutcome struct {
 	result Result
 	err    error
 }
 
+type callbackAttemptPolicy uint8
+
+const (
+	attemptMatchingRoute callbackAttemptPolicy = iota
+	attemptFixedRoute
+)
+
 type callbackFlow struct {
 	path           string
 	host           string
 	expectedIssuer string
+	attemptPolicy  callbackAttemptPolicy
 	expectedState  string
 	stateSet       atomic.Bool
 	attempts       atomic.Int32
 	completed      atomic.Bool
+	lastReject     atomic.Pointer[string]
 	resultOnce     sync.Once
 	result         chan callbackOutcome
 }
 
-func newCallbackFlow(path, host, issuer string) *callbackFlow {
+func newCallbackFlow(path, host, issuer string, attemptPolicy callbackAttemptPolicy) *callbackFlow {
 	return &callbackFlow{
 		path:           path,
 		host:           host,
 		expectedIssuer: issuer,
+		attemptPolicy:  attemptPolicy,
 		result:         make(chan callbackOutcome, 1),
 	}
 }
@@ -67,19 +193,33 @@ func (f *callbackFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, http.StatusNotFound)
 		return
 	}
-	attempt := f.attempts.Add(1)
-	if attempt > maxRequestAttempts {
-		f.complete(callbackOutcome{err: ErrCallbackAttempts})
-		writeFailure(w, http.StatusTooManyRequests)
-		return
+	attempt := int32(0)
+	if f.attemptPolicy == attemptMatchingRoute {
+		attempt = f.attempts.Add(1)
+		if attempt > maxRequestAttempts {
+			f.complete(callbackOutcome{err: ErrCallbackAttempts})
+			writeFailure(w, http.StatusTooManyRequests)
+			return
+		}
 	}
 
-	outcome, status, ok := f.validate(r)
+	outcome, rej, ok := f.validate(r)
 	if !ok {
-		if attempt == maxRequestAttempts {
-			f.complete(callbackOutcome{err: ErrCallbackAttempts})
+		if rej.authenticated {
+			// The sender knew the state secret, so this is the real browser and
+			// its rejection reason is trustworthy: end the flow now instead of
+			// waiting out the callback timeout.
+			f.complete(callbackOutcome{err: (&CallbackRejectedError{Reason: rej.reason}).Sanitized()})
+		} else {
+			// Fixed callbacks are public, pre-registered routes. Ambient malformed
+			// requests and wrong-state probes cannot consume their attempt budget.
+			// Random-path callbacks retain the bounded matching-route policy.
+			f.recordRejection(rej.reason)
+			if f.attemptPolicy == attemptMatchingRoute && attempt == maxRequestAttempts {
+				f.complete(callbackOutcome{err: ErrCallbackAttempts})
+			}
 		}
-		writeFailure(w, status)
+		writeFailure(w, rej.status)
 		return
 	}
 	if !f.tryComplete(outcome) {
@@ -94,20 +234,30 @@ func (f *callbackFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(successHTML))
 }
 
-func (f *callbackFlow) validate(r *http.Request) (callbackOutcome, int, bool) {
-	query, status, ok := f.callbackQuery(r)
+func (f *callbackFlow) validate(r *http.Request) (callbackOutcome, rejection, bool) {
+	query, rej, ok := f.callbackQuery(r)
 	if !ok {
-		return callbackOutcome{}, status, false
+		return callbackOutcome{}, rej, false
 	}
 	state := query.Get("state")
 	issuer := query.Get("iss")
 	if !f.stateSet.Load() || subtle.ConstantTimeCompare([]byte(state), []byte(f.expectedState)) != 1 {
-		return callbackOutcome{}, http.StatusBadRequest, false
+		return callbackOutcome{}, reject(http.StatusBadRequest, reasonState), false
 	}
+	// Everything below the state compare is authenticated: only the browser that
+	// received the authorization URL knows this value.
+	//
+	// RFC 9207 section 2.4: validate iss whenever it is present, but do not
+	// require it here. Whether the authorization server promised to send one is a
+	// discovery fact this listener does not have; the caller holds the discovery
+	// document and enforces the required-if-advertised half. Requiring it
+	// unconditionally locks out every provider that does not implement RFC 9207.
+	// main reached the same conclusion independently in #766; this keeps that
+	// guard and adds only the named reason on the mismatch path.
 	if issuer != "" {
 		canonical, err := canonicalIssuer(issuer)
 		if err != nil || canonical != f.expectedIssuer {
-			return callbackOutcome{}, http.StatusBadRequest, false
+			return callbackOutcome{}, rejectAuthenticated(reasonIssuerMismatch), false
 		}
 	}
 
@@ -115,34 +265,59 @@ func (f *callbackFlow) validate(r *http.Request) (callbackOutcome, int, bool) {
 	_, hasCode := query["code"]
 	if hasError {
 		if hasCode {
-			return callbackOutcome{}, http.StatusBadRequest, false
+			return callbackOutcome{}, rejectAuthenticated(reasonErrorAndCode), false
 		}
-		return callbackOutcome{err: ErrAuthorizationFailed}, http.StatusBadRequest, true
+		code := sanitizeOAuthErrorField(query.Get("error"))
+		if code == "" {
+			code = "unspecified"
+		}
+		return callbackOutcome{err: &AuthorizationErrorResponse{
+			Code:        code,
+			Description: sanitizeOAuthErrorField(query.Get("error_description")),
+		}}, reject(http.StatusBadRequest, ""), true
 	}
 	if !hasCode {
-		return callbackOutcome{}, http.StatusBadRequest, false
+		return callbackOutcome{}, rejectAuthenticated(reasonNoCode), false
 	}
-	return callbackOutcome{result: Result{Code: query.Get("code"), State: state, Iss: issuer}}, http.StatusOK, true
+	return callbackOutcome{result: Result{Code: query.Get("code"), State: state, Iss: issuer}}, reject(http.StatusOK, ""), true
 }
 
-func (f *callbackFlow) callbackQuery(r *http.Request) (url.Values, int, bool) {
+func (f *callbackFlow) recordRejection(reason string) {
+	if reason == "" {
+		return
+	}
+	f.lastReject.Store(&reason)
+}
+
+// annotate adds the last unauthenticated rejection reason to a timeout or
+// cancellation, so a flow that never received a valid callback still reports
+// what it did receive.
+func (f *callbackFlow) annotate(err error) error {
+	reason := f.lastReject.Load()
+	if reason == nil {
+		return err
+	}
+	return fmt.Errorf("%w (last callback rejected: %s)", err, *reason)
+}
+
+func (f *callbackFlow) callbackQuery(r *http.Request) (url.Values, rejection, bool) {
 	if r.Method != http.MethodGet {
-		return nil, http.StatusMethodNotAllowed, false
+		return nil, reject(http.StatusMethodNotAllowed, reasonMethod), false
 	}
 	if r.URL.Path != f.path || r.URL.RawPath != "" || r.URL.Fragment != "" || r.Host != f.host {
-		return nil, http.StatusNotFound, false
+		return nil, reject(http.StatusNotFound, reasonRoute), false
 	}
 	if r.ContentLength > 0 || len(r.TransferEncoding) != 0 || (r.Body != nil && r.Body != http.NoBody) {
-		return nil, http.StatusBadRequest, false
+		return nil, reject(http.StatusBadRequest, reasonBody), false
 	}
 	if len(r.URL.RawQuery) == 0 || len(r.URL.RawQuery) > maxRawQueryBytes {
-		return nil, http.StatusBadRequest, false
+		return nil, reject(http.StatusBadRequest, reasonQuery), false
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || !validQuery(query) {
-		return nil, http.StatusBadRequest, false
+		return nil, reject(http.StatusBadRequest, reasonQuery), false
 	}
-	return query, http.StatusOK, true
+	return query, reject(http.StatusOK, ""), true
 }
 
 func validQuery(query url.Values) bool {
