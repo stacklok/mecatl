@@ -370,7 +370,6 @@ func (c *fakeConv) CreateSessionInWorkspace(_ context.Context, workspace string,
 	if n > 1 {
 		id = "sess-test-000" + strconv.Itoa(n)
 	}
-	c.mu.Lock()
 	resolved := c.resolvedModel
 	if c.echoSelAsResolved && !sel.IsZero() {
 		resolved = client.ResolvedModel{ProviderID: sel.ProviderID, ModelID: sel.ModelID}
@@ -380,7 +379,6 @@ func (c *fakeConv) CreateSessionInWorkspace(_ context.Context, workspace string,
 		c.mode = client.ModeDefaultString
 	}
 	caps := c.caps
-	c.mu.Unlock()
 	return id, caps, resolved, nil
 }
 
