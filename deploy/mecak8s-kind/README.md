@@ -84,11 +84,13 @@ so clients must verify the fixture CA and hostname rather than disable TLS
 verification.
 
 The normal client journey is **Authorization Code + PKCE** with the public
-`mecatui-kind` client and the optional `mecak8s:access` scope. The realm's
-fixture users and any password grant are a narrowly scoped **test helper** for
-non-browser validation only; they are not the normal login flow. Use the
-access token whose `aud` includes `mecak8s` as the bearer credential. A missing,
-forged, wrong-issuer, or wrong-audience token is rejected before API handling.
+`mecatui-kind` client and the optional `mecak8s:access` and `offline_access`
+scopes. Request `offline_access` deliberately when the client needs a refresh token;
+it is not granted by default. The realm's fixture users and any password grant are a
+narrowly scoped **test helper** for non-browser validation only; they are not the
+normal login flow. Use the access token whose `aud` includes `mecak8s` as the bearer
+credential. A missing, forged, wrong-issuer, or wrong-audience token is rejected
+before API handling.
 
 ## Boundary
 

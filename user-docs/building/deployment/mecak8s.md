@@ -106,8 +106,10 @@ The Keycloak issuer is available at `https://keycloak.mecatl.svc.cluster.local:8
 the mecak8s API remains at `https://localhost:18081` (gRPC at `localhost:18080`).
 Keep TLS verification enabled and trust the fixture CA; do not disable certificate
 verification. The normal login flow is Authorization Code + PKCE with the public
-`mecatui-kind` client and a token whose audience includes `mecak8s`. The fixture's
-password grant users are only a test helper for non-browser validation.
+`mecatui-kind` client. Request the optional `mecak8s:access` scope for an audience
+that includes `mecak8s`, and request optional `offline_access` deliberately when
+refresh-token qualification is needed. The fixture's password grant users are only a
+test helper for non-browser validation.
 
 Remove the temporary hostname entry after the journey, then destroy the fixture:
 
@@ -131,13 +133,12 @@ workflow above covers the issuer forwarding, hostname mapping, PKCE client, and
 TLS requirements.
 
 For an interactive remote client after setup, add the fixture host aliases, run
-`mecatui login ADDRESS … --tls-ca ISSUER_CA`, then run
-`mecatui connect ADDRESS --tls --tls-ca SERVER_CA`. The fixture may publish the same
-public CA bundle for both roles, but they remain separate trust inputs. The client uses
-the `mecatui-kind` public OIDC client;
-there is no implicit browser flow in `connect`. This host-alias flow is available
-for live qualification, but is not part of ordinary offline tests. See the
-[fixture's setup and CA instructions](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-vmcp/README.md).
+`mecatui login ADDRESS … --tls-ca ISSUER_CA --scopes openid,profile,mecak8s:access,offline_access`,
+then run `mecatui connect ADDRESS --tls --tls-ca SERVER_CA`. The fixture may publish
+the same public CA bundle for both roles, but they remain separate trust inputs. The
+client uses the `mecatui-kind` public OIDC client; there is no implicit browser flow in
+`connect`. This host-alias flow is available for live qualification, but is not part of
+ordinary offline tests. See the [fixture's setup and CA instructions](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-kind/README.md).
 
 
 ---

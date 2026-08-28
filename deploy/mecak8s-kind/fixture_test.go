@@ -1,6 +1,7 @@
 package mecak8s_kind
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"regexp"
@@ -329,6 +330,9 @@ func TestMecak8sKindFixture_Scenario3_LoginDocumentation(t *testing.T) {
 				t.Fatalf("%s does not document Keycloak login boundary %q", path, want)
 			}
 		}
+		if path == "README.md" && !strings.Contains(text, "offline_access") {
+			t.Fatalf("%s does not document the optional offline_access scope", path)
+		}
 		if strings.Index(text, "Authorization Code + PKCE") > strings.Index(text, "password grant") {
 			t.Fatalf("%s presents password grant before the normal PKCE journey", path)
 		}
@@ -415,24 +419,32 @@ func TestMecak8sKindFixture_Scenario3_KeycloakOIDCOverlay(t *testing.T) {
 	}
 }
 
-// TestMecak8sKindFixture_Scenario3_ResourceAudience pins the public desktop
-// client and resource-specific audience scope. The audience is opt-in and is
-// emitted only into the access token.
-func TestMecak8sKindFixture_Scenario3_ResourceAudience(t *testing.T) {
+// TestMecak8sKindFixture_Scenario3_OptionalClientScopes pins the public desktop
+// client's deliberately requested resource audience and offline-access scopes.
+func TestMecak8sKindFixture_Scenario3_OptionalClientScopes(t *testing.T) {
 	manifest, err := os.ReadFile("keycloak.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(manifest)
+	_, realmJSON, found := strings.Cut(text, "realm.json: |\n")
+	if !found {
+		t.Fatal("Keycloak manifest does not contain realm.json")
+	}
+	realmJSON, _, found = strings.Cut(realmJSON, "\n---\n")
+	if !found || !json.Valid([]byte(realmJSON)) {
+		t.Fatal("Keycloak realm.json is not valid JSON")
+	}
 	for _, want := range []string{
 		`"name": "mecak8s:access"`, `"included.custom.audience": "mecak8s"`,
+		`"name": "offline_access"`, `"description": "OpenID Connect built-in scope: offline_access"`,
 		`"access.token.claim": "true"`, `"id.token.claim": "false"`,
 		`"clientId": "mecatui-kind"`, `"pkce.code.challenge.method": "S256"`,
 		`"publicClient": true`, `"standardFlowEnabled": true`,
-		"\"optionalClientScopes\": [\n            \"mecak8s:access\"",
+		"\"optionalClientScopes\": [\n            \"mecak8s:access\",\n            \"offline_access\"",
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("Keycloak resource audience configuration missing %q", want)
+			t.Fatalf("Keycloak optional client-scope configuration missing %q", want)
 		}
 	}
 	client := text[strings.Index(text, `"clientId": "mecatui-kind"`):]
@@ -440,6 +452,7 @@ func TestMecak8sKindFixture_Scenario3_ResourceAudience(t *testing.T) {
 		`"clientAuthenticatorType": "client-secret"`, `"directAccessGrantsEnabled": true`,
 		`"implicitFlowEnabled": true`, `"serviceAccountsEnabled": true`,
 		"\"defaultClientScopes\": [\n            \"mecak8s:access\"",
+		"\"defaultClientScopes\": [\n            \"offline_access\"",
 	} {
 		if strings.Contains(client, forbidden) {
 			t.Fatalf("public mecatui client contains forbidden configuration %q", forbidden)
