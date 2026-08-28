@@ -117,6 +117,164 @@ static and requires a rolling restart when it changes.
 
 The Secret is mounted read-only at `/var/run/secrets/redis` with `defaultMode: 0440`; the chart projects exactly the configured CA and ACL keys, not the whole Secret. Their values are never chart values or command arguments. The external chart passes the CA path when `redis.caKey` is set and `--redis-tls` otherwise, and conditionally passes configured password and username paths. Both TLS modes verify the Redis certificate against the hostname from `redis.endpoint` (including IP SAN rules); hostname verification is never disabled. TLS with no ACL is valid, and a system-trust install with no ACL renders no Secret volume at all. `values-kind.yaml` is a separate disposable-only profile for the local `ko.local` image and plaintext Redis fixture, and its rendered command includes the explicit `--redis-allow-plaintext` opt-in. It must not be used for a production install.
 
+#### Mounting XDG configuration
+
+Use `extraEnv`, `extraVolumes`, and `extraVolumeMounts` to project trusted,
+immutable agent configuration without adding pod-local state. Set `XDG_CONFIG_HOME`
+to the mount root and place content below `<root>/mecatl/skills`,
+`<root>/mecatl/agents`, and `<root>/mecatl/rules`. Set
+`skills.autoDiscover: true` (default `false`) to discover skills from the
+standard XDG locations (`$XDG_CONFIG_HOME/mecatl/skills` or
+`~/.config/mecatl/skills`, plus `~/.claude/skills`) and, when the workspace is
+trusted, `<workspace>/.mecatl/skills` and `<workspace>/.claude/skills`.
+Create the ConfigMap in the release namespace before referencing it:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mecatl-config-v1
+  namespace: mecatl
+immutable: true
+data:
+  review-skill: |
+    ---
+    name: review
+    ---
+    Review changes for correctness and security.
+  reviewer-agent: |
+    ---
+    name: reviewer
+    ---
+    Review the supplied change and report actionable findings.
+  base-rules: |
+    Keep responses concise and explain material risks.
+```
+
+Then supply the matching Helm values:
+
+```yaml
+extraEnv:
+  - name: XDG_CONFIG_HOME
+    value: /etc/mecatl-config
+skills:
+  autoDiscover: true
+extraArgs:
+  - --no-user-model
+extraVolumeMounts:
+  - name: mecatl-config
+    mountPath: /etc/mecatl-config
+    readOnly: true
+extraVolumes:
+  - name: mecatl-config
+    configMap:
+      name: mecatl-config-v1
+      items:
+        - {key: review-skill, path: mecatl/skills/review/SKILL.md}
+        - {key: reviewer-agent, path: mecatl/agents/reviewer.md}
+        - {key: base-rules, path: mecatl/rules/base.md}
+```
+
+Keep the ConfigMap and mount read-only. Immutable ConfigMaps cannot be changed:
+create a new versioned ConfigMap, update both its content and the Helm
+`configMap.name` reference, then run `helm upgrade`. Mutable ConfigMap updates
+also require a Deployment rollout because discovery is snapshotted at startup.
+A read-only XDG root cannot host the writable user-model store, so pass
+`--no-user-model` through `extraArgs`. `XDG_CONFIG_HOME` changes more than these
+three discovery paths: it also relocates operator settings, soul, and auth-file
+lookup under `<root>/mecatl`; include those files deliberately or leave them
+absent.
+
+A ToolHive-packaged skill can instead be mounted directly from an OCI artifact
+on Kubernetes 1.36 or newer. The artifact must contain `SKILL.md` at its root;
+mount each artifact at
+`<XDG_CONFIG_HOME>/mecatl/skills/<skill-name>` and enable
+`skills.autoDiscover: true`:
+
+```yaml
+extraEnv:
+  - name: XDG_CONFIG_HOME
+    value: /etc/mecatl-config
+skills:
+  autoDiscover: true
+extraArgs:
+  - --no-user-model
+extraVolumeMounts:
+  - name: review-skill
+    mountPath: /etc/mecatl-config/mecatl/skills/review
+    readOnly: true
+extraVolumes:
+  - name: review-skill
+    image:
+      reference: registry.example/skills/review@sha256:<digest>
+      pullPolicy: IfNotPresent
+```
+
+Kubernetes image volumes are inherently read-only, and the pod's
+`imagePullSecrets` apply to these artifact pulls normally. Use a digest-pinned
+reference in production; it remains immutable and `IfNotPresent` may safely use
+the node cache. A mutable tag with `IfNotPresent` may also reuse cached content;
+use `Always` if every pod start must resolve that tag from the registry. Mecatl
+still snapshots discovered skill metadata and body at process startup, so any
+artifact change requires pod recreation.
+
+##### Prove the skill in a coding run
+
+`GET /v1/skills` is an inventory check. It proves discovery, but it does not
+prove that the coding agent loaded or followed the skill. A useful end-to-end
+check must drive a real model through the skill and verify its tool calls.
+
+For example, create `oci-skill-demo/SKILL.md` with a body that requires the
+agent to create `oci-skill-proof.txt` containing `OCI_SKILL_MOUNT_OK`, then
+verify it with `Read`:
+
+```markdown
+---
+name: oci-skill-demo
+description: Creates and verifies a proof file from an OCI-mounted skill.
+---
+
+When invoked, use `Write` to create `oci-skill-proof.txt` containing exactly
+`OCI_SKILL_MOUNT_OK` and a trailing newline. Use `Read` to verify the file, then
+report the verified path and marker.
+```
+
+Build and publish that directory with ToolHive, resolve the published digest,
+and use the image-volume values above:
+
+```sh
+thv skill validate ./oci-skill-demo
+thv skill build ./oci-skill-demo --tag registry.example/skills/oci-skill-demo:v1
+thv skill push registry.example/skills/oci-skill-demo:v1
+```
+
+After starting mecak8s with a real provider, create a session and invoke the
+mounted skill through the HTTP API:
+
+```sh
+session_id=$(curl -fsS -X POST http://127.0.0.1:8081/v1/sessions \
+  -H 'Content-Type: application/json' -d '{}' | jq -r .session_id)
+
+curl -fsS -N -X POST \
+  "http://127.0.0.1:8081/v1/sessions/${session_id}/prompt" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"/oci-skill-demo Execute the mounted skill exactly and verify the resulting file."}'
+```
+
+The proof is the run, not the inventory response. Its SSE stream must show this
+sequence:
+
+1. `tool.call` for `Skill` with `name: "oci-skill-demo"`.
+2. A `tool.result` containing the instructions read from the OCI artifact.
+3. `tool.call` for `Write`, creating `oci-skill-proof.txt` with the unique marker.
+4. `tool.call` for `Read`, followed by a result containing `OCI_SKILL_MOUNT_OK`.
+5. A clean terminal result reporting the verified path and marker.
+
+Use Helm 3.16 or newer when adding an image volume to an existing release.
+Older Helm clients may render the manifest but fail to calculate the upgrade
+patch because their embedded Kubernetes API does not know the `image` volume
+field.
+
 #### Server TLS (`tls.*` chart values)
 
 Server TLS is separate from `redis.*` TLS and is disabled by default. Create the

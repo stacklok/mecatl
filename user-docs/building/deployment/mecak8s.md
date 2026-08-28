@@ -107,7 +107,7 @@ the mecak8s API remains at `https://localhost:18081` (gRPC at `localhost:18080`)
 Keep TLS verification enabled and trust the fixture CA; do not disable certificate
 verification. The normal login flow is Authorization Code + PKCE with the public
 `mecatui-kind` client and a token whose audience includes `mecak8s`. The fixture's
-password-grant users are only a test helper for non-browser validation.
+password grant users are only a test helper for non-browser validation.
 
 Remove the temporary hostname entry after the journey, then destroy the fixture:
 
@@ -243,6 +243,113 @@ CAs together for an overlap period, then remove the old one after leaves have ro
 The server client-CA trust pool remains static and changing it requires a rolling restart.
 
 The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exactly the configured CA and ACL keys; unrelated Secret keys are not exposed. A password key alone uses Redis's default ACL user, while a username key requires a password key. `caKey` is optional: leaving it empty selects system-trust TLS, so an install against a publicly-rooted managed Redis with no ACL renders `--redis-tls` and no Secret volume at all. `credentialsSecret` is required exactly when some key needs reading. TLS-without-ACL external deployments are valid. The rendered command receives paths only, never Secret values. `values-kind.yaml` is deliberately the only profile that permits `ko.local` and plaintext Redis, and it passes `--redis-allow-plaintext` explicitly. It is not a production configuration.
+
+### Mount trusted skills, agents, and rules
+
+The chart's `extraEnv`, `extraArgs`, `extraVolumes`, and `extraVolumeMounts`
+values can project an immutable ConfigMap as XDG configuration. Set
+`XDG_CONFIG_HOME` to the mount root, put files below
+`<root>/mecatl/{skills,agents,rules}`, and set `skills.autoDiscover: true`
+(default `false`) to discover skills from the standard XDG locations
+(`$XDG_CONFIG_HOME/mecatl/skills` or `~/.config/mecatl/skills`, plus
+`~/.claude/skills`) and, when the workspace is trusted,
+`<workspace>/.mecatl/skills` and `<workspace>/.claude/skills`.
+
+Create the referenced ConfigMap in the release namespace first:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mecatl-config-v1
+  namespace: mecatl
+immutable: true
+data:
+  review-skill: |
+    ---
+    name: review
+    ---
+    Review changes for correctness and security.
+  reviewer-agent: |
+    ---
+    name: reviewer
+    ---
+    Review the supplied change and report actionable findings.
+  base-rules: |
+    Keep responses concise and explain material risks.
+```
+
+Then provide the matching Helm values:
+
+```yaml
+extraEnv:
+  - name: XDG_CONFIG_HOME
+    value: /etc/mecatl-config
+skills:
+  autoDiscover: true
+extraArgs: [--no-user-model]
+extraVolumeMounts:
+  - {name: mecatl-config, mountPath: /etc/mecatl-config, readOnly: true}
+extraVolumes:
+  - name: mecatl-config
+    configMap:
+      name: mecatl-config-v1
+      items:
+        - {key: review-skill, path: mecatl/skills/review/SKILL.md}
+        - {key: reviewer-agent, path: mecatl/agents/reviewer.md}
+        - {key: base-rules, path: mecatl/rules/base.md}
+```
+
+Use a read-only mount and preferably an immutable ConfigMap. An immutable
+ConfigMap cannot be updated: create a new versioned ConfigMap, update its
+content and the Helm `configMap.name` reference, then run `helm upgrade`.
+Mutable ConfigMap updates also require a Deployment rollout because discovery
+is snapshotted at startup. `--no-user-model` is required when this XDG root is
+read-only because the user model is writable. Setting `XDG_CONFIG_HOME` also
+relocates `mecatl/settings.yaml`, `mecatl/soul.md`, and
+`mecatl/auth.yaml` lookup, so account for those files explicitly.
+
+On Kubernetes 1.36 or newer, a ToolHive-packaged skill can instead be mounted
+straight from an OCI artifact. Its `SKILL.md` must be at the artifact root.
+Mount each artifact at `<XDG_CONFIG_HOME>/mecatl/skills/<skill-name>` and keep
+`skills.autoDiscover: true`:
+
+```yaml
+extraEnv:
+  - {name: XDG_CONFIG_HOME, value: /etc/mecatl-config}
+skills:
+  autoDiscover: true
+extraArgs: [--no-user-model]
+extraVolumeMounts:
+  - name: review-skill
+    mountPath: /etc/mecatl-config/mecatl/skills/review
+    readOnly: true
+extraVolumes:
+  - name: review-skill
+    image:
+      reference: registry.example/skills/review@sha256:<digest>
+      pullPolicy: IfNotPresent
+```
+
+Image volumes are inherently read-only, and the pod's `imagePullSecrets` apply
+to artifact pulls normally. Use a digest-pinned reference in production; it
+remains immutable and `IfNotPresent` may safely use the node cache. A mutable
+tag with `IfNotPresent` may also reuse cached content; use `Always` if every pod
+start must resolve that tag from the registry. Mecatl snapshots skill metadata
+and body at startup, so any artifact change requires pod recreation.
+
+Do not stop at `GET /v1/skills` when qualifying this setup. That endpoint proves
+only that mecak8s discovered the artifact metadata. Drive a real coding session
+with `/oci-skill-demo` and check the SSE stream instead. A complete proof shows
+the `Skill` tool returning instructions from the artifact, the agent using
+`Write` to make the skill's uniquely named file, `Read` returning its unique
+marker, and a clean terminal result reporting the verified path. The full
+command sequence and expected events are in the
+[`mecak8s` operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#prove-the-skill-in-a-coding-run).
+
+Use Helm 3.16 or newer when adding an image volume to an existing release.
+Older clients can render the YAML but may not know the `image` field when they
+calculate an upgrade patch.
 
 ### Server TLS
 

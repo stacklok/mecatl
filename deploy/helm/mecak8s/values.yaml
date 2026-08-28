@@ -28,6 +28,23 @@ imagePullSecrets: []
 # either way.
 extraEnv: []
 
+# extraArgs appends command-line arguments to the mecak8s agent container.
+extraArgs: []
+
+# extraVolumes and extraVolumeMounts append restricted Kubernetes Volume and
+# VolumeMount entries. Keep configuration content read-only and immutable; XDG-
+# based skills/agents/rules can be projected from a ConfigMap, or a ToolHive OCI
+# skill can use a Kubernetes 1.36+ image volume mounted at
+# <XDG_CONFIG_HOME>/mecatl/skills/<skill-name>.
+extraVolumes: []
+extraVolumeMounts: []
+
+# Automatically discover skills from the standard XDG and trusted workspace locations.
+# XDG and user skills are operator-trusted model-steering instructions; project
+# skill locations remain gated on explicit project trust.
+skills:
+  autoDiscover: false
+
 replicaCount: 2
 mockProvider: false
 

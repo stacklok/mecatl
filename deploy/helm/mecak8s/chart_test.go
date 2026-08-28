@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -987,5 +988,135 @@ func TestMecak8sHelmChart_ExtraEnv(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("render with extraEnv set missing %q", want)
 		}
+	}
+}
+
+func TestMecak8sHelmChart_ConfigMountDefaultsAreEmpty(t *testing.T) {
+	rendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render production values: %v", err)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if slices.Contains(container.Args, "--skills-conventional=true") || slices.Contains(container.Args, "--no-user-model") {
+		t.Fatal("default render unexpectedly enables mounted configuration")
+	}
+	for _, env := range container.Env {
+		if env.Name == "XDG_CONFIG_HOME" {
+			t.Fatal("default render unexpectedly sets XDG_CONFIG_HOME")
+		}
+	}
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == "mecatl-config" || mount.MountPath == "/etc/mecatl-config" {
+			t.Fatal("default render unexpectedly mounts mecatl configuration")
+		}
+	}
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "mecatl-config" {
+			t.Fatal("default render unexpectedly defines a mecatl configuration volume")
+		}
+	}
+}
+
+func TestMecak8sHelmChart_SkillsAutoDiscover(t *testing.T) {
+	args := append(productionArgs(), "--set", "skills.autoDiscover=true")
+	rendered, err := helm(t, args...)
+	if err != nil {
+		t.Fatalf("render with skill auto-discovery: %v", err)
+	}
+	container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+	if !slices.Contains(container.Args, "--skills-conventional=true") {
+		t.Fatal("skills.autoDiscover did not render --skills-conventional=true")
+	}
+}
+
+func TestMecak8sHelmChart_XDGConfigMapMount(t *testing.T) {
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/config-mount-values.yaml")
+	if err != nil {
+		t.Fatalf("render XDG ConfigMap mount fixture: %v", err)
+	}
+
+	deployment := deploymentFromRender(t, rendered)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	for _, want := range []string{"--skills-conventional=true", "--no-user-model"} {
+		if !slices.Contains(container.Args, want) {
+			t.Fatalf("agent args missing %q", want)
+		}
+	}
+	if !slices.ContainsFunc(container.Env, func(env corev1.EnvVar) bool {
+		return env.Name == "XDG_CONFIG_HOME" && env.Value == "/etc/mecatl-config"
+	}) {
+		t.Fatal("agent env missing XDG_CONFIG_HOME=/etc/mecatl-config")
+	}
+	if !slices.ContainsFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool {
+		return mount.Name == "mecatl-config" && mount.MountPath == "/etc/mecatl-config" && mount.ReadOnly
+	}) {
+		t.Fatal("agent volume mounts missing read-only mecatl configuration mount")
+	}
+	if !slices.ContainsFunc(deployment.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool {
+		if volume.Name != "mecatl-config" || volume.ConfigMap == nil || volume.ConfigMap.Name != "mecatl-config-v1" {
+			return false
+		}
+		return slices.ContainsFunc(volume.ConfigMap.Items, func(item corev1.KeyToPath) bool {
+			return item.Key == "review-skill" && item.Path == "mecatl/skills/review/SKILL.md" && item.Mode != nil && *item.Mode == 0o444
+		})
+	}) {
+		t.Fatal("pod volumes missing projected review skill")
+	}
+}
+
+func TestMecak8sHelmChart_XDGImageVolumeSkillMount(t *testing.T) {
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/config-mount-values.yaml")
+	if err != nil {
+		t.Fatalf("render XDG image volume fixture: %v", err)
+	}
+
+	deployment := deploymentFromRender(t, rendered)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if !slices.ContainsFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool {
+		return mount.Name == "toolhive-review-skill" &&
+			mount.MountPath == "/etc/mecatl-config/mecatl/skills/toolhive-review" && mount.ReadOnly
+	}) {
+		t.Fatal("agent volume mounts missing read-only ToolHive skill mount")
+	}
+	if !slices.ContainsFunc(deployment.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool {
+		return volume.Name == "toolhive-review-skill" && volume.Image != nil &&
+			volume.Image.Reference == "ghcr.io/example/toolhive-review-skill@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" &&
+			volume.Image.PullPolicy == corev1.PullIfNotPresent
+	}) {
+		t.Fatal("pod volumes missing digest-pinned ToolHive skill image")
+	}
+}
+
+func TestMecak8sHelmChart_NewValuesAreSchemaValidated(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  string
+	}{
+		{name: "unknown root key", set: "unknownConfigMountValue=true"},
+		{name: "extraArgs scalar", set: "extraArgs=--no-user-model"},
+		{name: "skills auto-discover string", set: "skills.autoDiscover=not-a-bool"},
+		{name: "unknown skills setting", set: "skills.unknown=true"},
+		{name: "removed skillsConventional setting", set: "skillsConventional=true"},
+		{name: "volume mount missing path", set: "extraVolumeMounts[0].name=mecatl-config"},
+		{name: "volume name wrong type", set: "extraVolumes[0].name=true"},
+		{name: "volume hostPath source", set: "extraVolumes[0].name=unsafe,extraVolumes[0].hostPath.path=/tmp"},
+		{name: "volume unknown source", set: "extraVolumes[0].name=unknown,extraVolumes[0].unknown.name=value"},
+		{name: "volume without source", set: "extraVolumes[0].name=missing-source"},
+		{name: "volume with multiple sources", set: "extraVolumes[0].name=multiple,extraVolumes[0].configMap.name=config,extraVolumes[0].secret.secretName=secret"},
+		{name: "image volume missing reference", set: "extraVolumes[0].name=skill,extraVolumes[0].image.pullPolicy=Always"},
+		{name: "image volume empty reference", set: "extraVolumes[0].name=skill,extraVolumes[0].image.reference="},
+		{name: "image volume invalid pull policy", set: "extraVolumes[0].name=skill,extraVolumes[0].image.reference=registry.example/skill@sha256:abc,extraVolumes[0].image.pullPolicy=Sometimes"},
+		{name: "image volume unknown field", set: "extraVolumes[0].name=skill,extraVolumes[0].image.reference=registry.example/skill@sha256:abc,extraVolumes[0].image.unknown=true"},
+		{name: "image volume with another source", set: "extraVolumes[0].name=multiple,extraVolumes[0].image.reference=registry.example/skill@sha256:abc,extraVolumes[0].configMap.name=config"},
+		{name: "unsafe mount propagation", set: "extraVolumeMounts[0].name=config,extraVolumeMounts[0].mountPath=/config,extraVolumeMounts[0].mountPropagation=Bidirectional"},
+		{name: "mount subpath and expression", set: "extraVolumeMounts[0].name=config,extraVolumeMounts[0].mountPath=/config,extraVolumeMounts[0].subPath=one,extraVolumeMounts[0].subPathExpr=$(VALUE)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(productionArgs(), "--set", tc.set)
+			if _, err := helm(t, args...); err == nil {
+				t.Fatalf("render accepted malformed value %q", tc.set)
+			}
+		})
 	}
 }

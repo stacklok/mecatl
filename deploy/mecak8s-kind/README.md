@@ -34,6 +34,17 @@ task mecak8s:kind-port-forward
 task mecak8s:kind-destroy
 ```
 
+Kind must talk to Podman directly on a Podman host. This avoids the Docker CLI
+compatibility shim, whose cgroup detection does not match the real runtime:
+
+```sh
+KIND_EXPERIMENTAL_PROVIDER=podman task mecak8s:kind-setup
+```
+
+The same variable must be present for later `kind-status` and `kind-destroy`
+commands. The image-loading task sees it and exports the locally built mecak8s
+image through Podman before loading it into the Kind node.
+
 The fixture always uses `deploy/mecak8s-kind/kconfig.yaml` and
 `kind-mecatl-dev`; status, forwarding, and Helm commands never select the
 ambient kubeconfig. Setup is idempotent by recreating the named `mecatl-dev`

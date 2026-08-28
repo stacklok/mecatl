@@ -75,6 +75,56 @@
     "workspace": {"type": "string"},
     "imagePullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
     "extraEnv": {"type": "array", "items": {"type": "object"}},
+    "extraArgs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "extraVolumeMounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "mountPath"],
+        "properties": {
+          "name": {"$ref": "#/definitions/volumeName"},
+          "mountPath": {"type": "string", "minLength": 1, "pattern": "^/"},
+          "readOnly": {"type": "boolean"},
+          "subPath": {"type": "string"},
+          "subPathExpr": {"type": "string"},
+          "recursiveReadOnly": {"type": "string", "enum": ["Disabled", "IfPossible", "Enabled"]}
+        },
+        "allOf": [{"not": {"required": ["subPath", "subPathExpr"]}}]
+      }
+    },
+    "extraVolumes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {"$ref": "#/definitions/volumeName"},
+          "configMap": {"$ref": "#/definitions/configMapVolumeSource"},
+          "image": {"$ref": "#/definitions/imageVolumeSource"},
+          "secret": {"$ref": "#/definitions/kubernetesVolumeSource"},
+          "projected": {"$ref": "#/definitions/kubernetesVolumeSource"},
+          "downwardAPI": {"$ref": "#/definitions/kubernetesVolumeSource"},
+          "emptyDir": {"$ref": "#/definitions/kubernetesVolumeSource"},
+          "persistentVolumeClaim": {"$ref": "#/definitions/kubernetesVolumeSource"},
+          "ephemeral": {"$ref": "#/definitions/kubernetesVolumeSource"},
+          "csi": {"$ref": "#/definitions/kubernetesVolumeSource"}
+        },
+        "oneOf": [
+          {"required": ["configMap"]},
+          {"required": ["image"]},
+          {"required": ["secret"]},
+          {"required": ["projected"]},
+          {"required": ["downwardAPI"]},
+          {"required": ["emptyDir"]},
+          {"required": ["persistentVolumeClaim"]},
+          {"required": ["ephemeral"]},
+          {"required": ["csi"]}
+        ]
+      }
+    },
+    "skills": {"type": "object", "additionalProperties": false, "required": ["autoDiscover"], "properties": {"autoDiscover": {"type": "boolean"}}},
     "resources": {"type": "object"},
     "topologySpreadConstraints": {
       "type": "array",
@@ -131,5 +181,41 @@
         }
       }
     }
-  ]
+  ],
+  "definitions": {
+    "volumeName": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+    "kubernetesVolumeSource": {"type": "object"},
+    "imageVolumeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference"],
+      "properties": {
+        "reference": {"type": "string", "minLength": 1},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "configMapVolumeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "optional": {"type": "boolean"},
+        "defaultMode": {"type": "integer", "minimum": 0, "maximum": 511},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "path"],
+            "properties": {
+              "key": {"type": "string", "minLength": 1},
+              "path": {"type": "string", "minLength": 1},
+              "mode": {"type": "integer", "minimum": 0, "maximum": 511}
+            }
+          }
+        }
+      }
+    }
+  }
 }

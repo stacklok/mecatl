@@ -123,6 +123,12 @@ spec:
             - {{ printf "--tls-cert=/var/run/secrets/tls/%s" .Values.tls.certKey | quote }}
             - {{ printf "--tls-key=/var/run/secrets/tls/%s" .Values.tls.keyKey | quote }}
             {{- end }}
+            {{- if .Values.skills.autoDiscover }}
+            - --skills-conventional=true
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- with .Values.extraEnv }}
           env: {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -172,6 +178,9 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {sizeLimit: 256Mi}
@@ -207,4 +216,7 @@ spec:
             defaultMode: 0440
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}

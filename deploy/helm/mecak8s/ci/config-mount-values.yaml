@@ -1,0 +1,35 @@
+# task deploy:check fixture: trusted XDG configuration projected read-only from
+# an operator-created ConfigMap. The ConfigMap itself is intentionally not
+# rendered or looked up by the chart.
+image:
+  tag: v0.0.0
+mockProvider: true
+redis:
+  endpoint: redis.example.internal:6379
+  credentialsSecret: redis-credentials
+extraEnv:
+  - name: XDG_CONFIG_HOME
+    value: /etc/mecatl-config
+extraArgs:
+  - --no-user-model
+skills:
+  autoDiscover: true
+extraVolumeMounts:
+  - name: mecatl-config
+    mountPath: /etc/mecatl-config
+    readOnly: true
+  - name: toolhive-review-skill
+    mountPath: /etc/mecatl-config/mecatl/skills/toolhive-review
+    readOnly: true
+extraVolumes:
+  - name: mecatl-config
+    configMap:
+      name: mecatl-config-v1
+      items:
+        - key: review-skill
+          path: mecatl/skills/review/SKILL.md
+          mode: 292
+  - name: toolhive-review-skill
+    image:
+      reference: ghcr.io/example/toolhive-review-skill@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      pullPolicy: IfNotPresent
