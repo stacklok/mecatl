@@ -42,7 +42,7 @@ func TestFailedStepRetryKeepsQueueAndComposeStateThenHealthyDrain(t *testing.T) 
 	m = startRunning(t, m, "first")
 	m = enqueue(t, m, "second")
 	m = enqueue(t, m, "third")
-	m.ta.SetValue("unfinished draft")
+	m.ta.Rewrite("unfinished draft")
 	usersBefore := userBlockCount(m.conv)
 
 	mm, cmd := m.Update(failedStepRetryableResult())
@@ -191,7 +191,7 @@ func TestManualFailedStepRetryVisibleAndSecondPrecommit(t *testing.T) {
 			m = startRunning(t, m, "first")
 			m = enqueue(t, m, "queued")
 			m = prepare(m)
-			m.ta.SetValue("/retry")
+			m.ta.Rewrite("/retry")
 			mm, cmd, handled := m.dispatchBareBuiltin(m.ta.Value())
 			if !handled {
 				t.Fatal("/retry was not handled")
@@ -210,7 +210,7 @@ func TestManualFailedStepRetryVisibleAndSecondPrecommit(t *testing.T) {
 
 func TestManualFailedStepRetryDelegatesEligibilityToServerWithoutLocalCandidate(t *testing.T) {
 	m, conv := newQueueModel(t)
-	m.ta.SetValue("draft")
+	m.ta.Rewrite("draft")
 	users := userBlockCount(m.conv)
 	mm, cmd := m.runFailedStepRetry()
 	m = mm.(Model)
@@ -224,7 +224,7 @@ func TestRetryStartTransportFailurePreservesManualAffordanceAndQueue(t *testing.
 	m, conv := newQueueModel(t)
 	m.queued = []string{"later"}
 	m.queuePaused = stopError
-	m.ta.SetValue("draft")
+	m.ta.Rewrite("draft")
 	users := userBlockCount(m.conv)
 	mm, cmd := m.runFailedStepRetry()
 	m = mm.(Model)

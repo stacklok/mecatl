@@ -9,7 +9,7 @@ import (
 
 func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 	m, cb := selModel(t)
-	m.ta.SetValue("hello world")
+	m.ta.Rewrite("hello world")
 	rect, ok := inputRegionRect(m)
 	if !ok {
 		t.Fatal("input region unavailable")
@@ -61,7 +61,7 @@ func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 func TestPromptSelectionKeyboardWorksWithoutMouseAndStagingReplaces(t *testing.T) {
 	m, _ := selModel(t)
 	m.deps.NoMouse = true
-	m.ta.SetValue("before after")
+	m.ta.Rewrite("before after")
 	m.ta.SelectAll()
 
 	mm, _ := m.Update(pasteMsg(largePasteText()))
@@ -76,7 +76,7 @@ func TestPromptSelectionKeyboardWorksWithoutMouseAndStagingReplaces(t *testing.T
 
 func TestPromptAndConversationSelectionsAreExclusive(t *testing.T) {
 	m, _ := selModel(t)
-	m.ta.SetValue("prompt")
+	m.ta.Rewrite("prompt")
 	m.ta.SelectAll()
 	top := convTopRow(m)
 	m, _ = pressMouse(m, tea.MouseLeft, 0, top)

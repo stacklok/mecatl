@@ -11,7 +11,7 @@ import (
 // rather than its private wrap implementation.
 func TestTextareaClickPositionsCaret(t *testing.T) {
 	m, _ := selModel(t)
-	m.ta.SetValue("hello\nworld")
+	m.ta.Rewrite("hello\nworld")
 
 	rect, ok := inputRegionRect(m)
 	if !ok {
@@ -43,7 +43,7 @@ func TestTextareaClickPositionsCaret(t *testing.T) {
 func TestTextareaClickMapsSoftWrapAndScroll(t *testing.T) {
 	m, _ := selModel(t)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 20, Height: 30})
-	m.ta.SetValue("abcdefghijklmnopqrst")
+	m.ta.Rewrite("abcdefghijklmnopqrst")
 	rect, ok := inputRegionRect(m)
 	if !ok {
 		t.Fatal("inputRegionRect returned no input region")
@@ -55,10 +55,10 @@ func TestTextareaClickMapsSoftWrapAndScroll(t *testing.T) {
 		t.Fatalf("soft-wrapped caret = (%d,%d), want (0,19)", line, col)
 	}
 
-	m.ta.SetValue("one\ntwo\nthree\nfour\nfive")
-	m.ta.MoveToBegin()
+	m.ta.Rewrite("one\ntwo\nthree\nfour\nfive")
+	_ = m.ta.UpdateUserInput(tea.KeyPressMsg{Code: tea.KeyHome})
 	for range 4 {
-		m.ta.CursorDown()
+		_ = m.ta.UpdateUserInput(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.ta.ScrollYOffset() == 0 {
 		t.Fatal("test setup did not scroll textarea")
@@ -76,8 +76,8 @@ func TestTextareaClickMapsSoftWrapAndScroll(t *testing.T) {
 
 func TestTextareaClickHonorsMouseCapture(t *testing.T) {
 	m, _ := selModel(t)
-	m.ta.SetValue("hello")
-	m.ta.CursorEnd()
+	m.ta.Rewrite("hello")
+	_ = m.ta.UpdateUserInput(tea.KeyPressMsg{Code: tea.KeyEnd})
 	rect, ok := inputRegionRect(m)
 	if !ok {
 		t.Fatal("inputRegionRect returned no input region")

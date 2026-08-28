@@ -149,7 +149,7 @@ func TestDeletedPlaceholderDropsPaste(t *testing.T) {
 
 	mm, _ := m.Update(pasteMsg(largePasteText()))
 	m = mm.(Model)
-	m.ta.SetValue("never mind, just text")
+	m.ta.Rewrite("never mind, just text")
 
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)

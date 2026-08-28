@@ -329,7 +329,7 @@ func TestKittyDeleteOnFirstBlock(t *testing.T) {
 
 	// Type a prompt and submit — the first user block makes the conversation
 	// non-empty, the splash leaves, the mascot is retired.
-	m.ta.SetValue("do something")
+	m.ta.Rewrite("do something")
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 

@@ -51,7 +51,7 @@ func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 	if !strings.Contains(stripANSIstr(m.View().Content), "local source only") {
 		t.Fatal("source projection must remain visible while target hydrates")
 	}
-	m.ta.SetValue("must not send")
+	m.ta.Rewrite("must not send")
 	before := m.ta.Value()
 	mm, keyCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)

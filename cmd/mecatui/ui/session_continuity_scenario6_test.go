@@ -73,7 +73,7 @@ func TestADR_0108_FirstPromptRevalidatesAtomically(t *testing.T) {
 		sender := &fakeSender{}
 		conv := &fakeConv{recv: &fakeRecver{}, send: sender}
 		m := startupResumeUI(t, conv, "", "running")
-		m.ta.SetValue("retry this turn")
+		m.ta.Rewrite("retry this turn")
 		mm, cmd := m.submitPrompt()
 		m = mm.(Model)
 		runStartupCommands(cmd)

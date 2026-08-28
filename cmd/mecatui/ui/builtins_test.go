@@ -429,7 +429,7 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	if m.activeMode != "plan" {
 		t.Errorf("stale old-session mode update changed replacement mode to %q", m.activeMode)
 	}
-	m.ta.SetValue("new prompt")
+	m.ta.Rewrite("new prompt")
 	m, promptCmd = pressEnter(t, m)
 	_ = firstBatchLeaf(t, promptCmd)
 	frames := conv.send.frames()
@@ -491,7 +491,7 @@ func TestClearBuiltinCreateFailureKeepsOldSession(t *testing.T) {
 	if strings.Contains(stripANSIstr(m.statusMsg), "cleared") {
 		t.Errorf("failed /clear status must not claim cleared: %q", stripANSIstr(m.statusMsg))
 	}
-	m.ta.SetValue("retry old session")
+	m.ta.Rewrite("retry old session")
 	m, promptCmd := pressEnter(t, m)
 	_ = firstBatchLeaf(t, promptCmd)
 	frames := conv.send.frames()

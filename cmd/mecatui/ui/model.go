@@ -10,9 +10,7 @@ import (
 	"context"
 	"errors"
 
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -20,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -469,7 +468,7 @@ type Model struct {
 	// wrap shapes (one long line, a compound pipeline, a heredoc).
 	debugAskCycle int
 
-	ta textarea.Model
+	ta prompttextarea.Editor
 	sp spinner.Model
 	// stuck is true while the viewport auto-follows the bottom (tails streaming
 	// output). It is no longer hardcoded: syncStuck re-derives it from
@@ -884,21 +883,10 @@ func New(deps Deps) Model {
 	keys := applyKeyOverrides(defaultKeys(), deps.KeyOverrides)
 	hk := keyMarkingsWithScroll(keys, deps.scrollKeysMarking())
 
-	ta := textarea.New()
-	// The mode-coloured rail border (renderInputRail) is the SINGLE vertical accent cue,
-	// so suppress the textarea's own inner prompt bar (U+2503) and line-number gutter to
-	// avoid a redundant second bar (issue #161). Both MUST be set before any SetWidth —
-	// bubbles' textarea computes its inner gutter width in SetWidth from Prompt +
-	// ShowLineNumbers — which covers both New()'s internal SetWidth and the later onResize.
-	ta.Prompt = ""
-	ta.ShowLineNumbers = false
-	ta.Placeholder = "Ask mecatl to do something…  (" + hk.submit + " to send · " + hk.newlineFirst + " for newline · " + hk.help + " for help)"
-	ta.SetHeight(3)
-	ta.KeyMap.SelectAll = keys.SelectAll
-	// Copy is intercepted by promptInput so it shares the app's OSC52 + shell
-	// transport with conversation selection; never use bubbles' clipboard backend.
-	ta.KeyMap.CopySelection = key.NewBinding()
-	ta.Focus()
+	ta := prompttextarea.New(prompttextarea.Config{
+		Placeholder: "Ask mecatl to do something…  (" + hk.submit + " to send · " + hk.newlineFirst + " for newline · " + hk.help + " for help)",
+		SelectAll:   keys.SelectAll,
+	})
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(th.Style("spinner")))
 

@@ -65,7 +65,7 @@ func TestInputRailFillsUniformly(t *testing.T) {
 		mt, _, _ := newTestModel(t, th)
 		mt = applyAll(mt, tea.WindowSizeMsg{Width: w, Height: 30},
 			client.SessionReadyMsg{SessionID: "sess-test-0001"})
-		mt.ta.SetValue("Hello")
+		mt.ta.Rewrite("Hello")
 		mt.rend.inputValid = false // bust the cache so the typed value re-renders
 		typed := mt.renderInput()
 
@@ -163,7 +163,7 @@ func TestInputTextHasStrongContrast(t *testing.T) {
 	m, _, _ := newTestModel(t, th)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-test-0001"})
-	m.ta.SetValue("And if I write")
+	m.ta.Rewrite("And if I write")
 	m.rend.inputValid = false
 	out := m.renderInput()
 	// The Aztec Text slot (#E7E2D3) as the RGB foreground SGR lipgloss emits.

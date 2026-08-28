@@ -206,7 +206,7 @@ func TestSubmitStagedImageSendsPart(t *testing.T) {
 	m = pressCtrlV(t, m)
 	// Add some surrounding prose so we can assert the marker is stripped but the
 	// prose survives.
-	m.ta.SetValue("describe " + m.ta.Value())
+	m.ta.Rewrite("describe " + m.ta.Value())
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -249,7 +249,7 @@ func TestSubmitDeletedMarkerSendsNoPart(t *testing.T) {
 
 	m = pressCtrlV(t, m)
 	// User erases everything and types fresh text — the marker is gone.
-	m.ta.SetValue("never mind, just text")
+	m.ta.Rewrite("never mind, just text")
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -327,8 +327,8 @@ func TestSubmitMixedMentionAndClipboard(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	m = pressCtrlV(t, m)                       // stages [Image #1]
-	m.ta.SetValue("@shot.png " + m.ta.Value()) // prepend the mention
+	m = pressCtrlV(t, m)                      // stages [Image #1]
+	m.ta.Rewrite("@shot.png " + m.ta.Value()) // prepend the mention
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -410,7 +410,7 @@ func TestSubmitMultiLinePromptPreservesNewlines(t *testing.T) {
 
 	m = pressCtrlV(t, m) // stages [Image #1], input becomes "[Image #1] "
 	// A deliberately multi-line prompt with the marker embedded mid-line.
-	m.ta.SetValue("line one\n\nline two [Image #1]\nline three")
+	m.ta.Rewrite("line one\n\nline two [Image #1]\nline three")
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -480,7 +480,7 @@ func TestSubmitMarkerCollisionGuard(t *testing.T) {
 		"[Image #11]": {mime: "image/png", data: eleven},
 	}
 	m.nextMediaN = 11
-	m.ta.SetValue("a [Image #1] b [Image #11] c")
+	m.ta.Rewrite("a [Image #1] b [Image #11] c")
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)

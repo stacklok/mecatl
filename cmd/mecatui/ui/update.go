@@ -1592,8 +1592,7 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 		return m, false
 	}
 	m = m.clearSelection()
-	m.ta.ClearSelection()
-	m.promptSelecting = false
+	(&m).promptClearSelection()
 	m.refreshView()
 	return m, true
 }
@@ -3410,8 +3409,7 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		if mm, cmd, handled := m.onTextareaMousePress(mo); handled {
 			return mm, cmd
 		}
-		m.ta.ClearSelection()
-		m.promptSelecting = false
+		(&m).promptClearSelection()
 		// The selectable gate AND the count logic sit here, AFTER the gate: a press
 		// while an overlay owns the body (or under --no-mouse/--inline) starts nothing
 		// AND does not advance the multi-click count (Req 9).

@@ -265,7 +265,7 @@ func TestPaletteEscDismisses(t *testing.T) {
 		t.Fatalf("palette reopened while still in command mode after esc-dismiss")
 	}
 	// Clearing back out of command mode resets the latch; a fresh "/" reopens.
-	m.ta.SetValue("")
+	m.ta.Rewrite("")
 	m, _ = m.syncPalette()
 	m = typeRune(t, m, '/')
 	if !m.palette.open {

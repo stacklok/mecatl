@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -362,38 +361,8 @@ func modeAccentStyle(th theme.Theme, mode string) lipgloss.Style {
 
 func (m *Model) applyModeInputStyle() {
 	mode := m.inputMode()
-	styles := m.ta.Styles()
-	base := textarea.DefaultDarkStyles()
 	accent := modeAccentStyle(m.deps.Theme, mode)
-	// The textarea's inner prompt bar and line-number gutter are suppressed (New() sets
-	// Prompt="" and ShowLineNumbers=false, issue #161), so the rail border is the single
-	// mode cue — no Prompt/LineNumber/CursorLineNumber styling needed here any more.
-	styles.Focused.Placeholder = base.Focused.Placeholder.Foreground(accent.GetForeground())
-	styles.Cursor.Color = accent.GetForeground()
-	// Tint the WHOLE textarea body on the faint panel background so the input block
-	// reads as ONE even surface — the same bgPanel the rail pads its margins with — and
-	// so an empty input and a typed one look identical (the inconsistent-tint bug). The
-	// DefaultDarkStyles ship their own per-state backgrounds (a black cursor-line, a
-	// transparent body), which made the rows tint differently by content; overriding the
-	// body/cursor-line/placeholder/end-of-buffer backgrounds to bgPanel makes the fill
-	// uniform across every row. Applied to BOTH focus states so blur doesn't change the
-	// surface (the rail border is the single mode cue and stays at full accent strength
-	// regardless of focus — see the rail-blur invariant).
-	bg := m.deps.Theme.Color("bgPanel")
-	// Typed text gets the theme's full-strength Text colour for contrast: the bubbles
-	// DefaultDarkStyles leave Text with no foreground (terminal default) and tint the
-	// CursorLine grey (color 245), so what you type rendered washed-out on the panel.
-	// Setting both to the bright Text slot makes the input legible without touching the
-	// dim Placeholder (which stays muted as a prompt cue).
-	txt := m.deps.Theme.Color("text")
-	for _, st := range []*textarea.StyleState{&styles.Focused, &styles.Blurred} {
-		st.Base = st.Base.Background(bg)
-		st.Text = st.Text.Background(bg).Foreground(txt)
-		st.CursorLine = st.CursorLine.Background(bg).Foreground(txt)
-		st.EndOfBuffer = st.EndOfBuffer.Background(bg)
-		st.Placeholder = st.Placeholder.Background(bg)
-	}
-	m.ta.SetStyles(styles)
+	m.ta.SetColors(accent.GetForeground(), m.deps.Theme.Color("bgPanel"), m.deps.Theme.Color("text"))
 }
 
 func (m Model) renderHeaderMode(mode string) string {
@@ -545,20 +514,22 @@ func (m Model) renderFooter() string {
 	}
 
 	// The full decompressed chord list now lives in the "?" help overlay, so the
-	// footer carries only the two entry points and quit. "/ commands" is ALWAYS
-	// shown: the TUI ships built-in client-side commands (/clear, /help, and the
-	// caps-gated /mcp,/agents), so "/" is a live entry point even when the server
-	// has slash-command expansion disabled. While a run streams the line is extended
-	// with the type-while-running affordance (enter queues a follow-up; esc clears
-	// the staged input/queue or cancels the run). Prompt selection affordances appear
-	// only while the prompt accepts input. Every chord is sourced from the LIVE keyMap
-	// markings (hk) so a rebinding propagates to the footer affordances (issue #457,
-	// the #455 liveness pattern extended to the footer).
+	// footer leads with its two entry points and carries only the most useful prompt
+	// affordances plus quit. "/ commands" is ALWAYS shown: the TUI ships built-in
+	// client-side commands (/clear, /help, and the caps-gated /mcp,/agents), so "/"
+	// is a live entry point even when the server has slash-command expansion disabled.
+	// While a run streams the line is extended with the type-while-running affordance
+	// (enter queues a follow-up; esc clears the staged input/queue or cancels the run).
+	// Prompt selection affordances appear only while the prompt accepts input. Every
+	// chord is sourced from the LIVE keyMap markings (hk) so a rebinding propagates to
+	// the footer affordances (issue #457, the #455 liveness pattern extended to the
+	// footer).
 	hk := m.helpKeyMarkings()
-	help := hk.help + " help · / commands · " + hk.quit + " quit"
+	help := hk.help + " help · / commands"
 	if m.pasteGateOpen() {
-		help = hk.selectAll + " select all · " + hk.copySelection + " copy · " + help
+		help += " · " + hk.selectAll + " select all · " + hk.copySelection + " copy"
 	}
+	help += " · " + hk.quit + " quit"
 	if m.phase == phaseRunning {
 		help = hk.submit + " queue · " + hk.cancel + " cancel/clear · " + help
 	}

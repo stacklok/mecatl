@@ -7,36 +7,35 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// promptInput is the local seam between Model and bubbles' textarea. It owns
-// textarea selection and all prompt-content edits; phase and overlay policy stay
-// in update.go.
+// promptInput is the local seam between Model and the Mecatl prompt editor.
+// It owns prompt selection and all prompt-content edits; phase and overlay policy
+// stay in update.go.
 func (m *Model) promptInput(msg tea.Msg) tea.Cmd {
-	var cmd tea.Cmd
-	m.ta, cmd = m.ta.Update(msg)
-	return cmd
+	return m.ta.UpdateUserInput(msg)
 }
 
 func (m *Model) promptNewline() {
-	m.ta.DeleteSelection()
-	m.ta.InsertRune('\n')
+	m.ta.InsertNewline()
 }
 
 func (m *Model) promptInsert(s string) {
-	m.ta.DeleteSelection()
-	m.ta.InsertString(s)
+	m.ta.InsertText(s)
 }
 
 // promptRewrite is for host/app-owned replacements, never user edits.
 func (m *Model) promptRewrite(s string) {
-	m.ta.ClearSelection()
+	m.ta.Rewrite(s)
 	m.promptSelecting = false
-	m.ta.SetValue(s)
 }
 
 func (m *Model) promptReset() {
+	m.ta.Reset()
+	m.promptSelecting = false
+}
+
+func (m *Model) promptClearSelection() {
 	m.ta.ClearSelection()
 	m.promptSelecting = false
-	m.ta.Reset()
 }
 
 func (m *Model) promptSelectAll() {
