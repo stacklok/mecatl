@@ -21,6 +21,8 @@ func overrideAll() map[string][]string {
 		"Submit":           {"ctrl+f1"},
 		"Newline":          {"ctrl+f2"},
 		"Paste":            {"ctrl+f3"},
+		"SelectAll":        {"ctrl+f31"},
+		"CopySelection":    {"ctrl+f32"},
 		"Cancel":           {"ctrl+f4"},
 		"Effort":           {"ctrl+f5"},
 		"MCPPanel":         {"ctrl+f6"},
@@ -209,6 +211,15 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 		m.phase = phaseIdle
 		got := stripANSIstr(m.renderFooter())
 		// help line: "<help> help · / commands · <quit> quit"
+		if !strings.Contains(got, "ctrl+f31 select all") {
+			t.Errorf("footer help line should carry the overridden SelectAll chord ctrl+f31: %q", got)
+		}
+		if !strings.Contains(got, "ctrl+f32 copy") {
+			t.Errorf("footer help line should carry the overridden CopySelection chord ctrl+f32: %q", got)
+		}
+		if strings.Contains(got, "ctrl+g select all") || strings.Contains(got, "ctrl+shift+c copy") {
+			t.Errorf("footer help line still shows a default selection chord: %q", got)
+		}
 		if !strings.Contains(got, "ctrl+f12 help") {
 			t.Errorf("footer help line should carry the overridden help chord ctrl+f12: %q", got)
 		}

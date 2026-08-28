@@ -148,6 +148,52 @@ func m_helpBody(caps client.Capabilities) string {
 	return helpBody(aztec(), caps, defaultHelpKeys())
 }
 
+// TestSelectionShortcutsRenderDefaults proves the prompt-selection bindings are
+// visible on both persistent UI surfaces with their default chords.
+func TestSelectionShortcutsRenderDefaults(t *testing.T) {
+	const (
+		selectAll     = "ctrl+g select all"
+		copySelection = "ctrl+shift+c copy"
+	)
+
+	t.Run("help overlay", func(t *testing.T) {
+		got := stripANSIstr(m_helpBody(allOnCaps()))
+		rows := map[string]string{
+			"select all prompt text":                           "ctrl+g",
+			"copy the active prompt or conversation selection": "ctrl+shift+c",
+		}
+		for action, chord := range rows {
+			found := false
+			for _, line := range strings.Split(got, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.Contains(line, action) {
+					found = true
+					if !strings.HasPrefix(line, chord) {
+						t.Errorf("help row %q should lead with %q: %q", action, chord, line)
+					}
+				}
+			}
+			if !found {
+				t.Errorf("help overlay should contain %q:\n%s", action, got)
+			}
+		}
+	})
+
+	t.Run("footer", func(t *testing.T) {
+		m, _, _ := newTestModel(t, aztec())
+		m = applyAll(m,
+			tea.WindowSizeMsg{Width: 120, Height: 30},
+			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: allOnCaps()},
+		)
+		got := stripANSIstr(m.renderFooter())
+		for _, want := range []string{selectAll, copySelection} {
+			if !strings.Contains(got, want) {
+				t.Errorf("footer should contain %q: %q", want, got)
+			}
+		}
+	})
+}
+
 // TestHelpReflectsKeyOverride proves the help overlay reads the LIVE bindings:
 // EVERY rebindable row in the help body must lead with its overridden chord,
 // and the replaced default chord must not still label that row. The test builds
@@ -158,22 +204,24 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 	// distinct sentinel chord. The scroll pair uses one sentinel per half so the
 	// "<up>/<down>" join is exercised.
 	overrides := map[string][]string{
-		"Submit":      {"ctrl+f1"},
-		"Newline":     {"ctrl+f2"},
-		"Paste":       {"ctrl+f3"},
-		"Cancel":      {"ctrl+f4"},
-		"Effort":      {"ctrl+f5"},
-		"MCPPanel":    {"ctrl+f6"},
-		"Resources":   {"ctrl+f7"},
-		"Prompts":     {"ctrl+f8"},
-		"Agents":      {"ctrl+f9"},
-		"ModeSwitch":  {"ctrl+f10"},
-		"ExpandTools": {"ctrl+f11"},
-		"Help":        {"ctrl+f12"},
-		"Quit":        {"ctrl+f13"},
-		"ScrollU":     {"ctrl+f14"},
-		"ScrollD":     {"ctrl+f15"},
-		"Close":       {"ctrl+f16"},
+		"Submit":        {"ctrl+f1"},
+		"Newline":       {"ctrl+f2"},
+		"Paste":         {"ctrl+f3"},
+		"SelectAll":     {"ctrl+f31"},
+		"CopySelection": {"ctrl+f32"},
+		"Cancel":        {"ctrl+f4"},
+		"Effort":        {"ctrl+f5"},
+		"MCPPanel":      {"ctrl+f6"},
+		"Resources":     {"ctrl+f7"},
+		"Prompts":       {"ctrl+f8"},
+		"Agents":        {"ctrl+f9"},
+		"ModeSwitch":    {"ctrl+f10"},
+		"ExpandTools":   {"ctrl+f11"},
+		"Help":          {"ctrl+f12"},
+		"Quit":          {"ctrl+f13"},
+		"ScrollU":       {"ctrl+f14"},
+		"ScrollD":       {"ctrl+f15"},
+		"Close":         {"ctrl+f16"},
 	}
 	km := applyKeyOverrides(defaultKeys(), overrides)
 	body := stripANSIstr(helpBody(aztec(), allOnCaps(), keyMarkings(km)))
@@ -191,6 +239,8 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		{name: "Submit queued", match: "queue a follow-up", want: "ctrl+f1", absent: "enter", occurs: 1},
 		{name: "Newline", match: "newline", want: "ctrl+f2", absent: "shift+enter", occurs: 1},
 		{name: "Paste", match: "paste a clipboard image", want: "ctrl+f3", absent: "ctrl+v", occurs: 1},
+		{name: "SelectAll", match: "select all prompt text", want: "ctrl+f31", absent: "ctrl+g", occurs: 1},
+		{name: "CopySelection", match: "copy the active prompt or conversation selection", want: "ctrl+f32", absent: "ctrl+shift+c", occurs: 1},
 		{name: "Cancel turn", match: "cancel the running turn", want: "ctrl+f4", absent: "esc", occurs: 1},
 		{name: "Cancel staged", match: "clear staged input / queue", want: "ctrl+f4", absent: "esc", occurs: 1},
 		{name: "MCPPanel", match: "MCP inventory", want: "ctrl+f6", absent: "ctrl+o", occurs: 1},

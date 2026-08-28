@@ -550,11 +550,15 @@ func (m Model) renderFooter() string {
 	// caps-gated /mcp,/agents), so "/" is a live entry point even when the server
 	// has slash-command expansion disabled. While a run streams the line is extended
 	// with the type-while-running affordance (enter queues a follow-up; esc clears
-	// the staged input/queue or cancels the run). Every chord is sourced from the
-	// LIVE keyMap markings (hk) so a rebinding propagates to the footer affordances
-	// (issue #457, the #455 liveness pattern extended to the footer).
+	// the staged input/queue or cancels the run). Prompt selection affordances appear
+	// only while the prompt accepts input. Every chord is sourced from the LIVE keyMap
+	// markings (hk) so a rebinding propagates to the footer affordances (issue #457,
+	// the #455 liveness pattern extended to the footer).
 	hk := m.helpKeyMarkings()
 	help := hk.help + " help · / commands · " + hk.quit + " quit"
+	if m.pasteGateOpen() {
+		help = hk.selectAll + " select all · " + hk.copySelection + " copy · " + help
+	}
 	if m.phase == phaseRunning {
 		help = hk.submit + " queue · " + hk.cancel + " cancel/clear · " + help
 	}
