@@ -25,3 +25,6 @@ not restate it.
 - [`design/PRODUCTION-READINESS.md`](design/PRODUCTION-READINESS.md) — the live shipped/deferred status tracker.
 - [ADR 0215](adr/0215-openai-subscription-manual-token.md) — the landed,
   experimental `openai-codex` capability and its private-backend boundary.
+- [Agent Fabric Protocol](agent-fabric-protocol.md) — a draft, MCP-adjacent
+  protocol for remote access to files, folders, and callable actions over
+  HTTP; not yet implemented in mecatl.

@@ -827,3 +827,8 @@ Practical notes for such an adapter:
 - **The adapter holds its own forge credential** and never exposes it
   to the calling session — the delegation posture of §9.6, applied to
   a non-Fabric backend.
+
+---
+
+See also: [Extensibility](architecture/extensibility.md) for how mecatl
+consumes MCP and skills today, and the [documentation index](README.md).
