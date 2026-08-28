@@ -690,6 +690,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/session
+            - github.com/stacklok/mecatl/authn/oidc/scopedhttps
             - github.com/stacklok/toolhive-core/authn
           deny:
             - pkg: os
