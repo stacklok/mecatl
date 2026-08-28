@@ -1,23 +1,20 @@
 package redisstore
 
 import (
-	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 var errStoreClosed = errors.New("redisstore: store closed")
 
-type generationContextKey struct{}
-
 type clientGeneration struct {
-	owner    *clientGenerations
 	client   redis.UniversalClient
 	refs     int
 	retired  bool
-	closed   bool
+	closing  bool
 	closedCh chan struct{}
 }
 
@@ -26,54 +23,78 @@ type clientGenerations struct {
 	current   *clientGeneration
 	closed    bool
 	all       map[*clientGeneration]struct{}
+	allClosed chan struct{}
 	closeOnce sync.Once
+	closeWait int
 }
 
 func newClientGenerations(client redis.UniversalClient) *clientGenerations {
-	manager := &clientGenerations{all: make(map[*clientGeneration]struct{})}
-	generation := &clientGeneration{owner: manager, client: client, closedCh: make(chan struct{})}
+	manager := &clientGenerations{
+		all:       make(map[*clientGeneration]struct{}),
+		allClosed: make(chan struct{}),
+	}
+	generation := &clientGeneration{client: client, closedCh: make(chan struct{})}
 	manager.current = generation
 	manager.all[generation] = struct{}{}
 	return manager
 }
 
-func (m *clientGenerations) acquire() (*clientGeneration, error) {
+func (m *clientGenerations) acquire() (redis.UniversalClient, func(), error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed || m.current == nil {
-		return nil, errStoreClosed
+		m.mu.Unlock()
+		return nil, nil, errStoreClosed
 	}
-	m.current.refs++
-	return m.current, nil
+	generation := m.current
+	generation.refs++
+	m.mu.Unlock()
+
+	var once sync.Once
+	return generation.client, func() {
+		once.Do(func() { m.release(generation) })
+	}, nil
 }
 
-func (m *clientGenerations) finishClose(generation *clientGeneration) {
-	_ = generation.client.Close()
-	close(generation.closedCh)
-	m.mu.Lock()
-	delete(m.all, generation)
-	m.mu.Unlock()
+// retireAndClaimCloseLocked centralizes retirement and the retired -> closing
+// transition. A claimed close is started asynchronously after m.mu is released.
+func retireAndClaimCloseLocked(generation *clientGeneration, retire bool) *clientGeneration {
+	if retire {
+		generation.retired = true
+	}
+	if !generation.retired || generation.refs != 0 || generation.closing {
+		return nil
+	}
+	generation.closing = true
+	return generation
+}
+
+func (m *clientGenerations) startClose(generation *clientGeneration) {
+	go func() {
+		_ = generation.client.Close()
+		m.mu.Lock()
+		delete(m.all, generation)
+		close(generation.closedCh)
+		if m.closed && len(m.all) == 0 {
+			close(m.allClosed)
+		}
+		m.mu.Unlock()
+	}()
 }
 
 func (m *clientGenerations) release(generation *clientGeneration) {
-	var closeGeneration *clientGeneration
 	m.mu.Lock()
 	if generation.refs > 0 {
 		generation.refs--
 	}
-	if generation.retired && generation.refs == 0 && !generation.closed {
-		generation.closed = true
-		closeGeneration = generation
-	}
+	closeGeneration := retireAndClaimCloseLocked(generation, false)
 	m.mu.Unlock()
 	if closeGeneration != nil {
-		m.finishClose(closeGeneration)
+		m.startClose(closeGeneration)
 	}
 }
 
 func (m *clientGenerations) swap(client redis.UniversalClient) error {
-	candidate := &clientGeneration{owner: m, client: client, closedCh: make(chan struct{})}
-	var closeGeneration *clientGeneration
+	candidate := &clientGeneration{client: client, closedCh: make(chan struct{})}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -82,80 +103,54 @@ func (m *clientGenerations) swap(client redis.UniversalClient) error {
 	old := m.current
 	m.current = candidate
 	m.all[candidate] = struct{}{}
-	old.retired = true
-	if old.refs == 0 && !old.closed {
-		old.closed = true
-		closeGeneration = old
-	}
+	closeGeneration := retireAndClaimCloseLocked(old, true)
 	m.mu.Unlock()
 	if closeGeneration != nil {
-		m.finishClose(closeGeneration)
+		m.startClose(closeGeneration)
 	}
 	return nil
 }
 
-func (m *clientGenerations) close() error {
+func (m *clientGenerations) rejectNew() {
+	m.mu.Lock()
+	m.closed = true
+	m.mu.Unlock()
+}
+
+// close rejects new acquisitions and swaps immediately, starts every eligible
+// client close asynchronously, and waits at most grace for both leases and close
+// completion. Live leases are never force-closed; a timed-out generation closes
+// eventually after its final release or blocking client Close returns.
+func (m *clientGenerations) close(grace time.Duration) int {
 	m.closeOnce.Do(func() {
 		m.mu.Lock()
 		m.closed = true
-		if m.current != nil {
-			m.current.retired = true
-			m.current = nil
-		}
-		generations := make([]*clientGeneration, 0, len(m.all))
 		var ready []*clientGeneration
-		for generation := range m.all {
-			generations = append(generations, generation)
-			if generation.retired && generation.refs == 0 && !generation.closed {
-				generation.closed = true
+		if m.current != nil {
+			if generation := retireAndClaimCloseLocked(m.current, true); generation != nil {
 				ready = append(ready, generation)
 			}
+			m.current = nil
+		}
+		if len(m.all) == 0 {
+			close(m.allClosed)
 		}
 		m.mu.Unlock()
 		for _, generation := range ready {
-			m.finishClose(generation)
+			m.startClose(generation)
 		}
-		for _, generation := range generations {
-			<-generation.closedCh
+
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-m.allClosed:
+		case <-timer.C:
+			m.mu.Lock()
+			m.closeWait = len(m.all)
+			m.mu.Unlock()
 		}
 	})
-	return nil
-}
-
-func (st *Store) pin(ctx context.Context) (context.Context, func(), error) {
-	if generation, ok := ctx.Value(generationContextKey{}).(*clientGeneration); ok && generation != nil && generation.owner == st.clients {
-		return ctx, func() {}, nil
-	}
-	generation, err := st.clients.acquire()
-	if err != nil {
-		return ctx, nil, err
-	}
-	return context.WithValue(ctx, generationContextKey{}, generation), func() { st.clients.release(generation) }, nil
-}
-
-func (s *scheduleStore) pin(ctx context.Context) (context.Context, func(), error) {
-	if generation, ok := ctx.Value(generationContextKey{}).(*clientGeneration); ok && generation != nil && generation.owner == s.clients {
-		return ctx, func() {}, nil
-	}
-	generation, err := s.clients.acquire()
-	if err != nil {
-		return ctx, nil, err
-	}
-	return context.WithValue(ctx, generationContextKey{}, generation), func() { s.clients.release(generation) }, nil
-}
-
-func (st *Store) redis(ctx context.Context) redis.UniversalClient {
-	generation, ok := ctx.Value(generationContextKey{}).(*clientGeneration)
-	if !ok || generation == nil || generation.owner != st.clients {
-		panic("redisstore: Redis client used without a pinned generation")
-	}
-	return generation.client
-}
-
-func (s *scheduleStore) redis(ctx context.Context) redis.UniversalClient {
-	generation, ok := ctx.Value(generationContextKey{}).(*clientGeneration)
-	if !ok || generation == nil || generation.owner != s.clients {
-		panic("redisstore: Redis client used without a pinned generation")
-	}
-	return generation.client
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closeWait
 }

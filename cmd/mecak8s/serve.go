@@ -9,9 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -21,9 +19,9 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/internal/adapter/filewatch"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
+	"github.com/stacklok/mecatl/internal/adapter/tlsreload"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -261,104 +259,17 @@ func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, metricsSrv *htt
 	}
 }
 
-const (
-	tlsReloadDebounce    = 100 * time.Millisecond
-	tlsReloadMaxDebounce = time.Second
-)
-
-// certificateReloader publishes complete keypairs atomically. Invalid rotations
-// never displace the last certificate that passed key matching and DER parsing.
-type certificateReloader struct {
-	cert    atomic.Pointer[tls.Certificate]
-	watcher *filewatch.Watcher
-}
-
-func newCertificateReloader(certFile, keyFile string) (*certificateReloader, error) {
-	cert, err := loadServerCertificate(certFile, keyFile)
-	if err != nil {
-		return nil, err
+func closeTLSLifecycle(reloader *tlsreload.Reloader) {
+	if reloader != nil {
+		_ = reloader.Close()
 	}
-	r := &certificateReloader{}
-	r.cert.Store(cert)
-	watcher, err := filewatch.New(
-		[]string{certFile, keyFile},
-		tlsReloadDebounce,
-		tlsReloadMaxDebounce,
-		r.reload(certFile, keyFile),
-		func(error) {
-			slog.Warn("TLS certificate watch error", "component", "tls_certificate", "operation", "watch", "outcome", "failure", "reason", "watch_error")
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("watch TLS keypair: %w", err)
-	}
-	r.watcher = watcher
-	return r, nil
-}
-
-func (r *certificateReloader) reload(certFile, keyFile string) func() {
-	return func() {
-		cert, err := loadServerCertificate(certFile, keyFile)
-		if err != nil {
-			slog.Warn("TLS certificate reload rejected; retaining last valid certificate", "component", "tls_certificate", "operation", "reload", "outcome", "failure", "reason", "invalid_candidate")
-			return
-		}
-		r.cert.Store(cert)
-		slog.Info("TLS certificate reloaded", "component", "tls_certificate", "operation", "reload", "outcome", "success")
-	}
-}
-
-func (r *certificateReloader) getCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	return r.cert.Load(), nil
-}
-
-func (r *certificateReloader) Close() error {
-	return r.watcher.Close()
-}
-
-func closeTLSLifecycle(reloader *certificateReloader) {
-	if reloader == nil {
-		return
-	}
-	if err := reloader.Close(); err != nil {
-		slog.Warn("TLS certificate watcher shutdown failed", "component", "tls_certificate", "operation", "shutdown", "reason", "shutdown_error")
-	}
-}
-
-func loadServerCertificate(certFile, keyFile string) (*tls.Certificate, error) {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("load TLS keypair: %w", err)
-	}
-	if len(cert.Certificate) == 0 {
-		return nil, errors.New("load TLS keypair: certificate chain is empty")
-	}
-	now := time.Now()
-	parsed := make([]*x509.Certificate, 0, len(cert.Certificate))
-	for i, der := range cert.Certificate {
-		certificate, parseErr := x509.ParseCertificate(der)
-		if parseErr != nil {
-			return nil, fmt.Errorf("parse TLS certificate %d: %w", i, parseErr)
-		}
-		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
-			return nil, fmt.Errorf("validate TLS certificate %d: certificate is not currently valid", i)
-		}
-		parsed = append(parsed, certificate)
-	}
-	for i := 1; i < len(parsed); i++ {
-		if err := parsed[i-1].CheckSignatureFrom(parsed[i]); err != nil {
-			return nil, fmt.Errorf("validate TLS certificate chain %d: %w", i, err)
-		}
-	}
-	cert.Leaf = parsed[0]
-	return &cert, nil
 }
 
 // buildTLSConfig assembles the *tls.Config for the gRPC + HTTP servers from the
 // TLS flags. It returns nil (plaintext) when neither --tls-cert nor --tls-key
 // is set. The returned lifecycle owns the projected-volume watcher and must be
 // closed after both servers stop. Client CA material deliberately remains static.
-func buildTLSConfig(cfg config) (*tls.Config, *certificateReloader, error) {
+func buildTLSConfig(cfg config) (*tls.Config, *tlsreload.Reloader, error) {
 	if cfg.tlsCert == "" && cfg.tlsKey == "" {
 		if cfg.clientCA != "" {
 			return nil, nil, errors.New("--client-ca requires --tls-cert/--tls-key (mTLS needs server TLS)")
@@ -368,16 +279,16 @@ func buildTLSConfig(cfg config) (*tls.Config, *certificateReloader, error) {
 	if cfg.tlsCert == "" || cfg.tlsKey == "" {
 		return nil, nil, errors.New("--tls-cert and --tls-key must be supplied together")
 	}
-	reloader, err := newCertificateReloader(cfg.tlsCert, cfg.tlsKey)
+	reloader, err := tlsreload.New(cfg.tlsCert, cfg.tlsKey, cfg.diagnostics)
 	if err != nil {
 		return nil, nil, err
 	}
-	tlsCfg := &tls.Config{GetCertificate: reloader.getCertificate, MinVersion: tls.VersionTLS12}
+	tlsCfg := &tls.Config{GetCertificate: reloader.GetCertificate, MinVersion: tls.VersionTLS12}
 	if cfg.clientCA != "" {
-		caPEM, err := os.ReadFile(cfg.clientCA)
+		caPEM, err := tlsreload.ReadCredentialFile(cfg.clientCA)
 		if err != nil {
 			_ = reloader.Close()
-			return nil, nil, fmt.Errorf("read --client-ca: %w", err)
+			return nil, nil, errors.New("--client-ca load failed")
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {

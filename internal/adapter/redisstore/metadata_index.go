@@ -73,8 +73,8 @@ func (st *Store) observeMetadataWork(kind metadataWorkKind) {
 // store without reading any snapshot payload. Legacy records remain loadable,
 // but bounded inventory is honestly unavailable until an explicit migration
 // has saved every record through the current format.
-func (st *Store) initializeMetadataIndex(ctx context.Context) error {
-	state, err := st.redis(ctx).Get(ctx, metadataIndexStateKey).Result()
+func initializeMetadataIndex(ctx context.Context, client redis.UniversalClient) error {
+	state, err := client.Get(ctx, metadataIndexStateKey).Result()
 	if err == nil {
 		if state != metadataIndexReady && state != metadataIndexStale {
 			return fmt.Errorf("redisstore: unknown metadata index state %q", state)
@@ -88,7 +88,7 @@ func (st *Store) initializeMetadataIndex(ctx context.Context) error {
 	state = metadataIndexReady
 	var cursor uint64
 	for {
-		keys, next, scanErr := st.redis(ctx).Scan(ctx, cursor, sessionKeyPrefix+"*", 1).Result()
+		keys, next, scanErr := client.Scan(ctx, cursor, sessionKeyPrefix+"*", 1).Result()
 		if scanErr != nil {
 			return fmt.Errorf("redisstore: inspect legacy metadata index: %w", scanErr)
 		}
@@ -101,7 +101,7 @@ func (st *Store) initializeMetadataIndex(ctx context.Context) error {
 		}
 		cursor = next
 	}
-	if err := st.redis(ctx).SetNX(ctx, metadataIndexStateKey, state, 0).Err(); err != nil {
+	if err := client.SetNX(ctx, metadataIndexStateKey, state, 0).Err(); err != nil {
 		return fmt.Errorf("redisstore: initialize metadata index state: %w", err)
 	}
 	return nil
@@ -166,7 +166,7 @@ func sessionMetadata(s *session.Session, modifiedAt time.Time, size int64) port.
 	}
 }
 
-func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session, blob []byte, modifiedAt time.Time) error {
+func saveSnapshotAndMetadata(ctx context.Context, client redis.UniversalClient, s *session.Session, blob []byte, modifiedAt time.Time) error {
 	row := sessionMetadata(s, modifiedAt, int64(len(blob)))
 	member, err := encodeMetadataMember(row)
 	if err != nil {
@@ -176,14 +176,14 @@ func (st *Store) saveSnapshotAndMetadata(ctx context.Context, s *session.Session
 	if s.Owner != nil {
 		ownerScope = metadataOwnerScope(s.Owner)
 	}
-	return saveMetadataScript.Run(ctx, st.redis(ctx),
+	return saveMetadataScript.Run(ctx, client,
 		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey},
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
 		metadataOwnerIndexBase,
 	).Err()
 }
 
-func (st *Store) createSnapshotAndMetadata(ctx context.Context, s *session.Session, blob []byte, modifiedAt time.Time) (bool, error) {
+func createSnapshotAndMetadata(ctx context.Context, client redis.UniversalClient, s *session.Session, blob []byte, modifiedAt time.Time) (bool, error) {
 	row := sessionMetadata(s, modifiedAt, int64(len(blob)))
 	member, err := encodeMetadataMember(row)
 	if err != nil {
@@ -193,7 +193,7 @@ func (st *Store) createSnapshotAndMetadata(ctx context.Context, s *session.Sessi
 	if s.Owner != nil {
 		ownerScope = metadataOwnerScope(s.Owner)
 	}
-	created, err := createMetadataScript.Run(ctx, st.redis(ctx),
+	created, err := createMetadataScript.Run(ctx, client,
 		[]string{sessionKey(s.ID), metadataGlobalIndexKey, metadataGenerationKey, metadataRebuildGenerationKey},
 		blob, modifiedAt.UnixNano(), member, metadataGlobalScope, ownerScope, metadataIndexStateKey,
 		metadataOwnerIndexBase,
@@ -217,8 +217,8 @@ redis.call('INCR', KEYS[6])
 return 1
 `)
 
-func (st *Store) deleteSessionAndMetadata(ctx context.Context, id session.SessionID) error {
-	return deleteMetadataScript.Run(ctx, st.redis(ctx),
+func deleteSessionAndMetadata(ctx context.Context, client redis.UniversalClient, id session.SessionID) error {
+	return deleteMetadataScript.Run(ctx, client,
 		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey},
 		metadataGlobalScope, metadataOwnerIndexBase,
 	).Err()
@@ -241,12 +241,12 @@ redis.call('INCR', KEYS[6])
 return 1
 `)
 
-func (st *Store) deleteSessionIfMetadataUnchanged(ctx context.Context, expected port.SessionDiscoveryMeta) (bool, error) {
+func deleteSessionIfMetadataUnchanged(ctx context.Context, client redis.UniversalClient, expected port.SessionDiscoveryMeta) (bool, error) {
 	member, err := encodeMetadataMember(expected)
 	if err != nil {
 		return false, err
 	}
-	result, err := conditionalDeleteMetadataScript.Run(ctx, st.redis(ctx),
+	result, err := conditionalDeleteMetadataScript.Run(ctx, client,
 		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey},
 		member, metadataGlobalScope, metadataOwnerIndexBase,
 	).Int()
@@ -270,11 +270,11 @@ end
 return result
 `)
 
-func (st *Store) pageSessionMetadata(ctx context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+func (st *Store) pageSessionMetadata(ctx context.Context, client redis.UniversalClient, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
 	if request.Limit < 0 {
 		return port.SessionMetadataPage{}, fmt.Errorf("redisstore: metadata page limit must be non-negative")
 	}
-	if err := st.requireMetadataIndex(ctx); err != nil {
+	if err := requireMetadataIndex(ctx, client); err != nil {
 		return port.SessionMetadataPage{}, err
 	}
 	scope, indexKey := metadataScopeAndKey(request)
@@ -282,7 +282,7 @@ func (st *Store) pageSessionMetadata(ctx context.Context, request port.SessionMe
 	if err != nil {
 		return port.SessionMetadataPage{}, err
 	}
-	result, err := pageMetadataScript.Run(ctx, st.redis(ctx), []string{indexKey, metadataGenerationKey},
+	result, err := pageMetadataScript.Run(ctx, client, []string{indexKey, metadataGenerationKey},
 		scope, expectedGeneration, minimum, request.Limit+1).Result()
 	if err != nil {
 		if strings.Contains(err.Error(), "MECATL_METADATA_CURSOR_RESTART") {
@@ -293,8 +293,8 @@ func (st *Store) pageSessionMetadata(ctx context.Context, request port.SessionMe
 	return st.decodeMetadataPage(result, request, scope)
 }
 
-func (st *Store) requireMetadataIndex(ctx context.Context) error {
-	state, err := st.redis(ctx).Get(ctx, metadataIndexStateKey).Result()
+func requireMetadataIndex(ctx context.Context, client redis.UniversalClient) error {
+	state, err := client.Get(ctx, metadataIndexStateKey).Result()
 	if err == nil && state == metadataIndexReady {
 		return nil
 	}

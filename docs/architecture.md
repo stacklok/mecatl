@@ -414,7 +414,20 @@ shared assembly with **k8s-native defaults** — a **Redis** session store + dur
 (`internal/adapter/k8slease`, the in-cluster multi-replica single-writer path), a dynamic
 `/readyz` (drain-gated + Redis-pinged), and a bounded `GracefulStop`. The agent pods are
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
-managed service the pod talks to over the network (Redis + the k8s API server). Redis
+managed service the pod talks to over the network (Redis + the k8s API server). The focused
+`internal/adapter/tlsreload` lifecycle validates and atomically publishes the last-valid
+server chain for both listeners, watches projected-Secret swaps, and warns once per current
+certificate generation when its leaf is expiring or expired. Its fixed expiry ticker and
+watcher are both stopped and joined on shutdown; client CA trust remains static. File-backed
+Redis credentials reload as an atomically probed client generation. Each I/O path receives
+its leased client explicitly; shutdown rejects new work immediately, starts claimed client closes
+asynchronously, and waits on leases and close completion for only one fixed grace interval. It
+never force-closes a generation still held by an iterator or migration lock, and a blocked client
+`Close` cannot stall a swap. Credential targets must resolve to regular files. The reload-worker
+join is separately bounded after watcher close and cancellation; any candidate completing after a
+timeout is rejected and closed by the shut generation manager. Credential retries use capped
+jitter and restart at attempt one on a newer projection event.
+Redis
 metadata paging and retention are zero-load and work-bounded after index publication; the
 retention worker is owned by `app.Build`, whose idempotent close cancels and joins any
 startup/ticker sweep before Service and store teardown. Every automatic deletion uses

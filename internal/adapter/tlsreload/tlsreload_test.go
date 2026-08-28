@@ -1,7 +1,7 @@
-package main
+package tlsreload
 
 import (
-	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
@@ -10,15 +10,20 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
-	"log/slog"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/filewatch"
 )
 
 type testKeyPair struct {
@@ -34,7 +39,7 @@ func TestTLSCertificateReloadLastValid(t *testing.T) {
 	two := makeTestKeyPair(t, 2)
 	writeTestKeyPair(t, certPath, keyPath, one)
 
-	tlsCfg, lifecycle, err := buildTLSConfig(config{tlsCert: certPath, tlsKey: keyPath})
+	tlsCfg, lifecycle, err := testTLSConfig(config{tlsCert: certPath, tlsKey: keyPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +58,7 @@ func TestTLSCertificateReloadLastValid(t *testing.T) {
 	if err := os.WriteFile(certPath, malformedChain, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * tlsReloadDebounce)
+	time.Sleep(2 * reloadDebounce)
 	if got := currentSerial(t, tlsCfg); got != 2 {
 		t.Fatalf("serial after malformed additional chain entry = %d, want last valid 2", got)
 	}
@@ -61,7 +66,7 @@ func TestTLSCertificateReloadLastValid(t *testing.T) {
 	if err := os.WriteFile(certPath, []byte("not a certificate"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * tlsReloadDebounce)
+	time.Sleep(2 * reloadDebounce)
 	if got := currentSerial(t, tlsCfg); got != 2 {
 		t.Fatalf("serial after invalid rotation = %d, want last valid 2", got)
 	}
@@ -72,7 +77,7 @@ func TestTLSCertificateReloadLastValid(t *testing.T) {
 	if err := os.WriteFile(keyPath, two.key, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * tlsReloadDebounce)
+	time.Sleep(2 * reloadDebounce)
 	if got := currentSerial(t, tlsCfg); got != 2 {
 		t.Fatalf("serial after mismatched rotation = %d, want last valid 2", got)
 	}
@@ -92,26 +97,23 @@ func TestTLSReloadDiagnosticsUseBoundedReasonCodes(t *testing.T) {
 	keyPath := filepath.Join(dir, "tls.key")
 	pair := makeTestKeyPair(t, 41)
 	writeTestKeyPair(t, certPath, keyPath, pair)
-	reloader, err := newCertificateReloader(certPath, keyPath)
+	diagnostics := &capturedDiagnostics{}
+	reloader, err := New(certPath, keyPath, diagnostics)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reloader.Close()
 
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	defer slog.SetDefault(previous)
 	secret := "secret-pem-marker"
 	if err := os.WriteFile(certPath, []byte(secret), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reloader.reload(certPath, keyPath)()
-	text := logs.String()
-	if !strings.Contains(text, `"reason":"invalid_candidate"`) {
+	reloader.reload()
+	text := diagnostics.String()
+	if !strings.Contains(text, "invalid_candidate") {
 		t.Fatalf("reload diagnostic missing reason code: %s", text)
 	}
-	for _, forbidden := range []string{secret, certPath, keyPath, "BEGIN CERTIFICATE"} {
+	for _, forbidden := range []string{secret, certPath, keyPath, "BEGIN CERTIFICATE", "localhost", "serial"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("reload diagnostic leaked %q: %s", forbidden, text)
 		}
@@ -135,8 +137,8 @@ func TestTLSCertificateReloadRejectsInvalidChains(t *testing.T) {
 	defer reloader.Close()
 
 	writeTestKeyPair(t, certPath, keyPath, testKeyPair{cert: valid.pem(), key: valid.key})
-	reloader.reload(certPath, keyPath)()
-	if got := reloader.cert.Load().Leaf.SerialNumber.Int64(); got != 41 {
+	reloader.reload()
+	if got := reloader.certificate.Load().certificate.Leaf.SerialNumber.Int64(); got != 41 {
 		t.Fatalf("valid chain serial = %d, want 41", got)
 	}
 	for _, tc := range []struct {
@@ -150,8 +152,8 @@ func TestTLSCertificateReloadRejectsInvalidChains(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			writeTestKeyPair(t, certPath, keyPath, tc.pair)
-			reloader.reload(certPath, keyPath)()
-			if got := reloader.cert.Load().Leaf.SerialNumber.Int64(); got != 41 {
+			reloader.reload()
+			if got := reloader.certificate.Load().certificate.Leaf.SerialNumber.Int64(); got != 41 {
 				t.Fatalf("rejected chain displaced last valid certificate: serial=%d", got)
 			}
 		})
@@ -170,12 +172,12 @@ func TestTLSCertificateReloadInitialValidationAndShutdown(t *testing.T) {
 	if err := os.WriteFile(keyPath, two.key, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := buildTLSConfig(config{tlsCert: certPath, tlsKey: keyPath}); err == nil {
+	if _, _, err := testTLSConfig(config{tlsCert: certPath, tlsKey: keyPath}); err == nil {
 		t.Fatal("mismatched initial keypair succeeded")
 	}
 
 	writeTestKeyPair(t, certPath, keyPath, one)
-	tlsCfg, lifecycle, err := buildTLSConfig(config{tlsCert: certPath, tlsKey: keyPath})
+	tlsCfg, lifecycle, err := testTLSConfig(config{tlsCert: certPath, tlsKey: keyPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,9 +188,102 @@ func TestTLSCertificateReloadInitialValidationAndShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTestKeyPair(t, certPath, keyPath, two)
-	time.Sleep(2 * tlsReloadDebounce)
+	time.Sleep(2 * reloadDebounce)
 	if got := currentSerial(t, tlsCfg); got != 11 {
 		t.Fatalf("serial after watcher shutdown = %d, want 11", got)
+	}
+}
+
+func TestTLSCertificateRejectsNonRegularAndOversizedFiles(t *testing.T) {
+	pair := makeTestKeyPair(t, 13)
+	for _, tc := range []struct {
+		name string
+		path func(*testing.T) string
+	}{
+		{name: "directory", path: func(t *testing.T) string { return t.TempDir() }},
+		{name: "device", path: func(*testing.T) string { return "/dev/null" }},
+		{name: "fifo", path: func(t *testing.T) string {
+			path := filepath.Join(t.TempDir(), "tls.crt")
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return path
+		}},
+		{name: "oversized", path: func(t *testing.T) string {
+			path := filepath.Join(t.TempDir(), "tls.crt")
+			file, err := os.Create(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Truncate(maxTLSFileSize + 1); err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return path
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			certPath := tc.path(t)
+			keyPath := filepath.Join(t.TempDir(), "tls.key")
+			if err := os.WriteFile(keyPath, pair.key, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadServerCertificate(certPath, keyPath, time.Now())
+			if err == nil || err.Error() != "TLS keypair load failed" || strings.Contains(err.Error(), certPath) {
+				t.Fatalf("load error = %v", err)
+			}
+		})
+	}
+}
+
+func TestTLSCertificateReloadRejectsFIFOAndOversizedWithoutBlockingClose(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	pair := makeTestKeyPair(t, 14)
+	writeTestKeyPair(t, certPath, keyPath, pair)
+	r, err := New(certPath, keyPath, port.NopDiagnostics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := os.OpenFile(certPath, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxTLSFileSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.reload()
+	if got := r.certificate.Load().certificate.Leaf.SerialNumber.Int64(); got != 14 {
+		t.Fatalf("oversized reload displaced certificate: serial=%d", got)
+	}
+	writeTestKeyPair(t, certPath, keyPath, pair)
+
+	if err := os.Remove(certPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(certPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.reload()
+	if got := r.certificate.Load().certificate.Leaf.SerialNumber.Int64(); got != 14 {
+		t.Fatalf("FIFO reload displaced certificate: serial=%d", got)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- r.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked on FIFO reload callback")
 	}
 }
 
@@ -207,7 +302,7 @@ func TestTLSHandshakeReloadsAcrossProjectedSecretSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tlsCfg, lifecycle, err := buildTLSConfig(config{
+	tlsCfg, lifecycle, err := testTLSConfig(config{
 		tlsCert: filepath.Join(root, "tls.crt"),
 		tlsKey:  filepath.Join(root, "tls.key"),
 	})
@@ -222,7 +317,7 @@ func TestTLSHandshakeReloadsAcrossProjectedSecretSwap(t *testing.T) {
 
 	projectTLSVersion(t, root, "..bad", testKeyPair{cert: two.cert, key: one.key})
 	swapProjectedData(t, root, "..bad")
-	time.Sleep(2 * tlsReloadDebounce)
+	time.Sleep(2 * reloadDebounce)
 	badSerial, badFingerprint := handshakeCertificate(t, tlsCfg)
 	if badSerial != serial || badFingerprint != fingerprint {
 		t.Fatal("invalid intermediate projection displaced the last valid certificate")
@@ -244,7 +339,7 @@ func TestEstablishedTLSConnectionSurvivesCertificateRotation(t *testing.T) {
 	one := makeTestKeyPair(t, 31)
 	two := makeTestKeyPair(t, 32)
 	writeTestKeyPair(t, certPath, keyPath, one)
-	tlsCfg, lifecycle, err := buildTLSConfig(config{tlsCert: certPath, tlsKey: keyPath})
+	tlsCfg, lifecycle, err := testTLSConfig(config{tlsCert: certPath, tlsKey: keyPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,5 +586,293 @@ func swapProjectedData(t *testing.T, root, version string) {
 	}
 	if err := os.Rename(next, filepath.Join(root, "..data")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type config struct {
+	tlsCert string
+	tlsKey  string
+}
+
+func testTLSConfig(cfg config) (*tls.Config, *Reloader, error) {
+	r, err := New(cfg.tlsCert, cfg.tlsKey, port.NopDiagnostics{})
+	if err != nil {
+		return nil, nil, err
+	}
+	return &tls.Config{GetCertificate: r.GetCertificate, MinVersion: tls.VersionTLS12}, r, nil
+}
+
+func newCertificateReloader(certFile, keyFile string) (*Reloader, error) {
+	return New(certFile, keyFile, port.NopDiagnostics{})
+}
+
+type diagnosticRecord struct {
+	message string
+	args    []any
+}
+
+type capturedDiagnostics struct {
+	mu      sync.Mutex
+	records []diagnosticRecord
+}
+
+func (d *capturedDiagnostics) Log(_ context.Context, _ port.Level, message string, args ...any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.records = append(d.records, diagnosticRecord{message: message, args: append([]any(nil), args...)})
+}
+
+func (d *capturedDiagnostics) With(...any) port.Diagnostics { return d }
+
+func (d *capturedDiagnostics) String() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return fmt.Sprint(d.records)
+}
+
+func (d *capturedDiagnostics) reasonCount(reason string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	count := 0
+	for _, record := range d.records {
+		for i := 0; i+1 < len(record.args); i += 2 {
+			if record.args[i] == "reason" && record.args[i+1] == reason {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) Set(now time.Time) {
+	c.mu.Lock()
+	c.now = now
+	c.mu.Unlock()
+}
+
+type fakeTicker struct {
+	ch      chan time.Time
+	stopped chan struct{}
+	once    sync.Once
+}
+
+func newFakeTicker() *fakeTicker {
+	return &fakeTicker{ch: make(chan time.Time), stopped: make(chan struct{})}
+}
+
+func (t *fakeTicker) Chan() <-chan time.Time { return t.ch }
+func (t *fakeTicker) Stop()                  { t.once.Do(func() { close(t.stopped) }) }
+func (t *fakeTicker) Tick(now time.Time)     { t.ch <- now }
+
+func TestInitialCertificateRejectsExpiredAndInvalidParseableChain(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	for _, tc := range []struct {
+		name string
+		pair testKeyPair
+	}{
+		{name: "expired", pair: makeTestKeyPairUntil(t, now.Add(-time.Hour))},
+		{name: "invalid parseable chain", pair: func() testKeyPair {
+			valid := makeTestChain(t, 81, false, false)
+			unrelated := makeTestChain(t, 82, false, false)
+			return testKeyPair{cert: concatPEM(valid.leaf, unrelated.intermediate, unrelated.root), key: valid.key}
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			certPath := filepath.Join(dir, "tls.crt")
+			keyPath := filepath.Join(dir, "tls.key")
+			writeTestKeyPair(t, certPath, keyPath, tc.pair)
+			if _, err := New(certPath, keyPath, port.NopDiagnostics{}); err == nil {
+				t.Fatal("invalid initial certificate succeeded")
+			}
+		})
+	}
+}
+
+func TestConstructorErrorsAreStableAndPathFree(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "mounted-credential-marker")
+	if _, err := New(filepath.Join(marker, "tls.crt"), filepath.Join(marker, "tls.key"), port.NopDiagnostics{}); err == nil || err.Error() != "TLS keypair load failed" || strings.Contains(err.Error(), marker) {
+		t.Fatalf("missing-keypair error = %v", err)
+	}
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	writeTestKeyPair(t, certPath, keyPath, makeTestKeyPair(t, 83))
+	deps := defaultDependencies()
+	deps.watcher = func([]string, time.Duration, time.Duration, func(), func(error)) (*filewatch.Watcher, error) {
+		return nil, fmt.Errorf("cannot watch %s", marker)
+	}
+	if _, err := newWithDependencies(certPath, keyPath, port.NopDiagnostics{}, deps); err == nil || err.Error() != "TLS keypair watcher setup failed" || strings.Contains(err.Error(), marker) {
+		t.Fatalf("unwatchable-parent setup error = %v", err)
+	}
+}
+
+func TestExpiryObserverCannotPublishStaleGenerationWarning(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	clock := &fakeClock{now: now}
+	fakeTick := newFakeTicker()
+	diagnostics := &capturedDiagnostics{}
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	writeTestKeyPair(t, certPath, keyPath, makeTestKeyPairUntil(t, now.Add(time.Hour)))
+	deps := defaultDependencies()
+	deps.now = clock.Now
+	deps.newTicker = func(time.Duration) ticker { return fakeTick }
+	r, err := newWithDependencies(certPath, keyPath, diagnostics, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	r.beforeObserveLock = func() {
+		once.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+	done := make(chan struct{})
+	go func() {
+		r.observeCurrent()
+		close(done)
+	}()
+	<-entered
+	writeTestKeyPair(t, certPath, keyPath, makeTestKeyPairUntil(t, now.Add(2*time.Hour)))
+	candidate, err := loadServerCertificate(certPath, keyPath, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.publish(candidate)
+	close(release)
+	<-done
+	if got := diagnostics.reasonCount("expiring"); got != 2 {
+		t.Fatalf("expiry warnings = %d, want one per published generation", got)
+	}
+	if got := r.warned; got != r.certificate.Load().generation {
+		t.Fatalf("warned generation = %d, current = %d", got, r.certificate.Load().generation)
+	}
+}
+
+func TestExpiryObserverWarnsOnceAndResetsForPublishedGeneration(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	clock := &fakeClock{now: now}
+	fakeTick := newFakeTicker()
+	diagnostics := &capturedDiagnostics{}
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	writeTestKeyPair(t, certPath, keyPath, makeTestKeyPairUntil(t, now.Add(31*24*time.Hour)))
+	deps := defaultDependencies()
+	deps.now = clock.Now
+	deps.newTicker = func(time.Duration) ticker { return fakeTick }
+	r, err := newWithDependencies(certPath, keyPath, diagnostics, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if got := diagnostics.reasonCount("expiring"); got != 0 {
+		t.Fatalf("initial expiring warnings = %d, want 0", got)
+	}
+
+	clock.Set(now.Add(2 * 24 * time.Hour))
+	fakeTick.Tick(clock.Now())
+	awaitReasonCount(t, diagnostics, "expiring", 1)
+	fakeTick.Tick(clock.Now())
+	if got := diagnostics.reasonCount("expiring"); got != 1 {
+		t.Fatalf("same-generation expiring warnings = %d, want 1", got)
+	}
+
+	writeTestKeyPair(t, certPath, keyPath, makeTestKeyPairUntil(t, clock.Now().Add(time.Hour)))
+	r.reload()
+	if got := diagnostics.reasonCount("expiring"); got != 2 {
+		t.Fatalf("new-generation expiring warnings = %d, want 2", got)
+	}
+}
+
+func TestExpiryObserverReportsExpiredAndCloseJoins(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	clock := &fakeClock{now: now}
+	fakeTick := newFakeTicker()
+	diagnostics := &capturedDiagnostics{}
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "tls.crt")
+	keyPath := filepath.Join(dir, "tls.key")
+	writeTestKeyPair(t, certPath, keyPath, makeTestKeyPairUntil(t, now.Add(31*24*time.Hour)))
+	deps := defaultDependencies()
+	deps.now = clock.Now
+	deps.newTicker = func(time.Duration) ticker { return fakeTick }
+	r, err := newWithDependencies(certPath, keyPath, diagnostics, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Set(now.Add(32 * 24 * time.Hour))
+	fakeTick.Tick(clock.Now())
+	awaitReasonCount(t, diagnostics, "expired", 1)
+	if cert, getErr := r.GetCertificate(nil); getErr != nil || cert == nil {
+		t.Fatalf("expired observation disabled last-valid certificate: cert=%v err=%v", cert, getErr)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-fakeTick.stopped:
+	default:
+		t.Fatal("Close returned before observer fakeTick stopped")
+	}
+}
+
+func awaitReasonCount(t *testing.T, diagnostics *capturedDiagnostics, reason string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if diagnostics.reasonCount(reason) == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("reason %q count = %d, want %d", reason, diagnostics.reasonCount(reason), want)
+}
+
+func makeTestKeyPairUntil(t *testing.T, notAfter time.Time) testKeyPair {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(notAfter.UnixNano()),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		DNSNames:     []string{"localhost"},
+		NotBefore:    notAfter.Add(-60 * 24 * time.Hour),
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testKeyPair{
+		cert: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		key:  pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
 	}
 }

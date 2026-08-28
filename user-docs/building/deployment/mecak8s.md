@@ -165,8 +165,8 @@ when your Secret uses different PEM key names. The container receives the
 fixed mounted paths `/var/run/secrets/tls/<certKey>` and
 `/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`, enabling TLS
 for both gRPC and HTTP/SSE. The chart also changes health, readiness, and drain
-requests to HTTPS. Rotated certificate material requires a rollout/restart
-until the in-process reload work in issue #789 is available.
+requests to HTTPS. Rotated certificate/key pairs are loaded transactionally for new
+handshakes without a rollout; invalid candidates retain the last valid generation.
 
 ---
 
@@ -204,8 +204,10 @@ When `--tls-cert` and `--tls-key` point into a Kubernetes projected Secret,
 after the projection settles. A malformed or mismatched intermediate generation
 is rejected and the last valid certificate continues serving. Existing
 connections are unaffected; new TLS handshakes use the replacement without a pod
-restart. `--client-ca` is intentionally static and still requires a pod restart
-to change the trusted client identities.
+restart. A fixed internal observer emits a bounded warning once for a certificate generation
+that becomes expiring or expired; observation does not disable the last-valid certificate.
+`--client-ca` is intentionally static and still requires a pod restart to change the trusted
+client identities.
 
 ## Secure Redis credentials and TLS
 

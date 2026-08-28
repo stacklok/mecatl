@@ -61,19 +61,16 @@ func TestRedisWatchDiagnosticsUseReasonCodesOnly(t *testing.T) {
 	caFile := reloadWrite(t, dir, "ca.pem", ca)
 	diagnostics := &capturedDiagnostics{}
 	secret := "secret-watch-error-marker"
-	cfg := Config{
-		Addr:        server.Addr(),
-		CAFile:      caFile,
-		Diagnostics: diagnostics,
-		initialClientFactory: func(context.Context, *tcredis.Config) (redis.UniversalClient, error) {
-			return redis.NewClient(&redis.Options{Addr: server.Addr()}), nil
-		},
-		watcherFactory: func(_ []string, _ time.Duration, _ time.Duration, _ func(), onError func(error)) (*filewatch.Watcher, error) {
-			onError(fmt.Errorf("%s at %s", secret, caFile))
-			return nil, errors.New("stop after diagnostic")
-		},
+	cfg := Config{Addr: server.Addr(), CAFile: caFile, Diagnostics: diagnostics}
+	deps := defaultStoreDependencies()
+	deps.initialClient = func(context.Context, *tcredis.Config) (redis.UniversalClient, error) {
+		return redis.NewClient(&redis.Options{Addr: server.Addr()}), nil
 	}
-	_, err := NewWithConfig(cfg)
+	deps.watcher = func(_ []string, _ time.Duration, _ time.Duration, _ func(), onError func(error)) (*filewatch.Watcher, error) {
+		onError(fmt.Errorf("%s at %s", secret, caFile))
+		return nil, errors.New("stop after diagnostic")
+	}
+	_, err := newWithConfig(cfg, deps)
 	if err == nil {
 		t.Fatal("NewWithConfig succeeded with failing watcher fixture")
 	}
@@ -101,8 +98,9 @@ func TestPasswordRotationPublishesOnlyVerifiedCandidate(t *testing.T) {
 	server.RequireAuth("old")
 	diagnostics := &capturedDiagnostics{}
 	cfg := Config{Addr: server.Addr(), CAFile: caFile, PasswordFile: passwordFile, Diagnostics: diagnostics}
-	cfg.candidateFactory = passwordCandidateFactory("new-secret-value", "old", nil)
-	store, err := NewWithConfig(cfg)
+	deps := defaultStoreDependencies()
+	deps.candidate = passwordCandidateFactory("new-secret-value", "old", nil)
+	store, err := newWithConfig(cfg, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,8 +243,9 @@ func TestReloadRetriesUntilRedisAcceptsCredential(t *testing.T) {
 	diagnostics := &capturedDiagnostics{}
 	var redisReady atomic.Bool
 	cfg := Config{Addr: server.Addr(), CAFile: reloadWrite(t, dir, "ca.pem", ca), PasswordFile: passwordFile, Diagnostics: diagnostics}
-	cfg.candidateFactory = passwordCandidateFactory("eventual", "old", &redisReady)
-	store, err := NewWithConfig(cfg)
+	deps := defaultStoreDependencies()
+	deps.candidate = passwordCandidateFactory("eventual", "old", &redisReady)
+	store, err := newWithConfig(cfg, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,6 +284,121 @@ func TestUntrustedCARotationRetainsActiveClient(t *testing.T) {
 	}
 }
 
+func TestConnectionConfigRejectsNonRegularCredentialTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func(*testing.T) string
+	}{
+		{name: "directory", build: func(t *testing.T) string { return t.TempDir() }},
+		{name: "device", build: func(*testing.T) string { return "/dev/null" }},
+		{name: "fifo", build: func(t *testing.T) string {
+			path := filepath.Join(t.TempDir(), "credential.fifo")
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return path
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := tc.build(t)
+			called := false
+			_, err := connectionConfigWithReader(Config{Addr: "127.0.0.1:6379", TLS: true, PasswordFile: path}, func(*os.File, int64) ([]byte, error) {
+				called = true
+				return nil, errors.New("must not read")
+			})
+			if err == nil || !strings.Contains(err.Error(), "not regular") {
+				t.Fatalf("connectionConfig error = %v", err)
+			}
+			if called {
+				t.Fatal("non-regular credential target was read")
+			}
+		})
+	}
+}
+
+func TestConnectionConfigRejectsOversizedCredentialBeforeRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "password")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxCredentialFileSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err = connectionConfigWithReader(Config{Addr: "127.0.0.1:6379", TLS: true, PasswordFile: path}, func(*os.File, int64) ([]byte, error) {
+		called = true
+		return nil, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("connectionConfig error = %v", err)
+	}
+	if called {
+		t.Fatal("oversized credential was read")
+	}
+}
+
+func TestReloadLifecycleCloseIsBoundedByJoinGrace(t *testing.T) {
+	server := miniredis.RunT(t)
+	initial := &closeTrackingClient{UniversalClient: redis.NewClient(&redis.Options{Addr: server.Addr()})}
+	diagnostics := &capturedDiagnostics{}
+	store := &Store{clients: newClientGenerations(initial), diagnostics: diagnostics, closeGrace: 20 * time.Millisecond}
+	dir := t.TempDir()
+	passwordFile := reloadWrite(t, dir, "password", "secret")
+	cfg := Config{Addr: server.Addr(), TLS: true, PasswordFile: passwordFile, Diagnostics: diagnostics}
+	readStarted := make(chan struct{})
+	continueRead := make(chan struct{})
+	var readOnce sync.Once
+	var candidate *closeTrackingClient
+	deps := defaultStoreDependencies()
+	deps.joinGrace = 20 * time.Millisecond
+	deps.readFile = func(file *os.File, maxBytes int64) ([]byte, error) {
+		readOnce.Do(func() { close(readStarted) })
+		<-continueRead
+		return readCredentialFile(file, maxBytes)
+	}
+	deps.candidate = func(context.Context, *tcredis.Config) (redis.UniversalClient, error) {
+		candidate = &closeTrackingClient{UniversalClient: redis.NewClient(&redis.Options{Addr: server.Addr()})}
+		return candidate, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan struct{}, 1)
+	done := make(chan struct{})
+	lifecycle := &reloadLifecycle{cancel: cancel, done: done, diagnostics: diagnostics, joinGrace: deps.joinGrace}
+	store.reload = lifecycle
+	go runReload(ctx, done, events, store, cfg, deps, diagnostics)
+	events <- struct{}{}
+	<-readStarted
+
+	started := time.Now()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Store.Close blocked on credential read for %v", elapsed)
+	}
+	if got := strings.Count(diagnostics.text(), "reason reload_worker count 1"); got != 1 {
+		t.Fatalf("reload-worker timeout warnings = %d, logs=%q", got, diagnostics.text())
+	}
+
+	close(continueRead)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reload worker did not exit after stalled read completed")
+	}
+	deadline := time.Now().Add(time.Second)
+	for candidate != nil && candidate.closes.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if candidate == nil || candidate.closes.Load() != 1 {
+		t.Fatal("late candidate was not rejected and closed")
+	}
+}
+
 func TestConnectionConfigRejectsProjectedMixedGeneration(t *testing.T) {
 	root := t.TempDir()
 	_, caOne := reloadTLSFixture(t)
@@ -294,9 +408,7 @@ func TestConnectionConfigRejectsProjectedMixedGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloadWrite(t, v1, "ca.pem", caOne)
-	if err := syscall.Mkfifo(filepath.Join(v1, "password"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	reloadWrite(t, v1, "password", "password-one")
 	v2 := filepath.Join(root, "..v2")
 	if err := os.Mkdir(v2, 0o700); err != nil {
 		t.Fatal(err)
@@ -312,34 +424,23 @@ func TestConnectionConfigRejectsProjectedMixedGeneration(t *testing.T) {
 		}
 	}
 
-	writerOpened := make(chan struct{})
-	writePassword := make(chan struct{})
-	writerDone := make(chan error, 1)
-	go func() {
-		fd, err := syscall.Open(filepath.Join(v1, "password"), syscall.O_WRONLY, 0)
-		if err != nil {
-			writerDone <- err
-			return
+	passwordRead := make(chan struct{})
+	continueRead := make(chan struct{})
+	reader := func(file *os.File, maxBytes int64) ([]byte, error) {
+		if file.Name() == filepath.Join(root, "password") {
+			close(passwordRead)
+			<-continueRead
 		}
-		close(writerOpened)
-		<-writePassword
-		_, err = syscall.Write(fd, []byte("password-one"))
-		closeErr := syscall.Close(fd)
-		if err == nil {
-			err = closeErr
-		}
-		writerDone <- err
-	}()
+		return readCredentialFile(file, maxBytes)
+	}
 	result := make(chan error, 1)
 	go func() {
-		_, err := connectionConfig(Config{Addr: "127.0.0.1:6379", CAFile: filepath.Join(root, "ca.pem"), PasswordFile: filepath.Join(root, "password")})
+		_, err := connectionConfigWithReader(Config{
+			Addr: "127.0.0.1:6379", CAFile: filepath.Join(root, "ca.pem"), PasswordFile: filepath.Join(root, "password"),
+		}, reader)
 		result <- err
 	}()
-	select {
-	case <-writerOpened:
-	case <-time.After(2 * time.Second):
-		t.Fatal("credential snapshot did not reach the blocked password read")
-	}
+	<-passwordRead
 	next := filepath.Join(root, "..data.next")
 	if err := os.Symlink("..v2", next); err != nil {
 		t.Fatal(err)
@@ -347,10 +448,7 @@ func TestConnectionConfigRejectsProjectedMixedGeneration(t *testing.T) {
 	if err := os.Rename(next, filepath.Join(root, "..data")); err != nil {
 		t.Fatal(err)
 	}
-	close(writePassword)
-	if err := <-writerDone; err != nil {
-		t.Fatal(err)
-	}
+	close(continueRead)
 	select {
 	case err := <-result:
 		if err == nil || !strings.Contains(err.Error(), "changed while being read") {
@@ -378,8 +476,9 @@ func TestProjectedPasswordSymlinkSwapReloads(t *testing.T) {
 	}
 	server.RequireAuth("old")
 	cfg := Config{Addr: server.Addr(), CAFile: reloadWrite(t, root, "ca.pem", ca), PasswordFile: filepath.Join(root, "password")}
-	cfg.candidateFactory = passwordCandidateFactory("new", "old", nil)
-	store, err := NewWithConfig(cfg)
+	deps := defaultStoreDependencies()
+	deps.candidate = passwordCandidateFactory("new", "old", nil)
+	store, err := newWithConfig(cfg, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,15 +508,17 @@ func TestRejectedCandidateIsClosed(t *testing.T) {
 	}
 	server := miniredis.RunT(t)
 	var tracked *closeTrackingClient
-	cfg := Config{Addr: server.Addr(), AllowPlaintext: true, candidateFactory: func(ctx context.Context, cfg *tcredis.Config) (redis.UniversalClient, error) {
+	cfg := Config{Addr: server.Addr(), AllowPlaintext: true}
+	deps := defaultStoreDependencies()
+	deps.candidate = func(ctx context.Context, cfg *tcredis.Config) (redis.UniversalClient, error) {
 		client, err := tcredis.NewClient(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
 		tracked = &closeTrackingClient{UniversalClient: client}
 		return tracked, nil
-	}}
-	if err := reloadCandidate(context.Background(), store, cfg); !errors.Is(err, errStoreClosed) {
+	}
+	if err := reloadCandidate(context.Background(), store, cfg, deps); !errors.Is(err, errStoreClosed) {
 		t.Fatalf("reload after close: %v", err)
 	}
 	if tracked == nil || tracked.closes.Load() != 1 {
@@ -429,25 +530,24 @@ func TestReloadExhaustionWaitsForNewFileEvent(t *testing.T) {
 	store, _ := newGenerationTestStore(t)
 	var attempts atomic.Int32
 	nextAttempt := make(chan struct{})
-	cfg := Config{
-		Addr:           "127.0.0.1:1",
-		AllowPlaintext: true,
-		reloadBackoff:  func(int) time.Duration { return 0 },
-		candidateFactory: func(ctx context.Context, _ *tcredis.Config) (redis.UniversalClient, error) {
-			attempt := attempts.Add(1)
-			if attempt <= reloadMaxAttempts {
-				return nil, errors.New("candidate rejected")
-			}
-			close(nextAttempt)
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
+	cfg := Config{Addr: "127.0.0.1:1", AllowPlaintext: true}
+	deps := defaultStoreDependencies()
+	deps.backoff = func(int) time.Duration { return 0 }
+	deps.jitter = nil
+	deps.candidate = func(ctx context.Context, _ *tcredis.Config) (redis.UniversalClient, error) {
+		attempt := attempts.Add(1)
+		if attempt <= reloadMaxAttempts {
+			return nil, errors.New("candidate rejected")
+		}
+		close(nextAttempt)
+		<-ctx.Done()
+		return nil, ctx.Err()
 	}
 	diagnostics := &capturedDiagnostics{}
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan struct{}, 1)
 	done := make(chan struct{})
-	go runReload(ctx, done, events, store, cfg, diagnostics)
+	go runReload(ctx, done, events, store, cfg, deps, diagnostics)
 	events <- struct{}{}
 	awaitDiagnostic(t, diagnostics, "outcome failed attempts 8 reason candidate_rejected")
 	if got := attempts.Load(); got != reloadMaxAttempts {
@@ -472,6 +572,100 @@ func TestReloadExhaustionWaitsForNewFileEvent(t *testing.T) {
 	}
 }
 
+func TestReloadEventDuringAttemptRestartsAtAttemptOne(t *testing.T) {
+	store, server := newGenerationTestStore(t)
+	var calls atomic.Int32
+	started := make(chan struct{})
+	deps := defaultStoreDependencies()
+	deps.candidate = func(ctx context.Context, _ *tcredis.Config) (redis.UniversalClient, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return redis.NewClient(&redis.Options{Addr: server.Addr()}), nil
+	}
+	cfg := Config{Addr: server.Addr(), AllowPlaintext: true}
+	diagnostics := &capturedDiagnostics{}
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go runReload(ctx, done, events, store, cfg, deps, diagnostics)
+	events <- struct{}{}
+	<-started
+	events <- struct{}{}
+	awaitDiagnostic(t, diagnostics, "outcome succeeded attempt 1")
+	cancel()
+	<-done
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("candidate calls = %d, want 2", got)
+	}
+}
+
+func TestReloadEventDuringBackoffRestartsAtAttemptOne(t *testing.T) {
+	store, server := newGenerationTestStore(t)
+	var calls atomic.Int32
+	deps := defaultStoreDependencies()
+	deps.backoff = func(int) time.Duration { return time.Hour }
+	deps.jitter = nil
+	deps.candidate = func(context.Context, *tcredis.Config) (redis.UniversalClient, error) {
+		if calls.Add(1) == 1 {
+			return nil, errors.New("candidate rejected")
+		}
+		return redis.NewClient(&redis.Options{Addr: server.Addr()}), nil
+	}
+	cfg := Config{Addr: server.Addr(), AllowPlaintext: true}
+	diagnostics := &capturedDiagnostics{}
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go runReload(ctx, done, events, store, cfg, deps, diagnostics)
+	events <- struct{}{}
+	awaitDiagnostic(t, diagnostics, "outcome retrying attempt 1")
+	events <- struct{}{}
+	awaitDiagnostic(t, diagnostics, "outcome succeeded attempt 1")
+	cancel()
+	<-done
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("candidate calls = %d, want 2", got)
+	}
+}
+
+func TestReloadRetryJitterIsBoundedCappedAndDeterministic(t *testing.T) {
+	deps := storeDependencies{
+		backoff: func(int) time.Duration { return 1500 * time.Millisecond },
+		jitter:  func(delay time.Duration) time.Duration { return delay + 250*time.Millisecond },
+	}
+	if got := reloadRetryDelay(3, time.Second, deps); got != 1750*time.Millisecond {
+		t.Fatalf("deterministic jitter delay = %v", got)
+	}
+	deps.jitter = func(time.Duration) time.Duration { return 3 * time.Second }
+	if got := reloadRetryDelay(3, time.Second, deps); got != reloadMaxBackoff {
+		t.Fatalf("capped jitter delay = %v", got)
+	}
+
+	var jitterBase time.Duration
+	deps.backoff = func(int) time.Duration { return 10 * reloadMaxBackoff }
+	deps.jitter = func(delay time.Duration) time.Duration {
+		jitterBase = delay
+		return delay + 100*time.Millisecond
+	}
+	if got := reloadRetryDelay(9, time.Second, deps); got != 1700*time.Millisecond {
+		t.Fatalf("maximum-base positive jitter delay = %v", got)
+	}
+	if jitterBase != 1600*time.Millisecond {
+		t.Fatalf("maximum jitter base = %v", jitterBase)
+	}
+
+	defaults := defaultStoreDependencies()
+	for range 100 {
+		got := reloadRetryDelay(1, time.Second, defaults)
+		if got < 750*time.Millisecond || got > 1250*time.Millisecond {
+			t.Fatalf("default jitter out of bounds: %v", got)
+		}
+	}
+}
+
 func TestReloadEventsStaySingleFlightAndShutdownCancelsCandidate(t *testing.T) {
 	store, _ := newGenerationTestStore(t)
 	_, ca := reloadTLSFixture(t)
@@ -479,30 +673,28 @@ func TestReloadEventsStaySingleFlightAndShutdownCancelsCandidate(t *testing.T) {
 	var active atomic.Int32
 	var maximum atomic.Int32
 	started := make(chan struct{}, 1)
-	cfg := Config{
-		Addr:   "127.0.0.1:1",
-		CAFile: reloadWrite(t, dir, "ca.pem", ca),
-		candidateFactory: func(ctx context.Context, _ *tcredis.Config) (redis.UniversalClient, error) {
-			current := active.Add(1)
-			defer active.Add(-1)
-			for {
-				old := maximum.Load()
-				if current <= old || maximum.CompareAndSwap(old, current) {
-					break
-				}
+	cfg := Config{Addr: "127.0.0.1:1", CAFile: reloadWrite(t, dir, "ca.pem", ca)}
+	deps := defaultStoreDependencies()
+	deps.candidate = func(ctx context.Context, _ *tcredis.Config) (redis.UniversalClient, error) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			old := maximum.Load()
+			if current <= old || maximum.CompareAndSwap(old, current) {
+				break
 			}
-			select {
-			case started <- struct{}{}:
-			default:
-			}
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
+		}
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan struct{}, 1)
 	done := make(chan struct{})
-	go runReload(ctx, done, events, store, cfg, port.NopDiagnostics{})
+	go runReload(ctx, done, events, store, cfg, deps, port.NopDiagnostics{})
 	events <- struct{}{}
 	select {
 	case <-started:

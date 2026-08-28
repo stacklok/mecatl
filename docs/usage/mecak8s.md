@@ -141,8 +141,11 @@ both the gRPC and HTTP/SSE listeners. It projects only `tls.certKey` and
 `tls.keyKey` (defaulting to `tls.crt` and `tls.key`) from the pre-created Secret
 as a read-only `0440` volume; custom data-key names are supported. The chart
 creates no Secret. When enabled, the health, readiness, and drain requests use
-HTTPS. Certificate rotation still requires a rollout/restart until the reload
-work tracked by issue #789 lands.
+HTTPS. Projected certificate/key rotations are loaded transactionally and become visible to
+new gRPC and HTTP handshakes without a rollout; malformed or expired candidates retain the
+last valid certificate, and existing connections continue unchanged. A fixed internal
+observer warns once for each certificate generation that becomes expiring or expired. The
+client-CA bundle remains static and requires a rollout when it changes.
 
 #### Caller identity (`oidc.*` chart values)
 

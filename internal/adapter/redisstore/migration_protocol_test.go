@@ -15,6 +15,16 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func testRebuildGeneration(t *testing.T, st *Store) (int64, error) {
+	t.Helper()
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	return rebuildGeneration(context.Background(), client)
+}
+
 func TestMigrationLockRenewsPastOriginalExpiry(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -287,7 +297,7 @@ func TestFinalizeSessionMigrationUsesBoundedCoverageProofAndConstantWorkCAS(t *t
 			t.Fatal(err)
 		}
 	}
-	generation, err := st.rebuildGeneration(context.Background())
+	generation, err := testRebuildGeneration(t, st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +371,7 @@ func TestFinalizeRejectsUnmatchedOwnerMembershipsAndPublishesOnlyHealthyPaging(t
 					t.Fatal(err)
 				}
 			}
-			generation, err := st.rebuildGeneration(context.Background())
+			generation, err := testRebuildGeneration(t, st)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -414,7 +424,7 @@ func TestFinalizeRejectsGenerationDriftAfterExactCoverageProof(t *testing.T) {
 	if err := st.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
-	generation, err := st.rebuildGeneration(context.Background())
+	generation, err := testRebuildGeneration(t, st)
 	if err != nil {
 		t.Fatal(err)
 	}

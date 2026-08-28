@@ -105,10 +105,24 @@ the server-root system context and all existing flag behavior.
 
 ### mecak8s projected credentials and Helm runtime contract
 
-`cmd/mecak8s` serves server certificates through an atomic last-valid pointer and watches
-projected-Secret parent directories; `internal/adapter/redisstore` similarly swaps a fully
-probed client generation for file-backed CA/ACL changes while leases keep displaced clients
-alive for in-flight work. Partial or invalid rotations retain the previous generation. The
+`internal/adapter/tlsreload` owns mecak8s server-certificate loading, complete-chain
+validation, atomic last-valid publication, projected-Secret watching, and a fixed periodic
+leaf-expiry observer. Both gRPC and HTTP use its `GetCertificate` callback; cmd composition
+retains only static client-CA loading and lifecycle closure. Invalid rotations retain the
+prior generation. Expiry diagnostics warn once per published generation with only an
+`expiring`/`expired` reason and rounded remaining duration; they never disable the published
+certificate or expose paths, subjects, serials, or PEM. Close joins watcher and observer.
+`internal/adapter/redisstore` similarly swaps a fully probed client generation for file-backed
+CA/ACL changes while leases keep displaced clients alive for in-flight work. Acquisition returns
+the concrete client explicitly through every helper and iterator; only the migration acquisition
+identity remains in context. A followed credential target must be regular. Shutdown rejects new
+work first, closes the watcher, cancels reload, and separately bounds the worker join; an
+uncancellable late read cannot publish into the closed generation manager. Generation retirement
+claims close once and executes it asynchronously. One fixed generation grace bounds both live
+leases and close completion without force-closing active clients; a timeout emits one count-only
+warning and eventual releases/closes continue. Reload retries use bounded jittered exponential
+delay, with a newer projection event explicitly restarting at attempt one. Partial or invalid
+rotations retain the previous generation. The
 server client-CA pool remains static and requires restart; CA rotation should overlap old
 and new roots before removing the old root.
 
