@@ -211,6 +211,10 @@ func TestOperatorLearningSettingsAdvanceSensitivityNormalizesAbsentMode(t *testi
 }
 
 func TestOperatorLearningSettingsRejectsInvalidYAMLWithoutModification(t *testing.T) {
+	operations := map[string]func(*operatorLearningSettings) (string, string, string, error){
+		"Advance":            (*operatorLearningSettings).Advance,
+		"AdvanceSensitivity": (*operatorLearningSettings).AdvanceSensitivity,
+	}
 	cases := map[string]string{
 		"non-mapping learning": "learning: off\n",
 		"non-string mode":      "learning:\n  mode: [off]\n",
@@ -224,23 +228,29 @@ func TestOperatorLearningSettingsRejectsInvalidYAMLWithoutModification(t *testin
 		"duplicate activation": "learning:\n  mode: auto\n  skills:\n    activation: validated\n    activation: evaluated\n",
 		"multiple documents":   "learning:\n  mode: off\n---\nlearning:\n  mode: auto\n",
 	}
-	for name, body := range cases {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(canonicalTempDir(t), "settings.yaml")
-			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, _, _, err := (&operatorLearningSettings{path: path}).Advance(); err == nil {
-				t.Fatal("Advance succeeded for invalid YAML")
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != body {
-				t.Fatalf("invalid file was modified:\n%s", after)
-			}
-		})
+	for operationName, operation := range operations {
+		for name, body := range cases {
+			t.Run(operationName+"/"+name, func(t *testing.T) {
+				path := filepath.Join(canonicalTempDir(t), "settings.yaml")
+				if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				from, to, restart, err := operation(&operatorLearningSettings{path: path})
+				if err == nil || !strings.HasPrefix(err.Error(), "parse operator settings:") {
+					t.Fatalf("%s error = %v, want settings parse error", operationName, err)
+				}
+				if from != "" || to != "" || restart != "" {
+					t.Fatalf("%s success labels = %q, %q, %q, want empty", operationName, from, to, restart)
+				}
+				after, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(after) != body {
+					t.Fatalf("invalid file was modified:\n%s", after)
+				}
+			})
+		}
 	}
 }
 
