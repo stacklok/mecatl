@@ -507,7 +507,7 @@ func TestCarryoverHandoffFailure(t *testing.T) {
 	}
 
 	// Drive the carryover cmd → the failing create → source-preserving failure.
-	failMsg := m.carryoverCmd("sess-test-0001", sel, m.modelSwitchToken)()
+	failMsg := m.carryoverCmd("sess-test-0001", sel, m.modelSwitchRequestToken)()
 	if _, ok := failMsg.(modelSwitchFailedMsg); !ok {
 		t.Fatalf("a failed carryover create must preserve its source, got %T", failMsg)
 	}

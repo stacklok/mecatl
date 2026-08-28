@@ -530,9 +530,9 @@ type Model struct {
 	// created at Open and lives ONLY inside this interface field — never a
 	// pre-declared tombstone field (surface.go).
 	modal surface
-	// modelSwitchToken correlates the create-and-hydrate handoff. A stale result must
-	// not replace a session selected by a later lifecycle action.
-	modelSwitchToken uint64
+	// modelSwitchRequestToken correlates the asynchronous create-and-hydrate handoff.
+	// A stale result must not replace a session selected by a later lifecycle action.
+	modelSwitchRequestToken uint64
 	// createModelSelection is the client selection for future CreateSession calls. Zero uses the server default.
 	createModelSelection client.ModelSelection
 	// resolvedSessionModel is the server-resolved model for the bound session.

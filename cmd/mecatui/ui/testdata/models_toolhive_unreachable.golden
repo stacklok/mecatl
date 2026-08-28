@@ -2,19 +2,18 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                     ┃
-┃  Models  (1–3 of 4)                                                                                 ┃
+┃  Models  (4)                                                                                        ┃
 ┃  current: GPT-5 (server default)                                                                    ┃
 ┃  > filter models…                                                                                   ┃
 ┃                                                                                                     ┃
-┃  Selecting a model creates a new session.                                                           ┃
-┃  Visible conversation and context carry over; long histories may be costly to replay.               ┃
-┃  Cross-provider switches lose private reasoning/cache state.                                        ┃
+┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
 ┃  ╭────────────────────────────────────────╮                                                         ┃
 ┃  │  › ●  openai · GPT-5  img reason 200K  │                                                         ┃
 ┃  ╰────────────────────────────────────────╯                                                         ┃
 ┃       openai · GPT-5 mini  reason 128K                                                              ┃
 ┃       openai · text-embed                                                                           ┃
+┃       openrouter · Claude  img reason 1M                                                            ┃
 ┃  toolhive: proxy not reachable — start it with `thv llm proxy start`                                ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃

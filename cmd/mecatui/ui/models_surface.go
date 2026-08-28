@@ -172,7 +172,7 @@ func filterModels(models []client.ModelInfo, q string) []client.ModelInfo {
 	return out
 }
 
-const modelSwitchDisclosure = "Selecting a model creates a new session.\nVisible conversation and context carry over; long histories may be costly to replay.\nCross-provider switches lose private reasoning/cache state."
+const modelSwitchDisclosure = "Switching models is expensive as it clears caches."
 
 func modelsRowBudgetFor(height, fixedRows int) int {
 	if b := height - fixedRows; b >= modelsMinRows {
@@ -268,7 +268,7 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 		b.WriteString(th.Style("muted").Render(prov) + "\n")
 	}
 	b.WriteString(picker.filter.View() + "\n\n")
-	b.WriteString(th.Style("muted").Render(modelSwitchDisclosure) + "\n\n")
+	b.WriteString(th.Style("warning").Render(modelSwitchDisclosure) + "\n\n")
 	switch {
 	case picker.loading:
 		b.WriteString(th.Style("muted").Render("loading…") + "\n")

@@ -602,9 +602,7 @@ workspaces inherit). `↑`/`↓` move the cursor over the **filtered** set, `pgu
 navigate here, unlike the read-only overlays — so a name like `kimi`/`jamba` filters
 as typed.) `esc` is **two-stage**: with a non-empty filter it clears the filter (the
 picker stays open); with an empty filter it closes the picker. Before selection, the
-picker states that choosing creates a new session, keeps visible conversation/context,
-may make a long history costly to replay, and drops private reasoning/cache state on a
-cross-provider switch.
+picker states: **`Switching models is expensive as it clears caches.`**
 
 For `openai-codex`, the rows are the account's live entitlements, not public
 OpenAI catalog guesses. A rejected token, unreachable private service, or

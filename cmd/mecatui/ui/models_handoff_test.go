@@ -116,7 +116,7 @@ func TestModelSwitchSourceCloseFailureDoesNotUndoTarget(t *testing.T) {
 
 func TestModelSwitchIgnoresStaleHandoffResult(t *testing.T) {
 	m, _ := newModelSwitchHandoff(t, modelSwitchTranscriptLoader{})
-	m.modelSwitchToken = 2
+	m.modelSwitchRequestToken = 2
 	m.phase = phaseIdle
 	mm, _ := m.Update(modelSwitchReadyMsg{token: 1, sourceID: "source", ready: client.SessionReadyMsg{SessionID: "stale"}, transcript: client.SessionTranscript{SessionID: "stale", Complete: true}})
 	m = mm.(Model)

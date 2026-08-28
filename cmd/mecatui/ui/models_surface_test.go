@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -68,6 +69,22 @@ func TestModelsSurfaceConsumesWheelBeforeViewport(t *testing.T) {
 	m = mm.(Model)
 	if got := m.vp.YOffset(); got != 5 {
 		t.Fatalf("viewport offset = %d, want 5; open models surface must consume the wheel", got)
+	}
+}
+
+func TestModelsSwitchDisclosureIsOneWarningLine(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	picker := modelsState{filter: textinput.New()}
+	got := renderModelsPanel(th, modelCatalog{}, picker, client.Capabilities{}, "", defaultHelpKeys(), modelsMinRows)
+
+	if strings.Count(modelSwitchDisclosure, "\n") != 0 {
+		t.Fatalf("disclosure must be one line, got %q", modelSwitchDisclosure)
+	}
+	if strings.Count(stripANSIstr(got), modelSwitchDisclosure) != 1 {
+		t.Fatalf("rendered disclosure count = %d, want 1:\n%s", strings.Count(stripANSIstr(got), modelSwitchDisclosure), got)
+	}
+	if !strings.Contains(got, th.Style("warning").Render(modelSwitchDisclosure)) {
+		t.Fatalf("disclosure must use warning style:\n%s", got)
 	}
 }
 

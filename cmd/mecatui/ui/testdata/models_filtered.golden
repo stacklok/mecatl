@@ -1,14 +1,13 @@
  mecatui  ·  session #b9ba2286  ·  GPT-5  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
+
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                     ┃
 ┃  Models  (2)                                                                                        ┃
 ┃  current: GPT-5 (server default)                                                                    ┃
 ┃  > gpt                                                                                              ┃
 ┃                                                                                                     ┃
-┃  Selecting a model creates a new session.                                                           ┃
-┃  Visible conversation and context carry over; long histories may be costly to replay.               ┃
-┃  Cross-provider switches lose private reasoning/cache state.                                        ┃
+┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
 ┃  ╭────────────────────────────────────────╮                                                         ┃
 ┃  │  › ●  openai · GPT-5  img reason 200K  │                                                         ┃
@@ -20,6 +19,7 @@
 ┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
 ┃                                                                                                     ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

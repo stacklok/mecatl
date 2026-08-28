@@ -19,13 +19,7 @@ When a tool needs permission, a modal shows what it wants to do. Read the reques
 
 ## Change the conversation settings
 
-- `/models` starts a new session on the selected model while carrying the visible
-  conversation and context forward. The picker discloses that replaying a long history
-  may cost more; a cross-provider change drops provider-private reasoning/cache state,
-  not the conversation text. Mecatui keeps the source chat visible but non-interactive
-  while it adopts the target session's complete authoritative transcript, and closes the
-  source only after that succeeds; a creation or hydration failure returns to the open
-  source chat.
+- `/models` starts a new session on the selected model and keeps the conversation. **Switching models is expensive as it clears caches.**
 - `/effort` forks the conversation onto the chosen reasoning-effort tier. Unsupported tiers are reported rather than silently applied.
 - `/clear` starts over; `/session` shows the active session details.
 

@@ -217,9 +217,8 @@ compaction is free via the existing `maybeCompact`. The client surfaces a transi
 `switched to <model> — conversation kept` status note only after the target's
 **authoritative transcript** is loaded and adopted, appending
 `(prior reasoning cache dropped)` for a cross-provider switch (the strip). The picker
-also gives this non-blocking disclosure before `enter`: selection creates a new session,
-visible conversation/context carries over, long history may be costly to replay, and a
-cross-provider transition loses private reasoning/cache state. During target creation
+instead gives one non-blocking warning before `enter`: `Switching models is expensive as
+it clears caches.` During target creation
 and hydration the client keeps the source ID, metadata, and local projection on screen,
 but disarms its live feed. It validates that the target transcript is complete and for
 the created target ID, then replaces the local projection with that server-authoritative

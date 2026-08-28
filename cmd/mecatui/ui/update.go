@@ -512,7 +512,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case modelSwitchReadyMsg:
 		// The target's authoritative transcript is already complete and correlated.
 		// Only now may we discard the source projection or arm target interaction.
-		if msg.token != m.modelSwitchToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
+		if msg.token != m.modelSwitchRequestToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
 			return m, nil, true
 		}
 		m = m.resetSession()
@@ -528,7 +528,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// The source was deliberately left bound and open. Restore only its live feed;
 		// no reset or rebind is permitted on this path, so its transcript and metadata
 		// remain exactly as they were before selection.
-		if msg.token != m.modelSwitchToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
+		if msg.token != m.modelSwitchRequestToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
 			return m, nil, true
 		}
 		m.phase = phaseIdle

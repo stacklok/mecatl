@@ -149,12 +149,12 @@ func (m Model) restartOnModelWithCarryover(sel client.ModelSelection) (tea.Model
 	m.restartedThisRun = true
 	m.restartFailed = false
 	m.restartFailedForkID = ""
-	m.modelSwitchToken++
+	m.modelSwitchRequestToken++
 	m.disarmLiveFeed()
 	m.phase = phaseConnecting
 	m.statusMsg = "switching model — adopting server transcript…"
 	m.refreshView()
-	return m, tea.Batch(m.carryoverCmd(oldID, sel, m.modelSwitchToken), m.saveSelectionCmd(sel), m.sp.Tick), true
+	return m, tea.Batch(m.carryoverCmd(oldID, sel, m.modelSwitchRequestToken), m.saveSelectionCmd(sel), m.sp.Tick), true
 }
 
 type modelSwitchReadyMsg struct {
