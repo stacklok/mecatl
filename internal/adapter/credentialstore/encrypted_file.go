@@ -63,6 +63,7 @@ var (
 	_ Reader            = (*EncryptedFileStore)(nil)
 	_ ConditionalWriter = (*EncryptedFileStore)(nil)
 	_ Store             = (*EncryptedFileStore)(nil)
+	_ CorruptReplacer   = (*EncryptedFileStore)(nil)
 )
 
 // NewEncryptedFile constructs a local encrypted-file store. root must be an
@@ -161,6 +162,41 @@ func (s *EncryptedFileStore) Put(ctx context.Context, key, value []byte, expecte
 		case expected != nil && !exists:
 			return ErrNotFound
 		case expected != nil && (!expected.valid || !current.Equal(*expected)):
+			return ErrConflict
+		}
+		envelope, version, err := sealEnvelope(s.key, s.namespace, key, value, s.ops.random)
+		if err != nil {
+			return err
+		}
+		if err := s.commitEnvelope(ctx, names, envelope); err != nil {
+			return err
+		}
+		out = Record{Value: bytes.Clone(value), Version: version}
+		return nil
+	})
+	return out, err
+}
+
+// ReplaceCorrupt atomically replaces a record only while it remains unreadable
+// as an authenticated envelope. Valid, missing, and operationally unreadable
+// records are never overwritten.
+func (s *EncryptedFileStore) ReplaceCorrupt(ctx context.Context, key, value []byte) (Record, error) {
+	if err := validateRecordKey(key); err != nil {
+		return Record{}, err
+	}
+	if err := validateValue(value); err != nil {
+		return Record{}, err
+	}
+	var out Record
+	err := s.withRecordLock(ctx, key, func(names recordNames) error {
+		_, _, exists, err := s.readCurrent(names.data, key)
+		if err == nil || !errors.Is(err, ErrCorrupt) {
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return ErrNotFound
+			}
 			return ErrConflict
 		}
 		envelope, version, err := sealEnvelope(s.key, s.namespace, key, value, s.ops.random)
