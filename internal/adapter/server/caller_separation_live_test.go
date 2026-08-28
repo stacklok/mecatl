@@ -133,13 +133,13 @@ func TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked(t *testing.T) {
 	if _, err := svc.ApprovePlan(aliceCtx, sess.ID, session.ModeDefault, ""); !errors.Is(err, server.ErrNotAwaitingPlan) {
 		t.Fatalf("owner ApprovePlan on a live non-plan run = %v, want ErrNotAwaitingPlan", err)
 	}
-	if _, err := svc.ApproveRun(bobCtx, sess.ID, askID, session.VerdictAllowOnce); !errors.Is(err, server.ErrNotFound) {
+	if _, err := svc.ApproveRun(bobCtx, sess.ID, askID, session.VerdictAllowOnce, ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign ApproveRun allow = %v, want ErrNotFound", err)
 	}
-	if _, err := svc.ApproveRun(bobCtx, sess.ID, askID, session.VerdictDeny); !errors.Is(err, server.ErrNotFound) {
+	if _, err := svc.ApproveRun(bobCtx, sess.ID, askID, session.VerdictDeny, ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign ApproveRun deny = %v, want ErrNotFound", err)
 	}
-	if err := svc.Cancel(bobCtx, sess.ID); !errors.Is(err, server.ErrNotFound) {
+	if err := svc.Cancel(bobCtx, sess.ID, ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign Cancel = %v, want ErrNotFound", err)
 	}
 	svc.Persist(bobCtx, sess.ID)
@@ -157,13 +157,13 @@ func TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked(t *testing.T) {
 		t.Fatalf("foreign live-run verbs changed Alice's persisted state: before=%s/%s/%d after=%s/%s/%d", before.State, before.Mode, len(before.Conversation.Messages), unchanged.State, unchanged.Mode, len(unchanged.Conversation.Messages))
 	}
 
-	if _, err := svc.ApproveRun(aliceCtx, sess.ID, askID, session.VerdictDeny); err != nil {
+	if _, err := svc.ApproveRun(aliceCtx, sess.ID, askID, session.VerdictDeny, ""); err != nil {
 		t.Fatalf("owner ApproveRun deny: %v", err)
 	}
 
 	ownerSvc, ownerCtx, _ := callerSeparationLiveService(t)
 	ownerSess, ownerRun, _ := callerSeparationAwaitingRun(ownerCtx, t, ownerSvc)
-	if err := ownerSvc.Cancel(ownerCtx, ownerSess.ID); err != nil {
+	if err := ownerSvc.Cancel(ownerCtx, ownerSess.ID, ""); err != nil {
 		t.Fatalf("owner Cancel: %v", err)
 	}
 	for range ownerRun.Events() {
@@ -234,14 +234,14 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 func TestCallerSeparation_Scenario3_ForeignLiveRunReplayIsNotFound(t *testing.T) {
 	svc, aliceCtx, bobCtx := callerSeparationLiveService(t)
 	sess, run, _ := callerSeparationAwaitingRun(aliceCtx, t, svc)
-	if err := svc.Cancel(bobCtx, sess.ID); !errors.Is(err, server.ErrNotFound) {
+	if err := svc.Cancel(bobCtx, sess.ID, ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign Cancel while live = %v, want ErrNotFound", err)
 	}
 	run.Cancel()
 	for range run.Events() {
 	}
 	svc.FinishRun(sess.ID, run)
-	if err := svc.Cancel(bobCtx, sess.ID); !errors.Is(err, server.ErrNotFound) {
+	if err := svc.Cancel(bobCtx, sess.ID, ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign Cancel after completion = %v, want ErrNotFound", err)
 	}
 }

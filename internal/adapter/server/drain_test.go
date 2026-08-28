@@ -205,7 +205,7 @@ func TestDrainAwaitingResumePathGated(t *testing.T) {
 	// ApproveRun on an idle (non-awaiting) session with no live run: the state
 	// check returns ErrNoActiveRun BEFORE the drain gate (acquireLease) is
 	// reached — correct, there is nothing to resume.
-	_, err = svc.ApproveRun(context.Background(), sess.ID, "ask-x", session.VerdictAllowOnce)
+	_, err = svc.ApproveRun(context.Background(), sess.ID, "ask-x", session.VerdictAllowOnce, "")
 	if !errors.Is(err, server.ErrNoActiveRun) {
 		t.Fatalf("ApproveRun after Drain on an idle session = %v, want ErrNoActiveRun (state check fires before the drain gate)", err)
 	}

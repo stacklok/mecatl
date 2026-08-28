@@ -369,6 +369,11 @@ type approveBody struct {
 	// "allow_always" (allow_always additionally learns a per-session rule). An
 	// empty/unknown value falls back to Allow.
 	Verdict string `json:"verdict,omitempty"`
+	// ExpectedRunID, when set, scopes this control to ONE run: the request is
+	// refused with a 409 problem (code "stale_run_control") if the session's
+	// current run is a different one. Empty is the legacy behaviour — the control
+	// applies to whatever run is current. See ADR 0245.
+	ExpectedRunID string `json:"expected_run_id,omitempty"`
 }
 
 // --- handlers ---------------------------------------------------------------
@@ -758,7 +763,7 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ask_id is required")
 		return
 	}
-	run, err := h.svc.ApproveRun(r.Context(), id, body.AskID, verdictFromHTTP(body.Verdict, body.Allow))
+	run, err := h.svc.ApproveRun(r.Context(), id, body.AskID, verdictFromHTTP(body.Verdict, body.Allow), body.ExpectedRunID)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -994,10 +999,25 @@ func (h *HTTPHandler) compactSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.CompactSessionResponse{Compacted: result.Changed})
 }
 
+// cancelBody is the OPTIONAL JSON body of POST /v1/sessions/{id}/cancel.
+//
+// The endpoint predates it and must keep accepting an empty body, so decoding is
+// best-effort: a missing or unparseable body leaves ExpectedRunID empty, which is
+// the legacy "cancel whatever is running" behaviour. Refusing a malformed body
+// would break every existing caller that sends none.
+type cancelBody struct {
+	// ExpectedRunID, when set, scopes the cancel to ONE run. Cancelling the wrong
+	// run destroys work rather than merely permitting it, so a client that knows
+	// which run it is stopping should always send this. See ADR 0249.
+	ExpectedRunID string `json:"expected_run_id,omitempty"`
+}
+
 // cancel handles POST /v1/sessions/{id}/cancel, cancelling the in-flight run.
 func (h *HTTPHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	id := session.SessionID(r.PathValue("id"))
-	if err := h.svc.Cancel(r.Context(), id); err != nil {
+	var body cancelBody
+	_ = json.NewDecoder(r.Body).Decode(&body) // optional body; see cancelBody
+	if err := h.svc.Cancel(r.Context(), id, body.ExpectedRunID); err != nil {
 		writeServiceError(w, err)
 		return
 	}

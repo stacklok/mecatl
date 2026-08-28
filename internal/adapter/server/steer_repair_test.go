@@ -224,7 +224,7 @@ func TestSteer_TerminateWindowPromotes(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		svc.FinishRun(sess.ID, run)
 	}()
-	outc, promoted, run2, err := svc.Steer(ctx, sess.ID, "steer in the drain window", nil, "")
+	outc, promoted, run2, err := svc.Steer(ctx, sess.ID, "steer in the drain window", nil, "", "")
 	if err != nil {
 		t.Fatalf("Steer in the terminate window: %v (must promote, never drop)", err)
 	}

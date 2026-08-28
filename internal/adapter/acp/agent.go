@@ -578,7 +578,7 @@ func (a *Agent) handleSessionCancel(ctx context.Context, params json.RawMessage)
 	if err := json.Unmarshal(params, &n); err != nil || n.SessionID == "" {
 		return
 	}
-	if err := a.svc.Cancel(ctx, session.SessionID(n.SessionID)); err != nil {
+	if err := a.svc.Cancel(ctx, session.SessionID(n.SessionID), ""); err != nil {
 		a.diag.Log(ctx, port.LevelDebug, "acp: session/cancel", "session", n.SessionID, "err", err)
 	}
 }
@@ -622,7 +622,7 @@ func (a *Agent) handleSessionClose(ctx context.Context, params json.RawMessage) 
 	}
 	id := session.SessionID(req.SessionID)
 	// Cancel ongoing work first (best-effort: no live run is the common case).
-	if err := a.svc.Cancel(ctx, id); err != nil &&
+	if err := a.svc.Cancel(ctx, id, ""); err != nil &&
 		!errors.Is(err, server.ErrNoActiveRun) && !errors.Is(err, server.ErrNotFound) {
 		a.diag.Log(ctx, port.LevelDebug, "acp: session/close: cancel", "session", req.SessionID, "err", err)
 	}

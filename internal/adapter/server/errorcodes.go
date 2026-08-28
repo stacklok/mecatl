@@ -77,6 +77,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrCleanupPlanStale, Code: "cleanup_plan_stale", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Cleanup plan is stale"},
 	{Sentinel: ErrCleanupUnsupported, Code: "cleanup_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Session cleanup is not supported"},
 	{Sentinel: ErrCleanupBackend, Code: "cleanup_backend", GRPC: codes.Internal, HTTPStatus: http.StatusInternalServerError, Title: "Storage maintenance failed"},
+	{Sentinel: ErrStaleRunControl, Code: "stale_run_control", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Control targets a run that is no longer current"},
 	{Sentinel: ErrInvalidArgument, Code: "invalid_argument", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Invalid argument"},
 	{Sentinel: ErrNotFound, Code: "session_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Session not found"},
 	{Sentinel: ErrTeamNotFound, Code: "team_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Team not found"},

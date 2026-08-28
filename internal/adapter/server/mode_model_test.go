@@ -1267,7 +1267,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 					askingSelectorFactory(&ran2, mockllm.New(mockllm.TextTurn("done after approval")), store, &calls2),
 					nil)
 
-				run, err := svc2.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce)
+				run, err := svc2.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce, "")
 				if err != nil {
 					return nil, fmt.Errorf("awaiting-resume-caller: ApproveRun after restart: %w", err)
 				}

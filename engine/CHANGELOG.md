@@ -13,6 +13,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`agent.Run.RunID()`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — reports the run's host-minted identity, or `""` when none was supplied.
+
+  It exists so a caller holding a `*Run` can ASK which run it holds instead of inferring it from the session aggregate, and that distinction is load-bearing for stale-control refusal: a control addressed at a specific run must be compared against the run it would ACTUALLY affect, and the aggregate names the session's CURRENT run — which, after a terminal race, is precisely the run the caller did NOT mean.
+
 - **Durable run identity: `session.Event.RunID`, `session.Session.BeginRun`/`RunID`, `agent.RunRequest.RunID`, `sessnap.Snapshot.RunID`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — a run now carries an opaque, host-minted identity that survives restart.
 
   `agent.RunRequest.RunID` is how a host supplies it. The loop stamps every event it emits with that value at `Run.emit`/`emitOrAbort`, beside the existing `Seq` stamp — so `session.Event.RunID` is populated on every path an event can leave a run by, with no relay, transport, or persistence site able to omit it. `Seq` is monotonic WITHIN a run and restarts each run, so it cannot distinguish two runs of one session; `RunID` is what makes an event attributable to a specific run.

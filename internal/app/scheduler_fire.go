@@ -173,7 +173,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 				// run.Cancel(); a not-found/already-finished run is a nil-safe
 				// no-op (the watchdog only arms for a deadline, so a stale fire
 				// after a clean completion is harmless — Stop already ran).
-				_ = svc.Cancel(context.WithoutCancel(ownerCtx), sess.ID)
+				_ = svc.Cancel(context.WithoutCancel(ownerCtx), sess.ID, "")
 			})
 			stopTimer = func() { timer.Stop() }
 		}

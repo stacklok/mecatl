@@ -3669,7 +3669,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 // caller supplied none). On an accepted steer it parks in the session's FIFO so
 // the EvSteer drain echo can echo it (LookupSteerMessageID); the ACK-side echo
 // is the caller's own frame field (it never crosses the Service).
-func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID string) (agent.SteerOutcome, bool, *agent.Run, error) {
+func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID, expectedRunID string) (agent.SteerOutcome, bool, *agent.Run, error) {
 	// Authorize before touching the in-memory registry or the run-entry funnel:
 	// a steer injects caller input into a run / drives a follow-up, so a foreign
 	// request must be absence-equivalent (ErrNotFound), mirroring Cancel/Approve.
@@ -3680,6 +3680,9 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	// engine disarmed steer (EnableSteer off) reports too_late; it is PROMOTED
 	// rather than dropped — same lost-race contract as a closed inbox.
 	if run, ok := s.LookupRun(id); ok {
+		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			return agent.SteerTooLate, false, nil, err
+		}
 		outcome, err := run.EnqueueSteer(text, parts)
 		if err == nil && outcome != agent.SteerTooLate {
 			// Track BOTH accepted (new bundle) and appended (merged into the pending
@@ -3708,6 +3711,19 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	// promoted steer pays the wait — the shared funnel stays byte-identical, so
 	// a concurrent legitimate prompt on the same live session is never wrongly
 	// delayed.
+	// STRICT STEER (ADR 0249): a caller that named a specific run did NOT ask to
+	// start a different one. Promotion is the right default for an unqualified
+	// steer — the operator meant "say this to the agent", and a fresh follow-up
+	// run says it — but it is the wrong answer for "say this to run X", where X
+	// has already ended. Refusing is the honest outcome, and it is what lets an
+	// SDK offer a steer that never surprises a caller with an extra run.
+	//
+	// The guard is here rather than at the top because the live path above may
+	// still succeed: expected_run_id only forbids PROMOTION, it does not forbid
+	// steering the run it names.
+	if expectedRunID != "" {
+		return agent.SteerTooLate, false, nil, checkExpectedRun(expectedRunID, "")
+	}
 	promotedRun, err := s.promotedSteerRun(ctx, id, text, parts)
 	if err != nil {
 		return agent.SteerTooLate, false, nil, err
@@ -4579,7 +4595,7 @@ func (s *Service) awaitRunDeregister(ctx context.Context, id session.SessionID, 
 // ErrNoActiveRun; an unknown session yields ErrNotFound. The returned run, when
 // non-nil, is the resumed run the wire adapter must drain + FinishRun.
 func (s *Service) Approve(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict) error {
-	_, err := s.ApproveRun(ctx, id, askID, verdict)
+	_, err := s.ApproveRun(ctx, id, askID, verdict, "")
 	return err
 }
 
@@ -4608,7 +4624,7 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // frame for a dead run is silently dropped. The gRPC rehydrate path is a tracked
 // follow-up (additive, out of the Phase 2 gate) — see docs/adr/0027-cloud-native.md
 // Phase 2.
-func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict) (*agent.Run, error) {
+func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
 	// Authorize before reading the in-memory registry: a mismatch must be
 	// indistinguishable from a missing handle and cannot signal a live run.
 	if _, err := s.GetSession(ctx, id); err != nil {
@@ -4616,10 +4632,16 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 	}
 	// Fast path (lock-free): a live registered run resolves the ask over its channel.
 	if run, ok := s.LookupRun(id); ok {
+		// Compare against the run that would ACTUALLY receive the verdict, not the
+		// session's stored id: after a terminal race those can differ, and the
+		// whole point of expected_run_id is to refuse exactly that case (ADR 0245).
+		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			return nil, err
+		}
 		run.Approve(askID, verdict)
 		return nil, nil
 	}
-	return s.resumeFromAwaiting(ctx, id, askID, verdict)
+	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID)
 }
 
 // resumeFromAwaiting is the service half of the fourth (awaiting-only) run-entry
@@ -4644,7 +4666,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 // mirrors rehydrateSession's loser-teardown/MaxSessionEngines guard via
 // engineAndEnvironmentFor; the resumed run is registered into s.runs like any other so
 // a concurrent Cancel/Approve reaches it and FinishRun cleans it up.
-func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict) (*agent.Run, error) {
+func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
 	unlock := s.resumeMu.lock(id)
 	defer unlock()
 
@@ -4664,6 +4686,12 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		return nil, err
 	}
 	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return nil, err
+	}
+	// On this path the persisted session IS the run — it parked awaiting the ask
+	// and no live *agent.Run exists — so the stored id is the authoritative answer
+	// to "which run would this verdict resolve?" (ADR 0245).
+	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
 		return nil, err
 	}
 	if sess.State != session.StateAwaiting {
@@ -4774,7 +4802,11 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 	// The askID is read off the snapshot above; resumeFromAwaiting re-validates
 	// state under its resumeMu lock, so a concurrent resume that won the race
 	// returns (nil, nil) — handled below (no run to drain).
-	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict)
+	// ApprovePlan is an atomic RPC addressed at the session, not at a run: the
+	// caller approves THE PLAN this session is parked on, and the askID is read
+	// off the snapshot rather than supplied. There is no caller expectation to
+	// enforce, so it passes no expected run id.
+	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict, "")
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -4891,7 +4923,7 @@ func planVerdictForMode(m session.PermissionMode) (verdict session.ApprovalVerdi
 // Cancel cancels the session's in-flight run. The store-fallback semantics match
 // Approve: ErrNotFound when the session is unknown, ErrNoActiveRun when it
 // exists only in the store with no live run.
-func (s *Service) Cancel(ctx context.Context, id session.SessionID) error {
+func (s *Service) Cancel(ctx context.Context, id session.SessionID, expectedRunID string) error {
 	// Authorize before reading the in-memory registry: cancellation is a live
 	// signal and a foreign request must be absence-equivalent.
 	if _, err := s.GetSession(ctx, id); err != nil {
@@ -4899,6 +4931,12 @@ func (s *Service) Cancel(ctx context.Context, id session.SessionID) error {
 	}
 	run, ok := s.LookupRun(id)
 	if ok {
+		// Cancelling the WRONG run is the costliest stale-control outcome — it
+		// destroys work rather than merely permitting it — so the guard runs before
+		// the signal, never after.
+		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			return err
+		}
 		run.Cancel()
 		return nil
 	}

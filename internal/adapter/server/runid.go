@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/base32"
+	"fmt"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -69,4 +70,31 @@ var runlessEventTypes = map[session.EventType]struct{}{
 func allowsEmptyRunID(t session.EventType) bool {
 	_, ok := runlessEventTypes[t]
 	return ok
+}
+
+// checkExpectedRun enforces a control's expected_run_id (ADR 0245).
+//
+// expected == "" is the legacy path: the control applies to whatever run is
+// current, exactly as before run ids existed. A non-empty value that does not
+// match is refused with ErrStaleRunControl and the current run is untouched.
+//
+// The comparison is against the run the control would ACTUALLY affect, which the
+// caller resolves and passes in — a live *agent.Run's own id, or the loaded
+// session's id on the cross-process resume path. Resolving it here instead would
+// mean a second lookup (and, on the resume path, a second load) for a check that
+// is a no-op for every existing client.
+//
+// The message names BOTH ids on purpose. The caller already owns the session
+// (every control path authorizes first), so neither id is a disclosure, and a
+// stale-control failure is otherwise very hard to tell apart from a lost
+// approval: "I sent a verdict and nothing happened" reads identically whether
+// the ask was for a different run or never existed.
+func checkExpectedRun(expected, actual string) error {
+	if expected == "" || expected == actual {
+		return nil
+	}
+	if actual == "" {
+		return fmt.Errorf("%w: control targets run %q but the session has no current run", ErrStaleRunControl, expected)
+	}
+	return fmt.Errorf("%w: control targets run %q but the session's current run is %q", ErrStaleRunControl, expected, actual)
 }

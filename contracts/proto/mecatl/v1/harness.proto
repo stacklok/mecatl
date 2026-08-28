@@ -1384,6 +1384,21 @@ message ResumeApproval {
   // always (which additionally LEARNS a per-session allow rule for the matching
   // tool + exact pattern). Preferred over `allow`; UNSPECIFIED falls back to it.
   ApprovalVerdict verdict = 3;
+  // expected_run_id, when set, scopes this control to ONE run: the server
+  // refuses it if the session's current run is a different one, and the newer
+  // run is left untouched.
+  //
+  // It closes a real race, not a hypothetical one. Controls are addressed at a
+  // SESSION, so a control still in flight when a run ends would otherwise land
+  // on whatever run started next — approving a tool call the user never saw, or
+  // cancelling work they did not ask to stop. `seq` cannot distinguish the two
+  // runs (it restarts each run), so before run ids there was no way to express
+  // "this one".
+  //
+  // EMPTY is the legacy behaviour exactly: the control applies to whatever run
+  // is current. Existing clients are unaffected; a client that knows the run id
+  // it is acting on should always send it.
+  string expected_run_id = 4;
 }
 
 // ApprovalVerdict is the client's three-way resolution of a permission.ask,
@@ -1406,7 +1421,15 @@ enum ApprovalVerdict {
 
 // Cancel aborts the in-flight run. The loop observes the cancellation and
 // terminates with a result carrying stop = "cancelled".
-message Cancel {}
+message Cancel {
+  // expected_run_id, when set, scopes the cancel to ONE run: the server refuses
+  // it if the session's current run is a different one. Cancelling the wrong run
+  // is the most costly stale-control outcome — it destroys work rather than
+  // merely permitting it — so a client that knows which run it is stopping
+  // should always send this. Empty keeps the legacy "cancel whatever is running"
+  // behaviour.
+  string expected_run_id = 1;
+}
 
 // CancelChild cancels ONE child of the in-flight run, addressed by its child
 // SESSION id — the same handle the model reads on the Subagent result's
@@ -1448,6 +1471,26 @@ message Steer {
   // parts carries image/audio content alongside text, using the same validated
   // wire shape as Prompt.parts. A media-only steer is valid.
   repeated Content parts = 3;
+  // expected_run_id, when set, scopes this control to ONE run: the server
+  // refuses it if the session's current run is a different one, and the newer
+  // run is left untouched.
+  //
+  // It closes a real race, not a hypothetical one. Controls are addressed at a
+  // SESSION, so a control still in flight when a run ends would otherwise land
+  // on whatever run started next — approving a tool call the user never saw, or
+  // cancelling work they did not ask to stop. `seq` cannot distinguish the two
+  // runs (it restarts each run), so before run ids there was no way to express
+  // "this one".
+  //
+  // EMPTY is the legacy behaviour exactly: the control applies to whatever run
+  // is current. Existing clients are unaffected; a client that knows the run id
+  // it is acting on should always send it.
+  //
+  // On a steer it is additionally STRICT: supplying it means "steer this run or
+  // nothing". A steer that loses the terminal race is normally PROMOTED into a
+  // fresh follow-up run; with expected_run_id set it is refused instead, because
+  // a caller naming a specific run did not ask to start a different one.
+  string expected_run_id = 4;
 }
 
 // SteerCancel retracts the run's PENDING (un-drained) steer, if any. It is
@@ -1458,6 +1501,21 @@ message SteerCancel {
   // message_id is the CLIENT-MINTED correlation key, echoed verbatim on the
   // steer.outcome ack (same contract as Steer.message_id).
   string message_id = 1;
+  // expected_run_id, when set, scopes this control to ONE run: the server
+  // refuses it if the session's current run is a different one, and the newer
+  // run is left untouched.
+  //
+  // It closes a real race, not a hypothetical one. Controls are addressed at a
+  // SESSION, so a control still in flight when a run ends would otherwise land
+  // on whatever run started next — approving a tool call the user never saw, or
+  // cancelling work they did not ask to stop. `seq` cannot distinguish the two
+  // runs (it restarts each run), so before run ids there was no way to express
+  // "this one".
+  //
+  // EMPTY is the legacy behaviour exactly: the control applies to whatever run
+  // is current. Existing clients are unaffected; a client that knows the run id
+  // it is acting on should always send it.
+  string expected_run_id = 2;
 }
 
 // SteerOutcome is the AUTHORITATIVE result of a steer inbox transition,

@@ -136,7 +136,8 @@ Stale controls fail instead of landing on a newer run. Closes a real current bug
 
 **Work:**
 - `contracts/proto`: optional `expected_run_id` on approve, cancel, and steer.
-- `internal/adapter/server`: the guard on each control path; strict HTTP steer.
+- `internal/adapter/server`: the guard on each control path (`ApproveRun`, `Cancel`, `Steer`), plus strict steer. Steer is gRPC-only — ADR 0232 deferred an HTTP steer route and none exists — so "strict steer" means the promote path is refused when the frame names a run, not a second HTTP surface.
+- `engine/agent`: `Run.RunID()`, so a control is compared against the run it would ACTUALLY affect rather than the session's stored id (after a terminal race those differ, which is exactly the case being refused).
 
 **Acceptance:**
 - AC5.1: A control carrying the active run's id succeeds exactly as before.
@@ -145,9 +146,9 @@ Stale controls fail instead of landing on a newer run. Closes a real current bug
   - verify: `TestADR_0245_StaleControlCannotTouchNewerRun`
 - AC5.3: A control omitting `expected_run_id` behaves exactly as today, so `mecatui` is unaffected.
   - verify: `TestSDKServerEnablers_Scenario5_OmittedExpectedRunIDUnchanged`
-- AC5.4: A strict steer is never promoted into a new run; a late steer reports its outcome rather than starting one.
+- AC5.4: A steer carrying `expected_run_id` is never promoted into a new run — naming a run is not asking to start a different one. It is refused with the typed stale-control error instead.
   - verify: `TestADR_0245_StrictSteerNeverPromotes`
-- AC5.5: Existing steer promotion behaviour is preserved on the explicit non-strict session API.
+- AC5.5: An UNQUALIFIED steer (no `expected_run_id`) that loses the terminal race still promotes into a follow-up run, exactly as ADR 0232 shipped it — the strictness is opt-in and must not silently start dropping operator input.
   - verify: `TestSDKServerEnablers_Scenario5_PromotionRetainedOnRawAPI`
 
 ---

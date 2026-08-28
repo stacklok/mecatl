@@ -95,10 +95,27 @@ func TestSDKServerEnablers_Scenario2_RegistryPreservesPreRefactorMappings(t *tes
 			t.Errorf("%v: empty code", want.sentinel)
 		}
 	}
-	// Every golden sentinel must be REACHABLE — a row present but shadowed by an
-	// earlier, more general row would classify correctly here only by accident.
-	if len(preRefactorMappings) != len(errorRegistry) {
-		t.Errorf("registry has %d rows, golden table has %d — a sentinel was added or dropped without updating the proof",
+	// The registry may GROW — later work adds sentinels, and ErrStaleRunControl
+	// (ADR 0245) was the first — so this is deliberately NOT a count equality.
+	// Asserting the count would turn every legitimate addition into a failing
+	// test that the next person "fixes" by bumping a number, which teaches people
+	// to edit the proof instead of reading it.
+	//
+	// What must never happen is a pre-refactor sentinel being LOST or reclassified,
+	// and the per-row loop above already proves that for classification. This
+	// checks the remaining half: every golden sentinel still resolves to its OWN
+	// row, not to a more general row that happens to share its status. A shadowed
+	// sentinel would pass the loop above by accident and then hand clients the
+	// wrong stable code.
+	for _, want := range preRefactorMappings {
+		got := classifyError(want.sentinel)
+		if got.Sentinel == nil || !errors.Is(want.sentinel, got.Sentinel) {
+			t.Errorf("%v no longer resolves to its own registry row (got %q); a more general row shadows it",
+				want.sentinel, got.Code)
+		}
+	}
+	if len(errorRegistry) < len(preRefactorMappings) {
+		t.Errorf("registry has %d rows but the golden table has %d — a sentinel was DROPPED",
 			len(errorRegistry), len(preRefactorMappings))
 	}
 }

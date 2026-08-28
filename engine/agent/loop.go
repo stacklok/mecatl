@@ -824,6 +824,17 @@ type RunRequest struct {
 	AskIDDiscriminator string
 }
 
+// RunID reports the opaque, host-minted identity of this run (ADR 0245), or ""
+// when the host supplied none.
+//
+// It exists so a caller holding a *Run can ASK which run it holds, rather than
+// inferring it from the session aggregate. That distinction matters for stale
+// controls: a control addressed at a specific run must be compared against the
+// run it would actually affect, and a session's aggregate is a step removed from
+// that (it names the session's CURRENT run, which after a terminal race may not
+// be the one the caller is holding).
+func (r *Run) RunID() string { return r.runID }
+
 // Events returns the channel of domain Events for this run. It is closed when the
 // run ends (after the terminal result Event has been delivered).
 func (r *Run) Events() <-chan session.Event { return r.events }

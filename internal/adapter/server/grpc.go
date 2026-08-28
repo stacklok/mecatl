@@ -746,9 +746,15 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 		case *mecatlv1.ConverseRequest_ResumeApproval:
 			if k.ResumeApproval != nil {
 				ra := k.ResumeApproval
+				if h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
+					break
+				}
 				ct.active().Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
 			}
 		case *mecatlv1.ConverseRequest_Cancel:
+			if k.Cancel != nil && h.staleStreamControl(ctx, id, "cancel", k.Cancel.GetExpectedRunId(), ct.active()) {
+				break
+			}
 			ct.active().Cancel()
 		case *mecatlv1.ConverseRequest_CancelChild:
 			if k.CancelChild != nil {
@@ -774,6 +780,33 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 	}
 }
 
+// staleStreamControl reports whether a Converse control frame names a run that
+// is no longer the active one, refusing it if so (ADR 0245).
+//
+// The refusal is SILENT to the client, and that asymmetry is deliberate rather
+// than an oversight. Converse's approve and cancel frames are fire-and-forget:
+// the stream carries no per-control ack to put a typed error on, so the choices
+// are refuse-and-log or tear down the whole stream over one stale frame. Tearing
+// down would punish a client for a race it cannot avoid. A caller that needs the
+// typed ErrStaleRunControl uses the HTTP control endpoints, which return it; the
+// steer frame is the exception on this stream because it already HAS an ack
+// channel, so it reports too_late.
+//
+// The operator-visible half is the diagnostic below: nothing in the event
+// taxonomy reports a refused control, so without it a stale approve would vanish
+// without trace.
+func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) bool {
+	if expected == "" || run == nil {
+		return false
+	}
+	if err := checkExpectedRun(expected, run.RunID()); err != nil {
+		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "stale control frame refused",
+			"session", string(id), "frame", frame, "expected_run", valid(expected), "active_run", valid(run.RunID()))
+		return true
+	}
+	return false
+}
+
 // handleSteerFrame routes one steer frame through the Service (the single
 // routing owner — the handler is a dumb frame→Service mapper, mirroring how
 // the Approve/Cancel frames route). The Service decides live-enqueue vs
@@ -785,6 +818,7 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 // drop). Every ack echoes the frame's client-minted message_id.
 func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.SessionID, frame *mecatlv1.Steer, rl *runRelay, ho *steerHandoff) {
 	text, msgID := frame.GetText(), frame.GetMessageId()
+	expectedRunID := frame.GetExpectedRunId()
 	parts, perr := contentFromProto(frame.GetParts())
 	if perr != nil || (text == "" && len(parts) == 0) {
 		reason := "empty"
@@ -795,7 +829,7 @@ func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.Session
 		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE, Text: valid(text), MessageId: valid(msgID)})
 		return
 	}
-	outcome, promoted, promotedRun, err := h.svc.Steer(ctx, id, text, parts, msgID)
+	outcome, promoted, promotedRun, err := h.svc.Steer(ctx, id, text, parts, msgID, expectedRunID)
 	switch {
 	case err != nil:
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "steer route failed", "session", string(id), "error", err)

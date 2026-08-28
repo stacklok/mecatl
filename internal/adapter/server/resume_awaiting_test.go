@@ -135,7 +135,7 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 	var ran2 atomic.Int64
 	svc2 := newAskingService(t, store2, ps2, &ran2, mockllm.New(mockllm.TextTurn("done after approval")), true)
 
-	run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce)
+	run, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, "")
 	if err != nil {
 		t.Fatalf("ApproveRun after restart: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestApproveSameProcessUsesLiveRun(t *testing.T) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			// The live run is registered, so ApproveRun routes over the channel and
 			// returns (nil, nil) — NOT a new resumed run.
-			resumed, aerr := svc.ApproveRun(context.Background(), sess.ID, ev.Ask.AskID, session.VerdictAllowOnce)
+			resumed, aerr := svc.ApproveRun(context.Background(), sess.ID, ev.Ask.AskID, session.VerdictAllowOnce, "")
 			if aerr != nil {
 				t.Errorf("ApproveRun (same-process): %v", aerr)
 			}
@@ -335,7 +335,7 @@ func TestConcurrentApproveAfterRestartExecutesOnce(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			runs[i], errs[i] = svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce)
+			runs[i], errs[i] = svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowOnce, "")
 		}(i)
 	}
 	close(start)
