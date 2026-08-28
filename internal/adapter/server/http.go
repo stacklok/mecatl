@@ -16,7 +16,6 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -2110,158 +2109,33 @@ func modeFromString(s string) session.PermissionMode {
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
+	writeJSONBody(w, v)
+}
+
+// writeJSONBody encodes v to w. It is split out of writeJSON so the RFC 9457
+// path (which sets its own Content-Type and status) shares the one encoder.
+func writeJSONBody(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// writeError writes a JSON {"error": msg} body with the given status code.
+// writeError writes an RFC 9457 problem body for a caller that already knows the
+// HTTP status but has no service sentinel — request-shape failures raised inside
+// a handler (malformed JSON, a missing required field, an oversized body).
+//
+// It derives the stable code from the status rather than inventing one per call
+// site, so the ~40 existing callers keep working unchanged while every response
+// still carries a machine-readable code.
 func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	writeProblem(w, entryForHTTPStatus(code), msg)
 }
 
-// writeServiceError maps a service sentinel error to an HTTP status.
+// writeServiceError writes a service sentinel error as an RFC 9457 problem.
 //
-//nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
+// It is a REGISTRY LOOKUP, not a switch. It used to be a 49-case
+// errors.Is chain maintained in parallel with toStatus in grpc.go; the two
+// agreed only by discipline, and a sentinel added to one and forgotten in the
+// other would have reported a different class per transport. Both now read
+// errorRegistry, so they cannot disagree. See ADR 0244.
 func writeServiceError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, ErrManagementUnauthorized):
-		writeError(w, http.StatusForbidden, err.Error())
-	case errors.Is(err, ErrStorageHealthBackend):
-		writeError(w, http.StatusInternalServerError, err.Error())
-	case errors.Is(err, ErrMigrationUnsupported):
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, ErrMigrationConflict):
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrMigrationBackend):
-		writeError(w, http.StatusInternalServerError, err.Error())
-	case errors.Is(err, ErrCleanupPlanStale):
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrCleanupUnsupported):
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, ErrCleanupBackend):
-		writeError(w, http.StatusInternalServerError, err.Error())
-	case errors.Is(err, ErrInvalidArgument):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrTeamNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrChildNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrLearningUnavailable):
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, ErrProposalConflict):
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrDreamUnavailable):
-		writeError(w, http.StatusNotImplemented, ErrDreamUnavailable.Error())
-	case errors.Is(err, ErrDreamNotFound):
-		writeError(w, http.StatusNotFound, ErrDreamNotFound.Error())
-	case errors.Is(err, ErrDreamInProgress):
-		writeError(w, http.StatusConflict, ErrDreamInProgress.Error())
-	case errors.Is(err, ErrDreamConflict):
-		writeError(w, http.StatusPreconditionFailed, ErrDreamConflict.Error())
-	case errors.Is(err, ErrDreamTerminalConflict):
-		writeError(w, http.StatusGone, ErrDreamTerminalConflict.Error())
-	case errors.Is(err, ErrDreamCapacity):
-		writeError(w, http.StatusTooManyRequests, ErrDreamCapacity.Error())
-	case errors.Is(err, ErrDreamGenerateFailed):
-		writeError(w, http.StatusInternalServerError, ErrDreamGenerateFailed.Error())
-	case errors.Is(err, ErrDreamApplyFailed):
-		writeError(w, http.StatusInternalServerError, ErrDreamApplyFailed.Error())
-	case errors.Is(err, ErrDreamDeadline):
-		writeError(w, http.StatusGatewayTimeout, ErrDreamDeadline.Error())
-	case errors.Is(err, ErrDreamRequestFailed):
-		writeError(w, http.StatusInternalServerError, ErrDreamRequestFailed.Error())
-	case errors.Is(err, ErrFailedStepRetryIneligible):
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrFailedPrecondition):
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrTeamsDisabled):
-		// Teams are not enabled (no MemberEngine wired): a precondition for any
-		// team RPC is unmet. The gRPC side maps it to FailedPrecondition.
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrTeamRunning):
-		// The team is already running: a second run, a late spawn, or a cleanup
-		// of a live team. FailedPrecondition, like the gRPC side.
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrTeamNotRunning):
-		// The team is NOT running (created-but-never-run, or already done): a
-		// CancelTeammate has no in-flight run to reach into. FailedPrecondition,
-		// like the gRPC side.
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrTooManyTeams):
-		// The live-team registry is at MaxTeams (gRPC: ResourceExhausted).
-		writeError(w, http.StatusTooManyRequests, err.Error())
-	case errors.Is(err, ErrTooManySessionEngines):
-		// The per-session engine registry is at MaxSessionEngines (gRPC:
-		// ResourceExhausted): the client must release a session before opening another.
-		writeError(w, http.StatusTooManyRequests, err.Error())
-	case errors.Is(err, ErrNoScheduleStore):
-		// The configured store backend does not implement ScheduleStore: the
-		// schedule RPCs are not available on this deployment. 501.
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, ErrNoEventLog):
-		// No durable EventLog (cloud-native Phase 3a) is configured: the
-		// StreamSessionEvents read-back surface is not available on this
-		// deployment. 501 (gRPC Unimplemented).
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, ErrSessionDeleteUnsupported):
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, port.ErrSessionMetadataCursorRestart):
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, ErrSchedulerNotRunning):
-		// A ScheduleStore is available but no in-process scheduler is wired to
-		// drive a manual FireNow. 412 (gRPC FailedPrecondition), distinct from
-		// ErrNoScheduleStore's 501 (the store itself works fine).
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrScheduleDisabled):
-		// FireNow on a paused/done schedule. 412 (gRPC FailedPrecondition).
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrScheduleExhausted):
-		// FireNow on an already-fired one-shot. 412 (gRPC FailedPrecondition).
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrFireNowOverlap):
-		// FireNow singleton-overlap skip. 412 (gRPC FailedPrecondition) — the
-		// schedule exists and is well-formed, it is just running.
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrScheduleNotLeader):
-		// FireNow on a standby (non-leader) replica. 412 (gRPC
-		// FailedPrecondition); the message names the leader to redirect to.
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, port.ErrScheduleNotFound):
-		// A schedule/fire not found from the store. 404.
-		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, port.ErrScheduleUnsupported):
-		// The backend can never store schedules (a sticky-disable case). 501.
-		writeError(w, http.StatusNotImplemented, err.Error())
-	case errors.Is(err, ErrNoActiveRun):
-		// Known session, but its run is not live in this process (e.g. the
-		// stream was lost across a restart): nothing to deliver the control to.
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrNotAwaitingPlan):
-		// ApprovePlan precondition (issue #206, Wave 4): the session is not parked
-		// awaiting a plan-originated ask (it is live, not awaiting, or awaiting a
-		// generic tool ask). 409 Conflict — the session exists and is well-formed,
-		// it is just not in the state this atomic RPC requires.
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrSessionLeasedElsewhere):
-		// Cloud-native Phase 4: another replica holds the session's single-writer
-		// lease. 409 Conflict — the session exists and is well-formed, it is just
-		// owned by another process right now (a later retry can succeed).
-		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrUnavailable):
-		// ADR 0048 drain gate: this replica is draining (graceful shutdown) and
-		// refuses new run-entries. 503 so the client retries a survivor.
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, ErrNoMCPProvider):
-		// No MCP provider is wired: the precondition for read/get is unmet.
-		writeError(w, http.StatusPreconditionFailed, err.Error())
-	case errors.Is(err, ErrInternal):
-		// A downstream/transport fault on a connected MCP server — not the
-		// client's fault, so 500 rather than 400.
-		writeError(w, http.StatusInternalServerError, err.Error())
-	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
-	}
+	writeProblem(w, classifyError(err), err.Error())
 }

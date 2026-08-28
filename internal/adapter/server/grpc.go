@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -1508,131 +1509,39 @@ func toProtoCleanupJob(job CleanupJob) *mecatlv1.CleanupJob {
 //
 //nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
 func toStatus(err error) error {
-	switch {
-	case errors.Is(err, ErrManagementUnauthorized):
-		return status.Error(codes.PermissionDenied, err.Error())
-	case errors.Is(err, ErrStorageHealthBackend):
-		return status.Error(codes.Internal, err.Error())
-	case errors.Is(err, ErrMigrationUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrMigrationConflict):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, ErrMigrationBackend):
-		return status.Error(codes.Internal, err.Error())
-	case errors.Is(err, ErrCleanupPlanStale):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, ErrCleanupUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrCleanupBackend):
-		return status.Error(codes.Internal, err.Error())
-	case errors.Is(err, ErrInvalidArgument):
-		return status.Error(codes.InvalidArgument, err.Error())
-	case errors.Is(err, ErrNotFound):
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ErrTeamNotFound):
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ErrChildNotFound):
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ErrLearningUnavailable):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrProposalConflict):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, ErrDreamUnavailable):
-		return status.Error(codes.Unimplemented, ErrDreamUnavailable.Error())
-	case errors.Is(err, ErrDreamNotFound):
-		return status.Error(codes.NotFound, ErrDreamNotFound.Error())
-	case errors.Is(err, ErrDreamInProgress):
-		return status.Error(codes.Aborted, ErrDreamInProgress.Error())
-	case errors.Is(err, ErrDreamConflict):
-		return status.Error(codes.FailedPrecondition, ErrDreamConflict.Error())
-	case errors.Is(err, ErrDreamTerminalConflict):
-		return status.Error(codes.AlreadyExists, ErrDreamTerminalConflict.Error())
-	case errors.Is(err, ErrDreamCapacity):
-		return status.Error(codes.ResourceExhausted, ErrDreamCapacity.Error())
-	case errors.Is(err, ErrDreamGenerateFailed):
-		return status.Error(codes.Internal, ErrDreamGenerateFailed.Error())
-	case errors.Is(err, ErrDreamApplyFailed):
-		return status.Error(codes.Internal, ErrDreamApplyFailed.Error())
-	case errors.Is(err, ErrDreamDeadline):
-		return status.Error(codes.DeadlineExceeded, ErrDreamDeadline.Error())
-	case errors.Is(err, ErrDreamRequestFailed):
-		return status.Error(codes.Internal, ErrDreamRequestFailed.Error())
-	case errors.Is(err, ErrFailedStepRetryIneligible):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrFailedPrecondition):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrNoActiveRun):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrNotAwaitingPlan):
-		// ApprovePlan precondition (issue #206, Wave 4): the session is not parked
-		// awaiting a plan-originated ask. FailedPrecondition (HTTP 409).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrSessionLeasedElsewhere):
-		// Cloud-native Phase 4: another replica holds the session's single-writer
-		// lease. Well-formed request, transiently owned elsewhere — FailedPrecondition
-		// (consistent with ErrNoActiveRun; HTTP maps it to 409 Conflict).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrUnavailable):
-		// ADR 0048 drain gate: this replica is draining (graceful shutdown) and
-		// refuses new run-entries. Unavailable (HTTP 503) so the client retries a
-		// survivor.
-		return status.Error(codes.Unavailable, err.Error())
-	case errors.Is(err, ErrNoMCPProvider):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTeamsDisabled):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTeamRunning):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTeamNotRunning):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTooManyTeams):
-		return status.Error(codes.ResourceExhausted, err.Error())
-	case errors.Is(err, ErrTooManySessionEngines):
-		return status.Error(codes.ResourceExhausted, err.Error())
-	case errors.Is(err, ErrNoScheduleStore):
-		// The configured store backend does not implement ScheduleStore: the
-		// schedule RPCs are not available on this deployment. Unimplemented.
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrNoEventLog):
-		// No durable EventLog (cloud-native Phase 3a) is configured: the
-		// StreamSessionEvents read-back surface is not available on this
-		// deployment. Unimplemented (HTTP 501).
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrSessionDeleteUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, port.ErrSessionMetadataCursorRestart):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrSchedulerNotRunning):
-		// A ScheduleStore is available but no in-process scheduler is wired to
-		// drive a manual FireNow. FailedPrecondition (HTTP 412), distinct from
-		// ErrNoScheduleStore's Unimplemented (the store itself works fine).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrScheduleDisabled):
-		// FireNow on a paused/done schedule. FailedPrecondition (HTTP 412).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrScheduleExhausted):
-		// FireNow on an already-fired one-shot. FailedPrecondition (HTTP 412).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrFireNowOverlap):
-		// FireNow singleton-overlap skip. FailedPrecondition (HTTP 412) — the
-		// schedule exists and is well-formed, it is just running.
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrScheduleNotLeader):
-		// FireNow on a standby (non-leader) replica. FailedPrecondition (HTTP
-		// 412); the message names the leader to redirect to.
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, port.ErrScheduleNotFound):
-		// A schedule/fire not found from the store. NotFound (HTTP 404).
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, port.ErrScheduleUnsupported):
-		// The backend can never store schedules (a sticky-disable case).
-		// Unimplemented (HTTP 501).
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrInternal):
-		return status.Error(codes.Internal, err.Error())
-	default:
-		return status.Error(codes.Internal, err.Error())
-	}
+	return statusForEntry(classifyError(err), err)
 }
+
+// statusForEntry builds the gRPC status for a classified error, attaching the
+// stable mecatl code as a google.rpc.ErrorInfo detail.
+//
+// ErrorInfo is the standard carrier for exactly this (a machine-readable
+// `Reason` plus a `Domain` that scopes it), so a client reads the same
+// identifier the HTTP surface puts in the problem body's `code`. gRPC status
+// codes are far coarser than the domain — a dozen distinct conditions collapse
+// onto FailedPrecondition — so without the detail a gRPC caller simply cannot
+// tell them apart, and the SDK's "same normalized errors on both transports"
+// promise would be false on the gRPC side.
+//
+// The message stays err.Error(), unchanged from before this registry landed, and
+// is repaired to valid UTF-8: it can carry a downstream's error text, and
+// invalid UTF-8 in a status message is the marshal-time fault AGENTS.md
+// documents. If attaching the detail fails (it can only fail on a marshal
+// error), the bare status is returned — a missing detail degrades a client to
+// the old coarse behaviour, whereas dropping the status entirely would lose the
+// error.
+func statusForEntry(entry errorCodeEntry, err error) error {
+	st := status.New(entry.GRPC, session.ToValidUTF8(err.Error()))
+	withDetail, derr := st.WithDetails(&errdetails.ErrorInfo{
+		Reason: entry.Code,
+		Domain: errorDomain,
+	})
+	if derr != nil {
+		return st.Err()
+	}
+	return withDetail.Err()
+}
+
+// errorDomain scopes the ErrorInfo Reason above, per the google.rpc.ErrorInfo
+// contract that a Reason is unique only within its Domain.
+const errorDomain = "mecatl.stacklok.com"
