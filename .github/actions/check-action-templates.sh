@@ -28,16 +28,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GH_DIR="$(cd "${HERE}/.." && pwd)"          # the .github/ dir (.github/actions/ -> ..)
 
-# Collect the parsed-manifest set: all workflow YAML under .github/ plus every composite-action
-# manifest under .github/actions/. -print0 / read -d '' keeps paths with spaces intact. The
-# action.yml glob is a SUBSET of the .github/**/*.yml glob, so de-dup below (associative array).
-declare -A seen=()
+# Collect every parsed manifest once: the YAML find already includes composite-action
+# manifests below .github/actions/, so no de-duplication structure is needed.
 files=()
 while IFS= read -r -d '' f; do
-  if [ -z "${seen[$f]:-}" ]; then
-    seen[$f]=1
-    files+=("${f}")
-  fi
+  files+=("${f}")
 done < <(
   find "${GH_DIR}" -type f \( -name '*.yml' -o -name '*.yaml' \) -print0
 )

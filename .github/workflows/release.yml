@@ -515,13 +515,11 @@ jobs:
           echo "Resolved chart version: $CHART_VERSION (from ${VERSION})"
 
       # Bare `helm lint` renders with an empty values.yaml, which trips this
-      # chart's required-field guards (image.tag, redis.endpoint, ...) — those
-      # surface as non-fatal INFO lines that helm lint still renders past
-      # (see Taskfile.yml's deploy:check comment on why it prefers `helm
-      # template | kubeconform` for the same reason), so lint here with the
-      # same minimal production-shaped overrides that target already uses.
+      # chart's required-field guards (image.tag, redis.endpoint, ...) and its
+      # secure real-provider TLS/OIDC contract. Lint with the same minimal
+      # production-shaped overrides that target already uses.
       - name: helm lint
-        run: helm lint "${CHART_PATH}" --set image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials
+        run: helm lint "${CHART_PATH}" --set image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
 
       - name: helm package
         env:
