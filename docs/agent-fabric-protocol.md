@@ -830,8 +830,5 @@ Practical notes for such an adapter:
 
 ---
 
-## See also
-
-- [Mecatl extensibility](architecture/extensibility.md) — the current MCP and
-  engine-extension surface this draft complements; Fabric is not implemented by
-  mecatl.
+See also: [Extensibility](architecture/extensibility.md) for how mecatl
+consumes MCP and skills today, and the [documentation index](README.md).
