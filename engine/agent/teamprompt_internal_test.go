@@ -297,7 +297,7 @@ func TestSynthesisSourcesFlagRetriedMembers(t *testing.T) {
 }
 
 // assertTrustedGoal asserts that out renders goal as a TRUSTED instruction: the goal
-// text follows the "Team goal:\n" header PLAIN (not wrapped in an governance.UntrustedFence), and
+// text follows the "Team goal:\n" header PLAIN (not wrapped in a governance.UntrustedFence), and
 // the header is NOT immediately followed by an opening fence. It is the shared
 // structure check for the member and synthesis trusted-goal tests (AC1).
 //

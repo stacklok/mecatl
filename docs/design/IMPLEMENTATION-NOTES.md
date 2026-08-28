@@ -3257,23 +3257,26 @@ default** (the composition returns inner unchanged when unconfigured). Split acr
 three layers to keep the engine importable and the verdict shape in the adapter:
 
 - **`internal/adapter/modelhook/`** — the `Runner`, the adapter-local `VerdictChecker`
-  port (keeps engine/agent types out of the adapter), `Verdict` + `ParseVerdict`
-  (whole-output-single-object, the #31 discipline — **not** `session.ValidateJSON`),
-  `CompileRule`/`RuleSpec`/`CompiledRule` + the most-specific-wins matcher, the
-  consecutive-failure `failureStreak`, the merge, the built-in inspection prompts. It imports
-  `engine/governance` for the canonical fence helpers (`governance.UntrustedFence` /
-  `NeutraliseFraming` / `WriteUntrustedBlock`), so the checker fences untrusted
-  content with the **same** single source of truth as the team/ask-review prompts.
+  port, `Verdict` + `ParseVerdict` (whole-output-single-object, the #31 discipline —
+  **not** `session.ValidateJSON`), `CompileRule`/`RuleSpec`/`CompiledRule` + the
+  most-specific-wins matcher, the consecutive-failure `failureStreak`, the merge,
+  and the built-in inspection prompts. It intentionally imports `engine/agent` only
+  for the shared `StripLoneCodeFence` parser; checker execution still crosses the
+  adapter-local port. It imports `engine/governance` for the five canonical fence APIs
+  (`UntrustedFence`, `WriteUntrustedBlock`, `FenceUntrusted`, `NeutraliseFraming`, and
+  `NeutraliseDelegationResult`), so the checker fences untrusted content with the
+  **same** single source of truth as the team/ask-review prompts.
 - **`engine/agent/guardrailcheck.go`** — `RunGuardrailCheck`, the engine-driving half
   (it needs the unexported `drainChild`): a tool-less one-turn drive bounded by
   `guardrailCheckTimeout` (30s). It is a **free function**, not an exported struct —
   matching the `engineAskReviewer` / `engineJudge` siblings, which keep the concrete
   impl unexported (composition noise stays out of the importable public API). Returns
   raw text; composition parses it.
-- **`engine/governance/fence.go`** — the canonical shared fencing helpers:
-  `UntrustedFence`, `WriteUntrustedBlock`, `FenceUntrusted`, and
-  `NeutraliseFraming`. `engine/agent/fence.go` retains the agent-specific
-  `StripLoneCodeFence` parser (the security-sensitive lone-fence stripper the
+- **`engine/governance/fence.go`** — the five canonical shared fencing APIs:
+  `UntrustedFence`, `WriteUntrustedBlock`, `FenceUntrusted`, `NeutraliseFraming`,
+  and `NeutraliseDelegationResult`. The last is result-only; fenced prompt bodies
+  must use `WriteUntrustedBlock` or `FenceUntrusted`. `engine/agent/fence.go` retains
+  the `StripLoneCodeFence` parser (the security-sensitive lone-fence stripper the
   ask-review AND guardrail verdict parsers share — one parser, never diverging)
   and the private delegation-result wrapper; the public framing APIs live only
   in governance.

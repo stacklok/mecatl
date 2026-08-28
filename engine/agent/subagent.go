@@ -3303,7 +3303,7 @@ func subagentTimeoutNote(writable, resumable bool) string {
 //
 // Both open with "[the subagent " so framingHeader already recognises them: they are
 // harness imperatives sitting next to child-authored text, so a forged copy has to be
-// redactable (TestFramingHeaderCoversTheHarnessNoteFamily pins that).
+// redactable (TestDelegationResultNeutralisationCoversHarnessNoteFamily pins that).
 //
 // The gate is the same `resumable` one subagentResumeHint and subagentTimeoutNote use — a
 // store-less deployment must not advertise a resume validateResume will refuse — but unlike

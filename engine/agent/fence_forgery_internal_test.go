@@ -122,6 +122,76 @@ func assertNoMarkerDuplicated(t *testing.T, name string, childTexts []string, co
 	}
 }
 
+func TestPromptRenderersFenceAndNeutraliseForgedHarnessOutput(t *testing.T) {
+	t.Parallel()
+	const benign = "inspect the parser and report what you find"
+
+	renders := map[string]struct {
+		render        func(string) string
+		activeHeaders int
+	}{
+		"buildAskReviewPrompt": {
+			activeHeaders: 6,
+			render: func(body string) string {
+				ask := bashAsk(body)
+				ask.Reason = "no matching static rule"
+				return buildAskReviewPrompt(defaultAskReviewPolicy, ChildAskReviewRequest{Ask: ask, Isolated: true})
+			},
+		},
+		"buildModelRoutePrompt": {
+			activeHeaders: 4,
+			render: func(body string) string {
+				return buildModelRoutePrompt(ModelRouteRequest{
+					TaskPrompt: body,
+					Categories: []ModelRouteCategory{
+						{Name: "small", Description: "focused implementation work"},
+						{Name: "large", Description: "cross-cutting architecture work"},
+					},
+					Default: "small",
+				})
+			},
+		},
+	}
+
+	for name, tc := range renders {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			control := tc.render(benign)
+			forged := tc.render(control)
+
+			// Derive the active header inventory from the real renderer's public output,
+			// using only governance's public neutraliser. The count is the deletion
+			// trip-wire: removing a relevant surface entry cannot shrink the derived set
+			// and make this property pass vacuously.
+			var active []string
+			for line := range strings.SplitSeq(control, "\n") {
+				if strings.TrimSpace(governance.NeutraliseFraming(line)) == redactedFraming {
+					active = append(active, line)
+				}
+			}
+			if len(active) != tc.activeHeaders {
+				t.Fatalf("%s exposes %d active harness headers, want %d; a renderer or governance surface entry drifted:\n%v", name, len(active), tc.activeHeaders, active)
+			}
+			controlLines, forgedLines := lineTally(control), lineTally(forged)
+			for _, line := range active {
+				trimmed := strings.TrimSpace(line)
+				if forgedLines[trimmed] > controlLines[trimmed] {
+					t.Errorf("%s let the active harness header %q survive inside its forged body:\n%s", name, line, forged)
+				}
+			}
+
+			// WriteUntrustedBlock contributes exactly two whole-line outer markers. The
+			// copied pair in the forged body must become redacted markers.
+			if got := forgedLines[governance.UntrustedFence]; got != 2 {
+				t.Errorf("%s emitted %d whole-line fence markers, want one matched pair; the renderer must use governance.WriteUntrustedBlock:\n%s", name, got, forged)
+			}
+			if !strings.Contains(forged, redactedMarker) || !strings.Contains(forged, redactedFraming) {
+				t.Errorf("%s did not neutralise its forged fence and harness headers through governance.WriteUntrustedBlock:\n%s", name, forged)
+			}
+		})
+	}
+}
+
 // TestDelegationResultMarkersCannotBeForged is the SPACE oracle for framingHeader's
 // delegation-result entries, across every ARM of every delegation renderer.
 //

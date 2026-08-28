@@ -141,6 +141,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0098 — Telemetry for the headless binaries (mecatequi, mecak8s)](./0098-headless-telemetry.md)
 
 ### Governance & trust
+- [0239 — Canonical untrusted-content fences live in governance](./0239-governance-fence-ownership.md)
 - [0021 — Guardrails](./0021-guardrails.md)
 - [0049 — Remove the guardrails per-session checker call-count cap](./0049-guardrails-remove-maxchecks.md)
 - [0050 — Remove the guardrails oversized-content inspection skip](./0050-guardrails-remove-maxcontentbytes.md)

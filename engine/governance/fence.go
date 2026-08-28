@@ -15,6 +15,10 @@ import (
 // fence or a section header to break out of its block and smuggle instructions to
 // the model. The helpers are exported because the fence must be byte-identical
 // across every prompt builder, including ones in other packages.
+//
+// Governance is the correct single stdlib-only, session-free leaf for this shared
+// policy today. A second unrelated non-permission primitive here is the trip-wire
+// to extract a dedicated engine/fence leaf; do not create that package before then.
 
 // UntrustedFence is the delimiter wrapping an untrusted block in a model-visible
 // prompt. Text BETWEEN a matching open/close pair is data (peer-, operator-, or
@@ -373,9 +377,11 @@ func equalFoldASCII(a, b string) bool {
 // "Category:" / "Task to classify:" headers cannot be forged in a place they are not
 // emitted, so matching them here has zero protective value — and a real cost, because
 // "Category: …" / "Recorded findings:" / "Findings from …" is exactly how a review or
-// triage subagent writes a heading. Applying the whole list erased two lines out of every
-// finding of a structured deliverable, on the SUCCESS arm, silently (OWASP LLM09: a
-// redacted-away finding is one the orchestrator provably cannot act on). The prompt-only
+// triage subagent writes a heading. Never use NeutraliseDelegationResult for a fenced
+// prompt body; use WriteUntrustedBlock or FenceUntrusted there. Applying the whole list
+// erased two lines from every finding in a structured deliverable, on the SUCCESS arm,
+// silently (OWASP LLM09: a redacted-away finding is one the orchestrator provably cannot
+// act on). The prompt-only
 // markers lose nothing by being skipped here: every fenced prompt re-runs the FULL list
 // over its body at the fence (WriteUntrustedBlock), which is where those headers exist.
 //
@@ -505,7 +511,7 @@ func framingHeaderSurfaces(trimmed string) framingSurface {
 		// the load-bearing UntrustedFence — the fenced command cannot forge a fresh
 		// trusted section either.
 		trimmed == "policy:",
-		trimmed == "tool:",
+		strings.HasPrefix(trimmed, "tool:"),
 		trimmed == "requested command:",
 		// Model-router prompt headers (buildModelRoutePrompt, ADR 0031): defense-in-depth
 		// on top of the load-bearing UntrustedFence — the fenced task prompt cannot forge

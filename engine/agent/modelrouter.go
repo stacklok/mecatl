@@ -130,7 +130,7 @@ type ModelRouteCategory struct {
 // classifier should fall back to when none clearly fits.
 type ModelRouteRequest struct {
 	// TaskPrompt is the Subagent call's `prompt` — model-authored and possibly
-	// peer-injected → UNTRUSTED. It is wrapped in an governance.UntrustedFence (framing
+	// peer-injected → UNTRUSTED. It is wrapped in a governance.UntrustedFence (framing
 	// neutralised) by buildModelRoutePrompt so it can neither forge the verdict nor
 	// fabricate a fresh classifier instruction.
 	TaskPrompt string

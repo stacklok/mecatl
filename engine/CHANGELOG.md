@@ -26,7 +26,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Removed
 
-- **Agent untrusted-content fencing APIs** (issue #380) — removed
+- **Agent untrusted-content fencing APIs** (issue #380,
+  [ADR 0239](../docs/adr/0239-governance-fence-ownership.md)) — removed
   `agent.UntrustedFence`, `agent.WriteUntrustedBlock`, `agent.FenceUntrusted`, and
   `agent.NeutraliseFraming` as part of their clean relocation to governance. This
   is a breaking API change (pre-v1 a minor bump); callers must use the governance
@@ -34,7 +35,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Canonical governance untrusted-content fencing** (issue #380) —
+- **Canonical governance untrusted-content fencing** (issue #380,
+  [ADR 0239](../docs/adr/0239-governance-fence-ownership.md)) —
   `governance.UntrustedFence`, `governance.WriteUntrustedBlock`,
   `governance.FenceUntrusted`, `governance.NeutraliseFraming`, and
   `governance.NeutraliseDelegationResult` are the five canonical public APIs for

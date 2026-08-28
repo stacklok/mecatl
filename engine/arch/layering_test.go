@@ -13,7 +13,10 @@
 package arch
 
 import (
+	"errors"
 	"go/build"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -226,6 +229,42 @@ func TestNoCoreImportsAdapter(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestNoEngineAdapterImportsAgent(t *testing.T) {
+	const adapterRoot = "../adapter"
+	const agentImport = modulePrefix + "engine/agent"
+
+	packages := 0
+	err := filepath.WalkDir(adapterRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		bp, importErr := build.ImportDir(path, 0)
+		if importErr != nil {
+			var noGo *build.NoGoError
+			if errors.As(importErr, &noGo) {
+				return nil
+			}
+			return importErr
+		}
+		packages++
+		for _, imp := range bp.Imports {
+			if imp == agentImport {
+				t.Errorf("reference adapter %s imports engine/agent in production code; engine/adapter/* may depend only on inward domain/port seams", filepath.ToSlash(path))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk reference adapters: %v", err)
+	}
+	if packages == 0 {
+		t.Fatal("no engine/adapter packages found; the adapter-to-agent boundary check is vacuous")
 	}
 }
 
