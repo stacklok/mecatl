@@ -429,6 +429,16 @@ data:
       ],
       "enabled": true,
       "realm": "mecatl",
+      "roles": {
+        "realm": [
+          {
+            "clientRole": false,
+            "composite": false,
+            "description": "${role_offline-access}",
+            "name": "offline_access"
+          }
+        ]
+      },
       "sslRequired": "external",
       "ssoSessionIdleTimeout": 1800,
       "users": [
@@ -445,6 +455,7 @@ data:
           "enabled": true,
           "firstName": "Alice",
           "lastName": "Example",
+          "realmRoles": ["offline_access"],
           "username": "alice"
         },
         {
@@ -460,6 +471,7 @@ data:
           "enabled": true,
           "firstName": "Bob",
           "lastName": "Example",
+          "realmRoles": ["offline_access"],
           "username": "bob"
         }
       ]
