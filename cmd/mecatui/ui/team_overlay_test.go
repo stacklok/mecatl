@@ -284,7 +284,7 @@ func TestAgentsMidRunNoTeamNoCapsIsNoOp(t *testing.T) {
 	send := &fakeSender{}
 	m.stream = client.NewStream(nil, send)
 	m.phase = phaseRunning
-	before := m.ta.Value()
+	before := m.prompt.Value()
 
 	mm, _ := m.Update(ctrlKey('a'))
 	m = mm.(Model)
@@ -298,8 +298,8 @@ func TestAgentsMidRunNoTeamNoCapsIsNoOp(t *testing.T) {
 	if m.phase != phaseRunning {
 		t.Errorf("ctrl+a mid-run no-op changed the phase to %v", m.phase)
 	}
-	if m.ta.Value() != before {
-		t.Errorf("ctrl+a leaked into the textarea: %q (was %q)", m.ta.Value(), before)
+	if m.prompt.Value() != before {
+		t.Errorf("ctrl+a leaked into the textarea: %q (was %q)", m.prompt.Value(), before)
 	}
 	for _, f := range send.frames() {
 		if f.GetCancel() != nil {

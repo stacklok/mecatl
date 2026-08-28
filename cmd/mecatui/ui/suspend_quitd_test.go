@@ -67,7 +67,7 @@ func TestQuitDSecondQuits(t *testing.T) {
 // populated prompt is the textarea's DeleteCharacterForward, never a quit.
 func TestQuitDPopulatedPromptDoesNotQuit(t *testing.T) {
 	m := quitModel(t)
-	m.ta.Rewrite("a draft prompt")
+	m.prompt.Rewrite("a draft prompt")
 	m, cmd := pressKey(m, ctrlD())
 	if m.quitDArmed {
 		t.Error("ctrl+d on a populated prompt must not arm the QuitD guard")

@@ -75,8 +75,8 @@ func TestEnqueueWhileRunning(t *testing.T) {
 	if len(m.queued) != 1 || m.queued[0] != "second" {
 		t.Fatalf("queued = %v, want [second] (trimmed)", m.queued)
 	}
-	if strings.TrimSpace(m.ta.Value()) != "" {
-		t.Errorf("textarea should be reset after enqueue, got %q", m.ta.Value())
+	if strings.TrimSpace(m.prompt.Value()) != "" {
+		t.Errorf("textarea should be reset after enqueue, got %q", m.prompt.Value())
 	}
 	if m.phase != phaseRunning {
 		t.Errorf("enqueue must not change phase, got %d", m.phase)
@@ -125,8 +125,8 @@ func TestEnqueueCapEnforced(t *testing.T) {
 	if len(m.queued) != maxQueued {
 		t.Fatalf("over-cap enqueue grew the queue to %d, want %d", len(m.queued), maxQueued)
 	}
-	if m.ta.Value() != "overflow" {
-		t.Errorf("over-cap enqueue should KEEP the input, got %q", m.ta.Value())
+	if m.prompt.Value() != "overflow" {
+		t.Errorf("over-cap enqueue should KEEP the input, got %q", m.prompt.Value())
 	}
 	if !strings.Contains(stripANSIstr(m.statusMsg), "queue full") {
 		t.Errorf("status = %q, want 'queue full'", stripANSIstr(m.statusMsg))
@@ -228,7 +228,7 @@ func TestDrainMergePausesOnPendingMode(t *testing.T) {
 	if m.queuePaused != "mode" {
 		t.Fatalf("pending mode must pause the merged drain, queuePaused=%q", m.queuePaused)
 	}
-	if got := m.ta.Value(); got != "second"+queueMergeSep+"third" {
+	if got := m.prompt.Value(); got != "second"+queueMergeSep+"third" {
 		t.Fatalf("merged text must sit in the textarea, got %q", got)
 	}
 	if len(m.queued) != 0 {
@@ -541,8 +541,8 @@ func TestEscClearsInputBeforeQueue(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
 
-	if strings.TrimSpace(m.ta.Value()) != "" {
-		t.Errorf("esc should clear the live input first, got %q", m.ta.Value())
+	if strings.TrimSpace(m.prompt.Value()) != "" {
+		t.Errorf("esc should clear the live input first, got %q", m.prompt.Value())
 	}
 	if len(m.queued) != 1 {
 		t.Errorf("esc should leave the queue intact when input was non-empty, got %v", m.queued)

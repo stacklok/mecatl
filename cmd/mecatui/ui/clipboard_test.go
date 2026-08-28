@@ -73,8 +73,8 @@ func TestCtrlVImageStages(t *testing.T) {
 	if len(m.stagedMedia) != 1 {
 		t.Fatalf("staged = %d, want 1", len(m.stagedMedia))
 	}
-	if !strings.Contains(m.ta.Value(), "[Image #1]") {
-		t.Errorf("input = %q, want it to contain the [Image #1] marker", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "[Image #1]") {
+		t.Errorf("input = %q, want it to contain the [Image #1] marker", m.prompt.Value())
 	}
 	if _, ok := m.stagedMedia["[Image #1]"]; !ok {
 		t.Errorf("staged map not keyed by the marker: %v", m.stagedMedia)
@@ -92,8 +92,8 @@ func TestCtrlVTextFallback(t *testing.T) {
 	if len(m.stagedMedia) != 0 {
 		t.Fatalf("staged = %d, want 0 for a text paste", len(m.stagedMedia))
 	}
-	if !strings.Contains(m.ta.Value(), "pasted via ctrl+v") {
-		t.Errorf("input = %q, want the pasted text", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "pasted via ctrl+v") {
+		t.Errorf("input = %q, want the pasted text", m.prompt.Value())
 	}
 }
 
@@ -106,8 +106,8 @@ func TestCtrlVTextFallbackWorksWithoutImageCap(t *testing.T) {
 
 	m = pressCtrlV(t, m)
 
-	if !strings.Contains(m.ta.Value(), "text on a no-image model") {
-		t.Errorf("input = %q, want text inserted regardless of image cap", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "text on a no-image model") {
+		t.Errorf("input = %q, want text inserted regardless of image cap", m.prompt.Value())
 	}
 }
 
@@ -123,8 +123,8 @@ func TestCtrlVImageCapGatedRefused(t *testing.T) {
 	if len(m.stagedMedia) != 0 {
 		t.Fatalf("staged = %d, want 0 (image refused on a no-image model)", len(m.stagedMedia))
 	}
-	if strings.Contains(m.ta.Value(), "[Image") {
-		t.Errorf("input = %q, want no marker on refusal", m.ta.Value())
+	if strings.Contains(m.prompt.Value(), "[Image") {
+		t.Errorf("input = %q, want no marker on refusal", m.prompt.Value())
 	}
 	if cb.calls != 1 {
 		t.Errorf("clipboard read %d times, want 1 (read happens, then the result is refused)", cb.calls)
@@ -206,7 +206,7 @@ func TestSubmitStagedImageSendsPart(t *testing.T) {
 	m = pressCtrlV(t, m)
 	// Add some surrounding prose so we can assert the marker is stripped but the
 	// prose survives.
-	m.ta.Rewrite("describe " + m.ta.Value())
+	m.prompt.Rewrite("describe " + m.prompt.Value())
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -249,7 +249,7 @@ func TestSubmitDeletedMarkerSendsNoPart(t *testing.T) {
 
 	m = pressCtrlV(t, m)
 	// User erases everything and types fresh text — the marker is gone.
-	m.ta.Rewrite("never mind, just text")
+	m.prompt.Rewrite("never mind, just text")
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -279,8 +279,8 @@ func TestSubmitTwoStagedImages(t *testing.T) {
 	if len(m.stagedMedia) != 2 {
 		t.Fatalf("staged = %d, want 2", len(m.stagedMedia))
 	}
-	if !strings.Contains(m.ta.Value(), "[Image #1]") || !strings.Contains(m.ta.Value(), "[Image #2]") {
-		t.Fatalf("input = %q, want both markers", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "[Image #1]") || !strings.Contains(m.prompt.Value(), "[Image #2]") {
+		t.Fatalf("input = %q, want both markers", m.prompt.Value())
 	}
 
 	mm, cmd := m.submitPrompt()
@@ -327,8 +327,8 @@ func TestSubmitMixedMentionAndClipboard(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	m = pressCtrlV(t, m)                      // stages [Image #1]
-	m.ta.Rewrite("@shot.png " + m.ta.Value()) // prepend the mention
+	m = pressCtrlV(t, m)                              // stages [Image #1]
+	m.prompt.Rewrite("@shot.png " + m.prompt.Value()) // prepend the mention
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -350,7 +350,7 @@ func TestSubmitStagedCapFlippedRejects(t *testing.T) {
 	cb := &fakeClipboard{mime: "image/png", data: tinyPNG(t)}
 	m, send := newClipboardModel(t, client.Capabilities{Image: true}, cb)
 	m = pressCtrlV(t, m)
-	before := m.ta.Value()
+	before := m.prompt.Value()
 
 	// Simulate the cap being unavailable at submit time.
 	m.caps.Image = false
@@ -364,8 +364,8 @@ func TestSubmitStagedCapFlippedRejects(t *testing.T) {
 	if got := len(send.frames()); got != 0 {
 		t.Errorf("sent %d frames, want 0 on refusal", got)
 	}
-	if m.ta.Value() != before {
-		t.Errorf("input = %q, want it kept (%q) on refusal", m.ta.Value(), before)
+	if m.prompt.Value() != before {
+		t.Errorf("input = %q, want it kept (%q) on refusal", m.prompt.Value(), before)
 	}
 	if !strings.Contains(stripANSIstr(m.View().Content), "attach:") {
 		t.Errorf("transcript missing the attach refusal")
@@ -410,7 +410,7 @@ func TestSubmitMultiLinePromptPreservesNewlines(t *testing.T) {
 
 	m = pressCtrlV(t, m) // stages [Image #1], input becomes "[Image #1] "
 	// A deliberately multi-line prompt with the marker embedded mid-line.
-	m.ta.Rewrite("line one\n\nline two [Image #1]\nline three")
+	m.prompt.Rewrite("line one\n\nline two [Image #1]\nline three")
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
@@ -444,7 +444,7 @@ func TestSubmitAggregateCapRejects(t *testing.T) {
 	if len(m.stagedMedia) != over {
 		t.Fatalf("staged = %d, want %d", len(m.stagedMedia), over)
 	}
-	before := m.ta.Value()
+	before := m.prompt.Value()
 
 	mm, _ := m.submitPrompt()
 	m = mm.(Model)
@@ -455,8 +455,8 @@ func TestSubmitAggregateCapRejects(t *testing.T) {
 	if got := len(send.frames()); got != 0 {
 		t.Errorf("sent %d frames, want 0 on aggregate-cap refusal", got)
 	}
-	if m.ta.Value() != before {
-		t.Errorf("input = %q, want it kept on refusal", m.ta.Value())
+	if m.prompt.Value() != before {
+		t.Errorf("input = %q, want it kept on refusal", m.prompt.Value())
 	}
 	if !strings.Contains(stripANSIstr(m.View().Content), "too many media attachments") {
 		t.Errorf("transcript missing the aggregate-cap error:\n%s", stripANSIstr(m.View().Content))
@@ -480,7 +480,7 @@ func TestSubmitMarkerCollisionGuard(t *testing.T) {
 		"[Image #11]": {mime: "image/png", data: eleven},
 	}
 	m.nextMediaN = 11
-	m.ta.Rewrite("a [Image #1] b [Image #11] c")
+	m.prompt.Rewrite("a [Image #1] b [Image #11] c")
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)

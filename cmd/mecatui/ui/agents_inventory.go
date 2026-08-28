@@ -86,7 +86,7 @@ func (m Model) openAgentsInv() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Agents == nil {
 		return m, nil
 	}
-	m.ta.Blur() // overlay owns the keyboard while open
+	m.prompt.Blur() // overlay owns the keyboard while open
 	m.agentsInv = agentsInvState{view: agentsInvPanel, loading: true}
 	return m, client.ListAgentsCmd(m.deps.Ctx, m.deps.Agents)
 }
@@ -94,7 +94,7 @@ func (m Model) openAgentsInv() (tea.Model, tea.Cmd) {
 // closeAgentsInv dismisses the overlay and returns focus to the prompt input.
 func (m Model) closeAgentsInv() (tea.Model, tea.Cmd) {
 	m.agentsInv = agentsInvState{}
-	cmd := m.ta.Focus()
+	cmd := m.prompt.Focus()
 	return m, cmd
 }
 

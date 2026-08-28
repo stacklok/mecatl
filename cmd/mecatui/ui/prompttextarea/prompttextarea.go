@@ -31,7 +31,8 @@ type LineInfo struct {
 // Editor is Mecatl's prompt editor. The upstream model is intentionally private so
 // prompt mutation and selection policy cannot be bypassed by ui callers.
 type Editor struct {
-	model textarea.Model
+	model                textarea.Model
+	mouseSelectionActive bool
 }
 
 // New builds the fixed Mecatl prompt editor.
@@ -80,30 +81,55 @@ func (e *Editor) InsertNewline() {
 
 // Rewrite replaces prompt text for a host-owned operation and clears selection first.
 func (e *Editor) Rewrite(s string) {
-	e.model.ClearSelection()
+	e.ClearSelection()
 	e.model.SetValue(s)
 }
 
 // Reset clears prompt text for a host-owned operation and clears selection first.
 func (e *Editor) Reset() {
-	e.model.ClearSelection()
+	e.ClearSelection()
 	e.model.Reset()
 }
 
-// BeginSelection starts a mouse selection at editor-relative coordinates.
-func (e *Editor) BeginSelection(x, y int) { e.model.BeginSelection(x, y) }
+// BeginMouseSelection starts a mouse selection at editor-relative coordinates.
+func (e *Editor) BeginMouseSelection(x, y int) {
+	e.model.BeginSelection(x, y)
+	e.mouseSelectionActive = true
+}
 
-// ExtendSelection moves a mouse selection endpoint to editor-relative coordinates.
-func (e *Editor) ExtendSelection(x, y int) { e.model.ExtendSelection(x, y) }
+// ExtendMouseSelection moves the active mouse selection endpoint. It reports
+// whether a mouse gesture was in progress.
+func (e *Editor) ExtendMouseSelection(x, y int) bool {
+	if !e.mouseSelectionActive {
+		return false
+	}
+	e.model.ExtendSelection(x, y)
+	return true
+}
 
-// EndSelection completes the current mouse selection.
-func (e *Editor) EndSelection() { e.model.EndSelection() }
+// EndMouseSelection completes the active mouse selection. It reports whether
+// a mouse gesture was in progress.
+func (e *Editor) EndMouseSelection() bool {
+	if !e.mouseSelectionActive {
+		return false
+	}
+	e.model.EndSelection()
+	e.mouseSelectionActive = false
+	return true
+}
 
 // SelectAll selects all prompt text.
-func (e *Editor) SelectAll() { e.model.SelectAll() }
+func (e *Editor) SelectAll() {
+	e.mouseSelectionActive = false
+	e.model.SelectAll()
+}
 
-// ClearSelection retains prompt text and clears the selected range.
-func (e *Editor) ClearSelection() { e.model.ClearSelection() }
+// ClearSelection retains prompt text and clears the selected range and any
+// in-progress mouse gesture.
+func (e *Editor) ClearSelection() {
+	e.mouseSelectionActive = false
+	e.model.ClearSelection()
+}
 
 // HasSelection reports whether the prompt has a non-empty selected range.
 func (e Editor) HasSelection() bool { return e.model.HasSelection() }

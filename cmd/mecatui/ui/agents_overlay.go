@@ -102,7 +102,7 @@ func (m Model) openAgents() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.ta.Blur() // the overlay owns the keyboard while open
+	m.prompt.Blur() // the overlay owns the keyboard while open
 	// Context-sensitive default tab (preferredAgentsTab is the single predicate, tested in
 	// isolation): the richest LIVE surface wins, else the tab that has content.
 	m.agentsTab = m.preferredAgentsTab(teamLive, haveTeam, haveSub, parallelLive, haveParallel)
@@ -137,7 +137,7 @@ func (m Model) closeAgents() (tea.Model, tea.Cmd) {
 	m.team = teamState{}
 	m.subagents = subagentState{}
 	m.parallel = parallelState{}
-	cmd := m.ta.Focus()
+	cmd := m.prompt.Focus()
 	return m, cmd
 }
 

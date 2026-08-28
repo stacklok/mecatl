@@ -23,7 +23,7 @@ func (m Model) openModels() (tea.Model, tea.Cmd) {
 	}
 	requestToken := m.modelCatalogRequestToken + 1
 	m.gatewayNotice = ""
-	m.ta.Blur()
+	m.prompt.Blur()
 	ti := textinput.New()
 	ti.Placeholder = "filter models…"
 	ti.SetWidth(40)

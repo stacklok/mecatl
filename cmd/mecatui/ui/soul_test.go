@@ -83,7 +83,7 @@ func TestRunSoulOpensPanel(t *testing.T) {
 	if !st.loading {
 		t.Error("panel should be loading until the RPC result lands")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("opening the panel should blur the textarea")
 	}
 	if cmd == nil {
@@ -123,7 +123,7 @@ func keySoul(m Model, msg tea.KeyPressMsg) (Model, tea.Cmd, bool, bool) {
 	if handled && closed {
 		s.Close()
 		m.modal = nil
-		return m, tea.Batch(cmd, m.ta.Focus()), true, true
+		return m, tea.Batch(cmd, m.prompt.Focus()), true, true
 	}
 	return m, cmd, handled, closed
 }
@@ -341,8 +341,9 @@ func TestSoulKeySwallowsNonEsc(t *testing.T) {
 
 // TestSoulEscClosesPanel asserts esc closes the panel via the REAL m.Update path
 // (onKey → onOverlayKey → dispatchSurfaceKey → HandleKey → closed), restoring idle
-// input. It mirrors TestAgentsInvEscClosesPanel: both close paths focus the
-// textarea synchronously; the returned command only schedules cursor blinking.
+// input. It mirrors TestAgentsInvEscClosesPanel but — unlike the agents close path,
+// which calls m.prompt.Focus() directly inside the handler — the surface close path
+// returns the focusInput cmd from Close, so feedCmd must run it for focus to land.
 func TestSoulEscClosesPanel(t *testing.T) {
 	m := newSoulModel(t, sampleSoul(), client.Capabilities{Soul: true})
 	mm, cmd := m.runSoul()
@@ -358,7 +359,7 @@ func TestSoulEscClosesPanel(t *testing.T) {
 	if m.modal != nil {
 		t.Fatalf("esc did not close the panel: modal=%v", m.modal)
 	}
-	if !m.ta.Focused() {
+	if !m.prompt.Focused() {
 		t.Error("esc should restore focus to the textarea")
 	}
 }

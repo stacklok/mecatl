@@ -9,7 +9,7 @@ import (
 
 func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 	m, cb := selModel(t)
-	m.ta.Rewrite("hello world")
+	m.prompt.Rewrite("hello world")
 	rect, ok := inputRegionRect(m)
 	if !ok {
 		t.Fatal("input region unavailable")
@@ -18,8 +18,8 @@ func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 	m, _ = pressMouse(m, tea.MouseLeft, rect.x0, rect.y0)
 	m, _ = motionMouse(m, rect.x0+5, rect.y0)
 	m, cmd := releaseMouse(m, rect.x0+5, rect.y0)
-	if cmd != nil || !m.ta.HasSelection() || m.ta.SelectedText() != "hello" {
-		t.Fatalf("release must retain prompt selection without copying: selected=%q cmd=%v", m.ta.SelectedText(), cmd)
+	if cmd != nil || !m.prompt.HasSelection() || m.prompt.SelectedText() != "hello" {
+		t.Fatalf("release must retain prompt selection without copying: selected=%q cmd=%v", m.prompt.SelectedText(), cmd)
 	}
 	if len(cb.wrote) != 0 {
 		t.Fatal("release copied prompt selection")
@@ -27,20 +27,20 @@ func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 
 	mm, _ := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
 	m = mm.(Model)
-	if got := m.ta.Value(); got != "X world" {
+	if got := m.prompt.Value(); got != "X world" {
 		t.Fatalf("typed replacement = %q, want %q", got, "X world")
 	}
 
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
 	m = mm.(Model)
-	if got := m.ta.Value(); got != "X\n world" {
+	if got := m.prompt.Value(); got != "X\n world" {
 		t.Fatalf("newline replacement = %q", got)
 	}
 
 	mm, _ = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	m = mm.(Model)
-	if !m.ta.HasSelection() || m.ta.SelectedText() != "X\n world" {
-		t.Fatalf("ctrl+g did not select prompt: %q", m.ta.SelectedText())
+	if !m.prompt.HasSelection() || m.prompt.SelectedText() != "X\n world" {
+		t.Fatalf("ctrl+g did not select prompt: %q", m.prompt.SelectedText())
 	}
 	mm, cmd = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModShift})
 	m = mm.(Model)
@@ -61,26 +61,26 @@ func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 func TestPromptSelectionKeyboardWorksWithoutMouseAndStagingReplaces(t *testing.T) {
 	m, _ := selModel(t)
 	m.deps.NoMouse = true
-	m.ta.Rewrite("before after")
-	m.ta.SelectAll()
+	m.prompt.Rewrite("before after")
+	m.prompt.SelectAll()
 
 	mm, _ := m.Update(pasteMsg(largePasteText()))
 	m = mm.(Model)
-	if !strings.Contains(m.ta.Value(), "[Pasted text #1]") || strings.Contains(m.ta.Value(), "before") {
-		t.Fatalf("staged paste did not replace selection: %q", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "[Pasted text #1]") || strings.Contains(m.prompt.Value(), "before") {
+		t.Fatalf("staged paste did not replace selection: %q", m.prompt.Value())
 	}
-	if m.ta.HasSelection() {
+	if m.prompt.HasSelection() {
 		t.Fatal("paste left a stale selection")
 	}
 }
 
 func TestPromptAndConversationSelectionsAreExclusive(t *testing.T) {
 	m, _ := selModel(t)
-	m.ta.Rewrite("prompt")
-	m.ta.SelectAll()
+	m.prompt.Rewrite("prompt")
+	m.prompt.SelectAll()
 	top := convTopRow(m)
 	m, _ = pressMouse(m, tea.MouseLeft, 0, top)
-	if m.ta.HasSelection() {
+	if m.prompt.HasSelection() {
 		t.Fatal("conversation selection did not clear prompt selection")
 	}
 

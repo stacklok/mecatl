@@ -68,7 +68,7 @@ func (m Model) openTeam() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.ta.Blur() // overlay owns the keyboard while open
+	m.prompt.Blur() // overlay owns the keyboard while open
 	// The /team command opens the unified overlay pinned to the Teams tab (its
 	// team-specific entry point); ctrl+a uses openAgents for the context-sensitive tab.
 	m.agentsTab = tabTeams

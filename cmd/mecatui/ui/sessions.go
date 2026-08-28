@@ -104,7 +104,7 @@ func (m Model) openSessionDetails() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.sessionDetailsOpen = true
-	m.ta.Blur()
+	m.prompt.Blur()
 	if m.deps.Session != nil {
 		return m, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID)
 	}
@@ -117,7 +117,7 @@ func (m Model) onSessionDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, boo
 	}
 	if key.Matches(msg, m.keys.Close) {
 		m.sessionDetailsOpen = false
-		return m, m.ta.Focus(), true
+		return m, m.prompt.Focus(), true
 	}
 	if msg.String() != "c" {
 		return m, nil, true
@@ -183,7 +183,7 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Sessions == nil || m.deps.Transcript == nil {
 		return m, nil
 	}
-	m.ta.Blur()
+	m.prompt.Blur()
 	state := (&m).newSessionsSurface(false)
 	pageCmd := state.beginPage("")
 	cmds := []tea.Cmd{pageCmd, textinput.Blink}
@@ -266,7 +266,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.phase = phaseIdle
 	m.stuck = true
 	m.statusMsg = "continuing chat " + sanitizeTerminal(row.Title) + " — type to add a turn"
-	cmd := m.ta.Focus()
+	cmd := m.prompt.Focus()
 	m.refreshView()
 	if m.deps.Session != nil {
 		cmd = tea.Batch(cmd, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, row.ID))

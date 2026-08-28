@@ -60,3 +60,27 @@ func TestKeyUpdatePreservesUpstreamSelectionBehavior(t *testing.T) {
 		t.Fatalf("key update = %q, want x", got)
 	}
 }
+
+func TestHostSelectionOperationsStopMouseGesture(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(*Editor)
+	}{
+		{"rewrite", func(e *Editor) { e.Rewrite("after") }},
+		{"reset", func(e *Editor) { e.Reset() }},
+		{"clear selection", func(e *Editor) { e.ClearSelection() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			editor := New(Config{})
+			editor.Rewrite("before")
+			editor.BeginMouseSelection(0, 0)
+			tc.stop(&editor)
+			if editor.ExtendMouseSelection(3, 0) {
+				t.Fatal("host operation left mouse selection active")
+			}
+			if editor.EndMouseSelection() {
+				t.Fatal("host operation left mouse selection active")
+			}
+		})
+	}
+}

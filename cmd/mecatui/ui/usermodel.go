@@ -47,7 +47,7 @@ func (m Model) openUserModel() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.UserModel == nil {
 		return m, nil
 	}
-	m.ta.Blur() // overlay owns the keyboard while open
+	m.prompt.Blur() // overlay owns the keyboard while open
 	m.userModelGen++
 	m.userModel = userModelState{view: userModelPanel, loading: true}
 	return m, client.GetUserModelCmdTagged(m.deps.Ctx, m.deps.UserModel, m.userModelGen)
@@ -57,7 +57,7 @@ func (m Model) openUserModel() (tea.Model, tea.Cmd) {
 func (m Model) closeUserModel() (tea.Model, tea.Cmd) {
 	m.userModelGen++
 	m.userModel = userModelState{}
-	cmd := m.ta.Focus()
+	cmd := m.prompt.Focus()
 	return m, cmd
 }
 

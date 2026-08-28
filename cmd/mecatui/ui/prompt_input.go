@@ -7,40 +7,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// promptInput is the local seam between Model and the Mecatl prompt editor.
-// It owns prompt selection and all prompt-content edits; phase and overlay policy
-// stay in update.go.
-func (m *Model) promptInput(msg tea.Msg) tea.Cmd {
-	return m.ta.UpdateUserInput(msg)
-}
-
-func (m *Model) promptNewline() {
-	m.ta.InsertNewline()
-}
-
-func (m *Model) promptInsert(s string) {
-	m.ta.InsertText(s)
-}
-
-// promptRewrite is for host/app-owned replacements, never user edits.
-func (m *Model) promptRewrite(s string) {
-	m.ta.Rewrite(s)
-	m.promptSelecting = false
-}
-
-func (m *Model) promptReset() {
-	m.ta.Reset()
-	m.promptSelecting = false
-}
-
-func (m *Model) promptClearSelection() {
-	m.ta.ClearSelection()
-	m.promptSelecting = false
-}
-
 func (m *Model) promptSelectAll() {
 	*m = m.clearSelection()
-	m.ta.SelectAll()
+	m.prompt.SelectAll()
 }
 
 func (m *Model) promptMousePress(mo tea.Mouse) (tea.Cmd, bool) {
@@ -53,34 +22,27 @@ func (m *Model) promptMousePress(mo tea.Mouse) (tea.Cmd, bool) {
 	}
 	*m = m.clearSelection()
 	m.refreshView()
-	m.ta.BeginSelection(mo.X-rect.x0, mo.Y-rect.y0)
-	m.promptSelecting = true
-	return m.ta.Focus(), true
+	m.prompt.BeginMouseSelection(mo.X-rect.x0, mo.Y-rect.y0)
+	return m.prompt.Focus(), true
 }
 
 func (m *Model) promptMouseMotion(mo tea.Mouse) bool {
-	if !m.promptSelecting || !mouseCaptureEnabled(*m) {
+	if !mouseCaptureEnabled(*m) {
 		return false
 	}
 	rect, ok := inputRegionRect(*m)
 	if !ok {
 		return false
 	}
-	m.ta.ExtendSelection(mo.X-rect.x0, mo.Y-rect.y0)
-	return true
+	return m.prompt.ExtendMouseSelection(mo.X-rect.x0, mo.Y-rect.y0)
 }
 
 func (m *Model) promptMouseRelease(mo tea.Mouse) bool {
-	if !m.promptSelecting {
-		return false
-	}
 	rect, ok := inputRegionRect(*m)
 	if ok {
-		m.ta.ExtendSelection(mo.X-rect.x0, mo.Y-rect.y0)
+		m.prompt.ExtendMouseSelection(mo.X-rect.x0, mo.Y-rect.y0)
 	}
-	m.ta.EndSelection()
-	m.promptSelecting = false
-	return true
+	return m.prompt.EndMouseSelection()
 }
 
 func (m Model) copyPayload(payload string) (Model, tea.Cmd) {
@@ -93,8 +55,8 @@ func (m Model) copyPayload(payload string) (Model, tea.Cmd) {
 }
 
 func (m Model) copyActiveSelection() (tea.Model, tea.Cmd) {
-	if m.ta.HasSelection() {
-		return m.copyPayload(m.ta.SelectedText())
+	if m.prompt.HasSelection() {
+		return m.copyPayload(m.prompt.SelectedText())
 	}
 	if m.sel.active && !m.sel.empty() {
 		return m.copyPayload(selectedText(m.vp.GetContent(), m.sel))

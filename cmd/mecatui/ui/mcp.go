@@ -21,7 +21,7 @@ func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.MCP == nil {
 		return m, nil
 	}
-	m.ta.Blur() // modal owns the keyboard while open
+	m.prompt.Blur() // modal owns the keyboard while open
 	m.modal = &mcpState{view: v, loading: true, deps: (&m).surfaceDeps(), mcp: m.deps.MCP}
 	switch v {
 	case mcpPanel:
@@ -37,7 +37,7 @@ func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 		return m, client.ListMcpPromptsCmd(m.deps.Ctx, m.deps.MCP, "")
 	default:
 		m.closeModal()
-		_ = m.ta.Focus()
+		_ = m.prompt.Focus()
 		return m, nil
 	}
 }
@@ -442,10 +442,10 @@ func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 // insertIntoInput inserts text, closes the modal, and updates the status hint.
 func (m Model) insertIntoInput(text, label string) (tea.Model, tea.Cmd) {
 	m.closeModal()
-	(&m).promptRewrite(text)
+	m.prompt.Rewrite(text)
 	m.statusMsg = label + " — press " + firstKey(m.keys.Submit, "enter") + " to send"
 	m.refreshView()
-	return m, m.ta.Focus()
+	return m, m.prompt.Focus()
 }
 
 // joinContents flattens read-resource contents into a previewable string. Binary

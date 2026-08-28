@@ -218,7 +218,7 @@ func TestRetractQueuedRemovesSilently(t *testing.T) {
 	m, _ := queuedAskModel(t)
 	modal := m.modal
 	phase := m.phase
-	focused := m.ta.Focused()
+	focused := m.prompt.Focused()
 	spinnerVisible := m.spinnerVisible()
 
 	mm, cmd := m.Update(client.PermissionRetractMsg{AskID: askB})
@@ -236,7 +236,7 @@ func TestRetractQueuedRemovesSilently(t *testing.T) {
 	if m.phase != phase {
 		t.Fatalf("phase changed: got %v, want %v", m.phase, phase)
 	}
-	if m.ta.Focused() != focused {
+	if m.prompt.Focused() != focused {
 		t.Fatal("retracting a queued ask must not change textarea focus")
 	}
 	if m.spinnerVisible() != spinnerVisible {

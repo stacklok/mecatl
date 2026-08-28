@@ -47,11 +47,11 @@ func TestPasteImagePathStages(t *testing.T) {
 	if len(m.stagedMedia) != 1 {
 		t.Fatalf("staged = %d, want 1 (pasted media path)", len(m.stagedMedia))
 	}
-	if !strings.Contains(m.ta.Value(), "[Image #1]") {
-		t.Errorf("input = %q, want the marker, not the literal path", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "[Image #1]") {
+		t.Errorf("input = %q, want the marker, not the literal path", m.prompt.Value())
 	}
-	if strings.Contains(m.ta.Value(), "shot.png") {
-		t.Errorf("input = %q, want the path replaced by the marker", m.ta.Value())
+	if strings.Contains(m.prompt.Value(), "shot.png") {
+		t.Errorf("input = %q, want the path replaced by the marker", m.prompt.Value())
 	}
 }
 
@@ -70,8 +70,8 @@ func TestPasteNonImagePathLiteral(t *testing.T) {
 	if len(m.stagedMedia) != 0 {
 		t.Fatalf("staged = %d, want 0 (a .txt path is not media)", len(m.stagedMedia))
 	}
-	if !strings.Contains(m.ta.Value(), "notes.txt") {
-		t.Errorf("input = %q, want the literal path", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "notes.txt") {
+		t.Errorf("input = %q, want the literal path", m.prompt.Value())
 	}
 }
 
@@ -91,8 +91,8 @@ func TestPasteImagePathCapGatedLiteral(t *testing.T) {
 	if len(m.stagedMedia) != 0 {
 		t.Fatalf("staged = %d, want 0 (cap-gated path falls through to literal)", len(m.stagedMedia))
 	}
-	if !strings.Contains(m.ta.Value(), "shot.png") {
-		t.Errorf("input = %q, want the literal path on fall-through", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "shot.png") {
+		t.Errorf("input = %q, want the literal path on fall-through", m.prompt.Value())
 	}
 	if strings.Contains(stripANSIstr(m.View().Content), "attach:") {
 		t.Errorf("cap-gated path-paste should NOT raise a loud error (it falls through)")
@@ -116,7 +116,7 @@ func TestPasteLandsInInputWhenIdle(t *testing.T) {
 	mm, _ := m.Update(pasteMsg("hello pasted world"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "hello pasted world" {
+	if got := m.prompt.Value(); got != "hello pasted world" {
 		t.Fatalf("input value = %q, want the pasted text", got)
 	}
 	if len(m.stagedMedia) != 0 {
@@ -130,7 +130,7 @@ func TestPasteRestoresModifyOtherKeysNewlines(t *testing.T) {
 	mm, _ := m.Update(pasteMsg("first" + xtermModifyOtherKeysCtrlJ + "second"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "first\nsecond" {
+	if got := m.prompt.Value(); got != "first\nsecond" {
 		t.Fatalf("input value = %q, want decoded newline", got)
 	}
 }
@@ -151,8 +151,8 @@ func TestPasteLandsInInputWhileRunning(t *testing.T) {
 	if len(m.queued) != 0 {
 		t.Fatalf("paste must not enqueue (no enter), got %v", m.queued)
 	}
-	if !strings.Contains(m.ta.Value(), "a follow-up draft") {
-		t.Fatalf("input value = %q, want it to contain the pasted text", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "a follow-up draft") {
+		t.Fatalf("input value = %q, want it to contain the pasted text", m.prompt.Value())
 	}
 }
 
@@ -171,7 +171,7 @@ func TestPasteIgnoredWhileHelpOpen(t *testing.T) {
 	mm, _ = m.Update(pasteMsg("leak attempt"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("paste leaked into input behind help overlay: %q", got)
 	}
 	if !m.showHelp {
@@ -195,7 +195,7 @@ func TestPasteIgnoredDuringApproval(t *testing.T) {
 	mm, _ := m.Update(pasteMsg("leak attempt"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("paste leaked into input behind the approval modal: %q", got)
 	}
 	if m.phase != phaseAwaitingApproval {
@@ -215,7 +215,7 @@ func TestPasteIgnoredWhileMCPOverlayOpen(t *testing.T) {
 	mm, _ := m.Update(pasteMsg("leak attempt"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("paste leaked into input behind the MCP overlay: %q", got)
 	}
 	if mcpActive(m) == nil {
@@ -245,12 +245,12 @@ func TestPasteIgnoredWhileAgentsOverlayOpen(t *testing.T) {
 	if m.team.view == teamNone {
 		t.Fatalf("agents overlay should be open after ctrl+a")
 	}
-	_ = m.ta.Focus() // defeat the blur masking — exercise the gate, not the blur.
+	_ = m.prompt.Focus() // defeat the blur masking — exercise the gate, not the blur.
 
 	mm, _ = m.Update(pasteMsg("leak attempt"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("paste leaked into input behind the agents overlay: %q", got)
 	}
 	if m.team.view == teamNone {
@@ -278,7 +278,7 @@ func TestPasteIgnoredWhileConnecting(t *testing.T) {
 	mm, _ := m.Update(pasteMsg("too early"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("paste landed before the session was ready: %q", got)
 	}
 	if m.phase != phaseConnecting {
@@ -298,7 +298,7 @@ func TestPasteSyncsPalette(t *testing.T) {
 	if !m.palette.open {
 		t.Fatalf("palette should open after pasting a '/' command prefix")
 	}
-	if got := m.ta.Value(); got != "/re" {
+	if got := m.prompt.Value(); got != "/re" {
 		t.Fatalf("input value = %q, want the pasted '/re'", got)
 	}
 	// "/re" filters to the retry built-in plus review + refactor.

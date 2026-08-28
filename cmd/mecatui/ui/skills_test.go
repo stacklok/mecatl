@@ -85,7 +85,7 @@ func TestRunSkillsOpensPanel(t *testing.T) {
 	if !st.loading {
 		t.Error("panel should be loading until the RPC result lands")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("opening the panel should blur the textarea")
 	}
 	if cmd == nil {
@@ -183,7 +183,7 @@ func TestSkillsEscClosesPanel(t *testing.T) {
 	if m.modal != nil {
 		t.Fatalf("esc did not close the panel: modal=%v", m.modal)
 	}
-	if !m.ta.Focused() {
+	if !m.prompt.Focused() {
 		t.Error("esc should restore focus to the textarea")
 	}
 }

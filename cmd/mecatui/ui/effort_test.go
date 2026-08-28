@@ -34,7 +34,7 @@ func TestRunEffortOpensPicker(t *testing.T) {
 	if m.effort.view != effortPanel {
 		t.Fatalf("view = %v, want effortPanel", m.effort.view)
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("opening the picker should blur the textarea")
 	}
 	_ = cmd

@@ -212,7 +212,7 @@ func TestPaletteNavigateAndComplete(t *testing.T) {
 	// enter completes the selected WORKSPACE command (text-completion).
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if got := m.ta.Value(); got != "/review " {
+	if got := m.prompt.Value(); got != "/review " {
 		t.Fatalf("input = %q, want \"/review \" after complete", got)
 	}
 	if m.palette.open {
@@ -236,7 +236,7 @@ func TestPaletteCompleteWorkspaceWithTab(t *testing.T) {
 
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = mm.(Model)
-	if got := m.ta.Value(); got != "/fix " {
+	if got := m.prompt.Value(); got != "/fix " {
 		t.Fatalf("input = %q, want \"/fix \" after tab complete", got)
 	}
 	if m.palette.open {
@@ -256,7 +256,7 @@ func TestPaletteEscDismisses(t *testing.T) {
 	if m.palette.open {
 		t.Fatalf("palette open after esc")
 	}
-	if got := m.ta.Value(); got != "/f" {
+	if got := m.prompt.Value(); got != "/f" {
 		t.Fatalf("input = %q, want unchanged \"/f\" after esc", got)
 	}
 	// Typing another matching char does NOT reopen it (dismiss latched).
@@ -265,7 +265,7 @@ func TestPaletteEscDismisses(t *testing.T) {
 		t.Fatalf("palette reopened while still in command mode after esc-dismiss")
 	}
 	// Clearing back out of command mode resets the latch; a fresh "/" reopens.
-	m.ta.Rewrite("")
+	m.prompt.Rewrite("")
 	m, _ = m.syncPalette()
 	m = typeRune(t, m, '/')
 	if !m.palette.open {
@@ -297,7 +297,7 @@ func TestPaletteUnknownPrefixShowsNote(t *testing.T) {
 	if m.palette.open {
 		t.Fatalf("palette should not open for an unmatched prefix '/zzz'")
 	}
-	note := stripANSIstr(renderPalette(m.deps.Theme, m.palette, m.caps, m.ta.Value(), 100))
+	note := stripANSIstr(renderPalette(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), 100))
 	if !strings.Contains(note, "no matching command") {
 		t.Fatalf("want neutral 'no matching command' note for '/zzz':\n%s", note)
 	}

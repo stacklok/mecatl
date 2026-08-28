@@ -52,7 +52,7 @@ func (m Model) openWorktrees() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Worktrees == nil {
 		return m, nil
 	}
-	m.ta.Blur() // overlay owns the keyboard while open
+	m.prompt.Blur() // overlay owns the keyboard while open
 	m.worktrees.view = worktreesPanel
 	m.worktrees.loading = true
 	m.worktrees.err = nil
@@ -71,7 +71,7 @@ func (m Model) closeWorktrees() (tea.Model, tea.Cmd) {
 	m.worktrees.view = worktreesNone
 	m.worktrees.filter = textinput.Model{}
 	m.worktrees.filtered = nil
-	cmd := m.ta.Focus()
+	cmd := m.prompt.Focus()
 	return m, cmd
 }
 

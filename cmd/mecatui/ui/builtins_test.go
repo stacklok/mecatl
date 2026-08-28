@@ -429,7 +429,7 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	if m.activeMode != "plan" {
 		t.Errorf("stale old-session mode update changed replacement mode to %q", m.activeMode)
 	}
-	m.ta.Rewrite("new prompt")
+	m.prompt.Rewrite("new prompt")
 	m, promptCmd = pressEnter(t, m)
 	_ = firstBatchLeaf(t, promptCmd)
 	frames := conv.send.frames()
@@ -491,7 +491,7 @@ func TestClearBuiltinCreateFailureKeepsOldSession(t *testing.T) {
 	if strings.Contains(stripANSIstr(m.statusMsg), "cleared") {
 		t.Errorf("failed /clear status must not claim cleared: %q", stripANSIstr(m.statusMsg))
 	}
-	m.ta.Rewrite("retry old session")
+	m.prompt.Rewrite("retry old session")
 	m, promptCmd := pressEnter(t, m)
 	_ = firstBatchLeaf(t, promptCmd)
 	frames := conv.send.frames()
@@ -532,7 +532,7 @@ func TestHelpBuiltinOpensOverlay(t *testing.T) {
 	if !m.showHelp {
 		t.Error("/help should open the help overlay (showHelp=true)")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("/help should blur the textarea")
 	}
 	if cmd != nil {
@@ -568,8 +568,8 @@ func TestPaletteEnterRunsBuiltinDirectly(t *testing.T) {
 		t.Error("enter on built-in /clear row should start a create-first handoff, not text-complete")
 	}
 	// Text-completion would have left "/clear " in the input; running clears it.
-	if strings.HasPrefix(m.ta.Value(), "/clear") {
-		t.Errorf("built-in row should not be text-completed into the input, got %q", m.ta.Value())
+	if strings.HasPrefix(m.prompt.Value(), "/clear") {
+		t.Errorf("built-in row should not be text-completed into the input, got %q", m.prompt.Value())
 	}
 	if m.palette.open {
 		t.Error("palette should close after running a built-in")
@@ -605,8 +605,8 @@ func TestBuiltinPaletteAndTypedDispatchAgree(t *testing.T) {
 			if typed.phase != selected.phase || !reflect.DeepEqual(sessionState(typed), sessionState(selected)) || stripANSIstr(typed.statusMsg) != stripANSIstr(selected.statusMsg) {
 				t.Fatalf("typed and palette builtin outcomes differ: typed phase=%v state=%+v status=%q; palette phase=%v state=%+v status=%q", typed.phase, sessionState(typed), stripANSIstr(typed.statusMsg), selected.phase, sessionState(selected), stripANSIstr(selected.statusMsg))
 			}
-			if typed.palette.open || selected.palette.open || typed.ta.Value() != "" || selected.ta.Value() != "" {
-				t.Fatalf("both builtin ingress paths must clear input and close the palette: typed=%q/%t palette=%q/%t", typed.ta.Value(), typed.palette.open, selected.ta.Value(), selected.palette.open)
+			if typed.palette.open || selected.palette.open || typed.prompt.Value() != "" || selected.prompt.Value() != "" {
+				t.Fatalf("both builtin ingress paths must clear input and close the palette: typed=%q/%t palette=%q/%t", typed.prompt.Value(), typed.palette.open, selected.prompt.Value(), selected.palette.open)
 			}
 		})
 	}
@@ -717,7 +717,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 
 	const input = "\u2003/clear\u00a0"
 	m = typeText(t, m, input)
-	if got := m.ta.Value(); got != input {
+	if got := m.prompt.Value(); got != input {
 		t.Fatalf("textarea value = %q, want %q", got, input)
 	}
 	m, cmd := pressEnter(t, m)
@@ -737,8 +737,8 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 	if m.phase != phaseIdle {
 		t.Fatalf("Unicode-whitespace /clear phase = %v, want idle", m.phase)
 	}
-	if m.palette.open || m.ta.Value() != "" {
-		t.Fatalf("Unicode-whitespace /clear must close the palette and clear input, open=%t input=%q", m.palette.open, m.ta.Value())
+	if m.palette.open || m.prompt.Value() != "" {
+		t.Fatalf("Unicode-whitespace /clear must close the palette and clear input, open=%t input=%q", m.palette.open, m.prompt.Value())
 	}
 	if got := promptTexts(send); len(got) != 0 {
 		t.Fatalf("Unicode-whitespace /clear must send no prompt frames, got %v", got)
@@ -800,7 +800,7 @@ func TestSlashNoMatchBlocksKnownBuiltins(t *testing.T) {
 		t.Errorf("gated-off /mcp must send no frames, got %d", len(send.frames()))
 	}
 	// The textarea must NOT be cleared (user keeps their input for editing).
-	if m.ta.Value() == "" {
+	if m.prompt.Value() == "" {
 		t.Error("/mcp blocked: textarea should KEEP the input (not clear it)")
 	}
 	// A warning status must be set.
@@ -827,7 +827,7 @@ func TestSlashNoMatchCaseInsensitive(t *testing.T) {
 	if len(send.frames()) != 0 {
 		t.Errorf("/MODELS must send no frames, got %d", len(send.frames()))
 	}
-	if m.ta.Value() == "" {
+	if m.prompt.Value() == "" {
 		t.Error("/MODELS blocked: textarea should KEEP the input")
 	}
 	got := stripANSIstr(m.statusMsg)
@@ -849,8 +849,8 @@ func TestSlashNoMatchUnknownSends(t *testing.T) {
 		t.Fatal("/foo should fall through to the normal send (non-nil cmd), not be blocked")
 	}
 	// The textarea should be cleared by the normal send path.
-	if m.ta.Value() != "" {
-		t.Errorf("/foo: textarea should be cleared by the normal send, got %q", m.ta.Value())
+	if m.prompt.Value() != "" {
+		t.Errorf("/foo: textarea should be cleared by the normal send, got %q", m.prompt.Value())
 	}
 	// Flush the batch so the send frame fires.
 	runBatchLeaves(cmd)
@@ -877,8 +877,8 @@ func TestSlashGatedByCapsStillExecutes(t *testing.T) {
 		t.Errorf("/mcp (registered) must send no frames, got %d", len(send.frames()))
 	}
 	// The textarea should be cleared (the builtin resets it).
-	if strings.HasPrefix(m.ta.Value(), "/mcp") {
-		t.Errorf("/mcp (registered): textarea should be cleared after the builtin runs, got %q", m.ta.Value())
+	if strings.HasPrefix(m.prompt.Value(), "/mcp") {
+		t.Errorf("/mcp (registered): textarea should be cleared after the builtin runs, got %q", m.prompt.Value())
 	}
 	_ = cmd // may be non-nil (to load MCP inventory); that's fine
 }

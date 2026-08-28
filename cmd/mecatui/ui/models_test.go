@@ -122,7 +122,7 @@ func TestRunModelsOpensPicker(t *testing.T) {
 	if !modelsSurface(t, m).loading {
 		t.Error("picker should be loading until ListModels lands")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("opening the picker should blur the textarea")
 	}
 	if cmd == nil {

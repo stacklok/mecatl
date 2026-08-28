@@ -143,8 +143,8 @@ func TestInvariant_transcript_failure_never_enables_hidden_context(t *testing.T)
 	mm, cmd, _ := m.chooseSession()
 	m = mm.(Model)
 	m = applyAll(m, cmd())
-	if m.phase != phaseReplay || m.sessionID != "active-chat" || m.ta.Focused() {
-		t.Fatalf("failure enabled or rebound chat: phase=%v id=%q focused=%v", m.phase, m.sessionID, m.ta.Focused())
+	if m.phase != phaseReplay || m.sessionID != "active-chat" || m.prompt.Focused() {
+		t.Fatalf("failure enabled or rebound chat: phase=%v id=%q focused=%v", m.phase, m.sessionID, m.prompt.Focused())
 	}
 	view := stripANSIstr(m.View().Content)
 	if !strings.Contains(view, "Retry") || !strings.Contains(view, "Back") {

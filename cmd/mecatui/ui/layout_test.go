@@ -44,7 +44,7 @@ func withPalette(t *testing.T, m Model, n int) Model {
 		m.palette.filtered = append(m.palette.filtered, client.Command{Name: fmt.Sprintf("cmd%d", i), Description: "a command"})
 	}
 	m.palette.cursor = 0
-	if renderPalette(m.deps.Theme, m.palette, m.caps, m.ta.Value(), m.width) == "" {
+	if renderPalette(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width) == "" {
 		t.Fatalf("precondition: palette of %d rows should render a non-empty region", n)
 	}
 	m.relayout()
@@ -185,7 +185,7 @@ func TestTransientRegionShrinksViewportKeepsFooter(t *testing.T) {
 func TestNoTransientBodyHeightMatchesMeasuredChrome(t *testing.T) {
 	m, _ := selModel(t)
 	// Precondition: no transient is present.
-	if m.renderQueue() != "" || renderPalette(m.deps.Theme, m.palette, m.caps, m.ta.Value(), m.width) != "" ||
+	if m.renderQueue() != "" || renderPalette(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width) != "" ||
 		renderMention(m.deps.Theme, m.mention, m.width) != "" {
 		t.Fatal("precondition: no transient should be present in selModel")
 	}

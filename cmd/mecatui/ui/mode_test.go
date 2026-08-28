@@ -127,8 +127,8 @@ func TestPendingModeBlocksQueuedPromptUntilApplied(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("drainQueue should not submit while a mode switch is pending")
 	}
-	if strings.TrimSpace(m.ta.Value()) != "queued follow-up" {
-		t.Fatalf("textarea = %q, want queued follow-up kept for manual send", m.ta.Value())
+	if strings.TrimSpace(m.prompt.Value()) != "queued follow-up" {
+		t.Fatalf("textarea = %q, want queued follow-up kept for manual send", m.prompt.Value())
 	}
 	if !strings.Contains(stripANSIstr(m.statusMsg), "will apply before the queued prompt") {
 		t.Fatalf("status = %q, want pending-mode queue notice", stripANSIstr(m.statusMsg))

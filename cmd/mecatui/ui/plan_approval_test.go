@@ -182,7 +182,7 @@ func TestPlanAskDenyThenIterateTerminalReturnsToIdle(t *testing.T) {
 		t.Errorf("footer after StopPlanIterate = %q, want it to contain 'plan iterate · awaiting your feedback'", got)
 	}
 	// The textarea is focused (input usable): the cursor-blink state is on.
-	if !m.ta.Focused() {
+	if !m.prompt.Focused() {
 		t.Errorf("textarea must be focused after StopPlanIterate (operator types the revision)")
 	}
 }

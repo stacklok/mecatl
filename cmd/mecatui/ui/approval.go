@@ -96,7 +96,7 @@ func (m Model) finishApprovalIntent(advance approvalAdvance, resume phase, cmd t
 	case approvalQueueDrained:
 		m.phase = resume
 		m.closeModal()
-		m.ta.Focus()
+		m.prompt.Focus()
 		if resume == phaseRunning {
 			return m, tea.Batch(cmd, m.sp.Tick), true
 		}

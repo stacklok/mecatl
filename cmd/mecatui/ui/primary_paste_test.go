@@ -45,8 +45,8 @@ func TestMiddleClickRequestsPrimaryRead(t *testing.T) {
 	if cb.primaryCalls != 1 {
 		t.Errorf("ReadPrimary calls = %d, want 1", cb.primaryCalls)
 	}
-	if !strings.Contains(m.ta.Value(), "from primary") {
-		t.Errorf("input = %q, want the primary selection inserted", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "from primary") {
+		t.Errorf("input = %q, want the primary selection inserted", m.prompt.Value())
 	}
 }
 
@@ -62,8 +62,8 @@ func TestPrimaryPasteInsertsViaPastePipeline(t *testing.T) {
 		m, cmd := pressMiddle(m)
 		m, _ = deliver(t, m, cmd)
 
-		if !strings.Contains(m.ta.Value(), "middle-clicked text") {
-			t.Errorf("input = %q, want the selection text", m.ta.Value())
+		if !strings.Contains(m.prompt.Value(), "middle-clicked text") {
+			t.Errorf("input = %q, want the selection text", m.prompt.Value())
 		}
 		if len(m.stagedPastes) != 0 {
 			t.Errorf("stagedPastes = %d, want 0 for a small selection", len(m.stagedPastes))
@@ -78,10 +78,10 @@ func TestPrimaryPasteInsertsViaPastePipeline(t *testing.T) {
 		m, cmd := pressMiddle(m)
 		m, _ = deliver(t, m, cmd)
 
-		if !strings.Contains(m.ta.Value(), "[Pasted text #1]") {
-			t.Fatalf("input = %q, want the [Pasted text #1] placeholder", m.ta.Value())
+		if !strings.Contains(m.prompt.Value(), "[Pasted text #1]") {
+			t.Fatalf("input = %q, want the [Pasted text #1] placeholder", m.prompt.Value())
 		}
-		if strings.Contains(m.ta.Value(), payload) {
+		if strings.Contains(m.prompt.Value(), payload) {
 			t.Error("the raw payload entered the textarea; it must stage behind the placeholder")
 		}
 		if got := m.stagedPastes["[Pasted text #1]"]; got != payload {
@@ -98,14 +98,14 @@ func TestPrimaryClipboardMsgSelectionGate(t *testing.T) {
 
 	mm, _ := m.Update(tea.ClipboardMsg{Content: "system clipboard", Selection: 'c'})
 	m = mm.(Model)
-	if m.ta.Value() != "" {
-		t.Fatalf("a 'c' ClipboardMsg inserted %q, want it ignored", m.ta.Value())
+	if m.prompt.Value() != "" {
+		t.Fatalf("a 'c' ClipboardMsg inserted %q, want it ignored", m.prompt.Value())
 	}
 
 	mm, _ = m.Update(tea.ClipboardMsg{Content: "primary selection", Selection: 'p'})
 	m = mm.(Model)
-	if !strings.Contains(m.ta.Value(), "primary selection") {
-		t.Errorf("input = %q, want the 'p' ClipboardMsg content inserted", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "primary selection") {
+		t.Errorf("input = %q, want the 'p' ClipboardMsg content inserted", m.prompt.Value())
 	}
 }
 
@@ -121,13 +121,13 @@ func TestPrimaryPasteEmptyNoOp(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			m, _ := newClipboardModel(t, client.Capabilities{}, cb)
-			before, beforeStatus := m.ta.Value(), m.statusMsg
+			before, beforeStatus := m.prompt.Value(), m.statusMsg
 
 			m, cmd := pressMiddle(m)
 			m, next := deliver(t, m, cmd)
 
-			if m.ta.Value() != before {
-				t.Errorf("input changed %q → %q, want untouched", before, m.ta.Value())
+			if m.prompt.Value() != before {
+				t.Errorf("input changed %q → %q, want untouched", before, m.prompt.Value())
 			}
 			if m.statusMsg != beforeStatus {
 				t.Errorf("statusMsg = %q, want unchanged (silent no-op)", m.statusMsg)
@@ -227,7 +227,7 @@ func TestPrimaryReadDeliveryGatedUnderOverlay(t *testing.T) {
 				t.Fatal("middle-click at idle returned no command, want the primary read")
 			}
 			closeGate(&m)
-			_ = m.ta.Focus() // defeat the blur masking — exercise the gate, not the blur.
+			_ = m.prompt.Focus() // defeat the blur masking — exercise the gate, not the blur.
 
 			msg := cmd()
 			mm, next := m.Update(msg)
@@ -236,7 +236,7 @@ func TestPrimaryReadDeliveryGatedUnderOverlay(t *testing.T) {
 			if cb.primaryCalls != 1 {
 				t.Fatalf("ReadPrimary calls = %d, want 1 (the read ran; the GATE must drop its result)", cb.primaryCalls)
 			}
-			if got := m.ta.Value(); got != "" {
+			if got := m.prompt.Value(); got != "" {
 				t.Errorf("late primary read leaked into the input behind the modal: %q", got)
 			}
 			if len(m.stagedPastes) != 0 {
@@ -263,12 +263,12 @@ func TestPrimaryClipboardMsgDeliveryGatedUnderOverlay(t *testing.T) {
 				t.Fatal("middle-click at idle returned no command, want the OSC52 primary read")
 			}
 			closeGate(&m)
-			_ = m.ta.Focus() // defeat the blur masking — exercise the gate, not the blur.
+			_ = m.prompt.Focus() // defeat the blur masking — exercise the gate, not the blur.
 
 			mm, next := m.Update(tea.ClipboardMsg{Content: "late osc52 leak", Selection: 'p'})
 			m = mm.(Model)
 
-			if got := m.ta.Value(); got != "" {
+			if got := m.prompt.Value(); got != "" {
 				t.Errorf("late OSC52 response leaked into the input behind the modal: %q", got)
 			}
 			if len(m.stagedPastes) != 0 {
@@ -307,7 +307,7 @@ func TestRapidDoubleMiddleClickInsertsBothInOrder(t *testing.T) {
 	if cb.primaryCalls != 2 {
 		t.Errorf("ReadPrimary calls = %d, want 2", cb.primaryCalls)
 	}
-	val := m.ta.Value()
+	val := m.prompt.Value()
 	i, j := strings.Index(val, "alpha"), strings.Index(val, "bravo")
 	if i < 0 || j < 0 {
 		t.Fatalf("input = %q, want BOTH selections inserted", val)
@@ -338,8 +338,8 @@ func TestMiddleClickNoBackendFallsBackToOSC52(t *testing.T) {
 	// The terminal answers the query: the response inserts.
 	mm, _ := m.Update(tea.ClipboardMsg{Content: "osc52 primary", Selection: 'p'})
 	m = mm.(Model)
-	if !strings.Contains(m.ta.Value(), "osc52 primary") {
-		t.Errorf("input = %q, want the OSC52 response inserted", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "osc52 primary") {
+		t.Errorf("input = %q, want the OSC52 response inserted", m.prompt.Value())
 	}
 }
 

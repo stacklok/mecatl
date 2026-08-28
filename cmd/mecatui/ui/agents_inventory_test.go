@@ -68,7 +68,7 @@ func TestRunAgentsInvOpensPanel(t *testing.T) {
 	if !m.agentsInv.loading {
 		t.Error("panel should be loading until the RPC result lands")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("opening the panel should blur the textarea")
 	}
 	if cmd == nil {
@@ -147,7 +147,7 @@ func TestAgentsInvEscClosesPanel(t *testing.T) {
 	if m.agentsInv.view != agentsInvNone {
 		t.Fatalf("esc did not close the panel: %v", m.agentsInv.view)
 	}
-	if !m.ta.Focused() {
+	if !m.prompt.Focused() {
 		t.Error("esc should restore focus to the textarea")
 	}
 }

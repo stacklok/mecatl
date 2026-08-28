@@ -127,7 +127,7 @@ func mergeCommands(builtins, discovered []client.Command) []client.Command {
 // the built-in commands always exist; the lazy server fetch fires only when a
 // Commander IS wired.
 func (m Model) syncPalette() (Model, tea.Cmd) {
-	prefix, isCmd := commandPrefix(m.ta.Value())
+	prefix, isCmd := commandPrefix(m.prompt.Value())
 	if !isCmd {
 		// Left command mode: reset the palette (including the esc-dismiss latch) so a
 		// later "/" opens it afresh.
@@ -201,7 +201,7 @@ func (m Model) paletteComplete() Model {
 		return m
 	}
 	name := m.palette.filtered[m.palette.cursor].Name
-	(&m).promptRewrite("/" + name + " ")
+	m.prompt.Rewrite("/" + name + " ")
 	// Completing leaves command mode (a trailing space follows the name), so the
 	// palette closes; settle the derived state without re-fetching.
 	m.palette.open = false

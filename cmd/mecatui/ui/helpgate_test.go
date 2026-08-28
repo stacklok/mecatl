@@ -20,7 +20,7 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 	if !m.showHelp {
 		t.Fatal("'?' on empty input should open help")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("textarea should be blurred while help is up")
 	}
 
@@ -29,7 +29,7 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 	if m.showHelp {
 		t.Fatal("'?' should close the open help overlay")
 	}
-	if !m.ta.Focused() {
+	if !m.prompt.Focused() {
 		t.Error("textarea should be refocused after closing help")
 	}
 
@@ -40,8 +40,8 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 	if m.showHelp {
 		t.Fatal("'?' on a non-empty input must NOT open help")
 	}
-	if !strings.Contains(m.ta.Value(), "?") {
-		t.Errorf("'?' should have typed into the textarea, value=%q", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "?") {
+		t.Errorf("'?' should have typed into the textarea, value=%q", m.prompt.Value())
 	}
 }
 

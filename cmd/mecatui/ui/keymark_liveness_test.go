@@ -935,7 +935,7 @@ func TestAncillaryHintsReflectKeyOverride(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: th, KeyOverrides: overrideAll(), NoAltScreen: true})
 
 	t.Run("textarea placeholder", func(t *testing.T) {
-		got := m.ta.Placeholder()
+		got := m.prompt.Placeholder()
 		for _, want := range []string{"ctrl+f1 to send", "ctrl+f2 for newline", "ctrl+f12 for help"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("placeholder missing live hint %q: %q", want, got)

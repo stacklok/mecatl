@@ -101,7 +101,7 @@ func TestRunWorktreesOpensOverlay(t *testing.T) {
 	if !m.worktrees.loading {
 		t.Error("overlay should be loading until ListWorktrees lands")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("opening the overlay should blur the textarea")
 	}
 	if cmd == nil {

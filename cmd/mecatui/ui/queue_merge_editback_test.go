@@ -31,7 +31,7 @@ func TestEditBackRunningPullsMergedQueue(t *testing.T) {
 
 	m = pressUp(t, m)
 
-	if got := m.ta.Value(); got != "second"+queueMergeSep+"third" {
+	if got := m.prompt.Value(); got != "second"+queueMergeSep+"third" {
 		t.Fatalf("edit-back must load the merged queue into the input, got %q", got)
 	}
 	if len(m.queued) != 0 {
@@ -63,8 +63,8 @@ func TestEditBackNonEmptyInputIsNoOp(t *testing.T) {
 	if len(m.queued) != 1 || m.queued[0] != "second" {
 		t.Fatalf("↑ over a draft must leave the queue intact, got %v", m.queued)
 	}
-	if !strings.Contains(m.ta.Value(), "draft") {
-		t.Errorf("↑ over a draft must not wipe the input, got %q", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "draft") {
+		t.Errorf("↑ over a draft must not wipe the input, got %q", m.prompt.Value())
 	}
 }
 
@@ -79,8 +79,8 @@ func TestEditBackEmptyQueueIsNoOp(t *testing.T) {
 	if len(m.queued) != 0 {
 		t.Fatalf("no queue: ↑ must not fabricate one, got %v", m.queued)
 	}
-	if strings.TrimSpace(m.ta.Value()) != "" {
-		t.Errorf("no queue: ↑ must leave the empty input empty, got %q", m.ta.Value())
+	if strings.TrimSpace(m.prompt.Value()) != "" {
+		t.Errorf("no queue: ↑ must leave the empty input empty, got %q", m.prompt.Value())
 	}
 }
 
@@ -103,7 +103,7 @@ func TestEditBackIdlePausedPullsMergedQueue(t *testing.T) {
 
 	m = pressUp(t, m)
 
-	if got := m.ta.Value(); got != "second"+queueMergeSep+"third" {
+	if got := m.prompt.Value(); got != "second"+queueMergeSep+"third" {
 		t.Fatalf("idle edit-back must load the merged queue, got %q", got)
 	}
 	if len(m.queued) != 0 || m.queuePaused != "" {
@@ -129,8 +129,8 @@ func TestEscStillClearsAllNotEditBack(t *testing.T) {
 	if len(m.queued) != 0 {
 		t.Fatalf("esc must clear the queue outright, got %v", m.queued)
 	}
-	if strings.TrimSpace(m.ta.Value()) != "" {
-		t.Errorf("esc-clear must not load the queue into the input, got %q", m.ta.Value())
+	if strings.TrimSpace(m.prompt.Value()) != "" {
+		t.Errorf("esc-clear must not load the queue into the input, got %q", m.prompt.Value())
 	}
 }
 
@@ -248,7 +248,7 @@ func TestEditBackSetsEditingStatusAndFocus(t *testing.T) {
 	if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "editing") {
 		t.Errorf("edit-back must set an 'editing' status, got %q", got)
 	}
-	if !m.ta.Focused() {
+	if !m.prompt.Focused() {
 		t.Error("edit-back must leave the input focused for editing")
 	}
 }

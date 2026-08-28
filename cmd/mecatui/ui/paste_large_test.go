@@ -38,11 +38,11 @@ func TestLargePasteBecomesPlaceholder(t *testing.T) {
 	if got, ok := m.stagedPastes["[Pasted text #1]"]; !ok || got != largePasteText() {
 		t.Fatalf("store not keyed by the marker / payload mangled: %v", len(m.stagedPastes))
 	}
-	if !strings.Contains(m.ta.Value(), "[Pasted text #1]") {
-		t.Errorf("input = %q, want the placeholder marker", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "[Pasted text #1]") {
+		t.Errorf("input = %q, want the placeholder marker", m.prompt.Value())
 	}
-	if strings.Contains(m.ta.Value(), "BEGIN-") {
-		t.Errorf("input still holds the pasted payload (len %d)", len(m.ta.Value()))
+	if strings.Contains(m.prompt.Value(), "BEGIN-") {
+		t.Errorf("input still holds the pasted payload (len %d)", len(m.prompt.Value()))
 	}
 }
 
@@ -61,8 +61,8 @@ func TestTallPasteBecomesPlaceholder(t *testing.T) {
 	if len(m.stagedPastes) != 1 {
 		t.Fatalf("stagedPastes = %d, want 1 (line-count trigger)", len(m.stagedPastes))
 	}
-	if !strings.Contains(m.ta.Value(), "[Pasted text #1]") {
-		t.Errorf("input = %q, want the placeholder marker", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "[Pasted text #1]") {
+		t.Errorf("input = %q, want the placeholder marker", m.prompt.Value())
 	}
 }
 
@@ -74,7 +74,7 @@ func TestSmallPasteUnchanged(t *testing.T) {
 	mm, _ := m.Update(pasteMsg("hello pasted world"))
 	m = mm.(Model)
 
-	if got := m.ta.Value(); got != "hello pasted world" {
+	if got := m.prompt.Value(); got != "hello pasted world" {
 		t.Fatalf("input = %q, want the literal paste", got)
 	}
 	if len(m.stagedPastes) != 0 {
@@ -94,8 +94,8 @@ func TestPasteThresholdBoundary(t *testing.T) {
 	if len(m.stagedPastes) != 0 {
 		t.Fatalf("%d runes staged, want literal below the threshold", pasteCharThreshold-1)
 	}
-	if m.ta.Value() != under {
-		t.Fatalf("input len = %d, want the %d-rune literal", len(m.ta.Value()), len(under))
+	if m.prompt.Value() != under {
+		t.Fatalf("input len = %d, want the %d-rune literal", len(m.prompt.Value()), len(under))
 	}
 
 	m2, _ := newQueueModel(t)
@@ -104,7 +104,7 @@ func TestPasteThresholdBoundary(t *testing.T) {
 	if len(m2.stagedPastes) != 1 {
 		t.Fatalf("%d runes not staged, want placeholder at the threshold", pasteCharThreshold)
 	}
-	if strings.Contains(m2.ta.Value(), at) {
+	if strings.Contains(m2.prompt.Value(), at) {
 		t.Errorf("input still holds the at-threshold payload")
 	}
 }
@@ -149,7 +149,7 @@ func TestDeletedPlaceholderDropsPaste(t *testing.T) {
 
 	mm, _ := m.Update(pasteMsg(largePasteText()))
 	m = mm.(Model)
-	m.ta.Rewrite("never mind, just text")
+	m.prompt.Rewrite("never mind, just text")
 
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -283,7 +283,7 @@ func TestPlaceholderIgnoredBehindOverlay(t *testing.T) {
 	if m.nextPasteN != 0 {
 		t.Fatalf("nextPasteN = %d, want 0 behind the overlay (counter must not burn)", m.nextPasteN)
 	}
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("paste leaked into input behind help overlay: %q", truncate(got, 40))
 	}
 }
@@ -303,7 +303,7 @@ func TestClearDropsStagedPastes(t *testing.T) {
 	if len(m.stagedPastes) != 1 {
 		t.Fatalf("stagedPastes = %d, want 1 before /clear", len(m.stagedPastes))
 	}
-	m.ta.Reset() // marker deleted; the dangling store is exactly what /clear must drop
+	m.prompt.Reset() // marker deleted; the dangling store is exactly what /clear must drop
 
 	// Drive the real /clear built-in: type it and submit (the palette claims enter
 	// and runs the selected built-in row, the same user path as a bare-line submit).
@@ -351,10 +351,10 @@ func TestCumulativePastesStage(t *testing.T) {
 	if got := m.stagedPastes["[Pasted text #1]"]; got != second {
 		t.Errorf("staged payload is not the second paste (len %d)", len(got))
 	}
-	if strings.Contains(m.ta.Value(), "S-") {
+	if strings.Contains(m.prompt.Value(), "S-") {
 		t.Errorf("second payload leaked into the buffer")
 	}
-	if !strings.Contains(m.ta.Value(), first) {
+	if !strings.Contains(m.prompt.Value(), first) {
 		t.Errorf("first literal paste was converted out of the buffer — only the incoming paste may stage")
 	}
 }
@@ -375,8 +375,8 @@ func TestPasteRuneThresholdNotBytes(t *testing.T) {
 	if len(m.stagedPastes) != 0 {
 		t.Fatalf("1999-rune CJK paste staged — threshold is counting bytes, not runes")
 	}
-	if m.ta.Value() != payload {
-		t.Errorf("input != the literal CJK payload (len %d)", len(m.ta.Value()))
+	if m.prompt.Value() != payload {
+		t.Errorf("input != the literal CJK payload (len %d)", len(m.prompt.Value()))
 	}
 }
 
@@ -393,8 +393,8 @@ func TestPasteLineThresholdUnderBoundary(t *testing.T) {
 	if len(m.stagedPastes) != 0 {
 		t.Fatalf("%d-line paste staged, want literal under the line threshold", pasteLineThreshold-1)
 	}
-	if m.ta.Value() != under {
-		t.Errorf("input = %q…, want the literal multi-line paste", truncate(m.ta.Value(), 20))
+	if m.prompt.Value() != under {
+		t.Errorf("input = %q…, want the literal multi-line paste", truncate(m.prompt.Value(), 20))
 	}
 }
 
@@ -456,8 +456,8 @@ func TestQueueFullPasteRejectKeepsStore(t *testing.T) {
 	if len(m.stagedPastes) != 1 {
 		t.Errorf("stagedPastes = %d, want 1 kept on the queue-full reject", len(m.stagedPastes))
 	}
-	if !strings.Contains(m.ta.Value(), "[Pasted text #1]") {
-		t.Errorf("input lost the marker on the queue-full reject: %q", truncate(m.ta.Value(), 40))
+	if !strings.Contains(m.prompt.Value(), "[Pasted text #1]") {
+		t.Errorf("input lost the marker on the queue-full reject: %q", truncate(m.prompt.Value(), 40))
 	}
 }
 
@@ -491,7 +491,7 @@ func TestAggregateCapRejectKeepsPasteStore(t *testing.T) {
 	if len(m.stagedMedia) != over {
 		t.Errorf("stagedMedia = %d, want %d kept for the retry", len(m.stagedMedia), over)
 	}
-	if !strings.Contains(m.ta.Value(), "[Pasted text #1]") {
+	if !strings.Contains(m.prompt.Value(), "[Pasted text #1]") {
 		t.Errorf("input lost the paste marker on the refusal")
 	}
 }
@@ -530,8 +530,8 @@ func TestLongMediaPathPasteStaysMedia(t *testing.T) {
 	if len(m.stagedPastes) != 0 {
 		t.Fatalf("stagedPastes = %d, want 0 — the path must not fall into text staging", len(m.stagedPastes))
 	}
-	if !strings.Contains(m.ta.Value(), "[Image #1]") {
-		t.Errorf("input = %q…, want the image marker", truncate(m.ta.Value(), 40))
+	if !strings.Contains(m.prompt.Value(), "[Image #1]") {
+		t.Errorf("input = %q…, want the image marker", truncate(m.prompt.Value(), 40))
 	}
 }
 
@@ -650,7 +650,7 @@ func TestRenderInputInvalidatedBySelection(t *testing.T) {
 	// selection state, leaving the value, cursor, focus, and dimensions intact.
 	mm, _ := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	m = mm.(Model)
-	if !m.ta.HasSelection() {
+	if !m.prompt.HasSelection() {
 		t.Fatal("ctrl+g did not select the prompt")
 	}
 
@@ -672,7 +672,7 @@ func TestRenderInputInvalidatedByFocusChange(t *testing.T) {
 	_ = m.renderInput()
 	pokeInputCache(t, m, "SENTINEL")
 
-	m.ta.Blur()
+	m.prompt.Blur()
 	if got := m.renderInput(); got == "SENTINEL" {
 		t.Fatalf("blur did not invalidate the input render cache")
 	}

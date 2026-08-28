@@ -193,15 +193,15 @@ func (m Model) onClipboardErr(msg clipboardErrMsg) tea.Model {
 // insertText inserts a marker or clipboard payload at the current cursor. Markers
 // keep their separating space, while an active textarea selection is replaced.
 func (m *Model) insertText(s string) {
-	if m.ta.HasSelection() {
-		m.promptInsert(s + " ")
+	if m.prompt.HasSelection() {
+		m.prompt.InsertText(s + " ")
 		return
 	}
-	val := m.ta.Value()
+	val := m.prompt.Value()
 	if val != "" && !strings.HasSuffix(val, " ") && !strings.HasSuffix(val, "\n") {
 		val += " "
 	}
-	m.promptRewrite(val + s + " ")
+	m.prompt.Rewrite(val + s + " ")
 }
 
 // tryPasteMediaPath handles a bracketed paste whose payload is a single FILE PATH

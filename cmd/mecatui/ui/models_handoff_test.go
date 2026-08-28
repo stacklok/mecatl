@@ -51,11 +51,11 @@ func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 	if !strings.Contains(stripANSIstr(m.View().Content), "local source only") {
 		t.Fatal("source projection must remain visible while target hydrates")
 	}
-	m.ta.Rewrite("must not send")
-	before := m.ta.Value()
+	m.prompt.Rewrite("must not send")
+	before := m.prompt.Value()
 	mm, keyCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	if keyCmd != nil || m.ta.Value() != before {
+	if keyCmd != nil || m.prompt.Value() != before {
 		t.Fatal("connecting handoff must not accept input or open Converse")
 	}
 

@@ -106,7 +106,7 @@ func (m Model) chrome() (above, below []region) {
 	// The slash-command palette is an inline dropdown shown just ABOVE the input (not
 	// an overlay over the conversation): it appears only while idle and the input is a
 	// command line. renderPalette returns "" when it should not show.
-	if pal := renderPalette(m.deps.Theme, m.palette, m.caps, m.ta.Value(), m.width); pal != "" {
+	if pal := renderPalette(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width); pal != "" {
 		below = append(below, region{role: regionPalette, content: pal})
 	}
 	// The @-mention file menu is the same kind of inline dropdown as the palette and is

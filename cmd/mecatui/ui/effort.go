@@ -93,7 +93,7 @@ func (m Model) openEffort() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || !m.caps.ModelSelection {
 		return m, nil
 	}
-	m.ta.Blur() // overlay owns the keyboard while open
+	m.prompt.Blur() // overlay owns the keyboard while open
 	m.effort.view = effortPanel
 	m.effort.cursor = effortCursorFor(m.resolvedSessionModel.ReasoningEffort)
 	return m, nil
@@ -136,7 +136,7 @@ func (m Model) currentModelNoReasoning() bool {
 // closeEffort dismisses the overlay and returns focus to the prompt input.
 func (m Model) closeEffort() (tea.Model, tea.Cmd) {
 	m.effort.view = effortNone
-	cmd := m.ta.Focus()
+	cmd := m.prompt.Focus()
 	return m, cmd
 }
 

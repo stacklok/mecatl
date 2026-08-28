@@ -468,8 +468,8 @@ type Model struct {
 	// wrap shapes (one long line, a compound pipeline, a heredoc).
 	debugAskCycle int
 
-	ta prompttextarea.Editor
-	sp spinner.Model
+	prompt prompttextarea.Editor
+	sp     spinner.Model
 	// stuck is true while the viewport auto-follows the bottom (tails streaming
 	// output). It is no longer hardcoded: syncStuck re-derives it from
 	// m.vp.AtBottom() after every scroll/wheel/nav so a scroll-up unsticks (and
@@ -830,10 +830,6 @@ type Model struct {
 	// refreshView). Active only on the alt screen; an overlay/modal/help blocks a new
 	// selection and clears an active one.
 	sel selection
-	// promptSelecting tracks an in-progress textarea mouse drag. The textarea
-	// retains completed selection state itself.
-	promptSelecting bool
-
 	// mouseDebug is the last formatted mouse-diagnostic line (see mouseDebugLine),
 	// rendered in the footer only when Deps.DebugMouse is set. Set at the top of
 	// onMousePress/onMouseMotion when the diagnostic is enabled; empty otherwise.
@@ -883,7 +879,7 @@ func New(deps Deps) Model {
 	keys := applyKeyOverrides(defaultKeys(), deps.KeyOverrides)
 	hk := keyMarkingsWithScroll(keys, deps.scrollKeysMarking())
 
-	ta := prompttextarea.New(prompttextarea.Config{
+	prompt := prompttextarea.New(prompttextarea.Config{
 		Placeholder: "Ask mecatl to do something…  (" + hk.submit + " to send · " + hk.newlineFirst + " for newline · " + hk.help + " for help)",
 		SelectAll:   keys.SelectAll,
 	})
@@ -909,7 +905,7 @@ func New(deps Deps) Model {
 		hits:    &hitRegions{},
 		metrics: &renderedSurfaceMetrics{},
 		phase:   phaseConnecting,
-		ta:      ta,
+		prompt:  prompt,
 		sp:      sp,
 		vp:      vp,
 		stuck:   true,
@@ -942,7 +938,7 @@ func New(deps Deps) Model {
 		m.modelsReconciled = deps.Models == nil
 		state := m.newSessionsSurface(true)
 		_ = state.beginPage("")
-		m.ta.Blur()
+		m.prompt.Blur()
 		if deps.Sessions == nil {
 			state.loading = false
 			state.loadState = sessionsInitialPageError

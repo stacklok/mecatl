@@ -19,7 +19,7 @@ func TestSteer_RecomposedFragmentRendersPerPart(t *testing.T) {
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = mm.(Model)
 	runBatchLeaves(cmd)
-	if got := m.ta.Value(); got != "steer 7"+queueMergeSep+"steer 8" {
+	if got := m.prompt.Value(); got != "steer 7"+queueMergeSep+"steer 8" {
 		t.Fatalf("↑ must pull the merged bundle into the textarea, got %q", got)
 	}
 	m = typeText(t, m, "a")

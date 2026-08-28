@@ -397,7 +397,7 @@ func TestWindowTitleView(t *testing.T) {
 // submitPrompt reducer path (the same path a real enter-press takes).
 func sendText(t *testing.T, m Model, text string) Model {
 	t.Helper()
-	m.ta.Rewrite(text)
+	m.prompt.Rewrite(text)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	return mm.(Model)
 }

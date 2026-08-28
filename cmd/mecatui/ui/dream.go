@@ -42,7 +42,7 @@ func (m Model) openDream() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Dream == nil || m.caps.ManualDream == nil {
 		return m, nil
 	}
-	m.ta.Blur()
+	m.prompt.Blur()
 	selected := 0
 	if !m.caps.ManualDream.ProjectMemory.Generate && m.caps.ManualDream.UserModel.Generate {
 		selected = 1
@@ -54,7 +54,7 @@ func (m Model) openDream() (tea.Model, tea.Cmd) {
 func (m Model) closeDream() (tea.Model, tea.Cmd) {
 	m.dreamGen++
 	m.dream = dreamState{}
-	return m, m.ta.Focus()
+	return m, m.prompt.Focus()
 }
 
 func (m Model) dreamTarget() (string, client.DreamTargetCapability) {

@@ -33,7 +33,7 @@ func TestInputRailAddsOnlyTopPadRow(t *testing.T) {
 		m = applyAll(m, tea.WindowSizeMsg{Width: w, Height: 30},
 			client.SessionReadyMsg{SessionID: "sess-test-0001"})
 
-		bare := m.ta.View()
+		bare := m.prompt.View()
 		railed := m.renderInput()
 		if got, want := lipgloss.Height(railed), lipgloss.Height(bare)+inputRailPadTop; got != want {
 			t.Errorf("width %d: rail input height = %d rows, want %d (bare %d + top pad %d)", w, got, want, lipgloss.Height(bare), inputRailPadTop)
@@ -65,7 +65,7 @@ func TestInputRailFillsUniformly(t *testing.T) {
 		mt, _, _ := newTestModel(t, th)
 		mt = applyAll(mt, tea.WindowSizeMsg{Width: w, Height: 30},
 			client.SessionReadyMsg{SessionID: "sess-test-0001"})
-		mt.ta.Rewrite("Hello")
+		mt.prompt.Rewrite("Hello")
 		mt.rend.inputValid = false // bust the cache so the typed value re-renders
 		typed := mt.renderInput()
 
@@ -83,10 +83,10 @@ func TestInputRailFillsUniformly(t *testing.T) {
 		}
 		// Every textarea row is present and tinted, PLUS the one top-padding row
 		// (inputRailPadTop): height == ta.Height() + the pad. No zero-width empty rows.
-		if got, want := lipgloss.Height(empty), me.ta.Height()+inputRailPadTop; got != want {
+		if got, want := lipgloss.Height(empty), me.prompt.Height()+inputRailPadTop; got != want {
 			t.Errorf("width %d: empty input block height = %d rows, want %d (textarea rows + %d top pad)", w, got, want, inputRailPadTop)
 		}
-		if got, want := lipgloss.Height(typed), mt.ta.Height()+inputRailPadTop; got != want {
+		if got, want := lipgloss.Height(typed), mt.prompt.Height()+inputRailPadTop; got != want {
 			t.Errorf("width %d: typed input block height = %d rows, want %d (textarea rows + %d top pad)", w, got, want, inputRailPadTop)
 		}
 		// EVEN tint: every row's fill must run flush to the right edge — NO trailing
@@ -124,11 +124,11 @@ func TestInputRailBorderColourIgnoresFocus(t *testing.T) {
 	// The exact escape inputRailStyle uses to colour the border glyph for this mode.
 	wantBorder := inputRailStyle(th, m.inputMode()).Render("│")
 
-	m.ta.Focus()
+	m.prompt.Focus()
 	m.rend.inputValid = false
 	focused := m.renderInput()
 
-	m.ta.Blur()
+	m.prompt.Blur()
 	m.rend.inputValid = false
 	blurred := m.renderInput()
 
@@ -163,7 +163,7 @@ func TestInputTextHasStrongContrast(t *testing.T) {
 	m, _, _ := newTestModel(t, th)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-test-0001"})
-	m.ta.Rewrite("And if I write")
+	m.prompt.Rewrite("And if I write")
 	m.rend.inputValid = false
 	out := m.renderInput()
 	// The Aztec Text slot (#E7E2D3) as the RGB foreground SGR lipgloss emits.

@@ -20,7 +20,7 @@ func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
 	if got := modelsSurface(t, m).filter.Value(); got != "c" {
 		t.Fatalf("surface filter = %q, want input captured by the modal", got)
 	}
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("textarea = %q, want modal input capture", got)
 	}
 
@@ -38,7 +38,7 @@ func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
 	if m.modal != nil {
 		t.Fatal("second esc should close the models surface")
 	}
-	if !m.ta.Focused() {
+	if !m.prompt.Focused() {
 		t.Fatal("closing the models surface should refocus the textarea")
 	}
 

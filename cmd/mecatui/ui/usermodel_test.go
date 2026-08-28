@@ -69,7 +69,7 @@ func TestRunUserModelOpensPanel(t *testing.T) {
 	if !m.userModel.loading {
 		t.Error("panel should be loading until the RPC result lands")
 	}
-	if m.ta.Focused() {
+	if m.prompt.Focused() {
 		t.Error("opening the panel should blur the textarea")
 	}
 	if cmd == nil {

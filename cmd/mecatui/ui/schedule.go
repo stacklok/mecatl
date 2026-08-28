@@ -88,7 +88,7 @@ func (m Model) openSchedule() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Sched == nil {
 		return m, nil
 	}
-	m.ta.Blur()
+	m.prompt.Blur()
 	m.schedule.view = schedulePanel
 	m.schedule.loading = true
 	m.schedule.err = nil
@@ -105,7 +105,7 @@ func (m Model) openSchedule() (tea.Model, tea.Cmd) {
 // closeSchedule dismisses the overlay and returns focus to the prompt input.
 func (m Model) closeSchedule() (tea.Model, tea.Cmd) {
 	m.schedule = scheduleState{}
-	cmd := m.ta.Focus()
+	cmd := m.prompt.Focus()
 	return m, cmd
 }
 

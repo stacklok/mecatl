@@ -126,14 +126,14 @@ func TestQuitGuardInterveningKeyDisarms(t *testing.T) {
 // input clears the input and does NOT arm (mirrors esc's clear-the-line).
 func TestQuitGuardFirstCtrlCNonEmptyClearsInput(t *testing.T) {
 	m := quitModel(t)
-	m.ta.Rewrite("a draft prompt")
+	m.prompt.Rewrite("a draft prompt")
 
 	m, cmd := pressKey(m, ctrlC())
 	if m.quitArmed {
 		t.Error("ctrl+c with non-empty input should NOT arm the guard")
 	}
-	if strings.TrimSpace(m.ta.Value()) != "" {
-		t.Errorf("ctrl+c with non-empty input should clear the input, got %q", m.ta.Value())
+	if strings.TrimSpace(m.prompt.Value()) != "" {
+		t.Errorf("ctrl+c with non-empty input should clear the input, got %q", m.prompt.Value())
 	}
 	if isQuitCmd(cmd) {
 		t.Error("ctrl+c with non-empty input must not quit")

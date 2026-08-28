@@ -337,7 +337,7 @@ func (m Model) closeSessionCmd(id string) tea.Cmd {
 // sets (see onIdleKey). It blurs the textarea so the overlay owns the keyboard.
 func (m Model) runHelp() (tea.Model, tea.Cmd) {
 	m.showHelp = true
-	m.ta.Blur()
+	m.prompt.Blur()
 	return m, nil
 }
 
@@ -572,7 +572,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		m.palette.open = false
 		m.palette.filtered = nil
 		m.palette.cursor = 0
-		(&m).promptReset()
+		m.prompt.Reset()
 		mm, cmd := b.run(m)
 		return mm, cmd, true
 	}

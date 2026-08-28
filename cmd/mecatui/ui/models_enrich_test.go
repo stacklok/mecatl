@@ -664,7 +664,7 @@ func TestRestartOnModelTearsDownLiveRun(t *testing.T) {
 
 	// Start a real run: submitPrompt opens the stream, sets cancelRun, bumps streamGen,
 	// and launches the reader goroutine.
-	m.ta.Rewrite("run something")
+	m.prompt.Rewrite("run something")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	if m.stream == nil || m.cancelRun == nil {
@@ -937,7 +937,7 @@ func TestRestartStaleStreamEventDropped(t *testing.T) {
 		NoAltScreen: true,
 	})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.SessionReadyMsg{SessionID: "sess-test-0001"})
-	m.ta.Rewrite("run something")
+	m.prompt.Rewrite("run something")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	staleGen := m.streamGen // the generation the live reader is tagged with

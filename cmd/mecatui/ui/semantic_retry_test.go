@@ -42,7 +42,7 @@ func TestFailedStepRetryKeepsQueueAndComposeStateThenHealthyDrain(t *testing.T) 
 	m = startRunning(t, m, "first")
 	m = enqueue(t, m, "second")
 	m = enqueue(t, m, "third")
-	m.ta.Rewrite("unfinished draft")
+	m.prompt.Rewrite("unfinished draft")
 	usersBefore := userBlockCount(m.conv)
 
 	mm, cmd := m.Update(failedStepRetryableResult())
@@ -52,7 +52,7 @@ func TestFailedStepRetryKeepsQueueAndComposeStateThenHealthyDrain(t *testing.T) 
 	if got := m.queued; len(got) != 2 || got[0] != "second" || got[1] != "third" {
 		t.Fatalf("failed-step retry changed FIFO: %v", got)
 	}
-	if got := m.ta.Value(); got != "unfinished draft" {
+	if got := m.prompt.Value(); got != "unfinished draft" {
 		t.Fatalf("failed-step retry changed textarea: %q", got)
 	}
 	if got := userBlockCount(m.conv); got != usersBefore {
@@ -69,7 +69,7 @@ func TestFailedStepRetryKeepsQueueAndComposeStateThenHealthyDrain(t *testing.T) 
 	// A healthy retry becomes authoritative at turn.start, then resumes the queue.
 	m = applyAll(m, client.ModelRetryMsg{})
 	m = applyAll(m, client.TurnStartMsg{})
-	m.ta.Reset() // the draft above is only a mutation sentinel; normal running input is empty.
+	m.prompt.Reset() // the draft above is only a mutation sentinel; normal running input is empty.
 	mm, cmd = m.Update(client.ResultMsg{Stop: "end_turn"})
 	m = mm.(Model)
 	runBatchLeaves(cmd)
@@ -191,8 +191,8 @@ func TestManualFailedStepRetryVisibleAndSecondPrecommit(t *testing.T) {
 			m = startRunning(t, m, "first")
 			m = enqueue(t, m, "queued")
 			m = prepare(m)
-			m.ta.Rewrite("/retry")
-			mm, cmd, handled := m.dispatchBareBuiltin(m.ta.Value())
+			m.prompt.Rewrite("/retry")
+			mm, cmd, handled := m.dispatchBareBuiltin(m.prompt.Value())
 			if !handled {
 				t.Fatal("/retry was not handled")
 			}
@@ -201,8 +201,8 @@ func TestManualFailedStepRetryVisibleAndSecondPrecommit(t *testing.T) {
 			if retryFrameCount(conv.send.frames()) < 1 || len(m.queued) != 1 {
 				t.Fatalf("frames=%#v queued=%v", conv.send.frames(), m.queued)
 			}
-			if m.ta.Value() != "" || userBlockCount(m.conv) != 1 {
-				t.Fatalf("manual retry did not consume command or changed transcript: input=%q users=%d", m.ta.Value(), userBlockCount(m.conv))
+			if m.prompt.Value() != "" || userBlockCount(m.conv) != 1 {
+				t.Fatalf("manual retry did not consume command or changed transcript: input=%q users=%d", m.prompt.Value(), userBlockCount(m.conv))
 			}
 		})
 	}
@@ -210,13 +210,13 @@ func TestManualFailedStepRetryVisibleAndSecondPrecommit(t *testing.T) {
 
 func TestManualFailedStepRetryDelegatesEligibilityToServerWithoutLocalCandidate(t *testing.T) {
 	m, conv := newQueueModel(t)
-	m.ta.Rewrite("draft")
+	m.prompt.Rewrite("draft")
 	users := userBlockCount(m.conv)
 	mm, cmd := m.runFailedStepRetry()
 	m = mm.(Model)
 	runBatchLeaves(cmd)
-	if retryFrameCount(conv.send.frames()) != 1 || m.ta.Value() != "draft" || userBlockCount(m.conv) != users {
-		t.Fatalf("manual retry did not preserve compose/transcript or send RetryStart: frames=%#v input=%q", conv.send.frames(), m.ta.Value())
+	if retryFrameCount(conv.send.frames()) != 1 || m.prompt.Value() != "draft" || userBlockCount(m.conv) != users {
+		t.Fatalf("manual retry did not preserve compose/transcript or send RetryStart: frames=%#v input=%q", conv.send.frames(), m.prompt.Value())
 	}
 }
 
@@ -224,14 +224,14 @@ func TestRetryStartTransportFailurePreservesManualAffordanceAndQueue(t *testing.
 	m, conv := newQueueModel(t)
 	m.queued = []string{"later"}
 	m.queuePaused = stopError
-	m.ta.Rewrite("draft")
+	m.prompt.Rewrite("draft")
 	users := userBlockCount(m.conv)
 	mm, cmd := m.runFailedStepRetry()
 	m = mm.(Model)
 	runBatchLeaves(cmd)
 	m = applyAll(m, client.StreamErrMsg{Err: errors.New("server rejected retry")})
-	if m.phase != phaseIdle || len(m.queued) != 1 || m.ta.Value() != "draft" || userBlockCount(m.conv) != users {
-		t.Fatalf("rejection mutated state: phase=%v queue=%v input=%q users=%d", m.phase, m.queued, m.ta.Value(), userBlockCount(m.conv))
+	if m.phase != phaseIdle || len(m.queued) != 1 || m.prompt.Value() != "draft" || userBlockCount(m.conv) != users {
+		t.Fatalf("rejection mutated state: phase=%v queue=%v input=%q users=%d", m.phase, m.queued, m.prompt.Value(), userBlockCount(m.conv))
 	}
 	mm, cmd = m.runFailedStepRetry()
 	m = mm.(Model)

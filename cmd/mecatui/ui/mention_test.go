@@ -93,7 +93,7 @@ func TestSyncMentionFiltersWorkspace(t *testing.T) {
 	ws := seedWorkspace(t)
 	m := newMentionModel(t, ws)
 
-	m.ta.Rewrite("@main")
+	m.prompt.Rewrite("@main")
 	m = m.syncMention()
 	if !m.mention.open {
 		t.Fatalf("menu did not open for @main")
@@ -103,7 +103,7 @@ func TestSyncMentionFiltersWorkspace(t *testing.T) {
 	}
 
 	// Bare "@" lists every (non-dot) file, capped to the row window.
-	m.ta.Rewrite("@")
+	m.prompt.Rewrite("@")
 	m = m.syncMention()
 	if !m.mention.open {
 		t.Fatalf("menu did not open for bare @")
@@ -129,13 +129,13 @@ func TestMentionCompleteInsertsPath(t *testing.T) {
 	ws := seedWorkspace(t)
 	m := newMentionModel(t, ws)
 
-	m.ta.Rewrite("describe @main")
+	m.prompt.Rewrite("describe @main")
 	m = m.syncMention()
 	if !m.mention.open || len(m.mention.matches) != 1 {
 		t.Fatalf("precondition: open=%v matches=%v", m.mention.open, m.mention.matches)
 	}
 	m = m.mentionComplete()
-	if got := m.ta.Value(); got != "describe @main.go " {
+	if got := m.prompt.Value(); got != "describe @main.go " {
 		t.Fatalf("input = %q, want %q", got, "describe @main.go ")
 	}
 	if m.mention.open {
@@ -148,7 +148,7 @@ func TestMentionCompleteInsertsPath(t *testing.T) {
 func TestMentionNavigateClamps(t *testing.T) {
 	ws := seedWorkspace(t)
 	m := newMentionModel(t, ws)
-	m.ta.Rewrite("@") // lists 4 files
+	m.prompt.Rewrite("@") // lists 4 files
 	m = m.syncMention()
 	if len(m.mention.matches) < 2 {
 		t.Fatalf("need ≥2 matches to test navigation, got %v", m.mention.matches)
@@ -171,7 +171,7 @@ func TestMentionNavigateClamps(t *testing.T) {
 func TestMentionEscDismisses(t *testing.T) {
 	ws := seedWorkspace(t)
 	m := newMentionModel(t, ws)
-	m.ta.Rewrite("@main")
+	m.prompt.Rewrite("@main")
 	m = m.syncMention()
 	if !m.mention.open {
 		t.Fatalf("precondition: menu open")
@@ -185,7 +185,7 @@ func TestMentionEscDismisses(t *testing.T) {
 	if m.mention.open {
 		t.Fatalf("menu reopened while the same @token holds after esc-dismiss")
 	}
-	if got := m.ta.Value(); got != "@main" {
+	if got := m.prompt.Value(); got != "@main" {
 		t.Fatalf("input = %q, want unchanged @main", got)
 	}
 }
@@ -198,7 +198,7 @@ func TestMentionAndPaletteMutuallyExclusive(t *testing.T) {
 	if _, ok := mentionToken("/cmd @main"); ok {
 		t.Fatalf("a command line must not trigger the mention menu")
 	}
-	m.ta.Rewrite("/clear")
+	m.prompt.Rewrite("/clear")
 	m = m.syncMention()
 	if m.mention.open {
 		t.Fatalf("mention menu opened on a command line")
@@ -231,7 +231,7 @@ func TestSubmitWithImageMentionSendsPart(t *testing.T) {
 		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{Image: true}},
 	)
 
-	m.ta.Rewrite("describe @shot.png")
+	m.prompt.Rewrite("describe @shot.png")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	if m.phase != phaseRunning {
@@ -283,7 +283,7 @@ func TestSubmitImageMentionCapGatedRejects(t *testing.T) {
 		client.SessionReadyMsg{SessionID: "sess-test-0001"}, // caps all-false
 	)
 
-	m.ta.Rewrite("describe @shot.png")
+	m.prompt.Rewrite("describe @shot.png")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	runBatchLeaves(cmd)
@@ -294,7 +294,7 @@ func TestSubmitImageMentionCapGatedRejects(t *testing.T) {
 	if got := len(send.frames()); got != 0 {
 		t.Fatalf("sent %d frames, want 0 on cap-gated refusal", got)
 	}
-	if got := m.ta.Value(); got != "describe @shot.png" {
+	if got := m.prompt.Value(); got != "describe @shot.png" {
 		t.Fatalf("input = %q, want it kept on refusal", got)
 	}
 	// The transcript shows the loud attach error (the message is wrapped to the
@@ -354,7 +354,7 @@ func TestSubmitProseAtWordSendsAsText(t *testing.T) {
 	ws := t.TempDir() // empty: @oncall resolves to nothing
 	m, send := newSubmitModel(t, ws, client.Capabilities{Image: true})
 
-	m.ta.Rewrite("ping me @oncall")
+	m.prompt.Rewrite("ping me @oncall")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	if m.phase != phaseRunning {
@@ -388,7 +388,7 @@ func TestSubmitDirectoryMentionStaysText(t *testing.T) {
 	}
 	m, send := newSubmitModel(t, ws, client.Capabilities{Image: true})
 
-	m.ta.Rewrite("look in @somedir please")
+	m.prompt.Rewrite("look in @somedir please")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	if m.phase != phaseRunning {
@@ -416,7 +416,7 @@ func TestSubmitUnsupportedFileRejects(t *testing.T) {
 	}
 	m, send := newSubmitModel(t, ws, client.Capabilities{Image: true, Audio: true})
 
-	m.ta.Rewrite("read @report.pdf")
+	m.prompt.Rewrite("read @report.pdf")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	runBatchLeaves(cmd)
@@ -427,7 +427,7 @@ func TestSubmitUnsupportedFileRejects(t *testing.T) {
 	if got := len(send.frames()); got != 0 {
 		t.Fatalf("sent %d frames, want 0", got)
 	}
-	if got := m.ta.Value(); got != "read @report.pdf" {
+	if got := m.prompt.Value(); got != "read @report.pdf" {
 		t.Fatalf("input = %q, want it kept on refusal", got)
 	}
 	if !strings.Contains(stripANSIstr(m.View().Content), "attach:") {

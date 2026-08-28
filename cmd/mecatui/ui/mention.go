@@ -79,7 +79,7 @@ func mentionToken(s string) (token string, ok bool) {
 // workspace file list is gathered synchronously by a bounded directory walk, which
 // is cheap for a normal tree and capped (maxMentionWalk) for a huge one.
 func (m Model) syncMention() Model {
-	token, ok := mentionToken(m.ta.Value())
+	token, ok := mentionToken(m.prompt.Value())
 	if !ok {
 		// Left mention mode: reset (including the esc-dismiss latch) so a later "@"
 		// opens it afresh.
@@ -232,13 +232,13 @@ func (m Model) mentionComplete() Model {
 		return m
 	}
 	path := m.mention.matches[m.mention.cursor]
-	val := m.ta.Value()
+	val := m.prompt.Value()
 	// Find the start of the trailing word (the "@…" run) and rewrite from there.
 	start := 0
 	if i := strings.LastIndexAny(val, " \t"); i >= 0 {
 		start = i + 1
 	}
-	(&m).promptRewrite(val[:start] + "@" + path + " ")
+	m.prompt.Rewrite(val[:start] + "@" + path + " ")
 	m.mention.open = false
 	m.mention.matches = nil
 	m.mention.cursor = 0

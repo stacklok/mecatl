@@ -37,7 +37,7 @@ func (m Model) openReflections() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Reflections == nil {
 		return m, nil
 	}
-	m.ta.Blur()
+	m.prompt.Blur()
 	m.reflectionsGen++
 	m.reflections = reflectionsState{view: reflectionsList, loading: true}
 	return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", client.ReflectionCursors{}, m.activeWorkspace, m.reflectionsGen)
@@ -54,7 +54,7 @@ func (m Model) runReflect() (tea.Model, tea.Cmd) {
 func (m Model) closeReflections() (tea.Model, tea.Cmd) {
 	m.reflectionsGen++
 	m.reflections = reflectionsState{}
-	return m, m.ta.Focus()
+	return m, m.prompt.Focus()
 }
 
 //nolint:gocyclo // list/detail paging, scrolling, refresh, and lifecycle actions stay explicit

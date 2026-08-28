@@ -368,8 +368,8 @@ func TestSessionStorageContinuity_Scenario8_AdoptionTUIFlow(t *testing.T) {
 	mm, adoptCmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	m = applyAll(m, adoptCmd())
-	if m.sessionID != adopted.ID || m.phase != phaseIdle || !m.ta.Focused() || m.modal != nil {
-		t.Fatalf("success did not open writable authoritative target: id=%q phase=%v focused=%v modal=%v", m.sessionID, m.phase, m.ta.Focused(), m.modal)
+	if m.sessionID != adopted.ID || m.phase != phaseIdle || !m.prompt.Focused() || m.modal != nil {
+		t.Fatalf("success did not open writable authoritative target: id=%q phase=%v focused=%v modal=%v", m.sessionID, m.phase, m.prompt.Focused(), m.modal)
 	}
 	if m.sessionID == legacy.ID {
 		t.Fatalf("success rebound the inspect-only source instead of the new target")

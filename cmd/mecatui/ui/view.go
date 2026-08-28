@@ -362,7 +362,7 @@ func modeAccentStyle(th theme.Theme, mode string) lipgloss.Style {
 func (m *Model) applyModeInputStyle() {
 	mode := m.inputMode()
 	accent := modeAccentStyle(m.deps.Theme, mode)
-	m.ta.SetColors(accent.GetForeground(), m.deps.Theme.Color("bgPanel"), m.deps.Theme.Color("text"))
+	m.prompt.SetColors(accent.GetForeground(), m.deps.Theme.Color("bgPanel"), m.deps.Theme.Color("text"))
 }
 
 func (m Model) renderHeaderMode(mode string) string {
@@ -805,7 +805,7 @@ func (m Model) renderQueue() string {
 		// The edit hint only applies when EditBack is actionable, which
 		// requires an EMPTY input line; a draft present would make the
 		// hint misleading.
-		if strings.TrimSpace(m.ta.Value()) == "" {
+		if strings.TrimSpace(m.prompt.Value()) == "" {
 			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued · %s edit", n, hk.editBack)))
 		} else {
 			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued", n)))
@@ -897,12 +897,12 @@ func (m Model) renderSteer() string {
 // is no window in which a hidden-state change can hide behind an unchanged key.
 func (m Model) renderInput() string {
 	m.applyModeInputStyle()
-	li := m.ta.LineInfo()
-	hasSelection := m.ta.HasSelection()
-	selectionFrom, selectionTo, _ := m.ta.Selection()
+	li := m.prompt.LineInfo()
+	hasSelection := m.prompt.HasSelection()
+	selectionFrom, selectionTo, _ := m.prompt.Selection()
 	key := inputRenderKey{
-		value:            m.ta.Value(),
-		row:              m.ta.Line(),
+		value:            m.prompt.Value(),
+		row:              m.prompt.Line(),
 		rowOffset:        li.RowOffset,
 		colOffset:        li.ColumnOffset,
 		selection:        hasSelection,
@@ -910,15 +910,15 @@ func (m Model) renderInput() string {
 		selectionFromCol: selectionFrom.Col,
 		selectionToRow:   selectionTo.Row,
 		selectionToCol:   selectionTo.Col,
-		focused:          m.ta.Focused(),
-		width:            m.ta.Width(),
-		height:           m.ta.Height(),
+		focused:          m.prompt.Focused(),
+		width:            m.prompt.Width(),
+		height:           m.prompt.Height(),
 		mode:             m.inputMode(),
 	}
 	if m.rend.inputValid && m.rend.inputKey == key {
 		return m.rend.inputView
 	}
-	out := m.renderInputRail(m.ta.View())
+	out := m.renderInputRail(m.prompt.View())
 	m.rend.inputKey, m.rend.inputView, m.rend.inputValid = key, out, true
 	return out
 }

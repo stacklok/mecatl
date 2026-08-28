@@ -255,7 +255,7 @@ func TestSteer_TUIRendersAuthoritativeState(t *testing.T) {
 		mm2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 		m = mm2.(Model)
 		runBatchLeaves(cmd)
-		if got := m.ta.Value(); got != "second" {
+		if got := m.prompt.Value(); got != "second" {
 			t.Fatalf("↑ must pull the in-flight message into the textarea, got %q", got)
 		}
 		if got := steerCancelCount(conv.send); got != 1 {
@@ -385,7 +385,7 @@ func TestSteer_TUIEditCancelThenRecompose(t *testing.T) {
 	runBatchLeaves(cmd)
 
 	wantDraft := "second" + queueMergeSep + "third"
-	if got := m.ta.Value(); got != wantDraft {
+	if got := m.prompt.Value(); got != wantDraft {
 		t.Fatalf("↑ must pull the whole not-yet-drained set into ONE editable blob, got %q, want %q", got, wantDraft)
 	}
 	// Exactly ONE steer_cancel fired; the outstanding (cancelled) bundle is the
@@ -452,7 +452,7 @@ func TestSteer_TUIEditBackNoDuplicate(t *testing.T) {
 	mm2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = mm2.(Model)
 	runBatchLeaves(cmd)
-	if got := m.ta.Value(); got != "first" {
+	if got := m.prompt.Value(); got != "first" {
 		t.Fatalf("↑ must pull the in-flight steer back for editing, got %q", got)
 	}
 
@@ -508,7 +508,7 @@ func TestSteer_TUIBurnedIdFreshDraft(t *testing.T) {
 	if got := steerCancelCount(conv.send); got != 0 {
 		t.Fatalf("↑ after drain must send NO steer_cancel (the id is burned), got %d", got)
 	}
-	if got := m.ta.Value(); got != "" {
+	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("↑ after drain must NOT pull the shipped text back (burned id), got %q", got)
 	}
 
@@ -630,7 +630,7 @@ func TestSteer_RunningSlashCommandsInterceptLocalBuiltins(t *testing.T) {
 		if m.phase != phaseRunning {
 			t.Fatalf("bare /help changed phase to %v, want running", m.phase)
 		}
-		if got := m.ta.Value(); got != "" {
+		if got := m.prompt.Value(); got != "" {
 			t.Fatalf("bare /help must clear the input, got %q", got)
 		}
 		if got := steerTexts(conv.send); len(got) != 1 {
@@ -691,8 +691,8 @@ func TestSteer_RunningSlashCommandsInterceptLocalBuiltins(t *testing.T) {
 		if !strings.Contains(stripANSIstr(m.statusMsg), "cannot clear while running") {
 			t.Fatalf("palette /clear status = %q, want running warning", m.statusMsg)
 		}
-		if m.palette.open || m.ta.Value() != "" {
-			t.Fatalf("palette /clear must close the palette and clear input, open=%t input=%q", m.palette.open, m.ta.Value())
+		if m.palette.open || m.prompt.Value() != "" {
+			t.Fatalf("palette /clear must close the palette and clear input, open=%t input=%q", m.palette.open, m.prompt.Value())
 		}
 		if got := steerTexts(conv.send); len(got) != 1 {
 			t.Fatalf("palette /clear must not send another steer, got %v", got)

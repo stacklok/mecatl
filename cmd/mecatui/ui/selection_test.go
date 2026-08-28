@@ -2090,8 +2090,8 @@ func TestCtrlVPasteWithActiveSelection(t *testing.T) {
 
 	m = pressCtrlV(t, m)
 
-	if !strings.Contains(m.ta.Value(), "pasted text") {
-		t.Errorf("ctrl+v should insert the pasted text regardless of an active selection, got %q", m.ta.Value())
+	if !strings.Contains(m.prompt.Value(), "pasted text") {
+		t.Errorf("ctrl+v should insert the pasted text regardless of an active selection, got %q", m.prompt.Value())
 	}
 }
 

@@ -78,7 +78,7 @@ func (m Model) runSkills() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Skills == nil {
 		return m, nil
 	}
-	m.ta.Blur() // modal owns the keyboard while open
+	m.prompt.Blur() // modal owns the keyboard while open
 	m.skillsEpoch++
 	lifecycle, _ := m.deps.Skills.(client.LearnedSkillClient) // nil unless Skills carries the lifecycle half
 	ti := textinput.New()
@@ -342,7 +342,7 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 
 // Close tears the surface down; teardown is a no-op for skills (the surface
 // holds no resource). The parent dispatchSurfaceKey/dispatchSurfaceMsg closed
-// path runs Close, nils m.modal, and batches m.ta.Focus() itself — the refocus
+// path runs Close, nils m.modal, and batches m.prompt.Focus() itself — the refocus
 // is parent-authored. A skills RPC that lands after close falls through
 // HandleMsg's handled=false and is dropped at the Model.
 func (*skillsState) Close() {}
