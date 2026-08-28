@@ -1,4 +1,4 @@
-# ADR 0244 — Durable run identity: a host-minted `run_id`
+# ADR 0245 — Durable run identity: a host-minted `run_id`
 
 - Status: Proposed
 - Date: 2026-08-28
@@ -134,7 +134,7 @@ current bug. Multi-client and reconnecting-client scenarios become expressible. 
 - [ADR 0204](./0204-caller-identity-threading.md) — `Event.Actor`, the derive-at-append
   stamping precedent.
 - [ADR 0038](./0038-event-sourced-rehydration.md) — the fold that ignores `RunID`.
-- [ADR 0243](./0243-sdk-compatibility-and-error-contract.md) and [ADR 0245](./0245-durable-cursors-and-watch.md)
+- [ADR 0244](./0244-sdk-compatibility-and-error-contract.md) and [ADR 0246](./0246-durable-cursors-and-watch.md)
   — the sibling decisions in this stack.
 - [`AGENTS.md`](../../AGENTS.md) — the run-entry seam inventory and the storage-agnostic
   loop invariant.

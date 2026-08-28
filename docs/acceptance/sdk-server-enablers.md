@@ -3,7 +3,7 @@
 **Phase:** capability — the Go-side server contracts the TypeScript SDK is built on
 **Status:** draft
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
-**ADRs:** [ADR-0243](../adr/0243-sdk-compatibility-and-error-contract.md) (compatibility discovery + typed errors), [ADR-0244](../adr/0244-durable-run-identity.md) (durable run identity), [ADR-0245](../adr/0245-durable-cursors-and-watch.md) (durable cursors + watch).
+**ADRs:** [ADR-0244](../adr/0244-sdk-compatibility-and-error-contract.md) (compatibility discovery + typed errors), [ADR-0245](../adr/0245-durable-run-identity.md) (durable run identity), [ADR-0246](../adr/0246-durable-cursors-and-watch.md) (durable cursors + watch).
 **Delivery:** a **linear stack of nine PRs**, `sdk/01-…` → `sdk/09-…`, each independently green on `task lint && task test`, each targeting its predecessor.
 
 This plan covers **only the Go server surface**. No TypeScript is written here — `sdk/typescript/` does not exist at the end of this plan. That cut is deliberate: every invariant risk in #821 lives on this side, where the repo's gates (`task api:check`, the layering DAG, the conformance suites, `docs/lint`) actually have teeth, and every one of these contracts is independently valuable to the existing gRPC and HTTP clients. The SDK follows in a separate plan against a merged, proven server.
@@ -13,10 +13,10 @@ The doc is organized scenario-first because acceptance is about what the running
 ## Why these scope cuts
 
 - **Nine stacked PRs, not one accumulator.** Six of the nine units edit [`contracts/proto/mecatl/v1/harness.proto`](../../contracts/proto/mecatl/v1/harness.proto) and five edit [`internal/adapter/server/http.go`](../../internal/adapter/server/http.go); `contracts/gen/` is committed generated output, so parallel branches would churn the same generated files. A linear stack serializes those edits for free. Only two real dependencies exist (Scenario 4 → 5, and Scenarios 4+6 → 7); the rest of the ordering is contention management, not logic.
-- **`capabilities` and `features` stay separate.** `ServerCapabilities` answers "what has this operator enabled?"; `features` answers "what does this build implement?". Conflating them makes a `--no-bash` deployment look like version skew. See [ADR-0243](../adr/0243-sdk-compatibility-and-error-contract.md).
+- **`capabilities` and `features` stay separate.** `ServerCapabilities` answers "what has this operator enabled?"; `features` answers "what does this build implement?". Conflating them makes a `--no-bash` deployment look like version skew. See [ADR-0244](../adr/0244-sdk-compatibility-and-error-contract.md).
 - **Open strings, not proto enums**, for both `features` and error codes — the discipline [`AGENTS.md`](../../AGENTS.md) already settled for `EvNoProgress`/`StopBudget`. A new feature or error code is a minor SDK release, not a proto change.
 - **The run id reuses `RunRequest.AskIDDiscriminator`**, whose [ADR-0044](../adr/0044-host-supplied-askid-discriminator.md) contract is already written in terms of a run id ("A durable host … passes its own RunID") and which nothing supplies today. One identifier, not two with overlapping uniqueness contracts.
-- **Redis moves LIST → Stream.** A LIST cannot express a durable cross-process follow; emulating it with `LLEN` polling is strictly worse than the datatype Redis already ships, and positional cursors become a correctness bug the day anyone adds retention. See [ADR-0245](../adr/0245-durable-cursors-and-watch.md).
+- **Redis moves LIST → Stream.** A LIST cannot express a durable cross-process follow; emulating it with `LLEN` polling is strictly worse than the datatype Redis already ships, and positional cursors become a correctness bug the day anyone adds retention. See [ADR-0246](../adr/0246-durable-cursors-and-watch.md).
 - **The append-gap guarantee is deliberately weaker than #821 asked for.** Cross-process gap detection is not achievable; the ADR states the residual rather than shipping an absolute that a Redis outage falsifies. #821 explicitly instructs this ("stop and tighten the ADR wording rather than shipping a false guarantee").
 - **`mcp_servers` is listener-scoped and server-enforced**, not an SDK-side check. #821 places the "local daemon only" boundary in the client; a client-side check is not enforcement.
 
@@ -32,7 +32,7 @@ Each is independently demoable; later scenarios assume earlier ones but do not c
 
 ### Scenario 1 — `GetServerInfo` and the compatibility floor
 
-The SDK's first call. One authenticated RPC answers "what is this server?" without creating a probe session. `ServerCapabilities` already exists and is reused verbatim; `features` is new and open-stringed. See [ADR-0243](../adr/0243-sdk-compatibility-and-error-contract.md).
+The SDK's first call. One authenticated RPC answers "what is this server?" without creating a probe session. `ServerCapabilities` already exists and is reused verbatim; `features` is new and open-stringed. See [ADR-0244](../adr/0244-sdk-compatibility-and-error-contract.md).
 
 **Work:**
 - `contracts/proto`: `GetServerInfo` on `HarnessService`; `GetServerInfoResponse{api_major, capabilities, features, build_version, deployment}`.
@@ -47,11 +47,11 @@ The SDK's first call. One authenticated RPC answers "what is this server?" witho
 - AC1.3: `GetServerInfo` requires authentication — an unauthenticated call is rejected with the same discipline as every other RPC, and is distinguishable from `UNIMPLEMENTED`.
   - verify: `TestSDKServerEnablers_Scenario1_ServerInfoRequiresAuth`
 - AC1.4: `features` contains an identifier for every landed enabler in this stack and none for an unlanded one; the registry is the single source of truth for both transports.
-  - verify: `TestADR_0243_FeatureRegistryIsSingleSource`
+  - verify: `TestADR_0244_FeatureRegistryIsSingleSource`
 - AC1.5: `capabilities` and `features` are independent: a `--no-bash` server reports `capabilities.bash == false` while its `features` set is unchanged.
-  - verify: `TestADR_0243_CapabilitiesAreNotFeatures`
+  - verify: `TestADR_0244_CapabilitiesAreNotFeatures`
 - AC1.6: `deployment` is empty unless `--deployment-id` is set, is length-bounded when set, and is never derived from hostname, pod name, or environment.
-  - verify: `TestADR_0243_DeploymentIdentityIsOperatorSetOnly`
+  - verify: `TestADR_0244_DeploymentIdentityIsOperatorSetOnly`
 - AC1.7: Media capability remains session-authoritative — the `GetServerInfo` `image`/`audio` hint never overrides the per-session `CreateSessionResponse` echo.
   - verify: `TestInvariant_capability_truth_single_intersection`
 
@@ -70,9 +70,9 @@ One stable machine-readable identity per failure, carried identically on both tr
 - AC2.2: The same domain failure over gRPC carries the identical code string in a status detail alongside its `codes.Code`.
   - verify: `TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity`
 - AC2.3: Every registered code resolves to exactly one HTTP status and one gRPC code; the registry admits no duplicate or unmapped code.
-  - verify: `TestADR_0243_ErrorRegistryIsTotalAndUnambiguous`
+  - verify: `TestADR_0244_ErrorRegistryIsTotalAndUnambiguous`
 - AC2.4: No problem body carries a secret, a credential, a raw tool argument, or a deny-reason body — the structural no-secret guard walks every registered code's rendered output.
-  - verify: `TestADR_0243_ProblemDetailsCarryNoSecrets`
+  - verify: `TestADR_0244_ProblemDetailsCarryNoSecrets`
 - AC2.5: A failure with no registered code degrades to a generic code rather than leaking an unmapped internal error string.
   - verify: `TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades`
 - AC2.6: Problem bodies are valid UTF-8 for every producer-influenced string, per the existing mapper discipline.
@@ -93,7 +93,7 @@ The local-development browser path. Production remains a same-origin BFF.
 - AC3.2: A non-allowed origin — including a suffix, prefix, or scheme/port variant of an allowed one — receives no CORS grant.
   - verify: `TestSDKServerEnablers_Scenario3_NearMissOriginsRejected`
 - AC3.3: Credentials are permitted only for an exactly allowed origin; wildcard-with-credentials is never emitted under any configuration.
-  - verify: `TestADR_0243_NoWildcardWithCredentials`
+  - verify: `TestADR_0244_NoWildcardWithCredentials`
 - AC3.4: A preflight `OPTIONS` returns the correct allowed methods and headers for the route and does not invoke the handler.
   - verify: `TestSDKServerEnablers_Scenario3_PreflightDoesNotInvokeHandler`
 - AC3.5: With no `--cors-origins`, behaviour is byte-identical to today — no CORS headers on any response.
@@ -103,7 +103,7 @@ The local-development browser path. Production remains a same-origin BFF.
 
 ### Scenario 4 — Durable run identity
 
-A stable, opaque, host-minted handle for one run, persisted across restart. See [ADR-0244](../adr/0244-durable-run-identity.md).
+A stable, opaque, host-minted handle for one run, persisted across restart. See [ADR-0245](../adr/0245-durable-run-identity.md).
 
 **Work:**
 - `engine/session`: `Event.RunID`; the aggregate accessor/mutator. `engine/adapter/sessnap`: `Snapshot.RunID` (`omitempty`).
@@ -114,17 +114,17 @@ A stable, opaque, host-minted handle for one run, persisted across restart. See 
 - AC4.1: Every event of a run reaching the relay carries the same non-empty `RunID`; two consecutive runs of one session carry different ones.
   - verify: `TestSDKServerEnablers_Scenario4_EveryRunEventCarriesOneID`
 - AC4.2: The run id is supplied to the engine as `RunRequest.AskIDDiscriminator`, so askIDs minted during the run embed it and are reconstructable across processes.
-  - verify: `TestADR_0244_RunIDIsTheAskDiscriminator`
+  - verify: `TestADR_0245_RunIDIsTheAskDiscriminator`
 - AC4.3: The loop never stamps `RunID` — every emit site leaves it zero and the relay chokepoint is the only writer, mirroring `Event.Actor`.
-  - verify: `TestADR_0244_LoopNeverStampsRunID`
+  - verify: `TestADR_0245_LoopNeverStampsRunID`
 - AC4.4: A session parked `awaiting` across a process restart resumes as **the same run** — the resume path reuses the persisted id and mints nothing.
-  - verify: `TestADR_0244_AwaitingResumeKeepsRunID`
+  - verify: `TestADR_0245_AwaitingResumeKeepsRunID`
 - AC4.5: `ApprovePlan` reuses the id for the resumed run and mints a distinct one for the continuation run.
   - verify: `TestSDKServerEnablers_Scenario4_PlanResolutionSpansTwoRunIDs`
 - AC4.6: An empty `RunID` at the append chokepoint is legal for exactly the three `schedule.*` types and fails CI for any other type.
-  - verify: `TestADR_0244_RunlessEventSetIsClosed`
+  - verify: `TestADR_0245_RunlessEventSetIsClosed`
 - AC4.7: `eventsource.Fold` ignores `RunID`; a folded session is byte-identical to one folded before this scenario landed.
-  - verify: `TestADR_0244_FoldIgnoresRunID`
+  - verify: `TestADR_0245_FoldIgnoresRunID`
 - AC4.8: A legacy snapshot with no `run_id` key restores with an empty id and is stamped on the next run; no migration sweep runs.
   - verify: `TestSDKServerEnablers_Scenario4_LegacySnapshotRestoresEmpty`
 
@@ -142,11 +142,11 @@ Stale controls fail instead of landing on a newer run. Closes a real current bug
 - AC5.1: A control carrying the active run's id succeeds exactly as before.
   - verify: `TestSDKServerEnablers_Scenario5_MatchingExpectedRunIDSucceeds`
 - AC5.2: A control carrying a stale run id fails with a typed error and leaves the newer run untouched — no verdict applied, no cancellation, no steer enqueued.
-  - verify: `TestADR_0244_StaleControlCannotTouchNewerRun`
+  - verify: `TestADR_0245_StaleControlCannotTouchNewerRun`
 - AC5.3: A control omitting `expected_run_id` behaves exactly as today, so `mecatui` is unaffected.
   - verify: `TestSDKServerEnablers_Scenario5_OmittedExpectedRunIDUnchanged`
 - AC5.4: A strict steer is never promoted into a new run; a late steer reports its outcome rather than starting one.
-  - verify: `TestADR_0244_StrictSteerNeverPromotes`
+  - verify: `TestADR_0245_StrictSteerNeverPromotes`
 - AC5.5: Existing steer promotion behaviour is preserved on the explicit non-strict session API.
   - verify: `TestSDKServerEnablers_Scenario5_PromotionRetainedOnRawAPI`
 
@@ -154,7 +154,7 @@ Stale controls fail instead of landing on a newer run. Closes a real current bug
 
 ### Scenario 6 — `port.CursorEventLog` and the four backends
 
-The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0245](../adr/0245-durable-cursors-and-watch.md).
+The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0246](../adr/0246-durable-cursors-and-watch.md).
 
 **Work:**
 - `engine/port`: `CursorEventLog` (append-with-cursor, read-after, generation validation) + `engine/api/*.txt` + `engine/CHANGELOG.md`.
@@ -167,19 +167,19 @@ The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0245
 - AC6.1: All four backends satisfy one shared conformance suite for ordered, at-least-once, resumable delivery.
   - verify: `TestSDKServerEnablers_Scenario6_CursorConformanceAllBackends`
 - AC6.2: Existing `port.EventLog` behaviour is unchanged for every backend — the additive port breaks no consumer.
-  - verify: `TestADR_0245_EventLogContractUnbroken`
+  - verify: `TestADR_0246_EventLogContractUnbroken`
 - AC6.3: A cursor from a prior log generation yields `CursorExpiredError`, never silent degradation or wrong data.
-  - verify: `TestADR_0245_StaleGenerationCursorExpires`
+  - verify: `TestADR_0246_StaleGenerationCursorExpires`
 - AC6.4: A tampered or malformed cursor is rejected, never coerced to a position.
-  - verify: `TestADR_0245_TamperedCursorRejected`
+  - verify: `TestADR_0246_TamperedCursorRejected`
 - AC6.5: A watcher in a second process observes durable appends made by the first — the cross-process obligation, proved over Redis and JSONL.
-  - verify: `TestADR_0245_CrossProcessWatchObservesAppends`
+  - verify: `TestADR_0246_CrossProcessWatchObservesAppends`
 - AC6.6: Existing Redis LIST event logs are readable after the Stream migration; no session loses its history.
   - verify: `TestSDKServerEnablers_Scenario6_LegacyRedisListMigrates`
 - AC6.7: A gap marker occupies an append position and advances cursors, is surfaced by `ReadAfter`, and is **skipped** by the legacy `EventLog.Read`.
-  - verify: `TestADR_0245_GapMarkerIsEnvelopeNotEvent`
+  - verify: `TestADR_0246_GapMarkerIsEnvelopeNotEvent`
 - AC6.8: `session.Event` and the proto `Event` message gain no gap-related field; the event kind-parity surface is unchanged.
-  - verify: `TestADR_0245_GapAddsNoEventKind`
+  - verify: `TestADR_0246_GapAddsNoEventKind`
 
 ---
 
@@ -201,13 +201,13 @@ The transport over the cursor seam. Depends on Scenarios 4 and 6.
 - AC7.4: A watch is authenticated and ownership-checked; a caller who may not read the session is refused.
   - verify: `TestSDKServerEnablers_Scenario7_WatchOwnershipEnforced`
 - AC7.5: A slow watcher is terminated with a **resumable** error and never backpressures the run; the run completes normally.
-  - verify: `TestADR_0245_SlowWatcherTerminatesWithoutBackpressure`
+  - verify: `TestADR_0246_SlowWatcherTerminatesWithoutBackpressure`
 - AC7.6: A durable append failure terminates watchers **in that process** with `ActivityGapError` without advancing their cursor, and the owned run continues.
-  - verify: `TestADR_0245_AppendFailureTerminatesLocalWatchers`
+  - verify: `TestADR_0246_AppendFailureTerminatesLocalWatchers`
 - AC7.7: The best-effort durable gap marker, when it lands, is observed by watchers in a **second** process.
-  - verify: `TestADR_0245_GapMarkerObservedCrossProcess`
+  - verify: `TestADR_0246_GapMarkerObservedCrossProcess`
 - AC7.8: Exactly one append occurs per event; cursor assignment happens at the persistence chokepoint, not at the emit site.
-  - verify: `TestADR_0245_OneAppendPerEvent`
+  - verify: `TestADR_0246_OneAppendPerEvent`
 - AC7.9: The existing `StreamSessionEvents` and `StreamSessionLive` endpoints behave identically to today.
   - verify: `TestSDKServerEnablers_Scenario7_LegacyStreamEndpointsUnchanged`
 
@@ -251,9 +251,9 @@ The server-side half of callback tools. The boundary is enforced by the listener
 - AC9.1: A session created over a **UDS** listener with `mcp_servers` mounts them and reaches their tools.
   - verify: `TestSDKServerEnablers_Scenario9_UDSSessionMountsMCPServers`
 - AC9.2: The same request over a **TCP** listener is refused with a typed unsupported-feature error — the boundary holds against a client that does not implement the SDK's check.
-  - verify: `TestADR_0243_McpServersRejectedOnTCPListener`
+  - verify: `TestADR_0244_McpServersRejectedOnTCPListener`
 - AC9.3: `mcp_servers_on_create` appears in `GetServerInfo.features` only on a listener that permits it.
-  - verify: `TestADR_0243_ListenerScopedFeatureAdvertisement`
+  - verify: `TestADR_0244_ListenerScopedFeatureAdvertisement`
 - AC9.4: A stdio entry and an sse entry are hard-rejected on every listener — the no-stdio invariant is unchanged.
   - verify: `TestInvariant_no_stdio_mcp_ever`
 - AC9.5: Header values on a mounted MCP server are never logged, never projected into an event, and never appear in an error.

@@ -1,4 +1,4 @@
-# ADR 0243 — SDK compatibility discovery and the typed error contract
+# ADR 0244 — SDK compatibility discovery and the typed error contract
 
 - Status: Proposed
 - Date: 2026-08-28
@@ -118,7 +118,7 @@ reach a dev server without a proxy.
 **Harder — and these are the honest costs.**
 
 - **`features` is listener-dependent, not purely build-dependent.** Per
-  [ADR 0245](./0245-durable-cursors-and-watch.md)'s sibling decision on `mcp_servers`
+  [ADR 0246](./0246-durable-cursors-and-watch.md)'s sibling decision on `mcp_servers`
   (see [ADR 0237](./0237-listener-scoped-workspace-authority.md)), a feature that is only
   reachable on a UDS listener is advertised only on that listener. This muddies the clean
   capabilities/features split above: `features` is really "what this build implements
@@ -148,7 +148,7 @@ reach a dev server without a proxy.
   proposal.
 - [`docs/acceptance/sdk-server-enablers.md`](../acceptance/sdk-server-enablers.md) — the
   scenario-first acceptance contract for this decision.
-- [ADR 0244](./0244-durable-run-identity.md) — durable run identity; [ADR 0245](./0245-durable-cursors-and-watch.md)
+- [ADR 0245](./0245-durable-run-identity.md) — durable run identity; [ADR 0246](./0246-durable-cursors-and-watch.md)
   — durable cursors and the watch transport. The two siblings in the same stack.
 - [ADR 0237](./0237-listener-scoped-workspace-authority.md) — listener-scoped authority,
   the precedent for a per-listener feature.

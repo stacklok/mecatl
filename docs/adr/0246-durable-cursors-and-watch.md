@@ -1,4 +1,4 @@
-# ADR 0245 — Durable cursors and the session watch transport
+# ADR 0246 — Durable cursors and the session watch transport
 
 - Status: Proposed
 - Date: 2026-08-28
@@ -148,8 +148,8 @@ Bounded paging over a long log becomes possible for the first time.
 - [ADR 0048](./0048-mecak8s.md) — the storage-free multi-replica deployment that makes
   cross-process follow a requirement rather than a nicety.
 - [ADR 0038](./0038-event-sourced-rehydration.md) — the fold over the durable log.
-- [ADR 0243](./0243-sdk-compatibility-and-error-contract.md) — how an unsupported cursor
-  backend is advertised; [ADR 0244](./0244-durable-run-identity.md) — the `run_id` the
+- [ADR 0244](./0244-sdk-compatibility-and-error-contract.md) — how an unsupported cursor
+  backend is advertised; [ADR 0245](./0245-durable-run-identity.md) — the `run_id` the
   watch filters on.
 - [`engine/port/eventlog.go`](../../engine/port/eventlog.go) — the existing port this one
   extends without breaking.
