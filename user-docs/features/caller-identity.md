@@ -14,9 +14,11 @@ persisted child sessions are owned by the caller that created them.
 ## Availability
 
 Caller identity is an opt-in server feature for `mecated` and `mecak8s`. It
-protects both wire surfaces with the same validator and ownership rules. Clients
-such as mecatui connect to the authenticated server; they do not issue or
-refresh OIDC tokens themselves.
+protects both wire surfaces with the same validator and ownership rules. `mecatui`
+can either send an operator-supplied static bearer with `--auth-token`, or enroll a
+remote target with `mecatui login` and obtain, validate, and refresh its own OIDC
+credential. Those are distinct client modes; the server still only validates the
+bearer presented on each request.
 
 With OIDC disabled, the server preserves the single-shared-deployment behavior:
 there is no caller subject and anyone who can reach the API is treated as the
@@ -98,8 +100,9 @@ refresh. A malformed, expired, wrong-issuer, or wrong-audience token returns
 
 ## Use an authenticated client
 
-Obtain a token through your identity provider and pass it to mecatui or another
-client. Keep it out of shell history where possible:
+For a static bearer, obtain a token through your identity provider and pass it to
+mecatui or another client. Keep it out of shell history where possible. This mode does
+not refresh the token:
 
 ```console
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
@@ -107,14 +110,33 @@ bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN" \
   --workspace /srv/mecatl/workspace
 ```
 
-For remote cleartext connections, mecatui refuses to send a bearer. Use TLS (and
-`--tls-ca` for a private CA). A gRPC dial can succeed before the first request
+For managed remote OIDC, enroll once and then connect without putting a bearer on the
+command line:
+
+```console
+bin/mecatui login mecated.example.internal:443 \
+  --issuer https://idp.example.internal \
+  --client-id mecatui --audience mecatl \
+  --tls-ca /path/to/issuer-ca.pem
+bin/mecatui connect mecated.example.internal:443 \
+  --tls --tls-ca /path/to/server-ca.pem
+```
+
+The issuer CA bundle path/reference—not the CA contents—verifies issuer endpoints and is
+saved with the enrollment; the optional
+connect CA independently verifies the gRPC server. Managed credentials live in a
+keyring-wrapped encrypted store and refresh on later token demand. `connect` never opens
+a browser implicitly.
+
+For non-loopback connections, mecatui refuses to send a bearer over cleartext. Use TLS
+(and `connect --tls-ca` for a private server CA). A gRPC dial can succeed before the first request
 is authenticated; verify that an unauthenticated first request fails before
 producing a model response.
 
-The workspace path belongs to the agent server or pod, not the machine running
-the client. In Kubernetes, isolate tenant workspaces separately: ownership does
-not make a shared pod filesystem a security boundary.
+For a non-loopback target, the server's listener policy selects the workspace or no-FS
+profile: mecatui sends no local cwd and rejects `--workspace`. A loopback connection may
+still select a server-host path. In Kubernetes, isolate tenant workspaces separately:
+ownership does not make a shared pod filesystem a security boundary.
 
 ## Management is separate from authentication
 
@@ -148,8 +170,9 @@ This distinction is intentional:
 - OIDC configuration is supported on the server roots, not as an in-process
   token issuer. An embedding must provide its own authenticated boundary and
   owner propagation if it needs multi-user isolation.
-- mecatui obtains no token and performs no refresh. Use your IdP or a workload
-  identity mechanism, then pass the resulting bearer on each connection.
+- The static-bearer/unmanaged mecatui path obtains no token and performs no refresh.
+  Managed remote OIDC instead uses `mecatui login` and refreshes the encrypted,
+  target-bound credential on later application token demand.
 - `mecatequi` and scheduled/headless jobs do not open a browser. Pre-provision a
   short-lived identity or use the deployment's non-interactive credential path.
 - Raw remote store and memory drivers are trusted infrastructure; caller

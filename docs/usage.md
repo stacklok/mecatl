@@ -61,9 +61,9 @@ an editor that spawned it.
 corresponding command-specific help; direct `sessions --help`, `connect --help`, and
 `login --help` remain available. Use bare `mecatui --help-flags` for common embedded-mode
 flags, or `--help-all` with bare `mecatui`, `sessions`, or `connect` for every applicable
-flag. `mecatui login` supports only standard help and `--skip-browser`; it opens
-the ToolHive LLM gateway OIDC flow only—it does not authenticate to a remote
-`mecated`; use that server's credentials with `mecatui connect ADDRESS` instead.
+flag. `mecatui llm login` supports standard help and `--skip-browser`; it opens
+the ToolHive LLM gateway OIDC flow only. `mecatui login ADDRESS` instead supports the
+remote issuer/client/audience/CA/callback options and enrolls that remote target.
 
 Inside the TUI, `/retry` manually repeats the last typed `retryable` failed model
 step when it is still retry-pending. Mecatui automatically retries
@@ -372,9 +372,9 @@ Direct mode needs a cached OIDC credential. Get one with either of:
 
 ```sh
 # Option A: mecatui runs the interactive OIDC browser flow in-process (no separate thv binary).
-mecatui login
+mecatui llm login
 # Headless / SSH / CI: print the authorization URL instead of opening a browser.
-mecatui login --skip-browser
+mecatui llm login --skip-browser
 
 # Option B: the ToolHive CLI itself.
 thv llm setup
@@ -382,7 +382,7 @@ thv llm setup
 
 Both write a refresh-token REFERENCE (never the token value) to ToolHive's own config,
 so a subsequent non-interactive direct-mode session reuses the credential without
-re-login. `mecatui login` is a CLI-only operation — it does NOT start a session or
+re-login. `mecatui llm login` is a CLI-only operation — it does NOT start a session or
 connect to a server.
 
 #### Headless remediation
@@ -391,11 +391,11 @@ connect to a server.
 credential) surfaces a terminal error rather than launching a browser:
 
 ```
-no cached ToolHive LLM gateway credential — run `thv llm setup` (or `mecatui login`) to log in, or use `--toolhive-llm-mode proxy`
+no cached ToolHive LLM gateway credential — run `thv llm setup` (or `mecatui llm login`) to log in, or use `--toolhive-llm-mode proxy`
 ```
 
 The error names all three remediations. Pick whichever fits the deployment:
-`thv llm setup` / `mecatui login` to obtain a credential, or
+`thv llm setup` / `mecatui llm login` to obtain a credential, or
 `--toolhive-llm-mode proxy` to fall back to the loopback proxy (which holds the
 credential itself).
 

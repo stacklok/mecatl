@@ -80,7 +80,7 @@ bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
 
 `--workspace` defaults to the current directory for an embedded server and for a
 loopback client-selected `mecated`; it is resolved to an absolute path in those
-modes. For a remote `connect` target, mecatui does **not** send its local cwd.
+modes. For a non-loopback `connect` target, mecatui does **not** send its local cwd.
 An explicit `--workspace` is rejected locally before it is resolved or
 transmitted. A server-assigned deployment chooses its configured root from an
 empty wire workspace; `mecak8s` chooses its no-FS profile from its empty profile.
@@ -121,17 +121,59 @@ or fallback:
   bin/mecatui connect mecated.internal:443 --tls --auth-token "$MECATL_AUTH_TOKEN"
   ```
 
-- **`mecatui login [flags]`** — runs the interactive ToolHive LLM gateway OIDC
-  browser flow in-process, then exits without starting a session or connecting to
-  `mecated`. This logs in to the ToolHive gateway; it is **not** authentication for
-  a remote `mecated` server. Use that server's token with `connect --auth-token`.
+- **`mecatui login ADDRESS`** — performs the remote server's public OIDC
+  Authorization Code + PKCE login, then records target metadata and an encrypted,
+  target-bound credential. It requires `--issuer`, `--client-id`, `--audience`, and
+  `--tls-ca`; this CA verifies the issuer endpoints and is not the optional server CA
+  supplied to `connect`. It exits without starting a session. `--no-browser` prints the
+  authorization URL instead of opening a browser and then waits for the fixed
+  `http://127.0.0.1:18473/oauth/callback` callback (headless/SSH use). `connect` does
+  **not** implicitly
+  open a browser: an unenrolled target returns guidance to run this command.
+
+  A rejected callback reports a closed validation rule that failed — for example
+  `callback state did not match the authorization request` — rather than echoing
+  hostile callback values. Provider-returned OAuth `error` and `error_description`
+  are the narrow exception: each is printable-subset filtered and bounded. No code,
+  state, token, or callback path appears in either form.
+
+  RFC 9207 `iss` follows section 2.4: a present `iss` must match the expected
+  issuer, and an absent one is refused only when the authorization server's
+  discovery document sets `authorization_response_iss_parameter_supported`. A
+  provider that does not implement RFC 9207 therefore still works, while one that
+  promised an `iss` cannot have it stripped. Wrong-state and other unauthenticated
+  fixed-route probes are unlimited and do not burn state; the separate MCP OAuth
+  random-path callback retains its bounded sixteen matching-route attempts.
+
+- **`mecatui logout ADDRESS`** — removes the saved target and its target-bound
+  credential without starting a session. The command is idempotent. It conditionally
+  deletes credentials before metadata under a per-target transaction lock, so a
+  concurrent token rotation retains the registry entry and reports an incomplete
+  logout rather than making the credential unreachable. It releases the lock before
+  spending one operation-wide five-second provider budget on discovery and every
+  best-effort RFC 7009 revocation attempt; an
+  unavailable issuer does not block local removal, so provider-side termination is not
+  guaranteed. Existing credential-only orphans cannot be pruned because the store has
+  no enumeration operation.
+
+- **`mecatui llm login [--skip-browser]`** — runs the separate ToolHive LLM gateway
+  OIDC flow and exits without connecting to `mecated`. `--skip-browser` prints its
+  authorization URL and waits for the callback. It is not remote-server login.
 
 ### OIDC-connected server
 
-For a `mecated` or `mecak8s` deployment with caller identity enabled, obtain an
-OIDC token from your identity provider and pass it to the **external** transport.
-`mecatui` sends it as per-RPC `authorization: Bearer …` metadata on every gRPC
-request; it does not run an OIDC browser flow or refresh the token itself.
+`mecatui login ADDRESS` is the enrollment path for a remote `mecated`/`mecak8s`
+caller-identity deployment. The issuer, public client, audience, redirect URI, and
+scopes are bound to the canonical `host:port` target. Login validates discovery,
+PKCE, and the resulting token, and private HTTPS requires an explicit issuer CA bundle
+path. The registry saves that path/reference—not CA contents—for issuer discovery,
+token, JWKS, refresh, and revocation only;
+`connect --tls-ca` independently verifies the gRPC server. The connection registry
+contains public metadata only; credentials are encrypted on disk using a canonical-
+root-scoped key held by the OS keyring. Under a root lock, an old unsuffixed keyring key
+is copied only when the encrypted namespace contains an actual credential record; merely
+opening an empty namespace does not trigger migration. Legacy credentials enrolled with a zero-padded target port need
+one login after upgrade because target canonicalization changes their credential key.
 
 ```sh
 # A local port-forward is loopback, so it is the one plaintext bearer exception.
@@ -141,10 +183,35 @@ bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 For a non-loopback endpoint, `mecatui` refuses to send a bearer without `--tls`.
-Use `--tls-ca` when the deployment uses a private CA. A remote server chooses
+Use `connect --tls-ca` when the server uses a private CA. The remote server chooses
 its own workspace authority: mecatui sends no local cwd, and an explicit
 `--workspace` is rejected locally rather than being treated as a path inside an
 agent pod. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
+
+On later `connect`, a saved target supplies a managed dynamic bearer source: each RPC
+asks for a currently validated access token. Application token demand, rather than RPC
+success, gates proactive refresh, and refresh/enrollment/logout share one per-target
+interprocess transaction with CAS-persisted rotation. Only an exact structured OAuth
+`invalid_grant` code deletes a rejected credential; matching provider prose does not.
+A static `--auth-token` is unmanaged and is never obtained or refreshed by mecatui.
+Tokens do not enter UI state, logs, or command arguments. If authentication fails, the
+recoverable `/connect` overlay names whether the target is unenrolled, the session
+expired, the local credential is unusable, cleanup should be retried, or the server
+rejected the bearer. It never opens a browser itself. A rejected bearer requires
+issuer/audience/CA remediation rather than another login; cleanup retries without a
+browser. After same-target re-auth, mecatui asks the server's ownership-enforced
+session/transcript boundary to prove the new caller owns the prior session. Only a
+safe terminal turn boundary is resumed; a missing, mismatched, active, awaiting, or
+ambiguous candidate starts a fresh session and no in-flight prompt is replayed. The
+closed recovery action preserves that candidate and the current server CA path only for
+the same target; neither crosses a target switch. `/connect` lists saved
+targets and requires confirmation. Selecting one restarts into a new remote session;
+selecting **Sign in to a new target** returns to the CLI login flow first. No session
+or conversation crosses a target switch.
+
+The Kind remote flow is available after fixture setup with the documented host
+aliases and public CA. It is a live qualification path, not part of ordinary
+offline `task test` coverage; see `deploy/mecak8s-vmcp/README.md`.
 
 `ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
 a usage error, with one carve-out: `mecatui connect --help` renders the connect
@@ -242,7 +309,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--theme-dir` | – | extra directory of `*.json` themes to load |
 | `--auth-token` | – | bearer token for an **external** server (or `MECATL_AUTH_TOKEN`) |
 | `--tls` | off | use TLS transport for an **external** server |
-| `--tls-ca` | – | PEM CA bundle for external-server verification |
+| `--tls-ca` | – | path to a PEM CA bundle for external-server verification |
 | `--insecure` | off | skip TLS verification (testing only) |
 | `--list-themes` | – | print available themes and exit |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |

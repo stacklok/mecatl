@@ -292,8 +292,8 @@ forces the loopback path; `direct` forces the gateway path and Build-fails when 
 is absent. The direct base URL is derived (`gateway_url + "/v1"`), never hand-set. The
 token never enters a log, an error string, or an env var (OS keyring; only its
 reference is persisted; errors are sanitised via `llm.SanitizeTokenError`). `mecatui
-login` runs the interactive OIDC flow in-process; a headless `mecated` cache-miss
-surfaces an actionable error naming `thv llm setup` / `mecatui login` /
+llm login` runs the interactive OIDC flow in-process; a headless `mecated` cache-miss
+surfaces an actionable error naming `thv llm setup` / `mecatui llm login` /
 `--toolhive-llm-mode proxy`. `tls_skip_verify` is NOT honored in direct mode (upstream
 gap) — a self-signed gateway must use `--toolhive-llm-mode proxy`. See
 `docs/adr/0102-toolhive-direct-mode.md` for the full design.

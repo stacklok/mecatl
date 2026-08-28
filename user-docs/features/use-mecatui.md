@@ -25,8 +25,10 @@ workflow and controls; this page is the feature-level entry point.
   workspace, credentials, storage, capabilities, and policy; local embedded-server
   settings do not apply.
 
-The workspace path in connect mode is interpreted on the server host. It does not
-upload or share a checkout from the computer running the TUI.
+A loopback connect can select an absolute path interpreted on the server host. For a
+non-loopback target, mecatui sends no cwd and rejects `--workspace`; the server's
+listener authority chooses its configured root or no-FS profile. Neither mode uploads
+or shares a checkout from the computer running the TUI.
 
 Start here for connection ownership, TLS, bearer authentication, and remote
 workspace rules: [Connect to a server](../mecatui/remote-servers.md).

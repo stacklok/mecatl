@@ -3269,6 +3269,96 @@ fails closed for a missing/unknown `config daemon` subcommand — it never
 reaches `run()`/listeners. `--config` stays an advanced serve-only, explicit
 flag; ACP help excludes it. See ADR 0088.
 
+### Remote mecatui OIDC client authentication (ADR 0244)
+
+The command taxonomy is deliberately explicit. `mecatui llm login` is the existing
+ToolHive gateway login and has no server/session meaning. `mecatui login ADDRESS` is
+remote enrollment: it requires `--issuer`, `--client-id`, `--audience`, and `--tls-ca`,
+then runs public Authorization Code + PKCE and saves the target metadata plus
+credential. The registry saves the issuer CA path/reference, never the CA contents, for
+discovery/token/JWKS/refresh/revocation; the optional
+`connect --tls-ca` is separately the gRPC server trust root. `mecatui connect ADDRESS`
+only dials; it never implicitly opens a browser.
+A missing target enrollment returns the CLI-login instruction. The UI `/connect`
+overlay lists public saved-target metadata, confirms a selection, and requests a
+restart; a new-target selection exits to the same CLI login flow before reconnecting.
+Ordinary target selection and every target switch start a new remote session. During
+same-target authentication recovery only, an ownership-authorized completed, cancelled,
+or failed session may be adopted.
+
+The credential record is keyed by the canonical target and complete public OIDC
+identity. Numeric ports canonicalize to ordinary decimal spelling, so a legacy
+credential identity containing a zero-padded port needs one login after upgrade. The
+host-internal credential store is encrypted by a root-scoped OS-keyring account. A
+stable root-local flock serializes first creation and copies the old unsuffixed keyring
+entry into that account without deleting it only when the encrypted namespace contains
+an actual credential record; an empty namespace created by opening the old store is not
+migration evidence. The registry stores no tokens.
+
+Refresh, enrollment, logout, and superseded-credential cleanup use the same second
+stable flock scoped to the canonical root and target. Enrollment acquires it only after
+the browser flow has produced a token, snapshots both durable halves, and writes the
+credential. If that write reports an ambiguous post-rename failure, it rereads under the
+lock and accepts only the intended committed token. It then commits the registry. A
+registry error is followed by a reread: an observed desired snapshot confirms that the
+atomic rename committed; otherwise CAS compensation restores or deletes only the
+credential version this operation wrote. There is deliberately no transaction journal.
+A crash between the encrypted credential and registry stores can leave partial state; a
+missing
+credential is recovered by login, and credential-only orphans remain unenumerable.
+
+A connected target constructs a dynamic bearer source that validates an unexpired access
+token before each RPC,
+refreshes expired credentials, and conditionally persists rotation. The source also
+runs a bounded, activity-gated proactive refresher: an application-facing `Token`
+demand that obtains a bearer counts as activity, including one served from an already
+valid access token; RPC success is not the signal, and the background refresh cannot
+satisfy its own activity predicate. This prevents the poller from sustaining itself; it
+makes no portable claim about provider browser-SSO or refresh-token lifetime policy. Public and
+background paths acquire the target transaction flock before the source mutex, then
+serialize validation, exchange, and versioned CAS save; `Close` cancels and joins the
+poller before closing validation resources. Missing, corrupt, and expired refresh state
+returns the `ErrLoginRequired` sentinel with typed local causes. Only a structured OAuth
+`RetrieveError` whose exact `ErrorCode == "invalid_grant"` deletes a rejected refresh
+credential; prose in an error description does not. Composition translates the known
+adapter causes into the proto-free client's closed auth-reason values, while unknown
+provider, infrastructure, and cancellation failures pass through unclassified. A server
+`Unauthenticated` response remains a transport-layer rejection. OIDC discovery, token
+exchange, and JWKS use the shared ToolHive Core-derived scoped private-HTTPS client: explicit CA roots, HTTPS-only endpoint admission, DNS-pinned private
+addresses, TLS/hostname checks, and redirect refusal remain in force. Diagnostics fail
+closed: known local failures cross only as the closed auth-reason/callback-reason sets,
+unknown failures are not guessed into recovery actions, and no tokens, provider response
+bodies, callback values, or CA contents are logged or projected into UI restart intents.
+The Kind remote flow is available after fixture setup with host aliases and its public
+CA, but remains a live qualification
+path rather than ordinary offline test coverage.
+
+The fixed mecatui callback at `http://127.0.0.1:18473/oauth/callback` and the random
+MCP callback intentionally use different attempt policies. Fixed-route wrong-path,
+wrong-state, and other pre-state probes are unlimited: they do not spend a terminal
+attempt budget; the deadline, connection cap, and HTTP timeouts bound the
+public route. Knowledge of state makes provider errors and semantic callback rejection
+terminal. Random-path MCP callbacks retain the sixteen matching-route attempt budget
+because the path is itself a capability. Callback validator errors expose only a closed
+harness reason. Provider-returned OAuth `error` and `error_description` are separate:
+each is filtered to the RFC printable subset and bounded before display.
+
+The UI emits a closed `ConnectAction`: connect a saved target, reauthenticate, retry
+after credential cleanup without a browser, or add a target. Ordinary selection and any
+target switch create fresh. Same-target reauthentication and cleanup retry retain a
+candidate ID and the current server CA path; neither crosses to another target. The
+candidate is adopted only after ownership-enforced session and transcript reads prove a
+completed, cancelled, or failed boundary. Missing, hidden, running, awaiting, and
+ambiguous candidates are discarded. A server-rejected bearer does not offer the same
+browser-login loop. A static `--auth-token` remains unmanaged; only the managed saved
+OIDC source is validated and refreshed by mecatui.
+
+Logout removes local state under the target lock, then releases it before provider
+communication. All remote cleanup shares one operation-wide five-second budget that
+starts before scoped HTTP client construction and covers discovery plus refresh/access
+RFC 7009 revocation for every retained legacy registry entry; a shorter caller deadline
+wins. Provider failure never restores local state.
+
 ### CLI transport grammar (ADR 0089 — the clean break)
 
 One canonical spelling per transport action; the explicit `help` spellings are the
@@ -4386,7 +4476,7 @@ ToolHive proxy use (`llm.NewTokenSource`): system secrets provider →
 `DirectTokenSource` is the non-interactive variant (a genuine cache miss returns
 `llm.ErrTokenRequired` — surfaced with `toolhivellm.ErrTokenRequiredHint`; it NEVER
 silently launches a browser from a headless daemon); `RunInteractiveLogin` is the
-interactive variant (`mecatui login`). Errors are sanitised via
+interactive variant (`mecatui llm login`). Errors are sanitised via
 `llm.SanitizeTokenError` (strips any bearer material an IdP echoes back) before they
 cross any boundary.
 
@@ -4424,15 +4514,16 @@ ALWAYS forces proxy (it is a loopback address; direct derives from the config's
 Build-fail (never a silent proxy fallback): `validateToolhiveLLMMode` runs AFTER
 `validateToolhiveBaseURL` and BEFORE `buildProviderRegistry`, naming the missing
 fields and the remediation (`thv llm config set` + `thv llm setup` /
-`mecatui login`, or `--toolhive-llm-mode auto/proxy`).
+`mecatui llm login`, or `--toolhive-llm-mode auto/proxy`).
 
-`mecatui login` (`cmd/mecatui/login.go`) is a NEW CLI-only subcommand running the
-interactive OIDC browser flow in-process — NOT a session, NOT a transport. It writes
+`mecatui llm login` (`cmd/mecatui/login.go`) is the CLI-only ToolHive subcommand
+running the interactive OIDC browser flow in-process — NOT a session, NOT a remote-server
+transport. It writes
 the refresh-token reference to ToolHive's own config so a subsequent non-interactive
 direct-mode provider finds the credential without re-login. A `--skip-browser` flag
 prints the authorization URL for headless/SSH/CI. It runs in the normal buffer (no alt
 screen) over the default config path. A headless `mecated` cache-miss surfaces
-`toolhivellm.ErrTokenRequiredHint` (naming both `thv llm setup` and `mecatui login`
+`toolhivellm.ErrTokenRequiredHint` (naming both `thv llm setup` and `mecatui llm login`
 plus the `--toolhive-llm-mode proxy` escape hatch), mirroring the existing
 `errToolhiveNoModels` actionable-error pattern — never a silent browser popup from a
 daemon.
@@ -7508,23 +7599,26 @@ all controller operations before releasing owned transport state.
 ## MCP OAuth loopback login (ADR 0112)
 
 `mcp/oauthlogin` is a stdlib-only host runtime, not an engine port. `Runtime.Authorize`
-serializes the complete interaction per runtime instance, binds `tcp4` on
-`127.0.0.1:0`, derives a redirect with a fresh 32-byte random path segment, and starts a
-dedicated bounded `http.Server`. Its exact-path GET handler rejects request bodies,
-duplicate/empty/oversized query values, wrong Host, and mismatched state (constant-time).
-The `iss` value is optional at this host boundary; when supplied it must be canonical and
-match the configured issuer, and an absent value stays absent for the SDK's discovery-aware
-RFC 9207 check. It returns only code/state/issuer; static success and
-failure pages carry no provider values and set no-store, CSP, referrer, MIME-sniffing, and
-permissions headers. Sixteen invalid requests exhaust the flow.
+serializes the complete interaction per runtime instance and starts a dedicated bounded
+`http.Server`. MCP OAuth binds `tcp4` on `127.0.0.1:0` and derives a redirect with a
+fresh 32-byte random path segment. Remote mecatui instead opts into the registered fixed
+`127.0.0.1:18473/oauth/callback` redirect. The exact-path GET handler rejects request
+bodies, duplicate/empty/oversized query values, wrong Host, and mismatched state
+(constant-time). The `iss` value is optional at this host boundary; when supplied it
+must be canonical and match the configured issuer, and an absent value stays absent
+for the caller's discovery-aware RFC 9207 check. It returns only code/state/issuer; static
+success and failure pages carry no provider values and set no-store, CSP, referrer,
+MIME-sniffing, and permissions headers. In random-path mode sixteen matching-route invalid requests
+exhaust the flow; fixed-route pre-state probes do not consume that budget.
 
 Presentation parses the official SDK's authorization URL and requires exactly one state.
 An injected `BrowserLauncher` receives the opaque URL, or explicit no-browser mode writes it
 once to a required host-owned writer. The default launcher uses fixed OS-specific argv and
-never a shell. Browser/callback values never enter diagnostics or returned error text.
-Cancellation, callback completion, browser failure, and authorization failure all converge
-on detached bounded HTTP shutdown, listener close, and `Serve` join before the serialization
-gate is released.
+never a shell. Raw callback state, code, path, and hostile values never enter diagnostics
+or returned errors. Bounded printable-subset OAuth `error` and `error_description` fields
+may be returned to diagnose a provider rejection. Cancellation, callback completion,
+browser failure, and authorization failure all converge on detached bounded HTTP
+shutdown, listener close, and `Serve` join before the serialization gate is released.
 
 `internal/adapter/mcp/oauth_login.go` (`OAuthLoginPresenter`) only converts the runtime's
 result into `auth.AuthorizationResult`; it does not reproduce protocol validation.

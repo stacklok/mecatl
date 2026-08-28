@@ -130,9 +130,15 @@ and the explicit loopback port-forward is the only host path. The authenticated
 workflow above covers the issuer forwarding, hostname mapping, PKCE client, and
 TLS requirements.
 
-For global MCP OAuth, use an externally provisioned read-only environment credential and
-restart pods after rotation. `mecak8s` never launches a browser; a local mutable credential
-root conflicts with the normal storage-free posture. See [MCP client](/building/what-you-get/mcp-client.md).
+For an interactive remote client after setup, add the fixture host aliases, run
+`mecatui login ADDRESS … --tls-ca ISSUER_CA`, then run
+`mecatui connect ADDRESS --tls --tls-ca SERVER_CA`. The fixture may publish the same
+public CA bundle for both roles, but they remain separate trust inputs. The client uses
+the `mecatui-kind` public OIDC client;
+there is no implicit browser flow in `connect`. This host-alias flow is available
+for live qualification, but is not part of ordinary offline tests. See the
+[fixture's setup and CA instructions](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-vmcp/README.md).
+
 
 ---
 
@@ -759,10 +765,12 @@ policy layer's job.
 
 ### Use it from the TUI
 
-`mecatui` is an external gRPC client. Obtain a token using your normal IdP
-login flow, then use `mecatui connect` and provide the token with
-`--auth-token` (or `MECATL_AUTH_TOKEN`). The TUI sends it as bearer metadata on
-every RPC; it does not obtain or refresh OIDC tokens for you.
+`mecatui` is an external gRPC client with two authentication modes. For a static
+bearer, obtain a token using your normal unmanaged IdP flow and pass it with `--auth-token` (or
+`MECATL_AUTH_TOKEN`); only this static-bearer path does not obtain or refresh the token. For managed OIDC, run
+`mecatui login ADDRESS` with the issuer, client ID, audience, and issuer CA bundle path, then
+`mecatui connect ADDRESS`; mecatui stores the credential encrypted and refreshes it on
+later application token demand. Login never happens implicitly during `connect`.
 
 For a development port-forward, bearer traffic stays on loopback:
 
@@ -784,11 +792,12 @@ A gRPC dial can succeed before credentials are checked; the unauthenticated
 session's first request must fail before it produces a model response. If it
 replies, treat that as an authentication bypass.
 
-`--workspace` identifies a directory on the **agent pod**, not the machine
-running the TUI. Use a path that exists in the pod; `/tmp` is appropriate for
-this connectivity check, but is not a shared developer checkout. For a remote
-endpoint, use TLS (`--tls`, and `--tls-ca` for a private CA): the TUI rejects a
-bearer on a non-loopback cleartext connection.
+For a non-loopback endpoint, the server deployment owns workspace authority: mecatui
+sends no local cwd and rejects `--workspace`; configure a pod-visible root on the server
+or retain mecak8s's no-FS profile. Use TLS (`--tls`, and `connect --tls-ca` for a private
+server CA bundle path). The issuer CA path/reference supplied to `mecatui login` is separate and is used only for
+OIDC discovery/token/JWKS/refresh/revocation. The TUI rejects a bearer on a non-loopback
+cleartext connection.
 
 After creating a session in the TUI, verify the saved owner through the HTTP
 API (port-forward `8081:8081` as well if needed):
