@@ -145,8 +145,9 @@ func TestMecak8sVMCPPOC_Scenario3_Mecak8sTLSConnection(t *testing.T) {
 		"18081",
 
 		"base64 --decode > .scratch/mecak8s-vmcp-ca.crt",
-		"plaintext and an untrusted CA",
-		"live client connection demonstration\nis deferred",
+		"verified TLS\nusing the supplied custom fixture CA",
+		"plaintext, unauthenticated,\nor an untrusted CA must fail during transport/authentication setup",
+		"live client qualification remains confirmation-gated",
 	} {
 		if !strings.Contains(readme, required) {
 			t.Errorf("mecak8s TLS connection contract missing %q", required)

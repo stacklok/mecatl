@@ -119,21 +119,32 @@ kubectl --kubeconfig=deploy/mecak8s-vmcp/kconfig.yaml --context=kind-mecatl-dev 
   --namespace=mecatl-vmcp get secret fixture-ca -o jsonpath='{.data.tls\.crt}' | base64 --decode > .scratch/mecak8s-vmcp-ca.crt
 ```
 
-A normal-terminal `mecatui connect` flow with custom-CA TLS and OIDC PKCE is
-not implemented in this fixture, so the live client connection demonstration
-is deferred. When that client support lands, it must use this loopback mapping,
-the exported fixture CA, and a Keycloak-issued token; plaintext and an untrusted CA
-must fail before an authenticated RPC is served. No token or credential is
-stored by this fixture.
+A normal-terminal `mecatui login` then `connect` flow with custom-CA TLS and OIDC
+Authorization Code + PKCE is available. After `kind-hosts-add`, use the documented
+Service-DNS host aliases and export the public fixture CA to `.scratch/`; then enroll
+with `mecatui login <mecak8s-host>:18081 --issuer <fixture-https-issuer> --client-id
+mecatui-kind --audience mecatui-kind --tls-ca <exported-fixture-ca>` and connect with
+`mecatui connect <mecak8s-host>:18081 --tls --tls-ca <exported-fixture-ca>`. Add
+`--no-browser` to print the authorization URL for SSH or headless use. This is a live
+remote qualification path, not ordinary offline-test coverage. The login command stores
+credentials on the client; the fixture does not print or store them.
+
+The security contract is fail-closed before any authenticated RPC: verified TLS
+using the supplied custom fixture CA is required, and plaintext, unauthenticated,
+or an untrusted CA must fail during transport/authentication setup. A successful
+live client qualification remains confirmation-gated; offline tests do not claim
+that live connection has been performed.
 
 ## Separate Keycloak public clients
 
 `vmcp-browser` remains the embedded-vMCP browser client and uses
 `http://127.0.0.1:18080/oauth/callback`. `mecatui-kind` is a separate public
 client reserved for a normal-terminal loopback PKCE journey at
-`http://127.0.0.1:18473/oauth/callback`. Neither client has a secret. The
-fixture does not implement mecatui login, device flow, headless login, or
-credential storage.
+`http://127.0.0.1:18473/oauth/callback`. Neither client has a secret. After setup,
+the host-side `mecatui login ADDRESS` flow may use `mecatui-kind` for the live remote
+mecak8s qualification; the resulting credential is stored by mecatui, not by this
+fixture. The fixture does not implement device flow or headless login, and the
+setup/journey remains confirmation-gated.
 
 ## Shared Keycloak HTTPS issuer
 
