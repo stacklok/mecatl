@@ -631,13 +631,19 @@ type SessionReadyMsg struct {
 }
 
 // ConnectErrMsg reports a dial/CreateSession failure.
-type ConnectErrMsg struct{ Err error }
+type ConnectErrMsg struct {
+	Err        error
+	AuthReason AuthReason
+}
 
 // StreamErrMsg reports a non-EOF Recv error on the Converse stream.
 type StreamErrMsg struct {
 	Err error
-	// Transient is legacy display metadata from TransientStreamErr. A transport
-	// failure has no typed semantic commit fact and never authorizes TUI replay.
+	// AuthReason is set only by the transport's closed auth classifier. It is
+	// empty for ordinary stream failures; the UI never parses Err text.
+	AuthReason AuthReason
+	// Transient is display metadata from TransientStreamErr. A transport failure
+	// has no typed semantic commit fact and never authorizes TUI replay.
 	Transient bool
 }
 

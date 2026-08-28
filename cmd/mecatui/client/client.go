@@ -24,19 +24,26 @@ import (
 // unauthenticated plaintext by default; non-loopback may need a token and/or
 // TLS/mTLS.
 type DialConfig struct {
-	Server    string // host:port, e.g. 127.0.0.1:8080
-	AuthToken string // optional bearer; sent as "authorization: Bearer <tok>"
-	UseTLS    bool   // enable transport TLS
-	TLSCAFile string // optional custom CA bundle for server verification
-	Insecure  bool   // skip TLS verification (testing only; with UseTLS)
+	Server      string      // host:port, e.g. 127.0.0.1:8080
+	AuthToken   string      // optional static bearer; sent as "authorization: Bearer <tok>"
+	TokenSource TokenSource // optional dynamic bearer source, evaluated once per RPC
+	UseTLS      bool        // enable transport TLS
+	TLSCAFile   string      // optional custom CA bundle for server verification
+	Insecure    bool        // skip TLS verification (testing only; with UseTLS)
+}
+
+// TokenSource supplies a current bearer token for an RPC. Dial must not invoke it.
+type TokenSource interface {
+	Token(context.Context) (string, error)
 }
 
 // Client is a connected mecated gRPC client: the dialled conn plus the generated
 // service stub. Close it on shutdown.
 type Client struct {
-	conn        *grpc.ClientConn
-	svc         mecatlv1.HarnessServiceClient
-	scheduleSvc mecatlv1.ScheduleServiceClient
+	conn         *grpc.ClientConn
+	svc          mecatlv1.HarnessServiceClient
+	scheduleSvc  mecatlv1.ScheduleServiceClient
+	bearerBacked bool
 }
 
 // Dial connects to mecated per cfg. It uses grpc.NewClient (not the deprecated
@@ -53,7 +60,7 @@ func Dial(cfg DialConfig) (*Client, error) {
 	// per-RPC credential's RequireTransportSecurity() also blocks this at send
 	// time, but a hard pre-dial guard gives the operator a clear, actionable
 	// error instead of an opaque RPC failure later.
-	if cfg.AuthToken != "" && !cfg.UseTLS && !loopback {
+	if (cfg.AuthToken != "" || cfg.TokenSource != nil) && !cfg.UseTLS && !loopback {
 		return nil, fmt.Errorf(
 			"refusing to send auth token in cleartext to non-loopback %q: use --tls", cfg.Server)
 	}
@@ -75,19 +82,97 @@ func Dial(cfg DialConfig) (*Client, error) {
 	}
 
 	if cfg.AuthToken != "" {
-		// The credential requires transport security UNLESS the target is
-		// loopback (the documented plaintext single-user default). For any
-		// non-loopback target it demands TLS even when --tls is unset, so the
-		// token can never ride a cleartext wire to a remote host.
 		creds := bearerCreds{token: cfg.AuthToken, allowInsecure: loopback}
 		opts = append(opts, grpc.WithPerRPCCredentials(creds))
+	} else if cfg.TokenSource != nil {
+		opts = append(opts,
+			grpc.WithPerRPCCredentials(bearerCreds{source: cfg.TokenSource, allowInsecure: loopback}),
+			grpc.WithChainUnaryInterceptor(tokenSourceUnary(cfg.TokenSource)),
+			grpc.WithChainStreamInterceptor(tokenSourceStream(cfg.TokenSource)),
+		)
+	} else {
+		// Dialling with no credential at all is legitimate: a mecated with no OIDC
+		// configured needs none, so a missing saved credential cannot be an error
+		// here. It becomes actionable only when the server actually demands one,
+		// which is where these interceptors add the enrolment hint.
+		opts = append(opts,
+			grpc.WithChainUnaryInterceptor(anonymousUnaryHint(cfg.Server)),
+			grpc.WithChainStreamInterceptor(anonymousStreamHint(cfg.Server)),
+		)
 	}
 
 	conn, err := grpc.NewClient(cfg.Server, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial %q: %w", cfg.Server, err)
 	}
-	return &Client{conn: conn, svc: mecatlv1.NewHarnessServiceClient(conn), scheduleSvc: mecatlv1.NewScheduleServiceClient(conn)}, nil
+	return &Client{conn: conn, svc: mecatlv1.NewHarnessServiceClient(conn), scheduleSvc: mecatlv1.NewScheduleServiceClient(conn), bearerBacked: cfg.AuthToken != "" || cfg.TokenSource != nil}, nil
+}
+
+// anonymousDialHint annotates a server Unauthenticated rejection received by a
+// client that carried no bearer credential. Without it the operator sees only the
+// far side's "missing or invalid bearer token" and no indication that the local
+// cause is an unenrolled target. Wrapping preserves the gRPC status, so
+// status.Code classification elsewhere is unaffected.
+func anonymousDialHint(server string, err error) error {
+	if status.Code(err) != codes.Unauthenticated {
+		return err
+	}
+	return fmt.Errorf("%w (no saved credential for %s; run 'mecatui login %s')", err, server, server)
+}
+
+func anonymousUnaryHint(server string) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		return anonymousDialHint(server, invoker(ctx, method, req, reply, cc, opts...))
+	}
+}
+
+func anonymousStreamHint(server string) grpc.StreamClientInterceptor {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		stream, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil {
+			return nil, anonymousDialHint(server, err)
+		}
+		// Server-side auth rejects before the handler runs, and gRPC surfaces that
+		// on the first Recv rather than at stream creation, so the hint has to
+		// cover RecvMsg too.
+		return hintingStream{ClientStream: stream, server: server}, nil
+	}
+}
+
+type hintingStream struct {
+	grpc.ClientStream
+	server string
+}
+
+func (s hintingStream) RecvMsg(m any) error {
+	return anonymousDialHint(s.server, s.ClientStream.RecvMsg(m))
+}
+
+type tokenContextKey struct{}
+type tokenContextValue struct {
+	token string
+}
+
+func tokenSourceUnary(source TokenSource) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		token, err := source.Token(ctx)
+		if err != nil {
+			return err
+		}
+		ctx = context.WithValue(ctx, tokenContextKey{}, tokenContextValue{token: token})
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+func tokenSourceStream(source TokenSource) grpc.StreamClientInterceptor {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		token, err := source.Token(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = context.WithValue(ctx, tokenContextKey{}, tokenContextValue{token: token})
+		return streamer(ctx, desc, cc, method, opts...)
+	}
 }
 
 // Close releases the underlying connection.
@@ -182,9 +267,10 @@ func (c *Client) ForkSession(ctx context.Context, srcID, title, reasoningEffort 
 // transient failure (unavailable, deadline) keeps the fatal path with the
 // original error, never a dishonest "rejected" warning. Nil → false (codes.OK);
 // a non-status error → false (codes.Unknown).
-func IsInvalidArgument(err error) bool {
-	return status.Code(err) == codes.InvalidArgument
-}
+func IsInvalidArgument(err error) bool { return status.Code(err) == codes.InvalidArgument }
+
+// IsNotFound reports the server's privacy-preserving absent-session result.
+func IsNotFound(err error) bool { return status.Code(err) == codes.NotFound }
 
 // transientVocab is the shared, case-insensitive legacy presentation vocabulary.
 // It is deliberately kept in the client package (the ONLY mecatui layer with
@@ -297,7 +383,7 @@ func (c *Client) OpenConverse(ctx context.Context) (*Stream, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open converse: %w", err)
 	}
-	return NewStream(bidi, bidi), nil
+	return newAuthenticatedStream(bidi, bidi, c.bearerBacked), nil
 }
 
 // ModeDefaultString is the canonical CLI/UI spelling for default permission mode.
@@ -365,11 +451,27 @@ func loadCAPool(path string) (*x509.CertPool, error) {
 // returns true, so grpc-go refuses to send the token over a cleartext wire.
 type bearerCreds struct {
 	token         string
+	source        TokenSource
 	allowInsecure bool // true only for loopback targets
 }
 
-func (b bearerCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{"authorization": "Bearer " + b.token}, nil
+func (b bearerCreds) GetRequestMetadata(ctx context.Context, _ ...string) (map[string]string, error) {
+	token := b.token
+	if b.source != nil {
+		if cached, ok := ctx.Value(tokenContextKey{}).(tokenContextValue); ok {
+			token = cached.token
+		} else {
+			var err error
+			token, err = b.source.Token(ctx)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if token == "" {
+		return nil, errors.New("empty bearer token")
+	}
+	return map[string]string{"authorization": "Bearer " + token}, nil
 }
 
 func (b bearerCreds) RequireTransportSecurity() bool { return !b.allowInsecure }

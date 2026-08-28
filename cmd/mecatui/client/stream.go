@@ -51,6 +51,7 @@ type Stream struct {
 	// surface does not leave a Model approval-state tombstone merely to reject a
 	// late duplicate event.
 	resolvedApprovals map[string]struct{}
+	bearerBacked      bool
 }
 
 // NewStream binds a receive and send side into a Stream. Pass the same
@@ -58,6 +59,10 @@ type Stream struct {
 // no-op or recording Sender) in tests.
 func NewStream(recv Recver, send Sender) *Stream {
 	return &Stream{recv: recv, send: send}
+}
+
+func newAuthenticatedStream(recv Recver, send Sender, bearerBacked bool) *Stream {
+	return &Stream{recv: recv, send: send, bearerBacked: bearerBacked}
 }
 
 // MarkApprovalResolved records an ask id as resolved for this stream. It is
@@ -112,7 +117,7 @@ func (s *Stream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 			return nil, err
 		}
 		return resp.GetEvent(), nil
-	}, out)
+	}, out, s.bearerBacked, true)
 }
 
 // readEventLoop is the SINGLE translation path both the live Converse stream
@@ -123,7 +128,7 @@ func (s *Stream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 // yields StreamErrMsg; ctx cancellation unblocks a stuck send (no-leak) —
 // projection equivalence: the SAME EventToMsg path, the SAME lifecycle msgs, so
 // a replay and a live run project identically for the same event sequence.
-func readEventLoop(ctx context.Context, recv func() (*mecatlv1.Event, error), out chan<- tea.Msg) {
+func readEventLoop(ctx context.Context, recv func() (*mecatlv1.Event, error), out chan<- tea.Msg, bearerBacked, classifyAuth bool) {
 	defer close(out)
 	for {
 		ev, err := recv()
@@ -132,7 +137,12 @@ func readEventLoop(ctx context.Context, recv func() (*mecatlv1.Event, error), ou
 				emit(ctx, out, StreamClosedMsg{})
 				return
 			}
-			emit(ctx, out, StreamErrMsg{Err: err, Transient: TransientStreamErr(err)})
+			authReason := AuthReason("")
+			classified := false
+			if classifyAuth {
+				authReason, classified = AuthFailure(err, bearerBacked)
+			}
+			emit(ctx, out, StreamErrMsg{Err: err, AuthReason: authReason, Transient: !classified && TransientStreamErr(err)})
 			return
 		}
 		if m := EventToMsg(ev); m != nil {

@@ -24,6 +24,13 @@ import (
 // production; tests supply a scripted fake.
 type EventStream struct {
 	recv EventRecver
+	// bearerBacked is transport provenance, not credential material. Replay streams
+	// intentionally leave it false so replay failures can never open auth recovery.
+	bearerBacked bool
+	// classifyAuth distinguishes live/Converse streams from durable replay. A
+	// false bearer value means anonymous live transport when this is true, but
+	// replay must not classify receive failures at all.
+	classifyAuth bool
 }
 
 // NewEventStream wraps an EventRecver in an EventStream. Pass the generated
@@ -31,6 +38,14 @@ type EventStream struct {
 // production; pass a fake EventRecver in tests.
 func NewEventStream(recv EventRecver) *EventStream {
 	return &EventStream{recv: recv}
+}
+
+func newAuthenticatedEventStream(recv EventRecver, bearerBacked bool) *EventStream {
+	return newLiveEventStream(recv, bearerBacked)
+}
+
+func newLiveEventStream(recv EventRecver, bearerBacked bool) *EventStream {
+	return &EventStream{recv: recv, bearerBacked: bearerBacked, classifyAuth: true}
 }
 
 // ReadLoop runs the receive loop on its OWN goroutine over the replay stream:
@@ -41,7 +56,7 @@ func NewEventStream(recv EventRecver) *EventStream {
 // off the Bubble Tea update goroutine; pass a cancellable context so the ui can
 // tear it down when it leaves the transcript view.
 func (s *EventStream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
-	readEventLoop(ctx, s.recv.Recv, out)
+	readEventLoop(ctx, s.recv.Recv, out, s.bearerBacked, s.classifyAuth)
 }
 
 // StreamSessionLive opens the LIVE per-session event stream (ADR 0075
@@ -57,7 +72,7 @@ func (c *Client) StreamSessionLive(ctx context.Context, id string) (*EventStream
 	if err != nil {
 		return nil, fmt.Errorf("stream session live: %w", err)
 	}
-	return NewEventStream(stream), nil
+	return newAuthenticatedEventStream(stream, c.bearerBacked), nil
 }
 
 // LiveStreamCmd opens the live session event stream for session id synchronously,
@@ -71,9 +86,12 @@ func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan t
 
 	es, err := live.StreamSessionLive(ctx, id)
 	if err != nil {
+		// Open errors are classified only for a live stream with authenticated
+		// transport provenance; durable replay never opens auth recovery.
+		reason, classified := AuthFailure(err, liveBearerBacked(live))
 		go func() {
 			defer close(ch)
-			emit(ctx, ch, StreamErrMsg{Err: err, Transient: TransientStreamErr(err)})
+			emit(ctx, ch, StreamErrMsg{Err: err, AuthReason: reason, Transient: !classified && TransientStreamErr(err)})
 		}()
 		return ch, stop
 	}
@@ -152,6 +170,21 @@ func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out
 	return nil
 }
 
+type liveAuthProvenance interface {
+	bearerBackedStream() bool
+}
+
+func liveBearerBacked(live LiveStreamer) bool {
+	p, ok := live.(liveAuthProvenance)
+	return ok && p.bearerBackedStream()
+}
+
+func (s *EventStream) bearerBackedStream() bool {
+	return s != nil && s.bearerBacked
+}
+
+func (c *Client) bearerBackedStream() bool { return c != nil && c.bearerBacked }
+
 // reconnectLiveLoop is the body of ReconnectLiveCmd: the bounded-backoff
 // reconnect+catch-up loop. It emits LiveReconnectingMsg at the top of each
 // attempt, drains the durable catch-up (forwarding its event msgs onto out), then
@@ -159,9 +192,9 @@ func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out
 // it emits LiveReconnectedMsg and returns (the ui re-arms a FRESH live channel);
 // on failure it records the error and backs off. The probe stream's ctx is the
 // loop's ctx, so the ui's stop (cancel) cleans it up once the ui has re-armed.
-func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg) {
+func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg, priorAttempt int) {
 	defer close(out)
-	attempt := 0
+	attempt := priorAttempt
 	var lastErr error
 	for {
 		attempt++
@@ -189,7 +222,9 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 		}
 		// (a) drain the durable catch-up (recover delivery notes from the gap).
 		// Best-effort: a catch-up failure does not block the live reopen.
-		_ = catchUpReplay(ctx, replayer, id, out)
+		if replayer != nil {
+			_ = catchUpReplay(ctx, replayer, id, out)
+		}
 		// (b) re-open the live feed (connectivity probe; the ui re-arms a fresh
 		// channel on LiveReconnectedMsg).
 		es, err := live.StreamSessionLive(ctx, id)
@@ -198,6 +233,12 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 			// cancels this loop's ctx on LiveReconnectedMsg. Emit + return.
 			_ = es
 			emit(ctx, out, LiveReconnectedMsg{})
+			return
+		}
+		if reason, classified := AuthFailure(err, liveBearerBacked(live)); classified {
+			// An authenticated feed cannot recover by retrying: hand the closed,
+			// typed reason to the reducer and stop. Replay remains unclassified.
+			emit(ctx, out, StreamErrMsg{Err: err, AuthReason: reason})
 			return
 		}
 		lastErr = err
@@ -217,6 +258,17 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 // stores the channel + stop, tags reads with the live-reconnect generation, and
 // re-arms the live reader on LiveReconnectedMsg.
 func ReconnectLiveCmd(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string) (ch chan tea.Msg, stop func()) {
+	return reconnectLiveCmd(ctx, live, replayer, id, 0)
+}
+
+// ReconnectLiveCmdFromAttempt continues the per-session continuity attempt
+// sequence after a successful probe/re-arm. The first-ever failure remains
+// immediate; a later reader failure keeps its attempt number and backoff.
+func ReconnectLiveCmdFromAttempt(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, priorAttempt int) (ch chan tea.Msg, stop func()) {
+	return reconnectLiveCmd(ctx, live, replayer, id, priorAttempt)
+}
+
+func reconnectLiveCmd(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, priorAttempt int) (ch chan tea.Msg, stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	ch = make(chan tea.Msg, 64)
 	done := make(chan struct{})
@@ -229,7 +281,7 @@ func ReconnectLiveCmd(ctx context.Context, live LiveStreamer, replayer SessionRe
 	}
 	go func() {
 		defer close(done)
-		reconnectLiveLoop(ctx, live, replayer, id, ch)
+		reconnectLiveLoop(ctx, live, replayer, id, ch, priorAttempt)
 	}()
 	return ch, stop
 }

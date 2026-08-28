@@ -11,7 +11,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -86,7 +88,44 @@ func logOnlyScript() []*mecatlv1.Event {
 	}
 }
 
-// TestReplayReadLoopProjectionEquivalence asserts the replay (EventStream over a
+func TestEventStreamAuthClassificationRespectsBearerProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stream *EventStream
+		want   AuthReason
+	}{
+		{"anonymous live receive", newLiveEventStream(funcEventRecver{err: status.Error(codes.Unauthenticated, "secret server text")}, false), AuthNotEnrolled},
+		{"authenticated live receive", newAuthenticatedEventStream(funcEventRecver{err: status.Error(codes.Unauthenticated, "secret server text")}, true), AuthRejected},
+		{"replay receive", NewEventStream(funcEventRecver{err: status.Error(codes.Unauthenticated, "secret server text")}), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := make(chan tea.Msg, 2)
+			go tc.stream.ReadLoop(context.Background(), out)
+			msgs := drain(out)
+			if len(msgs) != 1 {
+				t.Fatalf("got %d messages, want one terminal message: %#v", len(msgs), msgs)
+			}
+			got, ok := msgs[0].(StreamErrMsg)
+			if !ok {
+				t.Fatalf("message = %T, want StreamErrMsg", msgs[0])
+			}
+			if got.AuthReason != tc.want {
+				t.Errorf("AuthReason = %q, want %q", got.AuthReason, tc.want)
+			}
+			if got.Err == nil || status.Code(got.Err) != codes.Unauthenticated {
+				t.Errorf("transport error = %v, want unauthenticated", got.Err)
+			}
+		})
+	}
+}
+
+// funcEventRecver is a minimal EventRecver for terminal receive-path tests.
+type funcEventRecver struct {
+	err error
+}
+
+func (f funcEventRecver) Recv() (*mecatlv1.Event, error) { return nil, f.err }
+
 // fakeEventStream) and the live Converse stream (Stream over a fakeStream) yield
 // the IDENTICAL tea.Msg sequence for the same event script — the
 // projection-equivalence contract of readEventLoop (the single translation path).
