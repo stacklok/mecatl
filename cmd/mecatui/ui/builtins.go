@@ -572,7 +572,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		m.palette.open = false
 		m.palette.filtered = nil
 		m.palette.cursor = 0
-		m.ta.Reset()
+		(&m).promptReset()
 		mm, cmd := b.run(m)
 		return mm, cmd, true
 	}

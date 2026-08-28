@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -830,6 +831,9 @@ type Model struct {
 	// refreshView). Active only on the alt screen; an overlay/modal/help blocks a new
 	// selection and clears an active one.
 	sel selection
+	// promptSelecting tracks an in-progress textarea mouse drag. The textarea
+	// retains completed selection state itself.
+	promptSelecting bool
 
 	// mouseDebug is the last formatted mouse-diagnostic line (see mouseDebugLine),
 	// rendered in the footer only when Deps.DebugMouse is set. Set at the top of
@@ -890,6 +894,10 @@ func New(deps Deps) Model {
 	ta.ShowLineNumbers = false
 	ta.Placeholder = "Ask mecatl to do something…  (" + hk.submit + " to send · " + hk.newlineFirst + " for newline · " + hk.help + " for help)"
 	ta.SetHeight(3)
+	ta.KeyMap.SelectAll = keys.SelectAll
+	// Copy is intercepted by promptInput so it shares the app's OSC52 + shell
+	// transport with conversation selection; never use bubbles' clipboard backend.
+	ta.KeyMap.CopySelection = key.NewBinding()
 	ta.Focus()
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(th.Style("spinner")))

@@ -246,7 +246,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--insecure` | off | skip TLS verification (testing only) |
 | `--list-themes` | – | print available themes and exit |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |
-| `--no-mouse` | off | keep the alt screen but don't capture the mouse, so the terminal's **native** click-drag selection works; trades away in-app wheel scroll + drag-select/copy (or `MECATUI_NO_MOUSE=1`; see the selection section) |
+| `--no-mouse` | off | keep the alt screen but disable mouse capture and in-app mouse gestures, preserving the terminal's **native** click-drag selection; keyboard prompt selection still works (or `MECATUI_NO_MOUSE=1`; see the selection section) |
 | `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> — <status word> mecatui` (the title is the first prompt, the status word reflects the phase); `off` collapses to the bare `mecatui` (escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
 | `--no-banner` | off | disable the first-run welcome **splash** (mascot + gradient wordmark); the plain prompt hint + affordance list still show. Auto-forced on under `--quiet` or a non-interactive stdin |
 | `--model` | – (provider default) | model id for the **embedded** server; empty = the server-configured `--default-model` (when set), else the provider-appropriate built-in (anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `openai/gpt-5`; openai-codex → first entitled live model). Overridden per session by the `/models` picker |
@@ -353,7 +353,7 @@ left owned after the bounded shutdown completes.
 | Env | Effect |
 |---|---|
 | `MECATUI_THEME` | theme name (same as `--theme`) |
-| `MECATUI_NO_MOUSE` | don't capture the mouse (same as `--no-mouse`) — native terminal selection over in-app wheel/drag |
+| `MECATUI_NO_MOUSE` | disable mouse capture and in-app mouse gestures (same as `--no-mouse`) while preserving native terminal selection; keyboard prompt selection still works |
 | `MECATUI_NO_TERMINAL_TITLE` | suppress the dynamic terminal window/tab title (same as `--terminal-title=off`) — collapse to the bare `mecatui` |
 | `MECATUI_DEBUG_MOUSE` | overlay raw mouse coords / click-mapping in the footer during a press/drag (troubleshooting) |
 | `MECATUI_FORCE_EMOJI` / `MECATUI_NO_EMOJI` | force / suppress the emoji glyph for the YOLO posture badge (force-on, no-wins-over-force); default is conservative env-based detection (see the posture badge) |
@@ -761,8 +761,9 @@ re-validates every part regardless.
 - a clipboard **image** is staged as an inline attachment and an `[Image #N]` marker
   is inserted into the prompt (cap-gated on `image` — on a text-only model the image
   is refused with a status line and nothing is staged);
-- otherwise the clipboard **text** is inserted into the prompt (always — text is not
-  cap-gated, so `ctrl+v` still pastes text on an image-incapable model).
+- otherwise the clipboard **text** replaces any active prompt selection, or is inserted
+  at the caret when there is none (always — text is not cap-gated, so `ctrl+v` still
+  pastes text on an image-incapable model).
 
 On submit, every surviving `[Image #N]` marker becomes a media part (ascending by
 `N`, in display order), the marker is **stripped** from the sent text, and the part
@@ -803,9 +804,9 @@ renumbered (its numbering is separate from `[Image #N]`); **deleting the marker 
 the input before sending silently drops that paste**; `/clear` drops any
 staged-but-unsent pastes. `@`-mentions or `[Image #N]` markers *inside* the pasted
 payload behave exactly as if typed — expansion happens before mention/media handling.
-One divergence from a small paste: the placeholder is **appended at the end of the
-input** (like image markers), not inserted at the cursor — a small literal paste is
-cursor-positioned.
+One divergence from a small paste: without an active prompt selection, the placeholder
+is **appended at the end of the input** (like image markers), not inserted at the cursor.
+With a selection, the selected text is replaced before the placeholder is inserted.
 
 ## First-run welcome splash
 
@@ -889,8 +890,8 @@ show the plain prompt-hint card.
 | `enter` (while a run streams) | **queue a follow-up** (staged; the whole queue is **merged into one prompt** and sent when the turn ends) |
 | `↑` (empty input, non-empty queue) | **edit queued** — pull the merged staged follow-ups back into the input for revising (non-destructive; the queue is emptied into the textarea, not dropped). Works both mid-run and while a paused queue is held. |
 | `shift+enter` (or `ctrl+j`) | newline in the input |
-| paste (bracketed) | insert clipboard text into the prompt; a single pasted **media-file path** is staged as an attachment instead, and a **large** paste (≥ 2000 chars — alone or combined with the current input — or ≥ 30 lines) is staged behind a `[Pasted text #N]` placeholder appended at the end of the input, expanding on send (ignored while an overlay/modal is open) |
-| `ctrl+v` | read the OS clipboard — a clipboard **image** stages as an `[Image #N]` attachment (when supported), else paste clipboard **text** (see below) |
+| paste (bracketed) | replace the active prompt selection, or insert clipboard text at the caret; a single pasted **media-file path** is staged as an attachment instead, and a **large** paste (≥ 2000 chars — alone or combined with the current input — or ≥ 30 lines) is staged behind a `[Pasted text #N]` placeholder, replacing the active selection before insertion or otherwise appending at the end of the input, expanding on send (ignored while an overlay/modal is open) |
+| `ctrl+v` | read the OS clipboard — a clipboard **image** stages as an `[Image #N]` attachment (when supported), else replace the active prompt selection with clipboard **text** (see below) |
 | `esc` (while a run streams) | clear staged input → else clear the queue → else cancel the in-flight run (sends `Cancel`; waits for the terminal result) |
 | `enter` (idle, **paused queue**, empty input) | resume — send the merged staged follow-ups |
 | `esc` (idle, **paused queue**) | clear staged input → else clear the queue |
@@ -909,16 +910,18 @@ show the plain prompt-hint card.
 | `pgup` / `pgdn` | scroll the conversation up / down |
 | `home` / `end` | jump to the top / bottom of the conversation (`end` resumes auto-follow) |
 | mouse wheel | scroll the conversation (**alt screen only**; see below) |
-| mouse click (prompt text) | move the prompt caret to that cell (**alt screen only**; prompt drag-selection/copy is not supported yet) |
-| mouse drag (left) | **select text** in the conversation — drag to an edge auto-scrolls; copies on release (alt screen only; see below) |
-| double / triple-click (left) | select word / whole line (copies; alt screen only) |
-| right-click | copy the current selection (if any) |
+| mouse click (prompt text) | place the prompt caret; drag from it to select prompt text (**alt screen only**; see below) |
+| mouse drag (left) | select text in the prompt or conversation — dragging in the conversation to an edge auto-scrolls; prompt release does **not** copy (alt screen only; see below) |
+| double / triple-click (left) | select word / whole line in the conversation (copies; alt screen only) |
+| `ctrl+shift+c` | copy the active prompt or conversation selection; no selection is a no-op |
+| right-click | copy the active prompt or conversation selection; no selection is a no-op |
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
 | `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
 | `alt+m` | cycle the current session permission mode: **default → plan → accept-edits → default**. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
+| `ctrl+g` | select all prompt text (rebindable as `SelectAll`; inside the `/models` picker, the existing `SetGlobalDefault` binding is used instead) |
 | `x` (agents overlay, on a **running** lane) | **cancel that child agent** (sends `CancelChild` with the lane's child id; the run itself keeps streaming). Works on all three tabs: a **Subagents** lane (roster or focus pane), a **Parallel branch** (inside a focused group — `↑/↓` selects the branch), and a **team member** (Teams roster or focus pane; mid-drive OR idle between rounds — the member is de-scheduled and its claimed tasks released). Confirm-less, because it is recoverable: the child is persisted (a subagent stays **resumable** by its `agentId`; a cancelled branch reads `[FAILED] cancelled by user`; a cancelled member shows `stopped — cancelled`). Inert on a done lane. If the child was parked on a surfaced permission ask, the server retracts it (`permission.retract`) and the approval modal dismisses itself. |
 | `@` | file-mention menu — complete a workspace path, then attach it on submit (see below) |
 
@@ -1024,6 +1027,8 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `Cancel` | `esc` | global | cancel the running turn / clear staged input & queue |
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
+| `SelectAll` | `ctrl+g` | global | select all prompt text; the `/models` picker keeps its `SetGlobalDefault` binding |
+| `CopySelection` | `ctrl+shift+c` | global | copy the active prompt or conversation selection; no selection is a no-op |
 | `Quit` | `ctrl+c` | global | graceful quit (double-press; first press clears the input or arms) |
 | `QuitD` | `ctrl+d` | global | EOF-habit quit (double-press, empty prompt only; independent of `Quit`) |
 | `Suspend` | `ctrl+z` | global | suspend the TUI to the shell (`fg` resumes; the engine keeps running) |
@@ -1071,12 +1076,14 @@ explicit rebind of either must keep the pair disjoint, or startup fails with a
 #### What the override cannot reach — the textarea's own editing keys
 
 The prompt input is the bubbles `textarea` widget, which ships its **own**
-keymap (`textarea.DefaultKeyMap`) that mecatui does NOT expose to `--keymap` —
-these are not actions in the table above and cannot be rebound:
+keymap (`textarea.DefaultKeyMap`). Its editing keys, including upstream keyboard
+selection, are not remappable through `--keymap`; the only client-owned selection
+exceptions are `SelectAll` and `CopySelection` in the action table above:
 
 | Chord(s) | Edit |
 |---|---|
 | `right` / `ctrl+f`, `left` / `ctrl+b` | character forward / backward |
+| `shift+right`, `shift+left`, `shift+up`, `shift+down` | extend or shrink the prompt selection |
 | `alt+right` / `alt+f`, `alt+left` / `alt+b` | word forward / backward |
 | `down` / `ctrl+n`, `up` / `ctrl+p` | next / previous line |
 | `home` / `ctrl+a`, `end` / `ctrl+e` | line start / line end |
@@ -1525,11 +1532,15 @@ The **mouse wheel** is only active on the alternate screen (the default full-scr
 TUI). With `--inline` / `--no-alt-screen` the terminal's own scrollback and native
 selection are left untouched (no mouse capture).
 
-**Prompt caret placement (alt screen).** Click directly on prompt text to move the
-caret to that cell; a click past a line's end lands at its end. The mapping follows
-the textarea's own soft-wrap and scroll state. This is caret placement only:
-mouse drag-selection, copy, and type-over replacement in the prompt are not supported
-yet. Conversation selection remains separate and unchanged.
+**Prompt selection (alt screen).** Click directly on prompt text to place the caret;
+drag to select from that anchor, with the mapping following the textarea's soft-wrap
+and scroll state. `shift+arrow` and the textarea's upstream keyboard selection work
+too. The selected range is rendered visibly and is the target for typing, text paste,
+newline insertion, and deletion. Prompt mouse release does **not** copy. Prompt
+selection survives permission prompts, overlays, and other non-content changes; a
+prompt-content mutation clears it. Starting a conversation selection clears prompt
+selection, and starting prompt selection clears conversation selection, so exactly one
+surface owns a selection at a time.
 
 **In-app text selection + copy (alt screen).** On the alt screen the app captures
 the mouse, so it provides its **own** text selection: **left-click-drag** over the
@@ -1569,13 +1580,16 @@ while a run streams, a permission ask is open, or the client is connecting. A **
 the **word** under the cursor (a maximal run of word characters, whitespace, or
 punctuation) and a **triple-click** selects the **whole logical line** — both
 highlight and copy immediately, just like copy-on-select; a fourth click at the same
-spot cycles back to a plain anchor. A **right-click** copies the current selection
-too. **`esc`** clears an active selection **before** its other
+spot cycles back to a plain anchor. A **right-click** or **`ctrl+shift+c`** copies
+the active prompt or conversation selection; with no selection either action is a
+no-op. Conversation selection still copies on release; prompt selection does not.
+**`esc`** clears an active selection **before** its other
 meanings (cancel a run / close an overlay / clear the input or queue); with no
-selection, `esc` behaves exactly as before. Selection is **blocked** while an
-overlay/modal owns the screen (permission ask, `/mcp`, `/team`, `/agents`,
+selection, `esc` behaves exactly as before. Conversation selection is **blocked** while
+an overlay/modal owns the screen (permission ask, `/mcp`, `/team`, `/agents`,
 `/skills`, `/soul`, `/usermodel`, `/models`, help, the fatal screen) — a press there
-starts nothing, and opening an overlay mid-drag clears the selection. The wheel
+starts nothing, and opening an overlay mid-drag clears the conversation selection.
+An existing prompt selection is preserved through those non-content changes. The wheel
 still scrolls while a selection exists, without clearing it.
 
 The copy uses **OSC52** (`tea.SetClipboard`) as the primary path and **also**
@@ -1585,10 +1599,12 @@ mirrors the payload into the platform clipboard binary as a best-effort fallback
 the OSC52 copy still carries the selection, and a failed shell write is never
 surfaced as an error.
 
-**`--no-mouse`: native selection instead.** In-app selection and the mouse wheel
-exist only because the app captures the mouse — and Bubble Tea has no wheel-only
-mouse mode, so capturing it is what *prevents* the terminal's own click-drag
-selection. Capturing the mouse also suppresses the terminal's native
+**`--no-mouse`: native selection instead.** In-app mouse selection and the mouse
+wheel exist only because the app captures the mouse — and Bubble Tea has no wheel-only
+mouse mode, so capturing it is what *prevents* the terminal's own click-drag selection.
+`--no-mouse` disables mouse capture and all in-app mouse gestures, restoring native
+click-drag selection and native middle-click paste. Keyboard prompt selection remains
+available. Capturing the mouse also suppresses the terminal's native
 **middle-click primary-selection paste**, which is why the app performs it in-app
 (see the keys table); `--no-mouse` restores the native middle-click paste along
 with native selection, and **`shift+middle-click` always performs the

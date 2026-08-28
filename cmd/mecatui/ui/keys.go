@@ -24,7 +24,11 @@ type keyMap struct {
 	// attachment ([Image #N]), text inserts into the prompt. Distinct from a
 	// bracketed paste (tea.PasteMsg, handled by onPaste) which never reaches here.
 	Paste key.Binding
-	Quit  key.Binding
+	// SelectAll and CopySelection are prompt-local actions. CopySelection is
+	// transported by the app so it can share the shell fallback with scrollback.
+	SelectAll     key.Binding
+	CopySelection key.Binding
+	Quit          key.Binding
 	// QuitD (ctrl+d) is the unix EOF-habit quit: a SECOND double-press guard,
 	// INDEPENDENT of Quit (ctrl+c). It quits only on an empty prompt — a populated
 	// prompt keeps the chord in the textarea. The two guards never share armed state
@@ -184,6 +188,14 @@ func defaultKeys() keyMap {
 		Paste: key.NewBinding(
 			key.WithKeys("ctrl+v"),
 			key.WithHelp("ctrl+v", "paste image"),
+		),
+		SelectAll: key.NewBinding(
+			key.WithKeys("ctrl+g"),
+			key.WithHelp("ctrl+g", "select all"),
+		),
+		CopySelection: key.NewBinding(
+			key.WithKeys("ctrl+shift+c"),
+			key.WithHelp("ctrl+shift+c", "copy selection"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c"),
@@ -358,6 +370,12 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		},
 		"Paste": func(chords []string) {
 			km.Paste = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Paste.Help().Desc))
+		},
+		"SelectAll": func(chords []string) {
+			km.SelectAll = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.SelectAll.Help().Desc))
+		},
+		"CopySelection": func(chords []string) {
+			km.CopySelection = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.CopySelection.Help().Desc))
 		},
 		"Quit": func(chords []string) {
 			km.Quit = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Quit.Help().Desc))

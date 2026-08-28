@@ -23,6 +23,8 @@ var validActions = map[string]struct{}{
 	"Cancel":           {},
 	"EditBack":         {},
 	"Paste":            {},
+	"SelectAll":        {},
+	"CopySelection":    {},
 	"Quit":             {},
 	"QuitD":            {},
 	"Suspend":          {},
@@ -59,7 +61,7 @@ var validActions = map[string]struct{}{
 // scope membership per action.
 var (
 	globalOpen = map[string]struct{}{
-		"Submit": {}, "Newline": {}, "Cancel": {}, "EditBack": {}, "Paste": {}, "Quit": {}, "QuitD": {},
+		"Submit": {}, "Newline": {}, "Cancel": {}, "EditBack": {}, "Paste": {}, "SelectAll": {}, "CopySelection": {}, "Quit": {}, "QuitD": {},
 		"Suspend": {},
 		"ScrollU": {}, "ScrollD": {}, "ScrollTop": {}, "ScrollBottom": {},
 		"ModeSwitch": {}, "MCPPanel": {}, "Resources": {}, "Prompts": {},

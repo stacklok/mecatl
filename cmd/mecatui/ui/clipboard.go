@@ -190,16 +190,18 @@ func (m Model) onClipboardErr(msg clipboardErrMsg) tea.Model {
 	return m
 }
 
-// insertText appends s (plus a trailing space when s ends a marker) at the end of
-// the current input, mirroring mentionComplete's SetValue pattern: a single space
-// separates it from any preceding text so a marker or pasted text never fuses with
-// the prior word. The cursor lands after the inserted text.
+// insertText inserts a marker or clipboard payload at the current cursor. Markers
+// keep their separating space, while an active textarea selection is replaced.
 func (m *Model) insertText(s string) {
+	if m.ta.HasSelection() {
+		m.promptInsert(s + " ")
+		return
+	}
 	val := m.ta.Value()
 	if val != "" && !strings.HasSuffix(val, " ") && !strings.HasSuffix(val, "\n") {
 		val += " "
 	}
-	m.ta.SetValue(val + s + " ")
+	m.promptRewrite(val + s + " ")
 }
 
 // tryPasteMediaPath handles a bracketed paste whose payload is a single FILE PATH

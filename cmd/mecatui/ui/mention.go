@@ -238,7 +238,7 @@ func (m Model) mentionComplete() Model {
 	if i := strings.LastIndexAny(val, " \t"); i >= 0 {
 		start = i + 1
 	}
-	m.ta.SetValue(val[:start] + "@" + path + " ")
+	(&m).promptRewrite(val[:start] + "@" + path + " ")
 	m.mention.open = false
 	m.mention.matches = nil
 	m.mention.cursor = 0

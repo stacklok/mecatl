@@ -841,35 +841,26 @@ func TestSelectedTextUnchangedByEmptyLineFix(t *testing.T) {
 	}
 }
 
-// TestPressDragReleaseCopies: a press anchors, motion extends, release copies. The
-// returned command carries the OSC52 payload AND the shell-write fallback fires;
-// the status reads "copied". FAILS if the copy path breaks.
-func TestPressDragReleaseCopies(t *testing.T) {
+// TestPressDragReleaseRetainsSelection: release finalizes the conversation
+// selection without copying. Copy is explicit (ctrl+shift+c or right click).
+func TestPressDragReleaseRetainsSelection(t *testing.T) {
 	m, cb := selModel(t)
 	m.vp.SetContent("hello world\nsecond line\nthird row")
 	m.vp.SetYOffset(0)
 	top := convTopRow(m)
 
-	m, _ = pressMouse(m, tea.MouseLeft, 0, top) // anchor at line0 col0
-	if !m.sel.active {
-		t.Fatal("press should activate a selection")
-	}
-	m, _ = motionMouse(m, 11, top) // extend to end of "hello world"
+	m, _ = pressMouse(m, tea.MouseLeft, 0, top)
+	m, _ = motionMouse(m, 11, top)
 	m, cmd := releaseMouse(m, 11, top)
 
-	leaves := collectLeaves(cmd)
-	payload, ok := osc52Payload(leaves)
-	if !ok {
-		t.Fatal("release should return an OSC52 SetClipboard command")
+	if cmd != nil {
+		t.Fatal("release must not copy")
 	}
-	if payload != "hello world" {
-		t.Errorf("OSC52 payload = %q, want %q", payload, "hello world")
+	if !m.sel.active || selectedText(m.vp.GetContent(), m.sel) != "hello world" {
+		t.Fatalf("selection = %q, want retained hello world", selectedText(m.vp.GetContent(), m.sel))
 	}
-	if len(cb.wrote) != 1 || string(cb.wrote[0]) != "hello world" {
-		t.Errorf("shell-write fallback not invoked with the payload: %v", cb.wrote)
-	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "copied") {
-		t.Errorf("status = %q, want a 'copied N chars' confirmation", stripANSIstr(m.statusMsg))
+	if len(cb.wrote) != 0 {
+		t.Fatalf("release wrote clipboard: %v", cb.wrote)
 	}
 }
 

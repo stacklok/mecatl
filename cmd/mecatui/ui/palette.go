@@ -201,7 +201,7 @@ func (m Model) paletteComplete() Model {
 		return m
 	}
 	name := m.palette.filtered[m.palette.cursor].Name
-	m.ta.SetValue("/" + name + " ")
+	(&m).promptRewrite("/" + name + " ")
 	// Completing leaves command mode (a trailing space follows the name), so the
 	// palette closes; settle the derived state without re-fetching.
 	m.palette.open = false

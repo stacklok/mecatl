@@ -166,11 +166,9 @@ func TestNormalizeEmojiWidthPreservesContent(t *testing.T) {
 		// ❤+VS16 diverges → VS16 stripped; ✅+VS16 already AGREES (width 2 both ways) →
 		// left byte-for-byte intact, VS16 and all. So only the heart loses its VS16.
 		{"mixed", "a " + "❤" + vs16 + " b ✅ c ✅" + vs16 + " d", "a ❤ b ✅ c ✅" + vs16 + " d"},
-		// A regional-indicator flag stays divergent after VS16-strip AND first-scalar
-		// (its first scalar U+1F1FA is itself GraphemeWidth 2 / WcWidth 1), so the
-		// whole cluster collapses to the U+FFFD placeholder, pinning the item-1
-		// fallback. The surrounding ASCII is untouched.
-		{"flag-to-placeholder", "\U0001F1FA\U0001F1F8 ja", "\uFFFD ja"},
+		// Regional-indicator width now agrees in the upgraded rendering stack, so it
+		// remains intact rather than taking the legacy replacement fallback.
+		{"flag-untouched", "\U0001F1FA\U0001F1F8 ja", "\U0001F1FA\U0001F1F8 ja"},
 	}
 	for _, c := range cases {
 		if got := normalizeEmojiWidth(c.in); got != c.want {

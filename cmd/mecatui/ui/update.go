@@ -378,7 +378,7 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 	}
 	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
 		m.pendingInitialPrompt = ""
-		m.ta.SetValue(p)
+		(&m).promptRewrite(p)
 		mm, submitCmd := m.submitPrompt()
 		return mm, tea.Batch(cmd, submitCmd)
 	}
@@ -453,7 +453,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// builtin dispatcher — documented behavior.
 	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
 		m.pendingInitialPrompt = ""
-		m.ta.SetValue(p)
+		(&m).promptRewrite(p)
 		mm, submitCmd := m.submitPrompt()
 		return mm, tea.Batch(cmd, submitCmd), true
 	}
@@ -1534,10 +1534,8 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// today's esc semantics are entirely preserved (Req 5). A selection only exists
 	// on the alt screen with no overlay (selectable), so this never shadows an
 	// overlay's own esc.
-	if key.Matches(msg, m.keys.Cancel) && m.sel.active {
-		m = m.clearSelection() // also zeroes any pending edge-autoscroll direction
-		m.refreshView()
-		return m, nil
+	if mm, cleared := m.clearAnySelection(msg); cleared {
+		return mm, nil
 	}
 
 	// An open inventory/picker overlay (MCP, team, agents, skills, soul, usermodel,
@@ -1587,6 +1585,19 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m.dispatchPhaseKey(msg)
 }
 
+// clearAnySelection gives esc priority over ordinary phase actions when either
+// selection owner is active.
+func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
+	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.ta.HasSelection()) {
+		return m, false
+	}
+	m = m.clearSelection()
+	m.ta.ClearSelection()
+	m.promptSelecting = false
+	m.refreshView()
+	return m, true
+}
+
 // onExpandToolsKey is the ctrl+t handler, extracted from onKey so onKey stays
 // under the cyclomatic cap. ctrl+t is a global render toggle (full vs capped
 // tool output); inside the permission modal it ROUTES by ask type (issue #488):
@@ -1605,6 +1616,9 @@ func (m Model) onExpandToolsKey() (tea.Model, tea.Cmd) {
 // phaseRunning→running-key, phaseReplay→replay-key (esc closes the transcript),
 // phaseIdle→idle-key. The default (connecting/fatal) is a no-op.
 func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if mm, cmd, handled := m.promptKey(msg); handled {
+		return mm, cmd
+	}
 	switch m.phase {
 	case phaseAwaitingApproval:
 		return m, nil
@@ -1885,7 +1899,7 @@ func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 	// First ctrl+c with staged input: clear the input (mirrors esc's clear-the-line)
 	// and do NOT arm — a single press to wipe a draft is expected.
 	if strings.TrimSpace(m.ta.Value()) != "" {
-		m.ta.Reset()
+		(&m).promptReset()
 		return m.afterInputEdit(nil)
 	}
 	// First ctrl+c on an empty prompt: arm the guard, show the hint, and schedule the
@@ -2085,8 +2099,7 @@ func (m Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		return m.stageLargePaste(content)
 	}
 	msg.Content = content
-	var cmd tea.Cmd
-	m.ta, cmd = m.ta.Update(msg)
+	cmd := (&m).promptInput(msg)
 	return m.afterInputEdit(cmd)
 }
 
@@ -2165,7 +2178,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Cancel):
 		return m.onRunningCancel()
 	case key.Matches(msg, m.keys.Newline):
-		m.ta.InsertRune('\n')
+		(&m).promptNewline()
 		return m.afterInputEdit(nil)
 	case key.Matches(msg, m.keys.Submit):
 		if mm, cmd, handled := m.dispatchBareBuiltin(m.ta.Value()); handled {
@@ -2176,11 +2189,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
 		return m.onScrollKey(msg)
 	default:
-		if swallowWordLeftHang(m.ta, msg) {
-			return m, nil // upstream bubbles#1652 workaround — see textarea_guard.go
-		}
-		var cmd tea.Cmd
-		m.ta, cmd = m.ta.Update(msg)
+		cmd := (&m).promptInput(msg)
 		return m.afterInputEdit(cmd)
 	}
 }
@@ -2193,7 +2202,7 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(m.ta.Value()) != "" {
 		// Staged-but-unsent input: esc clears it first (mirrors a text editor's
 		// "esc clears the line"), leaving the queue and the run untouched.
-		m.ta.Reset()
+		(&m).promptReset()
 		return m.afterInputEdit(nil)
 	}
 	if len(m.queued) > 0 {
@@ -2281,12 +2290,12 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 		m.nextPasteN = 0
 		if text == "" {
 			// Every marker was deleted and nothing else was typed: nothing to queue.
-			m.ta.Reset()
+			(&m).promptReset()
 			return m.afterInputEdit(nil)
 		}
 	}
 	m.queued = append(m.queued, text)
-	m.ta.Reset()
+	(&m).promptReset()
 	m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("queued (%d)", len(m.queued)))
 	m.refreshView()
 	return m.afterInputEdit(nil)
@@ -2314,7 +2323,7 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 		m.nextPasteN = 0
 		if text == "" {
 			// Every marker was deleted and nothing else was typed: nothing to steer.
-			m.ta.Reset()
+			(&m).promptReset()
 			return m.afterInputEdit(nil)
 		}
 	}
@@ -2335,7 +2344,7 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 		}
 		return nil
 	}
-	m.ta.Reset()
+	(&m).promptReset()
 	m.statusMsg = m.deps.Theme.Style("muted").Render("steering…")
 	m.refreshView()
 	return m, sendMsg
@@ -2381,7 +2390,7 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 		id := m.steer.watermarkID()
 		draft := joinSteerSends(m.steer.Sends)
 		m.steer = nil
-		m.ta.SetValue(draft)
+		(&m).promptRewrite(draft)
 		m.statusMsg = m.deps.Theme.Style("muted").Render("steer pulled back for editing — resend to replace")
 		m.refreshView()
 		cancel := func() tea.Msg {
@@ -2392,7 +2401,7 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 		}
 		return m.afterInputEdit(cancel)
 	}
-	m.ta.SetValue(strings.Join(m.queued, queueMergeSep))
+	(&m).promptRewrite(strings.Join(m.queued, queueMergeSep))
 	m.queued = nil
 	m.queuePaused = ""
 	m.statusMsg = m.deps.Theme.Style("muted").Render("queue pulled back for editing")
@@ -2458,7 +2467,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// cleared first; otherwise esc drops the paused queue. (With no input and an
 		// empty queue queuePaused is already "", so this branch never strands esc.)
 		if strings.TrimSpace(m.ta.Value()) != "" {
-			m.ta.Reset()
+			(&m).promptReset()
 			return m.afterInputEdit(nil)
 		}
 		m.queued = nil
@@ -2467,7 +2476,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	case key.Matches(msg, m.keys.Newline):
-		m.ta.InsertRune('\n')
+		(&m).promptNewline()
 		return m.afterInputEdit(nil)
 	case key.Matches(msg, m.keys.Submit):
 		return m.onIdleSubmit()
@@ -2475,11 +2484,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
 		return m.onScrollKey(msg)
 	default:
-		if swallowWordLeftHang(m.ta, msg) {
-			return m, nil // upstream bubbles#1652 workaround — see textarea_guard.go
-		}
-		var cmd tea.Cmd
-		m.ta, cmd = m.ta.Update(msg)
+		cmd := (&m).promptInput(msg)
 		return m.afterInputEdit(cmd)
 	}
 }
@@ -2628,7 +2633,7 @@ func (m Model) failStartupRunEntry() Model {
 	m.phase = phaseReplay
 	m.startupFirstPromptPending = false
 	m.startupRunEntryFailed = true
-	m.ta.SetValue(m.startupRetryPrompt)
+	(&m).promptRewrite(m.startupRetryPrompt)
 	m.ta.Blur()
 	m.refreshView()
 	return m
@@ -2764,7 +2769,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	if m.sessionTitle == "" {
 		m.sessionTitle = text
 	}
-	m.ta.Reset()
+	(&m).promptReset()
 	// A fresh run clears any queue pause: whether this is the auto-drain (popAndSubmit
 	// already cleared it) or a manual send while paused, the queue now gets a new
 	// chance to drain at this run's clean completion, so it is no longer "paused".
@@ -3230,7 +3235,7 @@ func (m Model) onStartupRunEntryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.closeModal()
 		m.startupRunEntryFailed = false
 		m.phase = phaseIdle
-		m.ta.SetValue(m.startupRetryPrompt)
+		(&m).promptRewrite(m.startupRetryPrompt)
 		return m.submitPrompt()
 	}
 	return m, nil
@@ -3351,46 +3356,10 @@ func inputRegionRect(m Model) (cellRect, bool) {
 	return cellRect{}, false
 }
 
-// positionTextareaCaret maps a prompt-text cell to the textarea cursor. The textarea
-// exposes movement and LineInfo but not its soft-wrap grid, so walking with CursorDown
-// deliberately delegates wrapping (including its trailing-space reservation) to bubbles.
-func (m Model) positionTextareaCaret(rect cellRect, mo tea.Mouse) (tea.Model, tea.Cmd) {
-	visualRow := m.ta.ScrollYOffset() + mo.Y - rect.y0
-	m.ta.MoveToBegin()
-	for range visualRow {
-		line, col := m.ta.Line(), m.ta.Column()
-		m.ta.CursorDown()
-		if m.ta.Line() == line && m.ta.Column() == col {
-			break
-		}
-	}
-
-	info := m.ta.LineInfo()
-	targetX := mo.X - rect.x0
-	m.ta.SetCursorColumn(info.StartColumn)
-	for col := info.StartColumn; col < info.StartColumn+info.Width; col++ {
-		m.ta.SetCursorColumn(col + 1)
-		next := m.ta.LineInfo()
-		if next.RowOffset != info.RowOffset || next.CharOffset > targetX {
-			m.ta.SetCursorColumn(col)
-			break
-		}
-	}
-	return m, m.ta.Focus()
-}
-
-// onTextareaMousePress handles a prompt click before the conversation-selection path.
-// Input clicks are accepted only in the same idle/running posture that accepts paste.
+// onTextareaMousePress delegates prompt drag initiation to the textarea seam.
 func (m Model) onTextareaMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
-	if !m.pasteGateOpen() || !mouseCaptureEnabled(m) {
-		return m, nil, false
-	}
-	rect, ok := inputRegionRect(m)
-	if !ok || !rect.contains(mo.X, mo.Y) {
-		return m, nil, false
-	}
-	mm, cmd := m.positionTextareaCaret(rect, mo)
-	return mm, cmd, true
+	cmd, handled := (&m).promptMousePress(mo)
+	return m, cmd, handled
 }
 
 // onModalMousePress handles generic rendered-frame hits before the legacy
@@ -3419,10 +3388,7 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 	}
 	switch mo.Button {
 	case tea.MouseRight:
-		if m.sel.active && !m.sel.empty() {
-			return m.copySelection()
-		}
-		return m, nil
+		return m.copyActiveSelection()
 	case tea.MouseMiddle:
 		// Middle-click pastes the PRIMARY selection (issue #43). Mouse capture
 		// (cell-motion tracking, see View) means the terminal never performs its
@@ -3444,6 +3410,8 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		if mm, cmd, handled := m.onTextareaMousePress(mo); handled {
 			return mm, cmd
 		}
+		m.ta.ClearSelection()
+		m.promptSelecting = false
 		// The selectable gate AND the count logic sit here, AFTER the gate: a press
 		// while an overlay owns the body (or under --no-mouse/--inline) starts nothing
 		// AND does not advance the multi-click count (Req 9).
@@ -3501,13 +3469,8 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 // because copySelection's signature is shared with the right-click and
 // release-on-drag paths (which carry no disarm) and must stay unchanged.
 func (m Model) clickCopy(disarm tea.Cmd) (tea.Model, tea.Cmd) {
-	payload := selectedText(m.vp.GetContent(), m.sel)
-	if payload == "" {
-		return m, disarm
-	}
-	m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("copied %s", plural(len([]rune(payload)), "char")))
-	m.refreshView()
-	return m, tea.Batch(tea.SetClipboard(payload), m.shellWriteCmd(payload), disarm)
+	mm, cmd := m.copyPayload(selectedText(m.vp.GetContent(), m.sel))
+	return mm, tea.Batch(cmd, disarm)
 }
 
 // autoScrollInterval is the cadence of the edge-drag autoscroll tick (FIXED — the
@@ -3568,6 +3531,9 @@ func (Model) autoScrollCmd() tea.Cmd {
 func (m Model) onMouseMotion(mo tea.Mouse) (tea.Model, tea.Cmd) {
 	if m.deps.DebugMouse {
 		m.mouseDebug = m.mouseDebugLine(mo)
+	}
+	if (&m).promptMouseMotion(mo) {
+		return m, nil
 	}
 	if !m.sel.active {
 		return m, nil
@@ -3731,6 +3697,9 @@ func (m *Model) extendHeadToEdge(dir autoScrollDir, x int) {
 // autoscroll only makes sense while the button is HELD; on release the drag is over,
 // so we just snap the head to wherever the pointer last was and finish.
 func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
+	if (&m).promptMouseRelease(mo) {
+		return m, nil
+	}
 	if !m.sel.active {
 		return m, nil
 	}
@@ -3751,7 +3720,7 @@ func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
 	// refreshView (in copySelection) sees a matching snapshot and keeps the highlight
 	// rather than treating the moved head as a reflow and clearing it.
 	snapshotSelection(&m)
-	return m.copySelection()
+	return m, nil
 }
 
 // copySelection copies the VISIBLE (ansi-stripped) selected text via OSC52
@@ -3759,13 +3728,7 @@ func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
 // (shellWriteCmd, batched). It sets a muted "copied N chars" status. An empty
 // payload is a no-op (defensive — release already clears empties).
 func (m Model) copySelection() (tea.Model, tea.Cmd) {
-	payload := selectedText(m.vp.GetContent(), m.sel)
-	if payload == "" {
-		return m, nil
-	}
-	m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("copied %s", plural(len([]rune(payload)), "char")))
-	m.refreshView()
-	return m, tea.Batch(tea.SetClipboard(payload), m.shellWriteCmd(payload))
+	return m.copyPayload(selectedText(m.vp.GetContent(), m.sel))
 }
 
 // snapshotSelection records the selection's identity anchor and RE-SPLICES the
@@ -4017,7 +3980,7 @@ func (m Model) popAndSubmit() (tea.Model, tea.Cmd) {
 	m.queuePaused = ""
 	merged := strings.Join(m.queued, queueMergeSep)
 	m.queued = nil
-	m.ta.SetValue(merged)
+	(&m).promptRewrite(merged)
 	if m.pendingMode != "" {
 		submit := firstKey(m.keys.Submit, "enter")
 		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply before the queued prompt — press " + submit + " to continue")

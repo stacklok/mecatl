@@ -442,7 +442,7 @@ func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 // insertIntoInput inserts text, closes the modal, and updates the status hint.
 func (m Model) insertIntoInput(text, label string) (tea.Model, tea.Cmd) {
 	m.closeModal()
-	m.ta.SetValue(text)
+	(&m).promptRewrite(text)
 	m.statusMsg = label + " — press " + firstKey(m.keys.Submit, "enter") + " to send"
 	m.refreshView()
 	return m, m.ta.Focus()
