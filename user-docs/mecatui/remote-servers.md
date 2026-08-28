@@ -89,9 +89,13 @@ After enrollment, every RPC demands a currently validated access token. Successf
 token demand, not RPC success, gates proactive refresh; refresh, enrollment, and logout
 share one per-target interprocess transaction, and rotated credentials are saved with
 CAS. Only an exact structured `invalid_grant` code removes a rejected credential;
-provider prose does not. This managed OIDC mode is refreshed by mecatui; a static
-`--auth-token` remains caller-managed and is never refreshed. The bearer is not placed
-in UI state, logs, or command arguments.
+provider prose does not. The default login request includes `offline_access`, but the
+issuer must offer and grant that scope before it can return a refresh token. Without a
+refresh token, the initial login can still succeed, but a later access-token expiry
+requires `mecatui login ADDRESS` again. Omit `offline_access` explicitly with
+`--scopes` only when that re-login behavior is intended. This managed OIDC mode is
+refreshed by mecatui; a static `--auth-token` remains caller-managed and is never
+refreshed. The bearer is not placed in UI state, logs, or command arguments.
 
 Remove an enrollment with:
 
@@ -130,7 +134,7 @@ ToolHive Core-derived private-HTTPS transport. It retains hostname verification,
 DNS-pinned address checks, HTTPS-only admission, and redirect refusal. The Kind
 remote flow is available after fixture setup using the documented host aliases and
 public CA, but it is a live qualification flow rather than ordinary offline-test
-coverage. Setup remains confirmation-gated; see [the fixture guide](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-vmcp/README.md).
+coverage. Setup remains confirmation-gated; see [the fixture guide](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-kind/README.md).
 ## Where to go next
 
 Use [Getting started](./getting-started.md) for the local first-run path and [Sessions](./sessions.md) to browse remote or embedded history. Operators configuring a server should use [Run mecated standalone](/building/deployment/mecated.md), [gRPC and HTTP deployment](/building/deployment/grpc-http.md), or [mecak8s](/building/deployment/mecak8s.md), as appropriate.
