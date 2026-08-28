@@ -244,10 +244,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onResize(msg)
 
 	case tea.ResumeMsg:
-		return m.onResume()
+		return m.onResume(), nil
 
 	case tea.ColorProfileMsg:
-		return m.onColorProfile(msg)
+		return m.onColorProfile(msg), nil
 
 	case tea.MouseWheelMsg, tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
 		return m.onMouseMsg(msg)
@@ -328,6 +328,10 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// through its intent, or fall through here after close; persistence receipts stay root-owned.
 	if mm, cmd, handled := m.updateModelsMsg(msg); handled {
 		return mm, cmd
+	}
+	// /connect saved-target picker response (tombstone overlay); fires no follow-up command.
+	if mm, handled := m.updateConnectMsg(msg); handled {
+		return mm, nil
 	}
 	// Stream events (session.init / turn.start / deltas / tool.* /
 	// permission.ask / hook / compaction / result).
@@ -448,6 +452,15 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		m.prompt.Rewrite(p)
 		mm, submitCmd := m.submitPrompt()
 		return mm, tea.Batch(cmd, submitCmd), true
+	}
+	if m.deps.ConnectOpen {
+		m.connect.err = m.deps.ConnectError
+		m.connect.reason = m.deps.ConnectReason
+		m.connect.failedTarget = m.deps.ConnectTarget
+		m.connect.resumeSessionID = m.deps.ConnectResumeSessionID
+		mm, connectCmd := m.openConnect()
+		m = mm.(Model)
+		cmd = tea.Batch(cmd, connectCmd)
 	}
 	return m, cmd, true
 }
@@ -578,6 +591,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render(notice)
 		return m, cmd, handled
 	case client.ConnectErrMsg:
+		if msg.AuthReason != "" {
+			m.phase = phaseIdle
+			m.connect.err = "Authentication needs attention."
+			m.connect.reason = msg.AuthReason
+			m.connect.failedTarget = m.deps.Server
+			mm, cmd := m.openConnect()
+			return mm, cmd, true
+		}
 		m.phase = phaseFatal
 		m.fatalErr = msg.Err.Error()
 		return m, nil, true
@@ -614,6 +635,10 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if msg.AuthReason != "" {
+			mm, cmd := m.reduceLiveAuthRecovery(msg.AuthReason)
+			return mm, cmd, true
+		}
 		if m.startupFirstPromptPending {
 			m = m.failStartupRunEntry()
 			return m, nil, true
@@ -1384,9 +1409,9 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 // anything poorer collapses to a single accent colour (set in the welcome package
 // off m.fullColor). The ui keeps colorprofile contained to the reducer — the
 // welcome package only ever sees the derived bool.
-func (m Model) onColorProfile(msg tea.ColorProfileMsg) (tea.Model, tea.Cmd) {
+func (m Model) onColorProfile(msg tea.ColorProfileMsg) Model {
 	m.fullColor = msg.Profile == colorprofile.TrueColor
-	return m, nil
+	return m
 }
 
 // maybeKittyTransmit fires the out-of-band Kitty mascot transmit (via tea.Raw)
@@ -1646,6 +1671,7 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onUserModelKey,
 		m.onReflectionsKey,
 		m.onDreamKey,
+		m.onConnectKey,
 		m.onEffortKey,
 		m.onWorktreesKey,
 		m.onScheduleKey,
@@ -1931,14 +1957,14 @@ func (m Model) onSuspend() (tea.Model, tea.Cmd) {
 // print it pre-suspend: a direct write landed in the discarded alt-screen buffer,
 // and tea.Println's deferred queue never gets a flush tick before SIGTSTP freezes
 // the process.)
-func (m Model) onResume() (tea.Model, tea.Cmd) {
+func (m Model) onResume() Model {
 	if m.suspendedAtID != "" || m.suspendedFrom != phaseConnecting {
 		m.conv.addNotice(m.resumeNotice())
 		m.suspendedFrom = phaseConnecting
 		m.suspendedAtID = ""
 	}
 	m.refreshView()
-	return m, nil
+	return m
 }
 
 // resumeNotice builds the "you suspended; the engine kept running" notice shown on
@@ -2334,7 +2360,7 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 	stream := m.stream
 	sendMsg := func() tea.Msg {
 		if err := stream.SendSteer(text, id); err != nil {
-			return client.StreamErrMsg{Err: err}
+			return authStreamErr(m, err)
 		}
 		return nil
 	}
@@ -2847,18 +2873,7 @@ func (m Model) openRun(retry bool, firstFrame func(*client.Stream) error) (Model
 	runCtx, cancel := context.WithCancel(m.deps.Ctx)
 	stream, err := m.deps.Conv.OpenConverse(runCtx)
 	if err != nil {
-		cancel()
-		m = m.endRun(stopError)
-		if retry {
-			m.failedStepRetryRun = false
-			m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + sanitizeTerminal(err.Error()) + " — use /retry to try again")
-		} else {
-			m.conv.addError("open run: " + err.Error())
-		}
-		if len(m.queued) > 0 {
-			m.queuePaused = stopError
-		}
-		return m, m.armLiveFeed()
+		return m.handleOpenError(err, cancel, retry)
 	}
 	ch := make(chan tea.Msg, 64)
 	m.stream = stream
@@ -2869,7 +2884,7 @@ func (m Model) openRun(retry bool, firstFrame func(*client.Stream) error) (Model
 
 	send := func() tea.Msg {
 		if err := firstFrame(stream); err != nil {
-			return client.StreamErrMsg{Err: err}
+			return authStreamErr(m, err)
 		}
 		return nil
 	}
@@ -2945,6 +2960,28 @@ func (m Model) waitLiveCmd() tea.Cmd {
 	return func() tea.Msg { return liveMsg{gen: gen, msg: read()} }
 }
 
+func (m Model) reduceLiveAuthRecovery(reason client.AuthReason) (tea.Model, tea.Cmd) {
+	if reason == "" {
+		return m, nil
+	}
+	// Tear down both readers before opening the existing connect surface. In
+	// particular, an active Converse run is cancelled and its generation is
+	// invalidated; auth recovery is not a completed run.
+	if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
+		m = m.endRun("")
+	}
+	m.disarmLiveFeed()
+	m.liveReconnecting = false
+	m.liveReconnectAttempt = 0
+	m.liveReconnectErr = ""
+	m.connect.err = "Authentication needs attention."
+	m.connect.reason = reason
+	m.connect.failedTarget = m.deps.Server
+	m.connect.resumeSessionID = m.sessionID
+	mm, cmd := m.openConnect()
+	return mm, tea.Batch(m.refreshCmd(), cmd)
+}
+
 // updateLiveMsg applies the generation guard for the live feed fan-in, then
 // reduces the inner msg into the live conversation. A message produced by the
 // live feed's reader (waitLiveCmd) carries the generation of the channel it was
@@ -2963,24 +3000,23 @@ func (m Model) updateLiveMsg(sm liveMsg) (tea.Model, tea.Cmd) {
 		return m, nil // stale reader — drop, do not re-arm
 	}
 	switch msg := sm.msg.(type) {
-	case client.StreamClosedMsg, client.StreamErrMsg:
-		// The live feed dropped (clean EOF or an error): the channel is closed,
-		// so clear its refs (no re-arm on this channel). If a live streamer is
-		// still wired AND the session is still the one this reader was armed
-		// for, drive the reconnect+catch-up loop (issue #387) instead of the
-		// old silent-drop: it recovers delivery notes emitted during the gap
-		// via the durable replay and re-opens the live feed with bounded
-		// backoff. A stale reader (gen mismatch, handled above) or a session
-		// that has since switched (m.liveArmed != m.sessionID, or no streamer)
-		// does NOT trigger a reconnect for the old session.
-		var cerr error
-		if se, ok := msg.(client.StreamErrMsg); ok {
-			cerr = se.Err
+	case client.StreamErrMsg:
+		if msg.AuthReason != "" {
+			return m.reduceLiveAuthRecovery(msg.AuthReason)
 		}
+		m.liveContinuityAttempt++
 		m.liveCh = nil
 		m.liveStop = nil
-		return m, (&m).startReconnect(cerr)
+		return m, (&m).startReconnect(msg.Err)
+	case client.StreamClosedMsg:
+		m.liveContinuityAttempt++
+		m.liveCh = nil
+		m.liveStop = nil
+		return m, (&m).startReconnect(nil)
 	default:
+		// A real event from the current reader proves the feed is healthy. Do not
+		// let replay/catch-up events or probe success reset this sequence.
+		m.liveContinuityAttempt = 0
 		// A delivery event (or any other EventToMsg projection): reduce into the
 		// live conversation via the SAME updateStreamEvent path a Converse stream
 		// event would take (addDelivery + refreshView via afterEvent). Then
@@ -3023,7 +3059,7 @@ func (m *Model) startReconnect(prevErr error) tea.Cmd {
 	if m.deps.Replayer != nil {
 		replayer = m.deps.Replayer
 	}
-	ch, stop := client.ReconnectLiveCmd(m.deps.Ctx, m.deps.LiveStream, replayer, m.sessionID)
+	ch, stop := client.ReconnectLiveCmdFromAttempt(m.deps.Ctx, m.deps.LiveStream, replayer, m.sessionID, m.liveContinuityAttempt-1)
 	m.liveReconCh = ch
 	m.liveReconStop = stop
 	// Seed the degraded footer state immediately so the operator sees the feed
@@ -3077,6 +3113,9 @@ func (m Model) waitReconnectCmd() tea.Cmd {
 func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 	if rm.gen != m.liveReconGen {
 		return m, nil // stale reader — drop, do not re-arm
+	}
+	if msg, ok := rm.msg.(client.StreamErrMsg); ok && msg.AuthReason != "" {
+		return m.reduceLiveAuthRecovery(msg.AuthReason)
 	}
 	switch msg := rm.msg.(type) {
 	case client.LiveReconnectingMsg:
@@ -4037,6 +4076,31 @@ func sumUsage(a, b client.Usage) client.Usage {
 	}
 }
 
+func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool) (Model, tea.Cmd) {
+	cancel()
+	streamErr := authStreamErr(m, err)
+	if streamErr.AuthReason != "" {
+		mm, connectCmd := m.reduceLiveAuthRecovery(streamErr.AuthReason)
+		return mm.(Model), connectCmd
+	}
+	m = m.endRun(stopError)
+	if retry {
+		m.failedStepRetryRun = false
+		m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + sanitizeTerminal(err.Error()) + " — use /retry to try again")
+	} else {
+		m.conv.addError("open run: " + err.Error())
+	}
+	if len(m.queued) > 0 {
+		m.queuePaused = stopError
+	}
+	return m, m.armLiveFeed()
+}
+
+func authStreamErr(m Model, err error) client.StreamErrMsg {
+	reason, classified := client.AuthFailure(err, m.deps.BearerBacked)
+	return client.StreamErrMsg{Err: err, AuthReason: reason, Transient: !classified && client.TransientStreamErr(err)}
+}
+
 // createSessionCmd runs CreateSession off the update goroutine; result arrives as
 // SessionReadyMsg, connectFallbackMsg, or ConnectErrMsg.
 //
@@ -4060,12 +4124,17 @@ func (m Model) createSessionCmd() tea.Cmd {
 			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
 		}
 		if sel.IsZero() || !client.IsInvalidArgument(err) {
-			return client.ConnectErrMsg{Err: err}
+			reason, _ := client.AuthFailure(err, deps.BearerBacked)
+			return client.ConnectErrMsg{Err: err, AuthReason: reason}
 		}
 		id, caps, resolved, retryErr := deps.Session.CreateSession(deps.Ctx, client.ModelSelection{}, m.desiredMode())
 		if retryErr != nil {
-			// Both creates failed: the selection wasn't the problem. Surface the
-			// ORIGINAL error on the unchanged fatal path.
+			// Authentication on the retry is authoritative: unlike an unclassified
+			// infrastructure failure, it must enter auth recovery rather than being
+			// hidden behind the original selector diagnostic.
+			if reason, classified := client.AuthFailure(retryErr, deps.BearerBacked); classified {
+				return client.ConnectErrMsg{Err: retryErr, AuthReason: reason}
+			}
 			return client.ConnectErrMsg{Err: err}
 		}
 		return connectFallbackMsg{

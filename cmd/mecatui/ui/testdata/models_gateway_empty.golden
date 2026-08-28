@@ -10,7 +10,7 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`        ┃
+┃  your gateway credential lists no models — ask your platform admin or re-run `mecatui llm login`    ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
 ┃  ● current  ★ global default                                                                        ┃

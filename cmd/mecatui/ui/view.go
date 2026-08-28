@@ -107,6 +107,8 @@ func (m Model) renderBody() string {
 		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.schedule.view != scheduleNone:
 		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Transcript != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case m.connect.open:
+		return m.renderConnectOverlay(m.deps.Theme)
 	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:
 		return m.renderZeroState()
 	default:

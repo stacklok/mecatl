@@ -166,6 +166,21 @@ type Deps struct {
 	// (the pick still applies to the next create this run, just isn't remembered).
 	SelectionStore SelectionStore
 	Learning       LearningSettings // operator mecatl settings.yaml; nil disables /learning
+	// Connect lists public saved remote-target metadata. It cannot authenticate,
+	// launch a browser, or expose credentials; selection exits via ConnectRestartIntent.
+	Connect ConnectController
+	// ConnectOpen reopens /connect after a host-side login/dial failure. ConnectError
+	// is host-sanitized display text only.
+	ConnectOpen  bool
+	ConnectError string
+	// ConnectReason controls the auth-recovery affordance without exposing a
+	// transport error or credential to the renderer.
+	ConnectReason          client.AuthReason
+	ConnectTarget          string
+	ConnectResumeSessionID string
+	// BearerBacked records credential provenance for classifying server auth
+	// responses. It contains no credential material.
+	BearerBacked bool
 	// InitialModel is the persisted selection loaded at launch (composition-side,
 	// from the state file). The picker seeds its active selection from it (the ●
 	// marker) and the startup CreateSession carries it — AFTER the connect-time
@@ -532,10 +547,13 @@ type Model struct {
 	// requests. It never resets when the picker closes, so an older result cannot
 	// overwrite root state or a reopened picker.
 	modelCatalogRequestToken uint64
-	modelCatalog             modelCatalog   // root-owned inventory, statuses, defaults, and selection reconciliation
-	effort                   effortState    // /effort picker overlay state (view==effortNone when closed) — ADR 0055
-	worktrees                worktreesState // /worktrees overlay state (view==worktreesNone when closed) — issue #102
-	schedule                 scheduleState  // /schedule overlay state (view==scheduleNone when closed) — issue #234
+	modelCatalog             modelCatalog          // root-owned inventory, statuses, defaults, and selection reconciliation
+	effort                   effortState           // /effort picker overlay state (view==effortNone when closed) — ADR 0055
+	worktrees                worktreesState        // /worktrees overlay state (view==worktreesNone when closed) — issue #102
+	schedule                 scheduleState         // /schedule overlay state (view==scheduleNone when closed) — issue #234
+	connect                  connectState          // /connect saved-target picker (tombstone overlay)
+	connectLoadGeneration    uint64                // monotonic across overlay close/reopen; stale async loads are ignored
+	connectIntent            *ConnectRestartIntent // set only immediately before tea.Quit
 	// modal is the ONE open modal overlay (nil = none). Stack/tiling/focus-tree
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
@@ -788,7 +806,11 @@ type Model struct {
 	liveReconGen         uint64
 	liveReconnecting     bool
 	liveReconnectAttempt int
-	liveReconnectErr     string
+	// liveContinuityAttempt is the per-session reader-failure sequence. It is
+	// independent of the current reconnect footer attempt: probes and catch-up
+	// do not reset it; only a real event from the current live reader does.
+	liveContinuityAttempt int
+	liveReconnectErr      string
 
 	// seenFireIDs is the per-session delivery-note dedup set (issue #387): a
 	// fire-result delivery note that arrives BOTH via the durable catch-up AND the
@@ -927,6 +949,14 @@ func New(deps Deps) Model {
 		// env-based) so the header hot path reads a bool, never os.Environ().
 		emojiOK: deps.emojiCapable(),
 	}
+	// Recovery-only startup has no session creator by design. Start directly in the
+	// connect surface so Init cannot fall through to createSessionCmd.
+	if deps.ConnectOpen && deps.Session == nil {
+		m.phase = phaseIdle
+		m.connectLoadGeneration = 1
+		m.connect = connectState{open: true, loading: true, err: deps.ConnectError, reason: deps.ConnectReason, failedTarget: deps.ConnectTarget, resumeSessionID: deps.ConnectResumeSessionID}
+		m.prompt.Blur()
+	}
 	// Init issues token 1 for the startup catalog request. Resume skips that
 	// request, so its first picker request starts at 1 instead.
 	if deps.Models != nil && deps.Resume == nil {
@@ -1061,6 +1091,7 @@ func (m Model) resetSessionDerived() Model {
 	// "reconnecting" for a session that no longer exists.
 	m.liveReconnecting = false
 	m.liveReconnectAttempt = 0
+	m.liveContinuityAttempt = 0
 	m.liveReconnectErr = ""
 	return m
 }
@@ -1081,6 +1112,16 @@ type startupResumeReadyMsg struct{}
 // fallback leg. With no lister wired (old server / persistence off) it fires
 // CreateSession directly (the historical path, with an empty selection).
 func (m Model) Init() tea.Cmd {
+	if m.deps.ConnectOpen && m.deps.Session == nil {
+		if m.deps.Connect == nil {
+			return nil
+		}
+		deps := m.deps
+		return func() tea.Msg {
+			targets, err := deps.Connect.ListConnectTargets(deps.Ctx)
+			return connectTargetsMsg{generation: m.connectLoadGeneration, targets: targets, err: err}
+		}
+	}
 	if m.deps.BrowseSessions {
 		cmds := []tea.Cmd{m.sp.Tick}
 		if m.deps.Models != nil {

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -74,6 +76,26 @@ func TestCreateSessionCmdCarriesCaps(t *testing.T) {
 
 // TestSessionReadyDefaultCapsAllFalse asserts an older server (no caps field)
 // leaves the model at the all-false zero value rather than over-promising.
+
+func TestInitialCreateAuthFailureOpensTargetAwareConnectRecovery(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, createErr: status.Error(codes.Unauthenticated, "missing")}
+	m := New(Deps{Session: conv, Conv: conv, Connect: fakeConnect{}, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "remote.example:443"})
+	msg := m.createSessionCmd()().(client.ConnectErrMsg)
+	if msg.AuthReason != client.AuthNotEnrolled {
+		t.Fatalf("reason=%q, want not_enrolled", msg.AuthReason)
+	}
+	got, _, handled := m.updateLifecycle(msg)
+	if !handled {
+		t.Fatal("auth create failure was not handled")
+	}
+	model := got.(Model)
+	if model.connect.failedTarget != "remote.example:443" {
+		t.Fatalf("failed target=%q", model.connect.failedTarget)
+	}
+	if !strings.Contains(model.connect.err+" "+connectAuthHint(model.connect.reason, model.connect.failedTarget), "remote.example:443") {
+		t.Fatal("recovery lost target-aware not-enrolled context")
+	}
+}
 func TestSessionReadyDefaultCapsAllFalse(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}} // caps left zero
 	m := newTestModelFromDeps(Deps{

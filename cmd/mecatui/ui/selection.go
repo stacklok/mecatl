@@ -121,6 +121,7 @@ func selectable(m Model) bool {
 		m.userModel.view == userModelNone &&
 		m.reflections.view == reflectionsNone &&
 		m.dream.view == dreamClosed &&
+		!m.connect.open &&
 		m.effort.view == effortNone &&
 		m.worktrees.view == worktreesNone &&
 		m.schedule.view == scheduleNone

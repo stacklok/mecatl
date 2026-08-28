@@ -203,7 +203,7 @@ func modelsPanelFixedRows(picker modelsState, prov string, hk helpKeys) int {
 
 const modelsDisabledNote = "Model selection is not available on this server.\nConfigure a provider on the server, then reconnect."
 const modelsErrorHint = "the model service may be unavailable — check mecated is running (log: $XDG_STATE_HOME/mecatl/mecatui.log)"
-const modelsGatewayEmptyNote = "your gateway credential lists no models — ask your platform admin or re-run `thv llm setup`"
+const modelsGatewayEmptyNote = "your gateway credential lists no models — ask your platform admin or re-run `mecatui llm login`"
 
 func modelsEmptyCopy(caps client.Capabilities, statuses []client.ProviderStatus) string {
 	if s, ok := promotedStatus(statuses); ok {

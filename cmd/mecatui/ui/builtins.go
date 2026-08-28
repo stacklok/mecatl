@@ -45,6 +45,7 @@ type wiredCollaborators struct {
 	Sessions    bool // /sessions picker — gated on inventory + authoritative transcript
 	Learning    bool // /learning operator-settings enum
 	DebugAsk    bool // /debug-ask — env-gated (MECATUI_DEBUG_ASK=1) fake-ask injector
+	Connect     bool // /connect — saved remote target picker
 }
 
 // wiredCollaborators builds the struct from m.deps — the SINGLE construction
@@ -63,6 +64,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Sessions: m.deps.Sessions != nil && m.deps.Transcript != nil,
 		Learning: m.deps.Learning != nil,
 		DebugAsk: m.deps.DebugAsk,
+		Connect:  m.deps.Connect != nil,
 	}
 }
 
@@ -199,6 +201,9 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "continue, inspect, or manage stored sessions",
 			run:  Model.runSessions,
 		})
+	}
+	if w.Connect {
+		out = append(out, builtin{name: "connect", desc: "sign in and connect to a saved remote target", run: Model.runConnect})
 	}
 	out = appendLearningBuiltin(out, w)
 	out = appendDebugAskBuiltin(out, w)
@@ -391,6 +396,12 @@ func (m Model) runDream() (tea.Model, tea.Cmd) {
 // belt-and-braces here.
 func (m Model) runModels() (tea.Model, tea.Cmd) {
 	return m.openModels()
+}
+
+// runConnect opens the saved remote-target picker. It is idle-only: switching a
+// connection tears down this TUI before any browser-capable work happens in main.
+func (m Model) runConnect() (tea.Model, tea.Cmd) {
+	return m.openConnect()
 }
 
 // runEffort opens the /effort picker (ADR 0055). Only registered when

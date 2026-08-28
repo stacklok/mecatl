@@ -1226,6 +1226,22 @@ func TestConnectCreateBothFailStaysFatal(t *testing.T) {
 	}
 }
 
+func TestConnectCreateRetryAuthFailureIsAuthoritative(t *testing.T) {
+	persisted := client.ModelSelection{ProviderID: "openrouter", ModelID: "missing"}
+	conv := &fakeConv{
+		rejectSelector: status.Error(codes.InvalidArgument, "unknown model"),
+		createErr:      &client.AuthError{Reason: client.AuthSessionExpired},
+	}
+	m := New(Deps{Session: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), InitialModel: persisted, BearerBacked: true})
+	msg, ok := m.createSessionCmd()().(client.ConnectErrMsg)
+	if !ok {
+		t.Fatalf("message = %T, want ConnectErrMsg", m.createSessionCmd()())
+	}
+	if msg.AuthReason != client.AuthSessionExpired || msg.Err != conv.createErr {
+		t.Fatalf("retry auth result = %#v, want retry error and expired reason", msg)
+	}
+}
+
 // TestConnectCreateTransientFailureStaysFatal is the missing cell {saved selection
 // valid} × {transient failure}: a connect-time create that fails for a
 // NON-rejection reason (deadline, unavailable — anything but gRPC InvalidArgument)
@@ -1353,10 +1369,10 @@ func TestModelsEmptyCopy_PromotesAnyNonOkStatus(t *testing.T) {
 	}
 
 	unauthorized := []client.ProviderStatus{
-		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `thv llm setup`"},
+		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `mecatui llm login`"},
 	}
 	got = modelsEmptyCopy(client.Capabilities{ModelSelection: true}, unauthorized)
-	want = "toolhive: gateway rejected the credential — re-auth with `thv llm setup`"
+	want = "toolhive: gateway rejected the credential — re-auth with `mecatui llm login`"
 	if got != want {
 		t.Errorf("unauthorized empty copy = %q, want %q", got, want)
 	}
@@ -1457,9 +1473,9 @@ func TestRenderProviderStatusLines_UnreachableAndUnauthorized(t *testing.T) {
 		t.Fatalf("unreachable line = %v", lines)
 	}
 	lines = renderProviderStatusLines([]client.ProviderStatus{
-		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `thv llm setup`"},
+		{ProviderID: "toolhive", State: "unauthorized", Hint: "re-auth with `mecatui llm login`"},
 	}, false)
-	if len(lines) != 1 || lines[0] != "toolhive: gateway rejected the credential — re-auth with `thv llm setup`" {
+	if len(lines) != 1 || lines[0] != "toolhive: gateway rejected the credential — re-auth with `mecatui llm login`" {
 		t.Fatalf("unauthorized line = %v", lines)
 	}
 }
@@ -1768,7 +1784,7 @@ func TestModelsPickerToolhiveUnreachableGolden(t *testing.T) {
 // #262 R6.2) when the model list is empty AND a status reports "empty".
 func TestModelsPickerGatewayEmptyGolden(t *testing.T) {
 	fm := &fakeModels{statuses: []client.ProviderStatus{
-		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `thv llm setup`"},
+		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `mecatui llm login`"},
 	}}
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()
@@ -1785,7 +1801,7 @@ func TestModelsPickerGatewayEmptyGolden(t *testing.T) {
 func TestModelsPickerMixedDeploymentEmptyGolden(t *testing.T) {
 	fm := sampleModels()
 	fm.statuses = []client.ProviderStatus{
-		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `thv llm setup`"},
+		{ProviderID: "toolhive", State: "empty", Hint: "ask your platform admin or re-run `mecatui llm login`"},
 	}
 	m := newModelsModel(t, fm, &fakeStore{}, modelsCaps(), client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()

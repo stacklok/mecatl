@@ -35,6 +35,7 @@
 ┃    /schedule             browse & manage scheduled tasks                                                                                                                        ┃
 ┃    /session              show active session details and copy its exact ID                                                                                                      ┃
 ┃    /sessions             continue, inspect, or manage stored sessions                                                                                                           ┃
+┃    /connect              sign in and connect to a saved remote target                                                                                                           ┃
 ┃    alt+m                 cycle permission mode (default / plan / accept-edits)                                                                                                  ┃
 ┃    ctrl+t                expand/collapse details                                                                                                                                ┃
 ┃                                                                                                                                                                                 ┃

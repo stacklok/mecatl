@@ -102,6 +102,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	inspectRows = append(inspectRows,
 		helpRow{key: "/session", action: "show active session details and copy its exact ID"},
 		helpRow{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
+		helpRow{key: "/connect", action: "sign in and connect to a saved remote target"},
 		helpRow{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
 		helpRow{key: hk.expandTools, action: "expand/collapse details"},
 	)
