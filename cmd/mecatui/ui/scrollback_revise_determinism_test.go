@@ -123,7 +123,7 @@ func TestScrollbackReviseBustsCacheEveryOp(t *testing.T) {
 func newReviseDeterminismModel(tb testing.TB) Model {
 	tb.Helper()
 	const depth = 16
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         context.Background(),
 		NoAltScreen: true,

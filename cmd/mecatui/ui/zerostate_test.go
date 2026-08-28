@@ -14,25 +14,19 @@ import (
 // and the given caps — the first-run state the welcome card renders in.
 func zeroStateModel(t *testing.T, caps client.Capabilities) Model {
 	t.Helper()
-	// Hermeticity: the zero-state View path calls welcome.KittyCapable() (real env)
-	// via maybeKittyTransmit on SessionReadyMsg. On a kitty/Ghostty/WezTerm/Konsole
-	// machine that flips m.kittyActive true and Splash emits U+10EEEE placeholder
-	// cells (not ANSI — stripANSI keeps them), diverging the goldens. Pin the
-	// override that wins over everything, matching the MECATUI_NO_MOUSE isolation in
-	// config_test.go.
-	t.Setenv("MECATUI_NO_KITTY", "1")
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: caps}
-	m := New(Deps{
-		Session:     conv,
-		Conv:        conv,
-		Theme:       aztec(),
-		Server:      "127.0.0.1:8080",
-		Workspace:   "/workspace",
-		Mode:        "default",
-		Model:       "mock-model",
-		Ctx:         context.Background(),
-		NoAltScreen: true,
+	m := newTestModelFromDeps(Deps{
+		Session:      conv,
+		Conv:         conv,
+		Theme:        aztec(),
+		Server:       "127.0.0.1:8080",
+		Workspace:    "/workspace",
+		Mode:         "default",
+		Model:        "mock-model",
+		Ctx:          context.Background(),
+		NoAltScreen:  true,
+		kittyCapable: func() bool { return false },
 	})
 	// A tall viewport so the FULL welcome card shows (mascot + wordmark + cwd +
 	// model + tagline + affordances + memory note) — the splash now fits its body to

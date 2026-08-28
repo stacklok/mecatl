@@ -25,7 +25,7 @@ func newAgentsInvModel(t *testing.T, ag client.AgentLister, caps client.Capabili
 	recv := &fakeRecver{script: nil, gate: make(chan struct{})}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send, caps: caps}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Agents:      ag,

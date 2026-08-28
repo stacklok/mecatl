@@ -25,7 +25,7 @@ func newUserModelModel(t *testing.T, um client.UserModelLister, caps client.Capa
 	recv := &fakeRecver{script: nil, gate: make(chan struct{})}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send, caps: caps}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		UserModel:   um,

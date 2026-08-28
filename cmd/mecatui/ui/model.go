@@ -18,6 +18,8 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
 // SessionCreator creates a server-side session and returns its id together with
@@ -187,6 +189,12 @@ type Deps struct {
 	// main.go populates it with client.NewClipboard().
 	Clipboard client.Clipboard
 	Theme     theme.Theme
+
+	// Presentation capability probes are package-private test seams. New replaces
+	// nil values with the production environment detectors.
+	emojiCapable      func() bool
+	kittyCapable      func() bool
+	scrollKeysMarking func() string
 
 	// Display-only context for the header bar.
 	Server    string
@@ -636,8 +644,8 @@ type Model struct {
 	// header hot path by postureBadge to pick the yolo badge's glyph variant (emoji
 	// "⚡️" with VS16 vs width-stable text "⚡"), so it must NOT call os.Environ() per
 	// render — seeding it here keeps the detection off the hot path. A bool field (not a
-	// sync.Once over a process global) so a test can override it on the Model after New
-	// and so t.Setenv-driven tests still drive the pure detectEmoji directly.
+	// sync.Once over a process global) keeps each Model independently injectable while
+	// pure detectEmoji tests continue to cover the production environment contract.
 	emojiOK bool
 
 	// kittyActive is true once the terminal is detected Kitty-graphics-capable AND the
@@ -857,9 +865,18 @@ func New(deps Deps) Model {
 	if deps.Ctx == nil {
 		deps.Ctx = context.Background()
 	}
+	if deps.emojiCapable == nil {
+		deps.emojiCapable = emojiCapable
+	}
+	if deps.kittyCapable == nil {
+		deps.kittyCapable = welcome.KittyCapable
+	}
+	if deps.scrollKeysMarking == nil {
+		deps.scrollKeysMarking = platform.ScrollKeysMarking
+	}
 	th := deps.Theme
 	keys := applyKeyOverrides(defaultKeys(), deps.KeyOverrides)
-	hk := keyMarkings(keys)
+	hk := keyMarkingsWithScroll(keys, deps.scrollKeysMarking())
 
 	ta := textarea.New()
 	// The mode-coloured rail border (renderInputRail) is the SINGLE vertical accent cue,
@@ -890,7 +907,7 @@ func New(deps Deps) Model {
 	m := Model{
 		deps:    deps,
 		keys:    keys,
-		rend:    newRenderer(th, keyMarkings(keys)),
+		rend:    newRenderer(th, hk),
 		hits:    &hitRegions{},
 		metrics: &renderedSurfaceMetrics{},
 		phase:   phaseConnecting,
@@ -914,7 +931,7 @@ func New(deps Deps) Model {
 		pendingInitialPrompt: deps.InitialPrompt,
 		// Detect emoji-presentation capability ONCE at construction (conservative,
 		// env-based) so the header hot path reads a bool, never os.Environ().
-		emojiOK: emojiCapable(),
+		emojiOK: deps.emojiCapable(),
 	}
 	// Init issues token 1 for the startup catalog request. Resume skips that
 	// request, so its first picker request starts at 1 instead.

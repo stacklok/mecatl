@@ -51,7 +51,7 @@ func newSessionsConv() *fakeConv {
 
 func newSessionsModel(t *testing.T, conv *fakeConv, fl *fakeSessionLister, loader client.SessionTranscripter) Model {
 	t.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Sessions: fl, Transcript: loader,
 		Theme: theme.New("aztec", theme.AztecPalette()), Workspace: "/workspace",
 		Mode: "default", Model: "mock-model", Ctx: context.Background(), NoAltScreen: true,
@@ -81,7 +81,7 @@ func testTheme() theme.Theme { return theme.New("aztec", theme.AztecPalette()) }
 func TestStartupSessionsWaitsForModelsThenCreatesOnlyOnNew(t *testing.T) {
 	conv := newSessionsConv()
 	lister := &fakeSessionLister{}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Sessions: lister, Transcript: &fakeSessionTranscriptLoader{},
 		Models: &fakeModels{}, BrowseSessions: true,
 		Theme: testTheme(), Workspace: "/workspace", Mode: "plan", Ctx: context.Background(), NoAltScreen: true,
@@ -123,7 +123,7 @@ func TestStartupSessionsWaitsForModelsThenCreatesOnlyOnNew(t *testing.T) {
 func TestStartupSessionsContinueInspectBackAndCancel(t *testing.T) {
 	conv := newSessionsConv()
 	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{Complete: true}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Sessions: &fakeSessionLister{}, Transcript: loader,
 		BrowseSessions: true, Theme: testTheme(), Workspace: "/workspace", Mode: "default", Ctx: context.Background(), NoAltScreen: true,
 	})
@@ -157,7 +157,7 @@ func TestStartupSessionsContinueInspectBackAndCancel(t *testing.T) {
 		t.Fatalf("continue: id=%q startup=%v creates=%d", m.sessionID, m.browsingStartupSessions, conv.createCount)
 	}
 
-	cancel := New(Deps{BrowseSessions: true, Sessions: &fakeSessionLister{}, Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	cancel := newTestModelFromDeps(Deps{BrowseSessions: true, Sessions: &fakeSessionLister{}, Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
 	mm, quit, handled := cancel.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	cancel = mm.(Model)
 	if !handled || quit == nil {

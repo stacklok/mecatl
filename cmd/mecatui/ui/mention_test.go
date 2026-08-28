@@ -51,7 +51,7 @@ func newMentionModel(t *testing.T, ws string) Model {
 	recv := &fakeRecver{script: nil, gate: make(chan struct{})}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),
@@ -218,7 +218,7 @@ func TestSubmitWithImageMentionSendsPart(t *testing.T) {
 	}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: &fakeRecver{}, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),
@@ -270,7 +270,7 @@ func TestSubmitImageMentionCapGatedRejects(t *testing.T) {
 	}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: &fakeRecver{}, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),
@@ -332,7 +332,7 @@ func newSubmitModel(t *testing.T, ws string, caps client.Capabilities) (Model, *
 	t.Helper()
 	send := &fakeSender{}
 	conv := &fakeConv{recv: &fakeRecver{}, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),

@@ -21,7 +21,7 @@ func newMCPModel(t *testing.T, th theme.Theme, mcp client.MCP) Model {
 	recv := &fakeRecver{script: nil, gate: make(chan struct{})}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		MCP:         mcp,

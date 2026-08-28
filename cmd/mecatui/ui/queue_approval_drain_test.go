@@ -47,7 +47,7 @@ func TestResolveAskArmsNoExtraStreamReader(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			th := theme.New("aztec", theme.AztecPalette())
 			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-			m := New(Deps{
+			m := newTestModelFromDeps(Deps{
 				Session:     conv,
 				Conv:        conv,
 				Theme:       th,
@@ -100,7 +100,7 @@ func TestResolveAskArmsNoExtraStreamReader(t *testing.T) {
 func TestStaleStreamGenerationDropped(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: th, Ctx: context.Background(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: th, Ctx: context.Background(), NoAltScreen: true})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.SessionReadyMsg{SessionID: "sess-test-0001"})
 
 	// Simulate an in-flight run on generation 5.
@@ -171,7 +171,7 @@ func TestQueueDrainAfterApprovalCompletesRunB(t *testing.T) {
 		sessionReady: make(chan struct{}),
 	}
 	prog := newProgress()
-	model := New(Deps{
+	model := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       th,

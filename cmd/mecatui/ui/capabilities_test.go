@@ -43,7 +43,7 @@ func TestTurnEndZeroUsageKeepsStickyContextMeter(t *testing.T) {
 func TestCreateSessionCmdCarriesCaps(t *testing.T) {
 	want := client.Capabilities{MCP: true, Memory: true, Teams: true}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, caps: want}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		Theme:   theme.New("aztec", theme.AztecPalette()),
@@ -76,7 +76,7 @@ func TestCreateSessionCmdCarriesCaps(t *testing.T) {
 // leaves the model at the all-false zero value rather than over-promising.
 func TestSessionReadyDefaultCapsAllFalse(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}} // caps left zero
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		Theme:   theme.New("aztec", theme.AztecPalette()),
@@ -100,7 +100,7 @@ func TestSessionReadyDefaultCapsAllFalse(t *testing.T) {
 func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 	resolved := client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5-effective", ContextWindow: 400000}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, resolvedModel: resolved}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		Theme:   theme.New("aztec", theme.AztecPalette()),
@@ -135,7 +135,7 @@ func TestEffectiveModelInHeaderFromTurnZero(t *testing.T) {
 func TestEffectiveModelDrivesFooterMeter(t *testing.T) {
 	resolved := client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5-effective", ContextWindow: 400000}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, resolvedModel: resolved}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		Theme:   theme.New("aztec", theme.AztecPalette()),
@@ -190,7 +190,7 @@ func TestFooterMeterFollowsModelSwitch(t *testing.T) {
 // graceful degrade, no crash.
 func TestEffectiveModelOlderServerNoSegment(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}} // resolvedModel left zero
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		Theme:   theme.New("aztec", theme.AztecPalette()),
@@ -216,7 +216,7 @@ func TestEffectiveModelOlderServerNoSegment(t *testing.T) {
 // display name from the ListModels inventory by (provider_id, model_id), falling
 // back to the raw id when the inventory has no match.
 func TestHeaderModelLabelUsesInventoryDisplayName(t *testing.T) {
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.phase = phaseIdle // past the connecting gate (the create response has landed)
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	m.modelCatalog.models = []client.ModelInfo{
@@ -239,7 +239,7 @@ func TestHeaderModelLabelUsesInventoryDisplayName(t *testing.T) {
 // selection, then to the launch-time --model — the PRE-EXISTING behavior, kept as-is.
 func TestHeaderModelLabelFallsBackWhenNoEffectiveModel(t *testing.T) {
 	// createModelSelection wins when set (and no effective model).
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.phase = phaseIdle
 	m.createModelSelection = client.ModelSelection{ProviderID: "openai", ModelID: "x"}
 	if got := m.headerModelLabel(); got != "x" {
@@ -247,7 +247,7 @@ func TestHeaderModelLabelFallsBackWhenNoEffectiveModel(t *testing.T) {
 	}
 
 	// With no effective model AND no active selection, fall back to deps.Model.
-	m2 := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Model: "y", Ctx: context.Background()})
+	m2 := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Model: "y", Ctx: context.Background()})
 	m2.phase = phaseIdle
 	if got := m2.headerModelLabel(); got != "y" {
 		t.Fatalf("headerModelLabel = %q, want the launch-time --model %q", got, "y")

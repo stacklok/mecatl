@@ -16,27 +16,22 @@ import (
 // wordmark gradient path is exercised when fullColor is requested.
 func splashModel(t *testing.T, w, h int, fullColor, noBanner bool) Model {
 	t.Helper()
-	// Hermeticity: pin off the kitty path so the rendered Splash is the half-block
-	// variant regardless of the host terminal — these tests assert on half-block ▀ /
-	// wordmark █ glyphs, which the kitty placeholder grid would replace. The kitty
-	// branch is exercised separately (welcome-package TestSplashKitty* and the
-	// FORCE_KITTY lifecycle test below).
-	t.Setenv("MECATUI_NO_KITTY", "1")
 	recv := &fakeRecver{gate: make(chan struct{})}
 	caps := embeddedCaps()
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: caps}
-	m := New(Deps{
-		Session:     conv,
-		Conv:        conv,
-		Theme:       aztec(),
-		Server:      "127.0.0.1:8080",
-		Workspace:   "/workspace",
-		Mode:        "default",
-		Model:       "mock-model",
-		Version:     "v9.9.9-test",
-		NoBanner:    noBanner,
-		Ctx:         t.Context(),
-		NoAltScreen: true,
+	m := newTestModelFromDeps(Deps{
+		Session:      conv,
+		Conv:         conv,
+		Theme:        aztec(),
+		Server:       "127.0.0.1:8080",
+		Workspace:    "/workspace",
+		Mode:         "default",
+		Model:        "mock-model",
+		Version:      "v9.9.9-test",
+		NoBanner:     noBanner,
+		Ctx:          t.Context(),
+		NoAltScreen:  true,
+		kittyCapable: func() bool { return false },
 	})
 	profile := colorprofile.ANSI256
 	if fullColor {
@@ -181,16 +176,16 @@ func TestNoBannerSuppressesSplash(t *testing.T) {
 // the identity line ("model · provider") when set — renderZeroState now threads
 // m.createModelSelection.ProviderID into welcome.Info.Provider.
 func TestSplashShowsProvider(t *testing.T) {
-	t.Setenv("MECATUI_NO_KITTY", "1")
 	recv := &fakeRecver{gate: make(chan struct{})}
 	caps := embeddedCaps()
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: caps}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: aztec(),
 		Server: "127.0.0.1:8080", Workspace: "/workspace", Mode: "default",
 		// A persisted selection seeds m.createModelSelection (ProviderID + ModelID).
 		InitialModel: client.ModelSelection{ProviderID: "anthropic", ModelID: "claude-opus-4"},
 		Ctx:          t.Context(), NoAltScreen: true,
+		kittyCapable: func() bool { return false },
 	})
 	// A tall terminal so the (low keep-priority) model·provider line is included by
 	// the greedy fit — on a short terminal it is correctly traded away for the head.
@@ -209,16 +204,16 @@ func TestSplashShowsProvider(t *testing.T) {
 // does NOT re-transmit on a same-tier resize, DOES re-fire on a tier-crossing
 // resize, and never activates under NoBanner. Asserted on model fields, not output.
 func TestKittyTransmitLifecycle(t *testing.T) {
-	t.Setenv("MECATUI_FORCE_KITTY", "1")
 
 	newM := func(noBanner bool) Model {
 		recv := &fakeRecver{gate: make(chan struct{})}
 		caps := embeddedCaps()
 		conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: caps}
-		return New(Deps{
+		return newTestModelFromDeps(Deps{
 			Session: conv, Conv: conv, Theme: aztec(),
 			Server: "127.0.0.1:8080", Workspace: "/workspace", Mode: "default",
 			NoBanner: noBanner, Ctx: t.Context(), NoAltScreen: true,
+			kittyCapable: func() bool { return true },
 		})
 	}
 
@@ -315,14 +310,14 @@ func collectRaw(cmd tea.Cmd) []string {
 // and resets kittyActive/kittyTier, so a later /clear back to the zero-state
 // re-transmits.
 func TestKittyDeleteOnFirstBlock(t *testing.T) {
-	t.Setenv("MECATUI_FORCE_KITTY", "1")
 	recv := &fakeRecver{gate: make(chan struct{})}
 	caps := embeddedCaps()
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: caps}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: aztec(),
 		Server: "127.0.0.1:8080", Workspace: "/workspace", Mode: "default",
 		Ctx: t.Context(), NoAltScreen: true,
+		kittyCapable: func() bool { return true },
 	})
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 100, Height: 50},

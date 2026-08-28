@@ -37,7 +37,7 @@ type fillPlacementTestSurface struct{ placementTestSurface }
 func (*fillPlacementTestSurface) modalPlacement() modalPlacement { return modalPlacementFill }
 
 func modalPlacementTestModel() Model {
-	m := New(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
 	m.width = 80
 	m.height = 30
 	m.vp.SetHeight(24)

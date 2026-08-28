@@ -18,7 +18,7 @@ import (
 // what makes the delta-vs-flush counting deterministic.
 func newCoalesceModel(t *testing.T) Model {
 	t.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         context.Background(),
 		NoAltScreen: true,

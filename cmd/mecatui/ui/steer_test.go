@@ -25,7 +25,7 @@ func newSteerModel(t *testing.T, steerCap bool) (Model, *fakeConv) {
 	recv := &fakeRecver{}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send, caps: client.Capabilities{Steer: steerCap}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),

@@ -19,7 +19,7 @@ import (
 // were known.
 func healModel(t *testing.T, conv *fakeConv) Model {
 	t.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),
@@ -131,7 +131,7 @@ func TestFooterHealStopsRefetchingOnceKnown(t *testing.T) {
 // real 128k model forever; the actual ==0 gate skips it.
 func TestFooterHealCatalogued128KNeverRefetches(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         t.Context(),

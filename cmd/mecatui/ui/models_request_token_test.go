@@ -45,7 +45,7 @@ func modelsResultFromCmd(t *testing.T, cmd tea.Cmd) client.ModelsMsg {
 
 func TestInitListModelsCmdCarriesInitialRequestToken(t *testing.T) {
 	fm := sampleModels()
-	m := New(Deps{Ctx: context.Background(), Models: fm, Theme: theme.New("aztec", theme.AztecPalette())})
+	m := newTestModelFromDeps(Deps{Ctx: context.Background(), Models: fm, Theme: theme.New("aztec", theme.AztecPalette())})
 	if m.modelCatalogRequestToken == 0 {
 		t.Fatal("New must mint the startup model catalog request token")
 	}

@@ -312,7 +312,7 @@ func builtinDispatchModel(t *testing.T, caps client.Capabilities, wireMCP bool) 
 	if wireMCP {
 		deps.MCP = &fakeMCP{}
 	}
-	m := New(deps)
+	m := newTestModelFromDeps(deps)
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 100, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: caps},
@@ -413,7 +413,7 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 
 	mm, closeCmd := m.Update(ready)
 	m = mm.(Model)
-	zero := New(m.deps).resetSession()
+	zero := newTestModelFromDeps(m.deps).resetSession()
 	if !reflect.DeepEqual(sessionState(m), sessionState(zero)) {
 		t.Errorf("successful /clear must reset ALL session-derived fields:\n got  %+v\n want %+v", sessionState(m), sessionState(zero))
 	}

@@ -18,7 +18,7 @@ import (
 func newPastePathModel(t *testing.T, ws string, caps client.Capabilities) Model {
 	t.Helper()
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),
@@ -264,7 +264,7 @@ func TestPasteIgnoredWhileAgentsOverlayOpen(t *testing.T) {
 // restriction); removing it would let a paste land before the session is ready.
 func TestPasteIgnoredWhileConnecting(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       aztec(),

@@ -27,7 +27,7 @@ func newQueueModel(t *testing.T, recvers ...*fakeRecver) (Model, *fakeConv) {
 	}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recvers[0], send: send, recvers: recvers}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),

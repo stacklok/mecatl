@@ -42,7 +42,7 @@ func TestDispatchSurfaceKeyAppliesHandledIntentOnce(t *testing.T) {
 		intent:     sessionsPhaseIntent{phase: sessionsIntentPhaseIdle},
 		keyHandled: true,
 	}
-	m := New(Deps{Ctx: context.Background(), Theme: testTheme(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Ctx: context.Background(), Theme: testTheme(), NoAltScreen: true})
 	m.phase = phaseReplay
 	m.modal = surface
 
@@ -72,7 +72,7 @@ func TestDispatchSurfaceKeyAppliesIntentBeforeClose(t *testing.T) {
 		keyHandled:     true,
 		closeRequested: true,
 	}
-	m := New(Deps{Ctx: context.Background(), Theme: testTheme(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Ctx: context.Background(), Theme: testTheme(), NoAltScreen: true})
 	m.phase = phaseReplay
 	m.modal = surface
 
@@ -87,7 +87,7 @@ func TestDispatchSurfaceKeyAppliesIntentBeforeClose(t *testing.T) {
 }
 
 func TestDispatchSurfaceMsgAdoptsTranscriptIntent(t *testing.T) {
-	m := New(Deps{Ctx: context.Background(), Theme: testTheme(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Ctx: context.Background(), Theme: testTheme(), NoAltScreen: true})
 	loaded := conversation{}
 	loaded.addUser("continued")
 	m.modal = &sessionsState{intent: sessionsTranscriptAdoptionIntent{

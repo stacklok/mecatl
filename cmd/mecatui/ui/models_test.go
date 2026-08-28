@@ -36,7 +36,7 @@ func newModelsModelSized(t *testing.T, fm *fakeModels, store SelectionStore, cap
 	recv := &fakeRecver{gate: make(chan struct{})}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send, caps: caps}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:        conv,
 		Conv:           conv,
 		Models:         fm,
@@ -161,7 +161,7 @@ func TestModelsPanelSanitizesNames(t *testing.T) {
 func TestRunModelsNilGuard(t *testing.T) {
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: modelsCaps()}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.SessionReadyMsg{Capabilities: modelsCaps()})
 	mm, cmd := m.runModels()
 	if mm.(Model).modal != nil || cmd != nil {
@@ -528,7 +528,7 @@ func TestModelsChooseNoSessionUsesPlainCreate(t *testing.T) {
 	store := &fakeStore{}
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: modelsCaps()}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:        conv,
 		Conv:           conv,
 		Models:         sampleModels(),
@@ -637,7 +637,7 @@ func TestModelsChooseSwitchArmsStatusNote(t *testing.T) {
 				caps:              modelsCaps(),
 				echoSelAsResolved: true, // the rebind's SessionReadyMsg mirrors the picked selector
 			}
-			m := New(Deps{
+			m := newTestModelFromDeps(Deps{
 				Session:        conv,
 				Conv:           conv,
 				Models:         sampleModels(),
@@ -839,7 +839,7 @@ func TestModelsConnectErrorDegradesToCreate(t *testing.T) {
 	seed := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: modelsCaps()}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:      conv,
 		Conv:         conv,
 		Models:       &fakeModels{err: errors.New("list boom")},
@@ -878,7 +878,7 @@ func TestModelsConnectErrorDegradesToCreate(t *testing.T) {
 func TestInitNoListerFiresCreateDirectly(t *testing.T) {
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: client.Capabilities{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		// Models intentionally nil.
@@ -933,7 +933,7 @@ func TestModelsReconcileKeepsModelMissingFromSnapshot(t *testing.T) {
 	}
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: modelsCaps()}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:      conv,
 		Conv:         conv,
 		Models:       &fakeModels{models: inventory},
@@ -997,7 +997,7 @@ func TestConnectCreateRejectedFallsBackToDefault(t *testing.T) {
 		caps:           modelsCaps(),
 		rejectSelector: status.Error(codes.InvalidArgument, "unknown or unavailable provider"),
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:        conv,
 		Conv:           conv,
 		Models:         &fakeModels{models: inventory},
@@ -1062,7 +1062,7 @@ func TestConnectCreateBothFailStaysFatal(t *testing.T) {
 		rejectSelector: status.Error(codes.InvalidArgument, "unknown or unavailable provider"),
 		createErr:      errors.New("server unavailable"),
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:      conv,
 		Conv:         conv,
 		Models:       &fakeModels{models: inventory},
@@ -1113,7 +1113,7 @@ func TestConnectCreateTransientFailureStaysFatal(t *testing.T) {
 		// (wrongly) complete connect on the server default.
 		rejectSelector: errors.New("context deadline exceeded"),
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:      conv,
 		Conv:         conv,
 		Models:       &fakeModels{models: inventory},
@@ -1388,7 +1388,7 @@ func TestModelsCatalogUpdatesWhilePickerClosed(t *testing.T) {
 // low-priority segment.
 func TestHeaderToolhiveSegment(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	if strings.Contains(stripANSIstr(m.renderHeader()), "via ToolHive gateway") {
 		t.Fatal("non-toolhive session must NOT show the gateway segment")
@@ -1414,7 +1414,7 @@ func TestHeaderToolhiveSegment(t *testing.T) {
 // segment renders — never both.
 func TestHeaderGatewayAvailableSegment(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 
 	// Active provider is openai (key-driven); toolhive is available-but-not-default.
@@ -1456,7 +1456,7 @@ func TestHeaderGatewayAvailableSegment(t *testing.T) {
 // fabricated suffix).
 func TestHeaderProviderRouteSuffix(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), Server: "127.0.0.1:8080"})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "moonshotai/kimi-k3"}
 	m.phase = phaseIdle // a bound session, so the model segment renders
 	m = applyAll(m, tea.WindowSizeMsg{Width: 160, Height: 30})
@@ -1954,7 +1954,7 @@ func TestModelOrgTagRenderedInPicker(t *testing.T) {
 // fires.
 func TestProvenanceHintAppendedWhenGatewayAvailable(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	m.modelCatalog.statuses = gatewayStatuses()
 	// toolhive is intent-driven; openrouter is NOT (key-driven) — the guard's premise.
@@ -1975,7 +1975,7 @@ func TestProvenanceHintAppendedWhenGatewayAvailable(t *testing.T) {
 // (the gateway IS the default) shows NO hint — the outranking condition does not hold.
 func TestProvenanceHintSuppressedWhenGatewayIsDefault(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	// toolhive is the default here, so AvailableNotDefault is false on its row.
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: false}}
@@ -1991,7 +1991,7 @@ func TestProvenanceHintSuppressedWhenGatewayIsDefault(t *testing.T) {
 // different gateway row is AvailableNotDefault.
 func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	// A second intent-driven provider is the default; toolhive is AvailableNotDefault.
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "other-gateway", ModelID: "some-model"}
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", ModelCount: 5, AvailableNotDefault: true}}
@@ -2010,7 +2010,7 @@ func TestProvenanceHintSuppressedWhenDefaultIsIntentDriven(t *testing.T) {
 // to the pre-feature line).
 func TestProvenanceHintSuppressedWhenNoStatus(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	got := m.modelProvenanceLine()
 	if strings.Contains(got, "gateway also available") {

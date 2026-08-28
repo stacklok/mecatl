@@ -59,7 +59,7 @@ func TestArgsViewRawToggleRepopulates(t *testing.T) {
 // Model emits no send command while the transcript notice still lands. This is the one
 // path the goldens cannot see (they never execute the returned cmd).
 func TestDebugAskResolveNilStreamNoPanic(t *testing.T) {
-	m := New(Deps{Theme: debugTheme()})
+	m := newTestModelFromDeps(Deps{Theme: debugTheme()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-debug-nil"
 	m.stream = nil // a /debug-ask from phaseIdle has no live run stream

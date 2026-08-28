@@ -27,7 +27,7 @@ import (
 func idleModelWith(t *testing.T, effective client.ResolvedModel, next client.ModelSelection, inv []client.ModelInfo) Model {
 	t.Helper()
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		Theme:   theme.New("aztec", theme.AztecPalette()),
@@ -129,7 +129,7 @@ func TestHeaderNextBadgeDroppedUnderWidthPressure(t *testing.T) {
 // client-held sources reads "server default".
 func TestModelProvenanceServerDefault(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}); got != "server default" {
 		t.Fatalf("provenance = %q, want server default", got)
@@ -141,7 +141,7 @@ func TestModelProvenanceServerDefault(t *testing.T) {
 func TestModelProvenanceWorkspaceDefault(t *testing.T) {
 	ws := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		WorkspaceDefault: ws, WorkspaceDefaultSet: true,
 	})
@@ -156,7 +156,7 @@ func TestModelProvenanceWorkspaceDefault(t *testing.T) {
 func TestModelProvenanceGlobalDefault(t *testing.T) {
 	gd := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		GlobalDefault: gd,
 	})
@@ -171,7 +171,7 @@ func TestModelProvenanceGlobalDefault(t *testing.T) {
 func TestModelProvenancePickedThisSession(t *testing.T) {
 	picked := client.ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"}
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		// Even though it ALSO matches a workspace default, picked-this-session wins.
 		WorkspaceDefault: picked, WorkspaceDefaultSet: true,
@@ -187,7 +187,7 @@ func TestModelProvenancePickedThisSession(t *testing.T) {
 // reads "--model flag".
 func TestModelProvenanceFlag(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		Model: "gpt-5",
 	})
@@ -207,7 +207,7 @@ func TestModelProvenanceFlag(t *testing.T) {
 // ProviderID=="toolhive" check.
 func TestModelProvenanceToolhiveAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: true}}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "auto-selected" {
@@ -223,7 +223,7 @@ func TestModelProvenanceToolhiveAutoSelected(t *testing.T) {
 // for every toolhive session, including this deliberately-configured one.
 func TestModelProvenanceToolhiveOperatorConfigured_NotAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "gpt-5"}
 	m.modelCatalog.statuses = []client.ProviderStatus{{ProviderID: "toolhive", State: "ok", DefaultModelAutoSelected: false}}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "gpt-5"}); got != "server default" {
@@ -238,7 +238,7 @@ func TestModelProvenanceToolhiveOperatorConfigured_NotAutoSelected(t *testing.T)
 // default".
 func TestModelProvenanceNoStatusRow_NotAutoSelected(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}
 	if got := m.modelProvenance(client.ModelSelection{ProviderID: "toolhive", ModelID: "claude-sonnet-4-6"}); got != "server default" {
 		t.Fatalf("provenance = %q, want server default (no status row)", got)
@@ -390,7 +390,7 @@ func TestCarryoverHandoff(t *testing.T) {
 		resolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"},
 	}
 	prog := newProgress()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Models:      &fakeModels{models: models},
@@ -478,7 +478,7 @@ func TestCarryoverHandoffFailure(t *testing.T) {
 		caps:      client.Capabilities{ModelSelection: true},
 		createErr: errors.New("carryover create rejected"),
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:      conv,
 		Conv:         conv,
 		Models:       &fakeModels{models: sampleModels().models},
@@ -569,7 +569,7 @@ func TestSeamlessSwitchCrossProviderCarriesProgram(t *testing.T) {
 		resolvedModel: client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"},
 	}
 	prog := newProgress()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Models:      &fakeModels{models: models},
@@ -645,7 +645,7 @@ func TestRestartOnModelTearsDownLiveRun(t *testing.T) {
 		recvers:      []*fakeRecver{run},
 		runCancelled: make(chan struct{}),
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Models:      &fakeModels{models: []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5"}}},
@@ -714,7 +714,7 @@ func TestRestartNowCreateFailureRecovers(t *testing.T) {
 		// (failing) call, matching production where the startup connect was the first.
 		createCount: 1,
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:      conv,
 		Conv:         conv,
 		Models:       &fakeModels{models: sampleModels().models},
@@ -790,7 +790,7 @@ func TestRestartNowCreateFailureRecovers(t *testing.T) {
 // flag. The flag is NOT cleared eagerly — the resolving msg owns its lifecycle.
 func TestRestartFailedEnterRetries(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 	})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -857,7 +857,7 @@ func TestRestartRetryReFailureStaysRecoverable(t *testing.T) {
 		send:      &fakeSender{},
 		createErr: errors.New("still rate limited"), // EVERY create fails (persistent transient)
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 	})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -923,7 +923,7 @@ func TestRestartStaleStreamEventDropped(t *testing.T) {
 		recv: run, send: &fakeSender{}, recvers: []*fakeRecver{run},
 		runCancelled: make(chan struct{}),
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv,
 		Models:      &fakeModels{models: []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5"}}},
 		Theme:       theme.New("aztec", theme.AztecPalette()),
@@ -966,7 +966,7 @@ func TestRestartStaleStreamEventDropped(t *testing.T) {
 // NO splash (it is a first-run affordance, not a per-switch one).
 func TestWelcomeSplashSuppressedAfterRestart(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()),
 		Workspace: "/workspace", Mode: "default", Ctx: context.Background(), NoAltScreen: true,
 	})
@@ -988,7 +988,7 @@ func TestWelcomeSplashSuppressedAfterRestart(t *testing.T) {
 // restartOnModelCmd must NOT call CloseSession when there is no prior session id.
 func TestRestartOnModelCmdNoCloseWhenNoOldID(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 	})
 	sel := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"}

@@ -198,7 +198,7 @@ func resolvedBubblesVersion(t *testing.T, modPath string) (version, source strin
 // window size plus SessionReadyMsg drive phaseConnecting → phaseIdle).
 func newGuardModel(t *testing.T) Model {
 	t.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         t.Context(),
 		NoAltScreen: true,

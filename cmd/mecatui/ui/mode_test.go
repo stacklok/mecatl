@@ -14,7 +14,7 @@ import (
 
 func modeTestModel(t *testing.T, conv *fakeConv) Model {
 	t.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv,
 		Conv:    conv,
 		Theme:   theme.New("aztec", theme.AztecPalette()),

@@ -21,7 +21,7 @@ func ctrlC() tea.KeyPressMsg { return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtr
 // "second ctrl+c quits" path exercises the cancel without a live stream.
 func quitModel(t *testing.T) Model {
 	t.Helper()
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.phase = phaseIdle
 	return m
@@ -269,7 +269,7 @@ func TestQuitDoublePressCancelsRunningProgram(t *testing.T) {
 		runCancelled: make(chan struct{}),
 	}
 	prog := newProgress()
-	model := New(Deps{
+	model := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       th,
@@ -310,7 +310,7 @@ func TestQuitDoublePressCancelsRunningProgram(t *testing.T) {
 // reducer to phaseFatal; a single ctrl+c then finishes the program.
 func TestQuitFatalSinglePressProgram(t *testing.T) {
 	prog := newProgress()
-	model := New(Deps{
+	model := newTestModelFromDeps(Deps{
 		Session:     &errSession{},
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         context.Background(),

@@ -107,7 +107,7 @@ func newReconnectModel(t *testing.T, ctx context.Context, fl client.LiveStreamer
 		Ctx:         ctx,
 		NoAltScreen: true,
 	}
-	m := New(deps)
+	m := newTestModelFromDeps(deps)
 	m = applyAll(
 		m,
 		tea.WindowSizeMsg{Width: 100, Height: 40},

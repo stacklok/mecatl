@@ -57,7 +57,7 @@ func (f *progressiveSessionPager) callCount() int {
 }
 
 func progressiveSessionsModel(pager client.SessionPager) Model {
-	return New(Deps{
+	return newTestModelFromDeps(Deps{
 		Sessions: pager, Transcript: &fakeSessionTranscriptLoader{}, BrowseSessions: true,
 		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true,
 	})

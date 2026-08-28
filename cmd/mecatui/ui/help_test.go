@@ -28,21 +28,28 @@ func allOnCaps() client.Capabilities {
 
 // helpModel builds a connected, sized idle model with the given caps and opens
 // the "?" help overlay, ready for a View() golden.
-func helpModel(t *testing.T, caps client.Capabilities) Model {
+func helpModel(t *testing.T, caps client.Capabilities, tweak ...func(*Deps)) Model {
 	t.Helper()
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: caps}
-	m := New(Deps{
-		Session:     conv,
-		Conv:        conv,
-		Theme:       aztec(),
-		Server:      "127.0.0.1:8080",
-		Workspace:   "/workspace",
-		Mode:        "default",
-		Model:       "mock-model",
-		Ctx:         context.Background(),
-		NoAltScreen: true,
-	})
+	deps := Deps{
+		Session:           conv,
+		Conv:              conv,
+		Theme:             aztec(),
+		Server:            "127.0.0.1:8080",
+		Workspace:         "/workspace",
+		Mode:              "default",
+		Model:             "mock-model",
+		Ctx:               context.Background(),
+		NoAltScreen:       true,
+		emojiCapable:      func() bool { return false },
+		kittyCapable:      func() bool { return false },
+		scrollKeysMarking: func() string { return "pgup/pgdn" },
+	}
+	for _, fn := range tweak {
+		fn(&deps)
+	}
+	m := newTestModelFromDeps(deps)
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 100, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: caps},
@@ -228,7 +235,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 func TestHelpKeyOverrideEndToEnd(t *testing.T) {
 	recv := &fakeRecver{gate: make(chan struct{})}
 	conv := &fakeConv{recv: recv, send: &fakeSender{}, caps: allOnCaps()}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       aztec(),

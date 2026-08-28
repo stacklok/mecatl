@@ -40,7 +40,7 @@ func newModelsProgram(t *testing.T, models []client.ModelInfo, initial client.Mo
 		created:      make(chan struct{}),
 	}
 	prog := newProgress()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:      conv,
 		Conv:         conv,
 		Models:       &fakeModels{models: models},

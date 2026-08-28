@@ -132,7 +132,7 @@ func TestSessionsTranscriptCloseReopenSameIDDropsStaleRequestToken(t *testing.T)
 }
 
 func TestSessionsTranscriptEscapeRetainsModalAndRestoresModelPhase(t *testing.T) {
-	m := New(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
 	st := newSessionsPanelState()
 	st.deps = (&m).surfaceDeps()
 	st.view = sessionsTranscript
@@ -150,7 +150,7 @@ func TestSessionsTranscriptEscapeRetainsModalAndRestoresModelPhase(t *testing.T)
 }
 
 func TestClosedSessionsSurfaceDropsStaleResponsesAndRoutesModelActionResults(t *testing.T) {
-	m := New(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
 	st := newSessionsPanelState()
 	st.deps = (&m).surfaceDeps()
 	st.view = sessionsTranscript
@@ -182,7 +182,7 @@ func TestSessionsTranscriptModalCloseReopenSameIDDropsOldSurfaceRequestToken(t *
 		SessionID: "same", Complete: true,
 		Messages: []client.ConversationMessage{{Role: "assistant", Text: "old transcript"}},
 	}}
-	m := New(Deps{Transcript: loader, Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Transcript: loader, Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
 	row := client.SessionListItem{ID: "same"}
 
 	updated, oldCmd, ok := m.loadSessionTranscript(row, false)
@@ -275,7 +275,7 @@ func TestSessionsSurfaceSemanticFormsStayStateOwned(t *testing.T) {
 }
 
 func TestSessionsModelKeyDispatchesThroughSurfaceIntent(t *testing.T) {
-	m := New(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
 	st := newSessionsPanelState()
 	st.deps = (&m).surfaceDeps()
 	st.loading = false

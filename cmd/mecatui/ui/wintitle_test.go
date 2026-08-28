@@ -309,7 +309,7 @@ func TestWindowTitleHealRefetchRoundTrip(t *testing.T) {
 		recv: &fakeRecver{}, send: &fakeSender{},
 		getSessionTitle: "forked carryover task",
 	}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),

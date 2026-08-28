@@ -49,7 +49,7 @@ func newLiveDeliveryModel(t *testing.T, fl *fakeLiveStreamer) Model {
 		Ctx:         context.Background(),
 		NoAltScreen: true,
 	}
-	m := New(deps)
+	m := newTestModelFromDeps(deps)
 	m = applyAll(
 		m,
 		tea.WindowSizeMsg{Width: 100, Height: 40},

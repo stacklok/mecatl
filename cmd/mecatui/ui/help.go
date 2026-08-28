@@ -7,7 +7,6 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -278,11 +277,20 @@ func navGlyph(chord string) string {
 
 // helpKeyMarkings builds the help-body key markings from the model's LIVE
 // keyMap, so a rebinding propagates into the "?" overlay.
-func (m Model) helpKeyMarkings() helpKeys { return keyMarkings(m.keys) }
+func (m Model) helpKeyMarkings() helpKeys {
+	marking := "pgup/pgdn"
+	if m.deps.scrollKeysMarking != nil {
+		marking = m.deps.scrollKeysMarking()
+	}
+	return keyMarkingsWithScroll(m.keys, marking)
+}
 
 // defaultHelpKeys builds the help markings from the DEFAULT bindings — the
-// honest fixture for tests that don't wire custom keymaps.
+// honest fixture for tests that don't wire custom keymaps. Standalone rendering
+// is host-independent and uses the canonical PC marking.
 func defaultHelpKeys() helpKeys { return keyMarkings(defaultKeys()) }
+
+func keyMarkings(km keyMap) helpKeys { return keyMarkingsWithScroll(km, "pgup/pgdn") }
 
 // keyMarkings derives the help-body key markings from km: each rebindable row
 // shows the binding's first chord; the scroll pair joins ScrollTop/ScrollBottom
@@ -290,7 +298,7 @@ func defaultHelpKeys() helpKeys { return keyMarkings(defaultKeys()) }
 // remaining chords. The approval keys (allow/allowAlways/deny) are populated
 // too so the footer help line and the permission/plan-review action bars read
 // the LIVE chords from the same struct (issue #457).
-func keyMarkings(km keyMap) helpKeys {
+func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 	hk := helpKeys{
 		submit:       firstKey(km.Submit, "enter"),
 		paste:        firstKey(km.Paste, "ctrl+v"),
@@ -307,7 +315,7 @@ func keyMarkings(km keyMap) helpKeys {
 		effort:       firstKey(km.Effort, "ctrl+e"),
 		modeSwitch:   firstKey(km.ModeSwitch, "alt+m"),
 		expandTools:  firstKey(km.ExpandTools, "ctrl+t"),
-		scroll:       scrollMarking(km),
+		scroll:       scrollMarking(km, defaultScrollMarking),
 		scrollUp:     firstKey(km.ScrollU, "pgup"),
 		scrollBottom: firstKey(km.ScrollBottom, "end"),
 		jump:         firstKey(km.ScrollTop, "home") + "/" + firstKey(km.ScrollBottom, "end"),
@@ -346,15 +354,13 @@ func keyMarkings(km keyMap) helpKeys {
 }
 
 // scrollMarking renders the ScrollU/ScrollD row. While the pair still holds the
-// DEFAULT pgup/pgdown chords it keeps the platform-adaptive marking
-// (platform.ScrollKeysMarking — "fn+↑/fn+↓ (pgup/pgdn)" on macOS, "pgup/pgdn"
-// elsewhere), so the default help body stays byte-identical; once either half is
-// remapped the platform gesture no longer applies, so the row shows the live
-// "<scrollU>/<scrollD>" chords instead.
-func scrollMarking(km keyMap) string {
+// DEFAULT pgup/pgdown chords it keeps the supplied platform-adaptive marking;
+// once either half is remapped the platform gesture no longer applies, so the
+// row shows the live "<scrollU>/<scrollD>" chords instead.
+func scrollMarking(km keyMap, defaultMarking string) string {
 	up, down := km.ScrollU.Keys(), km.ScrollD.Keys()
 	if len(up) == 1 && up[0] == "pgup" && len(down) == 1 && down[0] == "pgdown" {
-		return platform.ScrollKeysMarking()
+		return defaultMarking
 	}
 	return firstKey(km.ScrollU, "pgup") + "/" + firstKey(km.ScrollD, "pgdown")
 }

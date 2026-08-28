@@ -15,7 +15,7 @@ import (
 // stream is a no-op fake so resolveAsk's send command is harmless.
 func approvalModel(t *testing.T, ask pendingAsk) Model {
 	t.Helper()
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
@@ -63,7 +63,7 @@ func TestIsChildAsk(t *testing.T) {
 // TestPermissionAskMsgSetsOfferAlways: a main-agent ask (session-prefixed askID)
 // offers always-allow; a surfaced child ask does not.
 func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-abc"
 

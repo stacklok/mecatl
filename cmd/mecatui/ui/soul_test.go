@@ -24,7 +24,7 @@ func newSoulModel(t *testing.T, sf client.SoulFetcher, caps client.Capabilities)
 	recv := &fakeRecver{script: nil, gate: make(chan struct{})}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send, caps: caps}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Soul:        sf,

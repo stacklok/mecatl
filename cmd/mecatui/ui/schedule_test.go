@@ -124,7 +124,7 @@ func sampleSchedule(name string) client.Schedule {
 
 func newScheduleModel(t *testing.T, conv *fakeConv, fs *fakeScheduleLister, caps client.Capabilities) Model {
 	t.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Sched:       fs,
@@ -186,7 +186,7 @@ func TestRunScheduleOpensOverlay(t *testing.T) {
 // TestRunScheduleNilGuard: with no lister wired, openSchedule is a no-op.
 func TestRunScheduleNilGuard(t *testing.T) {
 	conv := newScheduleConv(client.Capabilities{})
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()),
 		Workspace: "/ws", Ctx: context.Background(), NoAltScreen: true,
 	})
@@ -602,7 +602,7 @@ func newScheduleModelWithTranscript(t *testing.T, conv *fakeConv, fs *fakeSchedu
 	if loader != nil {
 		deps.Transcript = loader
 	}
-	m := New(deps)
+	m := newTestModelFromDeps(deps)
 	m = applyAll(
 		m,
 		tea.WindowSizeMsg{Width: 100, Height: 40},

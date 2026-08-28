@@ -55,7 +55,7 @@ const scrollbackBlocks = 400
 // shapes). It returns the model ready to refreshView.
 func buildScrollbackModel(tb testing.TB) Model {
 	tb.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         context.Background(),
 		NoAltScreen: true,

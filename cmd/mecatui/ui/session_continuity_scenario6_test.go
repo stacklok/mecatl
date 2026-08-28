@@ -28,7 +28,7 @@ func startupSelection(id, state string) *client.ResumeSelection {
 
 func startupResumeUI(t *testing.T, conv *fakeConv, seed string, state string) Model {
 	t.Helper()
-	return New(Deps{
+	return newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: testTheme(), Ctx: t.Context(), Workspace: "/launch",
 		Resume: startupSelection("existing", state), InitialPrompt: seed,
 	})
@@ -141,7 +141,7 @@ func TestSessionContinuityUX_Scenario6_SeedAfterAdoption(t *testing.T) {
 
 func TestSessionContinuityUX_Scenario6_DefaultRemainsNew(t *testing.T) {
 	conv := &fakeConv{}
-	m := New(Deps{Session: conv, Conv: conv, Theme: testTheme(), Ctx: t.Context(), Workspace: "/launch"})
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: testTheme(), Ctx: t.Context(), Workspace: "/launch"})
 	runStartupCommands(m.Init())
 	if conv.createCount != 1 {
 		t.Fatalf("bare default CreateSession calls = %d, want 1", conv.createCount)

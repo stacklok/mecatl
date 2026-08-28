@@ -17,7 +17,7 @@ import (
 // planAskModel installs a PresentPlan ask through the normal reducer path.
 func planAskModel(t *testing.T, offerAlways bool) Model {
 	t.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         context.Background(),
 		NoAltScreen: true,
@@ -743,7 +743,7 @@ func planProceedModel(t *testing.T, offerAlways bool) (Model, *fakeConv, *fakeSe
 	}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: contRecv, send: send, recvers: []*fakeRecver{contRecv}}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Theme:       theme.New("aztec", theme.AztecPalette()),

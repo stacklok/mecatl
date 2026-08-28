@@ -18,10 +18,6 @@ import (
 // NO VS16; auto is "⚠ auto". The badge is sourced from caps.Posture (SessionReadyMsg),
 // NOT the per-session mode segment.
 func TestPostureBadgeShownForAutoYolo(t *testing.T) {
-	// Pin the no-emoji (bolt-less) yolo badge so the expectation is host-env-independent —
-	// a CI host advertising COLORTERM=truecolor would otherwise seed emojiOK and add the
-	// emoji bolt. The emoji variant has its own dedicated test.
-	t.Setenv("MECATUI_NO_EMOJI", "1")
 	cases := []struct {
 		posture   string
 		wantBadge string // "" = no badge
@@ -69,7 +65,6 @@ func TestPostureBadgeShownForAutoYolo(t *testing.T) {
 // substring (so a regression to the empty-fallback or muted style trips it) and confirms
 // the not-muted guard.
 func TestPostureBadgeCarriesWarningStyle(t *testing.T) {
-	t.Setenv("MECATUI_NO_EMOJI", "1") // bolt-less yolo pill (host-env-independent)
 	th := theme.New("aztec", theme.AztecPalette())
 	cases := []struct {
 		posture string
@@ -106,7 +101,6 @@ func TestPostureBadgeCarriesWarningStyle(t *testing.T) {
 // colour — the loudest posture must read loudest and identically across themes. It pins
 // the dangerPill's theme-independent alarm-red background + near-white foreground.
 func TestPostureBadgeYoloIsRedPill(t *testing.T) {
-	t.Setenv("MECATUI_NO_EMOJI", "1") // bolt-less yolo pill (host-env-independent)
 	th := theme.New("aztec", theme.AztecPalette())
 	m, _, _ := newTestModel(t, th)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30},
@@ -151,31 +145,25 @@ func TestPostureBadgeIsNotModeSegment(t *testing.T) {
 // emoji-presentation yolo badge ("⚡️ YOLO") from the width-stable text one ("⚡ YOLO").
 const vs16 = "️"
 
-// TestPostureBadgeEmojiVariant pins the new requirement (yolo badge uses an emoji when
-// the terminal supports it): MECATUI_FORCE_EMOJI → a PLAIN ⚡️ bolt (with VS16) rides
-// OUTSIDE the danger pill, the pill itself is the clean " YOLO " chip (no bolt inside);
-// MECATUI_NO_EMOJI → just the " YOLO " pill, NO bolt and NO VS16. The pill carries the
-// dangerPill style in both. The detection is seeded ONCE at New, so the env must be set
-// before newTestModel.
+// TestPostureBadgeEmojiVariant pins the yolo badge variants: an emoji-capable
+// model renders a PLAIN ⚡️ bolt (with VS16) OUTSIDE the danger pill; an incapable
+// model renders just the clean " YOLO " pill. The capability is injected before
+// New because detection is evaluated once at construction.
 func TestPostureBadgeEmojiVariant(t *testing.T) {
 	cases := []struct {
 		name     string
-		env      string // the override env key to set "1"
+		emojiOK  bool
 		wantBolt bool
 	}{
-		{"emoji forced", "MECATUI_FORCE_EMOJI", true},
-		{"emoji off", "MECATUI_NO_EMOJI", false},
+		{"emoji forced", true, true},
+		{"emoji off", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// The package TestMain pins MECATUI_NO_EMOJI=1; clear it here so this test
-			// drives the variant purely from tc.env (NO_EMOJI wins over FORCE, so the
-			// forced case must start from a non-opt-out baseline).
-			t.Setenv("MECATUI_NO_EMOJI", "")
-			t.Setenv("MECATUI_FORCE_EMOJI", "")
-			t.Setenv(tc.env, "1")
 			th := theme.New("aztec", theme.AztecPalette())
-			m, _, _ := newTestModel(t, th)
+			m, _, _ := newTestModel(t, th, func(deps *Deps) {
+				deps.emojiCapable = func() bool { return tc.emojiOK }
+			})
 			m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30},
 				client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{Posture: "yolo"}})
 
@@ -225,14 +213,16 @@ func TestPostureBadgeEmojiVariant(t *testing.T) {
 // (text, width-1) make the pill — and thus the +2-padded gap math — different widths.
 func TestYoloBadgeWithTailFitsOneRow(t *testing.T) {
 	cases := []struct {
-		name string
-		env  string // override env forced to "1"
+		name    string
+		emojiOK bool
 	}{
-		{"text glyph", "MECATUI_NO_EMOJI"},
-		{"emoji glyph", "MECATUI_FORCE_EMOJI"},
+		{"text glyph", false},
+		{"emoji glyph", true},
 	}
-	mkHeader := func(t *testing.T, th theme.Theme, posture string, w int) string {
-		m, _, _ := newTestModel(t, th)
+	mkHeader := func(t *testing.T, th theme.Theme, posture string, w int, emojiOK bool) string {
+		m, _, _ := newTestModel(t, th, func(deps *Deps) {
+			deps.emojiCapable = func() bool { return emojiOK }
+		})
 		m = applyAll(m, tea.WindowSizeMsg{Width: w, Height: 30},
 			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{Posture: posture}})
 		// A changed-files cue gives a non-empty right-aligned tail beside the badge.
@@ -242,15 +232,11 @@ func TestYoloBadgeWithTailFitsOneRow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Drive the variant purely from tc.env (the package TestMain pins NO_EMOJI).
-			t.Setenv("MECATUI_NO_EMOJI", "")
-			t.Setenv("MECATUI_FORCE_EMOJI", "")
-			t.Setenv(tc.env, "1")
 			th := theme.New("aztec", theme.AztecPalette())
 
 			for w := 60; w <= 120; w += 5 {
-				baseRows := lipgloss.Height(mkHeader(t, th, "strict", w)) // no badge
-				header := mkHeader(t, th, "yolo", w)                      // pill + tail
+				baseRows := lipgloss.Height(mkHeader(t, th, "strict", w, tc.emojiOK)) // no badge
+				header := mkHeader(t, th, "yolo", w, tc.emojiOK)                      // pill + tail
 				if rows := lipgloss.Height(header); rows != baseRows {
 					t.Errorf("%s width %d: yolo header is %d rows, want %d (the no-badge baseline) — the pill must not force an extra wrap", tc.name, w, rows, baseRows)
 				}

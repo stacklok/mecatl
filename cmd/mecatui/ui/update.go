@@ -1389,7 +1389,7 @@ func (m *Model) maybeKittyTransmit() tea.Cmd {
 	if m.phase != phaseIdle || !m.conv.isEmpty() || m.restartedThisRun {
 		return nil
 	}
-	if !welcome.KittyCapable() {
+	if !m.deps.kittyCapable() {
 		return nil
 	}
 	// Size the kitty footprint with the SAME (width, height) tier Splash uses, so the

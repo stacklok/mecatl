@@ -923,7 +923,7 @@ func TestAgentsInvOverlayHintsReflectKeyOverride(t *testing.T) {
 // post-picker status text, and nested help prose. All must read the same live keyMap.
 func TestAncillaryHintsReflectKeyOverride(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	m := New(Deps{Theme: th, KeyOverrides: overrideAll(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{Theme: th, KeyOverrides: overrideAll(), NoAltScreen: true})
 
 	t.Run("textarea placeholder", func(t *testing.T) {
 		got := m.ta.Placeholder

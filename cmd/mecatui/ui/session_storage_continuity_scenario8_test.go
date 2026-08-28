@@ -31,7 +31,7 @@ func (f *scenario8Adopter) AdoptSession(_ context.Context, id, _ string, binding
 }
 
 func scenario8Model(adopter client.SessionAdopter, row client.SessionListItem) Model {
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Adoption: adopter, Transcript: &fakeSessionTranscriptLoader{}, Theme: testTheme(),
 		Workspace: "/target", Ctx: context.Background(), NoAltScreen: true,
 	})
@@ -93,7 +93,7 @@ func (f *scenario8Maintenance) GetSessionCleanupJob(_ context.Context, id string
 }
 
 func maintenanceScenarioModel(fake *scenario8Maintenance) Model {
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Migration: fake, Cleanup: fake, Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true,
 	})
 	m.caps = client.Capabilities{StorageHealth: true, StorageMigration: true, StorageCleanup: true}

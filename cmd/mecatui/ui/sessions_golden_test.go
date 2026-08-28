@@ -17,7 +17,7 @@ func newSessionsGoldenModel(t *testing.T, sessions []client.SessionListItem) Mod
 	t.Helper()
 	conv := newSessionsConv()
 	loader := &fakeSessionTranscriptLoader{}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Sessions: &fakeSessionLister{sessions: sessions}, Transcript: loader,
 		Theme: theme.New("aztec", theme.AztecPalette()), Workspace: "/workspace",
 		Mode: "default", Model: "mock-model", Ctx: context.Background(), NoAltScreen: true,

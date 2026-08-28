@@ -29,7 +29,7 @@ func newClipboardModel(t *testing.T, caps client.Capabilities, cb client.Clipboa
 	t.Helper()
 	send := &fakeSender{}
 	conv := &fakeConv{recv: &fakeRecver{}, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Clipboard:   cb,
@@ -310,7 +310,7 @@ func TestSubmitMixedMentionAndClipboard(t *testing.T) {
 	ws := t.TempDir()
 	send := &fakeSender{}
 	conv := &fakeConv{recv: &fakeRecver{}, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Clipboard:   cb,

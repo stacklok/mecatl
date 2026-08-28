@@ -11,7 +11,7 @@ import (
 )
 
 func TestSurfaceApprovalMigration_Scenario1_DynamicSurfaceQueue(t *testing.T) {
-	m := New(Deps{Theme: debugTheme()})
+	m := newTestModelFromDeps(Deps{Theme: debugTheme()})
 	m.sessionID = "session-1"
 	m.phase = phaseRunning
 	m = applyAll(m,
@@ -80,7 +80,7 @@ func TestApprovalSurfaceCloseIsNoop(t *testing.T) {
 }
 
 func TestCloseModalSynchronizesSurfaceTokensWithoutLifecycleEffects(t *testing.T) {
-	m := New(Deps{Theme: debugTheme()})
+	m := newTestModelFromDeps(Deps{Theme: debugTheme()})
 	m.phase = phaseRunning
 	m.statusMsg = "unchanged"
 	m.modelCatalogRequestToken = 3
@@ -151,7 +151,7 @@ func TestApprovalSurfaceStateIsNotModelOwned(t *testing.T) {
 }
 
 func TestApprovalStateLookupCannotOpenSurface(t *testing.T) {
-	m := New(Deps{Theme: debugTheme()})
+	m := newTestModelFromDeps(Deps{Theme: debugTheme()})
 	if m.modal != nil {
 		t.Fatal("a new model must not have an approval surface")
 	}
@@ -168,7 +168,7 @@ func TestSurfaceApprovalMigration_Scenario2_VerdictTransportAndChildPolicy(t *te
 		t.Fatal("child ask must withhold Allow Always")
 	}
 
-	debug := New(Deps{Theme: debugTheme()})
+	debug := newTestModelFromDeps(Deps{Theme: debugTheme()})
 	debug.sessionID = "debug"
 	debug.phase = phaseIdle
 	debug = applyAll(debug, client.PermissionAskMsg{AskID: "debug:1:a", Tool: "Bash"})

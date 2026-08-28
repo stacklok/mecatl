@@ -73,7 +73,7 @@ func BenchmarkFooterMeterDegrade(b *testing.B) {
 // window source is chosen by the caller via resolvedSessionModel.ContextWindow.
 func buildFooterModel(tb testing.TB, window int64) Model {
 	tb.Helper()
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Theme:       benchTheme(),
 		Ctx:         context.Background(),
 		NoAltScreen: true,

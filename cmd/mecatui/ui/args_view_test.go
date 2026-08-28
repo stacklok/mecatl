@@ -32,7 +32,7 @@ var tallBashArgs = `{"command":"` + strings.Join(tallBashCommandLines(40), `\n`)
 // bashAskModel installs a Bash ask through the normal reducer path.
 func bashAskModel(t *testing.T, args string) Model {
 	t.Helper()
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
@@ -325,7 +325,7 @@ func TestArgsViewResizePreservesYOffset(t *testing.T) {
 // so only the hit-test path saw the offset. The render path must thread the
 // live offset so a scroll visibly re-renders the modal.
 func TestModalMiniViewportScrollRenders(t *testing.T) {
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 121, Height: 38})
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
@@ -350,7 +350,7 @@ func TestModalMiniViewportScrollRenders(t *testing.T) {
 // by the full args) — the body stays within the reserve + the region-budgeted
 // cap even though centerCard clamps the card to the region origin.
 func TestArgsViewTinyTerminalKeepsCardOnScreen(t *testing.T) {
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
@@ -403,7 +403,7 @@ func TestArgsViewFocusUnchanged(t *testing.T) {
 // driven via pressKey through the real Model update path (the KeyOverrides
 // wiring lands in New).
 func TestRawArgsReboundChordToggles(t *testing.T) {
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(),
 		KeyOverrides: map[string][]string{"RawArgs": {"ctrl+f20"}}})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-test-0001"

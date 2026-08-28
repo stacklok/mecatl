@@ -38,7 +38,7 @@ func newRawPaletteModel(t *testing.T, cmds client.Commander) Model {
 	recv := &fakeRecver{script: nil, gate: make(chan struct{})}
 	send := &fakeSender{}
 	conv := &fakeConv{recv: recv, send: send}
-	m := New(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
 		Cmds:        cmds,

@@ -273,7 +273,7 @@ func TestSpinnerRearmedOnEveryVisibleTransition(t *testing.T) {
 		// connect-phase animation: dropping its m.sp.Tick freezes the spinner from
 		// launch until the first submit.
 		conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-		m := New(Deps{
+		m := newTestModelFromDeps(Deps{
 			Session:     conv,
 			Conv:        conv,
 			Theme:       theme.New("aztec", theme.AztecPalette()),
@@ -293,7 +293,7 @@ func TestSpinnerRearmedOnEveryVisibleTransition(t *testing.T) {
 		// Launch → connecting, no-lister / old-server Init branch (direct
 		// CreateSession). Same sole-starter argument as the lister-wired branch.
 		conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
-		m := New(Deps{
+		m := newTestModelFromDeps(Deps{
 			Session:     conv,
 			Conv:        conv,
 			Theme:       theme.New("aztec", theme.AztecPalette()),

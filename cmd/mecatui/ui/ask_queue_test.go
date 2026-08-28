@@ -400,7 +400,7 @@ func TestConcurrentAsksWireRoundTrip(t *testing.T) {
 	ch := make(chan tea.Msg, 1)
 	go st.ReadLoop(context.Background(), ch)
 
-	m := New(Deps{Theme: aztec(), Ctx: context.Background()})
+	m := newTestModelFromDeps(Deps{Theme: aztec(), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-test-0001"
 	m.stream = st

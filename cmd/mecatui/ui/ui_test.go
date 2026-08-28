@@ -213,7 +213,7 @@ func preApprovalScript() []*mecatlv1.ConverseResponse {
 // sent, so the approval drives the post-approval tail (mirrors mecademo). Alt
 // screen is disabled so direct View() snapshots are clean. Used by the synchronous
 // golden/render tests (driveTo, TestRenderStripsServerEscapes).
-func newTestModel(t *testing.T, th theme.Theme) (Model, *fakeRecver, *fakeSender) {
+func newTestModel(t *testing.T, th theme.Theme, tweak ...func(*Deps)) (Model, *fakeRecver, *fakeSender) {
 	t.Helper()
 	recv := &fakeRecver{script: preApprovalScript(), gateType: "permission.ask", gate: make(chan struct{})}
 	send := &fakeSender{}
@@ -223,17 +223,24 @@ func newTestModel(t *testing.T, th theme.Theme) (Model, *fakeRecver, *fakeSender
 		}
 	}
 	conv := &fakeConv{recv: recv, send: send}
-	m := New(Deps{
-		Session:     conv,
-		Conv:        conv,
-		Theme:       th,
-		Server:      "127.0.0.1:8080",
-		Workspace:   "/workspace",
-		Mode:        "default",
-		Model:       "mock-model",
-		Ctx:         context.Background(),
-		NoAltScreen: true,
-	})
+	deps := Deps{
+		Session:           conv,
+		Conv:              conv,
+		Theme:             th,
+		Server:            "127.0.0.1:8080",
+		Workspace:         "/workspace",
+		Mode:              "default",
+		Model:             "mock-model",
+		Ctx:               context.Background(),
+		NoAltScreen:       true,
+		emojiCapable:      func() bool { return false },
+		kittyCapable:      func() bool { return false },
+		scrollKeysMarking: func() string { return "pgup/pgdn" },
+	}
+	for _, fn := range tweak {
+		fn(&deps)
+	}
+	m := newTestModelFromDeps(deps)
 	return m, recv, send
 }
 
@@ -274,21 +281,24 @@ func newProgramModel(t *testing.T, th theme.Theme, script []*mecatlv1.ConverseRe
 	conv := &fakeConv{recv: recv, send: send, sessionReady: make(chan struct{})}
 	prog := newProgress()
 	deps := Deps{
-		Session:     conv,
-		Conv:        conv,
-		Theme:       th,
-		Server:      "127.0.0.1:8080",
-		Workspace:   "/workspace",
-		Mode:        "default",
-		Model:       "mock-model",
-		Ctx:         context.Background(),
-		NoAltScreen: true,
-		onPhase:     prog.record,
+		Session:           conv,
+		Conv:              conv,
+		Theme:             th,
+		Server:            "127.0.0.1:8080",
+		Workspace:         "/workspace",
+		Mode:              "default",
+		Model:             "mock-model",
+		Ctx:               context.Background(),
+		NoAltScreen:       true,
+		emojiCapable:      func() bool { return false },
+		kittyCapable:      func() bool { return false },
+		scrollKeysMarking: func() string { return "pgup/pgdn" },
+		onPhase:           prog.record,
 	}
 	for _, fn := range tweak {
 		fn(&deps)
 	}
-	return programDeps{recv: recv, send: send, conv: conv, prog: prog, model: New(deps)}
+	return programDeps{recv: recv, send: send, conv: conv, prog: prog, model: newTestModelFromDeps(deps)}
 }
 
 // TestFullCycleProgram drives the whole three-act scenario through the real
@@ -623,17 +633,20 @@ func TestQueuedPromptAutoSendsProgram(t *testing.T) {
 	send := &fakeSender{}
 	conv := &fakeConv{recv: run1, send: send, recvers: []*fakeRecver{run1, run2}, sessionReady: make(chan struct{})}
 	prog := newProgress()
-	model := New(Deps{
-		Session:     conv,
-		Conv:        conv,
-		Theme:       th,
-		Server:      "127.0.0.1:8080",
-		Workspace:   "/workspace",
-		Mode:        "default",
-		Model:       "mock-model",
-		Ctx:         context.Background(),
-		NoAltScreen: true,
-		onPhase:     prog.record,
+	model := newTestModelFromDeps(Deps{
+		Session:           conv,
+		Conv:              conv,
+		Theme:             th,
+		Server:            "127.0.0.1:8080",
+		Workspace:         "/workspace",
+		Mode:              "default",
+		Model:             "mock-model",
+		Ctx:               context.Background(),
+		NoAltScreen:       true,
+		emojiCapable:      func() bool { return false },
+		kittyCapable:      func() bool { return false },
+		scrollKeysMarking: func() string { return "pgup/pgdn" },
+		onPhase:           prog.record,
 	})
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(100, 30))
 

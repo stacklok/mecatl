@@ -52,7 +52,7 @@ func (*hitDispatchSurface) Close()                                        {}
 
 func hitDispatchModel(t *testing.T) (Model, *hitDispatchSurface) {
 	t.Helper()
-	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m.deps.NoAltScreen = false
 	m.width, m.height = 80, 24
 	m.vp.SetHeight(18)
