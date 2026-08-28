@@ -2508,7 +2508,7 @@ func TestDoubleClickIdentitySnapshotSurvivesRefresh(t *testing.T) {
 
 // TestMouseDebugOverlay covers the gated MECATUI_DEBUG_MOUSE diagnostic: with
 // DebugMouse on, a mouse press sets m.mouseDebug to the formatted line (raw coords +
-// content mapping) and the footer surfaces it (highest priority — over the phase
+// content and input mapping) and the footer surfaces it (highest priority — over the phase
 // arms). With DebugMouse off, no press sets it and the footer shows the normal
 // status. Default OFF, zero cost when unset.
 func TestMouseDebugOverlay(t *testing.T) {
@@ -2528,7 +2528,7 @@ func TestMouseDebugOverlay(t *testing.T) {
 	m2.deps.DebugMouse = true
 	mo := tea.Mouse{X: 7, Y: convTopRow(m2) + 1}
 	line := m2.mouseDebugLine(mo)
-	for _, want := range []string{"MOUSE raw x=7", "y=", "top=", "yoff=", "vph=", "map ok="} {
+	for _, want := range []string{"MOUSE raw x=7", "y=", "top=", "yoff=", "vph=", "map ok=", "input ok="} {
 		if !strings.Contains(line, want) {
 			t.Errorf("mouseDebugLine = %q, missing %q", line, want)
 		}

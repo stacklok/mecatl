@@ -3325,8 +3325,72 @@ func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // between the raw y and the mapped L. Pure read; no mutation.
 func (m Model) mouseDebugLine(mo tea.Mouse) string {
 	line, col, ok := screenToContent(m, mo.X, mo.Y)
-	return fmt.Sprintf("MOUSE raw x=%d y=%d | top=%d yoff=%d vph=%d | map ok=%v L%d C%d",
-		mo.X, mo.Y, convTopRow(m), m.vp.YOffset(), m.vp.Height(), ok, line, col)
+	input, inputOK := inputRegionRect(m)
+	return fmt.Sprintf("MOUSE raw x=%d y=%d | top=%d yoff=%d vph=%d | map ok=%v L%d C%d | input ok=%v [%d,%d)x[%d,%d)",
+		mo.X, mo.Y, convTopRow(m), m.vp.YOffset(), m.vp.Height(), ok, line, col,
+		inputOK && input.contains(mo.X, mo.Y), input.x0, input.x1, input.y0, input.y1)
+}
+
+// inputRegionRect returns the text-bearing cells of the prompt textarea. Its vertical
+// placement comes from chrome(), the same layout source View and relayout use; its
+// horizontal inset comes from the rail style that onResize uses to size the textarea.
+func inputRegionRect(m Model) (cellRect, bool) {
+	if m.width <= 0 || m.height <= 0 {
+		return cellRect{}, false
+	}
+	_, below := m.chrome()
+	y := m.height - sumHeight(below)
+	for _, r := range below {
+		if r.role == regionInput {
+			rail := inputRailStyle(m.deps.Theme, m.inputMode())
+			x := rail.GetBorderLeftSize() + rail.GetPaddingLeft()
+			return cellRect{x0: x, x1: x + m.ta.Width(), y0: y + inputRailPadTop, y1: y + inputRailPadTop + m.ta.Height()}, true
+		}
+		y += r.height()
+	}
+	return cellRect{}, false
+}
+
+// positionTextareaCaret maps a prompt-text cell to the textarea cursor. The textarea
+// exposes movement and LineInfo but not its soft-wrap grid, so walking with CursorDown
+// deliberately delegates wrapping (including its trailing-space reservation) to bubbles.
+func (m Model) positionTextareaCaret(rect cellRect, mo tea.Mouse) (tea.Model, tea.Cmd) {
+	visualRow := m.ta.ScrollYOffset() + mo.Y - rect.y0
+	m.ta.MoveToBegin()
+	for range visualRow {
+		line, col := m.ta.Line(), m.ta.Column()
+		m.ta.CursorDown()
+		if m.ta.Line() == line && m.ta.Column() == col {
+			break
+		}
+	}
+
+	info := m.ta.LineInfo()
+	targetX := mo.X - rect.x0
+	m.ta.SetCursorColumn(info.StartColumn)
+	for col := info.StartColumn; col < info.StartColumn+info.Width; col++ {
+		m.ta.SetCursorColumn(col + 1)
+		next := m.ta.LineInfo()
+		if next.RowOffset != info.RowOffset || next.CharOffset > targetX {
+			m.ta.SetCursorColumn(col)
+			break
+		}
+	}
+	return m, m.ta.Focus()
+}
+
+// onTextareaMousePress handles a prompt click before the conversation-selection path.
+// Input clicks are accepted only in the same idle/running posture that accepts paste.
+func (m Model) onTextareaMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
+	if !m.pasteGateOpen() || !mouseCaptureEnabled(m) {
+		return m, nil, false
+	}
+	rect, ok := inputRegionRect(m)
+	if !ok || !rect.contains(mo.X, mo.Y) {
+		return m, nil, false
+	}
+	mm, cmd := m.positionTextareaCaret(rect, mo)
+	return mm, cmd, true
 }
 
 // onModalMousePress handles generic rendered-frame hits before the legacy
@@ -3375,6 +3439,9 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		return m, m.primaryPasteCmd()
 	case tea.MouseLeft:
 		if mm, cmd, handled := m.onModalMousePress(mo); handled {
+			return mm, cmd
+		}
+		if mm, cmd, handled := m.onTextareaMousePress(mo); handled {
 			return mm, cmd
 		}
 		// The selectable gate AND the count logic sit here, AFTER the gate: a press

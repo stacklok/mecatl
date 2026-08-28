@@ -61,6 +61,6 @@ Action names are exact. Global actions need a modified or special chord so norma
 
 ### Input editing caveat
 
-The prompt textarea has its own editing keys and they are not remappable through `--keymap`. For example, `ctrl+b`/`ctrl+f` move by character, `ctrl+w` deletes a word, and `ctrl+u`/`ctrl+k` kill to the start/end of a line. Some defaults intentionally take precedence: `ctrl+a` opens Agents, `ctrl+e` opens Effort, `ctrl+t` expands details, and `ctrl+v` handles paste. Remapping an action away frees its chord for the textarea.
+The prompt textarea has its own editing keys and they are not remappable through `--keymap`. For example, `ctrl+b`/`ctrl+f` move by character, `ctrl+w` deletes a word, and `ctrl+u`/`ctrl+k` kill to the start/end of a line. On the alternate screen, clicking prompt text also places the caret; mouse selection/copy within the prompt is not supported yet. Some defaults intentionally take precedence: `ctrl+a` opens Agents, `ctrl+e` opens Effort, `ctrl+t` expands details, and `ctrl+v` handles paste. Remapping an action away frees its chord for the textarea.
 
 For every action name, editing chord, overlay key, mouse behavior, and validation rule, see the [exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).

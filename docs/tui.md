@@ -909,6 +909,7 @@ show the plain prompt-hint card.
 | `pgup` / `pgdn` | scroll the conversation up / down |
 | `home` / `end` | jump to the top / bottom of the conversation (`end` resumes auto-follow) |
 | mouse wheel | scroll the conversation (**alt screen only**; see below) |
+| mouse click (prompt text) | move the prompt caret to that cell (**alt screen only**; prompt drag-selection/copy is not supported yet) |
 | mouse drag (left) | **select text** in the conversation — drag to an edge auto-scrolls; copies on release (alt screen only; see below) |
 | double / triple-click (left) | select word / whole line (copies; alt screen only) |
 | right-click | copy the current selection (if any) |
@@ -1524,6 +1525,12 @@ The **mouse wheel** is only active on the alternate screen (the default full-scr
 TUI). With `--inline` / `--no-alt-screen` the terminal's own scrollback and native
 selection are left untouched (no mouse capture).
 
+**Prompt caret placement (alt screen).** Click directly on prompt text to move the
+caret to that cell; a click past a line's end lands at its end. The mapping follows
+the textarea's own soft-wrap and scroll state. This is caret placement only:
+mouse drag-selection, copy, and type-over replacement in the prompt are not supported
+yet. Conversation selection remains separate and unchanged.
+
 **In-app text selection + copy (alt screen).** On the alt screen the app captures
 the mouse, so it provides its **own** text selection: **left-click-drag** over the
 conversation highlights the runes under the drag (press = anchor, drag = extend,
@@ -1603,8 +1610,8 @@ likewise leaves the mouse uncaptured.)
 off (a highlight on the wrong line, a click that lands a row away), set
 **`MECATUI_DEBUG_MOUSE=1`**: the footer-left is overridden during a press/drag with a
 live diagnostic — the raw mouse cell, the layout offsets (`top` = conversation top
-row, `yoff`, viewport height), and the `screenToContent` mapping (`ok`, logical
-`L`/`C`). It is off by default (zero cost when unset).
+row, `yoff`, viewport height), the `screenToContent` mapping (`ok`, logical `L`/`C`),
+and the prompt-text hit bounds. It is off by default (zero cost when unset).
 
 ### Type-while-running and queued follow-ups
 
