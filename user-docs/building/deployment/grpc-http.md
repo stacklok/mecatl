@@ -27,7 +27,18 @@ additive `manual_compaction` capability before offering it. The server decides w
 optional features are available and returns a capability snapshot when it creates a
 session. Authenticated callers may also use gRPC `GetServerInfo` or HTTP `GET
 /v1/info` to obtain the server build identity and sanitized diagnostic display
-endpoint projections; these are not connection configuration or instructions. See the detailed gRPC and HTTP
+endpoint projections; these are not connection configuration or instructions.
+
+Authenticated callers may also use gRPC `GetCompatibilityInfo` or HTTP `GET
+/v1/compatibility` to read the deployment's compatibility descriptor — the API
+major, the operator-enabled capability set, the build's feature identifiers, and
+an optional deployment label — without creating a session first. That is a
+separate endpoint from `GetServerInfo` / `GET /v1/info` above on purpose: the
+latter answers *which build is this?* and is bound by a privacy contract that
+keeps capabilities and configuration out of its response, while this one is
+exactly that negotiation data. A client wanting both makes both calls.
+
+See the detailed gRPC and HTTP
 references for their request, response, privacy, and compatibility contracts.
 
 ## The common lifecycle

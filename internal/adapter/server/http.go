@@ -47,6 +47,7 @@ type HTTPHandler struct {
 func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h := &HTTPHandler{svc: svc, mux: http.NewServeMux()}
 	h.mux.HandleFunc("GET /v1/info", h.getServerInfo)
+	h.mux.HandleFunc("GET /v1/compatibility", h.getCompatibilityInfo)
 	h.mux.HandleFunc("POST /v1/sessions", h.createSession)
 	h.mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
 	h.mux.HandleFunc("GET /v1/sessions/{id}/transcript", h.getSessionTranscript)
@@ -1507,6 +1508,18 @@ func (h *HTTPHandler) getMcpPrompt(w http.ResponseWriter, r *http.Request) {
 		msgs = append(msgs, toProtoMcpPromptMessage(m))
 	}
 	writeJSON(w, http.StatusOK, &mecatlv1.GetMcpPromptResponse{Description: res.Description, Messages: msgs})
+}
+
+// getCompatibilityInfo handles GET /v1/compatibility.
+//
+// It reads the SAME Service.CompatibilityInfo projection the gRPC handler does,
+// so the two transports cannot disagree about what this server permits — the
+// transport parity the SDK's normalized surface depends on. See ADR 0248.
+//
+// GET /v1/info is the sibling route for build identity (ADR 0245); the two are
+// deliberately separate resources rather than one overloaded document.
+func (h *HTTPHandler) getCompatibilityInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.svc.CompatibilityInfo(r.Context()))
 }
 
 // listMcpSources handles GET /v1/mcp/sources.

@@ -456,6 +456,9 @@ type config struct {
 	// settings.yaml posture: key raises it). The resolved tier is reported by the
 	// structured `operator posture` startup diagnostic emitted by app.Build.
 	posture string
+	// deploymentID is the operator-set opaque label surfaced on GetServerInfo
+	// (ADR 0248). Sanitised by sanitizeDeploymentID before it reaches app.Config.
+	deploymentID string
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
@@ -1152,6 +1155,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// YAML-only allow-all tier cannot escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
+		DeploymentID:   cfg.deploymentID,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
@@ -1238,6 +1242,7 @@ func posturePreCheckConfig(cfg config, diag port.Diagnostics) app.Config {
 		PermissionConfigs:       cfg.permissionConfigs,
 		Posture:                 app.ParsePosture(cfg.posture),
 		PostureFlagSet:          cfg.postureFlagSet,
+		DeploymentID:            cfg.deploymentID,
 		AllowAllTools:           cfg.allowAllTools,
 		TrustProject:            cfg.trustProject,
 		Headless:                cfg.headless,
@@ -1389,6 +1394,9 @@ func validateWorkspaceAuthority(cfg config) error {
 // non-finite (NaN/Inf) values are rejected (review fix #5).
 func validateEffectiveConfig(cfg config) error {
 	if err := validateWorkspaceAuthority(cfg); err != nil {
+		return err
+	}
+	if err := validateDeploymentID(cfg.deploymentID); err != nil {
 		return err
 	}
 	// --perf-mcp rides the admin listener, so it is meaningless without one.
@@ -1603,6 +1611,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		"ALIAS for --posture yolo (dangerous): allow-all server-wide AND loosen the substitution floor for CHILDREN too — a subagent's $()/backtick/heredoc command AUTO-RUNS (child prompt-injection defense OFF). A Deny in ANY scope and any DELIBERATELY configured Ask still apply (see docs/adr/0022-allow-all-posture.md). Isolated/ephemeral/single-tenant ONLY. Refused when running as root (euid 0) unless MECATL_SANDBOX=1 (or IS_SANDBOX=1) declares an isolated environment.")
 	fs.StringVar(&cfg.posture, "posture", "",
 		"OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate; trusted honours a project's ALLOW rules (= --trust-project); auto adds allow-all + main substitution loosening (recommended UNATTENDED default, child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in CHILDREN (injection-defense OFF, isolated single-tenant only). --yolo/--trust-project are aliases. auto/yolo are refused as root outside MECATL_SANDBOX. An unknown value fails closed to strict with a WARN.")
+
+	fs.StringVar(&cfg.deploymentID, "deployment-id", "",
+		fmt.Sprintf("OPTIONAL opaque label for this deployment, echoed on GetCompatibilityInfo so a client can tell one mecated from another (ADR 0248). Empty by default and NEVER inferred: mecatl will not derive it from hostname, pod name, or environment, because a label you did not choose leaks infrastructure topology to every authenticated caller. Printable single-line text only, max %d bytes; a longer or non-printable value is rejected at startup.", maxDeploymentIDLen))
 
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider's own default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only, so xhigh/max are clamped down to high (with a WARN); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key if present). A per-session CreateSession reasoning_effort out-ranks this default. A model with no reasoning support drops it. Operator-tier only; a project-tier reasoning-effort: key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")

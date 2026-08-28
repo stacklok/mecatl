@@ -946,6 +946,22 @@ func (h *HarnessServer) GetMcpPrompt(ctx context.Context, req *mecatlv1.GetMcpPr
 	return &mecatlv1.GetMcpPromptResponse{Description: res.Description, Messages: msgs}, nil
 }
 
+// GetCompatibilityInfo returns the deployment's compatibility descriptor
+// (ADR 0248).
+//
+// Distinct from GetServerInfo above, which answers "which BUILD is this?" under
+// ADR 0245's privacy boundary. This answers "what may I do with this server?"
+// and carries exactly the capabilities/configuration that boundary keeps out of
+// the identity response.
+//
+// It is authenticated like every other RPC, which keeps UNAUTHENTICATED and
+// UNIMPLEMENTED distinguishable at the client: the SDK treats UNIMPLEMENTED as
+// "below the compatibility floor" and fails loudly, so an auth failure must not
+// be able to masquerade as one.
+func (h *HarnessServer) GetCompatibilityInfo(ctx context.Context, _ *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+	return h.svc.CompatibilityInfo(ctx), nil
+}
+
 // ListMcpSources returns the resolved MCP source inventory snapshot.
 func (h *HarnessServer) ListMcpSources(ctx context.Context, _ *mecatlv1.ListMcpSourcesRequest) (*mecatlv1.ListMcpSourcesResponse, error) {
 	infos := h.svc.ListMcpSources(ctx)

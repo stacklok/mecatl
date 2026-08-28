@@ -414,6 +414,13 @@ type Config struct {
 	// Empty (the zero value / an unconfigured child service) yields no badge. String
 	// passthrough — no enum on the wire (the EvNoProgress/StopBudget discipline).
 	Posture string
+	// DeploymentID is an optional, opaque, operator-set label for this deployment,
+	// surfaced on GetServerInfo. It is empty by default and is NEVER derived from
+	// hostname, pod name, or environment: infrastructure topology is not something
+	// an authenticated caller is owed, and a label the operator did not choose is a
+	// leak with no consenting author. Bounded and validated at the composition
+	// root (mecated --deployment-id), not here. See ADR 0248.
+	DeploymentID string
 
 	// DefaultResolvedModel is the EFFECTIVE provider+model the DEFAULT/shared engine
 	// resolved to (the registry default provider + cfg.Model + the default context
@@ -2043,6 +2050,32 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// Manual compaction uses the configured engine, or a per-session engine
 		// derived under the same service construction semantics.
 		ManualCompaction: s.cfg.Engine != nil,
+	}
+}
+
+// CompatibilityInfo returns the deployment's compatibility descriptor (ADR 0248): the
+// API major, the operator-enabled capabilities, the build's supported feature
+// identifiers, and the optional build/deployment labels.
+//
+// It exists so a client can answer "what is this server?" WITHOUT creating a
+// probe session — ServerCapabilities otherwise rides CreateSessionResponse only,
+// so discovery cost a session that then had to be cleaned up.
+//
+// The capabilities half REUSES s.capabilities() rather than recomputing a
+// parallel projection. That is the load-bearing part: a second projection would
+// drift from the CreateSession echo, and a client comparing the two would see a
+// server contradicting itself about its own configuration.
+//
+// The two vocabularies stay SEPARATE by design. capabilities answers "what has
+// this operator enabled?" and changes with operator config; features answers
+// "what does this build implement?" and changes on upgrade. Folding one into the
+// other makes a --no-bash deployment indistinguishable from version skew.
+func (s *Service) CompatibilityInfo(context.Context) *mecatlv1.GetCompatibilityInfoResponse {
+	return &mecatlv1.GetCompatibilityInfoResponse{
+		ApiMajor:     APIMajor,
+		Capabilities: s.capabilities(),
+		Features:     serverFeatures(),
+		Deployment:   s.cfg.DeploymentID,
 	}
 }
 
