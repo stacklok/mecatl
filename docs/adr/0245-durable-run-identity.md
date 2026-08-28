@@ -39,9 +39,13 @@ is already exactly what a run id must satisfy:
 Nothing in `internal/` or `cmd/` supplies it today. It is an unused socket, specified in
 terms of a run id that does not yet exist.
 
-There is also a precedent for the *stamping* half. `session.Event.Actor` ([ADR 0204](./0204-caller-identity-threading.md))
-is documented as "LOG-ONLY and DERIVE-AT-APPEND: every emit site — the loop included —
-leaves it nil … and the server relay's single `appendEvent` chokepoint stamps it".
+The *stamping* half looked at first like `session.Event.Actor`
+([ADR 0204](./0204-caller-identity-threading.md)), documented as "LOG-ONLY and
+DERIVE-AT-APPEND: every emit site — the loop included — leaves it nil … and the server
+relay's single `appendEvent` chokepoint stamps it". Following that shape was the initial
+plan, and it does not work here: `Actor` is log-only, so persistence has the single
+chokepoint it needs, whereas a run id must also reach the client wire, which never passes
+through `appendEvent`. Decision 4 below records where that leads and why.
 
 ## Decision
 
@@ -50,10 +54,12 @@ colon-free — the askID grammar is `<sessionID>:<n>:<callID>:<discriminator>`, 
 are structurally forbidden and a colon-bearing value is already specified to be ignored
 with a WARN.
 
-**2. It is fed into the existing `RunRequest.AskIDDiscriminator`.** No new `RunRequest`
-field. This closes [ADR 0044](./0044-host-supplied-askid-discriminator.md)'s dangling
-seam rather than introducing a second identifier with an overlapping uniqueness contract
-and no stated relationship to the first.
+**2. It reaches the engine as a new `RunRequest.RunID` field**, and the engine derives
+the ask discriminator from it when `AskIDDiscriminator` is empty. The host therefore sets
+**one** field, and [ADR 0044](./0044-host-supplied-askid-discriminator.md)'s "a durable
+host (e.g. a downstream consumer) passes its own RunID" is satisfied literally rather
+than by coincidence. `AskIDDiscriminator` is retained for compatibility and gains no
+second writer.
 
 **3. It is persisted on the session snapshot** as `sessnap.Snapshot.RunID`
 (`omitempty`, additive, no format-tag bump — the `Profile`/`ProviderID`/`Usage`
@@ -61,10 +67,31 @@ precedent). This is what makes awaiting-resume *the same run*: the resume path *
 the persisted id rather than minting a new one**, which is how ADR 0044's "stable across
 processes for the same attempt" obligation is discharged mechanically instead of assumed.
 
-**4. It is stamped onto `session.Event.RunID` at the single relay chokepoint,**
-`Actor`-style. The loop leaves it zero and `eventsource.Fold` ignores it. The loop gains
-no knowledge of run identity, because every consumer — SDK first-event resolution, watch
-envelopes, run filtering, `expected_run_id` — sits at or above the relay.
+**4. The LOOP stamps `session.Event.RunID`, at `Run.emit`/`emitOrAbort`.**
+`eventsource.Fold` ignores it, as it does `Actor`.
+
+This is the one place this ADR departs from the `Actor` precedent that otherwise shapes
+it, and the departure is deliberate on two independent grounds.
+
+*Mechanically, the relay chokepoint does not exist.* `Actor` can be stamped inside
+`appendEvent` because it is **log-only** — persistence genuinely has a single chokepoint.
+`RunID` must also reach the **client wire** (the SDK resolves a started run on the first
+run-ID-bearing event, and the watch layer filters envelopes by run), and the wire path
+never passes through `appendEvent`. `Service.relayEvent` is not a substitute: it takes
+`session.Event` **by value**, so it cannot mutate the copy its caller hands to `toProto`,
+and five further `recorder.Observe` sites bypass it entirely. Stamping "at the relay"
+means stamping at roughly nine sites by hand — the per-surface drift class
+[`AGENTS.md`](../../AGENTS.md) records as having already fired three times.
+
+*Semantically, the exclusion argument does not transfer.* `Actor` stays out of the loop
+because the loop "knows nothing about principals" — a real domain boundary. A run id is
+not external metadata: the run is the **loop's own concept**, and the loop already labels
+every event it emits with run-scoped identity (`ev.Seq = r.seq.Add(1)`, at exactly the
+two sites in question). `RunID` belongs on the next line. The loop learns nothing about
+storage, transport, or callers; it learns the name of the thing it already is.
+
+A host that supplies no `RunID` emits events with an empty one, byte-identical to the
+behaviour before this ADR.
 
 **5. Each run-entry seam mints or reuses exactly one id:**
 
@@ -115,14 +142,21 @@ current bug. Multi-client and reconnecting-client scenarios become expressible. 
   session, and that a session whose only log content is `schedule.*` events yields
   `NoRunsError` from `attach()` while `activity()` succeeds. That asymmetry is deliberate
   and will look like an inconsistency to anyone who has not read this ADR.
-- **Engine public API grows.** `session.Event.RunID`, an aggregate accessor and mutator,
-  and `sessnap.Snapshot.RunID`. All **Added = minor** under
-  [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md), requiring `task api:update`
-  and a changelog entry.
-- **Reusing `AskIDDiscriminator` couples two concepts by construction.** If a future
-  requirement needs an ask discriminator that is *not* the run id, this decision has to
-  be unwound. We judge that unlikely enough — the ADR 0044 contract already describes the
-  discriminator in terms of a run id — to prefer one identifier over two.
+- **Engine public API grows.** `session.Event.RunID`, `agent.RunRequest.RunID`, an
+  aggregate accessor and mutator, and `sessnap.Snapshot.RunID`. All **Added = minor**
+  under [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md), requiring
+  `task api:update` and a changelog entry.
+- **The loop now carries a run identifier it did not previously have.** That is a real
+  widening of what `engine/agent` knows, and it is the cost of decision 4. The bound we
+  accept is narrow: the loop may STAMP the id and DERIVE the ask discriminator from it,
+  and nothing else. It must never branch on it, log it, send it to a provider, or use it
+  to reach storage — the moment it does, the storage-agnostic posture is gone and this
+  decision was the door.
+- **Two derived values now share one source.** `Event.RunID` and the ask discriminator
+  both come from `RunRequest.RunID`. If a future requirement needs an ask discriminator
+  that is *not* the run id, `AskIDDiscriminator` is still there to set explicitly — the
+  derivation only applies when it is empty — so the coupling is a default, not a
+  constraint.
 - **A legacy snapshot has no `RunID`.** It restores empty; the next run stamps one. There
   is no migration sweep, matching the `Profile`/`ProviderID` precedent.
 

@@ -106,17 +106,17 @@ The local-development browser path. Production remains a same-origin BFF.
 A stable, opaque, host-minted handle for one run, persisted across restart. See [ADR-0245](../adr/0245-durable-run-identity.md).
 
 **Work:**
-- `engine/session`: `Event.RunID`; the aggregate accessor/mutator. `engine/adapter/sessnap`: `Snapshot.RunID` (`omitempty`).
-- `internal/adapter/server`: minting in `StartRunContent`, reuse in `resumeFromAwaiting` and `ApprovePlan`, relay stamping at the append chokepoint, the closed run-less set.
+- `engine/session`: `Event.RunID`; the aggregate accessor/mutator. `engine/agent`: `RunRequest.RunID` + the `Run.emit`/`emitOrAbort` stamp + ask-discriminator derivation. `engine/adapter/sessnap`: `Snapshot.RunID` (`omitempty`).
+- `internal/adapter/server`: minting in `StartRunContent`, reuse in `resumeFromAwaiting` and `ApprovePlan`, the closed run-less set.
 - `engine/api/*.txt` + `engine/CHANGELOG.md`: Added/minor entries.
 
 **Acceptance:**
 - AC4.1: Every event of a run reaching the relay carries the same non-empty `RunID`; two consecutive runs of one session carry different ones.
   - verify: `TestSDKServerEnablers_Scenario4_EveryRunEventCarriesOneID`
-- AC4.2: The run id is supplied to the engine as `RunRequest.AskIDDiscriminator`, so askIDs minted during the run embed it and are reconstructable across processes.
+- AC4.2: The run id is supplied to the engine as `RunRequest.RunID`, and the engine derives the ask discriminator from it when `AskIDDiscriminator` is empty — so askIDs minted during the run embed it and are reconstructable across processes, from ONE host-set field.
   - verify: `TestADR_0245_RunIDIsTheAskDiscriminator`
-- AC4.3: The loop never stamps `RunID` — every emit site leaves it zero and the relay chokepoint is the only writer, mirroring `Event.Actor`.
-  - verify: `TestADR_0245_LoopNeverStampsRunID`
+- AC4.3: Every event a run emits carries the run id, stamped by the loop at `Run.emit`/`emitOrAbort` beside the existing `Seq` stamp — so no relay, transport, or persistence path can omit it. A run with no supplied id emits an empty one, byte-identical to prior behaviour.
+  - verify: `TestADR_0245_LoopStampsEveryEmittedEvent`
 - AC4.4: A session parked `awaiting` across a process restart resumes as **the same run** — the resume path reuses the persisted id and mints nothing.
   - verify: `TestADR_0245_AwaitingResumeKeepsRunID`
 - AC4.5: `ApprovePlan` reuses the id for the resumed run and mints a distinct one for the continuation run.
