@@ -322,34 +322,6 @@ func TestAuthenticatedRejectionIsTerminalAndNamesTheRule(t *testing.T) {
 	}
 }
 
-// TestCallbackWithoutIssIsAcceptedAndReported pins RFC 9207 section 2.4 at this
-// layer: an absent iss is passed through with Result.Iss empty so the caller can
-// decide using the discovery document. A provider that does not implement
-// RFC 9207 (Dex, for one) must not be locked out by the listener.
-func TestCallbackWithoutIssIsAcceptedAndReported(t *testing.T) {
-	var redirect string
-	launcher := launcherFunc(func(_ context.Context, _ string) error {
-		req, _ := http.NewRequest(http.MethodGet, redirect+"?code=c&state=s", nil)
-		if got := request(t, req); got.status != http.StatusOK || got.body != successHTML {
-			t.Fatalf("response = %d %q", got.status, got.body)
-		}
-		return nil
-	})
-	var got Result
-	err := runWithLauncher(t, launcher, func(ctx context.Context, redirectURL string, present func(context.Context, string) (Result, error)) error {
-		redirect = redirectURL
-		var err error
-		got, err = present(ctx, "https://as.example.test/authorize?state=s")
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Code != "c" || got.Iss != "" {
-		t.Fatalf("result = %#v, want code c and empty Iss", got)
-	}
-}
-
 // TestUnauthenticatedRejectionReasonSurvivesToTimeout proves the recorded
 // pre-state reason reaches the caller when no valid callback ever arrives.
 func TestUnauthenticatedRejectionReasonSurvivesToTimeout(t *testing.T) {

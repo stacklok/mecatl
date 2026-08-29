@@ -287,12 +287,7 @@ func randomCallbackPath(reader io.Reader) (string, error) {
 }
 
 func isExactRedirectURL(raw string) bool {
-	u, err := url.Parse(raw)
-	return err == nil && raw == ExactRedirectURL &&
-		u.Scheme == "http" && u.Host == "127.0.0.1:18473" &&
-		u.Hostname() == "127.0.0.1" && u.Port() == "18473" &&
-		u.Path == "/oauth/callback" && u.RawPath == "" &&
-		u.User == nil && u.RawQuery == "" && u.Fragment == ""
+	return raw == ExactRedirectURL
 }
 
 func canonicalIssuer(raw string) (string, error) {
