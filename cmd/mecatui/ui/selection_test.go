@@ -841,9 +841,9 @@ func TestSelectedTextUnchangedByEmptyLineFix(t *testing.T) {
 	}
 }
 
-// TestPressDragReleaseRetainsSelection: release finalizes the conversation
-// selection without copying. Copy is explicit (ctrl+shift+c or right click).
-func TestPressDragReleaseRetainsSelection(t *testing.T) {
+// TestPressDragReleaseCopiesSelection confirms a non-empty conversation drag
+// copies on release while retaining its selection.
+func TestPressDragReleaseCopiesSelection(t *testing.T) {
 	m, cb := selModel(t)
 	m.vp.SetContent("hello world\nsecond line\nthird row")
 	m.vp.SetYOffset(0)
@@ -853,14 +853,31 @@ func TestPressDragReleaseRetainsSelection(t *testing.T) {
 	m, _ = motionMouse(m, 11, top)
 	m, cmd := releaseMouse(m, 11, top)
 
-	if cmd != nil {
-		t.Fatal("release must not copy")
+	leaves := collectLeaves(cmd)
+	osc52, shellWrites := 0, 0
+	for _, msg := range leaves {
+		if _, ok := msg.(shellWriteResultMsg); ok {
+			shellWrites++
+		} else {
+			osc52++
+		}
+	}
+	if osc52 != 1 || shellWrites != 1 {
+		t.Fatalf("copy transports = OSC52:%d shell:%d, want one each", osc52, shellWrites)
+	}
+	payload, ok := osc52Payload(leaves)
+	if !ok || payload != "hello world" {
+		t.Fatalf("release OSC52 payload = %q, ok=%v", payload, ok)
+	}
+	for _, msg := range leaves {
+		mm, _ := m.Update(msg)
+		m = mm.(Model)
 	}
 	if !m.sel.active || selectedText(m.vp.GetContent(), m.sel) != "hello world" {
 		t.Fatalf("selection = %q, want retained hello world", selectedText(m.vp.GetContent(), m.sel))
 	}
-	if len(cb.wrote) != 0 {
-		t.Fatalf("release wrote clipboard: %v", cb.wrote)
+	if len(cb.wrote) != 1 || string(cb.wrote[0]) != "hello world" {
+		t.Fatalf("release shell clipboard writes = %q", cb.wrote)
 	}
 }
 

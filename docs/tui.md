@@ -1588,7 +1588,8 @@ meanings (cancel a run / close an overlay / clear the input or queue); with no
 selection, `esc` behaves exactly as before. Conversation selection is **blocked** while
 an overlay/modal owns the screen (permission ask, `/mcp`, `/team`, `/agents`,
 `/skills`, `/soul`, `/usermodel`, `/models`, help, the fatal screen) — a press there
-starts nothing, and opening an overlay mid-drag clears the conversation selection.
+starts nothing, and opening an overlay clears an in-progress conversation selection
+while stopping a prompt drag without changing an already completed prompt selection.
 An existing prompt selection is preserved through those non-content changes. The wheel
 still scrolls while a selection exists, without clearing it.
 

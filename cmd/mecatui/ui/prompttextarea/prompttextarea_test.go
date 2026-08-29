@@ -55,7 +55,7 @@ func TestKeyUpdatePreservesUpstreamSelectionBehavior(t *testing.T) {
 	editor := New(Config{})
 	editor.Rewrite("before")
 	editor.SelectAll()
-	_ = editor.UpdateUserInput(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	editor.UpdateKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if got := editor.Value(); got != "x" {
 		t.Fatalf("key update = %q, want x", got)
 	}

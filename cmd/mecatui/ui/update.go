@@ -169,23 +169,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	model, cmd := m.update(msg)
 	if mm, ok := model.(Model); ok {
-		// SINGLE source of truth for "an overlay/modal/help/fatal took the body, so a
-		// mid-drag selection is now stale" (Req 8). This wrapper sees the model BEFORE
-		// and AFTER the message is reduced, so a selectable→non-selectable transition
-		// is detectable in ONE place — covering every overlay opener, the permission
-		// ask, and the fatal screen without a clearSelection() call sprinkled in each.
-		// It runs synchronously while the overlay state is active (before View renders
-		// the overlay body and well before the overlay closes), so the highlight is
-		// cleared the moment the body changes hands. The openers do NOT refreshView, so
-		// this cannot live in refreshView — it must be on the per-message seam.
-		if mm.sel.active && !selectable(mm) {
-			mm = mm.clearSelection()
-			// The highlight is spliced into the content (styleSelection), not a native
-			// viewport highlight, so dropping the selection needs a re-render to repaint
-			// the now-UNSTYLED content. relayout below only refreshes on a height change,
-			// so refresh here explicitly — this is the single seam that owns the
-			// clear-then-render for the non-selectable transition.
-			mm.refreshView()
+		// A non-selectable body owner stops an in-progress prompt drag without
+		// clearing a completed prompt selection. Conversation selection remains
+		// blocked and is cleared when its body owner changes.
+		if !selectable(mm) {
+			mm.prompt.StopMouseSelection()
+			if mm.sel.active {
+				mm = mm.clearSelection()
+				mm.refreshView()
+			}
 		}
 		// SINGLE relayout chokepoint: re-size the viewport from the CURRENT region
 		// stack after every message, so the body height always matches the layout
@@ -1588,7 +1580,10 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // clearAnySelection gives esc priority over ordinary phase actions when either
 // selection owner is active.
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
-	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) {
+	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
+		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
+		m.userModel.view != userModelNone || m.reflections.view != reflectionsNone ||
+		m.dream.view != dreamClosed || m.effort.view != effortNone || m.worktrees.view != worktreesNone {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2098,7 +2093,7 @@ func (m Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		return m.stageLargePaste(content)
 	}
 	msg.Content = content
-	cmd := m.prompt.UpdateUserInput(msg)
+	cmd := m.prompt.UpdatePaste(msg)
 	return m.afterInputEdit(cmd)
 }
 
@@ -2188,7 +2183,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
 		return m.onScrollKey(msg)
 	default:
-		cmd := m.prompt.UpdateUserInput(msg)
+		cmd := (&m).updatePromptKey(msg)
 		return m.afterInputEdit(cmd)
 	}
 }
@@ -2483,7 +2478,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
 		return m.onScrollKey(msg)
 	default:
-		cmd := m.prompt.UpdateUserInput(msg)
+		cmd := (&m).updatePromptKey(msg)
 		return m.afterInputEdit(cmd)
 	}
 }
@@ -3679,8 +3674,8 @@ func (m *Model) extendHeadToEdge(dir autoScrollDir, x int) {
 }
 
 // onMouseRelease finalises a selection. An empty (anchor==head, e.g. a plain
-// click) selection is cleared with no copy; a real selection copies on release
-// (the copy-on-select default). A release with no active selection is a no-op.
+// click) selection is cleared with no copy; a real conversation selection copies on
+// release (the copy-on-select default). A release with no active selection is a no-op.
 // Release always DISARMS edge-autoscroll (scrollNone) so any in-flight tick no-ops.
 //
 // Asymmetry note: a release uses screenToContent's clamp (a release outside the
@@ -3707,12 +3702,10 @@ func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Release is the one head-changing path that doesn't already run through
-	// snapshotSelection; capture the identity snapshot AND re-render the spliced
-	// highlight for the final head before copy, so the immediately-following
-	// refreshView (in copySelection) sees a matching snapshot and keeps the highlight
-	// rather than treating the moved head as a reflow and clearing it.
+	// snapshotSelection; capture the identity snapshot and re-render the spliced
+	// highlight for the final head before copying.
 	snapshotSelection(&m)
-	return m, nil
+	return m.copySelection()
 }
 
 // copySelection copies the VISIBLE (ansi-stripped) selected text via OSC52

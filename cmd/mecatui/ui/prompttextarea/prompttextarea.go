@@ -49,9 +49,15 @@ func New(cfg Config) Editor {
 	return Editor{model: model}
 }
 
-// UpdateUserInput applies an upstream keyboard or paste operation, including its
-// native selection behavior.
-func (e *Editor) UpdateUserInput(msg tea.Msg) tea.Cmd {
+// UpdateKey applies an upstream keyboard operation, including its native selection behavior.
+func (e *Editor) UpdateKey(msg tea.KeyPressMsg) tea.Cmd {
+	var cmd tea.Cmd
+	e.model, cmd = e.model.Update(msg)
+	return cmd
+}
+
+// UpdatePaste applies an upstream paste operation, including its native selection behavior.
+func (e *Editor) UpdatePaste(msg tea.PasteMsg) tea.Cmd {
 	var cmd tea.Cmd
 	e.model, cmd = e.model.Update(msg)
 	return cmd
@@ -143,11 +149,21 @@ func (e Editor) Selection() (from, to Position, ok bool) {
 	return Position{Row: fromRaw.Row, Col: fromRaw.Col}, Position{Row: toRaw.Row, Col: toRaw.Col}, ok
 }
 
+// StopMouseSelection abandons an in-progress mouse gesture without changing a
+// completed selection.
+func (e *Editor) StopMouseSelection() { e.mouseSelectionActive = false }
+
 // Focus gives keyboard focus to the prompt and returns the upstream focus command.
-func (e *Editor) Focus() tea.Cmd { return e.model.Focus() }
+func (e *Editor) Focus() tea.Cmd {
+	e.StopMouseSelection()
+	return e.model.Focus()
+}
 
 // Blur removes keyboard focus from the prompt.
-func (e *Editor) Blur() { e.model.Blur() }
+func (e *Editor) Blur() {
+	e.StopMouseSelection()
+	e.model.Blur()
+}
 
 // Focused reports whether the prompt has keyboard focus.
 func (e Editor) Focused() bool { return e.model.Focused() }

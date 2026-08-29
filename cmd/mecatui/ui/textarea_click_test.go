@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -56,9 +57,9 @@ func TestTextareaClickMapsSoftWrapAndScroll(t *testing.T) {
 	}
 
 	m.prompt.Rewrite("one\ntwo\nthree\nfour\nfive")
-	_ = m.prompt.UpdateUserInput(tea.KeyPressMsg{Code: tea.KeyHome})
+	_ = m.prompt.UpdateKey(tea.KeyPressMsg{Code: tea.KeyHome})
 	for range 4 {
-		_ = m.prompt.UpdateUserInput(tea.KeyPressMsg{Code: tea.KeyDown})
+		_ = m.prompt.UpdateKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.prompt.ScrollYOffset() == 0 {
 		t.Fatal("test setup did not scroll textarea")
@@ -74,10 +75,47 @@ func TestTextareaClickMapsSoftWrapAndScroll(t *testing.T) {
 	}
 }
 
+func TestTextareaDragSelectionEditsAcrossSoftWrapAndScroll(t *testing.T) {
+	m, _ := selModel(t)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 20, Height: 30})
+
+	for _, text := range []string{
+		"abcdefghijklmnopqrst",
+		"one\ntwo\nthree\nfour\nfive",
+	} {
+		m.prompt.Rewrite(text)
+		if strings.Contains(text, "\n") {
+			for range 4 {
+				mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				m = mm.(Model)
+			}
+			if m.prompt.ScrollYOffset() == 0 {
+				t.Fatal("test setup did not scroll textarea")
+			}
+		}
+		rect, ok := inputRegionRect(m)
+		if !ok {
+			t.Fatal("input region unavailable")
+		}
+		m, _ = pressMouse(m, tea.MouseLeft, rect.x0, rect.y0)
+		m, _ = motionMouse(m, rect.x0+2, rect.y0+1)
+		m, _ = releaseMouse(m, rect.x0+2, rect.y0+1)
+		selected := m.prompt.SelectedText()
+		if selected == "" {
+			t.Fatalf("drag did not select %q", text)
+		}
+		mm, _ := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
+		m = mm.(Model)
+		if m.prompt.HasSelection() || strings.Contains(m.prompt.Value(), selected) {
+			t.Fatalf("edit did not replace drag selection %q in %q", selected, m.prompt.Value())
+		}
+	}
+}
+
 func TestTextareaClickHonorsMouseCapture(t *testing.T) {
 	m, _ := selModel(t)
 	m.prompt.Rewrite("hello")
-	_ = m.prompt.UpdateUserInput(tea.KeyPressMsg{Code: tea.KeyEnd})
+	_ = m.prompt.UpdateKey(tea.KeyPressMsg{Code: tea.KeyEnd})
 	rect, ok := inputRegionRect(m)
 	if !ok {
 		t.Fatal("inputRegionRect returned no input region")

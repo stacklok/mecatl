@@ -7,6 +7,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+func (m *Model) updatePromptKey(msg tea.KeyPressMsg) tea.Cmd {
+	cmd := m.prompt.UpdateKey(msg)
+	if m.prompt.HasSelection() && m.sel.active {
+		*m = m.clearSelection()
+		m.refreshView()
+	}
+	return cmd
+}
+
 func (m *Model) promptSelectAll() {
 	*m = m.clearSelection()
 	m.prompt.SelectAll()
@@ -22,8 +31,9 @@ func (m *Model) promptMousePress(mo tea.Mouse) (tea.Cmd, bool) {
 	}
 	*m = m.clearSelection()
 	m.refreshView()
+	focusCmd := m.prompt.Focus()
 	m.prompt.BeginMouseSelection(mo.X-rect.x0, mo.Y-rect.y0)
-	return m.prompt.Focus(), true
+	return focusCmd, true
 }
 
 func (m *Model) promptMouseMotion(mo tea.Mouse) bool {
@@ -50,7 +60,6 @@ func (m Model) copyPayload(payload string) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("copied %s", plural(len([]rune(payload)), "char")))
-	m.refreshView()
 	return m, tea.Batch(tea.SetClipboard(payload), m.shellWriteCmd(payload))
 }
 

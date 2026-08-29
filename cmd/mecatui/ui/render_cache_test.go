@@ -1484,3 +1484,28 @@ func TestResetBlockCachesInvalidatesVPView(t *testing.T) {
 		t.Error("resetBlockCaches must clear vpViewValid (defense-in-depth)")
 	}
 }
+
+func TestInputRenderCacheTracksSelectionThroughModelUpdate(t *testing.T) {
+	m, _ := selModel(t)
+	m.prompt.Rewrite("select me")
+	unselected := m.renderInput()
+	if again := m.renderInput(); again != unselected {
+		t.Fatal("input cache hit changed unselected render")
+	}
+
+	mm, _ := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	selected := m.renderInput()
+	if !m.prompt.HasSelection() || selected == unselected {
+		t.Fatal("SelectAll through Model.Update did not refresh selected input render")
+	}
+
+	m.prompt.ClearSelection()
+	restored := m.renderInput()
+	if restored != unselected {
+		t.Fatal("ClearSelection did not restore the unselected cached render")
+	}
+	if again := m.renderInput(); again != restored {
+		t.Fatal("input cache hit changed restored unselected render")
+	}
+}
