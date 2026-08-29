@@ -103,13 +103,6 @@ type Store interface {
 	ConditionalWriter
 }
 
-// CorruptReplacer is an optional recovery capability for durable stores that can
-// atomically prove a record is still corrupt and replace that exact record under
-// the same mutation lock. It is not an unconditional overwrite operation.
-type CorruptReplacer interface {
-	ReplaceCorrupt(ctx context.Context, key, value []byte) (Record, error)
-}
-
 func validateNamespace(namespace string) error {
 	if namespace == "" || len(namespace) > MaxNamespaceBytes || !utf8.ValidString(namespace) {
 		return ErrInvalidNamespace

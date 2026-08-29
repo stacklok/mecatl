@@ -410,14 +410,18 @@ type CredentialRecord struct {
 }
 
 // Credentials is a target-bound, CAS-safe credential repository.
-type Credentials struct{ store credentialstore.Store }
+type Credentials struct {
+	store     credentialstore.Store
+	fileStore *credentialstore.EncryptedFileStore
+}
 
 // NewCredentials creates a credential repository backed by store.
 func NewCredentials(store credentialstore.Store) (*Credentials, error) {
 	if store == nil {
 		return nil, errors.New("clientauth: credential store is required")
 	}
-	return &Credentials{store}, nil
+	fileStore, _ := store.(*credentialstore.EncryptedFileStore)
+	return &Credentials{store: store, fileStore: fileStore}, nil
 }
 
 // Load retrieves and validates credentials for identity.
@@ -464,7 +468,8 @@ func (c *Credentials) Save(ctx context.Context, identity Identity, token Token, 
 
 // replaceUnusable conditionally repairs a credential that is still corrupt. A
 // semantically malformed plaintext record uses ordinary CAS; an unreadable
-// encrypted envelope requires the backend's atomic corrupt-replacement seam.
+// encrypted envelope can be repaired only by the encrypted-file backend that
+// owns the record lock.
 func (c *Credentials) replaceUnusable(ctx context.Context, identity Identity, token Token) (CredentialRecord, error) {
 	canonical, err := identity.Canonical()
 	if err != nil {
@@ -485,11 +490,10 @@ func (c *Credentials) replaceUnusable(ctx context.Context, identity Identity, to
 		}
 		written, err = c.store.Put(ctx, key, body, &raw.Version)
 	case errors.Is(err, credentialstore.ErrCorrupt):
-		replacer, ok := c.store.(credentialstore.CorruptReplacer)
-		if !ok {
+		if c.fileStore == nil {
 			return CredentialRecord{}, errors.New("clientauth: credential store cannot safely replace a corrupt record")
 		}
-		written, err = replacer.ReplaceCorrupt(ctx, key, body)
+		written, err = c.fileStore.ReplaceCorrupt(ctx, key, body)
 	default:
 		return CredentialRecord{}, err
 	}

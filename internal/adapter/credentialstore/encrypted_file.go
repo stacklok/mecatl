@@ -63,7 +63,6 @@ var (
 	_ Reader            = (*EncryptedFileStore)(nil)
 	_ ConditionalWriter = (*EncryptedFileStore)(nil)
 	_ Store             = (*EncryptedFileStore)(nil)
-	_ CorruptReplacer   = (*EncryptedFileStore)(nil)
 )
 
 // NewEncryptedFile constructs a local encrypted-file store. root must be an
