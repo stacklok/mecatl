@@ -42,8 +42,13 @@ func NewClient(ctx context.Context, endpoints []string, trustedCAPEM []byte) (*h
 		return nil, err
 	}
 	transport := &http.Transport{
-		DialContext:           policy.dialContext,
-		DisableKeepAlives:     true,
+		DialContext: policy.dialContext,
+		// Keep-alive is intentional: dialContext already re-validates the dial
+		// target against the approved IP set on every new connection, so an
+		// established connection is at least as trustworthy as a fresh one and
+		// reusing it avoids paying a resolver round trip per request (a
+		// "cluster.local"-suffixed host costs a deterministic ~5s stall per
+		// lookup on a macOS client, since that TLD forces mDNS resolution).
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: clientTimeout,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},

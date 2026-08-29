@@ -86,6 +86,9 @@ func writeLogoutResult(out io.Writer, result clientauth.LogoutResult) {
 	}
 	if result.RevocationsFailed > 0 {
 		_, _ = fmt.Fprintln(out, "provider revocation was unavailable or incomplete; local cleanup was attempted independently")
+		if result.RevocationError != "" {
+			_, _ = fmt.Fprintf(out, "revocation cause: %s\n", result.RevocationError)
+		}
 	}
 	for _, issue := range result.Issues {
 		if issue.Identity.ClientID != "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,7 +14,14 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
 
-const revocationTimeout = 5 * time.Second
+// revocationTimeout must clear DNS resolution, not just the HTTP round trips:
+// a hostname ending in "cluster.local" (Kubernetes' default cluster domain) is
+// resolved via mDNS on macOS clients, which imposes a deterministic ~5s stall
+// per lookup before falling back to /etc/hosts. scopedhttps resolves twice by
+// design (once to approve the endpoint at construction, once more as a TOCTOU
+// check on the first dial) before any connection is reused, so the guaranteed
+// floor is ~10s; 15s leaves room for TLS plus discovery and revoke on top.
+const revocationTimeout = 15 * time.Second
 
 // ErrIncompleteLogout indicates that local state could not be fully reconciled.
 // Provider revocation failures do not produce this error: local logout remains
@@ -42,7 +50,10 @@ type LogoutResult struct {
 	RegistryDeleted      bool
 	RevocationsAttempted int
 	RevocationsFailed    int
-	Issues               []LogoutIssue
+	// RevocationError is the first cause of a revocation failure (a DNS,
+	// discovery, or HTTP error), secret-free. Empty unless RevocationsFailed > 0.
+	RevocationError string
+	Issues          []LogoutIssue
 }
 
 // LogoutConfig supplies local state and an optional issuer-scoped HTTP client.
@@ -137,18 +148,32 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 		if remaining == 0 || clientFor == nil {
 			continue
 		}
-		if cleanupCtx.Err() != nil {
+		if err := cleanupCtx.Err(); err != nil {
 			result.RevocationsFailed += remaining
+			recordRevocationError(result, item.conn.Identity, err)
 			continue
 		}
 		client, err := clientFor(cleanupCtx, item.conn)
 		if err != nil {
 			result.RevocationsFailed += remaining
+			recordRevocationError(result, item.conn.Identity, err)
 			continue
 		}
-		attempted, failed := revokeTokens(cleanupCtx, client, item.conn.Identity, item.token)
+		attempted, failed, err := revokeTokens(cleanupCtx, client, item.conn.Identity, item.token)
 		result.RevocationsAttempted += attempted
 		result.RevocationsFailed += failed
+		if err != nil {
+			recordRevocationError(result, item.conn.Identity, err)
+		}
+	}
+}
+
+// recordRevocationError keeps only the first cause, which is almost always
+// the one that actually explains the failure (a later error in the same
+// exhausted-budget run is usually just "context deadline exceeded" again).
+func recordRevocationError(result *LogoutResult, id Identity, err error) {
+	if result.RevocationError == "" {
+		result.RevocationError = fmt.Sprintf("issuer %s: %v", id.Issuer, err)
 	}
 }
 
@@ -221,14 +246,20 @@ func revocableTokenCount(token Token) int {
 	return count
 }
 
-func revokeTokens(ctx context.Context, client *http.Client, id Identity, token Token) (attempted, failed int) {
+func revokeTokens(ctx context.Context, client *http.Client, id Identity, token Token) (attempted, failed int, lastErr error) {
 	remaining := revocableTokenCount(token)
-	if client == nil || ctx.Err() != nil {
-		return 0, remaining
+	if client == nil {
+		return 0, remaining, errors.New("no HTTP client")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, remaining, err
 	}
 	endpoint, err := discoverRevocationEndpoint(ctx, client, id)
-	if err != nil || endpoint == "" {
-		return 0, remaining
+	if err != nil {
+		return 0, remaining, err
+	}
+	if endpoint == "" {
+		return 0, remaining, errors.New("revocation discovery: no revocation_endpoint published")
 	}
 	values := []struct {
 		value string
@@ -266,15 +297,17 @@ func revokeTokens(ctx context.Context, client *http.Client, id Identity, token T
 		res, doErr := client.Do(req)
 		if doErr != nil {
 			failed++
+			lastErr = doErr
 			continue
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 		_ = res.Body.Close()
 		if res.StatusCode != http.StatusOK {
 			failed++
+			lastErr = fmt.Errorf("%s revocation: HTTP %d", item.hint, res.StatusCode)
 		}
 	}
-	return attempted, failed
+	return attempted, failed, lastErr
 }
 
 func discoverRevocationEndpoint(ctx context.Context, client *http.Client, id Identity) (string, error) {
