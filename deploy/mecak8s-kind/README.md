@@ -70,12 +70,15 @@ task mecak8s:kind-port-forward
 task mecak8s:kind-hosts-remove
 ```
 
-`kind-hosts-add` manages only `127.0.0.1 keycloak.mecatl.svc.cluster.local` in
-`/etc/hosts`; `kind-hosts-remove` removes only that exact entry and leaves an
-`/etc/hosts.bak` backup. The Keycloak port-forward listens on
-`127.0.0.1:8443`; it is not a NodePort or external Service. This preserves
-Keycloak's configured issuer and its certificate hostname while making the
-local browser leg reachable.
+`kind-hosts-add` manages two entries in `/etc/hosts`:
+`127.0.0.1 keycloak.mecatl.svc.cluster.local` and
+`127.0.0.1 mecak8s-mecak8s.mecatl.svc.cluster.local`; `kind-hosts-remove` removes
+only those exact entries and leaves an `/etc/hosts.bak` backup. The Keycloak
+port-forward listens on `127.0.0.1:8443`; it is not a NodePort or external
+Service. Keycloak's alias preserves its configured issuer and certificate
+hostname while making the local browser leg reachable. The mecak8s alias exists
+for a different, less obvious reason -- see the footgun note below; it is not
+merely a second convenience name.
 
 ### Supervised remote-client quickstart
 
@@ -93,10 +96,33 @@ the client; `Ctrl-C` tears down both forwards. The existing individual forward t
 remain available when you need to manage them separately.
 
 The authenticated mecak8s API is still reached only through its loopback
-port-forward. Connect to `https://localhost:18081` (and gRPC at
-`localhost:18080`): `localhost` and `127.0.0.1` are certificate-covered names,
-so clients must verify the fixture CA and hostname rather than disable TLS
-verification.
+port-forward: gRPC at `18080`, HTTP at `18081`. `localhost` and `127.0.0.1` are
+both certificate-covered names, so a plain TLS client (`curl`, `openssl
+s_client`) can verify the fixture CA and connect to either one directly for a
+raw reachability check.
+
+**Footgun: do not pass a `localhost`-named target to `mecatui login`/`connect`
+against this fixture.** This deployment sets `--workspace` (see
+`values-kind.yaml`), which makes mecak8s the sole authority over the session
+workspace and rejects any client-supplied value. But mecatui's own client
+treats an address whose hostname is literally `localhost` (or a loopback IP)
+as a co-located, embedded-style server and defaults its workspace field to the
+CALLER's own working directory instead of leaving it empty
+(`client.IsLoopbackHost`, `configureWorkspaceForTransport`). The two
+assumptions collide: `mecatui connect localhost:18080 ...` fails with
+`rpc error: code = InvalidArgument desc = server: invalid argument: deployment
+assigns the workspace; filesystem session requests must leave workspace
+empty`. A `kubectl port-forward` target is loopback by construction but is
+never actually co-located, so the heuristic is wrong for exactly this fixture's
+normal use.
+
+The fix is the `mecak8s-mecak8s.mecatl.svc.cluster.local` alias
+`kind-hosts-add` installs above: a DNS name is never treated as loopback by
+`IsLoopbackHost`, so using it instead of `localhost` for `mecatui login` and
+`mecatui connect` clears the client's workspace field as this deployment
+requires, with no other change to the command. It resolves to the same
+loopback address the port-forward already binds, so nothing else about the
+connection changes.
 
 The normal client journey is **Authorization Code + PKCE** with the public
 `mecatui-kind` client and the optional `mecak8s:access` and `offline_access`

@@ -375,8 +375,11 @@ func TestMecak8sKindFixture_Scenario3_KeycloakDemoQuickstart(t *testing.T) {
 		"svc/keycloak 8443:8443", "svc/{{.RELEASE}}-mecak8s 18080:8080 18081:8081",
 		"--address=127.0.0.1", "get secret fixture-ca", "fixture-ca.crt",
 		"wait_port Keycloak 8443", "wait_port mecak8s-gRPC 18080", "wait_port mecak8s-HTTPS 18081",
-		"mecatui login localhost:18081", "--client-id mecatui-kind", "--audience mecak8s",
-		"--scopes openid,profile,mecak8s:access,offline_access", "mecatui connect localhost:18081 --tls",
+		// NOT localhost:18080/18081: mecatui's client treats a "localhost"-named
+		// target as co-located and defaults its workspace field to the caller's
+		// own cwd, which this --workspace-assigning deployment rejects.
+		"mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080", "--client-id mecatui-kind", "--audience mecak8s",
+		"--scopes openid,profile,mecak8s:access,offline_access", "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Keycloak demo quickstart missing %q", want)

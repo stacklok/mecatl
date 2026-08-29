@@ -111,8 +111,13 @@ tasks:
           mv "$decoded" "$ca"
 
           printf '\nFixture forwards are ready. In another terminal, run:\n\n'
-          printf '%s\n' "mecatui login localhost:18081 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca $ca --scopes openid,profile,mecak8s:access,offline_access"
-          printf '%s\n' "mecatui connect localhost:18081 --tls --tls-ca $ca"
+          # NOT localhost:18080 -- mecatui's client treats a "localhost"-named
+          # target as co-located and defaults its workspace field to the
+          # CALLER's own cwd; this deployment sets --workspace and rejects
+          # any client-supplied value, so that combination fails with
+          # codes.InvalidArgument. The DNS alias below is not cosmetic.
+          printf '%s\n' "mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca $ca --scopes openid,profile,mecak8s:access,offline_access"
+          printf '%s\n' "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca $ca"
           printf '\nThe CA is at %s. This task keeps both loopback forwards alive; press Ctrl-C here to stop them.\n' "$ca"
 
           while kill -0 "$keycloak_pid" 2>/dev/null && kill -0 "$mecak8s_pid" 2>/dev/null; do
@@ -141,27 +146,44 @@ tasks:
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/keycloak 8443:8443
 
   kind-hosts-show:
-    desc: Show the temporary loopback alias required for the Keycloak issuer
+    desc: Show the temporary loopback aliases required for the issuer and mecak8s target
     cmds:
-      - cmd: printf '%s\n' '127.0.0.1 keycloak.mecatl.svc.cluster.local'
+      - cmd: |
+          printf '%s\n' '127.0.0.1 keycloak.mecatl.svc.cluster.local'
+          printf '%s\n' '127.0.0.1 mecak8s-mecak8s.mecatl.svc.cluster.local'
 
   kind-hosts-add:
-    desc: Add the temporary Keycloak issuer alias to /etc/hosts (loopback only)
+    desc: Add the temporary Keycloak issuer and mecak8s target aliases to /etc/hosts (loopback only)
     cmds:
       - cmd: |
           set -eu
-          entry='127.0.0.1 keycloak.mecatl.svc.cluster.local'
-          sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
+          # Both entries are needed, not only Keycloak's. mecatui's client treats
+          # a "localhost"-named target as co-located and defaults its workspace
+          # field to the CALLER's own cwd (IsLoopbackHost); this deployment sets
+          # --workspace and rejects any client-supplied value, so a mecatui
+          # login/connect run against plain `localhost` fails with
+          # codes.InvalidArgument. A DNS name is never treated as loopback by
+          # that check, so the mecak8s alias below -- resolving to the SAME
+          # 127.0.0.1 the port-forward already binds -- is the fix, not a
+          # cosmetic alternative to `localhost`.
+          for entry in \
+            '127.0.0.1 keycloak.mecatl.svc.cluster.local' \
+            '127.0.0.1 mecak8s-mecak8s.mecatl.svc.cluster.local'; do
+            sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
+          done
           echo 'Added (or already present):'
           task mecak8s:kind-hosts-show
 
   kind-hosts-remove:
-    desc: Remove only the temporary Keycloak issuer alias from /etc/hosts
+    desc: Remove only the temporary Keycloak issuer and mecak8s target aliases from /etc/hosts
     cmds:
       - cmd: |
           set -eu
-          sudo sed -i.bak -e '\|^127\.0\.0\.1 keycloak\.mecatl\.svc\.cluster\.local$|d' /etc/hosts
-          echo 'Removed exact temporary entry (backup: /etc/hosts.bak).'
+          sudo sed -i.bak \
+            -e '\|^127\.0\.0\.1 keycloak\.mecatl\.svc\.cluster\.local$|d' \
+            -e '\|^127\.0\.0\.1 mecak8s-mecak8s\.mecatl\.svc\.cluster\.local$|d' \
+            /etc/hosts
+          echo 'Removed exact temporary entries (backup: /etc/hosts.bak).'
 
   kind-destroy:
     desc: Delete the named Kind baseline and its local state
