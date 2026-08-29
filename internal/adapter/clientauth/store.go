@@ -652,14 +652,25 @@ func (r *Registry) list() ([]Connection, error) {
 	if json.Unmarshal(data, &f) != nil || f.Version != 1 {
 		return nil, ErrCorrupt
 	}
-	for n := range f.Connections {
-		c, err := f.Connections[n].Identity.Canonical()
-		if err != nil || !validIssuerCAFile(f.Connections[n].IssuerCAFile) {
-			return nil, ErrCorrupt
+	// A single entry that fails canonicalization or CA-path validation is
+	// unusable for its OWN target only -- e.g. a pre-tightening record saved with
+	// a relative issuer_ca_file before validIssuerCAFile required an absolute
+	// one. It must not fail every OTHER target's List/FindTarget/Enroll: that
+	// previously made one legacy or damaged row brick every saved login, with no
+	// repair path, because the very machinery that replaces a target's entry
+	// (Upsert) can only run after list() has already succeeded. Drop the bad
+	// entry instead; a saved-target listing simply omits it, and its target's
+	// next login (Upsert) replaces it outright.
+	valid := make([]Connection, 0, len(f.Connections))
+	for _, conn := range f.Connections {
+		c, err := conn.Identity.Canonical()
+		if err != nil || !validIssuerCAFile(conn.IssuerCAFile) {
+			continue
 		}
-		f.Connections[n].Identity = c
+		conn.Identity = c
+		valid = append(valid, conn)
 	}
-	return f.Connections, nil
+	return valid, nil
 }
 
 // FindTarget returns the saved connection for target.

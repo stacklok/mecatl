@@ -1141,10 +1141,19 @@ func TestRegistryReadsLegacyIssuerCAAndMigratesOnMutation(t *testing.T) {
 	}
 }
 
-func TestRegistryRejectsRelativePersistedIssuerCA(t *testing.T) {
+// TestRegistryOmitsInvalidEntriesWithoutBlockingOthers pins the fix for a real
+// regression: list() used to fail the WHOLE registry read if ANY single entry
+// had a relative issuer_ca_file (a shape valid before validIssuerCAFile required
+// an absolute path), regardless of which target the caller actually asked
+// about. One legacy or damaged row then permanently broke List/FindTarget/Enroll
+// for every OTHER target too, with no repair path -- Upsert's own per-target
+// replace can only run after list() has already succeeded once. An invalid
+// entry must be excluded, not fatal.
+func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	dir := t.TempDir()
-	conn := Connection{Identity: identity("relative-ca.example:443"), IssuerCAFile: "issuer-ca.pem"}
-	body, err := json.Marshal(registryFile{Version: 1, Connections: []Connection{conn}})
+	bad := Connection{Identity: identity("relative-ca.example:443"), IssuerCAFile: "issuer-ca.pem"}
+	good := Connection{Identity: identity("unrelated-target.example:443"), IssuerCAFile: "/ca.pem"}
+	body, err := json.Marshal(registryFile{Version: 1, Connections: []Connection{bad, good}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1155,10 +1164,22 @@ func TestRegistryRejectsRelativePersistedIssuerCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reg.List(); !errors.Is(err, ErrCorrupt) {
-		t.Fatalf("List error = %v, want ErrCorrupt", err)
+	all, err := reg.List()
+	if err != nil {
+		t.Fatalf("List error = %v, want nil (the relative-CA entry should be omitted, not fatal)", err)
 	}
-	if _, err := reg.Upsert(conn); err == nil || !strings.Contains(err.Error(), "absolute and clean") {
+	if len(all) != 1 || all[0].Identity.Target != good.Identity.Target {
+		t.Fatalf("List = %#v, want only the unrelated valid target", all)
+	}
+	if _, err := reg.FindTarget(good.Identity.Target); err != nil {
+		t.Fatalf("FindTarget(unrelated target) = %v, want nil: the bad entry must not block it", err)
+	}
+	if _, err := reg.FindTarget(bad.Identity.Target); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("FindTarget(invalid entry's own target) = %v, want ErrNotFound", err)
+	}
+	// New writes still enforce the absolute-path requirement; only PERSISTED
+	// legacy rows are tolerated on read.
+	if _, err := reg.Upsert(bad); err == nil || !strings.Contains(err.Error(), "absolute and clean") {
 		t.Fatalf("Upsert relative CA error = %v", err)
 	}
 }
