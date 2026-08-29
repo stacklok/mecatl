@@ -3398,13 +3398,14 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 		if cmd, handled := (&m).promptMousePress(mo); handled {
 			return m, cmd
 		}
-		m.prompt.ClearSelection()
-		// The selectable gate AND the count logic sit here, AFTER the gate: a press
-		// while an overlay owns the body (or under --no-mouse/--inline) starts nothing
-		// AND does not advance the multi-click count (Req 9).
+		// The selectable gate AND the count logic sit here, BEFORE prompt selection is
+		// cleared: a press while an overlay owns the body (or under --no-mouse/--inline)
+		// starts nothing, preserves an existing prompt selection, and does not advance
+		// the multi-click count (Req 9).
 		if !selectable(m) {
 			return m, nil
 		}
+		m.prompt.ClearSelection()
 		line, col, ok := screenToContent(m, mo.X, mo.Y)
 		if !ok {
 			return m, nil
