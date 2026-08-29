@@ -22,7 +22,7 @@ func (m *Model) promptSelectAll() {
 }
 
 func (m *Model) promptMousePress(mo tea.Mouse) (tea.Cmd, bool) {
-	if !m.pasteGateOpen() || !mouseCaptureEnabled(*m) {
+	if !selectable(*m) {
 		return nil, false
 	}
 	rect, ok := inputRegionRect(*m)

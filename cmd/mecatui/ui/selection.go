@@ -104,15 +104,16 @@ func convTopRow(m Model) int {
 // showing it. Mouse capture exists only on the alt screen with mouse enabled, so
 // --inline/--no-alt-screen (NoAltScreen) and --no-mouse (NoMouse) are never
 // selectable — those leave the mouse uncaptured for the terminal's native
-// selection. An open overlay/modal/help or the fatal screen owns the body and
-// blocks a new selection (and opening one mid-drag clears the active selection —
-// see the overlay-open paths in update.go).
+// selection. An open overlay/modal/help, session-details view, or the fatal screen
+// owns the body and blocks a new selection (and opening one mid-drag clears the
+// active selection — see the overlay-open paths in update.go).
 func selectable(m Model) bool {
 	return !m.deps.NoAltScreen &&
 		!m.deps.NoMouse &&
 		m.phase != phaseFatal &&
 		m.phase != phaseAwaitingApproval &&
 		m.phase != phaseReplay &&
+		!m.sessionDetailsOpen &&
 		!m.showHelp &&
 		m.team.view == teamNone &&
 		m.agentsInv.view == agentsInvNone &&
@@ -121,7 +122,8 @@ func selectable(m Model) bool {
 		m.reflections.view == reflectionsNone &&
 		m.dream.view == dreamClosed &&
 		m.effort.view == effortNone &&
-		m.worktrees.view == worktreesNone
+		m.worktrees.view == worktreesNone &&
+		m.schedule.view == scheduleNone
 }
 
 // screenToContent maps a screen cell (x, y) to a LOGICAL content position (line

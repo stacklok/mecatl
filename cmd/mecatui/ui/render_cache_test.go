@@ -1500,7 +1500,11 @@ func TestInputRenderCacheTracksSelectionThroughModelUpdate(t *testing.T) {
 		t.Fatal("SelectAll through Model.Update did not refresh selected input render")
 	}
 
-	m.prompt.ClearSelection()
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	if m.prompt.HasSelection() {
+		t.Fatal("Escape through Model.Update did not clear prompt selection")
+	}
 	restored := m.renderInput()
 	if restored != unselected {
 		t.Fatal("ClearSelection did not restore the unselected cached render")

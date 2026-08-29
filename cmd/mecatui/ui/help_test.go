@@ -148,6 +148,74 @@ func m_helpBody(caps client.Capabilities) string {
 	return helpBody(aztec(), caps, defaultHelpKeys())
 }
 
+func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
+	const (
+		selectAll     = "ctrl+alt+s"
+		copySelection = "ctrl+alt+c"
+	)
+	m := New(Deps{
+		Theme:             aztec(),
+		Ctx:               context.Background(),
+		NoAltScreen:       true,
+		KeyOverrides:      map[string][]string{"SelectAll": {selectAll}, "CopySelection": {copySelection}},
+		emojiCapable:      func() bool { return false },
+		kittyCapable:      func() bool { return false },
+		scrollKeysMarking: func() string { return "pgup/pgdn" },
+	})
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-key-override"},
+	)
+	m.prompt.Rewrite("copy me")
+
+	mm, _ := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl | tea.ModAlt})
+	m = mm.(Model)
+	if got := m.prompt.SelectedText(); got != "copy me" {
+		t.Fatalf("overridden SelectAll via Model.Update selected %q, want %q", got, "copy me")
+	}
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModAlt})
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("overridden CopySelection via Model.Update returned no copy command")
+	}
+	footer := stripANSIstr(m.renderFooter())
+	for _, marker := range []string{selectAll + " select all", copySelection + " copy"} {
+		if !strings.Contains(footer, marker) {
+			t.Errorf("footer missing overridden marker %q:\n%s", marker, footer)
+		}
+	}
+	for _, marker := range []string{"ctrl+g select all", "ctrl+shift+c copy"} {
+		if strings.Contains(footer, marker) {
+			t.Errorf("footer retained default marker %q:\n%s", marker, footer)
+		}
+	}
+
+	m.prompt.Rewrite("")
+	mm, _ = m.Update(qmark())
+	m = mm.(Model)
+	help := stripANSIstr(m.View().Content)
+	for action, marker := range map[string]string{
+		"select all prompt text":                           selectAll,
+		"copy the active prompt or conversation selection": copySelection,
+	} {
+		found := false
+		for _, line := range strings.Split(help, "\n") {
+			if strings.Contains(line, action) && strings.Contains(line, marker) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("help missing overridden marker %q for %q:\n%s", marker, action, help)
+		}
+	}
+	for _, marker := range []string{"ctrl+g", "ctrl+shift+c"} {
+		if strings.Contains(help, marker) {
+			t.Errorf("help retained default marker %q:\n%s", marker, help)
+		}
+	}
+}
+
 // TestSelectionShortcutsRenderDefaults proves the prompt-selection bindings are
 // visible on both persistent UI surfaces with their default chords.
 func TestSelectionShortcutsRenderDefaults(t *testing.T) {

@@ -79,10 +79,16 @@ func TestTextareaDragSelectionEditsAcrossSoftWrapAndScroll(t *testing.T) {
 	m, _ := selModel(t)
 	m = applyAll(m, tea.WindowSizeMsg{Width: 20, Height: 30})
 
-	for _, text := range []string{
-		"abcdefghijklmnopqrst",
-		"one\ntwo\nthree\nfour\nfive",
+	for _, tc := range []struct {
+		text                   string
+		wantSelected           string
+		wantFromRow, wantToRow int
+		wantFromCol, wantToCol int
+	}{
+		{"abcdefghijklmnopqrst", "abcdefghijklmnopqrs", 0, 0, 0, 19},
+		{"one\ntwo\nthree\nfour\nfive", "three\nfo", 2, 3, 0, 2},
 	} {
+		text := tc.text
 		m.prompt.Rewrite(text)
 		if strings.Contains(text, "\n") {
 			for range 4 {
@@ -101,8 +107,11 @@ func TestTextareaDragSelectionEditsAcrossSoftWrapAndScroll(t *testing.T) {
 		m, _ = motionMouse(m, rect.x0+2, rect.y0+1)
 		m, _ = releaseMouse(m, rect.x0+2, rect.y0+1)
 		selected := m.prompt.SelectedText()
-		if selected == "" {
-			t.Fatalf("drag did not select %q", text)
+		from, to, ok := m.prompt.Selection()
+		if !ok || selected != tc.wantSelected || from.Row != tc.wantFromRow || from.Col != tc.wantFromCol || to.Row != tc.wantToRow || to.Col != tc.wantToCol {
+			t.Fatalf("drag selection = %q, (%d,%d)-(%d,%d), want %q, (%d,%d)-(%d,%d)",
+				selected, from.Row, from.Col, to.Row, to.Col,
+				tc.wantSelected, tc.wantFromRow, tc.wantFromCol, tc.wantToRow, tc.wantToCol)
 		}
 		mm, _ := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
 		m = mm.(Model)

@@ -7,6 +7,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+type bodyOwnerTestSurface struct{}
+
+func (*bodyOwnerTestSurface) Render(int, int) (string, []ClickableRegion) { return "", nil }
+func (*bodyOwnerTestSurface) HandleKey(tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	return nil, false, false
+}
+func (*bodyOwnerTestSurface) HandleMsg(tea.Msg) (tea.Cmd, bool, bool)       { return nil, false, false }
+func (*bodyOwnerTestSurface) HandleWheel(tea.MouseWheelMsg) (tea.Cmd, bool) { return nil, false }
+func (*bodyOwnerTestSurface) Close()                                        {}
+
 func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 	m, cb := selModel(t)
 	m.prompt.Rewrite("hello world")
@@ -130,6 +140,68 @@ func TestPromptSelectionSurvivesOverlayAndStopsStaleDrag(t *testing.T) {
 	m, _ = releaseMouse(m, rect.x0+10, rect.y0)
 	if m.prompt.SelectedText() != "hello" {
 		t.Fatalf("stale drag changed selection after overlay: %q", m.prompt.SelectedText())
+	}
+}
+
+func TestPromptMousePressRespectsBodyOwners(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*Model)
+	}{
+		{"schedule", func(m *Model) { m.schedule.view = schedulePanel }},
+		{"session details", func(m *Model) { m.sessionDetailsOpen = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := selModel(t)
+			m.prompt.Rewrite("hello world")
+			m.prompt.SelectAll() // A completed selection persists while an overlay is open.
+			tc.setup(&m)
+			rect, ok := inputRegionRect(m)
+			if !ok {
+				t.Fatal("input region unavailable")
+			}
+
+			m, _ = pressMouse(m, tea.MouseLeft, rect.x0, rect.y0)
+			m, _ = motionMouse(m, rect.x0+5, rect.y0)
+			m, _ = releaseMouse(m, rect.x0+5, rect.y0)
+			if got := m.prompt.SelectedText(); got != "hello world" {
+				t.Fatalf("mouse selection began behind body owner: got %q, want existing selection", got)
+			}
+		})
+	}
+}
+
+func TestSelectableMatchesAllBodyOwners(t *testing.T) {
+	m, _ := selModel(t)
+	for _, tc := range []struct {
+		name  string
+		setup func(*Model)
+		want  bool
+	}{
+		{"idle", func(*Model) {}, true},
+		{"running", func(m *Model) { m.phase = phaseRunning }, true},
+		{"fatal", func(m *Model) { m.phase = phaseFatal }, false},
+		{"awaiting approval", func(m *Model) { m.phase = phaseAwaitingApproval }, false},
+		{"replay", func(m *Model) { m.phase = phaseReplay }, false},
+		{"session details", func(m *Model) { m.sessionDetailsOpen = true }, false},
+		{"help", func(m *Model) { m.showHelp = true }, false},
+		{"team", func(m *Model) { m.team.view = teamRoster }, false},
+		{"agents inventory", func(m *Model) { m.agentsInv.view = agentsInvPanel }, false},
+		{"modal surface", func(m *Model) { m.modal = &bodyOwnerTestSurface{} }, false},
+		{"user model", func(m *Model) { m.userModel.view = userModelPanel }, false},
+		{"reflections", func(m *Model) { m.reflections.view = reflectionsList }, false},
+		{"dream", func(m *Model) { m.dream.view = dreamTargets }, false},
+		{"effort", func(m *Model) { m.effort.view = effortPanel }, false},
+		{"worktrees", func(m *Model) { m.worktrees.view = worktreesPanel }, false},
+		{"schedule", func(m *Model) { m.schedule.view = schedulePanel }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := m
+			tc.setup(&got)
+			if selectable(got) != tc.want {
+				t.Fatalf("selectable = %v, want %v", selectable(got), tc.want)
+			}
+		})
 	}
 }
 
