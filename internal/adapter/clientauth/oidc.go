@@ -342,7 +342,16 @@ func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord
 		return "", false, loginRequired(SessionExpired)
 	}
 	exchangeCtx := context.WithValue(ctx, oauth2.HTTPClient, s.client)
-	tok, err := (&oauth2.Config{ClientID: s.identity.ClientID, Endpoint: s.endpoint}).TokenSource(exchangeCtx, &oauth2.Token{AccessToken: rec.Token.AccessToken, RefreshToken: rec.Token.RefreshToken, Expiry: expiry}).Token()
+	// The seed token's Expiry is deliberately already-past, not the real expiry:
+	// refreshAhead already decided a refresh is due, so TokenSource must always
+	// perform a genuine refresh_token exchange here. Passing the real (not-yet-
+	// expired-by-x/oauth2's own smaller reuse threshold) expiry lets TokenSource
+	// hand back this locally-constructed token verbatim without ever calling the
+	// token endpoint -- and since that placeholder never had TokenType set,
+	// validToken() then rejects it as corrupt even though the stored credential
+	// was never touched.
+	seed := &oauth2.Token{AccessToken: rec.Token.AccessToken, RefreshToken: rec.Token.RefreshToken, Expiry: time.Now().Add(-time.Minute)}
+	tok, err := (&oauth2.Config{ClientID: s.identity.ClientID, Endpoint: s.endpoint}).TokenSource(exchangeCtx, seed).Token()
 	if err != nil {
 		if isInvalidGrant(err) {
 			if deleteErr := s.creds.Delete(ctx, s.identity, rec.Version); deleteErr != nil && !errors.Is(deleteErr, credentialstore.ErrNotFound) {
