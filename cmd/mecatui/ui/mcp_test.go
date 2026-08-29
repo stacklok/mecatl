@@ -618,8 +618,8 @@ func TestFeedMCPInsertionRunsBusinessMessageWithoutBlink(t *testing.T) {
 	m = feedMCPInsertion(t, m, func() tea.Msg {
 		return client.MCPPromptGotMsg{Name: "review", Messages: samplePromptMCP().promptMsg}
 	})
-	if m.modal != nil || !strings.Contains(m.ta.Value(), "Please review") {
-		t.Fatalf("business message was not reduced: modal=%v input=%q", m.modal, m.ta.Value())
+	if m.modal != nil || !strings.Contains(m.prompt.Value(), "Please review") {
+		t.Fatalf("business message was not reduced: modal=%v input=%q", m.modal, m.prompt.Value())
 	}
 	// feedMCPInsertion never invokes the returned focus command. Cursor lifecycle
 	// rendering remains owned by TestRenderInputInvalidatedByCursorMove.
