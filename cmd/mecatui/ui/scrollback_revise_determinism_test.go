@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -11,49 +12,22 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// TestScrollbackReviseAllocsIndependentOfN is the determinism guard for the
-// reviseAssistant streaming-bench mechanism (scrollback_bench_test.go): it proves
-// that the per-op allocation count of the revise+refreshView loop does NOT depend
-// on the iteration count. The old mechanism appended a byte per op, so the live
-// block (and the markdown it rendered) GREW with the loop, making allocs/op a
-// function of b.N — a determinism hazard that made the gated scrollback suite
-// flaky. The fixed-size revision keeps per-op work constant.
+// TestScrollbackReviseAllocsIndependentOfN is the direct allocation-scaling guard
+// for the streaming benchmark. It measures the real reviseAssistant+refreshView
+// loop at two cumulative window sizes; fixed-size replacement must keep allocations
+// per operation independent of the window size.
 //
-// Precision note — why we assert a relative tolerance band rather than exact
-// equality: testing.AllocsPerRun returns floor(process-wide malloc delta / runs).
-// Under -race, background goroutines (race-detector bookkeeping, GC workers)
-// contribute a small, N-INDEPENDENT residue of process-wide allocations. Because
-// the high-count window runs ~4× longer wall-clock than the low-count window, more
-// background mallocs accumulate in it; when floor-divided by the run count the
-// quotient can tip +1 or +2 relative to the low window. This is purely an
-// instrument artefact: the real regression this guard targets (re-introducing
-// `b.raw += text` unbounded growth) makes high grow with N, producing a delta on
-// the order of ~10^5 allocs/op — orders of magnitude larger than the ±2 noise
-// band.
-//
-// The assertion therefore checks a relative tolerance BAND whose width scales with
-// the baseline (not a pure ratio): high must not exceed low by more than
-// max(2, low*0.001). With low≈3469 the tolerance is ≈3.5 allocs (~0.1%), safely
-// above the observed ±2 residue and safely below any real regression (which
-// overshoots it by ~100×+).
-//
-// Cross-reference: .github/workflows/perf.yml already classifies the
-// tui_scrollback_view* render-alloc scenario suite as ADVISORY
-// (fail-on-alert:false) for the same reason — "non-deterministic on shared
-// runner". This test was the last hard pass/fail on the same noisy metric;
-// the tolerance band brings it in line with that guidance while keeping the
-// guard meaningful.
+// The 50/200 windows are the smallest tested pair that was stable without weakening
+// the former threshold: over 100 race-enabled runs, high-low ranged from -2 to +3
+// allocs/op (distribution: -2:7, -1:25, 0:29, +1:29, +2:8, +3:2). Smaller 10/40
+// and 20/80 windows reached +6 and +5 respectively. Three allocations is therefore
+// measured race-instrumentation noise, while preserving a slightly tighter ceiling
+// than the former ~3.5-allocation tolerance. An output-preserving mutation that grew
+// off-screen history exceeded this ceiling by more than 35,000 allocations/op.
 func TestScrollbackReviseAllocsIndependentOfN(t *testing.T) {
-	// A modest scrollback so the test stays cheap and offline; the absolute alloc
-	// count is irrelevant — only its INVARIANCE across iteration counts matters.
-	build := func() Model {
-		m := newReviseDeterminismModel(t)
-		m.refreshView() // warm the per-block + join caches before measuring
-		return m
-	}
-
 	measure := func(runs int) float64 {
-		m := build()
+		m := newReviseDeterminismModel(t)
+		m.refreshView()
 		op := 0
 		return testing.AllocsPerRun(runs, func() {
 			m.conv.reviseAssistant(reviseBody(op))
@@ -62,27 +36,57 @@ func TestScrollbackReviseAllocsIndependentOfN(t *testing.T) {
 		})
 	}
 
-	// lowRuns raised 50→500 so the wall-clock ratio between the two measurement
-	// windows drops from ~40× to ~4×, cutting the differential background-goroutine
-	// residue that caused the -race flake.
-	const lowRuns = 500
-	const highRuns = 2000
-
+	const (
+		lowRuns   = 50
+		highRuns  = 200
+		tolerance = 3.0
+	)
 	low := measure(lowRuns)
 	high := measure(highRuns)
-
-	// Relative tolerance band — see the header comment above.
-	// tolerance = max(2, low*0.001) (≈3.5 allocs at low≈3469): absorbs the ±2
-	// N-independent instrument residue under -race while a real b.raw+=text
-	// regression (order ~10^5 allocs/op) exceeds it by ~100×+.
-	tolerance := low * 0.001
-	if tolerance < 2 {
-		tolerance = 2
-	}
+	t.Logf("allocs/op: low(%d)=%.1f high(%d)=%.1f delta=%.1f", lowRuns, low, highRuns, high, high-low)
 	if high > low+tolerance {
-		t.Fatalf("per-op allocs scale with iteration count: low(%d)=%.1f high(%d)=%.1f (Δ=%.1f, want ≤%.1f)\n"+
-			"this means the live block grows per op again — reviseAssistant must keep a FIXED-size body",
+		t.Fatalf("per-op allocs scale with iteration count: low(%d)=%.1f high(%d)=%.1f (delta=%.1f, want <=%.1f); reviseAssistant must keep cumulative work bounded",
 			lowRuns, low, highRuns, high, high-low, tolerance)
+	}
+}
+
+// TestScrollbackReviseOutputIndependentOfN pins the streaming benchmark's
+// iteration-independent behavior: every operation replaces the live assistant
+// body with one fixed-size revision. A cumulatively revised model must therefore
+// render exactly like an independently warmed model that received only the
+// current revision.
+func TestScrollbackReviseOutputIndependentOfN(t *testing.T) {
+	cumulative := newReviseDeterminismModel(t)
+	cumulative.refreshView()
+
+	const ops = 4
+	previous := ""
+	for op := 0; op < ops; op++ {
+		body := reviseBody(op)
+		if len(body) != reviseBodyLen {
+			t.Fatalf("op %d: reviseBody length = %d, want %d", op, len(body), reviseBodyLen)
+		}
+		if op > 0 && body == previous {
+			t.Fatalf("op %d: consecutive reviseBody values are equal", op)
+		}
+		previous = body
+
+		cumulative.conv.reviseAssistant(body)
+		cumulative.refreshView()
+
+		reference := newReviseDeterminismModel(t)
+		reference.refreshView()
+		reference.conv.reviseAssistant(body)
+		reference.refreshView()
+
+		got := cumulative.vp.View()
+		want := reference.vp.View()
+		if got != want {
+			t.Fatalf("op %d: cumulative revisions changed rendered viewport; reviseAssistant must replace the current body\n got %q\nwant %q", op, got, want)
+		}
+		if rendered := stripANSIstr(got); !strings.Contains(rendered, body) {
+			t.Fatalf("op %d: rendered viewport does not contain latest revision %q\nviewport: %q", op, body, rendered)
+		}
 	}
 }
 
@@ -118,11 +122,10 @@ func TestScrollbackReviseBustsCacheEveryOp(t *testing.T) {
 // newReviseDeterminismModel builds a small connected, sized Model with a handful
 // of settled blocks plus a live assistant block to revise. It mirrors
 // buildScrollbackModel's reducer path but at a fraction of the depth so the
-// determinism test stays cheap (the absolute alloc count is irrelevant; only its
-// invariance across iteration counts is asserted).
+// behavioral oracle stays cheap.
 func newReviseDeterminismModel(tb testing.TB) Model {
 	tb.Helper()
-	const depth = 16
+	const depth = 4
 	m := newTestModelFromDeps(Deps{
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         context.Background(),
