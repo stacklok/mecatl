@@ -23,7 +23,7 @@ Driven over gRPC + HTTP; an optional Bubble Tea TUI (`mecatui`) is a client.
 
 ## Operating as an agent in this repository
 
-Be token-efficient by avoiding needless context, tool calls, and delegation—not by prematurely constraining useful work. When invoking `Subagent`, omit `max_run_tokens`/`max_tokens`, `max_turns`, `max_tool_calls`, and `timeout_ms` unless the user or task explicitly requests a bound. Unnecessary limits can terminate a child after spending tokens without producing its deliverable.
+Be token-efficient by avoiding needless context, tool calls, and delegation—not by prematurely constraining useful work. When invoking `Subagent`, omit `max_run_tokens`/`max_tokens`, `max_turns`, `max_tool_calls`, and `timeout_ms` unless the user or task explicitly requests a bound. Omit `authority` too unless a task requires a deliberate, documented reduction of the child’s derived authority; an unnecessary `remaining_delegation_depth` or tool/filesystem restriction can prevent the delegation from running. Unnecessary limits can terminate a child after spending tokens without producing its deliverable.
 For unfamiliar code, use `Grep` to locate symbols, then bounded `Read` calls (`offset` + `limit`); do not issue parallel full-file reads. Pass known ranges to a delegated worker and stop discovery once there is enough context for its next edit.
 
 ## Commands
