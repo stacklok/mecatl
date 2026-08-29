@@ -3354,7 +3354,7 @@ browser-login loop. A static `--auth-token` remains unmanaged; only the managed 
 OIDC source is validated and refreshed by mecatui.
 
 Logout removes local state under the target lock, then releases it before provider
-communication. All remote cleanup shares one operation-wide five-second budget that
+communication. All remote cleanup shares one operation-wide fifteen-second budget that
 starts before scoped HTTP client construction and covers discovery plus refresh/access
 RFC 7009 revocation for every retained legacy registry entry; a shorter caller deadline
 wins. Provider failure never restores local state.

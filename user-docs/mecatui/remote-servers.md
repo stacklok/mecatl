@@ -107,7 +107,7 @@ Logout conditionally removes the target-bound credential before its public regis
 entry under the target transaction lock. It is safe to repeat. A concurrent rotation
 is reloaded and retried once; a persistent conflict or re-enrollment retains the
 metadata and reports an incomplete logout so the unresolved credential does not become
-unreachable. After releasing the lock, it spends one operation-wide five-second budget
+unreachable. After releasing the lock, it spends one operation-wide fifteen-second budget
 on scoped client creation, discovery, and all best-effort RFC 7009 revocation requests.
 An unavailable provider never blocks local deletion;
 provider-side termination is therefore not guaranteed. The command does not prune a

@@ -150,7 +150,7 @@ or fallback:
   deletes credentials before metadata under a per-target transaction lock, so a
   concurrent token rotation retains the registry entry and reports an incomplete
   logout rather than making the credential unreachable. It releases the lock before
-  spending one operation-wide five-second provider budget on discovery and every
+  spending one operation-wide fifteen-second provider budget on discovery and every
   best-effort RFC 7009 revocation attempt; an
   unavailable issuer does not block local removal, so provider-side termination is not
   guaranteed. Existing credential-only orphans cannot be pruned because the store has

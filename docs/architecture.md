@@ -414,7 +414,7 @@ credential by
 CAS before deleting the matching registry snapshot, so a concurrent rotation is
 reloaded and retried once; a persistent conflict or re-enrollment retains reachable
 metadata and reports an incomplete logout rather than creating an orphan. It uses
-non-creating keyring access and spends one operation-wide five-second provider budget,
+non-creating keyring access and spends one operation-wide fifteen-second provider budget,
 beginning before HTTP client construction and shared by discovery and every refresh- or
 access-token RFC 7009 revocation attempt, after local cleanup. A target absent from the
 registry is an idempotent success, but pre-existing credential-only orphans remain unreachable
@@ -433,7 +433,7 @@ probes are unlimited and do not burn state, while MCP OAuth keeps its random-pat
 matching-route policy. The shared private-HTTPS path reuses ToolHive Core's scoped,
 DNS-pinned transport. Kind remote login is available after fixture setup with host aliases and
 the public CA, but is a live qualification path, not ordinary offline-test coverage.
-See [ADR 0244](adr/0244-remote-mecatui-oidc.md).
+See [ADR 0244](adr/0244-remote-mecatui-oidc.md) and [ADR 0249](adr/0249-remote-mecatui-logout-budget.md).
 
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against
