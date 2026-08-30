@@ -9,16 +9,22 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/provider/openai"
 )
 
 func main() {
-	useOpenAI := flag.Bool("openai", false, "run against the live OpenAI Responses API (key from OPENAI_API_KEY)")
-	model := flag.String("model", demoModel, "model identifier when --openai is set")
-	baseURL := flag.String("openai-base-url", "", "override the OpenAI API base URL")
-	flag.Parse()
+	if buildinfo.IsVersion(os.Args) {
+		buildinfo.PrintVersion(os.Stdout, "mecademo")
+		return
+	}
+	parsed, err := parseFlags(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mecademo:", err)
+		os.Exit(2)
+	}
 
-	provider, label, err := selectProvider(*useOpenAI, *model, *baseURL)
+	provider, label, err := selectProvider(parsed.useOpenAI, parsed.model, parsed.baseURL)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mecademo:", err)
 		os.Exit(1)
@@ -32,7 +38,7 @@ func main() {
 	fmt.Println("guardrails: OFF (no checker model configured; bind the `guardrail` model slot or set --guardrails-model to enable)")
 	fmt.Println()
 
-	events, err := RunScenario(context.Background(), provider, *model)
+	events, err := RunScenario(context.Background(), provider, parsed.model)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mecademo:", err)
 		os.Exit(1)
@@ -44,7 +50,7 @@ func main() {
 
 	// Second act (offline only): a 2-member agent team whose lead consolidates the
 	// worker's recorded finding into a single report — the team's deliverable.
-	if !*useOpenAI {
+	if !parsed.useOpenAI {
 		fmt.Println()
 		fmt.Println("=== mecatl team demo (offline) ===")
 		fmt.Println("A lead + worker coordinate; the worker records a finding; the lead synthesises the consolidated report.")
@@ -74,6 +80,28 @@ func main() {
 			fmt.Println(n)
 		}
 	}
+}
+
+type demoFlags struct {
+	useOpenAI bool
+	model     string
+	baseURL   string
+}
+
+func parseFlags(args []string) (demoFlags, error) {
+	fs := flag.NewFlagSet("mecademo", flag.ContinueOnError)
+	var parsed demoFlags
+	fs.BoolVar(&parsed.useOpenAI, "openai", false, "run against the live OpenAI Responses API (key from OPENAI_API_KEY)")
+	fs.StringVar(&parsed.model, "model", demoModel, "model identifier when --openai is set")
+	fs.StringVar(&parsed.baseURL, "openai-base-url", "", "override the OpenAI API base URL")
+	fs.Usage = func() {
+		fs.PrintDefaults()
+		_, _ = fmt.Fprintln(fs.Output(), "\nVersion: mecademo --version prints the build version and exits.")
+	}
+	if err := fs.Parse(args); err != nil {
+		return demoFlags{}, err
+	}
+	return parsed, nil
 }
 
 // selectProvider returns the configured LLMProvider and a human label. The

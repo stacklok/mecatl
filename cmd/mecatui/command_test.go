@@ -1076,6 +1076,9 @@ func runHelpCase(t *testing.T, argv []string, wantSubstring string) string {
 func TestRunBareHelpShowsOnlyCommandIndex(t *testing.T) {
 	out := runHelpCase(t, []string{"mecatui", "--help"}, "Usage: mecatui [flags]")
 	assertCatalogCommandsRendered(t, out)
+	if !strings.Contains(out, "mecatui --version prints the build version and exits") {
+		t.Errorf("run bare help omitted the global version action:\n%s", out)
+	}
 	for _, group := range []string{"Session:", "UI:", "Provider:", "Permissions:"} {
 		if strings.Contains(out, group) {
 			t.Errorf("run bare help included flag group %q:\n%s", group, out)

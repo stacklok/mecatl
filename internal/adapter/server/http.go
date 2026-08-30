@@ -46,6 +46,7 @@ type HTTPHandler struct {
 // http.Handler ready to mount.
 func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h := &HTTPHandler{svc: svc, mux: http.NewServeMux()}
+	h.mux.HandleFunc("GET /v1/info", h.getServerInfo)
 	h.mux.HandleFunc("POST /v1/sessions", h.createSession)
 	h.mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
 	h.mux.HandleFunc("GET /v1/sessions/{id}/transcript", h.getSessionTranscript)
@@ -128,6 +129,16 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 // ServeHTTP routes to the registered handlers.
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
+}
+
+// getServerInfo returns safe build, composition, and the caller-selected provider endpoint projection.
+func (h *HTTPHandler) getServerInfo(w http.ResponseWriter, r *http.Request) {
+	providerIDs := r.URL.Query()["provider_id"]
+	providerID := ""
+	if len(providerIDs) == 1 {
+		providerID = providerIDs[0]
+	}
+	writeJSON(w, http.StatusOK, h.svc.serverInfoResponse(providerID))
 }
 
 // --- request/response bodies ------------------------------------------------

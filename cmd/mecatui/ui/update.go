@@ -280,6 +280,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case quitDisarmMsg, quitDDisarmMsg, clickDisarmMsg:
 		return m.onDisarmMsg(msg)
 
+	case diagnosticsMsg:
+		return m.handleDiagnostics(msg)
+
 	default:
 		return m.dispatchNonInputMsg(msg)
 	}

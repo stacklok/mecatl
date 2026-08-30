@@ -110,10 +110,15 @@ type LearningSettings interface {
 // imports client + theme only — never contracts/gen or any internal/... package;
 // all proto contact happens behind Converser/SessionCreator.
 type Deps struct {
-	Session     SessionCreator
-	Conv        Converser
-	MCP         client.MCP              // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
-	Cmds        client.Commander        // slash-command discovery for the input palette; nil disables it
+	Session SessionCreator
+	Conv    Converser
+	MCP     client.MCP       // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
+	Cmds    client.Commander // slash-command discovery for the input palette; nil disables it
+	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
+	ServerInfo ServerInfoGetter
+	// ServerImpl is the locally-known embedded server family. It is used without
+	// an RPC when Embedded is true.
+	ServerImpl  string
 	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
 	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
 	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
@@ -197,6 +202,11 @@ type Deps struct {
 	kittyCapable      func() bool
 	scrollKeysMarking func() string
 
+	// ClientBuild is the local mecatui build identity and Embedded selects the
+	// local server identity path for /diagnostics.
+	ClientBuild string
+	Embedded    bool
+
 	// Display-only context for the header bar.
 	Server    string
 	Workspace string
@@ -219,7 +229,7 @@ type Deps struct {
 
 	// Version is the mecatui build version, shown on the first-run welcome splash
 	// (e.g. "v0.3.1" or "dev"). Threaded from the shared
-	// internal/buildinfo.Version (ldflags-set); "" omits the version line.
+	// internal/buildinfo.BuildID (ldflags-set); "" omits the version line.
 	// Display-only.
 	Version string
 

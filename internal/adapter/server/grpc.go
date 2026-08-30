@@ -80,6 +80,11 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	}, nil
 }
 
+// GetServerInfo returns safe build, composition, and the caller-selected provider endpoint projection.
+func (h *HarnessServer) GetServerInfo(_ context.Context, req *mecatlv1.GetServerInfoRequest) (*mecatlv1.GetServerInfoResponse, error) {
+	return h.svc.serverInfoResponse(req.GetProviderId()), nil
+}
+
 // GetSession returns a snapshot of the requested session.
 func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
 	if req.GetSessionId() == "" {

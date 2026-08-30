@@ -65,7 +65,7 @@ func TestCompactLocalRejectionsNeverReachModel(t *testing.T) {
 		status string
 	}{
 		{"gated off", func(m *Model) { m.caps.ManualCompaction = false }, "/compact", "not available"},
-		{"arguments", func(*Model) {}, "/compact now", "takes no arguments"},
+		{"arguments", func(*Model) {}, "/compact now", "does not take arguments"},
 		{"active", func(m *Model) { m.phase = phaseRunning }, "/compact", "run is active"},
 		{"missing session", func(m *Model) { *m = m.bindSessionID("") }, "/compact", "no active session"},
 		{"duplicate", func(m *Model) { m.compactPending = true }, "/compact", "already in progress"},

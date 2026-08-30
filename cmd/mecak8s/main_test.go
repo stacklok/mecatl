@@ -21,8 +21,20 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
+
+func TestVersionInvocationIsExact(t *testing.T) {
+	if !buildinfo.IsVersion([]string{"mecak8s", "--version"}) {
+		t.Fatal("exact --version was not recognized")
+	}
+	for _, args := range [][]string{{"--version", "--mock"}, {"-version"}} {
+		if _, err := parseFlags(args); err == nil {
+			t.Errorf("parseFlags(%v) accepted a non-exact version invocation", args)
+		}
+	}
+}
 
 func TestMecak8sRejectsOpenAICodexCredential(t *testing.T) {
 	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
@@ -110,6 +122,9 @@ func TestAppConfigMapsK8sFields(t *testing.T) {
 		t.Fatalf("parseFlags: %v", err)
 	}
 	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	if ac.ServerImplementation != mecak8sServerImplementation {
+		t.Errorf("app.Config ServerImplementation = %q, want %q", ac.ServerImplementation, mecak8sServerImplementation)
+	}
 	if ac.RedisURL != "redis:6379" {
 		t.Errorf("app.Config RedisURL = %q, want redis:6379", ac.RedisURL)
 	}

@@ -65,6 +65,84 @@ func parseSSE(t *testing.T, r *bufio.Reader) []*mecatlv1.Event {
 	}
 }
 
+func TestHTTPGetServerInfoReturnsSafeDiagnosticsSnapshot(t *testing.T) {
+	svc := newService(t, mockllm.New(), allowRules())
+	h := server.NewHTTPHandler(svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/info?provider_id=test-provider", nil)
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /v1/info status = %d, want 200", resp.Code)
+	}
+	var info struct {
+		BuildID                    string `json:"build_id"`
+		ServerImplementation       string `json:"server_implementation"`
+		LLMProviderDisplayEndpoint string `json:"llm_provider_display_endpoint"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		t.Fatalf("decode info: %v", err)
+	}
+	if info.BuildID != "test-build" {
+		t.Fatalf("build id = %q, want test-build", info.BuildID)
+	}
+	if info.ServerImplementation != "unknown" {
+		t.Fatalf("server implementation = %q, want unknown", info.ServerImplementation)
+	}
+	if info.LLMProviderDisplayEndpoint != "https://provider.example:8443/v1" || strings.Contains(info.LLMProviderDisplayEndpoint, "secret") || strings.Contains(info.LLMProviderDisplayEndpoint, "token") {
+		t.Fatalf("unsafe LLM provider display endpoint = %q", info.LLMProviderDisplayEndpoint)
+	}
+	missing := httptest.NewRecorder()
+	h.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/v1/sessions/never-created", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("GET /v1/info must not create or inspect session state; GetSession status = %d, want 404", missing.Code)
+	}
+}
+
+func TestHTTPGetServerInfoIgnoresAbsentRepeatedAndUnknownSelectors(t *testing.T) {
+	svc := newService(t, mockllm.New(), allowRules())
+	for _, target := range []string{"/v1/info", "/v1/info?provider_id=unknown", "/v1/info?provider_id=test-provider&provider_id=unknown"} {
+		resp := httptest.NewRecorder()
+		server.NewHTTPHandler(svc).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, target, nil))
+		var info struct {
+			LLMProviderDisplayEndpoint string `json:"llm_provider_display_endpoint"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			t.Fatalf("decode %s: %v", target, err)
+		}
+		if info.LLMProviderDisplayEndpoint != "" {
+			t.Errorf("%s display endpoint = %q, want unavailable", target, info.LLMProviderDisplayEndpoint)
+		}
+	}
+}
+
+func TestHTTPGetServerInfoNormalizesImplementation(t *testing.T) {
+	for _, tc := range []struct {
+		implementation string
+		want           string
+	}{
+		{implementation: "mecated", want: "mecated"},
+		{implementation: "mecak8s", want: "mecak8s"},
+		{implementation: "mecatui", want: "mecatui"},
+		{implementation: "topology:10.0.0.1", want: "unknown"},
+		{implementation: "secret=credential", want: "unknown"},
+		{implementation: "mecated\x00", want: "unknown"},
+	} {
+		svc := newServiceWithImplementation(t, mockllm.New(), allowRules(), tc.implementation)
+		resp := httptest.NewRecorder()
+		server.NewHTTPHandler(svc).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/v1/info?provider_id=test-provider", nil))
+		var info struct {
+			ServerImplementation string `json:"server_implementation"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			t.Fatal(err)
+		}
+		if info.ServerImplementation != tc.want {
+			t.Errorf("server implementation = %q, want %q", info.ServerImplementation, tc.want)
+		}
+	}
+}
+
 // TestHTTPPromptSSE drives /v1/sessions then /v1/sessions/{id}/prompt and
 // asserts the SSE stream carries the event taxonomy and a terminal result.
 func TestHTTPPromptSSE(t *testing.T) {

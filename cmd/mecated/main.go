@@ -54,6 +54,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
 )
@@ -508,6 +509,10 @@ func (l *stringList) Set(v string) error {
 }
 
 func main() {
+	if buildinfo.IsVersion(os.Args) {
+		buildinfo.PrintVersion(os.Stdout, "mecated")
+		return
+	}
 	res := resolveCommand(os.Args)
 
 	// A usage error (unknown command / unknown-or-missing subcommand) fails
@@ -1013,6 +1018,9 @@ func setupObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 	return observability{providers: providers, metrics: metrics, recorder: recorder}, nil
 }
 
+// mecatedServerImplementation is the stable family reported to authenticated clients.
+const mecatedServerImplementation = "mecated"
+
 // appConfig constructs the command root's declarative app.Config. app.Build loads the
 // injected provider credential after resolving operator definitions.
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
@@ -1174,6 +1182,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		DisableSteer:        cfg.noSteer,
 		DisableSteerFlagSet: cfg.noSteerFlagSet,
 	}
+	out.ServerImplementation = mecatedServerImplementation
 	// Project the once-resolved credentials and parsed base URLs without I/O.
 	// An OPENAI_API_KEY in the environment implies the user wants the real provider —
 	// the same flip the previous inline read did, now keyed off the resolved keys.

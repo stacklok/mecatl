@@ -34,6 +34,8 @@ $ go run ./cmd/mecated serve --openai --workspace "$PWD"
 - `mecated --help-all` — the exhaustive serve-compatible flag reference (every
   public flag a `mecated serve` invocation accepts), plus a note pointing to
   `mecated acp --help-all` for the ACP-scoped subset.
+- `mecated --version` — prints the linker-stamped build identity and exits before
+  loading configuration or starting a service.
 - `mecated mcp login SERVER [--no-browser] [--permission-config PATH ...]` — authorize one operator-configured
   OAuth server backed by a mutable local credential store. Login uses the same
   conventional operator settings and explicit-file precedence as `serve`; the

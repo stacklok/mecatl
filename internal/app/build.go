@@ -82,6 +82,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/provider/openai"
 )
@@ -126,7 +127,10 @@ const (
 // the fields they need. Sink and ToolCallRecorder are optional (nil installs no
 // telemetry — the engine nil-guards both).
 type Config struct {
-	Workspace string
+	// ServerImplementation is the stable composition family exposed by GetServerInfo.
+	// Empty safely reports as "unknown" for generic embeddings.
+	ServerImplementation string
+	Workspace            string
 	// WorkspaceAuthority is the deployment's workspace-selection policy (ADR 0237).
 	// The zero value is client-selectable, preserving embedded and loopback use.
 	// The cmd/ main owns this decision: listener topology never reaches the server
@@ -1756,6 +1760,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.storageMaintenance = &storageMaintenanceState{}
 	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
 	svcCfg := server.Config{
+		BuildID:              buildinfo.BuildID,
+		ServerImplementation: cfg.ServerImplementation,
+		// GetServerInfo looks up only a caller-selected, already-known provider
+		// in this immutable composition registry. It intentionally does not
+		// inspect session selectors, discover providers, or re-read configuration.
+		ProviderEndpoint: func(providerID string) string {
+			entry, ok := reg.Lookup(providerID)
+			if !ok {
+				return ""
+			}
+			return entry.baseURL
+		},
 		Engine:                              engine,
 		Store:                               store,
 		OwnershipEnforced:                   cfg.OwnershipEnforced,
@@ -2614,6 +2630,7 @@ func sessionEngineFactory(
 		// has no tool, so the note is withheld (the model is never told about a
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
 		// front there is no filesystem — and stop the prompt <env> claiming the
@@ -3485,6 +3502,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// a per-session engine; a store that backs no ScheduleStore withholds the
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
 	// prompt here: it is truthed per-request against the LIVE tool.Environment in
@@ -7485,6 +7503,18 @@ func applySchedulePosture(pc prompt.Config, hasSchedule bool) prompt.Config {
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + schedulePostureNote
+	return pc
+}
+
+// diagnosticsPostureNote tells only main-session models that the TUI can submit
+// a safe current-state report through the ordinary prompt path.
+const diagnosticsPostureNote = "The mecatui /diagnostics command submits a concise current client/server diagnostic report as a normal user prompt. Treat that report as the authoritative current state when the user provides it; do not request secrets, configuration, environment variables, or raw connection details to recreate it."
+
+func applyDiagnosticsPosture(pc prompt.Config) prompt.Config {
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + diagnosticsPostureNote
 	return pc
 }
 

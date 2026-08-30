@@ -438,6 +438,7 @@ func writeTopLevelHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml\n")
 	_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill\n")
 	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json\n")
+	_, _ = fmt.Fprintf(out, "\nGlobal: mecated --version prints the build version and exits.\n")
 	_, _ = fmt.Fprintf(out, "\nExhaustive serve-compatible flag reference (every public flag a\n")
 	_, _ = fmt.Fprintf(out, "`mecated serve` invocation accepts):\n\n")
 	_, _ = fmt.Fprintf(out, "Flags:\n")

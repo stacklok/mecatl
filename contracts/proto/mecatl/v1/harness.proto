@@ -34,6 +34,10 @@ service HarnessService {
   // CreateSession allocates a new server-side session and returns its id.
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
 
+  // GetServerInfo returns only the composed server build identity. It is authenticated
+  // like every HarnessService operation and does not inspect configuration or state.
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+
   // GetSession returns a snapshot of an existing session.
   rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
 
@@ -473,6 +477,30 @@ message CreateSessionRequest {
   // is rejected with FailedPrecondition. Empty means no carryover
   // (byte-identical default).
   string source_session_id = 8;
+}
+
+// GetServerInfoRequest asks for the sanitized diagnostic display endpoint of the
+// caller's already-known active provider. An absent or unknown provider_id leaves
+// llm_provider_display_endpoint unavailable; the server never infers it from a
+// default or session state.
+message GetServerInfoRequest {
+  string provider_id = 1;
+}
+
+// GetServerInfoResponse contains server build/composition identities and sanitized
+// diagnostic display projections, never connection instructions.
+message GetServerInfoResponse {
+  string build_id = 1;
+  // server_implementation is the stable composition family only (for example,
+  // "mecated"). It never identifies an instance, deployment, topology,
+  // configuration, capabilities, or authentication.
+  string server_implementation = 2;
+  // llm_provider_display_endpoint is sanitized diagnostic display data for the
+  // requested provider_id only when that provider is already known to composition.
+  // It is never connection configuration or a connection instruction. It contains
+  // only scheme, host, optional port, and an escaped clean path; userinfo, query,
+  // fragment, controls, and invalid or oversized values are omitted.
+  string llm_provider_display_endpoint = 3;
 }
 
 // ServerCapabilities reports which optional features this server has ENABLED,

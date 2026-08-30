@@ -43,6 +43,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -57,6 +58,10 @@ func (e *usageErrorTrailer) Error() string { return e.err.Error() }
 func (e *usageErrorTrailer) Unwrap() error { return e.err }
 
 func main() {
+	if buildinfo.IsVersion(os.Args) {
+		buildinfo.PrintVersion(os.Stdout, "mecatui")
+		return
+	}
 	if err := run(os.Args); err != nil {
 		// --help / --help-all is a successful action: the Usage hook (or the
 		// --help-all renderer) already printed help; mirror mecated's
@@ -216,6 +221,7 @@ func run(argv []string) error {
 		Conv:                cl,
 		MCP:                 cl,
 		Cmds:                cl,
+		ServerInfo:          cl,
 		Skills:              cl,
 		Agents:              cl,
 		Soul:                cl,
@@ -243,6 +249,8 @@ func run(argv []string) error {
 		Clipboard:           client.NewClipboard(),
 		Theme:               th,
 		Server:              target,
+		ClientBuild:         buildinfo.BuildID,
+		Embedded:            cfg.transportMode == modeLocal,
 		// Model is best-effort display only. For an EXTERNAL --server it reflects
 		// the locally-configured --model flag and may NOT match the server's actual
 		// model (the server owns provider config); for an embedded server it is
@@ -257,7 +265,7 @@ func run(argv []string) error {
 		Resume:    resume,
 		Ctx:       ctx,
 		// Build version for the welcome splash (ldflags-set; "dev" by default).
-		Version: version,
+		Version: buildinfo.BuildID,
 		// Suppress the rich welcome splash under --no-banner, --quiet, or a
 		// non-interactive stdin (the OR lives here so config.go stays pure — it owns
 		// only the flag). The plain prompt hint is still shown in all three cases.
@@ -287,6 +295,7 @@ func run(argv []string) error {
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: cliconfig.JoinPromptBody(cfg.prompt, cfg.promptFileBody),
 	})
+	deps.ServerImpl = mecatuiServerImplementation
 	wireManualCompaction(&deps, cl)
 
 	// Apply keymap overrides (CLI for now).
@@ -599,6 +608,9 @@ func applyTrustPrompt(cfg config, diag port.Diagnostics) config {
 	return cfg
 }
 
+// mecatuiServerImplementation is the stable family of the embedded server.
+const mecatuiServerImplementation = "mecatui"
+
 // embeddedConfig constructs the embedded server's declarative app.Config. app.Build
 // loads the injected provider credential; connect mode never calls this function.
 func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
@@ -785,6 +797,7 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	out.MCPProfileLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
 	out.ProviderCredentialLoader = cliconfig.NewProviderCredentialResolver(cfg.providerFlags, keys)
 	out.ProviderOverrides = cfg.providerFlags.EndpointOverrides()
+	out.ServerImplementation = mecatuiServerImplementation
 	return out
 }
 

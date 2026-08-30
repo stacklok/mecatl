@@ -12,9 +12,7 @@
 #
 # Build:   KO_DOCKER_REPO=ko.local ko build --local ./cmd/mecated   (or `task ko:build`)
 # Publish: KO_DOCKER_REPO=<registry> ko build --push ./cmd/mecated  (or `task ko:publish`)
-#
-# mecated has no version stamping vars in cmd/mecated/main.go, so no -X ldflags are set
-# here (add them under `ldflags` if/when a version package lands).
+# Build IDs are supplied through VERSION by the Taskfile's shared BUILD_ID value.
 
 defaultBaseImage: cgr.dev/chainguard/static@sha256:d6a97eb401cbc7c6d48be76ad81d7899b94303580859d396b52b67bc84ea7345
 
@@ -34,6 +32,7 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
+      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{with index .Env "VERSION"}}{{.}}{{else}}dev{{end}}
   # mecak8s (ADR 0048): the storage-free k8s-native agent binary. Same distroless
   # base + build flags as mecated — it is a thin peer of mecated that composes
   # app.Build with k8s-native defaults (Redis store + k8s lease + drain gate).
@@ -45,12 +44,12 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
+      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{with index .Env "VERSION"}}{{.}}{{else}}dev{{end}}
   # mecatui (issue #302): the optional Bubble Tea TUI binary. It overrides the
   # distroless base with the brood-box wolfi base (see baseImageOverrides above —
   # brood-box connects over SSH and needs a shell) and ships a kodata/agent.yaml
-  # brood-box manifest alongside the binary. The build version is stamped into
-  # the welcome splash via -X main.version (cmd/mecatui/version.go), sourced
-  # from the VERSION env var via ko's {{.Env.VERSION}} template expansion.
+  # brood-box manifest alongside the binary. The build version is stamped from
+  # VERSION when set, otherwise the template explicitly keeps the `dev` default.
   - id: mecatui
     main: ./cmd/mecatui
     flags:
@@ -59,4 +58,4 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X main.version={{.Env.VERSION}}
+      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{with index .Env "VERSION"}}{{.}}{{else}}dev{{end}}

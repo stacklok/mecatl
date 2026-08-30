@@ -213,6 +213,18 @@ type SessionEngineFactory func(ctx context.Context, sel ProviderSelector, specs 
 
 // Config wires the server adapter to the WP8 engine and its collaborators.
 type Config struct {
+	// BuildID is the composed binary build identity exposed by GetServerInfo only.
+	BuildID string
+	// ServerImplementation is the stable composition family exposed by GetServerInfo.
+	// NewService admits only [a-z][a-z0-9-]{0,63}; invalid values report "unknown".
+	// It must not identify an instance, deployment, topology, configuration,
+	// capabilities, or authentication.
+	ServerImplementation string
+	// ProviderEndpoint returns the configured endpoint for a provider already known
+	// to the caller and composition. It must not perform discovery, session/store or
+	// config reads, or other side effects; GetServerInfo sanitizes its result before
+	// every response boundary. nil and unknown providers report unavailable.
+	ProviderEndpoint func(providerID string) string
 	// Engine is the shared agent engine that drives every run. Required.
 	Engine *agent.Engine
 	// Store persists and looks up sessions. Required.
@@ -1148,6 +1160,22 @@ func validateWorkspaceAuthorityConfig(cfg Config) error {
 	}
 }
 
+// normalizeServerImplementation admits only a stable, non-identifying composition
+// family token for GetServerInfo. All other input is intentionally indistinguishable.
+func normalizeServerImplementation(value string) string {
+	if len(value) == 0 || len(value) > 64 || value[0] < 'a' || value[0] > 'z' {
+		return "unknown"
+	}
+	for i := 1; i < len(value); i++ {
+		c := value[i]
+		if c == '-' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+			continue
+		}
+		return "unknown"
+	}
+	return value
+}
+
 // NewService validates cfg and constructs a Service. It returns ErrConfig if
 // Engine, Store or Workspaces is nil.
 func NewService(cfg Config) (*Service, error) {
@@ -1163,6 +1191,7 @@ func NewService(cfg Config) (*Service, error) {
 	if err := validateWorkspaceAuthorityConfig(cfg); err != nil {
 		return nil, err
 	}
+	cfg.ServerImplementation = normalizeServerImplementation(cfg.ServerImplementation)
 	if cfg.DefaultMode == "" {
 		cfg.DefaultMode = session.ModeDefault
 	}

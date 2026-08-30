@@ -398,6 +398,12 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.otlpMetricsProtocol, "otlp-metrics-protocol", "grpc", "OTLP transport for metrics: \"grpc\" (default) or \"http\"")
 	fs.DurationVar(&cfg.otlpShutdownTimeout, "otlp-shutdown-timeout", 5*time.Second, "bound on the telemetry flush at SIGTERM (so a dead collector cannot hang shutdown). 0 disables the bound")
 
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(fs.Output(), "Usage: mecak8s [flags]\n\n")
+		fs.PrintDefaults()
+		_, _ = fmt.Fprintln(fs.Output(), "\nVersion: mecak8s --version prints the build version and exits.")
+	}
+
 	if err := fs.Parse(argv); err != nil {
 		return config{}, err
 	}
@@ -481,6 +487,9 @@ func parseFlags(argv []string) (config, error) {
 
 	return cfg, nil
 }
+
+// mecak8sServerImplementation is the stable family reported to authenticated clients.
+const mecak8sServerImplementation = "mecak8s"
 
 // appConfig maps the CLI config onto the shared app.Config build contract,
 // threading a Diagnostics sink into the engine/composition. It is a thin subset
@@ -612,6 +621,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		slog.Warn(keys.AuthFileWarning)
 	}
 	cfg.toolhiveLLMFlags.Apply(&out)
+	out.ServerImplementation = mecak8sServerImplementation
 	return out
 }
 

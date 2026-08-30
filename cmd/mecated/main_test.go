@@ -47,6 +47,9 @@ func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	want := cfg.providerCredentials.OpenAICodex
 	for range 2 {
 		got := appConfig(cfg, nil, nil, nil, nil, nil)
+		if got.ServerImplementation != mecatedServerImplementation {
+			t.Fatalf("ServerImplementation = %q, want %q", got.ServerImplementation, mecatedServerImplementation)
+		}
 		profile, _, err := got.ProviderCredentialLoader.Load(nil)
 		if err != nil || profile.OpenAICodexCredential != want || profile.OpenAICodexCredential.Validate(time.Now()) != nil {
 			t.Fatal("mecated provider credential loader omitted or re-resolved the parsed credential")
