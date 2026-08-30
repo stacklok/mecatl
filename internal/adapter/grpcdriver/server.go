@@ -239,6 +239,7 @@ func metadataToProto(meta port.SessionDiscoveryMeta) (*driverv1.SessionMetadataE
 		ParentSessionId: string(meta.Relationship.ParentSessionID), CallId: string(meta.Relationship.CallID),
 		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID),
 		TeamId: meta.Relationship.TeamID, MemberName: meta.Relationship.MemberName,
+		DebugTargetSessionId: valid(string(meta.Relationship.DebugTargetID)),
 	}
 	if !meta.ModifiedAt.IsZero() {
 		entry.ModifiedAt = timestamppb.New(meta.ModifiedAt)

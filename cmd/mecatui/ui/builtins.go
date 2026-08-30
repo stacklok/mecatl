@@ -28,21 +28,22 @@ type builtin struct {
 // had reached 7 and was growing per feature) into one named struct so call sites
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
-	MCP         bool
-	Agents      bool
-	Skills      bool
-	Soul        bool
-	UserModel   bool
-	Reflections bool
-	Dream       bool
-	Compactor   bool
-	Models      bool // mirrors client.Capabilities.ModelSelection
-	Worktrees   bool
-	Scheduling  bool
-	Sessions    bool // /sessions picker — gated on inventory + authoritative transcript
-	Learning    bool // /learning operator-settings enum
-	DebugAsk    bool // /debug-ask — env-gated (MECATUI_DEBUG_ASK=1) fake-ask injector
-	Connect     bool // /connect — saved remote target picker
+	MCP          bool
+	Agents       bool
+	Skills       bool
+	Soul         bool
+	UserModel    bool
+	Reflections  bool
+	Dream        bool
+	Compactor    bool
+	Models       bool // mirrors client.Capabilities.ModelSelection
+	Worktrees    bool
+	Scheduling   bool
+	Sessions     bool // /sessions picker — gated on inventory + authoritative transcript
+	Learning     bool // /learning operator-settings enum
+	DebugAsk     bool // /debug-ask — env-gated (MECATUI_DEBUG_ASK=1) fake-ask injector
+	Connect      bool // /connect — saved remote target picker
+	DebugSession bool // dedicated target-bound debugger: hide binding-breaking actions
 }
 
 // wiredCollaborators builds the struct from m.deps — the SINGLE construction
@@ -59,10 +60,11 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Dream:       m.deps.Dream != nil,
 		Compactor:   m.deps.Compactor != nil,
 		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
-		Sessions: m.deps.Sessions != nil && m.deps.Transcript != nil,
-		Learning: m.deps.Learning != nil,
-		DebugAsk: m.deps.DebugAsk,
-		Connect:  m.deps.Connect != nil,
+		Sessions:     m.deps.Sessions != nil && m.deps.Transcript != nil,
+		Learning:     m.deps.Learning != nil,
+		DebugAsk:     m.deps.DebugAsk,
+		Connect:      m.deps.Connect != nil,
+		DebugSession: m.deps.DebugTarget != "",
 	}
 }
 
@@ -226,6 +228,18 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "show the server's operator posture",
 			run:  Model.runPosture,
 		})
+	}
+	if w.DebugSession {
+		filtered := out[:0]
+		for _, b := range out {
+			switch b.name {
+			case "clear", "models", "effort", "worktrees", "sessions":
+				continue
+			default:
+				filtered = append(filtered, b)
+			}
+		}
+		return filtered
 	}
 	return out
 }

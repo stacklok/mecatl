@@ -806,6 +806,8 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		TitleProvenance:         string(s.TitleProvenance),
 		Capabilities:            caps,
 		AdoptionSourceSessionId: valid(string(adoptionSourceID(s))),
+		Kind:                    string(s.Kind),
+		Relationship:            toProtoSessionRelationship(s.Relationship),
 	}
 }
 
@@ -1031,7 +1033,7 @@ func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.Session
 	out := &mecatlv1.SessionRelationship{
 		ParentSessionId: string(r.ParentSessionID), CallId: string(r.CallID),
 		ScheduleName: r.ScheduleName, OriginSessionId: string(r.OriginSessionID),
-		TeamId: r.TeamID, MemberName: r.MemberName,
+		TeamId: r.TeamID, MemberName: r.MemberName, DebugTargetSessionId: valid(string(r.DebugTargetID)),
 	}
 	if r.BranchIndex != nil {
 		index := ClampInt32(*r.BranchIndex)

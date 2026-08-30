@@ -30,6 +30,9 @@ type config struct {
 	// browseSessions selects the startup session-browser launch intent. Transport
 	// remains independent: both embedded and connect modes can browse first.
 	browseSessions bool
+	// debugTarget binds a dedicated no-filesystem analysis session to one stored
+	// target. It comes only from the command grammar, never from a flag.
+	debugTarget string
 	// helpAll is true when --help-all was passed; it requests the exhaustive
 	// flag listing and exits 0 before transport resolution.
 	helpAll   bool
@@ -309,8 +312,8 @@ type config struct {
 	// docs/adr/0018-perf-observability.md; used only when hosting an in-process
 	// server). OFF by default. perf arms the loopback runtime-introspection admin
 	// surface (pprof/expvar/RSS/goroutines/flightrecorder + /metrics) plus the
-	// domain-metrics EventSink in the embedded engine. perfAddr is the loopback
-	// admin listen address (empty = an ephemeral loopback port, logged on start).
+	// domain-metrics EventSink. Empty perfAddr uses a private UNIX socket, except
+	// perfMCP uses ephemeral loopback TCP for its streaming-HTTP transport.
 	// perfGoroutineWarnThreshold arms the live goroutine-leak watchdog (0 = off).
 	perf                       bool
 	perfAddr                   string
@@ -442,10 +445,10 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.skillsDir, "skills-dir", "", "embedded server only: directory of skill units (<name>/SKILL.md); empty = the conventional dirs (e.g. .claude/skills)")
 	fs.BoolVar(&cfg.noSkills, "no-skills", false, "embedded server only: disable skill discovery (the Skill tool) entirely")
 
-	fs.BoolVar(&cfg.perf, "perf", false, "embedded server only: expose the loopback perf-observability admin surface (/metrics, /debug/pprof, /debug/vars, /debug/flightrecorder) and wire domain metrics into the engine. OFF by default. The address is logged on start. SECURITY: loopback-bound, UNAUTHENTICATED — its output can embed prompt text/file paths/goroutine stacks, so it stays on 127.0.0.1 only (decision 6/7 of docs/adr/0018-perf-observability.md)")
-	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "embedded server only: loopback listen address for the --perf admin surface (empty = the fixed default 127.0.0.1:9099, predictable so an MCP-client config can hardcode the /mcp URL; distinct from mecated's :9090). Pass another host:port, or 127.0.0.1:0 for an ephemeral port. On a port clash, start FAILS with guidance. Only consulted with --perf")
+	fs.BoolVar(&cfg.perf, "perf", false, "embedded server only: expose the private perf-observability admin surface (/metrics, /debug/pprof, /debug/vars, /debug/flightrecorder) and wire domain metrics into the engine. OFF by default. Empty --perf-addr uses a per-instance UNIX socket. SECURITY: UNAUTHENTICATED — its output can embed prompt text/file paths/goroutine stacks")
+	fs.StringVar(&cfg.perfAddr, "perf-addr", "", "embedded server only: explicit loopback host:port for the --perf admin surface (empty = private per-instance UNIX socket, or ephemeral 127.0.0.1 TCP with --perf-mcp). Use 127.0.0.1:0 for explicit ephemeral TCP. Non-loopback addresses are refused. Only consulted with --perf")
 	fs.IntVar(&cfg.perfGoroutineWarnThreshold, "perf-goroutine-warn-threshold", 0, "embedded server only: arm the live goroutine-leak watchdog — log a Warn whenever runtime.NumGoroutine() exceeds this count (decision 10). 0 (default) disables the alarm; the /metrics goroutine-count series is exported regardless. Only consulted with --perf")
-	fs.BoolVar(&cfg.perfMCP, "perf-mcp", false, "embedded server only: mount the read-only perf MCP server at /mcp on the --perf admin surface, so an agent can introspect THIS process's runtime/latency/profile state over MCP (list_slow_turns, runtime/heap/CPU profiles, FlightRecorder). Only meaningful with --perf. SECURITY: loopback-bound, UNAUTHENTICATED (decision 6) — embed REFUSES a non-loopback --perf-addr with this set")
+	fs.BoolVar(&cfg.perfMCP, "perf-mcp", false, "embedded server only: mount the read-only streaming-HTTP perf MCP server at /mcp. With empty --perf-addr this selects ephemeral 127.0.0.1 TCP and logs the resolved URL; stdio is never used. Only meaningful with --perf. SECURITY: loopback-bound, UNAUTHENTICATED")
 	fs.BoolVar(&cfg.helpAll, "help-all", false, "print the exhaustive flag reference for this command and exit")
 	fs.BoolVar(&cfg.helpFlags, "help-flags", false, "print the common embedded-mode flag reference and exit (bare invocation only)")
 
@@ -488,6 +491,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	// flags; the bare/local mode rejects remote-only flags.
 	if err := rejectInapplicableFlags(fs, mode); err != nil {
 		return fs, config{}, err
+	}
+	if fs.NArg() != 0 {
+		return fs, config{}, fmt.Errorf("unexpected operand %q", fs.Arg(0))
 	}
 
 	if err := finalizeParsedConfig(fs, &cfg); err != nil {
@@ -708,6 +714,13 @@ func transportUsage(fs *flag.FlagSet, mode transportMode, browseSessions ...bool
 // rejected before a dial or CreateSession call. Embedded and loopback workflows
 // retain the local cwd/worktree default.
 func configureWorkspaceForTransport(cfg *config) error {
+	if cfg.debugTarget != "" && cfg.transportMode == modeConnect {
+		if cfg.workspaceExplicit {
+			return errors.New("--workspace is not allowed when connecting to a remote debug session")
+		}
+		cfg.workspace = ""
+		return nil
+	}
 	if cfg.transportMode == modeConnect && !client.IsLoopbackHost(cfg.connectAddress) {
 		if cfg.workspaceExplicit {
 			return errors.New("--workspace is not allowed when connecting to a remote server")
@@ -744,13 +757,24 @@ func resolveWorkspace(ws string) (string, error) {
 
 // validate checks invariants the server also enforces, failing fast client-side.
 func (c config) validate() error {
+	if c.debugTarget != "" && c.listThemes {
+		return errors.New("debug conflicts with --list-themes")
+	}
 	if c.listThemes {
 		return nil
 	}
 	if err := validateResumeSelectors(c); err != nil {
 		return err
 	}
-	if c.workspace == "" && (c.transportMode != modeConnect || client.IsLoopbackHost(c.connectAddress)) {
+	if c.debugTarget != "" {
+		switch {
+		case c.resumeID != "" || c.resumeLatest:
+			return errors.New("debug conflicts with resume launch actions")
+		case c.browseSessions:
+			return errors.New("debug conflicts with sessions launch")
+		}
+	}
+	if c.workspace == "" && c.debugTarget == "" && (c.transportMode != modeConnect || client.IsLoopbackHost(c.connectAddress)) {
 		return errors.New("workspace is required")
 	}
 	if c.workspace != "" && !filepath.IsAbs(c.workspace) {

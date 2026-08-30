@@ -141,6 +141,7 @@ const RoutingReasonPinnedModel untyped string = "pinned-model"
 const RoutingReasonResume untyped string = "resume"
 const RoutingReasonRouterDisabled untyped string = "router-disabled"
 const RoutingReasonTargetUnavailable untyped string = "route-target-unavailable"
+const SessionKindDebug SessionKind = "debug"
 const SessionKindMain SessionKind = "main"
 const SessionKindParallelBranch SessionKind = "parallel_branch"
 const SessionKindScheduled SessionKind = "scheduled"
@@ -191,6 +192,7 @@ func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Messag
 func NewAudioContent(mime string, data []byte) (Content, error)
 func NewAudioURLContent(mime string, rawURL string) (Content, error)
 func NewContent(kind MediaKind, mime string, data []byte, rawURL string) (Content, error)
+func NewDebug(id SessionID, mode PermissionMode, limits Limits, createdAt time.Time, target SessionID) (*Session, error)
 func NewEmbeddedResourceBlock(uri string, mimeType string, text string, blob []byte, audience []string) (Content, error)
 func NewImageContent(mime string, data []byte) (Content, error)
 func NewImageURLContent(mime string, rawURL string) (Content, error)
@@ -259,7 +261,7 @@ type SchedulePayload struct{ScheduleName string; FireID string; SessionID Sessio
 type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; Adoption *AdoptionMetadata; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
-type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""}
+type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""; DebugTargetID SessionID "json:\"debug_target_id,omitempty\""}
 type State string
 type SteerPayload struct{Text string; Parts []Content}
 type StopReason string

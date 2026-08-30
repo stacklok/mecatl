@@ -63,6 +63,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 			{id: "conf-kind-subagent", kind: session.SessionKindSubagent, rel: session.SessionRelationship{ParentSessionID: "parent", CallID: "call-sub"}},
 			{id: "conf-kind-parallel", kind: session.SessionKindParallelBranch, rel: session.SessionRelationship{ParentSessionID: "parent", CallID: "call-par", BranchIndex: intPointer(2)}},
 			{id: "conf-kind-team", kind: session.SessionKindTeamMember, rel: session.SessionRelationship{TeamID: "team", MemberName: "reviewer", ParentSessionID: "parent"}},
+			{id: "conf-kind-debug", kind: session.SessionKindDebug, rel: session.SessionRelationship{DebugTargetID: "target"}},
 		}
 		for _, tc := range cases {
 			t.Run(string(tc.kind), func(t *testing.T) {

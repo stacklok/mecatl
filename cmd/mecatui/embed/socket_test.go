@@ -34,6 +34,10 @@ func TestUnixSocketListenerDarwinFallsBackFromLongRuntimeDir(t *testing.T) {
 	if !unixSocketPathFits(sock) {
 		t.Fatalf("fallback socket path is still too long: %q (%d bytes)", sock, len(sock))
 	}
+	adminSock := filepath.Join(dir, adminSocketName)
+	if !unixSocketPathFits(adminSock) {
+		t.Fatalf("fallback admin socket path is still too long: %q (%d bytes)", adminSock, len(adminSock))
+	}
 	if strings.HasPrefix(dir, longBase+string(filepath.Separator)) {
 		t.Fatalf("socket dir %q remained under overlong runtime dir %q", dir, longBase)
 	}

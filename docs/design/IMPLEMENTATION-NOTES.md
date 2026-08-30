@@ -165,6 +165,54 @@ automatic, or client-transcript-upload path.
 
 ---
 
+## Dedicated session debugger
+
+A debug session is a normal durable conversation for the analyst, but its authority is
+not normal. `engine/session/kind.go` (`SessionKindDebug`) persists an exact
+`DebugTargetID` relationship. `internal/adapter/server/service.go`
+(`validateDebugCreate`) requires the no-fs profile, empty workspace, no carryover,
+schedule, or client-MCP relationship, and a distinct target ID. Target authorization
+uses the ordinary ownership check but maps absent and unauthorized targets to the same
+not-found result.
+
+Composition's `internal/app/build.go` (`debugSessionEngineFactory`) constructs a fresh
+per-session engine with an exact one-tool catalog. `internal/adapter/sessiondebug/sessiondebug.go`
+(`New`) binds `InspectSession` to the trusted target; its arguments select only
+`status`, `transcript`, `activity`, or `performance`, never a session ID. Snapshot
+status and paged transcript use the authoritative snapshot. Transcript rows project
+model-visible `Message.Parts` and preferred `ToolResult.Parts`; bounded textual and
+structured values remain visible, while binary/media bytes become explicit metadata-only
+omissions. Per-field truncation, item omission, page scan completion, and overall projection
+completion are separate fields, so `complete: true` never masks missing model-visible data.
+If a projected row cannot fit, `omitted_rows` reports its index, role, projected byte size,
+and reason while `next_offset` still advances past it; pagination can never stall on one
+oversized row. Text repaired by `session.ToValidUTF8` is marked on its field and page and
+makes the projection incomplete. Tool arguments remain `json.RawMessage` rather than passing through `any`, preserving JSON
+number tokens larger than 2^53; malformed JSON or UTF-8 is explicitly marked omitted.
+EventLog activity and aggregate performance are non-authoritative, optional, and potentially
+incomplete. Performance therefore keeps `complete: false`; `scan_complete` only reports that
+an available log reached EOF. Transcript pages contain at most 20 rows, activity 100,
+performance 50 turns/10,000 scanned events, and every response is bounded to 64 KiB after
+canonical fencing and framing neutralisation. All evidence is repaired to valid UTF-8 and wrapped with `governance.FenceUntrusted` before it
+reaches the model.
+
+`applyDebugSessionPosture` adds the trusted stable-prefix contract: inspect status
+first, prefer transcript truth, treat target content as hostile, distinguish evidence
+from hypotheses, and never mutate/resume/approve/cancel/steer the target. The debug
+session gets its own no-fs environment and ordinary lifecycle; no operation loads the
+target into a run-entry path or acquires its lease. On restart,
+`Service.rehydrateSession` recognizes the durable kind/relationship and calls the
+dedicated factory. Invalid no-fs metadata, a missing factory, or unavailable target
+fails closed rather than using the shared or generic no-fs engine.
+
+The mecatui command forms, privacy disclosure, automatic diagnostic prompt, persistent
+DEBUG rail/title, and disabled binding-breaking controls are the client projection.
+Enhanced structured diagnostics, sanitized network-attempt timing, live target
+following, raw audit/tool-record inspection, and support bundles are follow-ups, not
+parts of this shipped boundary. See [ADR 0248](../adr/0248-session-debugger-admin-transport.md).
+
+---
+
 ## Domain — `engine/session/` (lifecycle recovery)
 
 A turn always drives the `Session` aggregate to a terminal state within one

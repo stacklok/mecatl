@@ -70,6 +70,9 @@ type Capabilities struct {
 	// ManualCompaction gates the bodyless out-of-band session compaction action.
 	// Older servers leave it false, hiding /compact.
 	ManualCompaction bool
+	// SessionDebug advertises dedicated no-filesystem sessions bound to one stored
+	// target. False is fail-closed for older servers.
+	SessionDebug bool
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -104,6 +107,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		ManualDream:       manualDreamCapabilitiesFrom(c.GetManualDream()),
 		Steer:             c.GetSteer(),
 		ManualCompaction:  c.GetManualCompaction(),
+		SessionDebug:      c.GetSessionDebug(),
 	}
 }
 

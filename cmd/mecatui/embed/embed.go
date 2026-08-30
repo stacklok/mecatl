@@ -62,15 +62,9 @@ type grpcServer interface {
 	Stop()
 }
 
-// DefaultPerfAddr is the loopback default for the opt-in perf admin listener when
-// PerfConfig.Enabled is set but Addr is empty. It is a FIXED, PREDICTABLE loopback
-// port, chosen so an MCP-client config can hardcode the /mcp URL once and reconnect
-// across restarts (an ephemeral ":0" port changes every run, so its URL is
-// unknowable without scraping logs). It is distinct from mecated's own admin
-// default (127.0.0.1:9090) so the two don't collide when co-running. If 9099 is
-// unavailable, Start FAILS with guidance rather than silently falling back — pass
-// --perf-addr 127.0.0.1:0 for an ephemeral port, or another host:port.
-const DefaultPerfAddr = "127.0.0.1:9099"
+// adminSocketName is the fixed admin socket filename beside the embedded gRPC
+// socket. The containing directory is randomised per instance.
+const adminSocketName = "admin.sock"
 
 // PerfConfig is the opt-in perf-observability configuration for the embedded
 // server (decision 7 in docs/adr/0018-perf-observability.md). It is OFF by default
@@ -88,18 +82,16 @@ type PerfConfig struct {
 	// Enabled turns the whole perf surface on. The zero value (false) means no
 	// telemetry, no admin listener, no flight recorder, no watchdog.
 	Enabled bool
-	// Addr is the loopback HTTP listen address for the admin mux. Empty defaults
-	// to DefaultPerfAddr (a fixed loopback port). The bound address (with the
-	// resolved port) is logged and exposed via Server.AdminAddr.
+	// Addr is an explicit loopback TCP listen address for the admin mux. When
+	// empty, the admin surface uses a private UNIX socket beside the embedded
+	// gRPC socket; MCP instead uses ephemeral 127.0.0.1 TCP because the current
+	// streaming-HTTP MCP client transport cannot dial HTTP over UNIX.
 	Addr string
 	// MCP mounts the read-only perf MCP server (internal/adapter/mcpperf) at /mcp on
 	// the embedded admin mux, so an agent can introspect THIS process's
-	// runtime/latency/profile state over MCP. Only meaningful with Enabled. The
-	// admin listener is loopback by construction (DefaultPerfAddr / a loopback Addr),
-	// and setupPerf FAILS CLOSED if a non-loopback Addr is configured with MCP set:
-	// the surface is UNAUTHENTICATED and can embed goroutine-derived names/timing
-	// (decision 6 / CWE-306). When set, a slow-turn ring buffer is wired into the
-	// embedded engine's sink so list_slow_turns sees real turns.
+	// runtime/latency/profile state over MCP. Only meaningful with Enabled.
+	// Explicit addresses are loopback-only; with no address MCP uses ephemeral
+	// loopback TCP. A slow-turn ring is wired into the embedded engine's sink.
 	MCP bool
 	// GoroutineWarnThreshold arms the live goroutine-leak watchdog (decision 10):
 	// a background sampler logs slog.Warn whenever runtime.NumGoroutine() exceeds
@@ -126,8 +118,9 @@ type Server struct {
 	appstop func() // app.Built.Close — tears down MCP etc.
 
 	// Perf teardown (all nil/no-op when PerfConfig.Enabled is false). adminSrv is
-	// the loopback admin HTTP server; perfStop cancels the watchdog ctx and stops
-	// the flight recorder; perfShutdown flushes the telemetry providers.
+	// the private UNIX or loopback TCP admin HTTP server; perfStop cancels the
+	// watchdog context and stops the flight recorder; perfShutdown flushes providers.
+	adminNetwork string
 	adminAddr    string
 	adminSrv     *http.Server
 	perfStop     func()
@@ -166,24 +159,30 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 	// This private Unix-socket server is the one explicit compatibility authority
 	// for local single-user storage management. Remote roots never set this bit.
 	cfg.LocalStorageManagement = true
-	// Perf setup happens BEFORE app.Build so the domain-metrics EventSink can be
-	// injected into the engine via cfg.Sink/cfg.ToolCallRecorder. perfState gathers the
-	// teardown handles; on any later error we unwind it.
-	ps, err := setupPerf(ctx, perf, &cfg)
+	// Reserve the private per-instance directory first. The default perf admin
+	// socket is a sibling of this gRPC socket, so both share the same ownership,
+	// Darwin path fallback, and cleanup lifecycle.
+	lis, dir, sock, err := newUnixSocketListener()
 	if err != nil {
+		return nil, err
+	}
+	cleanupRuntime := func() {
+		_ = lis.Close()
+		_ = os.RemoveAll(dir)
+	}
+
+	// Perf setup happens BEFORE app.Build so the domain-metrics EventSink can be
+	// injected into the engine via cfg.Sink/cfg.ToolCallRecorder.
+	ps, err := setupPerf(ctx, perf, &cfg, dir)
+	if err != nil {
+		cleanupRuntime()
 		return nil, err
 	}
 
 	built, err := app.Build(ctx, cfg)
 	if err != nil {
 		ps.teardown(ctx)
-		return nil, err
-	}
-
-	lis, dir, sock, err := newUnixSocketListener()
-	if err != nil {
-		built.Close()
-		ps.teardown(ctx)
+		cleanupRuntime()
 		return nil, err
 	}
 
@@ -211,6 +210,7 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 		dir:           dir,
 		grpc:          grpcSrv,
 		appstop:       built.Close,
+		adminNetwork:  ps.adminNetwork,
 		adminAddr:     ps.adminAddr,
 		adminSrv:      ps.adminSrv,
 		perfStop:      ps.stop,
@@ -231,10 +231,12 @@ func (s *Server) RecorderArmed() bool { return s.recorderArmed }
 // Target returns the gRPC dial string for the hosted server (a "unix://" target).
 func (s *Server) Target() string { return s.target }
 
-// AdminAddr returns the bound loopback address of the perf admin listener
-// (/metrics, /debug/pprof, /debug/vars, /debug/flightrecorder), or "" when perf
-// is disabled. With an ephemeral DefaultPerfAddr it reflects the actual chosen
-// port, so a caller can log or display where to point a browser/pprof.
+// AdminNetwork returns "unix" for the collision-free default or "tcp" for an
+// explicit TCP address and for the streaming-HTTP MCP fallback.
+func (s *Server) AdminNetwork() string { return s.adminNetwork }
+
+// AdminAddr returns the resolved admin listener address: a private socket path
+// for UNIX or host:port for TCP. It is empty when perf is disabled.
 func (s *Server) AdminAddr() string { return s.adminAddr }
 
 // Close stops the gRPC server with a bounded graceful-stop window, tears down
@@ -292,6 +294,7 @@ func (s *Server) Close() error {
 // perfState gathers the teardown handles for an armed perf surface so Start can
 // unwind cleanly on a later error and Close can release everything in one place.
 type perfState struct {
+	adminNetwork  string
 	adminAddr     string
 	adminSrv      *http.Server
 	stop          func()                      // cancels the watchdog ctx + stops the flight recorder
@@ -321,7 +324,7 @@ func (p perfState) teardown(ctx context.Context) {
 // app.Build runs. It returns a perfState carrying the teardown handles (a zero
 // perfState when perf is disabled). On any setup error it unwinds whatever it has
 // already built and returns the error.
-func setupPerf(ctx context.Context, perf PerfConfig, cfg *app.Config) (perfState, error) {
+func setupPerf(ctx context.Context, perf PerfConfig, cfg *app.Config, runtimeDir string) (perfState, error) {
 	if !perf.Enabled {
 		return perfState{}, nil
 	}
@@ -334,18 +337,10 @@ func setupPerf(ctx context.Context, perf PerfConfig, cfg *app.Config) (perfState
 		logger = slog.New(slog.DiscardHandler)
 	}
 
-	// FAIL CLOSED on a non-loopback admin Addr with the perf MCP server requested —
-	// BEFORE arming any telemetry/flight-recorder/listener so the refusal is a pure
-	// config error with no side effects. The surface is UNAUTHENTICATED and can
-	// embed goroutine-derived names/timing (decision 6 / CWE-306).
-	if perf.MCP {
-		addr := perf.Addr
-		if addr == "" {
-			addr = DefaultPerfAddr
-		}
-		if !isLoopbackHostPort(addr) {
-			return perfState{}, fmt.Errorf("perf MCP refuses a non-loopback admin Addr=%s: it exposes unauthenticated runtime data; bind loopback or add auth (future work)", addr)
-		}
+	// An explicit address always selects TCP. The entire admin mux is sensitive,
+	// not just /mcp, so reject non-loopback binds before creating telemetry.
+	if perf.Addr != "" && !isLoopbackHostPort(perf.Addr) {
+		return perfState{}, fmt.Errorf("perf admin refuses non-loopback Addr=%s: it exposes unauthenticated runtime data; bind loopback or add auth (future work)", perf.Addr)
 	}
 
 	// Telemetry providers: metrics ALWAYS on (no OTLP endpoint needed — the
@@ -433,21 +428,31 @@ func setupPerf(ctx context.Context, perf PerfConfig, cfg *app.Config) (perfState
 		}
 	}
 
-	// Admin listener: bind eagerly so the chosen (possibly ephemeral) port is known
-	// before Start returns. SECURITY: pprof/expvar/flightrecorder output can embed
-	// prompt text, file paths, and goroutine stacks — this MUST stay loopback-bound
-	// (decision 6); it is never mounted on the gRPC service surface.
-	addr := perf.Addr
-	if addr == "" {
-		addr = DefaultPerfAddr
+	// Bind eagerly so callers can report the resolved endpoint. Plain perf defaults
+	// to a collision-free private UNIX socket. The current MCP SDK's streaming-HTTP
+	// client transport has no HTTP-over-UNIX dial hook, so MCP defaults to ephemeral
+	// loopback TCP instead. An explicit --perf-addr always selects loopback TCP.
+	var (
+		lis     net.Listener
+		lerr    error
+		network string
+	)
+	switch {
+	case perf.Addr != "":
+		network = "tcp"
+		lis, lerr = net.Listen(network, perf.Addr)
+	case perf.MCP:
+		network = "tcp"
+		lis, lerr = net.Listen(network, "127.0.0.1:0")
+	default:
+		network = "unix"
+		lis, lerr = listenPrivateUnix(filepath.Join(runtimeDir, adminSocketName))
 	}
-	// (The non-loopback + MCP refusal already happened at the top of setupPerf,
-	// before any side effects.)
-	lis, lerr := net.Listen("tcp", addr)
 	if lerr != nil {
 		ps.teardown(ctx)
-		return perfState{}, fmt.Errorf("perf admin port %q is unavailable: %w; choose another address with --perf-addr (a different host:port, or 127.0.0.1:0 for an ephemeral port)", addr, lerr)
+		return perfState{}, fmt.Errorf("listen perf admin %s: %w", network, lerr)
 	}
+	ps.adminNetwork = network
 	ps.adminAddr = lis.Addr().String()
 	adminMux := telemetry.NewAdminMux(providers.Registry, recorder)
 	adminPaths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
@@ -472,8 +477,8 @@ func setupPerf(ctx context.Context, perf PerfConfig, cfg *app.Config) (perfState
 			logger.Warn("perf admin server stopped", "err", serveErr)
 		}
 	}()
-	logger.Info("perf admin server listening (loopback, UNAUTHENTICATED — single-user trust model)",
-		"addr", ps.adminAddr, "paths", adminPaths)
+	logger.Info("perf admin server listening (private, UNAUTHENTICATED — single-user trust model)",
+		"network", ps.adminNetwork, "addr", ps.adminAddr, "paths", adminPaths)
 
 	return ps, nil
 }
@@ -581,6 +586,26 @@ func runtimeDir() string {
 	return ""
 }
 
+// listenPrivateUnix binds a new owner-private UNIX socket without removing any
+// pre-existing path. Even though callers normally pass a fresh private directory,
+// the collision check is fail-closed against symlinks and arbitrary files.
+func listenPrivateUnix(path string) (net.Listener, error) {
+	if _, err := os.Lstat(path); err == nil {
+		return nil, fmt.Errorf("refusing existing admin socket path %q", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect admin socket path %q: %w", path, err)
+	}
+	lis, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = lis.Close()
+		return nil, fmt.Errorf("restrict admin socket %q: %w", path, err)
+	}
+	return lis, nil
+}
+
 // newUnixSocketListener creates the private socket directory and validates the
 // final path before binding. Darwin's sockaddr_un leaves only 103 bytes for a
 // pathname; a long XDG_RUNTIME_DIR or TMPDIR therefore falls back to a private
@@ -610,7 +635,7 @@ func newUnixSocketListener() (net.Listener, string, string, error) {
 		)
 	}
 
-	lis, err := net.Listen("unix", sock)
+	lis, err := listenPrivateUnix(sock)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, "", "", fmt.Errorf("listen unix %q: %w", sock, err)

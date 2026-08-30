@@ -1005,7 +1005,8 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 
 	for _, want := range []string{
 		"  sessions\n    browse stored sessions before creating or continuing a chat\n",
-		"  connect ADDRESS [sessions]\n    dial a running mecated at ADDRESS (host:port); append sessions to browse\n    stored sessions\n",
+		"  debug SESSION_ID [flags]\n    diagnose a stored session in a separate no-filesystem analysis session\n",
+		"  connect ADDRESS [sessions | debug SESSION_ID] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
 		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
 		"  llm login [--skip-browser]\n    run the ToolHive LLM gateway OIDC browser flow (no session)\n",
 	} {
@@ -1017,7 +1018,7 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 		t.Errorf("command summary put the connect description on its synopsis line:\n%s", summary)
 	}
 	unknown := unknownCommandError("unknown").Error()
-	if !strings.Contains(unknown, "  connect ADDRESS [sessions]\n    dial a running mecated at ADDRESS (host:port); append sessions to browse\n    stored sessions\n") {
+	if !strings.Contains(unknown, "  connect ADDRESS [sessions | debug SESSION_ID] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n") {
 		t.Errorf("unknown-command output did not reuse the indented, wrapped command summary:\n%s", unknown)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(summary, "\n"), "\n") {

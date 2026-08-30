@@ -199,6 +199,7 @@ message SessionMetadataEntry {
   // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
   string title_provenance = 22;
   int64 estimated_bytes = 23;
+  string debug_target_session_id = 24;
 }
 
 message PageSessionMetadataResponse {

@@ -60,6 +60,18 @@ The admin endpoint also serves runtime introspection paths:
 
 The flight recorder is armed at startup when `--flight-recorder=true` (default). The mutex and block pprof profiles are off by default; enable them with `--mutex-profile-fraction` and `--block-profile-rate` only while investigating contention, as they carry runtime overhead.
 
+### Embedded mecatui admin transport
+
+`mecatui --perf` serves the same sensitive endpoints, but its default is an owner-private
+per-instance UNIX `admin.sock` beside the embedded gRPC socket. Concurrent mecatui
+instances therefore do not collide. `--perf-addr` explicitly selects TCP and accepts only
+loopback addresses.
+
+`--perf-mcp` with no explicit address uses ephemeral loopback TCP and logs the resolved
+URL because the supported MCP transport is streaming HTTP. There is no stdio fallback.
+Raw admin data remains an operator surface and is not injected into mecatui's session
+debugger or any model context.
+
 ### Perf MCP server (opt-in)
 
 `--perf-mcp` mounts a read-only MCP server at `/mcp` on the admin listener. It exposes the same runtime data as reduced numeric summaries (goroutine counts, latency percentiles, allocation rankings, slow-turn lists) so an agent can query performance state directly. Raw pprof blobs are offered as user-audience resource links, not injected into model context.

@@ -267,11 +267,13 @@ func TestStartListAgentsOverSocket(t *testing.T) {
 	}
 }
 
-// TestStartProviderError asserts Start surfaces app.Build's provider error (and
-// leaks nothing) when neither OpenAI nor the mock is configured.
+// TestStartProviderError asserts Start surfaces app.Build's provider error and
+// removes the already-created gRPC/admin runtime directory on unwind.
 func TestStartProviderError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 
 	// Multi-provider S1: app.Build now AUTO-DETECTS a provider from the environment
 	// (OPENAI_API_KEY / OPENROUTER_API_KEY) via its registry, so the zero-keys case
@@ -280,9 +282,16 @@ func TestStartProviderError(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENROUTER_API_KEY", "")
 
-	_, err := embed.Start(ctx, app.Config{Workspace: t.TempDir(), Model: "x"}, embed.PerfConfig{})
+	_, err := embed.Start(ctx, app.Config{Workspace: t.TempDir(), Model: "x"}, embed.PerfConfig{Enabled: true})
 	if err == nil {
 		t.Fatal("expected an error when no LLM provider is configured")
+	}
+	entries, readErr := os.ReadDir(runtimeDir)
+	if readErr != nil {
+		t.Fatalf("ReadDir(runtime): %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed Start left runtime entries: %v", entries)
 	}
 }
 
@@ -344,119 +353,94 @@ func TestStartPerfMCPRefusesNonLoopback(t *testing.T) {
 	}
 }
 
-// TestDefaultPerfAddrIsFixedPort locks the predictable default: an empty
-// PerfConfig.Addr resolves to a FIXED loopback port (not an ephemeral ":0"), so an
-// MCP-client config can hardcode the /mcp URL once. The value is distinct from
-// mecated's admin default (127.0.0.1:9090) so the two never collide.
-func TestDefaultPerfAddrIsFixedPort(t *testing.T) {
-	if embed.DefaultPerfAddr != "127.0.0.1:9099" {
-		t.Errorf("DefaultPerfAddr = %q, want %q (fixed, predictable loopback port)", embed.DefaultPerfAddr, "127.0.0.1:9099")
-	}
-}
-
-// TestStartPerfAddrClashFailsWithGuidance proves the fail-on-clash posture: when
-// the fixed default port is already held, Start (with an empty Addr ⇒ resolving to
-// that default) must FAIL with an actionable error pointing at --perf-addr, rather
-// than silently falling back to an ephemeral port.
-//
-// It is deterministic and offline-safe: it pre-binds the fixed port itself; if THAT
-// bind fails (the port is held by something external), it t.Skips rather than
-// hitting the network. The trailing goleak gate confirms the FAILED Start leaks
-// nothing (no GoroutineWarnThreshold is set, so no watchdog goroutine is even
-// spawned; the error-path teardown still tears down the telemetry it set up).
-func TestStartPerfAddrClashFailsWithGuidance(t *testing.T) {
-	defer goleak.VerifyNone(t)
-
-	// Pre-bind the fixed default port so the embedded server's bind must clash.
-	hog, lerr := net.Listen("tcp", embed.DefaultPerfAddr)
-	if lerr != nil {
-		t.Skipf("cannot pre-bind %s (held externally?): %v", embed.DefaultPerfAddr, lerr)
-	}
-	defer func() { _ = hog.Close() }()
-
+// TestStartPerfDefaultUnixIsCollisionFree proves two live instances use distinct
+// owner-private sockets, both serve HTTP, and Close removes both runtime dirs.
+func TestStartPerfDefaultUnixIsCollisionFree(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	srv, err := embed.Start(ctx, mockAppConfig(t.TempDir()), embed.PerfConfig{
-		Enabled: true,
-		Addr:    "", // ⇒ resolves to DefaultPerfAddr, which we just hogged
-		MCP:     true,
-	})
-	if err == nil {
-		if srv != nil {
-			_ = srv.Close()
-		}
-		t.Fatal("Start with the fixed perf port already held should fail, got nil error")
-	}
-	if !strings.Contains(err.Error(), "--perf-addr") {
-		t.Errorf("error = %q, want it to guide the operator to --perf-addr", err)
-	}
-}
-
-// TestStartPerfEmptyAddrResolvesToDefault is the SUCCESSFUL-bind counterpart to the
-// clash test: an empty PerfConfig.Addr must resolve to EXACTLY DefaultPerfAddr
-// (127.0.0.1:9099) on a real bind — guarding against a regression that resolves
-// empty to some other fixed port. The clash test only ever sees the bind FAIL, so
-// it can't prove the resolved port specifically.
-//
-// It binds the real 9099, so it is guarded: a best-effort pre-probe net.Listen
-// confirms the port is free (t.Skip if held externally), then closes the probe
-// before Start binds it for real. It is NON-parallel (no t.Parallel) so it can't
-// race TestStartPerfAddrClashFailsWithGuidance's hog for the same port. The process
-// FlightRecorder is a sync.Once singleton — if a prior perf-enabled test already
-// armed+stopped it, this Start just coalesces (recorderArmed ends up false); we
-// don't assert on it. goleak confirms Close tears everything down.
-func TestStartPerfEmptyAddrResolvesToDefault(t *testing.T) {
-	defer goleak.VerifyNone(t)
-
-	// Pre-probe: only proceed if the fixed port is actually free right now.
-	probe, perr := net.Listen("tcp", embed.DefaultPerfAddr)
-	if perr != nil {
-		t.Skipf("fixed perf port %s is held externally; skipping the real-bind check: %v", embed.DefaultPerfAddr, perr)
-	}
-	_ = probe.Close() // release it so Start can bind the same port
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	srv, err := embed.Start(ctx, mockAppConfig(t.TempDir()), embed.PerfConfig{
-		Enabled: true,
-		Addr:    "", // ⇒ must resolve to DefaultPerfAddr
-		MCP:     false,
-	})
+	first, err := embed.Start(ctx, mockAppConfig(t.TempDir()), embed.PerfConfig{Enabled: true})
 	if err != nil {
-		t.Fatalf("embed.Start (perf on, empty Addr): %v", err)
+		t.Fatalf("start first: %v", err)
+	}
+	second, err := embed.Start(ctx, mockAppConfig(t.TempDir()), embed.PerfConfig{Enabled: true})
+	if err != nil {
+		_ = first.Close()
+		t.Fatalf("start second: %v", err)
 	}
 	closed := false
-	t.Cleanup(func() {
+	defer func() {
 		if !closed {
-			_ = srv.Close()
+			_ = second.Close()
+			_ = first.Close()
 		}
-	})
-
-	if got := srv.AdminAddr(); got != embed.DefaultPerfAddr {
-		t.Errorf("AdminAddr() = %q, want the fixed default %q (empty Addr must resolve to it)", got, embed.DefaultPerfAddr)
+	}()
+	if first.AdminNetwork() != "unix" || second.AdminNetwork() != "unix" || first.AdminAddr() == second.AdminAddr() {
+		t.Fatalf("admin endpoints = %s:%s, %s:%s; want distinct unix sockets", first.AdminNetwork(), first.AdminAddr(), second.AdminNetwork(), second.AdminAddr())
 	}
-
+	for _, sock := range []string{first.AdminAddr(), second.AdminAddr()} {
+		info, statErr := os.Lstat(sock)
+		if statErr != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
+			t.Fatalf("admin socket %q posture = %v, %v; want socket 0600", sock, info, statErr)
+		}
+		parent, statErr := os.Stat(filepath.Dir(sock))
+		if statErr != nil || parent.Mode().Perm() != 0o700 {
+			t.Fatalf("admin parent posture = %v, %v; want 0700", parent, statErr)
+		}
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		}}
+		resp, getErr := (&http.Client{Transport: transport}).Get("http://unix/metrics")
+		if getErr != nil {
+			t.Fatalf("GET %q /metrics: %v", sock, getErr)
+		}
+		_ = resp.Body.Close()
+		transport.CloseIdleConnections()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %q /metrics status = %d", sock, resp.StatusCode)
+		}
+	}
+	firstDir, secondDir := filepath.Dir(first.AdminAddr()), filepath.Dir(second.AdminAddr())
+	if err := second.Close(); err != nil {
+		t.Fatalf("close second: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first: %v", err)
+	}
 	closed = true
-	if cerr := srv.Close(); cerr != nil {
-		t.Fatalf("Close: %v", cerr)
+	for _, dir := range []string{firstDir, secondDir} {
+		if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+			t.Errorf("runtime dir %q remains after Close: %v", dir, statErr)
+		}
+	}
+}
+
+func TestStartPerfExplicitTCPOverride(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv, err := embed.Start(ctx, mockAppConfig(t.TempDir()), embed.PerfConfig{
+		Enabled: true,
+		Addr:    "127.0.0.1:0",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+	if srv.AdminNetwork() != "tcp" {
+		t.Fatalf("AdminNetwork() = %q, want tcp", srv.AdminNetwork())
+	}
+	host, service, splitErr := net.SplitHostPort(srv.AdminAddr())
+	if splitErr != nil || host != "127.0.0.1" || service == "0" {
+		t.Fatalf("AdminAddr() = %q, want resolved loopback TCP address (err=%v)", srv.AdminAddr(), splitErr)
 	}
 }
 
 // TestStartPerfServesAdminSurface is the end-to-end proof of decision 7: with
-// --perf the embedded server brings up a loopback admin listener serving the
-// runtime-introspection surface — /metrics, /debug/vars, /debug/pprof/ — and tears
-// it ALL down on Close with no leaked listener or goroutine (the trailing goleak
-// gate). The gRPC socket still works alongside it. It passes an EXPLICIT
-// "127.0.0.1:0" to exercise the ephemeral escape hatch (NOT the fixed default), so
-// it never contends for the predictable 9099 port; AdminAddr reports the resolved
-// ephemeral port.
-//
-// ONLY ONE test in this binary may enable perf: ProcessFlightRecorder is a
-// process-lifetime sync.Once, so once this test's Close stops the recorder it
-// cannot be re-armed in the same process (see flightrecorder.go). Adding a second
-// perf-enabled test here would coalesce onto a recorder this test already stopped.
+// --perf the embedded server brings up an ephemeral loopback admin listener for
+// the runtime-introspection surface — /metrics, /debug/vars, /debug/pprof/ — and
+// tears it down without leaking. With --perf-mcp and no explicit address it uses
+// ephemeral loopback listener for streaming HTTP and reports the resolved port.
+// The process FlightRecorder is a sync.Once singleton, so this test accepts the
+// documented coalesced/stopped state when another perf test ran first.
 func TestStartPerfServesAdminSurface(t *testing.T) {
 	// Per-test goleak: the perf surface arms a watchdog ctx, a flight-recorder
 	// runtime-trace subscription, an admin HTTP server, and telemetry providers —
@@ -476,9 +460,8 @@ func TestStartPerfServesAdminSurface(t *testing.T) {
 	workspace := t.TempDir()
 	srv, err := embed.Start(ctx, mockAppConfig(workspace), embed.PerfConfig{
 		Enabled:                true,
-		Addr:                   "127.0.0.1:0", // ephemeral loopback
-		MCP:                    true,          // also mount /mcp (the perf MCP server)
-		GoroutineWarnThreshold: 1 << 30,       // armed but never fires
+		MCP:                    true,    // empty Addr => ephemeral loopback for streaming HTTP
+		GoroutineWarnThreshold: 1 << 30, // armed but never fires
 		GoroutineWarnInterval:  time.Millisecond,
 	})
 	if err != nil {
@@ -501,12 +484,6 @@ func TestStartPerfServesAdminSurface(t *testing.T) {
 	if host, _, _ := net.SplitHostPort(addr); host != "127.0.0.1" {
 		t.Errorf("perf admin bound to %q, want a loopback (127.0.0.1) address", addr)
 	}
-	// Escape-hatch contract: passing "127.0.0.1:0" must yield an EPHEMERAL port,
-	// i.e. NOT the fixed default 9099 (proving "127.0.0.1:0 for ephemeral" works).
-	if addr == embed.DefaultPerfAddr {
-		t.Errorf("explicit 127.0.0.1:0 resolved to the fixed default %q, want an ephemeral port", embed.DefaultPerfAddr)
-	}
-
 	// The gRPC socket must still serve alongside the admin surface: a real client
 	// dial + session create proves readiness (no separate health probe).
 	cl, err := client.Dial(client.DialConfig{Server: srv.Target()})

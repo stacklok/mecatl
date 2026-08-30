@@ -208,7 +208,7 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 
 	rel := snap.Relationship
 	size += int64(len(rel.ScheduleName) + len(rel.OriginSessionID) + len(rel.ParentSessionID) +
-		len(rel.CallID) + len(rel.TeamID) + len(rel.MemberName))
+		len(rel.CallID) + len(rel.TeamID) + len(rel.MemberName) + len(rel.DebugTargetID))
 	if rel.BranchIndex != nil {
 		size += 16
 	}

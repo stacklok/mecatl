@@ -211,6 +211,11 @@ type ResolvedModel struct {
 // (the run-entry/rehydration seam), never resolving a model itself.
 type SessionEngineFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode) (SessionEngineResult, error)
 
+// DebugSessionEngineFactory builds the dedicated engine for a debug session.
+// target is the immutable, authorized target identity; implementations may use
+// it to bind read-only evidence tools without copying target conversation state.
+type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, target session.SessionID) (SessionEngineResult, error)
+
 // Config wires the server adapter to the WP8 engine and its collaborators.
 type Config struct {
 	// BuildID is the composed binary build identity exposed by GetServerInfo only.
@@ -227,6 +232,10 @@ type Config struct {
 	ProviderEndpoint func(providerID string) string
 	// Engine is the shared agent engine that drives every run. Required.
 	Engine *agent.Engine
+	// DebugSessionEngine builds dedicated no-filesystem debug-session engines.
+	// Nil disables creation and makes persisted debug sessions fail closed at
+	// rehydration rather than falling back to Engine or SessionEngine.
+	DebugSessionEngine DebugSessionEngineFactory
 	// Store persists and looks up sessions. Required.
 	Store port.SessionStore
 	// StorageManagementAuthorized gates process-wide storage health. A nil
@@ -1453,6 +1462,8 @@ type createSessionOpts struct {
 	// scheduled is set only by the trusted scheduler composition path. Public
 	// create requests have no field that can populate it.
 	scheduled *session.SessionRelationship
+	// debugTargetID binds a separate debug session to one authorized target.
+	debugTargetID session.SessionID
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1478,6 +1489,13 @@ func WithSessionID(id session.SessionID) CreateSessionOption {
 // (no option) is the byte-identical no-carryover path.
 func WithSourceSession(id session.SessionID) CreateSessionOption {
 	return func(o *createSessionOpts) { o.sourceSessionID = id }
+}
+
+// WithDebugTarget creates a dedicated debug session bound to id. The target is
+// authorized through the ordinary absence-shaped ownership seam and is only
+// loaded for validation; its state and conversation are never changed or copied.
+func WithDebugTarget(id session.SessionID) CreateSessionOption {
+	return func(o *createSessionOpts) { o.debugTargetID = id }
 }
 
 // WithOwner overrides the owner a CreateSession* call stamps on the new session
@@ -1516,11 +1534,15 @@ func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principa
 	return session.PrincipalFromContext(ctx)
 }
 
-func newCreatedSession(id session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, createdAt time.Time, scheduled *session.SessionRelationship) (*session.Session, error) {
-	if scheduled == nil {
+func newCreatedSession(id session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, createdAt time.Time, opts createSessionOpts) (*session.Session, error) {
+	switch {
+	case opts.debugTargetID != "":
+		return session.NewDebug(id, mode, limits, createdAt, opts.debugTargetID)
+	case opts.scheduled != nil:
+		return session.NewScheduled(id, mode, workspace, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID)
+	default:
 		return session.New(id, mode, workspace, limits, createdAt), nil
 	}
-	return session.NewScheduled(id, mode, workspace, limits, createdAt, scheduled.ScheduleName, scheduled.OriginSessionID)
 }
 
 // CreateSession allocates a new idle session on the SHARED engine, persists it,
@@ -1644,11 +1666,15 @@ type createRequest struct {
 	relationship session.SessionRelationship
 }
 
-func newCreateRequest(workspace string, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, scheduled *session.SessionRelationship) createRequest {
+func newCreateRequest(workspace string, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, opts createSessionOpts) createRequest {
 	request := createRequest{workspace: workspace, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain}
-	if scheduled != nil {
+	switch {
+	case opts.debugTargetID != "":
+		request.kind = session.SessionKindDebug
+		request.relationship = session.SessionRelationship{DebugTargetID: opts.debugTargetID}
+	case opts.scheduled != nil:
 		request.kind = session.SessionKindScheduled
-		request.relationship = *scheduled
+		request.relationship = *opts.scheduled
 	}
 	return request
 }
@@ -1815,7 +1841,40 @@ func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (
 	}
 }
 
+func (s *Service) authorizeDebugTarget(ctx context.Context, id session.SessionID) error {
+	target, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		if errors.Is(err, port.ErrSessionNotFound) {
+			return fmt.Errorf("%w", ErrNotFound)
+		}
+		return fmt.Errorf("server: load debug target: %w", err)
+	}
+	if target == nil || target.ID != id || s.authorizeSession(ctx, target) != nil {
+		return fmt.Errorf("%w", ErrNotFound)
+	}
+	return nil
+}
+
+func (s *Service) validateDebugCreate(ctx context.Context, workspace string, profile SessionProfile, specs []mcp.ServerConfig, opts createSessionOpts) error {
+	if opts.debugTargetID == "" {
+		return nil
+	}
+	if profile != ProfileNoFS || workspace != "" {
+		return fmt.Errorf("%w: debug sessions require profile %q and an empty workspace", ErrInvalidArgument, ProfileNoFS)
+	}
+	if opts.sourceSessionID != "" || opts.scheduled != nil || len(specs) > 0 {
+		return fmt.Errorf("%w: debug target cannot be combined with source, scheduled, or client MCP relationships", ErrInvalidArgument)
+	}
+	if opts.idSet && opts.id == opts.debugTargetID {
+		return fmt.Errorf("%w: debug session must be separate from its target", ErrInvalidArgument)
+	}
+	return s.authorizeDebugTarget(ctx, opts.debugTargetID)
+}
+
 func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+	if err := s.validateDebugCreate(ctx, workspace, profile, specs, opts); err != nil {
+		return nil, err
+	}
 	var err error
 	workspace, profile, err = s.workspaceForCreate(workspace, profile)
 	if err != nil {
@@ -1848,7 +1907,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if opts.id == "" {
 			return nil, fmt.Errorf("%w: session id must not be empty", ErrInvalidArgument)
 		}
-		request := newCreateRequest(workspace, mode, limits, sel, profile, opts.sourceSessionID, opts.scheduled)
+		request := newCreateRequest(workspace, mode, limits, sel, profile, opts.sourceSessionID, opts)
 		retryRequest = &request
 		existing, release, err := s.reserveSessionID(ctx, opts.id, owner, request)
 		if err != nil {
@@ -1897,7 +1956,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		// the empty pair + default profile here (the empty-selector default profile is
 		// exactly the no-per-session case), so setLabels persists nothing new — the
 		// snapshot stays byte-identical to a pre-Phase-1 default session.
-		sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), opts.scheduled)
+		sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), opts)
 		if err != nil {
 			return nil, fmt.Errorf("server: create session metadata: %w", err)
 		}
@@ -1911,7 +1970,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		return s.persistCreatedSession(ctx, sess, owner, retryRequest)
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts.scheduled, carriedAuthority, carriedAuthorityBound, retryRequest)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -1922,8 +1981,14 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 // evicts the reservation and tears the freshly-built engine down so a failed
 // create leaks neither a slot nor a connection. See createSession for the
 // profile-aware workspace rule and the carryover snapshot semantics.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, scheduled *session.SessionRelationship, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest) (*session.Session, error) {
-	if s.cfg.SessionEngine == nil {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest) (*session.Session, error) {
+	factory := s.cfg.SessionEngine
+	if opts.debugTargetID != "" {
+		if s.cfg.DebugSessionEngine == nil {
+			return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
+		}
+		factory = nil
+	} else if factory == nil {
 		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 	}
 	// Cheap cap pre-check (CWE-770): reject BEFORE the factory connects MCP /
@@ -1938,14 +2003,20 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		return nil, fmt.Errorf("%w: %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
 	}
 
-	res, err := s.cfg.SessionEngine(ctx, sel, specs, profile, workspace, mode)
+	var res SessionEngineResult
+	var err error
+	if opts.debugTargetID != "" {
+		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID)
+	} else {
+		res, err = factory(ctx, sel, specs, profile, workspace, mode)
+	}
 	if err != nil {
 		// Factory maps an unknown/unavailable provider to ErrInvalidArgument; any
 		// error is propagated as-is for the caller to map to a status.
 		return nil, err
 	}
 	eng, closeFn := res.Engine, res.Close
-	sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), scheduled)
+	sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), opts)
 	if err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -2090,6 +2161,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// Manual compaction uses the configured engine, or a per-session engine
 		// derived under the same service construction semantics.
 		ManualCompaction: s.cfg.Engine != nil,
+		SessionDebug:     s.cfg.DebugSessionEngine != nil,
 	}
 }
 
@@ -3948,7 +4020,7 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 	}
 	switch purpose {
 	case runPurposeChat:
-		if kind == session.SessionKindMain && !hasLegacyNonChatPrefix(sess.ID) {
+		if (kind == session.SessionKindMain || kind == session.SessionKindDebug) && !hasLegacyNonChatPrefix(sess.ID) {
 			return nil
 		}
 	case runPurposeScheduler:
@@ -4299,6 +4371,7 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // a heal that lands after the restart.
 func (s *Service) needsRehydration(sess *session.Session) bool {
 	return s.cfg.LearnedSkills != nil && sess.Owner != nil && sess.Owner.Issuer != "" && sess.Owner.Subject != "" ||
+		sess.Kind == session.SessionKindDebug ||
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
@@ -4345,7 +4418,14 @@ func profileForSession(sess *session.Session) SessionProfile {
 // in FIRST-REGISTRATION-WINS mode (a concurrent rehydration losing the race keeps
 // the winner's engine and tears its own down).
 func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (*sessionEngine, error) {
-	if s.cfg.SessionEngine == nil {
+	if sess.Kind == session.SessionKindDebug {
+		if sess.Profile != string(ProfileNoFS) || sess.Workspace != "" || sess.Relationship.DebugTargetID == "" {
+			return nil, fmt.Errorf("%w: persisted debug session %q has invalid no-fs metadata", ErrInvalidArgument, sess.ID)
+		}
+		if s.cfg.DebugSessionEngine == nil {
+			return nil, fmt.Errorf("%w: persisted debug session %q cannot be rehydrated (no debug-session engine factory configured)", ErrInvalidArgument, sess.ID)
+		}
+	} else if s.cfg.SessionEngine == nil {
 		// NEVER fall back to the shared engine: that is exactly the degradation
 		// (no-fs escalation / wrong-model) this seam exists to prevent. A session
 		// needing a per-session engine could only have been created with a factory
@@ -4400,7 +4480,13 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 			return nil, fmt.Errorf("%w: %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
 		}
 	}
-	res, err := s.cfg.SessionEngine(ctx, sel, nil, profile, sess.Workspace, mode)
+	var res SessionEngineResult
+	var err error
+	if sess.Kind == session.SessionKindDebug {
+		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, sess.Relationship.DebugTargetID)
+	} else {
+		res, err = s.cfg.SessionEngine(ctx, sel, nil, profile, sess.Workspace, mode)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
 	}
@@ -6472,7 +6558,8 @@ func validSessionRelationshipUTF8(relationship session.SessionRelationship) bool
 		utf8.ValidString(relationship.ScheduleName) &&
 		utf8.ValidString(string(relationship.OriginSessionID)) &&
 		utf8.ValidString(relationship.TeamID) &&
-		utf8.ValidString(relationship.MemberName)
+		utf8.ValidString(relationship.MemberName) &&
+		utf8.ValidString(string(relationship.DebugTargetID))
 }
 
 func validSessionIdentityMetadata(id session.SessionID, relationship session.SessionRelationship) bool {

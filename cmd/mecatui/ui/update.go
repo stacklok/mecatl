@@ -1665,7 +1665,7 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// alt+m cycles permission mode. It is handled here — before the phase switch —
 	// for idle + running so the key never feeds the textarea. Ctrl+M collides with
 	// Enter on real terminals, so the binding deliberately uses Alt+M.
-	if key.Matches(msg, m.keys.ModeSwitch) && (m.phase == phaseIdle || m.phase == phaseRunning) {
+	if m.deps.DebugTarget == "" && key.Matches(msg, m.keys.ModeSwitch) && (m.phase == phaseIdle || m.phase == phaseRunning) {
 		return m.switchMode(client.NextMode(m.desiredMode()))
 	}
 
@@ -2569,7 +2569,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.runMCPPrompts()
 	case key.Matches(msg, m.keys.Agents):
 		return m.openAgents()
-	case key.Matches(msg, m.keys.Effort):
+	case key.Matches(msg, m.keys.Effort) && m.deps.DebugTarget == "":
 		// ctrl+e opens the /effort reasoning-effort picker — the same surface the
 		// /effort command opens (runEffort → openEffort). openEffort self-gates on
 		// idle + caps.ModelSelection, so when model selection is unavailable this

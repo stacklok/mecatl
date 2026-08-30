@@ -63,8 +63,8 @@ Every shipped executable accepts exact top-level `--version` and prints its buil
 ## mecatui command discovery
 
 `mecatui --help`, `mecatui -h`, and `mecatui help` render the concise command index.
-`mecatui help sessions`, `mecatui help connect`, and `mecatui help login` alias the
-corresponding command-specific help; direct `sessions --help`, `connect --help`, and
+`mecatui help sessions`, `mecatui help connect`, `mecatui help debug`, and `mecatui help login` alias the
+corresponding command-specific help; direct `sessions --help`, `connect --help`, `debug --help`, and
 `login --help` remain available. Use bare `mecatui --help-flags` for common embedded-mode
 flags, or `--help-all` with bare `mecatui`, `sessions`, or `connect` for every applicable
 flag. `mecatui llm login` supports standard help and `--skip-browser`; it opens
@@ -111,6 +111,24 @@ recovers the byte-exact final active ID after any rebind. Keep it to launch
 `mecatui --resume SESSION_ID` later. No handoff is claimed when setup fails, no session
 exists, the TUI fails, or a signal interrupts/forces exit; stdout is unchanged. See the
 [full TUI reference](tui.md#continue-a-chat-at-startup).
+
+## Debug a stored session
+
+Use `mecatui debug SESSION_ID` against the embedded store, or
+`mecatui connect ADDRESS debug SESSION_ID` against a running server. This creates a
+**separate durable debug session** and automatically asks the model to inspect the
+bound target's status and authoritative transcript. The invocation itself is consent:
+mecatui prints a privacy warning because stored prompts, outputs, tool arguments/results,
+paths, and secrets may be sent to the selected model.
+
+The debug engine has an empty workspace, the no-filesystem profile, and exactly one
+read-only tool, `InspectSession`. Its status and transcript views come from the target
+snapshot; activity and performance are optional, incomplete EventLog projections.
+Evidence is bounded and fenced as hostile data. The target ID is fixed by the server,
+not supplied by the model, and the debug run never resumes, mutates, approves, cancels,
+steers, or leases the target. A persistent DEBUG rail and terminal title distinguish the
+analysis session, and model/mode/session-changing affordances are disabled. See
+[ADR 0248](adr/0248-session-debugger-admin-transport.md).
 
 ## Scheduled tasks
 

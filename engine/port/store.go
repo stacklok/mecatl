@@ -434,7 +434,7 @@ func SessionDiscoveryMetaEqual(a, b SessionDiscoveryMeta) bool {
 func sessionRelationshipsEqual(a, b session.SessionRelationship) bool {
 	if a.ScheduleName != b.ScheduleName || a.OriginSessionID != b.OriginSessionID ||
 		a.ParentSessionID != b.ParentSessionID || a.CallID != b.CallID ||
-		a.TeamID != b.TeamID || a.MemberName != b.MemberName {
+		a.TeamID != b.TeamID || a.MemberName != b.MemberName || a.DebugTargetID != b.DebugTargetID {
 		return false
 	}
 	return a.BranchIndex == nil && b.BranchIndex == nil ||

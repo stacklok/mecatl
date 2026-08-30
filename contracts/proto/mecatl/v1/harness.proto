@@ -561,6 +561,12 @@ message CreateSessionRequest {
   // is rejected with FailedPrecondition. Empty means no carryover
   // (byte-identical default).
   string source_session_id = 8;
+
+  // debug_target_session_id creates a separate diagnostic session bound to the
+  // named target. It requires profile "no-fs" and an empty workspace, cannot be
+  // combined with source_session_id, and never copies or mutates target history.
+  // Missing and foreign-owned targets are both reported as NotFound.
+  string debug_target_session_id = 9;
 }
 
 // GetServerInfoRequest asks for the sanitized diagnostic display endpoint of the
@@ -743,6 +749,9 @@ message ServerCapabilities {
   // session compaction pass to an idle owned session. Gates the client's
   // /compact action.
   bool manual_compaction = 25;
+  // session_debug is true when this server can create and rehydrate dedicated
+  // no-filesystem debug sessions.
+  bool session_debug = 26;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -1021,6 +1030,7 @@ message SessionRelationship {
   string origin_session_id = 5;
   string team_id = 6;
   string member_name = 7;
+  string debug_target_session_id = 8;
 }
 
 // SessionInventoryCapabilities is the picker-safe action posture for one row.
@@ -1355,6 +1365,9 @@ message Session {
   // adoption_source_session_id is the immutable audit relationship on a main
   // session created by explicit legacy adoption.
   string adoption_source_session_id = 13;
+  // kind and relationship preserve the durable trusted-producer identity.
+  string kind = 14;
+  SessionRelationship relationship = 15;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The

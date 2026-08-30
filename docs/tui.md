@@ -113,7 +113,7 @@ clients.
 
 ### Transport commands
 
-Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level command index. `mecatui help sessions`, `mecatui help connect`, and `mecatui help login` alias their corresponding command-specific help; direct `sessions --help`, `connect --help`, and `login --help` also work. Use bare `mecatui --help-flags` for common embedded-mode flags and bare `mecatui --help-all` (or the corresponding `sessions` or `connect` form) for the exhaustive flag reference.
+Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level command index. `mecatui help sessions`, `mecatui help connect`, `mecatui help debug`, and `mecatui help login` alias their corresponding command-specific help; direct `sessions --help`, `connect --help`, `debug --help`, and `login --help` also work. Use bare `mecatui --help-flags` for common embedded-mode flags and bare `mecatui --help-all` (or the corresponding `sessions` or `connect` form) for the exhaustive flag reference.
 
 The transport is exactly what the invocation says — there is no implicit probe
 or fallback:
@@ -131,6 +131,14 @@ or fallback:
   Press `enter` to Continue an eligible chat or Inspect a read-only run, `n` to
   create a new chat with the launch workspace/mode/model defaults, or `esc` to
   quit without a session. Inspection `esc` returns to the startup inventory.
+
+- **`mecatui debug SESSION_ID [flags]`** — create a separate durable no-filesystem
+  analysis session permanently bound to that stored target. The invocation is the
+  consent gesture: before entering the TUI, mecatui warns that the target transcript
+  and diagnostic evidence may contain prompts, outputs, tool arguments/results, file
+  paths, and secrets and will be sent to the selected model. It then submits a default
+  diagnostic prompt automatically. The target is never resumed, leased, mutated, or
+  used as the debugger's conversation.
 
 - **`mecatui connect ADDRESS [flags]`** — always dial a running `mecated` at
   `ADDRESS` (host:port); **never probe** loopback and **never embed** — the
@@ -247,7 +255,9 @@ offline `task test` coverage; see `deploy/mecak8s-vmcp/README.md`.
 `ADDRESS` must immediately follow `connect`; a missing or flag-first `ADDRESS` is
 a usage error, with one carve-out: `mecatui connect --help` renders the connect
 help instead of the missing-ADDRESS usage error. Put `sessions` after the address
-for the remote startup browser: `mecatui connect ADDRESS sessions [flags]`.
+for the remote startup browser, or `debug SESSION_ID` for a remote dedicated debugger:
+`mecatui connect ADDRESS sessions [flags]` and
+`mecatui connect ADDRESS debug SESSION_ID [flags]`.
 An unknown leading command fails closed.
 
 The startup browser never creates a throwaway session. It completes the model-list
@@ -263,6 +273,36 @@ a usage error; choose one startup intent explicitly.
 > To use the headless ask reviewer, run a headless `mecated serve --headless
 > --subagent-ask-reviewer …` and point `mecatui connect` at it. The `--model-slot
 > ask-reviewer=…` model slot is unaffected.
+
+### Debug a stored session
+
+```sh
+mecatui debug 01JOPAQUETARGET
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARGET
+```
+
+These commands do not attach to or continue the target. They authorize it, create a
+separate durable no-filesystem debug session, print a privacy disclosure, and submit a
+default diagnostic prompt. The disclosure is load-bearing: target prompts, model output,
+tool arguments/results, paths, and secrets can be sent to the selected model. Running the
+command is the consent gesture.
+
+The debug model has exactly one tool, `InspectSession`, permanently bound by the server to
+the command's target. The model can request bounded `status`, `transcript`, `activity`, and
+`performance` views, but cannot supply or change the target ID. Snapshot transcript is the
+authoritative history. Activity and performance depend on EventLog availability and are
+marked optional/incomplete; all returned evidence is fenced as untrusted. The target is
+never resumed, reopened, recovered, leased, mutated, approved, cancelled, or steered by
+the debugger.
+
+The debug conversation persists independently and can rehydrate after server restart with
+the same exact lineage and narrow catalog. Invalid lineage/no-fs metadata, a missing debug
+factory, or an unavailable target fails closed. The TUI retains a DEBUG rail and a
+`DEBUG <target-digest>` title in every phase. It hides `/clear`, `/sessions`, `/models`,
+`/effort`, and `/worktrees`, and blocks the mode/effort shortcuts because those controls
+can replace the launch binding. Schedule and learning controls remain available because
+changing those independent settings does not rebind the debug target; harmless inspection
+and presentation controls remain too.
 
 ### Continue a chat at startup
 
@@ -383,10 +423,10 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--trust-project` | off | **embedded** server: honour a discovered project's permission **ALLOW** rules **and** its project soul (`.mecatl/soul.md`). Default OFF, unified with `mecated` — deny/ask are always honoured regardless. Only pass it for a repo you trust |
 | `--yolo` | off | **embedded** server: OPERATOR POSTURE (dangerous) — suppress permission prompts for the built-in mutate-ask floor, for ephemeral/sandboxed use only. A configured deny/ask in any scope still applies. Refused as root unless `MECATL_SANDBOX=1` (or `IS_SANDBOX=1`) |
 | `--quiet` | off | discard the embedded server's operational diagnostics instead of writing them to `$XDG_STATE_HOME/mecatl/mecatui.log` (see the diagnostics note below) |
-| `--perf` | off | **embedded** server: expose the loopback perf admin surface (`/metrics`, `/debug/pprof`, `/debug/vars`, `/debug/flightrecorder`) and wire domain metrics. Loopback, UNAUTHENTICATED |
-| `--perf-addr` | – (`127.0.0.1:9099`) | **embedded** server: admin listen address for `--perf`. Empty = the **fixed** `127.0.0.1:9099` (predictable, so an MCP-client config can hardcode the `/mcp` URL; distinct from `mecated`'s `:9090`). Pass another `host:port`, or `127.0.0.1:0` for an ephemeral port. On a clash, startup **fails with guidance** |
+| `--perf` | off | **embedded** server: expose the sensitive admin surface (`/metrics`, `/debug/pprof`, `/debug/vars`, `/debug/flightrecorder`) and wire domain metrics. Empty `--perf-addr` uses the instance's owner-private UNIX `admin.sock`. UNAUTHENTICATED |
+| `--perf-addr` | – | **embedded** server: explicit TCP address for `--perf`; only loopback is accepted. Empty uses the private per-instance UNIX socket, except `--perf-mcp` uses ephemeral `127.0.0.1` TCP because streaming HTTP needs a URL. `127.0.0.1:0` explicitly requests ephemeral TCP |
 | `--perf-goroutine-warn-threshold` | 0 (off) | **embedded** server: arm the live goroutine-leak watchdog — Warn whenever the goroutine count exceeds this; the `/metrics` goroutine series is exported regardless. Only consulted with `--perf` |
-| `--perf-mcp` | off | **embedded** server: mount the read-only perf MCP server at `/mcp` on the `--perf` surface (introspect this process over MCP). Refuses a non-loopback `--perf-addr` |
+| `--perf-mcp` | off | **embedded** server: mount the read-only streaming-HTTP perf MCP server at `/mcp`. With no `--perf-addr`, the resolved ephemeral loopback URL is logged. No stdio MCP; raw admin data is not injected into a debug/model session |
 
 The embedded server has no auth/TLS — it is a private, user-owned UNIX socket
 (the same single-user loopback trust model `mecated` uses for `127.0.0.1`, with a
@@ -476,7 +516,10 @@ The title leads because tab bars **truncate from the right**; the status is a
 **static word, never an animated spinner** (per-frame title churn trips OS
 attention heuristics — the dock bounces / the taskbar flashes on every change).
 The title self-heals across a session switch / fork / carryover (a refetch adopts
-the server's stored title when this client never saw the first prompt).
+the server's stored title when this client never saw the first prompt). A dedicated
+debugger instead always starts with `DEBUG <target-digest>`, followed by its static
+phase label; the persistent on-screen DEBUG rail carries the same identity even when
+the ordinary header is replaced by a modal or fatal view.
 
 The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prompt
 can't embed an OSC title-injection), and newlines/tabs collapse to single spaces
