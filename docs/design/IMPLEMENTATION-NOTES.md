@@ -2867,7 +2867,7 @@ the DATA framing + the "only memory"/"preserved verbatim" framing, via
 `mockllm.WithRequestObserver`), budget-in-instruction, empty-summary
 abort, missing-sections/over-long acceptance, pairing preservation, and LLM-error abort.
 
-**Full-request trigger accounting and manual compaction (ADR 0244).** The user-visible
+**Full-request trigger accounting and manual compaction (ADR 0251).** The user-visible
 failure was a provider context rejection before automatic compaction fired. History-only
 accounting omitted prompt layers that are sent on every call. `engine/agent/loop.go`
 (`estimateRequestTokens`) now measures the already-built `port.LLMRequest`: rendered
