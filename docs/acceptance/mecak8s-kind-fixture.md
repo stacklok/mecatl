@@ -147,7 +147,12 @@ and the bounded signing-key availability policy
   fetch is unavailable; after a successful fetch, an outage beyond the
   configured JWKS staleness bound yields retryable 503 rather than an
   unauthenticated fallback or a 401 token classification.
-  - verify: `TestADR_0205_KeycloakFixtureJWKSStaleness`
+  - verify: `TestADR_0205_InitialJWKSOutagePreventsValidatorStartup`
+    (`go test ./authn/oidc -run '^TestADR_0205_InitialJWKSOutagePreventsValidatorStartup$'`;
+    `authn/oidc/fixture_test.go`),
+    `TestCallerIdentity_Scenario1_JWKSDownIsTransientNotUnauthorized`
+    (`go test ./internal/adapter/server -run '^TestCallerIdentity_Scenario1_JWKSDownIsTransientNotUnauthorized$'`;
+    `internal/adapter/server/caller_identity_test.go`)
 - AC3.7: Fixture instructions document authorization-code + PKCE as the normal
   login journey; any fixture password grant is identified as a narrowly scoped
   test helper and is not presented as the normal client flow.
@@ -200,7 +205,8 @@ part of this accumulator.
 - `TestMecak8sKindFixture_Scenario3_ResourceAudience`
 - `TestMecak8sKindFixture_Scenario3_LoopbackReachability`
 - `TestMecak8sKindFixture_Scenario3_AuthenticatedRequest`
-- `TestADR_0205_KeycloakFixtureJWKSStaleness`
+- `TestADR_0205_InitialJWKSOutagePreventsValidatorStartup`
+- `TestCallerIdentity_Scenario1_JWKSDownIsTransientNotUnauthorized`
 - `TestMecak8sKindFixture_Scenario3_LoginDocumentation`
 
 ## Definition of done

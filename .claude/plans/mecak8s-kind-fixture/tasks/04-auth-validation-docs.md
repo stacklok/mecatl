@@ -34,7 +34,12 @@ ToolHive, RFC 8693, and the ToolHive CA workaround outside this task.
   fetch is unavailable; after a successful fetch, an outage beyond the
   configured JWKS staleness bound yields retryable 503 rather than an
   unauthenticated fallback or a 401 token classification.
-  - verify: `TestADR_0205_KeycloakFixtureJWKSStaleness`
+  - verify: `TestADR_0205_InitialJWKSOutagePreventsValidatorStartup`
+    (`go test ./authn/oidc -run '^TestADR_0205_InitialJWKSOutagePreventsValidatorStartup$'`;
+    `authn/oidc/fixture_test.go`),
+    `TestCallerIdentity_Scenario1_JWKSDownIsTransientNotUnauthorized`
+    (`go test ./internal/adapter/server -run '^TestCallerIdentity_Scenario1_JWKSDownIsTransientNotUnauthorized$'`;
+    `internal/adapter/server/caller_identity_test.go`)
 - AC3.7: Fixture instructions document authorization-code + PKCE as the normal
   login journey; any fixture password grant is identified as a narrowly scoped
   test helper and is not presented as the normal client flow.
