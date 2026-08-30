@@ -35,15 +35,42 @@ A debugger is intentionally different from continuing a chat:
 ```sh
 mecatui debug 01JOPAQUESESSIONID
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUESESSIONID
+
+# Replace the automatic diagnosis question with a focused one.
+mecatui debug 01JOPAQUESESSIONID \
+  --prompt "Why did the final tool call fail?"
 ```
 
-It creates a separate durable no-filesystem analysis session, warns that the target's
-prompts, outputs, tool arguments/results, paths, and secrets may be sent to the selected
-model, and submits a default diagnosis prompt. Invocation is your consent to that
-disclosure. The target stays unchanged and unleased; the analysis has one target-bound
-read-only tool and cannot switch targets. Its transcript evidence is authoritative;
-activity/performance evidence is optional and may be incomplete. The persistent DEBUG
-rail/title helps prevent confusing the debugger with the original chat.
+### What happens
+
+1. Copy the target ID from `/session`, `/sessions`, or the
+   `mecatui: final-session-id=...` line printed when its TUI exits.
+2. Run `mecatui debug` against the same embedded store, or use
+   `mecatui connect ADDRESS debug` against the server that owns the target.
+3. mecatui prints a privacy disclosure before entering the alternate screen.
+   Running the command is consent to send bounded target evidence—which may
+   include prompts, model output, tool arguments/results, paths, and secrets—to
+   the selected model.
+4. The server authorizes the target and creates a **different**, durable,
+   no-filesystem analysis session. A persistent DEBUG rail and terminal title
+   show the target ID so it cannot be mistaken for the original chat.
+5. The debugger submits the supplied `--prompt`, or starts with a default
+   diagnosis that checks status and the authoritative transcript first.
+6. Ask follow-up questions normally. The debugger can inspect bounded status,
+   transcript, activity, and performance views for only that target. Activity
+   and performance depend on the optional event log and may be incomplete.
+7. Quit normally when finished. The target remains unchanged and unleased; the
+   debug conversation is stored separately.
+
+The debugger cannot switch targets, browse the filesystem, run a shell, or act
+on the target. It never resumes, approves, cancels, steers, or mutates the
+original session. `/clear`, `/sessions`, `/models`, `/effort`, and `/worktrees`
+are hidden in debug mode because they could replace the analysis binding.
+
+For local process-level investigation, adding `--perf` starts an owner-private,
+per-instance `admin.sock`. That raw metrics/pprof surface is for the human
+operator and is **not** placed in model context; the debugger's performance view
+is the bounded event-derived projection.
 
 ## Start fresh with `/clear`
 
