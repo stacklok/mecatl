@@ -30,7 +30,9 @@ func TestMainWiresManualCompaction(t *testing.T) {
 }
 
 // TestRunCallsWireManualCompaction prevents the composition root from drifting
-// away from the /compact collaborator wiring tested above.
+// away from the /compact collaborator wiring tested above. run itself is a
+// thin forwarder (added for the connect-recovery restart path); runWithOptions
+// is the composition root that actually executes on every invocation.
 func TestRunCallsWireManualCompaction(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
 	if err != nil {
@@ -40,7 +42,7 @@ func TestRunCallsWireManualCompaction(t *testing.T) {
 	var wired bool
 	ast.Inspect(file, func(node ast.Node) bool {
 		fn, ok := node.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "run" {
+		if !ok || fn.Name.Name != "runWithOptions" {
 			return true
 		}
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -64,6 +66,6 @@ func TestRunCallsWireManualCompaction(t *testing.T) {
 		return !wired
 	})
 	if !wired {
-		t.Fatal("run must invoke wireManualCompaction(&deps, cl) so /compact is available")
+		t.Fatal("runWithOptions must invoke wireManualCompaction(&deps, cl) so /compact is available")
 	}
 }
