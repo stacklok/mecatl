@@ -345,18 +345,16 @@ opt-ins that spend tokens or need explicit configuration stay off: static
 `--mcp-server` registrations, the `SkillDraft` quarantine, the background
 user-model reviewer, and memory consolidation — run a full `mecated serve` and
 `connect` to it for those. It also accepts **`--perf`** (off by default) to bring up the same
-loopback observability surface `mecated` exposes — `/metrics`, `/debug/pprof/*`,
-`/debug/vars`, `/debug/flightrecorder` — on a **fixed** `127.0.0.1:9099` port by
-default (predictable, so an MCP-client config can hardcode the `/mcp` URL once;
-distinct from `mecated`'s `:9090`). Pass `--perf-addr host:port` to move it, or
-`--perf-addr 127.0.0.1:0` for an ephemeral port. On a port clash, startup **fails
-with guidance** rather than silently falling back (`--perf-goroutine-warn-threshold`
-arms the goroutine alarm). The chosen address is logged at startup (loopback, unauthenticated —
-same posture as `mecated`'s admin listener; see the observability note in §3).
-With `--perf` it also accepts **`--perf-mcp`** to mount the read-only perf MCP
-server at `/mcp` on that admin surface (same fail-closed loopback enforcement: a
-non-loopback `--perf-addr` with `--perf-mcp` is refused). This is the in-process
-way to profile a freeze in the embedded server itself.
+sensitive observability surface `mecated` exposes — `/metrics`, `/debug/pprof/*`,
+`/debug/vars`, `/debug/flightrecorder`. With no `--perf-addr`, ordinary perf uses an
+owner-private `admin.sock` beside this mecatui instance's private gRPC socket, so
+simultaneous instances do not collide. An explicit `--perf-addr host:port` selects TCP
+and must be loopback; `127.0.0.1:0` requests an ephemeral port. The resolved network and
+address are logged at startup (`--perf-goroutine-warn-threshold` arms the goroutine alarm).
+With **`--perf-mcp`**, an empty address instead selects ephemeral loopback TCP because
+the supported MCP transport is streaming HTTP and needs a URL; the resolved `/mcp` URL
+is logged. No stdio MCP is used, and this raw admin data is not injected into the model
+or dedicated session debugger.
 The embedded server also accepts `--yolo` (the
 allow-all operator posture — same semantics, root refusal, and `MECATL_SANDBOX`/
 `IS_SANDBOX` env as `mecated`; see the allow-all note in §12). It is **rejected in

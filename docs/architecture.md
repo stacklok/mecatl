@@ -366,7 +366,26 @@ external `mecated` it dials via `mecatui connect ADDRESS` — so a single binary
 works with no daemon. The `sessions` launch intent is orthogonal to that transport:
 `mecatui sessions` and `mecatui connect ADDRESS sessions` enter the same stored-session
 inventory without first creating a session, then continue/inspect through the existing
-authoritative transcript path or create only when the operator requests a new chat. Each
+authoritative transcript path or create only when the operator requests a new chat.
+The sibling `mecatui debug SESSION_ID` and `mecatui connect ADDRESS debug SESSION_ID`
+forms create a separate durable `debug` session whose trusted relationship metadata binds
+one authorized target. That engine has no filesystem, carries a stable-prefix debugging
+contract, and exposes exactly the target-bound `InspectSession` tool; the model cannot
+choose another target. Snapshot status and transcript are authoritative sources; the
+transcript projection includes bounded textual/structured message and tool-result parts,
+marks binary payloads omitted with metadata, advances past a row that cannot fit while
+reporting its index, role, projected size, and omission reason, and reports scan versus
+projection completeness explicitly. UTF-8 repair is likewise disclosed at the affected
+field and page; canonical fencing is included in the final 64 KiB calculation. EventLog
+activity/performance projections are optional, non-authoritative, and always evidentially
+incomplete even when an available log was scanned to EOF. Every evidence
+payload is fenced as hostile data. Creation conceals absent and unauthorized targets behind
+the same not-found result, and the debug session never resumes, leases, mutates, approves,
+cancels, or steers its target. Persisted debug sessions rehydrate through the dedicated
+factory and fail closed if their lineage, no-fs metadata, target, or factory is unavailable.
+Mecatui treats invocation as consent, prints the disclosure before launch, submits the
+default diagnostic prompt, and keeps a persistent DEBUG rail/title while hiding binding-
+breaking controls. See [ADR 0248](adr/0248-session-debugger-admin-transport.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption

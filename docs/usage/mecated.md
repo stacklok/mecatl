@@ -528,12 +528,12 @@ It prints (note: **no `Authorization` header** — the surface is loopback/no-au
 }
 ```
 
-> **Embedded `mecatui` server:** when `mecatui` hosts its own server (`--perf
-> --perf-mcp`), the admin surface defaults to a **fixed `127.0.0.1:9099`** (whereas
-> `mecated` defaults to `9090`). A `mecatui` user can generate the matching client
-> snippet by overriding the address — `mecated perf-mcp print-config --metrics-addr
-> 127.0.0.1:9099` — or simply hardcode the `http://127.0.0.1:9099/mcp` URL, since
-> the port is now predictable across restarts.
+> **Embedded `mecatui` server:** plain `mecatui --perf` defaults to an
+> owner-private per-instance UNIX `admin.sock`, not a TCP port. When `--perf-mcp`
+> is also set without `--perf-addr`, mecatui uses an ephemeral loopback TCP port
+> because streaming HTTP needs a URL and logs the resolved endpoint. Pass an
+> explicit loopback `--perf-addr` only when a stable URL is required; non-loopback
+> addresses are refused, and stdio MCP is never used.
 
 The perf server's `query_metric` tool and `perf://metrics/summary` resource expose
 a **curated** counter/gauge/histogram set (not the full `/metrics` scrape). Beside

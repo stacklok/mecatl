@@ -56,6 +56,15 @@ replacement. Read the [exact operator setup and same-UID plaintext
 boundary](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental)
 before adding the mount.
 
+## Runtime and sensitive local administration
+
+Each embedded instance creates its own private runtime directory. With `--perf`, ordinary
+runtime administration uses an owner-private `admin.sock` in that directory, so multiple
+containers or local instances do not compete for a fixed port. `--perf-mcp` instead needs
+a streaming-HTTP URL: without an explicit loopback `--perf-addr`, it chooses ephemeral
+loopback TCP and logs the endpoint. No stdio transport exists. Keep all perf output private;
+it may contain prompts, paths, and runtime details.
+
 ---
 
 ## Building locally

@@ -13,6 +13,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **`session.SessionRelationship.DebugTargetID`** — adds the durable target link
+  for dedicated debug sessions. Adding a field to an exported struct breaks
+  external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+
 - **`agent.AgentMeta.WritableAuthorityCeiling`** (issue #517, [ADR 0242](../docs/adr/0242-route-unpinned-writable-named-specialists.md)) — adds the exported mode-specific managed-authority ceiling used when a fresh named specialist runs with direct write. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 
 - **`agent.SteerOutcome` enum: superseded/slot_full dropped, appended added**
@@ -45,6 +49,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   the pairing-validated, non-active aggregate rewrite seam; `agent.Engine.CompactSession`
   and `agent.ManualCompactionResult` run the configured compactor once and expose the
   archive/summary needed by a durable service operation. Added (minor).
+
+- **Debug session identity** — adds `session.SessionKindDebug` and
+  `session.NewDebug`, creating a separate empty-workspace session bound to one
+  target session without copying target conversation state. Added (minor).
 
 - **`agent.WithAgentWritableModelEngineFactory`** (issue #517, [ADR 0242](../docs/adr/0242-route-unpinned-writable-named-specialists.md)) — a `SubagentOption` factory that rebuilds an unpinned named `mode:"read-write"` specialist on the semantic router's selected model while preserving its specialist scope, direct-write environment, same-provider boundary, and per-definition limits. A declined target falls back to the ordinary writable specialist. Added (minor).
 

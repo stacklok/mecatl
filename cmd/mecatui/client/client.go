@@ -11,6 +11,7 @@ import (
 	"os"
 	pathpkg "path"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -168,6 +169,32 @@ func (c *Client) CreateSession(ctx context.Context, workspace string, mode mecat
 		ModelId:         sel.ModelID,
 		ReasoningEffort: sel.ReasoningEffort,
 	})
+}
+
+// CreateDebugSession creates a separate no-filesystem analysis session bound to
+// targetID. Capability absence is detected from the create response (the first
+// common response carrying ServerCapabilities); an older server may ignore the
+// new target field, so that accidentally-created ordinary session is closed
+// before this method fails closed.
+func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection) (string, Capabilities, ResolvedModel, error) {
+	id, caps, resolved, err := c.createSession(ctx, &mecatlv1.CreateSessionRequest{
+		Profile:              "no-fs",
+		Mode:                 mode,
+		ProviderId:           sel.ProviderID,
+		ModelId:              sel.ModelID,
+		ReasoningEffort:      sel.ReasoningEffort,
+		DebugTargetSessionId: targetID,
+	})
+	if err != nil {
+		return "", Capabilities{}, ResolvedModel{}, err
+	}
+	if !caps.SessionDebug {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = c.CloseSession(cleanupCtx, id)
+		return "", Capabilities{}, ResolvedModel{}, errors.New("server does not support dedicated session debugging")
+	}
+	return id, caps, resolved, nil
 }
 
 // CreateSessionWithCarryover is CreateSession seeded with the source session's

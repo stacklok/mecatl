@@ -26,6 +26,8 @@ const (
 	SessionKindParallelBranch SessionKind = "parallel_branch"
 	// SessionKindTeamMember is a member driven by a team Supervisor.
 	SessionKindTeamMember SessionKind = "team_member"
+	// SessionKindDebug is a separate diagnostic session bound to one target session.
+	SessionKindDebug SessionKind = "debug"
 )
 
 // SessionRelationship carries the kind-specific relationship metadata of a
@@ -41,6 +43,7 @@ type SessionRelationship struct {
 	BranchIndex     *int       `json:"branch_index,omitempty"`
 	TeamID          string     `json:"team_id,omitempty"`
 	MemberName      string     `json:"member_name,omitempty"`
+	DebugTargetID   SessionID  `json:"debug_target_id,omitempty"`
 }
 
 // ErrInvalidSessionMetadata marks an invalid kind/relationship combination.
@@ -71,6 +74,10 @@ func ValidateSessionMetadata(kind SessionKind, rel SessionRelationship) error {
 	case SessionKindTeamMember:
 		if !validTeamMemberRelationship(rel) {
 			return fmt.Errorf("%w: team member requires team id and member name with optional parent session", ErrInvalidSessionMetadata)
+		}
+	case SessionKindDebug:
+		if !validDebugRelationship(rel) {
+			return fmt.Errorf("%w: debug requires only a target session", ErrInvalidSessionMetadata)
 		}
 	default:
 		return fmt.Errorf("%w: unknown kind %q", ErrInvalidSessionMetadata, kind)
@@ -106,6 +113,12 @@ func validTeamMemberRelationship(rel SessionRelationship) bool {
 	forbidden.MemberName = ""
 	forbidden.ParentSessionID = ""
 	return rel.TeamID != "" && rel.MemberName != "" && forbidden == (SessionRelationship{})
+}
+
+func validDebugRelationship(rel SessionRelationship) bool {
+	forbidden := rel
+	forbidden.DebugTargetID = ""
+	return rel.DebugTargetID != "" && forbidden == (SessionRelationship{})
 }
 
 // RestoreSessionMetadata validates and restores persisted creation metadata.
@@ -152,6 +165,12 @@ func NewParallelBranch(id SessionID, mode PermissionMode, workspace string, limi
 // for a directly-driven team and is present for a tool-driven team.
 func NewTeamMember(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, teamID, member string, parent SessionID) (*Session, error) {
 	return newRelated(id, mode, workspace, limits, createdAt, SessionKindTeamMember, SessionRelationship{TeamID: teamID, MemberName: member, ParentSessionID: parent})
+}
+
+// NewDebug constructs a validated diagnostic session bound to target. It starts
+// with an empty conversation; target history is never copied into it.
+func NewDebug(id SessionID, mode PermissionMode, limits Limits, createdAt time.Time, target SessionID) (*Session, error) {
+	return newRelated(id, mode, "", limits, createdAt, SessionKindDebug, SessionRelationship{DebugTargetID: target})
 }
 
 func newRelated(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, kind SessionKind, rel SessionRelationship) (*Session, error) {

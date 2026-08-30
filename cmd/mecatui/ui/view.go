@@ -62,7 +62,11 @@ func (m Model) View() tea.View {
 	}
 
 	if m.phase == phaseFatal {
-		v.Content = m.renderFatal()
+		if m.deps.DebugTarget != "" {
+			v.Content = m.renderDebugRail() + "\n" + m.renderFatal()
+		} else {
+			v.Content = m.renderFatal()
+		}
 		return v
 	}
 
@@ -170,7 +174,23 @@ func (m Model) renderHeader() string {
 	} else if m.deps.StatusSource != nil {
 		line = ""
 	}
-	return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
+	header := m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
+	if m.deps.DebugTarget != "" {
+		return m.renderDebugRail() + "\n" + header
+	}
+	return header
+}
+
+func (m Model) renderDebugRail() string {
+	label := "DEBUG"
+	if target := strings.TrimSpace(strings.Join(strings.Fields(sanitizeTerminal(m.deps.DebugTarget)), " ")); target != "" {
+		label += " target: " + target
+	}
+	width := m.widthOr()
+	if width > 0 {
+		label = truncate(label, width)
+	}
+	return m.deps.Theme.Style("warning").Bold(true).Width(width).Render(label)
 }
 
 // Operator-posture tier names (the m.caps.Posture vocabulary, server-wide). Named

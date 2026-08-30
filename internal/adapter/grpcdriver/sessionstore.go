@@ -335,6 +335,7 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 			OriginSessionID: session.SessionID(entry.GetOriginSessionId()),
 			TeamID:          entry.GetTeamId(),
 			MemberName:      entry.GetMemberName(),
+			DebugTargetID:   session.SessionID(entry.GetDebugTargetSessionId()),
 		},
 	}
 	if entry.GetModifiedAt() != nil {

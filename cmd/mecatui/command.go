@@ -60,9 +60,17 @@ var topLevelCommands = []topLevelCommand{
 		},
 	},
 	{
+		name:     "debug",
+		synopsis: "debug SESSION_ID [flags]",
+		purpose:  "diagnose a stored session in a separate no-filesystem analysis session",
+		resolve: func(args []string) invocationResolution {
+			return resolveDebugCommand(modeLocal, "", args)
+		},
+	},
+	{
 		name:     "connect",
-		synopsis: "connect ADDRESS [sessions]",
-		purpose:  "dial a running mecated at ADDRESS (host:port); append sessions to browse stored sessions",
+		synopsis: "connect ADDRESS [sessions | debug SESSION_ID] [flags]",
+		purpose:  "dial a running mecated at ADDRESS (host:port), optionally browsing or debugging a stored session",
 		resolve:  resolveConnectCommand,
 	},
 	{
@@ -84,6 +92,7 @@ type invocationResolution struct {
 	mode           transportMode
 	address        string // connect target; "" for the bare/local mode
 	browseSessions bool   // launch directly into the shared stored-session inventory
+	debugTarget    string // immutable target for a dedicated no-filesystem debug session
 	helpIndex      bool   // render the top-level command index
 	remaining      []string
 	err            error
@@ -197,12 +206,25 @@ func resolveConnectCommand(args []string) invocationResolution {
 	if browseSessions {
 		remaining = remaining[1:]
 	}
+	if len(remaining) > 0 && remaining[0] == "debug" {
+		return resolveDebugCommand(modeConnect, args[0], remaining[1:])
+	}
 	return invocationResolution{
 		mode:           modeConnect,
 		address:        args[0],
 		browseSessions: browseSessions,
 		remaining:      remaining,
 	}
+}
+
+func resolveDebugCommand(mode transportMode, address string, args []string) invocationResolution {
+	if len(args) == 1 && isHelpMetaFlag(args[0]) {
+		return invocationResolution{mode: mode, address: address, remaining: args}
+	}
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return invocationResolution{err: helpUsageError("debug requires SESSION_ID before flags")}
+	}
+	return invocationResolution{mode: mode, address: address, debugTarget: args[0], remaining: args[1:]}
 }
 
 // isHelpMetaFlag reports whether arg is one of the help meta-flags (--help/-h/
@@ -254,6 +276,8 @@ func writeSoftWrapped(out io.Writer, indent, text string, width int) {
 // spellings and after a leading-word usage error.
 func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Usage: mecatui [flags]")
+	_, _ = fmt.Fprintln(out, "       mecatui debug SESSION_ID [flags]")
+	_, _ = fmt.Fprintln(out, "       mecatui connect ADDRESS debug SESSION_ID [flags]")
 	_, _ = fmt.Fprintln(out, "       mecatui <command> [flags]")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")

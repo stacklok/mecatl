@@ -56,6 +56,9 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if src := req.GetSourceSessionId(); src != "" {
 		opts = append(opts, WithSourceSession(session.SessionID(src)))
 	}
+	if target := req.GetDebugTargetSessionId(); target != "" {
+		opts = append(opts, WithDebugTarget(session.SessionID(target)))
+	}
 	sess, err := h.svc.CreateSessionWithProfile(ctx, req.GetWorkspace(), modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
 	if err != nil {
 		return nil, toStatus(err)

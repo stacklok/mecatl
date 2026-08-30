@@ -81,9 +81,15 @@
   only for a fired/failed fire; a skipped fire has no run, duration 0). The
   duration histogram shares the `latencyInstruments` explicit-bucket ladder.
   > A broader performance-observability effort lands incrementally on a
-  > **loopback-only, unauthenticated admin listener** (`--metrics-addr`, default
-  > `127.0.0.1:9090`): `/metrics`, `/debug/pprof/*`, `/debug/vars` (a curated
-  > `runtime/metrics` snapshot), `/debug/flightrecorder` (an execution-trace ring),
+  > separate unauthenticated admin listener: `mecated --metrics-addr` remains
+  > loopback-only (default `127.0.0.1:9090`), while embedded `mecatui --perf`
+  > defaults to an owner-private per-instance UNIX `admin.sock` beside its gRPC
+  > socket. Multiple mecatui instances therefore do not contend for a fixed port.
+  > An explicit mecatui `--perf-addr` selects TCP and is rejected unless loopback;
+  > `--perf-mcp` with no explicit address uses ephemeral loopback TCP because the
+  > supported MCP transport is streaming HTTP and requires a URL. No stdio MCP is
+  > introduced. The surfaces serve `/metrics`, `/debug/pprof/*`, `/debug/vars`,
+  > `/debug/flightrecorder` (an execution-trace ring),
   > and — opt-in via `--perf-mcp` — `/mcp`, the read-only **perf MCP server**
   > (`internal/adapter/mcpperf`) that lets an agent introspect this process's
   > runtime/latency/profile state as reduced numeric summaries (slow-turns,

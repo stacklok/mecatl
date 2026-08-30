@@ -37,6 +37,9 @@ func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 		{name: "team member", new: func() (*session.Session, error) {
 			return session.NewTeamMember("team-member-1", session.ModeDefault, "/ws", session.Limits{}, created, "team-1", "reviewer", "parent-1")
 		}, kind: session.SessionKindTeamMember, rel: session.SessionRelationship{TeamID: "team-1", MemberName: "reviewer", ParentSessionID: "parent-1"}},
+		{name: "debug", new: func() (*session.Session, error) {
+			return session.NewDebug("debug-1", session.ModeDefault, session.Limits{}, created, "target-1")
+		}, kind: session.SessionKindDebug, rel: session.SessionRelationship{DebugTargetID: "target-1"}},
 	}
 
 	for _, tc := range tests {
@@ -98,6 +101,8 @@ func TestADR_0108_InvalidRelationshipsFailClosed(t *testing.T) {
 		{ID: "bad-subagent", Kind: session.SessionKindSubagent, Relationship: session.SessionRelationship{ParentSessionID: "parent"}, CreatedAt: created},
 		{ID: "bad-parallel", Kind: session.SessionKindParallelBranch, Relationship: session.SessionRelationship{ParentSessionID: "parent", CallID: "call", BranchIndex: intPtr(-1)}, CreatedAt: created},
 		{ID: "bad-team", Kind: session.SessionKindTeamMember, Relationship: session.SessionRelationship{TeamID: "team"}, CreatedAt: created},
+		{ID: "bad-debug-empty", Kind: session.SessionKindDebug, CreatedAt: created},
+		{ID: "bad-debug-parent", Kind: session.SessionKindDebug, Relationship: session.SessionRelationship{DebugTargetID: "target", ParentSessionID: "forged"}, CreatedAt: created},
 		{ID: "bad-unknown", Kind: session.SessionKind("future"), CreatedAt: created},
 	}
 	for _, snap := range invalid {

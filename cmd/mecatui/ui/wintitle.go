@@ -36,6 +36,9 @@ func (m Model) windowTitle() string {
 	if m.deps.NoWindowTitle {
 		return "mecatui"
 	}
+	if m.deps.DebugTarget != "" {
+		return "DEBUG " + sessionDigest(m.deps.DebugTarget)[:8] + " — " + debugPhaseTitle(m.phase) + " mecatui"
+	}
 	title := clampWindowTitle(m.sessionTitle)
 	status := phaseStatusWord(m.phase)
 	switch {
@@ -48,6 +51,13 @@ func (m Model) windowTitle() string {
 	default:
 		return title + " — " + status + " mecatui"
 	}
+}
+
+func debugPhaseTitle(p phase) string {
+	if status := phaseStatusWord(p); status != "" {
+		return status
+	}
+	return "Ready"
 }
 
 // phaseStatusWord maps a phase to the status WORD it contributes to the window

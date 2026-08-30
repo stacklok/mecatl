@@ -171,6 +171,9 @@ type createSessionBody struct {
 	// running/awaiting source is a 4xx (FailedPrecondition). Empty means no
 	// carryover.
 	SourceSessionID string `json:"source_session_id,omitempty"`
+	// DebugTargetSessionID creates a separate no-fs diagnostic session bound to
+	// one authorized target; it never copies target conversation state.
+	DebugTargetSessionID string `json:"debug_target_session_id,omitempty"`
 }
 
 type limitsIn struct {
@@ -241,6 +244,7 @@ type serverCapabilitiesJSON struct {
 	StorageMigration  bool                              `json:"storage_migration"`
 	StorageCleanup    bool                              `json:"storage_cleanup"`
 	LegacyAdoption    bool                              `json:"legacy_adoption"`
+	SessionDebug      bool                              `json:"session_debug"`
 	ManualDream       *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
 	ManualCompaction  bool                              `json:"manual_compaction"`
 	Posture           string                            `json:"posture,omitempty"`
@@ -268,6 +272,7 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		StorageMigration:  c.GetStorageMigration(),
 		StorageCleanup:    c.GetStorageCleanup(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
+		SessionDebug:      c.GetSessionDebug(),
 		ManualDream:       c.GetManualDream(),
 		ManualCompaction:  c.GetManualCompaction(),
 		Posture:           c.GetPosture(),
@@ -292,7 +297,9 @@ type sessionResp struct {
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
 	// source). Omitted (nil) when no model resolved (older-server-equivalent).
-	ResolvedModel *resolvedModelJSON `json:"resolved_model,omitempty"`
+	ResolvedModel *resolvedModelJSON            `json:"resolved_model,omitempty"`
+	Kind          string                        `json:"kind,omitempty"`
+	Relationship  *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
 }
 
 type dreamGenerateBody struct {
@@ -398,6 +405,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	var opts []CreateSessionOption
 	if body.SourceSessionID != "" {
 		opts = append(opts, WithSourceSession(session.SessionID(body.SourceSessionID)))
+	}
+	if body.DebugTargetSessionID != "" {
+		opts = append(opts, WithDebugTarget(session.SessionID(body.DebugTargetSessionID)))
 	}
 	sess, err := h.svc.CreateSessionWithProfile(r.Context(), body.Workspace, modeFromString(body.Mode), limits, sel, profile, opts...)
 	if err != nil {
@@ -572,6 +582,8 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		Title:           title,
 		TitleProvenance: string(sess.TitleProvenance),
 		ResolvedModel:   resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
+		Kind:            string(sess.Kind),
+		Relationship:    toProtoSessionRelationship(sess.Relationship),
 	})
 }
 

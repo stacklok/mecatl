@@ -231,6 +231,9 @@ type Deps struct {
 	// /models restart or /clear never re-submits it. Populated by main.go from
 	// -p/--prompt + --prompt-file.
 	InitialPrompt string
+	// DebugTarget is immutable launch metadata for a dedicated analysis session.
+	// It is presentation/control state only; the client adapter owns wire projection.
+	DebugTarget string
 
 	// Version is the mecatui build version, shown on the first-run welcome splash
 	// (e.g. "v0.3.1" or "dev"). Threaded from the shared
