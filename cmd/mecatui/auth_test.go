@@ -23,6 +23,7 @@ func TestAuthTokenSourceMapsOnlyRecoveryCauses(t *testing.T) {
 		{"session expired", &clientauth.LoginRequiredError{Cause: clientauth.SessionExpired}, client.AuthSessionExpired},
 		{"credential unusable", &clientauth.LoginRequiredError{Cause: clientauth.CredentialUnusable}, client.AuthCredentialUnusable},
 		{"cleanup", errors.Join(errors.New("remove failed"), clientauth.ErrCredentialCleanup), client.AuthCredentialCleanup},
+		{"issuer", clientauth.ErrDiscovery, client.AuthStorageUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := mapAuthTokenSource(authTokenSourceFunc(func(context.Context) (string, error) { return "", tc.err }))
@@ -39,7 +40,6 @@ func TestAuthTokenSourcePreservesUnclassifiedErrors(t *testing.T) {
 	unknownCause := clientauth.LoginRequiredCause("future_cause")
 	for _, want := range []error{
 		context.Canceled,
-		clientauth.ErrDiscovery,
 		clientauth.ErrTokenExchange,
 		errors.New("token validation failed"),
 		&clientauth.LoginRequiredError{Cause: unknownCause},

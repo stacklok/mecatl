@@ -127,8 +127,15 @@ or fallback:
   `--tls-ca`; this CA verifies the issuer endpoints and is not the optional server CA
   supplied to `connect`. It exits without starting a session. `--no-browser` prints the
   authorization URL instead of opening a browser and then waits for the fixed
-  `http://127.0.0.1:18473/oauth/callback` callback (headless/SSH use). `connect` does
-  **not** implicitly
+  `http://127.0.0.1:18473/oauth/callback` callback (headless/SSH use). For SSH, open
+  that URL on the operator workstation and forward the fixed callback port to the host
+  running `mecatui login`:
+
+  ```sh
+  ssh -N -L 18473:127.0.0.1:18473 user@login-host
+  ```
+
+  This is Authorization Code + PKCE, not device flow. `connect` does **not** implicitly
   open a browser: an unenrolled target returns guidance to run this command.
 
   A rejected callback reports a closed validation rule that failed — for example

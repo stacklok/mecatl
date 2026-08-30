@@ -67,6 +67,31 @@ func TestVMCPFixturePinsBackendAndBoundary(t *testing.T) {
 	}
 }
 
+func TestMecak8sVMCPFixtureDisablesKeycloakServiceAccountToken(t *testing.T) {
+	for _, path := range []string{"deploy/mecak8s-kind/keycloak.yaml", "deploy/mecak8s-vmcp/keycloak.yaml"} {
+		body := readRepoFile(t, path)
+		if !strings.Contains(body, "    spec:\n      automountServiceAccountToken: false\n      securityContext:") {
+			t.Errorf("%s must disable the Keycloak service-account token at PodSpec level", path)
+		}
+	}
+}
+
+func TestMecak8sVMCPREADMERemoteLoginContract(t *testing.T) {
+	readme := readRepoFile(t, "deploy/mecak8s-vmcp/README.md")
+	for _, required := range []string{
+		"mecatui-kind --audience http://127.0.0.1:18080/mcp",
+		"Authorization Code + PKCE, not device flow",
+		"ssh -N -L 18473:127.0.0.1:18473 user@login-host",
+		"fixed callback",
+	} {
+		if !strings.Contains(readme, required) {
+			t.Errorf("vMCP README missing remote-login contract %q", required)
+		}
+	}
+	if strings.Contains(readme, "--audience mecatui-kind") {
+		t.Error("vMCP README must not use the client ID as the resource audience")
+	}
+}
 func TestVMCPFixtureDoesNotCommitCredentialValues(t *testing.T) {
 	for _, path := range []string{"deploy/mecak8s-vmcp/Taskfile.yml", "deploy/mecak8s-vmcp/README.md", "deploy/mecak8s-vmcp/versions.yaml", "deploy/mecak8s-vmcp/toolhive-redis.yaml", "deploy/mecak8s-vmcp/vmcp.yaml"} {
 		body := readRepoFile(t, path)

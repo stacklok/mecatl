@@ -63,6 +63,9 @@ type LogoutConfig struct {
 	Registry    *Registry
 	Credentials *Credentials
 	HTTPClient  func(context.Context, Connection) (*http.Client, error)
+	// HTTPClientOwned may return a client created for this revocation attempt and
+	// whether Logout owns its idle-connection cleanup. HTTPClient remains caller-owned.
+	HTTPClientOwned func(context.Context, Connection) (*http.Client, bool, error)
 }
 
 type pendingRevocation struct {
@@ -133,11 +136,11 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 	unlock()
 	locked = false
 
-	revokeLogoutTokens(ctx, revoke, cfg.HTTPClient, &result)
+	revokeLogoutTokens(ctx, revoke, cfg.HTTPClient, cfg.HTTPClientOwned, &result)
 	return result, nil
 }
 
-func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientFor func(context.Context, Connection) (*http.Client, error), result *LogoutResult) {
+func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientFor func(context.Context, Connection) (*http.Client, error), ownedClientFor func(context.Context, Connection) (*http.Client, bool, error), result *LogoutResult) {
 	// Revocation is deliberately after local cleanup and outside the target
 	// transaction. One operation-wide budget covers client construction (including
 	// DNS), discovery, and every token; a stalled issuer must not block enrollment.
@@ -145,7 +148,7 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 	defer cancelCleanup()
 	for _, item := range revoke {
 		remaining := revocableTokenCount(item.token)
-		if remaining == 0 || clientFor == nil {
+		if remaining == 0 || (clientFor == nil && ownedClientFor == nil) {
 			continue
 		}
 		if err := cleanupCtx.Err(); err != nil {
@@ -153,13 +156,28 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 			recordRevocationError(result, item.conn.Identity, err)
 			continue
 		}
-		client, err := clientFor(cleanupCtx, item.conn)
+		var (
+			client *http.Client
+			err    error
+			owned  bool
+		)
+		if ownedClientFor != nil {
+			client, owned, err = ownedClientFor(cleanupCtx, item.conn)
+		} else if clientFor != nil {
+			client, err = clientFor(cleanupCtx, item.conn)
+		}
 		if err != nil {
+			if owned && client != nil {
+				client.CloseIdleConnections()
+			}
 			result.RevocationsFailed += remaining
 			recordRevocationError(result, item.conn.Identity, err)
 			continue
 		}
 		attempted, failed, err := revokeTokens(cleanupCtx, client, item.conn.Identity, item.token)
+		if owned && client != nil {
+			client.CloseIdleConnections()
+		}
 		result.RevocationsAttempted += attempted
 		result.RevocationsFailed += failed
 		if err != nil {

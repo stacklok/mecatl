@@ -15,7 +15,7 @@ import (
 type savedConnectController struct{}
 
 func (savedConnectController) ListConnectTargets(context.Context) ([]ui.ConnectTarget, error) {
-	registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+	registry, err := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
 	if err != nil {
 		return nil, fmt.Errorf("saved targets unavailable: opening the connection registry failed: %w", err)
 	}
@@ -34,7 +34,7 @@ func (savedConnectController) ListConnectTargets(context.Context) ([]ui.ConnectT
 }
 
 func savedConnection(target string) (clientauth.Connection, error) {
-	registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+	registry, err := clientauth.OpenExistingRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
 	if err != nil {
 		return clientauth.Connection{}, fmt.Errorf("saved target unavailable: opening the connection registry failed: %w", err)
 	}

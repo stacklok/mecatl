@@ -78,7 +78,14 @@ needs one login after upgrade. `mecatui connect
 ADDRESS` never opens a browser; an unenrolled target tells you to run `login`.
 Add `--no-browser` to print the authorization URL for you to open yourself, which is
 what you want over SSH or on a headless host. Remote login listens at the registered
-`http://127.0.0.1:18473/oauth/callback`. Wrong-route, wrong-state, and malformed pre-state
+`http://127.0.0.1:18473/oauth/callback`. Open the printed URL in a browser on your
+workstation and forward that fixed callback port to the host running the login:
+
+```sh
+ssh -N -L 18473:127.0.0.1:18473 user@login-host
+```
+
+This remote flow is Authorization Code + PKCE, not device flow. Wrong-route, wrong-state, and malformed pre-state
 probes are unlimited and do not consume the secret state; the deadline and connection
 limits still bound the listener. This differs from MCP OAuth's random callback path,
 which retains a bounded matching-route attempt count. Only a callback proving the secret

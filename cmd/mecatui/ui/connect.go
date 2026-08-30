@@ -133,7 +133,7 @@ func (m Model) connectRestartIntent() ConnectRestartIntent {
 		return intent
 	}
 	switch m.connect.reason {
-	case client.AuthCredentialCleanup:
+	case client.AuthCredentialCleanup, client.AuthStorageUnavailable:
 		intent.Action = RetryAfterCleanup
 	case client.AuthNotEnrolled, client.AuthSessionExpired, client.AuthCredentialUnusable:
 		intent.Action = Reauthenticate
@@ -206,7 +206,7 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 			label = "Continue to add a new target? Press enter to confirm."
 		} else if sameTarget {
 			switch m.connect.reason {
-			case client.AuthCredentialCleanup:
+			case client.AuthCredentialCleanup, client.AuthStorageUnavailable:
 				label = "Retry connection without opening a browser? Press enter to confirm."
 			case client.AuthNotEnrolled, client.AuthSessionExpired, client.AuthCredentialUnusable:
 				label = "Sign in again and connect? Press enter to confirm."
@@ -229,7 +229,9 @@ func connectAuthHint(reason client.AuthReason, target string) string {
 	case client.AuthSessionExpired:
 		return "Your session expired. Sign in again to reconnect."
 	case client.AuthCredentialUnusable:
-		return "The local credential cannot be used. Signing in again may not fix keyring or saved-record corruption."
+		return "The saved credential is corrupt. Sign in again to replace it."
+	case client.AuthStorageUnavailable:
+		return "Local credential storage or the saved issuer/CA trust is unavailable. Retry the connection after restoring it -- signing in again will not fix this."
 	case client.AuthCredentialCleanup:
 		return "Stored credential cleanup is still in progress. Retry the connection before signing in again."
 	case client.AuthRejected:

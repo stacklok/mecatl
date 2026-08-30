@@ -400,7 +400,9 @@ refresh. This prevents a background refresh loop from sustaining itself; provide
 browser-SSO and refresh-token lifetimes remain provider-specific. Only an OAuth
 `RetrieveError` whose exact structured `ErrorCode` is `invalid_grant` triggers
 credential cleanup; provider prose never does. Local login-required errors retain the `ErrLoginRequired` sentinel and safe typed causes,
-which composition translates into the client's closed auth-reason contract; unknown
+which composition translates into the client's closed auth-reason contract; repairable
+credential corruption is distinct from unavailable local storage or issuer trust, which
+must not be overwritten and instead require remediation or a browser-free retry. Unknown
 adapter and transport failures remain unclassified. A server `Unauthenticated` verdict
 remains a transport-layer rejection. Refresh, enrollment, logout, and
 superseded-credential cleanup share one canonical-root-plus-target cross-process
@@ -430,10 +432,13 @@ restarts, and a rejected static bearer offers no browser-login loop. Static
 refreshed by mecatui. No session history crosses a target switch. Remote login uses the
 fixed `http://127.0.0.1:18473/oauth/callback`: unauthenticated wrong-state/pre-state
 probes are unlimited and do not burn state, while MCP OAuth keeps its random-path bounded
-matching-route policy. The shared private-HTTPS path reuses ToolHive Core's scoped,
-DNS-pinned transport. Kind remote login is available after fixture setup with host aliases and
+matching-route policy. `--no-browser` uses Authorization Code + PKCE (not device flow)
+and lets SSH users forward that fixed callback with `ssh -N -L 18473:127.0.0.1:18473`.
+The shared private-HTTPS path reuses a finite, owner-closed scoped keep-alive pool;
+every new dial re-resolves DNS and intersects the approved addresses while retaining
+HTTPS, origin, CA, hostname, and redirect safeguards. Kind remote login is available after fixture setup with host aliases and
 the public CA, but is a live qualification path, not ordinary offline-test coverage.
-See [ADR 0244](adr/0244-remote-mecatui-oidc.md) and [ADR 0249](adr/0249-remote-mecatui-logout-budget.md).
+See [ADR 0250](adr/0250-bounded-scoped-https-keepalive-oidc.md), [ADR 0244](adr/0244-remote-mecatui-oidc.md) and [ADR 0249](adr/0249-remote-mecatui-logout-budget.md).
 
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against
@@ -980,8 +985,8 @@ through `--oidc-issuer` / `--oidc-jwks-uri` / `--oidc-audience` /
 `--oidc-max-jwks-staleness`. A private HTTPS issuer may additionally opt into
 `--oidc-allow-private-https-issuer` with a required `--oidc-ca-cert-file`; an
 internal scoped transport admits only the configured issuer/JWKS hosts' resolved
-private addresses, re-checks them on every dial with keep-alives disabled, and
-keeps HTTPS, CA and hostname validation, and redirect refusal. The legacy
+private addresses, re-checks them on every new dial, and reuses only a finite,
+owner-closed keep-alive pool. It keeps HTTPS, CA and hostname validation, and redirect refusal. The legacy
 `--oidc-insecure-allow-private-issuer` remains deprecated compatibility-only and
 is the sole combined HTTP/private escape hatch ([ADR 0235](adr/0235-scoped-private-https-oidc-transport.md)).
 `internal/cliconfig/oidc.go` (`OIDCConfig`, `OIDCValidator`) makes a validator

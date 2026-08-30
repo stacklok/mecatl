@@ -15,7 +15,9 @@ import (
 
 	"github.com/adrg/xdg"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -25,6 +27,7 @@ const savedLoginCallbackTimeout = 5 * time.Minute
 var (
 	executeRemoteLogin    = runSavedRemoteLogin
 	newRemoteLoginRuntime = oauthlogin.New
+	prepareSavedLogin     = prepareSavedRemoteLogin
 )
 
 type notifyContextFunc func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
@@ -92,16 +95,56 @@ func runRemoteLogin(address string, args []string) error {
 	return nil
 }
 
+// preparedSavedLogin owns the local handles proven usable before interactive OIDC.
+// Its store must remain open until enrollment completes.
+type preparedSavedLogin struct {
+	registry *clientauth.Registry
+	creds    *clientauth.Credentials
+	close    func()
+}
+
+func prepareSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (preparedSavedLogin, error) {
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	registry, err := clientauth.OpenRegistry(root)
+	if err != nil {
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	keys, err := clientauth.NewKeyringProvider(root)
+	if err != nil {
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	store, err := clientauth.OpenStore(ctx, root, keys)
+	if err != nil {
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	closeStore := func() { _ = store.Close() }
+	creds, err := clientauth.NewCredentials(store)
+	if err != nil {
+		closeStore()
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	if _, err := creds.Load(ctx, conn.Identity); err != nil &&
+		!errors.Is(err, credentialstore.ErrNotFound) && !errors.Is(err, clientauth.ErrCorrupt) {
+		closeStore()
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore}, nil
+}
+
 // runSavedRemoteLogin performs the ordinary OIDC flow for an already-saved public
 // target. It runs only after Bubble Tea has exited; neither the UI nor its restart
 // intent receives OAuth material.
 func runSavedRemoteLogin(ctx context.Context, conn clientauth.Connection, noBrowser bool) error {
 	ca, err := os.ReadFile(conn.IssuerCAFile)
 	if err != nil {
-		// The CA path is operator-typed, so a typo and a permissions problem must
-		// not read alike.
-		return fmt.Errorf("saved target certificate is unavailable: %w", err)
+		return &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
+	prepared, err := prepareSavedLogin(ctx, conn)
+	if err != nil {
+		return err
+	}
+	defer prepared.close()
+
 	opts := oauthlogin.Options{RedirectURL: oauthlogin.ExactRedirectURL}
 	if noBrowser {
 		opts.NoBrowser = true
@@ -122,31 +165,13 @@ func runSavedRemoteLogin(ctx context.Context, conn clientauth.Connection, noBrow
 	})
 	token, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: conn.Identity, Presenter: presenter, PrivateHTTPS: true, TrustedCAPEM: ca})
 	if err != nil {
+		if errors.Is(err, clientauth.ErrDiscovery) {
+			return &client.AuthError{Reason: client.AuthStorageUnavailable}
+		}
 		return signinError(err)
 	}
-	// Three distinct failures used to share one message, which made a failed
-	// enrolment undiagnosable: the OS keyring, the store, and the write are
-	// separate causes with separate fixes. None of these carry token material.
-	root := filepath.Join(xdg.ConfigHome, "mecatl")
-	keys, err := clientauth.NewKeyringProvider(root)
-	if err != nil {
-		return fmt.Errorf("credential storage unavailable: opening the OS keyring failed: %w", err)
-	}
-	store, err := clientauth.OpenStore(ctx, root, keys)
-	if err != nil {
-		return fmt.Errorf("credential storage unavailable: opening the OS keyring failed: %w", err)
-	}
-	defer func() { _ = store.Close() }()
-	creds, err := clientauth.NewCredentials(store)
-	if err != nil {
-		return fmt.Errorf("credential storage unavailable: opening the credential store failed: %w", err)
-	}
-	registry, err := clientauth.OpenRegistry(root)
-	if err != nil {
-		return fmt.Errorf("credential storage unavailable: opening the connection registry failed: %w", err)
-	}
-	if err := clientauth.Enroll(ctx, conn, token, clientauth.EnrollmentConfig{Registry: registry, Credentials: creds}); err != nil {
-		return fmt.Errorf("credential storage unavailable: committing enrollment failed: %w", err)
+	if err := clientauth.Enroll(ctx, conn, token, clientauth.EnrollmentConfig{Registry: prepared.registry, Credentials: prepared.creds}); err != nil {
+		return &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
 	return nil
 }

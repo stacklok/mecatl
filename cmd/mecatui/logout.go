@@ -55,12 +55,13 @@ func runRemoteLogout(address string, args []string) error {
 	}
 	result, err := clientauth.Logout(ctx, address, clientauth.LogoutConfig{
 		Registry: registry, Credentials: creds,
-		HTTPClient: func(ctx context.Context, conn clientauth.Connection) (*http.Client, error) {
+		HTTPClientOwned: func(ctx context.Context, conn clientauth.Connection) (*http.Client, bool, error) {
 			ca, err := os.ReadFile(conn.IssuerCAFile)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
-			return scopedhttps.NewClient(ctx, []string{conn.Identity.Issuer}, ca)
+			client, err := scopedhttps.NewClient(ctx, []string{conn.Identity.Issuer}, ca)
+			return client, true, err
 		},
 	})
 	if err != nil {

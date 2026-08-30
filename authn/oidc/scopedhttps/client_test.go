@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"net/http"
@@ -16,6 +17,41 @@ import (
 	"time"
 )
 
+func TestScopedTransportForwardsCloseIdleConnections(t *testing.T) {
+	closed := false
+	transport := scopedTransport{next: roundTripperWithClose{close: func() { closed = true }}}
+	transport.CloseIdleConnections()
+	if !closed {
+		t.Fatal("CloseIdleConnections was not forwarded")
+	}
+}
+
+type roundTripperWithClose struct {
+	close func()
+}
+
+func (roundTripperWithClose) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r roundTripperWithClose) CloseIdleConnections() { r.close() }
+
+func TestNewClientBoundsIdleConnections(t *testing.T) {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	client := newTestClient(t, srv)
+	transport, ok := client.Transport.(scopedTransport)
+	if !ok {
+		t.Fatalf("Transport type = %T, want scopedTransport", client.Transport)
+	}
+	next, ok := transport.next.(*http.Transport)
+	if !ok {
+		t.Fatalf("wrapped transport type = %T, want *http.Transport", transport.next)
+	}
+	if next.MaxIdleConns != maxIdleConnections || next.MaxIdleConnsPerHost != maxIdlePerHost || next.IdleConnTimeout != idleConnTimeout {
+		t.Fatalf("idle bounds = (%d, %d, %s), want (%d, %d, %s)", next.MaxIdleConns, next.MaxIdleConnsPerHost, next.IdleConnTimeout, maxIdleConnections, maxIdlePerHost, idleConnTimeout)
+	}
+}
 func TestNewClientRejectsInvalidEndpoint(t *testing.T) {
 	for _, endpoint := range []string{
 		"http://127.0.0.1",

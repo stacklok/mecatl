@@ -9,6 +9,7 @@ import (
 
 	"github.com/adrg/xdg"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -53,8 +54,12 @@ func TestRemoteLoginStoresAbsoluteIssuerCAReferenceAcrossCWDChanges(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if conn.IssuerCAFile != ca || !filepath.IsAbs(conn.IssuerCAFile) {
-		t.Fatalf("saved issuer CA = %q, want %q", conn.IssuerCAFile, ca)
+	physicalCA, err := filepath.EvalSymlinks(ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn.IssuerCAFile != physicalCA || !filepath.IsAbs(conn.IssuerCAFile) {
+		t.Fatalf("saved issuer CA = %q, want %q", conn.IssuerCAFile, physicalCA)
 	}
 }
 
@@ -82,7 +87,11 @@ func TestRemoteLoginWiresExactRedirectURL(t *testing.T) {
 
 	t.Run("callback runtime", func(t *testing.T) {
 		original := newRemoteLoginRuntime
-		t.Cleanup(func() { newRemoteLoginRuntime = original })
+		originalPrepare := prepareSavedLogin
+		t.Cleanup(func() { newRemoteLoginRuntime = original; prepareSavedLogin = originalPrepare })
+		prepareSavedLogin = func(context.Context, clientauth.Connection) (preparedSavedLogin, error) {
+			return preparedSavedLogin{close: func() {}}, nil
+		}
 		marker := errors.New("stop after runtime option capture")
 		newRemoteLoginRuntime = func(opts oauthlogin.Options) (*oauthlogin.Runtime, error) {
 			if opts.RedirectURL != oauthlogin.ExactRedirectURL {
@@ -102,4 +111,32 @@ func TestRemoteLoginWiresExactRedirectURL(t *testing.T) {
 			t.Fatalf("runSavedRemoteLogin error = %v", err)
 		}
 	})
+}
+
+func TestSavedRemoteLoginPreflightsLocalStorageBeforeRuntime(t *testing.T) {
+	originalRuntime := newRemoteLoginRuntime
+	t.Cleanup(func() { newRemoteLoginRuntime = originalRuntime })
+	opened := false
+	newRemoteLoginRuntime = func(oauthlogin.Options) (*oauthlogin.Runtime, error) {
+		opened = true
+		return nil, errors.New("runtime must not open")
+	}
+	originalPrepare := prepareSavedLogin
+	t.Cleanup(func() { prepareSavedLogin = originalPrepare })
+	prepareSavedLogin = func(context.Context, clientauth.Connection) (preparedSavedLogin, error) {
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := runSavedRemoteLogin(t.Context(), clientauth.Connection{IssuerCAFile: caFile}, false)
+	var authErr *client.AuthError
+	if !errors.As(err, &authErr) || authErr.Reason != client.AuthStorageUnavailable {
+		t.Fatalf("preflight error = %v, want storage unavailable", err)
+	}
+	if opened {
+		t.Fatal("OIDC runtime opened before local credential preflight")
+	}
 }

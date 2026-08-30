@@ -58,7 +58,7 @@ require (
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
 	golang.org/x/time v0.15.0
-	golang.org/x/tools v0.48.0
+	golang.org/x/tools v0.49.0
 	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.11
 	k8s.io/api v0.35.3
@@ -141,7 +141,7 @@ require (
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
 	github.com/go-openapi/swag v0.26.1 // indirect
 	github.com/go-openapi/swag/cmdutils v0.27.0 // indirect
-	github.com/go-openapi/swag/conv v0.27.3 // indirect
+	github.com/go-openapi/swag/conv v0.28.0 // indirect
 	github.com/go-openapi/swag/fileutils v0.27.3 // indirect
 	github.com/go-openapi/swag/jsonname v0.26.1 // indirect
 	github.com/go-openapi/swag/jsonutils v0.27.3 // indirect
@@ -150,7 +150,7 @@ require (
 	github.com/go-openapi/swag/netutils v0.27.0 // indirect
 	github.com/go-openapi/swag/pools v0.27.3 // indirect
 	github.com/go-openapi/swag/stringutils v0.27.3 // indirect
-	github.com/go-openapi/swag/typeutils v0.27.3 // indirect
+	github.com/go-openapi/swag/typeutils v0.28.0 // indirect
 	github.com/go-openapi/swag/yamlutils v0.27.3 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
@@ -273,7 +273,7 @@ require (
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/exp/event v0.0.0-20260611194520-c48552f49976 // indirect
 	golang.org/x/exp/jsonrpc2 v0.0.0-20260709172345-9ea1abe57597 // indirect
-	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

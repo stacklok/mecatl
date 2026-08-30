@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/stacklok/toolhive-core/authn"
@@ -32,7 +33,7 @@ type Config struct {
 	InsecureAllowPrivateIssuer bool
 	// AllowPrivateHTTPSIssuer permits only the configured issuer and optional
 	// JWKS host's resolved private addresses. Its internal scoped transport
-	// re-validates addresses on every dial, disables keep-alives, refuses redirects,
+	// re-validates addresses on every dial, bounds keep-alives, refuses redirects,
 	// and retains HTTPS and TLS hostname verification.
 	// TrustedCAFile is required when this mode is enabled.
 	AllowPrivateHTTPSIssuer bool
@@ -69,6 +70,10 @@ var ErrIdentityUnavailable = errors.New("oidc: identity unavailable")
 // when it is no longer needed.
 type Validator struct {
 	validator *authn.Validator
+	// internalClient is owned by this validator; caller-supplied clients remain
+	// caller-owned and are never closed here.
+	internalClient *http.Client
+	closeOnce      sync.Once
 }
 
 // NewValidator constructs a fail-closed OIDC validator. Issuer and Audience
@@ -88,20 +93,25 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 		return nil, fmt.Errorf("%w: custom HTTP client is not allowed with private HTTPS issuer mode", ErrInvalidConfig)
 	}
 	toolhiveConfig := authnConfig(cfg)
+	var internalClient *http.Client
 	if cfg.AllowPrivateHTTPSIssuer {
 		client, err := newPrivateHTTPSClient(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 		}
+		internalClient = client
 		toolhiveConfig.HTTPClient = client
 	} else {
 		toolhiveConfig.HTTPClient = cfg.HTTPClient
 	}
 	validator, err := authn.NewValidator(ctx, toolhiveConfig)
 	if err != nil {
+		if internalClient != nil {
+			internalClient.CloseIdleConnections()
+		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
-	return &Validator{validator: validator}, nil
+	return &Validator{validator: validator, internalClient: internalClient}, nil
 }
 
 func authnConfig(cfg Config) authn.Config {
@@ -133,9 +143,17 @@ func (v *Validator) Validate(ctx context.Context, bearer string) (*session.Princ
 
 // Close stops background JWKS refresh.
 func (v *Validator) Close() error {
-	if v != nil && v.validator != nil {
-		v.validator.Close()
+	if v == nil {
+		return nil
 	}
+	v.closeOnce.Do(func() {
+		if v.validator != nil {
+			v.validator.Close()
+		}
+		if v.internalClient != nil {
+			v.internalClient.CloseIdleConnections()
+		}
+	})
 	return nil
 }
 

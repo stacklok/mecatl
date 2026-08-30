@@ -35,6 +35,9 @@ func (s authTokenSource) Token(ctx context.Context) (string, error) {
 	if errors.Is(err, clientauth.ErrCredentialCleanup) {
 		return "", &client.AuthError{Reason: client.AuthCredentialCleanup}
 	}
+	if errors.Is(err, clientauth.ErrDiscovery) {
+		return "", &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
 	return "", err
 }
 

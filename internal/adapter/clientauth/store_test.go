@@ -66,6 +66,61 @@ func (m *memoryKeyring) value(account string) (string, bool) {
 	return value, ok
 }
 
+func TestExistingOnlyRegistryDoesNotCreateState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	if _, err := OpenExistingRegistry(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing registry root was created: %v", err)
+	}
+
+	existing := t.TempDir()
+	registry, err := OpenExistingRegistry(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.List(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("existing-only discovery created state: %#v", entries)
+	}
+}
+
+func TestExistingOnlyStoreDoesNotCreateReplacementState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	backend := newMemoryKeyring()
+	_, err := newExistingKeyringProvider(root, backend)
+	if err == nil {
+		t.Fatal("missing keyring root unexpectedly opened")
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing keyring root was created: %v", err)
+	}
+
+	existing := t.TempDir()
+	keys, err := newExistingKeyringProvider(existing, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keys.ExistingStoreKey(t.Context()); !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("missing key unexpectedly returned %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(existing, keyringLockName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("existing-only key lookup created lock: %v", err)
+	}
+	if _, err := OpenExistingStore(t.Context(), existing, fakeKeys{key: make([]byte, 32)}); err == nil {
+		t.Fatal("missing credential namespace unexpectedly opened")
+	}
+	if _, err := os.Stat(filepath.Join(existing, keyringLockName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("existing-only store open created lock: %v", err)
+	}
+}
 func TestRootScopedKeyringConcurrentOpensConverge(t *testing.T) {
 	// Distinct providers own distinct flock handles to the same root-local file.
 	// gofrs/flock implements these handles with an OS advisory lock, so this is the
@@ -528,11 +583,16 @@ func TestOpenExistingStoreDoesNotFallBackToKeyCreation(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenExistingStore(t.Context(), root, fakeKeys{key: make([]byte, 32)})
-	if err != nil {
-		t.Fatalf("open existing store: %v", err)
+	if _, err := OpenExistingStore(t.Context(), root, fakeKeys{key: make([]byte, 32)}); !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("missing existing namespace error = %v", err)
 	}
-	_ = store.Close()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("existing open created replacement state: %#v", entries)
+	}
 }
 
 func TestLoginDiscoveryEndpointErrorDoesNotReflectProviderURL(t *testing.T) {
@@ -1182,6 +1242,56 @@ func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	if _, err := reg.Upsert(bad); err == nil || !strings.Contains(err.Error(), "absolute and clean") {
 		t.Fatalf("Upsert relative CA error = %v", err)
 	}
+}
+
+func TestRegistryMutationsPreserveQuarantinedRawRows(t *testing.T) {
+	dir := t.TempDir()
+	bad := json.RawMessage(`{"identity":{"Target":"quarantine.example:443"},"unknown_future_field":"preserve-me"}`)
+	first := Connection{Identity: identity("first.example:443"), IssuerCAFile: "/first.pem"}
+	second := Connection{Identity: identity("second.example:443"), IssuerCAFile: "/second.pem"}
+	body, err := json.Marshal(map[string]any{"version": 1, "connections": []json.RawMessage{bad, mustStoreJSON(t, first), mustStoreJSON(t, second)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "clientauth-connections.json")
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := OpenRegistry(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuarantined := func(operation string) {
+		t.Helper()
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if !bytes.Contains(data, bad) {
+			t.Fatalf("%s dropped quarantined raw row: %s", operation, data)
+		}
+	}
+	if _, err := reg.Upsert(Connection{Identity: identity("third.example:443")}); err != nil {
+		t.Fatal(err)
+	}
+	assertQuarantined("Upsert")
+	if _, err := reg.DeleteTarget(second.Identity.Target, []Connection{second}); err != nil {
+		t.Fatal(err)
+	}
+	assertQuarantined("DeleteTarget")
+	if err := reg.replaceTarget(first.Identity.Target, []Connection{first}, []Connection{{Identity: identity("replacement.example:443")}}); err != nil {
+		t.Fatal(err)
+	}
+	assertQuarantined("replaceTarget")
+}
+
+func mustStoreJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func TestRegistryPrecommitFailureCleansUniqueTemporary(t *testing.T) {

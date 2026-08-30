@@ -123,11 +123,18 @@ A normal-terminal `mecatui login` then `connect` flow with custom-CA TLS and OID
 Authorization Code + PKCE is available. After `kind-hosts-add`, use the documented
 Service-DNS host aliases and export the public fixture CA to `.scratch/`; then enroll
 with `mecatui login <mecak8s-host>:18081 --issuer <fixture-https-issuer> --client-id
-mecatui-kind --audience mecatui-kind --tls-ca <exported-fixture-ca>` and connect with
-`mecatui connect <mecak8s-host>:18081 --tls --tls-ca <exported-fixture-ca>`. Add
-`--no-browser` to print the authorization URL for SSH or headless use. This is a live
-remote qualification path, not ordinary offline-test coverage. The login command stores
-credentials on the client; the fixture does not print or store them.
+mecatui-kind --audience http://127.0.0.1:18080/mcp --tls-ca <exported-fixture-ca>` and connect with
+`mecatui connect <mecak8s-host>:18081 --tls --tls-ca <exported-fixture-ca>`. The login uses
+Authorization Code + PKCE, not device flow. For SSH or another headless host, add
+`--no-browser`, open the printed URL in a browser on the operator workstation, and
+forward the fixed callback port back to the login host:
+
+```sh
+ssh -N -L 18473:127.0.0.1:18473 user@login-host
+```
+
+The callback remains `http://127.0.0.1:18473/oauth/callback`; do not substitute the
+vMCP resource audience for the separate `mecatui-kind` client ID.
 
 The security contract is fail-closed before any authenticated RPC: verified TLS
 using the supplied custom fixture CA is required, and plaintext, unauthenticated,

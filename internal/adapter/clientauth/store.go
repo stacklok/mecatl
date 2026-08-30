@@ -174,11 +174,48 @@ type KeyringProvider struct {
 	account string
 	lock    *flock.Flock
 	backend keyringBackend
+	// existingOnly is used by discovery/connect paths. It forbids all local
+	// initialization, including lock-file creation and legacy-key migration.
+	existingOnly bool
 }
 
 // NewKeyringProvider binds an OS-keyring provider to one absolute, clean store root.
 func NewKeyringProvider(root string) (*KeyringProvider, error) {
 	return newKeyringProvider(root, osKeyringBackend{})
+}
+
+// NewExistingKeyringProvider binds to keyring state that is already present.
+// It never creates the store root or its lock, and never migrates legacy state.
+func NewExistingKeyringProvider(root string) (*KeyringProvider, error) {
+	return newExistingKeyringProvider(root, osKeyringBackend{})
+}
+
+func newExistingKeyringProvider(root string, backend keyringBackend) (*KeyringProvider, error) {
+	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || backend == nil {
+		return nil, errors.New("clientauth: existing store root is invalid")
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("clientauth: existing store root: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, errors.New("clientauth: existing store root is not a directory")
+	}
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("clientauth: canonicalize store root: %w", err)
+	}
+	canonical = filepath.Clean(canonical)
+	return &KeyringProvider{root: canonical, account: keyringAccountFor(canonical), backend: backend, existingOnly: true}, nil
+}
+
+// keyringAccountFor derives the root-scoped keyring account name. Two
+// KeyringProviders bound to the same canonicalized root must always agree on
+// this name, so both the creating and the existing-only constructor call
+// through this one helper rather than each deriving it independently.
+func keyringAccountFor(canonicalRoot string) string {
+	sum := sha256.Sum256(append([]byte(keyringAccountDomain), []byte(canonicalRoot)...))
+	return legacyKeyringAccount + "/root-" + hex.EncodeToString(sum[:])
 }
 
 func newKeyringProvider(root string, backend keyringBackend) (*KeyringProvider, error) {
@@ -201,8 +238,7 @@ func newKeyringProvider(root string, backend keyringBackend) (*KeyringProvider, 
 	if err := os.Chmod(root, 0700); err != nil {
 		return nil, fmt.Errorf("clientauth: protect store root: %w", err)
 	}
-	sum := sha256.Sum256(append([]byte(keyringAccountDomain), []byte(root)...))
-	account := legacyKeyringAccount + "/root-" + hex.EncodeToString(sum[:])
+	account := keyringAccountFor(root)
 	return &KeyringProvider{
 		root: root, account: account, backend: backend,
 		lock: flock.New(filepath.Join(root, keyringLockName), flock.SetPermissions(0600)),
@@ -218,6 +254,24 @@ func (p *KeyringProvider) storeRoot() string {
 
 // ExistingStoreKey returns or migrates an existing key without generating one.
 func (p *KeyringProvider) ExistingStoreKey(ctx context.Context) ([]byte, error) {
+	if p != nil && p.existingOnly {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrKeyUnavailable, err)
+		}
+		if key, found, err := p.readKey(p.account); err != nil {
+			return nil, err
+		} else if found {
+			return key, nil
+		}
+		// Legacy state is readable, but discovery must not migrate it by writing
+		// a new root-scoped key.
+		if key, found, err := p.readKey(legacyKeyringAccount); err != nil {
+			return nil, err
+		} else if found && legacyCredentialExists(p.root) {
+			return key, nil
+		}
+		return nil, ErrKeyUnavailable
+	}
 	return p.withLock(ctx, false)
 }
 
@@ -356,6 +410,19 @@ func OpenExistingStore(ctx context.Context, root string, keys ExistingKeyProvide
 	root, err := validateStoreRoot(root, keys)
 	if err != nil {
 		return nil, err
+	}
+	if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
+		if statErr == nil {
+			statErr = os.ErrNotExist
+		}
+		return nil, fmt.Errorf("%w: existing credential store: %w", ErrKeyUnavailable, statErr)
+	}
+	nsPath := filepath.Join(root, credentialstore.NamespacePhysicalName(credentialNamespace))
+	if info, statErr := os.Stat(nsPath); statErr != nil || !info.IsDir() {
+		if statErr == nil {
+			statErr = os.ErrNotExist
+		}
+		return nil, fmt.Errorf("%w: existing credential namespace: %w", ErrKeyUnavailable, statErr)
 	}
 	key, err := keys.ExistingStoreKey(ctx)
 	if err != nil {
@@ -572,6 +639,7 @@ type Registry struct {
 	root              string
 	mu                sync.Mutex
 	lock              *flock.Flock
+	existingOnly      bool
 	writeFault        func(string) error
 	targetLockAttempt func()
 }
@@ -609,6 +677,17 @@ type registryFile struct {
 	Connections []Connection `json:"connections"`
 }
 
+type registryRawFile struct {
+	Version     int               `json:"version"`
+	Connections []json.RawMessage `json:"connections"`
+}
+
+type registryRow struct {
+	connection Connection
+	raw        json.RawMessage
+	valid      bool
+}
+
 // OpenRegistry opens the connection metadata registry rooted at root.
 func OpenRegistry(root string) (*Registry, error) {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
@@ -633,10 +712,38 @@ func OpenRegistry(root string) (*Registry, error) {
 	return &Registry{path: path, root: root, lock: flock.New(path+".lock", flock.SetPermissions(0600))}, nil
 }
 
+// OpenExistingRegistry opens registry metadata without creating the root,
+// registry file, or lock. It is for saved-target discovery and connection only.
+func OpenExistingRegistry(root string) (*Registry, error) {
+	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
+		return nil, errors.New("clientauth: registry root must be absolute and clean")
+	}
+	info, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return &Registry{path: filepath.Join(root, "clientauth-connections.json"), root: filepath.Clean(root), existingOnly: true}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("clientauth: registry root is not a directory")
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("clientauth: canonicalize registry root: %w", err)
+	}
+	root = filepath.Clean(root)
+	path := filepath.Join(root, "clientauth-connections.json")
+	return &Registry{path: path, root: root, existingOnly: true}, nil
+}
+
 // List returns all saved connections.
 func (r *Registry) List() ([]Connection, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.existingOnly {
+		return r.list()
+	}
 	if err := r.lock.RLock(); err != nil {
 		return nil, err
 	}
@@ -645,6 +752,20 @@ func (r *Registry) List() ([]Connection, error) {
 }
 
 func (r *Registry) list() ([]Connection, error) {
+	rows, err := r.readRows()
+	if err != nil {
+		return nil, err
+	}
+	valid := make([]Connection, 0, len(rows))
+	for _, row := range rows {
+		if row.valid {
+			valid = append(valid, row.connection)
+		}
+	}
+	return valid, nil
+}
+
+func (r *Registry) readRows() ([]registryRow, error) {
 	data, err := os.ReadFile(r.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -652,29 +773,33 @@ func (r *Registry) list() ([]Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	var f registryFile
+	var f registryRawFile
 	if json.Unmarshal(data, &f) != nil || f.Version != 1 {
 		return nil, ErrCorrupt
 	}
-	// A single entry that fails canonicalization or CA-path validation is
-	// unusable for its OWN target only -- e.g. a pre-tightening record saved with
-	// a relative issuer_ca_file before validIssuerCAFile required an absolute
-	// one. It must not fail every OTHER target's List/FindTarget/Enroll: that
-	// previously made one legacy or damaged row brick every saved login, with no
-	// repair path, because the very machinery that replaces a target's entry
-	// (Upsert) can only run after list() has already succeeded. Drop the bad
-	// entry instead; a saved-target listing simply omits it, and its target's
-	// next login (Upsert) replaces it outright.
-	valid := make([]Connection, 0, len(f.Connections))
-	for _, conn := range f.Connections {
-		c, err := conn.Identity.Canonical()
-		if err != nil || !validIssuerCAFile(conn.IssuerCAFile) {
-			continue
+	rows := make([]registryRow, 0, len(f.Connections))
+	for _, raw := range f.Connections {
+		var fields map[string]json.RawMessage
+		var conn Connection
+		valid := json.Unmarshal(raw, &fields) == nil && fields != nil && json.Unmarshal(raw, &conn) == nil
+		if valid {
+			for key := range fields {
+				if key != "identity" && key != "issuer_ca_file" && key != "tls_ca_file" {
+					valid = false
+					break
+				}
+			}
 		}
-		conn.Identity = c
-		valid = append(valid, conn)
+		if valid {
+			canonical, canonicalErr := conn.Identity.Canonical()
+			valid = canonicalErr == nil && validIssuerCAFile(conn.IssuerCAFile)
+			if valid {
+				conn.Identity = canonical
+			}
+		}
+		rows = append(rows, registryRow{connection: conn, raw: raw, valid: valid})
 	}
-	return valid, nil
+	return rows, nil
 }
 
 // FindTarget returns the saved connection for target.
@@ -724,30 +849,31 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 		return nil, err
 	}
 	defer func() { _ = r.lock.Unlock() }()
-	all, err := r.list()
+	rows, err := r.readRows()
 	if err != nil {
 		return nil, err
 	}
-	// Key on TARGET, not the full identity, and COLLAPSE: drop every entry for this
-	// target and write exactly one. FindTarget looks up by target alone and refuses
-	// ambiguity with ErrCorrupt, so identity-keyed upsert let a re-enrolment against
-	// a different issuer add a second entry and brick every later lookup, with no
-	// logout or prune to recover. Replacing matches in place is not enough either --
-	// a registry that already holds duplicates would keep them, just with identical
-	// values. Collapsing repairs such a registry on the next login.
-	kept := make([]Connection, 0, len(all)+1)
+	// Collapse valid entries for this target, but carry quarantined raw rows
+	// through untouched. They are intentionally invisible to callers while
+	// remaining recoverable and lossless across unrelated mutations.
+	kept := make([]registryRow, 0, len(rows)+1)
 	var displaced []Identity
-	for _, existing := range all {
+	for _, row := range rows {
+		if !row.valid {
+			kept = append(kept, row)
+			continue
+		}
+		existing := row.connection
 		if existing.Identity.Target != id.Target {
-			kept = append(kept, existing)
+			kept = append(kept, registryRow{connection: existing, valid: true})
 			continue
 		}
 		if !existing.Identity.Equal(id) {
 			displaced = append(displaced, existing.Identity)
 		}
 	}
-	all = append(kept, Connection{Identity: id, IssuerCAFile: conn.IssuerCAFile})
-	if err := r.write(all); err != nil {
+	kept = append(kept, registryRow{connection: Connection{Identity: id, IssuerCAFile: conn.IssuerCAFile}, valid: true})
+	if err := r.writeRows(kept); err != nil {
 		return nil, err
 	}
 	return displaced, nil
@@ -767,17 +893,22 @@ func (r *Registry) DeleteTarget(target string, expected []Connection) (int, erro
 		return 0, err
 	}
 	defer func() { _ = r.lock.Unlock() }()
-	all, err := r.list()
+	rows, err := r.readRows()
 	if err != nil {
 		return 0, err
 	}
 	current := make([]Connection, 0, len(expected))
-	kept := make([]Connection, 0, len(all))
-	for _, conn := range all {
+	kept := make([]registryRow, 0, len(rows))
+	for _, row := range rows {
+		if !row.valid {
+			kept = append(kept, row)
+			continue
+		}
+		conn := row.connection
 		if conn.Identity.Target == canonical {
 			current = append(current, conn)
 		} else {
-			kept = append(kept, conn)
+			kept = append(kept, registryRow{connection: conn, valid: true})
 		}
 	}
 	if !sameConnections(current, expected) {
@@ -786,7 +917,7 @@ func (r *Registry) DeleteTarget(target string, expected []Connection) (int, erro
 	if len(current) == 0 {
 		return 0, nil
 	}
-	if err := r.write(kept); err != nil {
+	if err := r.writeRows(kept); err != nil {
 		return 0, err
 	}
 	return len(current), nil
@@ -828,23 +959,31 @@ func (r *Registry) replaceTarget(target string, expected, desired []Connection) 
 		return err
 	}
 	defer func() { _ = r.lock.Unlock() }()
-	all, err := r.list()
+	rows, err := r.readRows()
 	if err != nil {
 		return err
 	}
 	current := make([]Connection, 0, len(expected))
-	kept := make([]Connection, 0, len(all)+len(desired))
-	for _, conn := range all {
+	kept := make([]registryRow, 0, len(rows)+len(desired))
+	for _, row := range rows {
+		if !row.valid {
+			kept = append(kept, row)
+			continue
+		}
+		conn := row.connection
 		if conn.Identity.Target == target {
 			current = append(current, conn)
 		} else {
-			kept = append(kept, conn)
+			kept = append(kept, registryRow{connection: conn, valid: true})
 		}
 	}
 	if !sameConnections(current, expected) {
 		return credentialstore.ErrConflict
 	}
-	return r.write(append(kept, desired...))
+	for _, conn := range desired {
+		kept = append(kept, registryRow{connection: conn, valid: true})
+	}
+	return r.writeRows(kept)
 }
 
 func (r *Registry) lockTarget(ctx context.Context, target string) (func(), error) {
@@ -873,7 +1012,27 @@ func (r *Registry) lockTarget(ctx context.Context, target string) (func(), error
 }
 
 func (r *Registry) write(all []Connection) error {
-	data, err := json.Marshal(registryFile{1, all})
+	rows := make([]registryRow, 0, len(all))
+	for _, conn := range all {
+		rows = append(rows, registryRow{connection: conn, valid: true})
+	}
+	return r.writeRows(rows)
+}
+
+func (r *Registry) writeRows(rows []registryRow) error {
+	connections := make([]json.RawMessage, 0, len(rows))
+	for _, row := range rows {
+		if row.valid {
+			data, err := json.Marshal(row.connection)
+			if err != nil {
+				return err
+			}
+			connections = append(connections, data)
+		} else {
+			connections = append(connections, row.raw)
+		}
+	}
+	data, err := json.Marshal(registryRawFile{Version: 1, Connections: connections})
 	if err != nil {
 		return err
 	}

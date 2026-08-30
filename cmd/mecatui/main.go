@@ -504,6 +504,9 @@ func restartFromConnectIntentWith(argv []string, intent ui.ConnectRestartIntent,
 			cancel()
 		}
 		if err != nil {
+			if reason, ok := client.AuthFailure(err, false); ok {
+				recoveryReason = reason
+			}
 			return ops.run([]string{argv[0]}, runOptions{connectOpen: true, connectError: "Sign in failed; check the saved target and try again.", connectReason: recoveryReason, connectTarget: intent.Target, connectResumeSessionID: resumeSessionID, connectTransport: selectedTransport, recoveryOnly: true})
 		}
 	default:
@@ -692,9 +695,9 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure}
 		if cfg.authToken == "" && !cfg.noSavedAuth {
 			root := filepath.Join(xdg.ConfigHome, "mecatl")
-			registry, regErr := clientauth.OpenRegistry(root)
+			registry, regErr := clientauth.OpenExistingRegistry(root)
 			if regErr != nil {
-				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 			}
 			conn, findErr := registry.FindTarget(cfg.connectAddress)
 			if findErr == nil {
@@ -705,20 +708,20 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 				}
 				ca, readErr := os.ReadFile(conn.IssuerCAFile)
 				if readErr != nil {
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
-				keys, keyErr := clientauth.NewKeyringProvider(root)
+				keys, keyErr := clientauth.NewExistingKeyringProvider(root)
 				if keyErr != nil {
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
-				store, storeErr := clientauth.OpenStore(ctx, root, keys)
+				store, storeErr := clientauth.OpenExistingStore(ctx, root, keys)
 				if storeErr != nil {
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
 				creds, credsErr := clientauth.NewCredentials(store)
 				if credsErr != nil {
 					_ = store.Close()
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
 				if _, loadErr := creds.Load(ctx, conn.Identity); loadErr != nil {
 					_ = store.Close()
@@ -731,26 +734,26 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 						// memory is gone and only the registry can tell them apart.
 						return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthSessionExpired}
 					}
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+					if errors.Is(loadErr, clientauth.ErrCorrupt) {
+						return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+					}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
 				source, sourceErr := clientauth.NewRefreshSource(ctx, creds, clientauth.LoginConfig{Identity: conn.Identity, PrivateHTTPS: true, TrustedCAPEM: ca, Registry: registry})
 				if sourceErr != nil {
 					_ = store.Close()
 					// NewRefreshSource fails with ErrDiscovery when the issuer is
-					// unreachable, its TLS is untrusted, or JWKS will not load. None of
-					// those is broken local storage, and saying so would send the
-					// operator to fix a keyring while the provider is down. Leave it
-					// unclassified so the CLI surfaces the real cause.
+					// unreachable, its TLS is untrusted, or JWKS will not load.
 					if errors.Is(sourceErr, clientauth.ErrDiscovery) {
-						return target, client.DialConfig{}, noop, sourceErr
+						return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 					}
-					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
 				dial.TokenSource = mapAuthTokenSource(source)
 				return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
 			}
 			if !errors.Is(findErr, credentialstore.ErrNotFound) {
-				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthCredentialUnusable}
+				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 			}
 		}
 		return cfg.connectAddress, dial, noop, nil

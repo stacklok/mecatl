@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	namespaceDomain = "mecatl/credentialstore/namespace/v1"
-	recordDomain    = "mecatl/credentialstore/record/v1"
-	lockRetryDelay  = 5 * time.Millisecond
+	recordDomain   = "mecatl/credentialstore/record/v1"
+	lockRetryDelay = 5 * time.Millisecond
 )
 
 type fileOps struct {
@@ -418,11 +417,6 @@ func (s *EncryptedFileStore) recordNames(key []byte) recordNames {
 	digest := sha256.Sum256(frameFields(recordDomain, s.namespace, key))
 	stem := "rec-v1-" + hex.EncodeToString(digest[:])
 	return recordNames{stem: stem, lock: stem + ".lock", data: stem + ".cred"}
-}
-
-func namespacePhysicalName(namespace []byte) string {
-	digest := sha256.Sum256(frameFields(namespaceDomain, namespace))
-	return "ns-v1-" + hex.EncodeToString(digest[:])
 }
 
 func unavailable(operation string, err error) error {

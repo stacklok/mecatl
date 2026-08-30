@@ -33,7 +33,9 @@ func TestConnectAuthReasonsRenderHonestAffordances(t *testing.T) {
 	}{
 		{client.AuthNotEnrolled, "No saved login"},
 		{client.AuthSessionExpired, "session expired"},
-		{client.AuthCredentialUnusable, "may not fix"},
+		{client.AuthCredentialUnusable, "corrupt"},
+		{client.AuthStorageUnavailable, "unavailable"},
+		{client.AuthStorageUnavailable, "will not fix"},
 		{client.AuthCredentialCleanup, "Retry the connection"},
 		{client.AuthRejected, "Re-login is disabled"},
 	} {
@@ -80,6 +82,7 @@ func TestConnectActionTable(t *testing.T) {
 		{"ordinary saved", "", 0, ConnectSaved, false},
 		{"expired same", client.AuthSessionExpired, 0, Reauthenticate, true},
 		{"unusable same", client.AuthCredentialUnusable, 0, Reauthenticate, true},
+		{"storage same", client.AuthStorageUnavailable, 0, RetryAfterCleanup, true},
 		{"not enrolled same", client.AuthNotEnrolled, 0, Reauthenticate, true},
 		{"cleanup same", client.AuthCredentialCleanup, 0, RetryAfterCleanup, true},
 		{"different target", client.AuthSessionExpired, 1, ConnectSaved, false},

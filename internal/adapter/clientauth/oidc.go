@@ -109,6 +109,9 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 	if err != nil {
 		return Token{}, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
+	if cfg.HTTPClient == nil {
+		defer client.CloseIdleConnections()
+	}
 	doc, err := fetchDiscovery(ctx, client, id)
 	if err != nil {
 		return Token{}, fmt.Errorf("%w: %w", ErrDiscovery, err)
@@ -163,20 +166,21 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 // RefreshSource validates access tokens and refreshes them only when necessary.
 // It is safe for gRPC's concurrent per-RPC credential calls.
 type RefreshSource struct {
-	identity  Identity
-	creds     *Credentials
-	registry  *Registry
-	client    *http.Client
-	endpoint  oauth2.Endpoint
-	validator *authoidc.Validator
-	mu        sync.Mutex
-	activity  uint64
-	refreshed uint64
-	pending   LoginRequiredCause
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	closeOnce sync.Once
+	identity   Identity
+	creds      *Credentials
+	registry   *Registry
+	client     *http.Client
+	endpoint   oauth2.Endpoint
+	validator  *authoidc.Validator
+	ownsClient bool
+	mu         sync.Mutex
+	activity   uint64
+	refreshed  uint64
+	pending    LoginRequiredCause
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	closeOnce  sync.Once
 }
 
 const (
@@ -197,6 +201,13 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 	if err != nil {
 		return nil, ErrDiscovery
 	}
+	ownsClient := cfg.HTTPClient == nil
+	closeOnFailure := ownsClient
+	defer func() {
+		if closeOnFailure {
+			client.CloseIdleConnections()
+		}
+	}()
 	doc, err := fetchDiscovery(ctx, client, id)
 	if err != nil {
 		return nil, ErrDiscovery
@@ -205,7 +216,10 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 	if err != nil {
 		return nil, ErrDiscovery
 	}
-	return newRefreshSource(id, creds, cfg.Registry, client, doc.TokenEndpoint, validator, refreshPoll), nil
+	result := newRefreshSource(id, creds, cfg.Registry, client, doc.TokenEndpoint, validator, refreshPoll)
+	result.ownsClient = ownsClient
+	closeOnFailure = false
+	return result, nil
 }
 
 func newRefreshSource(id Identity, creds *Credentials, registry *Registry, client *http.Client, tokenURL string, validator *authoidc.Validator, poll time.Duration) *RefreshSource {
@@ -216,7 +230,7 @@ func newRefreshSource(id Identity, creds *Credentials, registry *Registry, clien
 }
 
 // Close releases resources held by the refresh source and waits for proactive
-// refresh to stop before closing the validator.
+// refresh to stop before closing owned clients and the validator.
 func (s *RefreshSource) Close() error {
 	s.closeOnce.Do(func() {
 		s.cancel()
@@ -225,6 +239,9 @@ func (s *RefreshSource) Close() error {
 		defer s.mu.Unlock()
 		if s.validator != nil {
 			_ = s.validator.Close()
+		}
+		if s.ownsClient && s.client != nil {
+			s.client.CloseIdleConnections()
 		}
 	})
 	return nil
@@ -341,6 +358,13 @@ func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord
 	if rec.Token.RefreshToken == "" {
 		return "", false, loginRequired(SessionExpired)
 	}
+	return s.exchangeAndPersist(ctx, rec)
+}
+
+// exchangeAndPersist performs the refresh_token exchange for rec and persists
+// the result, split out of tokenLocked to keep that function's branching
+// within the complexity gate.
+func (s *RefreshSource) exchangeAndPersist(ctx context.Context, rec CredentialRecord) (string, bool, error) {
 	exchangeCtx := context.WithValue(ctx, oauth2.HTTPClient, s.client)
 	// The seed token's Expiry is deliberately already-past, not the real expiry:
 	// refreshAhead already decided a refresh is due, so TokenSource must always
@@ -361,16 +385,27 @@ func (s *RefreshSource) tokenLocked(ctx context.Context, loaded CredentialRecord
 		}
 		return "", false, ErrTokenExchange
 	}
-	if _, err := s.validator.Validate(ctx, tok.AccessToken); err != nil {
-		return "", false, safeValidationError(err)
-	}
 	refresh := tok.RefreshToken
 	if refresh == "" {
 		refresh = rec.Token.RefreshToken
 	}
 	replacement := Token{AccessToken: tok.AccessToken, RefreshToken: refresh, TokenType: tok.TokenType, Expiry: tok.Expiry.UTC().Format(time.RFC3339)}
-	if _, err := s.creds.Save(ctx, s.identity, replacement, &rec.Version); err != nil {
-		return "", false, fmt.Errorf("clientauth: credential update failed: %w", err)
+	rotated := tok.RefreshToken != "" && tok.RefreshToken != rec.Token.RefreshToken
+	// Persist a rotated refresh token before validating the new access token. A
+	// transient JWKS failure must not strand the one-time refresh token: the next
+	// attempt must be able to validate the replacement without exchanging again.
+	if rotated && validToken(replacement) {
+		if _, err := s.creds.Save(ctx, s.identity, replacement, &rec.Version); err != nil {
+			return "", false, fmt.Errorf("clientauth: credential update failed: %w", err)
+		}
+	}
+	if _, err := s.validator.Validate(ctx, tok.AccessToken); err != nil {
+		return "", false, safeValidationError(err)
+	}
+	if !rotated {
+		if _, err := s.creds.Save(ctx, s.identity, replacement, &rec.Version); err != nil {
+			return "", false, fmt.Errorf("clientauth: credential update failed: %w", err)
+		}
 	}
 	return replacement.AccessToken, true, nil
 }

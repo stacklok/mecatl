@@ -16,7 +16,12 @@ import (
 	"time"
 )
 
-const clientTimeout = 15 * time.Second
+const (
+	clientTimeout      = 15 * time.Second
+	maxIdleConnections = 8
+	maxIdlePerHost     = 2
+	idleConnTimeout    = 30 * time.Second
+)
 
 type approvedEndpoint struct {
 	host string
@@ -50,6 +55,9 @@ func NewClient(ctx context.Context, endpoints []string, trustedCAPEM []byte) (*h
 		// "cluster.local"-suffixed host costs a deterministic ~5s stall per
 		// lookup on a macOS client, since that TLD forces mDNS resolution).
 		TLSHandshakeTimeout:   10 * time.Second,
+		MaxIdleConns:          maxIdleConnections,
+		MaxIdleConnsPerHost:   maxIdlePerHost,
+		IdleConnTimeout:       idleConnTimeout,
 		ResponseHeaderTimeout: clientTimeout,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
 	}
@@ -173,6 +181,11 @@ type scopedTransport struct {
 	next   http.RoundTripper
 }
 
+func (t scopedTransport) CloseIdleConnections() {
+	if closer, ok := t.next.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
 func (t scopedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL == nil || req.URL.Scheme != "https" || req.URL.User != nil {
 		return nil, errors.New("HTTPS request must use HTTPS without userinfo")

@@ -16,8 +16,14 @@ const (
 	AuthNotEnrolled AuthReason = "not_enrolled"
 	// AuthSessionExpired means a stored session can no longer refresh.
 	AuthSessionExpired AuthReason = "session_expired"
-	// AuthCredentialUnusable means local credential storage cannot be used.
+	// AuthCredentialUnusable means the saved encrypted record itself is unusable
+	// (e.g. corrupt) but reauthentication replaces it and repairs the failure.
 	AuthCredentialUnusable AuthReason = "credential_unusable" // #nosec G101 -- closed diagnostic label, not a credential.
+	// AuthStorageUnavailable means a local dependency the login flow cannot
+	// replace by itself -- the registry, keyring, encrypted store, or the saved
+	// issuer/CA preflight -- is unavailable. Reauthentication will not fix this;
+	// the user must retry after restoring the local dependency.
+	AuthStorageUnavailable AuthReason = "storage_unavailable" // #nosec G101 -- closed diagnostic label, not a credential.
 	// AuthCredentialCleanup means rejected-credential cleanup needs a retry.
 	AuthCredentialCleanup AuthReason = "credential_cleanup" // #nosec G101 -- closed diagnostic label, not a credential.
 	// AuthRejected means the remote server rejected a supplied bearer.
@@ -54,7 +60,7 @@ func localAuthFailure(err error) (AuthReason, bool) {
 		return "", false
 	}
 	switch local.Reason {
-	case AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthCredentialCleanup, AuthRejected:
+	case AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthStorageUnavailable, AuthCredentialCleanup, AuthRejected:
 		return local.Reason, true
 	default:
 		return "", false

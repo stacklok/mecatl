@@ -20,6 +20,9 @@ func TestAuthFailureUsesTypedLocalCausesAndBearerProvenance(t *testing.T) {
 		{"not enrolled", &AuthError{Reason: AuthNotEnrolled}, false, AuthNotEnrolled},
 		{"expired", &AuthError{Reason: AuthSessionExpired}, true, AuthSessionExpired},
 		{"unusable", &AuthError{Reason: AuthCredentialUnusable}, true, AuthCredentialUnusable},
+		{"corrupt", &AuthError{Reason: AuthCredentialUnusable}, true, AuthCredentialUnusable},
+		{"storage", &AuthError{Reason: AuthStorageUnavailable}, true, AuthStorageUnavailable},
+		{"issuer", &AuthError{Reason: AuthStorageUnavailable}, true, AuthStorageUnavailable},
 		{"cleanup", &AuthError{Reason: AuthCredentialCleanup}, true, AuthCredentialCleanup},
 		{"anonymous server rejection", status.Error(codes.Unauthenticated, "anything"), false, AuthNotEnrolled},
 		{"bearer server rejection", status.Error(codes.Unauthenticated, "anything"), true, AuthRejected},
@@ -40,16 +43,15 @@ func TestAuthFailureUsesTypedLocalCausesAndBearerProvenance(t *testing.T) {
 		}
 	}
 	// An unclassified token-path error stays unclassified. Relabelling it
-	// AuthCredentialUnusable named the wrong fault: a discovery, exchange, or
-	// validation failure is not broken local storage, and the overlay would have
-	// offered a remedy that cannot help. Unclassified errors route to the CLI's
-	// exit error, so the text reaches the operator's stderr and never UI state.
+	// AuthCredentialUnusable names the wrong fault: arbitrary provider failures
+	// are not broken local storage. Explicit issuer discovery failures map to the
+	// separate AuthStorageUnavailable recovery path in the composition layer.
 	unknown := errors.New("provider unreachable: dial tcp: connection refused")
 	if reason, ok := AuthFailure(unknown, true); ok {
 		t.Fatalf("unknown source error classified as %q; want unclassified", reason)
 	}
 	// A reason label never carries caller-supplied text, whichever path produced it.
-	for _, r := range []AuthReason{AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthCredentialCleanup, AuthRejected} {
+	for _, r := range []AuthReason{AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthCredentialUnusable, AuthStorageUnavailable, AuthStorageUnavailable, AuthCredentialCleanup, AuthRejected} {
 		if got := (&AuthError{Reason: r}).Error(); got != "authentication unavailable: "+string(r) {
 			t.Fatalf("AuthError text = %q; must be the closed label alone", got)
 		}

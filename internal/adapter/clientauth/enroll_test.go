@@ -1,7 +1,9 @@
 package clientauth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -103,6 +105,59 @@ func TestEnrollRecoversCorruptCurrentCredentialWithoutStrandingRegistry(t *testi
 			}
 		})
 	}
+}
+
+func TestEnrollPreservesQuarantinedRegistryRows(t *testing.T) {
+	root := t.TempDir()
+	reg, err := OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := credentialstore.NewEncryptedFile(root, "enroll-quarantine", bytesOf(14))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	creds, _ := NewCredentials(store)
+	id := identity("reenroll.example:443")
+	conn := Connection{Identity: id, IssuerCAFile: "/issuer-ca.pem"}
+	if _, err := reg.Upsert(conn); err != nil {
+		t.Fatal(err)
+	}
+	badRow := json.RawMessage(`{"identity":{"Target":"quarantined.example:443"},"unknown_future_field":"keep-byte-for-byte"}`)
+	body, err := json.Marshal(map[string]any{"version": 1, "connections": []json.RawMessage{badRow, mustJSON(t, conn)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "clientauth-connections.json")
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Upsert(t.Context(), id, Token{AccessToken: "old", TokenType: "Bearer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Enroll(t.Context(), conn, Token{AccessToken: "new", TokenType: "Bearer"}, EnrollmentConfig{Registry: reg, Credentials: creds}); err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(persisted, badRow) {
+		t.Fatalf("enrollment dropped quarantined raw row: %s", persisted)
+	}
+	if _, err := reg.FindTarget("quarantined.example:443"); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("quarantined row became publicly readable: %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func TestEnrollCorruptRecoveryRegistryFailureRetainsReachableReplacement(t *testing.T) {

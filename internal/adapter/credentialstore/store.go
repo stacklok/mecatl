@@ -2,7 +2,9 @@ package credentialstore
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"math"
 	"unicode"
@@ -16,7 +18,22 @@ const (
 	MaxRecordKeyBytes = 1024
 	// MaxValueBytes bounds an opaque record value to one MiB.
 	MaxValueBytes = 1 << 20
+
+	namespaceDomain = "mecatl/credentialstore/namespace/v1"
 )
+
+func namespacePhysicalName(namespace []byte) string {
+	digest := sha256.Sum256(frameFields(namespaceDomain, namespace))
+	return "ns-v1-" + hex.EncodeToString(digest[:])
+}
+
+// NamespacePhysicalName returns the on-disk directory name NewEncryptedFile
+// uses for namespace. Callers that must locate an existing namespace directory
+// without opening the store (e.g. an existing-only precondition check) use this
+// instead of re-deriving the naming scheme themselves.
+func NamespacePhysicalName(namespace string) string {
+	return namespacePhysicalName([]byte(namespace))
+}
 
 var (
 	// ErrNotFound reports that the selected namespace has no record for the key.

@@ -28,6 +28,9 @@ type refreshFixture struct {
 	key             *rsa.PrivateKey
 	calls           atomic.Int32
 	bad             atomic.Bool
+	malformed       atomic.Bool
+	jwksDown        atomic.Bool
+	rotatedKID      atomic.Bool
 	descriptionOnly atomic.Bool
 	tokenEntered    chan struct{}
 	tokenRelease    <-chan struct{}
@@ -49,8 +52,16 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 				"code_challenge_methods_supported": []string{"S256"},
 			})
 		case "/keys":
+			if f.jwksDown.Load() {
+				http.Error(w, "temporary JWKS failure", http.StatusServiceUnavailable)
+				return
+			}
+			kid := "refresh-test"
+			if f.rotatedKID.Load() {
+				kid = "refresh-rotated"
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
-				"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "refresh-test",
+				"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid,
 				"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
 				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
 			}}})
@@ -78,8 +89,16 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 				}
 				return
 			}
+			if f.malformed.Load() {
+				_, _ = w.Write([]byte(`{"refresh_token":"refresh-rotated","token_type":"Bearer","expires_in":60}`))
+				return
+			}
+			accessToken := f.token(t, "rotated", time.Now().Add(time.Minute))
+			if f.rotatedKID.Load() {
+				accessToken = f.tokenWithKID(t, "rotated", time.Now().Add(time.Minute), "refresh-rotated")
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"access_token":  f.token(t, "rotated", time.Now().Add(time.Minute)),
+				"access_token":  accessToken,
 				"refresh_token": "refresh-rotated", "token_type": "Bearer", "expires_in": 60,
 			})
 		default:
@@ -91,11 +110,15 @@ func newRefreshFixture(t *testing.T) *refreshFixture {
 }
 
 func (f *refreshFixture) token(t *testing.T, subject string, expiry time.Time) string {
+	return f.tokenWithKID(t, subject, expiry, "refresh-test")
+}
+
+func (f *refreshFixture) tokenWithKID(t *testing.T, subject string, expiry time.Time, kid string) string {
 	t.Helper()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss": f.srv.URL, "sub": subject, "aud": "vmcp", "exp": expiry.Unix(), "iat": time.Now().Unix(),
 	})
-	tok.Header["kid"] = "refresh-test"
+	tok.Header["kid"] = kid
 	v, err := tok.SignedString(f.key)
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +139,112 @@ func (f *refreshFixture) source(t *testing.T, c *Credentials, id Identity, poll 
 		t.Fatal(err)
 	}
 	return newRefreshSource(id, c, registry, f.srv.Client(), f.srv.URL+"/token", validator, poll)
+}
+
+type failingRefreshSaveStore struct {
+	credentialstore.Store
+	err error
+}
+
+func (s failingRefreshSaveStore) Put(context.Context, []byte, []byte, *credentialstore.Version) (credentialstore.Record, error) {
+	return credentialstore.Record{}, s.err
+}
+
+func TestRefreshRotationSurvivesTransientValidationFailure(t *testing.T) {
+	f := newRefreshFixture(t)
+	c := credentials(t)
+	id := identity("remote.example:443")
+	id.Issuer = f.srv.URL
+	id, _ = id.Canonical()
+	original := Token{AccessToken: f.token(t, "original", time.Now().Add(time.Minute)), RefreshToken: "refresh-original", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}
+	if _, err := c.Save(t.Context(), id, original, nil); err != nil {
+		t.Fatal(err)
+	}
+	s := f.source(t, c, id, 0)
+	defer s.Close()
+	f.rotatedKID.Store(true)
+	f.jwksDown.Store(true)
+
+	if _, err := s.Token(t.Context()); !errors.Is(err, authoidc.ErrIdentityUnavailable) {
+		t.Fatalf("first Token error = %v, want identity unavailable", err)
+	}
+	stored, err := c.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Token.RefreshToken != "refresh-rotated" {
+		t.Fatalf("rotated refresh token was not saved: %q", stored.Token.RefreshToken)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.jwksDown.Store(false)
+	recovered := f.source(t, c, id, 0)
+	defer recovered.Close()
+	got, err := recovered.Token(t.Context())
+	if err != nil {
+		t.Fatalf("recovery Token: %v", err)
+	}
+	if got != stored.Token.AccessToken {
+		t.Fatalf("recovery token = %q, want saved replacement", got)
+	}
+	if calls := f.calls.Load(); calls != 1 {
+		t.Fatalf("refresh exchanges = %d, want 1", calls)
+	}
+}
+
+func TestRefreshMalformedExchangeOutputDoesNotReplaceCredential(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.malformed.Store(true)
+	c := credentials(t)
+	id := identity("remote.example:443")
+	id.Issuer = f.srv.URL
+	id, _ = id.Canonical()
+	original := Token{AccessToken: f.token(t, "original", time.Now().Add(time.Minute)), RefreshToken: "refresh-original", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}
+	if _, err := c.Save(t.Context(), id, original, nil); err != nil {
+		t.Fatal(err)
+	}
+	s := f.source(t, c, id, 0)
+	defer s.Close()
+	if _, err := s.Token(t.Context()); !errors.Is(err, ErrTokenExchange) {
+		t.Fatalf("Token error = %v, want token exchange error", err)
+	}
+	stored, err := c.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Token != original {
+		t.Fatalf("malformed exchange replaced credential: %#v", stored.Token)
+	}
+}
+
+func TestRefreshRotationSaveFailureDoesNotReturnAccessToken(t *testing.T) {
+	f := newRefreshFixture(t)
+	base := credentials(t)
+	id := identity("remote.example:443")
+	id.Issuer = f.srv.URL
+	id, _ = id.Canonical()
+	original := Token{AccessToken: f.token(t, "original", time.Now().Add(time.Minute)), RefreshToken: "refresh-original", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}
+	if _, err := base.Save(t.Context(), id, original, nil); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("save unavailable")
+	c, err := NewCredentials(failingRefreshSaveStore{Store: base.store, err: wantErr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := f.source(t, c, id, 0)
+	defer s.Close()
+	if token, err := s.Token(t.Context()); token != "" || !errors.Is(err, wantErr) {
+		t.Fatalf("Token = %q, %v; want empty token and save error", token, err)
+	}
+	stored, err := base.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Token != original {
+		t.Fatalf("save failure replaced credential: %#v", stored.Token)
+	}
 }
 
 func TestLoginRequiredCauses(t *testing.T) {

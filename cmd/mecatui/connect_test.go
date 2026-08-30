@@ -82,7 +82,7 @@ func TestCanonicalSavedTargetFlowsThroughRecoveryRestart(t *testing.T) {
 		t.Fatalf("resolved target = %q, want canonical target", target)
 	}
 	reason, ok := client.AuthFailure(resolveErr, false)
-	if !ok || reason != client.AuthCredentialUnusable {
+	if !ok || reason != client.AuthStorageUnavailable {
 		t.Fatalf("resolve error = %v, reason=%q ok=%v", resolveErr, reason, ok)
 	}
 	options := authRecoveryOptions(reason, target, "Authentication needs attention.", "session-1", restartTransport{Target: target, TLSCAFile: serverCA})
@@ -102,7 +102,7 @@ func TestCanonicalSavedTargetFlowsThroughRecoveryRestart(t *testing.T) {
 	m = model.(ui.Model)
 	model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	intent, ok := model.(ui.Model).ConnectRestartIntent()
-	if !ok || intent.Target != target || intent.Action != ui.Reauthenticate || intent.ResumeSessionID != "session-1" {
+	if !ok || intent.Target != target || intent.Action != ui.RetryAfterCleanup || intent.ResumeSessionID != "session-1" {
 		t.Fatalf("canonical recovery intent = %#v, ok=%v", intent, ok)
 	}
 
@@ -125,8 +125,8 @@ func TestCanonicalSavedTargetFlowsThroughRecoveryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantArgv := []string{"mecatui", "connect", "mixed.example:443", "--tls", "--tls-ca", serverCA}
-	if !slices.Equal(gotArgv, wantArgv) || gotIssuerCA != conn.IssuerCAFile {
-		t.Fatalf("restart argv=%q issuerCA=%q, want argv=%q issuer CA A=%q", gotArgv, gotIssuerCA, wantArgv, conn.IssuerCAFile)
+	if !slices.Equal(gotArgv, wantArgv) || gotIssuerCA != "" {
+		t.Fatalf("restart argv=%q issuerCA=%q, want browser-free retry", gotArgv, gotIssuerCA)
 	}
 }
 
