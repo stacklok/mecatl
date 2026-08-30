@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/parser"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
@@ -23,7 +25,49 @@ import (
 // unrecognized top-level key is a parse error, not a silently-ignored typo.
 // It is designed to grow additive fields later (theme, UI behaviour, …).
 type clientSettings struct {
-	Keymap map[string]string `yaml:"keymap"`
+	Keymap              map[string]string    `yaml:"keymap"`
+	StatusCustomization *statusCustomization `yaml:"status_customization"`
+}
+
+// clientSettingsYAML is the strict decode shape. A duration stays textual until
+// after the strict YAML decode so the accepted duration syntax is explicit.
+type clientSettingsYAML struct {
+	Keymap              map[string]string        `yaml:"keymap"`
+	StatusCustomization *statusCustomizationYAML `yaml:"status_customization"`
+}
+
+type statusCustomizationYAML struct {
+	Templates *statusTemplates `yaml:"templates"`
+	Command   *statusCommand   `yaml:"command"`
+	Interval  string           `yaml:"interval"`
+}
+
+// statusCustomization is inert client configuration. A nil Templates and
+// Command selects the shipped status template; rendering and command execution
+// deliberately belong to later client layers.
+type statusCustomization struct {
+	Templates *statusTemplates
+	Command   *statusCommand
+	Interval  time.Duration
+}
+
+// statusTemplates supplies independent header and footer responsive variants.
+type statusTemplates struct {
+	Header *statusSurfaceTemplates `yaml:"header"`
+	Footer *statusSurfaceTemplates `yaml:"footer"`
+}
+
+type statusSurfaceTemplates struct {
+	Full    string `yaml:"full"`
+	Compact string `yaml:"compact"`
+	Minimal string `yaml:"minimal"`
+}
+
+// statusCommand is a trusted user-global direct executable selection. It has no
+// environment or working-directory fields: the status source owns both.
+type statusCommand struct {
+	Path string   `yaml:"executable"`
+	Args []string `yaml:"args"`
 }
 
 // legacySettings mirrors the keymap: key out of the SERVER-owned operator-tier
@@ -76,45 +120,36 @@ func splitKeymap(raw map[string]string) map[string][]string {
 	return out
 }
 
-// readClientKeymap reads the CLIENT-owned settings file
-// (~/.config/mecatui/settings.yaml) and returns its keymap overrides as
-// action -> []chords. An absent file (or unresolvable config base) returns
-// (nil, false, nil). The bool reports "the client file contributed a keymap".
-//
-// The file is decoded STRICTLY (KnownFields(true)): clientSettings is the
-// whole schema, so an unknown top-level key is an error naming the file (the
-// daemonconfig strict-decode idiom — a *yaml.TypeError is the unknown-key /
-// wrong-type signal; a plain decode error is a syntax problem whose message
-// embeds the offending source line and is therefore NOT wrapped through,
-// CWE-209). A multi-document file is rejected.
-func readClientKeymap() (map[string][]string, bool, error) {
+// readClientSettings reads the one strict client-owned settings document. An
+// absent file (or unresolvable config base) yields the zero settings value.
+func readClientSettings() (clientSettings, error) {
 	path := clientSettingsPath(xdgconfig.OSEnv)
 	if path == "" {
-		return nil, false, nil
+		return clientSettings{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, false, nil
+			return clientSettings{}, nil
 		}
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
+		return clientSettings{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	document, err := yamldiag.ParseSettingsDocument(b)
 	if err != nil {
 		if errors.Is(err, yamldiag.ErrMultipleDocuments) {
-			return nil, false, fmt.Errorf("parsing %s: multiple documents are not supported (the client settings schema is a single document)", path)
+			return clientSettings{}, fmt.Errorf("parsing %s: multiple documents are not supported (the client settings schema is a single document)", path)
 		}
-		return nil, false, clientKeymapSyntaxError(path, err)
+		return clientSettings{}, clientKeymapSyntaxError(path, err)
 	}
-	var s clientSettings
-	if err := yaml.NewDecoder(bytes.NewReader(nil), yaml.DisallowUnknownField()).DecodeFromNode(document.Mapping(), &s); err != nil {
-		return nil, false, fmt.Errorf("parsing %s: does not match the expected schema (unknown key or type); the only recognized key is keymap", path)
+	var raw clientSettingsYAML
+	if err := yaml.NewDecoder(bytes.NewReader(nil), yaml.DisallowUnknownField()).DecodeFromNode(document.Mapping(), &raw); err != nil {
+		return clientSettings{}, fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type)", path)
 	}
-	out := splitKeymap(s.Keymap)
-	if out == nil {
-		return nil, false, nil
+	status, err := decodeStatusCustomization(raw.StatusCustomization)
+	if err != nil {
+		return clientSettings{}, fmt.Errorf("parsing %s: invalid status_customization configuration", path)
 	}
-	return out, true, nil
+	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status}, nil
 }
 
 func clientKeymapSyntaxError(path string, err error) error {
@@ -123,6 +158,99 @@ func clientKeymapSyntaxError(path string, err error) error {
 		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema)", path, documentError.Location.Line, documentError.Location.Column)
 	}
 	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema)", path)
+}
+
+// readClientKeymap reads the CLIENT-owned settings file
+// (~/.config/mecatui/settings.yaml) and returns its keymap overrides as
+// action -> []chords. An absent file (or unresolvable config base) returns
+// (nil, false, nil). The bool reports "the client file contributed a keymap".
+func readClientKeymap() (map[string][]string, bool, error) {
+	s, err := readClientSettings()
+	if err != nil {
+		return nil, false, err
+	}
+	out := splitKeymap(s.Keymap)
+	if out == nil {
+		return nil, false, nil
+	}
+	return out, true, nil
+}
+
+// shippedStatusCustomization is the inert default selector. Template literals
+// live with the renderer, not the settings parser.
+func shippedStatusCustomization() statusCustomization { return statusCustomization{} }
+
+// newSource adapts validated settings into the source.
+func newSource(customization statusCustomization) statusline.Source {
+	if customization.Command != nil {
+		launchDir, _ := os.Getwd()
+		return statusline.NewCommandSource(statusline.Command{
+			Path: customization.Command.Path, Args: customization.Command.Args, LaunchDir: launchDir, RefreshInterval: customization.Interval,
+		})
+	}
+	if customization.Templates == nil {
+		return statusline.NewDefaultSource(customization.Interval)
+	}
+	return statusline.NewTemplateSource(statusline.TemplateSet{
+		Header: toSurfaceTemplates(customization.Templates.Header),
+		Footer: toSurfaceTemplates(customization.Templates.Footer),
+	}, customization.Interval)
+}
+
+func toSurfaceTemplates(value *statusSurfaceTemplates) statusline.SurfaceTemplates {
+	if value == nil {
+		return statusline.SurfaceTemplates{}
+	}
+	return statusline.SurfaceTemplates{Full: value.Full, Compact: value.Compact, Minimal: value.Minimal}
+}
+
+// readStatusCustomization reads only the strict mecatui client settings file.
+// A missing status_customization key selects the renderer's shipped default.
+func readStatusCustomization() (statusCustomization, error) {
+	s, err := readClientSettings()
+	if err != nil {
+		return statusCustomization{}, err
+	}
+	if s.StatusCustomization == nil {
+		return shippedStatusCustomization(), nil
+	}
+	return *s.StatusCustomization, nil
+}
+
+func decodeStatusCustomization(raw *statusCustomizationYAML) (*statusCustomization, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if (raw.Templates == nil) == (raw.Command == nil) {
+		return nil, errors.New("choose exactly one status source")
+	}
+	if raw.Templates != nil && raw.Templates.Header == nil && raw.Templates.Footer == nil {
+		return nil, errors.New("template source has no surface")
+	}
+	if raw.Command != nil && !(statusline.Command{
+		Path: raw.Command.Path, Args: raw.Command.Args,
+	}).Valid() {
+		return nil, errors.New("invalid command")
+	}
+	if raw.Templates != nil && (!validStatusSurfaceTemplates(raw.Templates.Header) || !validStatusSurfaceTemplates(raw.Templates.Footer)) {
+		return nil, errors.New("template source has no variant")
+	}
+	out := &statusCustomization{Templates: raw.Templates, Command: raw.Command}
+	if raw.Interval != "" {
+		interval, err := time.ParseDuration(raw.Interval)
+		if err != nil || interval < time.Second {
+			return nil, errors.New("invalid interval")
+		}
+		out.Interval = interval
+	}
+	return out, nil
+}
+
+func validStatusSurfaceTemplates(value *statusSurfaceTemplates) bool {
+	if value == nil {
+		return true
+	}
+	return strings.TrimSpace(value.Full) != "" && strings.TrimSpace(value.Compact) != "" && strings.TrimSpace(value.Minimal) != ""
 }
 
 // readLegacyKeymap reads the keymap: key out of the SERVER-owned operator-tier

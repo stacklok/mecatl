@@ -26,6 +26,7 @@ Read [Connect to a server](./remote-servers.md) before using a remote endpoint. 
 - [Keybindings](./keybindings.md) — everyday keys, approval controls, and remapping.
 - [Commands and memory](./commands-and-memory.md) — learning, reflections, and memory-maintenance commands.
 - [Themes](./themes.md) — select or add a color palette.
+- [Status line customization](./status-line.md) — configure responsive status templates or a local executable.
 - [Customization](./customization.md) — understand which settings belong to the client or server.
 - [Troubleshooting](./troubleshooting.md) — take safe next steps when something fails.
 

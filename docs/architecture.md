@@ -383,11 +383,21 @@ from proto `Event`s** and are bound by the inward-only layering rule. The
 `contracts/gen` + grpc + `internal/app` surface lives only in `cmd/mecatui/client`,
 `cmd/mecatui/embed`, and the `cmd/mecatui` main; the `ui` (Bubble Tea
 model/update/view) and `theme` (pure styling) packages import no `engine/...` or `internal/...`
-package and no proto directly. Its `/clear` command uses the existing create-session
-RPC to create a new empty session first (preserving the current workspace, effective
-model/reasoning effort, and permission mode), then rebinds locally and only afterward
-best-effort closes the old session; a failed create leaves the old session and UI
-unchanged. Usage and theming are documented in `docs/tui.md`.
+package and no proto directly. Its local status customization is a separate
+client-owned seam: `cmd/mecatui/statusline.Source` receives display-safe `Input`
+snapshots from the UI and publishes latest semantic `Result` spans. It owns
+responsive template evaluation or a direct local executable, refresh and
+cancellation; the UI owns theme resolution, renderer chrome, clipping, and
+alignment. Settings live only in `$XDG_CONFIG_HOME/mecatui/settings.yaml`; a
+remote server or project never selects a local executable. Templates get a
+StatusML-escaped projection, commands get raw JSON on stdin, and StatusML carries
+semantic tokens rather than ANSI/OSC. This preserves `ui` as a pure render layer
+while allowing autonomous source updates. Its `/clear` command uses the existing
+create-session RPC to create a new empty session first (preserving the current
+workspace, effective model/reasoning effort, and permission mode), then rebinds
+locally and only afterward best-effort closes the old session; a failed create
+leaves the old session and UI unchanged. Usage and configuration are documented in
+`docs/tui.md`.
 
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against

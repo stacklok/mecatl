@@ -849,6 +849,9 @@ produces one count/reason-only warning. A pathological uncancellable file read m
 worker after return, but the closed generation manager rejects and closes any late candidate.
 Restart reconstructs both last-valid values from the currently mounted regular files. These are transport credentials, not session or run
 state, so List 2 gains no row.
+| 64 | Mecatui status-line source worker, optional interval ticker, debounce timer, and one command process tree | `cmd/mecatui/statusline.statusLineSource`, constructed by the local mecatui client | client process | `StatusLineSource.Close` stops the ticker, cancels the active invocation/tree, joins its reader/worker with a one-second detached bound, then closes `Changed`; commands also have a one-second deadline and use a contained process group | **reset-by-design**: generated surfaces, last-good command surfaces, pending input, and timers are local presentation state. A restart reloads user-global settings and renders afresh; no session/run state is retained | `cmd/mecatui/statusline/source.go` (`run`, `Close`); `cmd/mecatui/statusline/command.go` (`NewCommandStatusLineSource`, `runCommand`) |
+
+**Mecatui status-line re-audit (ADR 0247).** List 1 row 64 owns the local source lifecycle. It contains only display-safe input and generated presentation state, never session authority or transcript data, so List 2 gains no row. Shutdown is bounded rather than silently abandoning a live command tree; a process restart deliberately starts from fresh local status state.
 
 **Steer-while-running re-audit (List 1 / List 2 — issue #512, ADR 0232).** List 1 row 60 inventories the in-memory inbox, stream handoff, and watermark correlation. List 2 row 37 records the pending bundle's deliberate restart-loss; only a drained steer becomes durable ordinary user history.
 

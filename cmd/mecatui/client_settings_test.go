@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -94,6 +97,30 @@ func TestGoccyYAMLMigration_Scenario5_MecatuiReadersRetainFallbacks(t *testing.T
 			t.Fatalf("keymap syntax error = %q, want line and column", err)
 		}
 	})
+}
+
+func TestStatusCustomizationCommandIntervalReachesCommandSource(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "runs")
+	source := newSource(statusCustomization{
+		Command:  &statusCommand{Path: "/bin/sh", Args: []string{"-c", `read input; printf x >> "$1"; printf '<footer><text>fixed</text></footer>'`, "--", marker}},
+		Interval: time.Second,
+	})
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+
+	source.Submit(statusline.Input{Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	select {
+	case <-source.Changed():
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial command did not publish")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if body, err := os.ReadFile(marker); err == nil && len(body) >= 2 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("configured command interval did not schedule a refresh")
 }
 
 func TestClientSettingsPathResolvesUnderXDG(t *testing.T) {
@@ -308,5 +335,96 @@ func TestApplyKeyOverridesInvalidActionStillFailsStartup(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "keymap:") || !strings.Contains(err.Error(), "NotAnAction") {
 		t.Errorf("error must carry the keymap: prefix and name the bad action: %v", err)
+	}
+}
+
+// TestStatusCustomization_Scenario1_UserSettingsOwnCustomization pins the
+// client/server settings boundary: status customization is a mecatui-only
+// setting and an absent client value selects the shipped templates.
+func TestStatusCustomization_Scenario1_UserSettingsOwnCustomization(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatl", "status_customization:\n  templates:\n    wide: legacy\n")
+
+	got, err := readStatusCustomization()
+	if err != nil {
+		t.Fatalf("read absent client customization: %v", err)
+	}
+	if !reflect.DeepEqual(got, shippedStatusCustomization()) {
+		t.Fatalf("absent client customization = %#v, want shipped default %#v", got, shippedStatusCustomization())
+	}
+
+	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f12\nstatus_customization:\n  templates:\n    header:\n      full: client header\n      compact: client compact\n      minimal: client\n  interval: 2s\n")
+	got, err = readStatusCustomization()
+	if err != nil {
+		t.Fatalf("read client customization: %v", err)
+	}
+	if got.Templates == nil || got.Templates.Header == nil || got.Templates.Header.Full != "client header" || got.Templates.Header.Compact != "client compact" || got.Templates.Header.Minimal != "client" {
+		t.Fatalf("templates = %#v, want client-owned responsive templates", got.Templates)
+	}
+	if got.Interval != 2*time.Second {
+		t.Errorf("interval = %s, want 2s", got.Interval)
+	}
+}
+
+func TestReadStatusCustomizationRejectsInvalidConfigurationWithoutEchoingValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"both sources", "status_customization:\n  templates:\n    wide: status\n  command:\n    executable: /usr/local/bin/status\n"},
+		{"interval too short", "status_customization:\n  templates:\n    wide: status\n  interval: 500ms\n"},
+		{"unsafe command path", "status_customization:\n  command:\n    executable: ' bad-command '\n"},
+		{"removed shell fields", "status_customization:\n  command:\n    shell: /bin/sh\n    source: 'printf status'\n"},
+		{"unknown nested key", "status_customization:\n  templates:\n    tablet: status\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			writeSettings(t, "mecatui", tc.body)
+			_, err := readStatusCustomization()
+			if err == nil {
+				t.Fatal("invalid status customization must fail")
+			}
+			if strings.Contains(err.Error(), "bad-command") {
+				t.Errorf("error must not echo configuration values: %v", err)
+			}
+		})
+	}
+}
+
+func TestReadStatusCustomizationAcceptsValidatedDirectExecutable(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatui", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    args: [--format, statusml]\n")
+	got, err := readStatusCustomization()
+	if err != nil {
+		t.Fatalf("read command customization: %v", err)
+	}
+	if got.Command == nil || got.Command.Path != "/usr/local/bin/status" || !reflect.DeepEqual(got.Command.Args, []string{"--format", "statusml"}) {
+		t.Fatalf("command = %#v, want direct executable with literal args", got.Command)
+	}
+}
+
+func TestReadStatusCustomizationRejectsPartialSurfaceVariants(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatui", "status_customization:\n  templates:\n    header:\n      full: '<header><text>x</text></header>'\n")
+	if _, err := readStatusCustomization(); err == nil {
+		t.Fatal("a configured surface must supply full, compact, and minimal variants")
+	}
+}
+
+func TestBuildStatusSourceConstructsValidatedTemplateSettings(t *testing.T) {
+	source := buildStatusSource(statusCustomization{Templates: &statusTemplates{Footer: &statusSurfaceTemplates{
+		Full:    `<footer><accent>{{.Session.Title}}</accent></footer>`,
+		Compact: `<footer><accent>{{.Session.Title}}</accent></footer>`,
+		Minimal: `<footer><accent>{{.Session.Title}}</accent></footer>`,
+	}}})
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(statusline.Input{Session: statusline.Session{Title: "configured"}, Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	select {
+	case <-source.Changed():
+	case <-time.After(time.Second):
+		t.Fatal("configured template source did not publish")
+	}
+	if got, want := source.Latest().Footer.Spans[0].Text, "configured"; got != want {
+		t.Fatalf("configured template text = %q, want %q", got, want)
 	}
 }

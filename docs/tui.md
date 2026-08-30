@@ -13,6 +13,30 @@ a private UNIX socket (the default) or an **external** `mecated` it dials via
 start and no TCP port. See [Run](#run).
 
 It is built on the Charm v2 stack (Bubble Tea / Lip Gloss / Bubbles / Glamour).
+
+### Local status lines
+
+Mecatui reads `status_customization:` only from the client-owned
+`$XDG_CONFIG_HOME/mecatui/settings.yaml`. It composes a UI-agnostic
+`statusline.Source`: the UI submits display-safe `Input` snapshots and listens for
+latest `Result` semantic spans, while the source owns template evaluation or the
+optional local direct executable, refresh, cancellation, and fallback. The source
+returns no terminal rendering; the UI applies the active theme, preserves its
+mandatory safety/navigation and activity lanes, then clips and aligns the result.
+
+A configuration selects exactly one source: responsive `templates` or a
+`command` with an absolute `executable` and literal `args`. Templates receive an
+automatically StatusML-escaped projection; a command receives the same raw input
+as JSON on stdin. It is run directly (there is no shell or source configuration
+form); `/bin/sh` is available only when explicitly selected as the executable with
+literal arguments. It uses a constrained environment, local-only CWD selection, a
+one-second deadline, and a combined 4 KiB stdout/stderr limit. StatusML accepts semantic theme tokens and validated
+HTTP(S) link metadata, never raw ANSI or OSC.
+
+See [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md)
+for the complete settings schema, input reference, StatusML grammar, safety limits,
+and copyable template and executable examples.
+
 The render packages (`ui`, `theme`) and the `client` package stay a pure client —
 they never import any `engine/...` or `internal/...` package and render solely from the proto
 `Event` envelope. Hosting the embedded server is confined to the `cmd/mecatui`

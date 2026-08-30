@@ -100,6 +100,10 @@ when the code that satisfies the plan has landed.
   narrowed at every delegation seam, with the decision behind one swappable
   evaluator port at the single dispatch chokepoint; Cedar is an opt-in adapter.
   Status: draft.
+- [Extensible mecatui status line](mecatui-status-line.md) — user-global
+  responsive header/footer templates or one local command over a shared status
+  input and theme-integrated StatusML; present chrome is the default templates.
+  Status: draft.
 
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — network listeners assign one operator-configured filesystem root while embedded and loopback deployments retain client-selected workspaces; mecak8s is no-FS by default. Status: draft.
 
