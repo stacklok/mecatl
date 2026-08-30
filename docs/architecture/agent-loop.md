@@ -50,12 +50,19 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
    `sess.StopReason()` trips, `ctx` is cancelled, or the run **token budget**
    is crossed (below), terminate.
 4. `BeginTurn`, emit `turn.start`.
-5. **Maybe compact** (`maybeCompact`).
-6. **Run the turn** (`runTurn`): build the `LLMRequest`, call `LLM.Stream`,
-   consume chunks, emit `message.delta` for text, accumulate reasoning, collect
-   tool calls and usage, capture the stop reason; assemble one assistant
-   `Message`. While building each request, an optional `OperatorProfileSource` is
-   re-read and its last-good active facts are placed only in the volatile system
+5. **Maybe compact** (`engine/agent/loop.go` (`maybeCompact`)): estimate the
+   already-built complete request, including rendered system text, ephemeral
+   fragments, messages, typed tool results, and advertised tool schemas. At the
+   default 0.8 ratio, compact only persisted conversation history and rebuild only
+   the request's message suffix. Fixed system, fragment, and tool-schema overhead
+   cannot be reduced. A client can request the separate threshold-independent
+   `Engine.CompactSession` operation only outside a run; see
+   [context & compaction](context-and-compaction.md).
+6. **Run the turn** (`runTurn`): send the already-built `LLMRequest`, call
+   `LLM.Stream`, consume chunks, emit `message.delta` for text, accumulate
+   reasoning, collect tool calls and usage, capture the stop reason; assemble one
+   assistant `Message`. While `buildRequest` assembles each request, an optional
+   `OperatorProfileSource` is re-read and its last-good active facts are placed only in the volatile system
    suffix. A read fault warns once and reuses the run-local last-good snapshot;
    profile bytes are never persisted as conversation messages. `ctx` cancellation
    mid-stream surfaces as a cancellation.

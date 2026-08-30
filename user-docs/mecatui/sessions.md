@@ -35,6 +35,14 @@ current workspace and model. The old conversation remains stored and discoverabl
 through `/sessions`; mecatui releases its old runtime resources only on a best-effort
 basis after the replacement session is ready.
 
+## Reduce model history with `/compact`
+
+If a long chat is close to its context limit, use bare `/compact` while the session
+is idle. The command keeps the same session and visible scrollback but asks the server
+to reduce the persisted history sent to the model. It creates no chat turn and reports
+whether anything changed. The command appears only when the connected server advertises
+manual compaction; older servers hide it. A cascade summary can still use model tokens.
+
 ## Browse, continue, inspect, or fork
 
 Open the inventory without creating a session:

@@ -41,6 +41,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Manual session compaction core** — `session.ReplaceHistoryAtBoundary` provides
+  the pairing-validated, non-active aggregate rewrite seam; `agent.Engine.CompactSession`
+  and `agent.ManualCompactionResult` run the configured compactor once and expose the
+  archive/summary needed by a durable service operation. Added (minor).
+
 - **`agent.WithAgentWritableModelEngineFactory`** (issue #517, [ADR 0242](../docs/adr/0242-route-unpinned-writable-named-specialists.md)) — a `SubagentOption` factory that rebuilds an unpinned named `mode:"read-write"` specialist on the semantic router's selected model while preserving its specialist scope, direct-write environment, same-provider boundary, and per-definition limits. A declined target falls back to the ordinary writable specialist. Added (minor).
 
 - **Canonical governance untrusted-content fencing** (issue #380,

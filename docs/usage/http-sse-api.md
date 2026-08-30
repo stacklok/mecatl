@@ -19,6 +19,7 @@ numbers rather than protojson enum names.
 | `GET /v1/sessions/{id}/events` | — | `200` `text/event-stream` — replay a session's durable event log (full timeline incl. the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips); empty for an unknown id, `501` when no durable `EventLog` is wired |
 | `POST /v1/sessions/{id}/rename` | `{title}` | `200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease |
 | `POST /v1/sessions/{id}/delete` | — | `204` after permanently removing the snapshot and store-managed sidecars; `412` when the target is active, awaiting, or not a main chat, `409` when another replica holds the session lease, `501` when the configured store cannot physically delete |
+| `POST /v1/sessions/{id}/compact` | no body | `200` `{"compacted":true}` when one forced pass saved shorter model history, or `{"compacted":false}` for a successful no-op; `412` for an active/awaiting/non-main session, `409` when another replica holds its lease |
 | `DELETE /v1/sessions/{id}` | — | `204` — close the session, releasing its per-session resources (not physical stored-session deletion) |
 | `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events; rejected while failed-step retry intent is pending |
 | `POST /v1/sessions/{id}/retry` | no body | `200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible |
@@ -151,6 +152,32 @@ $ curl -s http://127.0.0.1:8081/v1/sessions/8867bdea940108c1dd82d13d3fb7fc61
 ```
 
 A missing id returns `404` `{"error":"not found: \"...\""}`.
+
+### Compact model history without a turn
+
+Use the bodyless manual operation when the next prompt may not fit or when you want
+to reduce stored model history before continuing:
+
+```console
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/compact
+{"compacted":true}
+```
+
+The server runs the configured compactor once regardless of the automatic 0.8
+trigger. It adds no prompt and starts no model turn, although the cascade strategy
+may make a compaction-slot summarization call. `false` is a successful no-op and
+causes no save or event append. The legal states are idle, completed, cancelled,
+and failed; state is preserved. Running/awaiting, scheduled, child, or same-process
+live sessions return `412`. A lease held by another replica returns `409`. Missing
+and foreign-owned IDs both return `404`; configured HTTP authentication still
+applies before ownership checks.
+
+On change, the compacted snapshot is saved before the existing compaction notice
+and archive are appended. Save failure returns `500` without appending them. An
+event-log append failure after save does not roll back the snapshot or change the
+`200` response, so the log may lack that manual compaction record. Clients can
+check `capabilities.manual_compaction` on session creation; an old server leaves it
+false and returns `404` for the unknown route.
 
 ### Start a run (SSE stream)
 

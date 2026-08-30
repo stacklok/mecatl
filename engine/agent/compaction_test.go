@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -913,8 +914,10 @@ func TestCarryoverSeededCompactsOnTurn0(t *testing.T) {
 	const recentTask = "ACTUAL TASK: rename Foo to Bar"
 	conv := &session.Conversation{}
 	conv.Append(session.NewUserMessage("original setup"))
-	conv.Append(session.NewUserMessage(recentTask))
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 40; i++ {
+		if i == 35 {
+			conv.Append(session.NewUserMessage(recentTask))
+		}
 		id := session.ToolCallID(string(rune('a' + i)))
 		conv.Append(session.NewAssistantMessage("", "", []session.ToolCall{
 			session.NewToolCall(id, "Read", json.RawMessage(`{"path":"f.go"}`)),
@@ -1068,6 +1071,7 @@ func TestCompactionEmitsNonDestructiveArchive(t *testing.T) {
 		Compactor:       rec,
 		ContextWindow:   func() int { return 200 },
 		CompactionRatio: 0.8,
+		PromptBuilder:   func(prompt.Config) prompt.Layered { return prompt.Layered{} },
 	})
 
 	sess := session.New("s-archive", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
@@ -1281,7 +1285,170 @@ type recordingCompactor struct{ called int }
 
 func (c *recordingCompactor) Compact(_ context.Context, _ *session.Conversation) ([]session.Message, string, error) {
 	c.called++
-	return []session.Message{session.NewUserMessage("compacted goal")}, "compacted summary", nil
+	return []session.Message{session.NewUserMessage("x")}, "compacted summary", nil
+}
+
+type compactionAccountingTool struct{ spec tool.ToolSpec }
+
+func (t compactionAccountingTool) Spec() tool.ToolSpec { return t.spec }
+func (compactionAccountingTool) ReadOnly() bool        { return true }
+func (compactionAccountingTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, "unused"), nil
+}
+
+func TestCompactionAccountsForCompleteRequest(t *testing.T) {
+	const filler = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	for _, component := range []string{"system", "fragments", "tool schema", "typed tool-result parts"} {
+		t.Run(component, func(t *testing.T) {
+			cat := tool.NewCatalog()
+			sess := session.New("accounting", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+			var assembler *countingAssembler
+			buildCalls := 0
+			deps := agent.Deps{
+				Catalog:         cat,
+				Policy:          allowAll(),
+				Model:           "m",
+				TokenCounter:    agent.HeuristicTokenCounter{CharsPerToken: 1},
+				ContextWindow:   func() int { return 100 },
+				CompactionRatio: 0.8,
+				PromptBuilder: func(prompt.Config) prompt.Layered {
+					buildCalls++
+					if component == "system" {
+						return prompt.Layered{StablePrefix: filler}
+					}
+					return prompt.Layered{}
+				},
+			}
+			switch component {
+			case "fragments":
+				assembler = &countingAssembler{msg: filler}
+				deps.Instructions = assembler
+			case "tool schema":
+				err := cat.Register(compactionAccountingTool{spec: tool.ToolSpec{
+					Name: "LargeSchema", Schema: json.RawMessage(`{"type":"object","description":"` + filler + `"}`),
+				}})
+				if err != nil {
+					t.Fatalf("register tool: %v", err)
+				}
+			case "typed tool-result parts":
+				call := session.NewToolCall("call", "T", json.RawMessage(`{}`))
+				withParts := []session.Message{
+					session.NewUserMessage("seed"),
+					session.NewAssistantMessage("", "", []session.ToolCall{call}),
+					session.NewToolMessage(session.NewToolResultWithParts(call.ID, "short", []session.Content{{
+						BlockKind: session.BlockStructuredContent, Text: filler,
+					}})),
+				}
+				if err := sess.SeedHistory(withParts); err != nil {
+					t.Fatalf("seed history: %v", err)
+				}
+			}
+
+			persistedOnly := append([]session.Message(nil), sess.Conversation.Messages...)
+			if component == "typed tool-result parts" {
+				result := *persistedOnly[2].ToolResult
+				result.Parts = nil
+				persistedOnly[2] = session.NewToolMessage(result)
+			}
+			persistedOnly = append(persistedOnly, session.NewUserMessage("hi"))
+			if got := deps.TokenCounter.CountMessages(persistedOnly); got >= 80 {
+				t.Fatalf("persisted history without the tested component = %d, want below threshold", got)
+			}
+
+			rc := &recordingCompactor{}
+			deps.Compactor = rc
+			var sent port.LLMRequest
+			deps.LLM = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+				sent = req
+			})}, mockllm.TextTurn("done"))
+			e := agent.NewEngine(deps)
+			r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
+			for range r.Events() {
+			}
+			if rc.called == 0 {
+				t.Fatal("compactor was not invoked")
+			}
+			if buildCalls != 1 {
+				t.Fatalf("system prompt built %d times, want once", buildCalls)
+			}
+			if assembler != nil && assembler.called != 1 {
+				t.Fatalf("instruction fragments assembled %d times, want once", assembler.called)
+			}
+			if len(sent.Messages) == 0 || sent.Messages[len(sent.Messages)-1].Text != "x" {
+				t.Fatalf("provider request did not use compacted history: %+v", sent.Messages)
+			}
+			switch component {
+			case "system":
+				if sent.System.StablePrefix != filler {
+					t.Fatal("measured system prompt was not preserved in provider request")
+				}
+			case "fragments":
+				if sent.Messages[0].Text != filler {
+					t.Fatal("ephemeral fragment was not preserved ahead of compacted history")
+				}
+			case "tool schema":
+				if len(sent.Tools) != 1 || !strings.Contains(string(sent.Tools[0].Schema), filler) {
+					t.Fatalf("measured tool schema was not preserved in provider request: %+v", sent.Tools)
+				}
+			}
+		})
+	}
+}
+
+func TestAutomaticCompactionRejectsGrowingDefaultHeuristicCandidate(t *testing.T) {
+	const irreducible = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	sess := session.New("short", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	e := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalogWith(t), Policy: allowAll(), Model: "m",
+		Compactor: agent.HeuristicCompactor{}, TokenCounter: agent.HeuristicTokenCounter{CharsPerToken: 1},
+		ContextWindow: func() int { return 100 }, CompactionRatio: 0.8,
+		PromptBuilder: func(prompt.Config) prompt.Layered { return prompt.Layered{StablePrefix: irreducible} },
+	})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
+	for ev := range r.Events() {
+		if ev.Type == session.EvCompaction || ev.Type == session.EvCompactionArchive {
+			t.Fatalf("growing candidate emitted %s", ev.Type)
+		}
+	}
+	for _, message := range sess.Conversation.Messages {
+		if strings.Contains(message.Text, session.CompactionSummaryMarker) {
+			t.Fatalf("short history accumulated a summary: %q", message.Text)
+		}
+	}
+}
+
+func TestAutomaticCascadeUsesLiveCompleteRequestBudget(t *testing.T) {
+	call := session.NewToolCall("call", "Read", json.RawMessage(`{"path":"large"}`))
+	messages := []session.Message{session.NewUserMessage("goal")}
+	for i := 0; i < 70; i++ {
+		messages = append(messages, session.NewAssistantMessage(strings.Repeat("old response ", 10), "", nil))
+	}
+	messages = append(messages,
+		session.NewAssistantMessage("", "", []session.ToolCall{call}),
+		session.NewToolMessage(session.NewToolResult(call.ID, strings.Repeat("tool body ", 300))),
+	)
+	for i := 0; i < 6; i++ {
+		messages = append(messages, session.NewAssistantMessage("recent", "", nil))
+	}
+	sess := session.New("cascade-budget", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	if err := sess.SeedHistory(messages); err != nil {
+		t.Fatalf("SeedHistory: %v", err)
+	}
+	var sent port.LLMRequest
+	e := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { sent = req })}, mockllm.TextTurn("done")),
+		Catalog: catalogWith(t), Policy: allowAll(), Model: "m",
+		Compactor:    agent.CascadeCompactor{BudgetTokens: 128_000, Counter: agent.HeuristicTokenCounter{CharsPerToken: 1}},
+		TokenCounter: agent.HeuristicTokenCounter{CharsPerToken: 1}, ContextWindow: func() int { return 500 }, CompactionRatio: 0.8,
+	})
+	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "continue"})
+	for range r.Events() {
+	}
+	for _, message := range sent.Messages {
+		if message.ToolResult != nil && len(message.ToolResult.Content) > 300 {
+			t.Fatalf("cascade used configured 128k budget instead of request-local small-window target: %d-byte tool result", len(message.ToolResult.Content))
+		}
+	}
 }
 
 // TestCompactionTriggersAtThreshold drives the loop with a tiny context window so

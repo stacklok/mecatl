@@ -320,25 +320,84 @@ func conv(m Model) *fakeConv {
 }
 
 // feedModelSwitchBusiness executes the source-known model-switch batch: create or
-// carryover, then selection persistence. Each business leaf and every reducer
-// follow-up runs through feedCmd. It deliberately skips the spinner tick and the
-// outer textarea-focus blink; both lifecycle commands are irrelevant to these
-// business assertions, and focus already mutates synchronously.
+// carryover, then selection persistence. Each business leaf and every meaningful
+// reducer follow-up runs through feedCmd. It deliberately skips only lifecycle
+// waits: the spinner tick, outer textarea-focus blink, and a failed handoff's
+// focus/live-feed waits (focus and feed rearming already mutate the model
+// synchronously in that reducer).
 func feedModelSwitchBusiness(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
-	outerMsg := runCmd(cmd)
-	outer, ok := outerMsg.(tea.BatchMsg)
-	if !ok || len(outer) != 2 {
-		t.Fatalf("model switch command = %T with %d leaves, want outer Batch(business, focus)", outerMsg, len(outer))
+	batchMsg := runCmd(cmd)
+	batch, ok := batchMsg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("model switch command = %T, want business batch or outer Batch(business, focus)", batchMsg)
 	}
-	businessMsg := runCmd(outer[0])
-	business, ok := businessMsg.(tea.BatchMsg)
-	if !ok || len(business) != 3 {
+	business := batch
+	if len(batch) == 2 {
+		businessMsg := runCmd(batch[0])
+		business, ok = businessMsg.(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("outer model switch business command = %T, want Batch(create, save, spinner)", businessMsg)
+		}
+	}
+	if len(business) != 3 {
 		t.Fatalf("model switch business command has %d leaves, want create/save/spinner batch", len(business))
 	}
 
-	m = feedCmd(t, m, business[0])
+	msg := runCmd(business[0])
+	switch msg.(type) {
+	case modelSwitchReadyMsg, client.SessionReadyMsg:
+		mm, followup := m.Update(msg)
+		m = feedCmd(t, mm.(Model), followup)
+	case modelSwitchFailedMsg:
+		mm, followup := m.Update(msg)
+		m = mm.(Model)
+		if followup == nil {
+			t.Fatal("failed model switch returned no focus/rearm follow-up")
+		}
+		// The reducer synchronously focuses and rearms the source; the returned
+		// commands only wait for the textarea blink and live stream.
+	case restartFailedMsg:
+		mm, followup := m.Update(msg)
+		m = mm.(Model)
+		if followup != nil {
+			t.Fatal("failed plain create returned an unexpected follow-up")
+		}
+	default:
+		t.Fatalf("model switch business command returned unsupported message %T", msg)
+	}
 	return feedCmd(t, m, business[1])
+}
+
+func TestFeedModelSwitchBusinessHandlesPlainCreateFailure(t *testing.T) {
+	store := &fakeStore{}
+	m := newModelsModel(t, sampleModels(), store, modelsCaps(), client.ModelSelection{})
+	fake := conv(m)
+	fake.createErr = errors.New("create unavailable")
+	m = m.bindSessionID("")
+	sel := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"}
+
+	mm, cmd, handled := m.chooseModel(sel, "GPT-5 mini")
+	if !handled || cmd == nil {
+		t.Fatal("plain model switch did not return its create batch")
+	}
+	m = feedModelSwitchBusiness(t, mm.(Model), cmd)
+
+	if fake.createCount != 1 {
+		t.Fatalf("plain CreateSession calls = %d, want 1", fake.createCount)
+	}
+	if got := fake.closed(); len(got) != 0 {
+		t.Fatalf("no-source switch closed sessions = %v, want none", got)
+	}
+	if m.phase != phaseIdle || m.sessionID != "" || !m.restartFailed || !m.prompt.Focused() {
+		t.Fatalf("plain-create failure not recoverable: phase=%v session=%q restartFailed=%t focused=%t", m.phase, m.sessionID, m.restartFailed, m.prompt.Focused())
+	}
+	if statusText := stripANSIstr(m.statusMsg); !strings.Contains(statusText, "create unavailable") || !strings.Contains(statusText, "retry") {
+		t.Fatalf("plain-create failure status = %q, want error and retry affordance", statusText)
+	}
+	if store.saves != 1 || store.lastSel != sel {
+		t.Fatalf("selection persistence = saves:%d selection:%+v, want 1/%+v", store.saves, store.lastSel, sel)
+	}
 }
 
 func TestFeedModelSwitchBusinessExecutesBusinessFollowupsWithoutLifecycle(t *testing.T) {
@@ -347,9 +406,11 @@ func TestFeedModelSwitchBusinessExecutesBusinessFollowupsWithoutLifecycle(t *tes
 	conv(m).getSessionResults = []client.ResolvedModel{{ProviderID: "openrouter", ModelID: "hydrated-model"}}
 	m.phase = phaseConnecting
 	businessCalls, lifecycleCalls := 0, 0
+	var businessOrder []string
 	cmd := tea.Batch(tea.Batch(
 		func() tea.Msg {
 			businessCalls++
+			businessOrder = append(businessOrder, "create")
 			return modelSwitchReadyMsg{
 				token:    m.modelSwitchRequestToken,
 				sourceID: m.sessionID,
@@ -367,6 +428,7 @@ func TestFeedModelSwitchBusinessExecutesBusinessFollowupsWithoutLifecycle(t *tes
 		},
 		func() tea.Msg {
 			businessCalls++
+			businessOrder = append(businessOrder, "save")
 			return selectionSavedMsg{err: errors.New("save failed")}
 		},
 		func() tea.Msg { lifecycleCalls++; return struct{}{} },
@@ -375,6 +437,9 @@ func TestFeedModelSwitchBusinessExecutesBusinessFollowupsWithoutLifecycle(t *tes
 	m = feedModelSwitchBusiness(t, m, cmd)
 	if businessCalls != 2 {
 		t.Fatalf("business commands invoked = %d, want 2", businessCalls)
+	}
+	if got := strings.Join(businessOrder, ","); got != "create,save" {
+		t.Fatalf("business command order = %q, want create,save", got)
 	}
 	if lifecycleCalls != 0 {
 		t.Fatalf("lifecycle commands invoked = %d, want 0", lifecycleCalls)

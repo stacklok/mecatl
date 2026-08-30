@@ -30,6 +30,19 @@ func newModelSwitchHandoff(t *testing.T, loader client.SessionTranscripter) (Mod
 	return m, conv
 }
 
+func wireModelSwitchLiveFeed(m *Model) *fakeLiveStreamer {
+	live := &fakeLiveStreamer{stream: client.NewFakeEventStream()}
+	m.deps.LiveStream = live
+	return live
+}
+
+func assertModelSwitchSourceRearmed(t *testing.T, m Model, live *fakeLiveStreamer) {
+	t.Helper()
+	if m.liveArmed != "source" || m.liveCh == nil || live.calls != 1 || live.lastID != "source" {
+		t.Fatalf("source live feed not rearmed: liveArmed=%q liveCh=%v calls=%d lastID=%q", m.liveArmed, m.liveCh, live.calls, live.lastID)
+	}
+}
+
 func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 	loader := &handoffTranscriptLoader{transcript: client.SessionTranscript{
 		SessionID: "sess-test-0002", Complete: true,
@@ -59,7 +72,7 @@ func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 		t.Fatal("connecting handoff must not accept input or open Converse")
 	}
 
-	m = feedCmd(t, m, cmd)
+	m = feedModelSwitchBusiness(t, m, cmd)
 	if m.phase != phaseIdle || m.sessionID != "sess-test-0002" {
 		t.Fatalf("adopted state = phase:%v session:%q, want idle target", m.phase, m.sessionID)
 	}
@@ -107,11 +120,13 @@ func TestModelSwitchHandoffFailuresRetainSource(t *testing.T) {
 			m, conv := newModelSwitchHandoff(t, loader)
 			loader.conv = conv
 			tc.setup(conv, loader)
+			live := wireModelSwitchLiveFeed(&m)
 			mm, cmd, _ := m.chooseModel(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"}, "GPT-5 mini")
-			m = feedCmd(t, mm.(Model), cmd)
-			if m.phase != phaseIdle || m.sessionID != "source" || m.sessionTitle != "Source title" || m.sessionState != "completed" || m.sessionCreatedAt != 42 {
-				t.Fatalf("failure must retain source exactly: phase:%v id:%q title:%q state:%q created:%d", m.phase, m.sessionID, m.sessionTitle, m.sessionState, m.sessionCreatedAt)
+			m = feedModelSwitchBusiness(t, mm.(Model), cmd)
+			if m.phase != phaseIdle || m.sessionID != "source" || m.sessionTitle != "Source title" || m.sessionState != "completed" || m.sessionCreatedAt != 42 || !m.prompt.Focused() {
+				t.Fatalf("failure must retain and rearm source exactly: phase:%v id:%q title:%q state:%q created:%d focused:%t", m.phase, m.sessionID, m.sessionTitle, m.sessionState, m.sessionCreatedAt, m.prompt.Focused())
 			}
+			assertModelSwitchSourceRearmed(t, m, live)
 			if !strings.Contains(stripANSIstr(m.View().Content), "local source only") || strings.Contains(stripANSIstr(m.statusMsg), "conversation kept") {
 				t.Fatalf("failure must preserve source and never claim carryover: view=%q status=%q", m.View().Content, m.statusMsg)
 			}
@@ -128,7 +143,7 @@ func TestModelSwitchSourceCloseFailureDoesNotUndoTarget(t *testing.T) {
 	loader.conv = conv
 	conv.closeErr = errors.New("source close failed")
 	mm, cmd, _ := m.chooseModel(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"}, "GPT-5 mini")
-	m = feedCmd(t, mm.(Model), cmd)
+	m = feedModelSwitchBusiness(t, mm.(Model), cmd)
 	if m.phase != phaseIdle || m.sessionID != "sess-test-0002" || !strings.Contains(stripANSIstr(m.View().Content), "target") {
 		t.Fatalf("source close failure must keep adopted target: phase:%v id:%q", m.phase, m.sessionID)
 	}
@@ -164,12 +179,14 @@ func TestModelSwitchIgnoresStaleHandoffFailure(t *testing.T) {
 
 func TestModelSwitchWithoutTranscriptRetainsSourceAndCleansTarget(t *testing.T) {
 	m, conv := newModelSwitchHandoff(t, nil)
+	live := wireModelSwitchLiveFeed(&m)
 	mm, cmd, _ := m.chooseModel(client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5-mini"}, "GPT-5 mini")
-	m = feedCmd(t, mm.(Model), cmd)
+	m = feedModelSwitchBusiness(t, mm.(Model), cmd)
 
-	if m.phase != phaseIdle || m.sessionID != "source" || m.sessionTitle != "Source title" || m.sessionState != "completed" || m.sessionCreatedAt != 42 {
-		t.Fatalf("missing transcript must retain source exactly: phase:%v id:%q title:%q state:%q created:%d", m.phase, m.sessionID, m.sessionTitle, m.sessionState, m.sessionCreatedAt)
+	if m.phase != phaseIdle || m.sessionID != "source" || m.sessionTitle != "Source title" || m.sessionState != "completed" || m.sessionCreatedAt != 42 || !m.prompt.Focused() {
+		t.Fatalf("missing transcript must retain and rearm source exactly: phase:%v id:%q title:%q state:%q created:%d focused:%t", m.phase, m.sessionID, m.sessionTitle, m.sessionState, m.sessionCreatedAt, m.prompt.Focused())
 	}
+	assertModelSwitchSourceRearmed(t, m, live)
 	if !strings.Contains(stripANSIstr(m.View().Content), "local source only") || strings.Contains(stripANSIstr(m.statusMsg), "conversation kept") {
 		t.Fatalf("missing transcript must preserve source without a success receipt: view=%q status=%q", m.View().Content, m.statusMsg)
 	}

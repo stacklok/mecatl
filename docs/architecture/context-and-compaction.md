@@ -17,19 +17,35 @@ compaction, engine introspection, session echoes, model listings, per-session en
 and provider-bound children. The operator-owned exact-map decision is recorded in
 [ADR 0207](../adr/0207-context-window-overrides.md).
 
-- **`TokenCounter`** (`engine/agent/tokencount.go`) estimates message-slice token cost.
-  The default `HeuristicTokenCounter` (≈chars/4) needs no dependencies; the
-  offline **`tokenizer.Counter`** (`internal/adapter/tokenizer`, tiktoken BPE
-  tables embedded — no network, no CGO) is the accurate swap-in, selected with
-  `--tokenizer=tiktoken`.
-- **`Compactor`** (`engine/agent/compaction.go`) compresses the conversation once it
-  crosses the trigger ratio. The default `HeuristicCompactor` is single-summary:
-  it preserves the goal + touched file paths, truncates large tool bodies, and
-  keeps the last N messages. The swap-in `CascadeCompactor` (`engine/agent/cascade.go`,
-  `--compaction=cascade`) runs a **cheapest-first tiered cascade** —
-  snip → strip tool bodies → collapse large file bodies → summarize — stopping as
-  soon as the slice fits the token budget, with trigger/target **hysteresis** so
-  it does not thrash near the threshold.
+- **`TokenCounter`** (`engine/agent/tokencount.go`) estimates model-visible request
+  cost. The default `HeuristicTokenCounter` (about chars/4) needs no dependencies;
+  the offline **`tokenizer.Counter`** (`internal/adapter/tokenizer/tokenizer.go`,
+  tiktoken BPE tables embedded, no network or CGO) is the accurate swap-in selected
+  with `--tokenizer=tiktoken`. Both count message framing, reasoning, tool calls,
+  message parts, and typed tool-result parts. For a tool result they use the larger
+  of flattened `Content` and `Parts`, which avoids double-counting alternate
+  projections without treating typed-only results as free.
+- **Automatic trigger.** Before every model turn, `engine/agent/loop.go`
+  (`estimateRequestTokens`) estimates the complete `port.LLMRequest`: the rendered
+  system prompt, ephemeral turn-0 fragments plus persisted conversation messages,
+  and every advertised tool's name, description, JSON schema, and envelope overhead.
+  At the default ratio, `maybeCompact` runs when that estimate reaches **0.8** of the
+  resolved window. Only `Session.Conversation` is compactible. System instructions,
+  ephemeral fragments, and tool definitions remain in the request, so they are
+  irreducible overhead and can by themselves keep the estimate above the trigger.
+  After a successful pass the loop rebuilds only the message suffix; the system and
+  tool layers remain byte-for-byte unchanged.
+- **`Compactor`** (`engine/agent/compaction.go`) compresses persisted conversation
+  history once the trigger is crossed. The default `HeuristicCompactor` is
+  single-summary: it preserves the goal + touched file paths, truncates large tool
+  bodies, and keeps the last N messages. The swap-in `CascadeCompactor`
+  (`engine/agent/cascade.go`, `--compaction=cascade`) runs a **cheapest-first tiered
+  cascade**: snip, strip tool bodies, collapse large file bodies, then summarize. On
+  automatic compaction it derives a request-local target from the same live window:
+  complete request ≤ **0.6** of the window, minus measured irreducible system, fragment,
+  and tool-schema overhead for the compactible persisted-history budget. The configured
+  cascade budget remains the manual-pass behavior. This 0.8/0.6 trigger/target hysteresis
+  avoids thrash and prevents a fixed 128k target from no-oping on a smaller live window.
 
   Both compactors **back-snap the kept-tail boundary to recent user turns** (the
   shared `snapCutToRecentUserTurn` helper) so the most-recent user instruction(s)
@@ -50,6 +66,38 @@ and provider-bound children. The operator-owned exact-map decision is recorded i
   `agent.ErrCompactionWouldOrphan` sentinel; the loop treats it like any other
   compaction failure (keep the uncompacted history, WARN, continue). The aggregate
   itself backstops this: `Session.ReplaceHistory` rejects an unpaired slice.
+
+## Manual compaction
+
+Automatic compaction waits for the 0.8 trigger. A client can instead request one
+forced pass through `engine/agent/manual_compaction.go` (`CompactSession`), regardless
+of the current estimate. This is an out-of-band session operation, not a prompt or
+model turn. The configured compactor still applies, so the cascade's summary tier can
+make a compaction-slot model call and incur its normal cost.
+
+`internal/adapter/server/service.go` (`CompactSession`) accepts owned main-chat
+sessions at a turn boundary: idle, completed, cancelled, or failed. It rejects
+running and awaiting sessions, delegation and scheduled sessions, and any same-process
+live run. The per-session run-entry lock serializes it with prompt start, and a
+configured mutation lease excludes another server replica. Rehydrated sessions use
+their persisted provider/model/profile engine rather than the shared default.
+
+An empty, identical, pairing-invalid, or non-reducing candidate is never applied (pairing
+invalidity is reported; the other cases are successful no-ops). Automatic compaction uses
+the same admission gate, so irreducible overhead cannot make short histories grow by
+accumulating summaries. A manual no-op reports no change and the service performs no save
+or event append. On a real change,
+the service saves the compacted snapshot first, then appends the existing
+`EvCompaction` notice and `EvCompactionArchive` in order. A save failure returns an
+error before either event. Event-log append failure is best-effort after commit: it is
+warned and does not roll back or retry the compacted snapshot, so the event log can
+lack the notice or archive.
+
+The operation is exposed as gRPC `CompactSession` and bodyless HTTP
+`POST /v1/sessions/{id}/compact`. `ServerCapabilities.manual_compaction` lets clients
+hide it when talking to an older server. Mecatui uses that bit for its bare `/compact`
+built-in; the command is local control flow and never becomes model input. These
+additive decisions are recorded in [ADR 0244](../adr/0244-full-request-and-manual-compaction.md).
 
 ## Prerequisites
 

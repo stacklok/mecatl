@@ -16,11 +16,6 @@ import (
 // are a Model concern — they mutate model state (clear the conversation, open an
 // overlay) rather than talking to the server. They coexist with server-side
 // workspace commands in the palette; see mergeCommands for precedence.
-//
-// Note: /compact is intentionally NOT a built-in. Compaction is a server
-// operation with no client-reachable RPC today, so a "/compact" built-in would
-// have nothing to call. It is a follow-up that needs a proto message + server
-// RPC before the ui can offer it.
 type builtin struct {
 	name string
 	desc string
@@ -39,6 +34,7 @@ type wiredCollaborators struct {
 	UserModel   bool
 	Reflections bool
 	Dream       bool
+	Compactor   bool
 	Models      bool // mirrors client.Capabilities.ModelSelection
 	Worktrees   bool
 	Scheduling  bool
@@ -60,6 +56,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Reflections: m.deps.Reflections != nil,
 		Dream:       m.deps.Dream != nil,
+		Compactor:   m.deps.Compactor != nil,
 		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		Sessions: m.deps.Sessions != nil && m.deps.Transcript != nil,
 		Learning: m.deps.Learning != nil,
@@ -112,6 +109,13 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "retry the last eligible failed model step without resending its prompt",
 			run:  Model.runFailedStepRetry,
 		},
+	}
+	if caps.ManualCompaction && w.Compactor {
+		out = append(out, builtin{
+			name: "compact",
+			desc: "compact this session's model history",
+			run:  Model.runCompact,
+		})
 	}
 	if caps.MCP && w.MCP {
 		out = append(out, builtin{
@@ -338,6 +342,29 @@ func (m Model) closeSessionCmd(id string) tea.Cmd {
 	}
 }
 
+func (m Model) runCompact() (tea.Model, tea.Cmd) {
+	if m.phase != phaseIdle {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot compact while a run is active")
+		return m, nil
+	}
+	if m.sessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot compact: no active session")
+		return m, nil
+	}
+	if m.compactPending {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("session compaction is already in progress")
+		return m, nil
+	}
+	if m.deps.Compactor == nil || !m.caps.ManualCompaction {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("/compact is not available on this server")
+		return m, nil
+	}
+	m.compactPending = true
+	m.compactRequestToken++
+	m.statusMsg = m.deps.Theme.Style("muted").Render("compacting model history…")
+	return m, client.CompactSessionCmd(m.deps.Ctx, m.deps.Compactor, m.sessionID, m.compactRequestToken)
+}
+
 // runHelp opens the "?" keys-&-features overlay — the same state the "?" key
 // sets (see onIdleKey). It blurs the textarea so the overlay owns the keyboard.
 func (m Model) runHelp() (tea.Model, tea.Cmd) {
@@ -537,12 +564,14 @@ func allBuiltins() map[string]bool {
 	allCaps := client.Capabilities{
 		MCP: true, Agents: true, Teams: true, Skills: true, Soul: true,
 		UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true,
-		Posture: "yes",
+		ManualCompaction: true,
+		Posture:          "yes",
 	}
 	allWired := wiredCollaborators{
 		MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true,
 		Models: true, Worktrees: true, Scheduling: true, Sessions: true, Learning: true,
-		DebugAsk: true,
+		Compactor: true,
+		DebugAsk:  true,
 	}
 	set := make(map[string]bool, 14)
 	for _, b := range builtinCommands(allCaps, allWired) {
@@ -568,7 +597,12 @@ func isKnownBuiltinName(name string) bool {
 // send with a warning. Otherwise it returns handled=false and the caller falls
 // through to the model-facing send path (workspace/custom command, issue #348).
 func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
-	name, ok := commandPrefix(strings.TrimSpace(text))
+	trimmed := strings.TrimSpace(text)
+	if fields := strings.Fields(trimmed); len(fields) > 0 && strings.EqualFold(fields[0], "/compact") && trimmed != fields[0] {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("/compact takes no arguments; use bare /compact")
+		return m, nil, true
+	}
+	name, ok := commandPrefix(trimmed)
 	if !ok {
 		return m, nil, false
 	}

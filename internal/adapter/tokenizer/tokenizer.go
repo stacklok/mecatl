@@ -11,7 +11,9 @@
 package tokenizer
 
 import (
+	"encoding/base64"
 	"fmt"
+	"strconv"
 
 	"github.com/tiktoken-go/tokenizer"
 
@@ -36,9 +38,12 @@ const (
 // history from being undercounted, matching the heuristic counter's intent.
 const perMessageOverhead = 4
 
-// perToolCallOverhead is the framing-token cost attributed to each tool call
-// (id + JSON envelope) on top of its encoded name and arguments.
+// perToolCallOverhead is the framing-token cost attributed to each tool-call
+// envelope. IDs, names, arguments, and provider item IDs are encoded separately.
 const perToolCallOverhead = 4
+
+// perContentPartOverhead covers the provider's typed-block envelope and discriminator.
+const perContentPartOverhead = 4
 
 // Counter is a tiktoken-backed agent.TokenCounter. It is safe for concurrent use:
 // the underlying codec is read-only after construction.
@@ -93,13 +98,48 @@ func (c *Counter) CountMessages(msgs []session.Message) int {
 		total += perMessageOverhead
 		total += c.Count(m.Text)
 		total += c.Count(m.Reasoning)
+		total += c.Count(m.ProviderPhase)
+		total += c.Count(m.ReasoningItemID)
 		for _, call := range m.ToolCalls {
 			total += perToolCallOverhead
+			total += c.Count(string(call.ID))
 			total += c.Count(call.Name)
 			total += c.Count(string(call.Args))
+			total += c.Count(call.ItemID)
 		}
 		if m.ToolResult != nil {
-			total += c.Count(m.ToolResult.Content)
+			total += c.Count(string(m.ToolResult.CallID))
+			total += max(c.Count(m.ToolResult.Content), c.countContentParts(m.ToolResult.Parts))
+		}
+		total += c.countContentParts(m.Parts)
+	}
+	return total
+}
+
+func (c *Counter) countContentParts(parts []session.Content) int {
+	total := 0
+	for _, p := range parts {
+		total += perContentPartOverhead
+		data := string(p.Data)
+		if len(p.Data) > 0 && (p.Kind == session.MediaImage || p.Kind == session.MediaAudio) {
+			data = base64.StdEncoding.EncodeToString(p.Data)
+		}
+		// Resource metadata is conservatively counted because shared provider routing
+		// may render it into model-visible text. Fixed overhead covers framing only.
+		for _, value := range []string{
+			string(p.BlockKind), string(p.Kind), p.MIMEType, data, p.URL,
+			p.Text, p.Name, p.Title, p.Description, p.LastModified,
+		} {
+			total += c.Count(value)
+		}
+		if p.Size != 0 {
+			total += c.Count(strconv.FormatInt(p.Size, 10))
+		}
+		if p.Priority != 0 {
+			total += c.Count(strconv.FormatFloat(p.Priority, 'g', -1, 64))
+		}
+		for _, audience := range p.Audience {
+			total += c.Count(audience)
 		}
 	}
 	return total

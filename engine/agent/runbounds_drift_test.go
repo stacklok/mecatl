@@ -41,6 +41,7 @@ func TestRunBoundsInventoryIsComplete(t *testing.T) {
 	want := []bound{
 		{"defaultNoProgressNudges", 2},
 		{"defaultCompactionRatio", 0.8},
+		{"compactionTargetRatio", 0.6},
 		{"defaultMaxConcurrentChildren", 8},
 		{"defaultStructuredOutputRetries", 2},
 		{"MinSubagentRunTokens", 25_000},
@@ -61,6 +62,8 @@ func TestRunBoundsInventoryIsComplete(t *testing.T) {
 			got = defaultNoProgressNudges
 		case "defaultCompactionRatio":
 			got = defaultCompactionRatio
+		case "compactionTargetRatio":
+			got = compactionTargetRatio
 		case "defaultMaxConcurrentChildren":
 			got = defaultMaxConcurrentChildren
 		case "defaultStructuredOutputRetries":

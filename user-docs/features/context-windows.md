@@ -6,10 +6,10 @@ description: Control how mecatl resolves model context windows and compacts long
 
 # Context windows
 
-A model's context window is the maximum token budget for the request history and
-current instructions. Mecatl uses the resolved window to decide when a growing
-conversation needs compaction. You normally do not invoke compaction yourself;
-the loop checks before each turn and continues after it succeeds.
+A model's context window is the maximum token budget for the complete request: current
+instructions, conversation history, and tool definitions. Mecatl checks that request
+before each turn and compacts stored history when needed. You can also request one
+manual pass before the next turn.
 
 ## Availability
 
@@ -55,8 +55,13 @@ resolved model and window are authoritative.
 
 ## Automatic compaction
 
-By default, compaction starts when estimated conversation usage approaches 80%
-of the resolved window. Choose the strategy with `--compaction`:
+By default, compaction starts when the estimated complete model request reaches
+80% of the resolved window. The estimate includes the rendered system prompt,
+ephemeral project and memory instructions, conversation messages, typed tool
+results, and advertised tool schemas. Only persisted conversation history can be
+compacted. System instructions, ephemeral fragments, and tool definitions are
+fixed overhead, so a large fixed prompt can still leave little room after a pass.
+Choose the strategy with `--compaction`:
 
 - `heuristic` (default) preserves the goal, recently touched paths, and recent
   messages while truncating large tool bodies;
@@ -85,6 +90,21 @@ A successful compaction emits a compaction event and archives the pre-compaction
 conversation in the durable event log when one is configured. The archive lets
 operators reconstruct earlier context even though the active session history is
 shorter.
+
+## Compact manually in mecatui
+
+When the server advertises manual compaction, enter bare `/compact` while the
+session is idle. The command runs one pass without waiting for the 80% trigger. It
+does not send a prompt or start a chat turn, and the TUI keeps your visible
+scrollback. A notice says whether model history changed or was already compact.
+
+The configured strategy still applies. A cascade pass that reaches its summary tier
+can make a compaction-model call, so the operation may cost tokens even though it
+creates no chat turn. Active runs and pending approvals must finish first. Older
+servers hide the command. API clients can use gRPC `CompactSession` or bodyless
+`POST /v1/sessions/{id}/compact`; see the [gRPC](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md)
+and [HTTP](https://github.com/stacklok/mecatl/blob/main/docs/usage/http-sse-api.md)
+operator references for state, ownership, lease, and response details.
 
 ## Context and cost limits
 

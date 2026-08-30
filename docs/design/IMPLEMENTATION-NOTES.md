@@ -2867,6 +2867,64 @@ the DATA framing + the "only memory"/"preserved verbatim" framing, via
 `mockllm.WithRequestObserver`), budget-in-instruction, empty-summary
 abort, missing-sections/over-long acceptance, pairing preservation, and LLM-error abort.
 
+**Full-request trigger accounting and manual compaction (ADR 0244).** The user-visible
+failure was a provider context rejection before automatic compaction fired. History-only
+accounting omitted prompt layers that are sent on every call. `engine/agent/loop.go`
+(`estimateRequestTokens`) now measures the already-built `port.LLMRequest`: rendered
+`System`, all `Messages` (ephemeral fragments plus persisted history), and every advertised
+tool's name, description, schema, and `perToolSpecOverhead`. `maybeCompact` compares that
+complete estimate with `ContextWindow() * CompactionRatio` (default 0.8). For the
+cascade, that same live window yields a request-local 0.6 complete-request target;
+`maybeCompact` subtracts the measured system/fragment/tool overhead and passes the safely
+floored remainder through the internal budgeted-compactor seam. The configured 128k-derived
+cascade budget remains the manual-compaction behavior and can no longer make automatic
+compaction no-op for a smaller live model or override. The compactor still sees only
+`sess.Conversation`: system text, ephemeral fragments, and tool schemas are irreducible
+overhead. After a successful replacement it rebuilds only `req.Messages` from the unchanged
+fragments plus compacted history. A large fixed prompt/tool surface can keep the request
+above the trigger even after all useful history reduction.
+
+Both counters now include typed content. `engine/agent/tokencount.go`
+(`HeuristicTokenCounter`) and `internal/adapter/tokenizer/tokenizer.go` (`Counter`) count
+message `Parts` and every potentially model-visible `Content` field plus a per-part
+envelope. Replay payload accounting includes tool-call/result IDs, provider phase,
+reasoning-item IDs, and provider item IDs; fixed overhead now covers framing only. Inline
+image/audio bytes use their base64-expanded model projection. Resource metadata remains
+conservatively counted because shared provider routing may render it into model-visible
+text. For `ToolResult`, the counters add `max(count(Content), count(Parts))`: adapters may
+send either the flattened compatibility text or typed blocks, and summing both would
+double-charge mirrored payloads. Advertised tool specs are counted in
+`estimateRequestTokens`, not `CountMessages`, because they belong to the request rather than
+persisted conversation.
+
+`engine/agent/manual_compaction.go` (`CompactSession`) is the forced, threshold-independent
+pass. It deep-copies input for the configured compactor. The same private candidate gate is
+used by automatic compaction: it accepts only non-active aggregate states for manual calls,
+validates pairing, and applies a candidate only when it is non-empty, different, and strictly
+smaller under `CountMessages`. Empty/identical/non-reducing output is a successful no-op. `engine/session/session.go` (`ReplaceHistoryAtBoundary`) permits idle, completed,
+cancelled, and failed while preserving state and metadata; running and awaiting are illegal.
+The configured cascade can still enter its tier-4 summarizer, so "no chat turn" does not mean
+"no model cost" when the compaction slot is needed.
+
+`internal/adapter/server/service.go` (`CompactSession`) makes the operation durable and
+caller-safe: reject delegation-child ids, verify ownership without creating an oracle,
+require main-chat purpose, take `runEntryMu`, reject `IsLive`, acquire the mutation lease,
+reload/revalidate, rehydrate the session engine when needed, then compact. A changed snapshot
+is saved before `EvCompaction` and `EvCompactionArchive` are appended in that order with actor
+attribution. No-op means no save and no events. Save failure returns `ErrInternal` and appends
+nothing. Event-log append is best-effort after commit: each append is attempted, failures WARN,
+and the operation neither rolls back nor retries, so a compacted snapshot can exist without a
+complete archive trail.
+
+The wire additions are `contracts/proto/mecatl/v1/harness.proto` (`CompactSessionRequest`),
+`CompactSessionResponse.compacted`, and additive `ServerCapabilities.manual_compaction`, plus
+the bodyless HTTP mirror. `cmd/mecatui/ui/builtins.go` (`runCompact`) exposes `/compact` only
+when both the capability and collaborator exist. It requires the bare command, an active
+session, no live run, and no pending compact request; while pending it blocks prompt submit.
+Success adds a durable local scrollback notice but leaves existing transcript cards in place.
+Older servers leave the capability false, so the palette hides the built-in and typed use is
+rejected locally rather than sent as a prompt.
+
 ## Run-bound knobs — index
 
 The run-bound knobs (turn/tool-call/round caps, token budgets, no-progress nudges,
@@ -2904,6 +2962,7 @@ new cascade tier knob does not.
 |---|---|---|---|---|
 | no-progress nudge cap | 2 | `engine/agent/loop.go` (`defaultNoProgressNudges`) | shared loop (main + Subagent + team member + lead synthesis + Parallel) | `Deps.MaxNoProgressNudges` ← `Config.MaxNoProgressNudges`; `<0` disables, `0`→this |
 | compaction trigger ratio | 0.8 | `engine/agent/loop.go` (`defaultCompactionRatio`) | shared loop | `Deps.CompactionRatio` ← `Config.CompactionRatio`; `(0,1]` overrides, else this |
+| automatic cascade complete-request target ratio | 0.6 | `engine/agent/loop.go` (`compactionTargetRatio`) | request-local automatic cascade budget | not separately configurable; irreducible request overhead is subtracted |
 | child concurrency gate | 8 | `engine/agent/subagent.go` (`defaultMaxConcurrentChildren`) | Subagent fan-out (forking + forker-less) | `WithMaxConcurrentChildren`; `<1`→1 |
 | structured-output retries | 2 | `engine/agent/subagent.go` (`defaultStructuredOutputRetries`) | per Subagent `output_schema` call | not configurable (correction re-drives) |
 | subagent run-token floor | 25 000 | `engine/agent/subagent.go` (`MinSubagentRunTokens`) | per-call `MaxRunTokensOverride` floor | tighten-only floor; raises a below-floor override |
@@ -2927,7 +2986,7 @@ new cascade tier knob does not.
 | deployment max-tool-calls | 8000 | `internal/app/build.go` (`deploymentMaxToolCalls`) | main engine `Deps.Limits` | `Config.Limits` ← `defaultLimits()`; no CLI flag |
 | deployment max-consecutive-failures | 5 | `internal/app/build.go` (`deploymentMaxConsecutiveFailures`) | main engine `Deps.Limits` | `Config.Limits` ← `defaultLimits()`; no CLI flag |
 | compaction trigger ratio (composition) | 0.8 | `internal/app/build.go` (`defaultCompactionRatio`) | shared engine compactor | `Config.CompactionRatio`; **duplicated in** `engine/agent/loop.go` (`defaultCompactionRatio`) — both pinned to 0.8, keep in sync |
-| cascade compaction target ratio | 0.6 | `internal/app/build.go` (`defaultCompactionTargetRatio`) | cascade compactor reduce-toward target | not separately configurable |
+| configured cascade target ratio | 0.6 | `internal/app/build.go` (`defaultCompactionTargetRatio`) | configured `CascadeCompactor.BudgetTokens`, retained for manual compaction | not separately configurable; automatic compaction supplies its request-local target |
 | context-window floor | 128 000 | `internal/app/build.go` (`defaultContextWindowTokens`) | context-window resolver terminal floor | `--context-window-override` wins |
 
 ### Precedence (the MaxTurns axis; same shape applies to the other bounds)

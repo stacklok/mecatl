@@ -80,7 +80,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 // The fixed order is clear, help, session, mcp, agents, team, skills, soul, usermodel,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {
-	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, Posture: "auto"}
+	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, ManualCompaction: true, Posture: "auto"}
 	cases := []struct {
 		name string
 		caps client.Capabilities
@@ -88,6 +88,9 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		want []string
 	}{
 		{"bare", client.Capabilities{}, wiredCollaborators{}, []string{"clear", "help"}},
+		{"compact cap but not wired", client.Capabilities{ManualCompaction: true}, wiredCollaborators{}, []string{"clear", "help"}},
+		{"compact wired but no cap", client.Capabilities{}, wiredCollaborators{Compactor: true}, []string{"clear", "help"}},
+		{"compact cap and wired", client.Capabilities{ManualCompaction: true}, wiredCollaborators{Compactor: true}, []string{"clear", "help", "compact"}},
 		{"mcp cap but not wired", client.Capabilities{MCP: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"mcp wired but no cap", client.Capabilities{}, wiredCollaborators{MCP: true}, []string{"clear", "help"}},
 		{"mcp cap and wired", client.Capabilities{MCP: true}, wiredCollaborators{MCP: true}, []string{"clear", "help", "mcp"}},
@@ -121,8 +124,8 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{
 			"all",
 			all,
-			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true, Sessions: true},
-			[]string{"clear", "help", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "sessions", "posture"},
+			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true, Sessions: true, Compactor: true},
+			[]string{"clear", "help", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "sessions", "posture"},
 		},
 	}
 	for _, tc := range cases {
@@ -749,7 +752,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "session", "retry", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"clear", "help", "session", "retry", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}

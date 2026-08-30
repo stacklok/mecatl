@@ -28,6 +28,7 @@ import (
 //	DELETE /v1/sessions/{id}          -> CloseSession (release session resources; 204)
 //	POST   /v1/sessions/{id}/rename   -> RenameSession (persist an explicit title)
 //	POST   /v1/sessions/{id}/delete   -> DeleteSession (physical snapshot + sidecars)
+//	POST   /v1/sessions/{id}/compact  -> CompactSession (bodyless manual compaction)
 //	POST   /v1/sessions/{id}/prompt   -> start a run; text/event-stream of Events
 //	POST   /v1/sessions/{id}/approve  -> resolve the paused ask on the run
 //	POST   /v1/sessions/{id}/cancel   -> cancel the in-flight run
@@ -52,6 +53,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("DELETE /v1/sessions/{id}", h.closeSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/rename", h.renameSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/delete", h.deleteSession)
+	h.mux.HandleFunc("POST /v1/sessions/{id}/compact", h.compactSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/prompt", h.prompt)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/retry", h.retry)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/approve", h.approve)
@@ -229,6 +231,7 @@ type serverCapabilitiesJSON struct {
 	StorageCleanup    bool                              `json:"storage_cleanup"`
 	LegacyAdoption    bool                              `json:"legacy_adoption"`
 	ManualDream       *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
+	ManualCompaction  bool                              `json:"manual_compaction"`
 	Posture           string                            `json:"posture,omitempty"`
 }
 
@@ -255,6 +258,7 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		StorageCleanup:    c.GetStorageCleanup(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
 		ManualDream:       c.GetManualDream(),
+		ManualCompaction:  c.GetManualCompaction(),
 		Posture:           c.GetPosture(),
 	}
 }
@@ -960,6 +964,21 @@ func (h *HTTPHandler) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// compactSession handles the bodyless POST /v1/sessions/{id}/compact action.
+func (h *HTTPHandler) compactSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	result, err := h.svc.CompactSession(r.Context(), session.SessionID(id), session.PrincipalFromContext(r.Context()))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.CompactSessionResponse{Compacted: result.Changed})
 }
 
 // cancel handles POST /v1/sessions/{id}/cancel, cancelling the in-flight run.

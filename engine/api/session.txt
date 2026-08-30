@@ -34,6 +34,7 @@
     method func (*Session).RenameTitle(text string) error
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
+    method func (*Session).ReplaceHistoryAtBoundary(messages []Message) error
     method func (*Session).ResetUsage() error
     method func (*Session).RestoreFailedStepRetryPending(disposition RetryDisposition, progress StreamProgress) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error

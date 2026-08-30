@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,7 +54,7 @@ func modelSlotSpecs() {
 					"--compaction", "cascade",
 					"--model-alias", "cheap="+cheap,
 					"--model-slot", "compaction=cheap",
-					"--max-run-tokens", envOrDefault("MECATL_E2E_COMPACTION_MAX_RUN_TOKENS", "150000"),
+					"--max-run-tokens", envOrDefault("MECATL_E2E_COMPACTION_MAX_RUN_TOKENS", "300000"),
 				)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawn local mecated with --model-slot")
 				defer func() { _ = spawn.Close() }()
@@ -70,9 +71,10 @@ func modelSlotSpecs() {
 				gomega.Expect(startLog).To(gomega.ContainSubstring(cheap),
 					"the slot fact must name the resolved cheap model "+cheap+logTail())
 
-				// (B) Drive a session that triggers a real compaction (the same Read-bury
-				// arithmetic as the compaction spec), then assert a compaction fired and
-				// the runs ended cleanly — the tier-4 summary (slot model) ran live.
+				// (B) Drive enough deterministic padding turns to grow compactible history
+				// past the complete-request threshold and yield a reducing tier-4 summary,
+				// then assert a compaction fired and the runs ended cleanly — the tier-4
+				// summary (slot model) ran live.
 				var runs []*harness.RunResult
 				runTurn := func(scenario, prompt string) *harness.RunResult {
 					ginkgo.GinkgoHelper()
@@ -90,10 +92,16 @@ func modelSlotSpecs() {
 				}
 
 				runTurn("slot-0-framing", `You are helping me. Reply with the single word ready.`)
-				readPrompt := `Read the file compaction-input.txt in the workspace and reply with the single word ok.`
-				runTurn("slot-1-read", readPrompt)
-				runTurn("slot-2-read", readPrompt)
-				last := runTurn("slot-3-read", readPrompt)
+				// Grow persisted history directly with deterministic user text. Depending on
+				// repeated Read calls made this test model-behaviour-dependent: after the
+				// first Read, a model can legitimately reuse the prior result. Seven turns
+				// put several large messages outside the cascade's preserved tail.
+				paddingPrompt := strings.Repeat("deterministic compaction padding ", 240) +
+					"\nReply with the single word ok."
+				for i := 1; i <= 7; i++ {
+					runTurn("slot-padding-"+strconv.Itoa(i), paddingPrompt)
+				}
+				last := runTurn("slot-trigger", `Reply with the single word done.`)
 
 				totalCompactions := 0
 				for _, r := range runs {

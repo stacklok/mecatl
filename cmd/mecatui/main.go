@@ -328,6 +328,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: cliconfig.JoinPromptBody(cfg.prompt, cfg.promptFileBody),
 	})
+	wireManualCompaction(&deps, cl)
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
@@ -602,6 +603,10 @@ func setupSignalHandler() (context.Context, chan struct{}) {
 // already bounded to ~40s by tasks #1+#2, so 45s normally lets it complete; on
 // timeout the process exits 1 rather than hang (the signal goroutine stays armed
 // the whole time, so an operator Ctrl+C also force-exits a wedged cleanup).
+func wireManualCompaction(deps *ui.Deps, compactor client.SessionCompactor) {
+	deps.Compactor = compactor
+}
+
 func runCleanup(forceExit chan struct{}, cleanup func()) {
 	cleanupDone := make(chan struct{})
 	go func() {

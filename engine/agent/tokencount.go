@@ -1,6 +1,11 @@
 package agent
 
-import "github.com/stacklok/mecatl/engine/session"
+import (
+	"strconv"
+
+	"github.com/stacklok/mecatl/engine/prompt"
+	"github.com/stacklok/mecatl/engine/session"
+)
 
 // TokenCounter estimates how many model tokens a piece of text or a slice of
 // conversation messages occupies. It is a seam (ARCHITECTURE.md §8, gauntlet
@@ -20,6 +25,30 @@ type TokenCounter interface {
 	// summing each message's text/reasoning/tool bodies plus the per-message and
 	// per-role framing overhead the provider adds on the wire.
 	CountMessages(msgs []session.Message) int
+}
+
+// byteTokenCounter and layeredTokenCounter let in-package counters avoid temporary
+// strings while keeping TokenCounter's public compatibility surface unchanged.
+type byteTokenCounter interface {
+	countBytes([]byte) int
+}
+
+type layeredTokenCounter interface {
+	countLayered(prompt.Layered) int
+}
+
+func countBytes(counter TokenCounter, text []byte) int {
+	if c, ok := counter.(byteTokenCounter); ok {
+		return c.countBytes(text)
+	}
+	return counter.Count(string(text))
+}
+
+func countLayered(counter TokenCounter, system prompt.Layered) int {
+	if c, ok := counter.(layeredTokenCounter); ok {
+		return c.countLayered(system)
+	}
+	return counter.Count(system.Render())
 }
 
 // estimateZeroUsageInput implements the issue-#82 DISPLAY-ONLY zero-usage input
@@ -50,8 +79,15 @@ const charsPerToken = 4
 const perMessageOverhead = 4
 
 // perToolCallOverhead is the fixed token cost the heuristic attributes to each
-// tool call for its id and JSON envelope, on top of the name and argument bytes.
+// tool-call envelope. IDs, names, arguments, and provider item IDs are counted
+// separately as transmitted payload.
 const perToolCallOverhead = 4
+
+// perToolSpecOverhead covers the advertised tool-definition envelope.
+const perToolSpecOverhead = 4
+
+// perContentPartOverhead covers the provider's typed-block envelope and discriminator.
+const perContentPartOverhead = 4
 
 // HeuristicTokenCounter is the default, dependency-free TokenCounter. It divides
 // byte length by charsPerToken and adds a small fixed overhead per message and
@@ -66,39 +102,75 @@ type HeuristicTokenCounter struct {
 
 // Count implements TokenCounter for a single string.
 func (h HeuristicTokenCounter) Count(text string) int {
-	cpt := charsPerToken
-	if h.CharsPerToken > 0 {
-		cpt = h.CharsPerToken
+	return len(text) / h.charsPerToken()
+}
+
+func (h HeuristicTokenCounter) countBytes(text []byte) int {
+	return len(text) / h.charsPerToken()
+}
+
+func (h HeuristicTokenCounter) countLayered(system prompt.Layered) int {
+	length := len(system.StablePrefix) + len(system.VolatileSuffix)
+	if system.StablePrefix != "" && system.VolatileSuffix != "" {
+		length += len("\n\n")
 	}
-	return len(text) / cpt
+	return length / h.charsPerToken()
+}
+
+func (h HeuristicTokenCounter) charsPerToken() int {
+	if h.CharsPerToken > 0 {
+		return h.CharsPerToken
+	}
+	return charsPerToken
 }
 
 // CountMessages implements TokenCounter for a conversation slice, summing the
 // text/reasoning/tool bodies (divided by the chars-per-token ratio) plus the
 // fixed per-message and per-tool-call framing overhead.
 func (h HeuristicTokenCounter) CountMessages(msgs []session.Message) int {
-	cpt := charsPerToken
-	if h.CharsPerToken > 0 {
-		cpt = h.CharsPerToken
-	}
+	cpt := h.charsPerToken()
 	total := 0
 	for _, m := range msgs {
 		total += perMessageOverhead
-		total += (len(m.Text) + len(m.Reasoning)) / cpt
+		total += (len(m.Text) + len(m.Reasoning) + len(m.ProviderPhase) + len(m.ReasoningItemID)) / cpt
 		for _, c := range m.ToolCalls {
 			total += perToolCallOverhead
-			total += (len(c.Name) + len(c.Args)) / cpt
+			total += (len(c.ID) + len(c.Name) + len(c.Args) + len(c.ItemID)) / cpt
 		}
 		if m.ToolResult != nil {
-			total += len(m.ToolResult.Content) / cpt
+			total += len(m.ToolResult.CallID) / cpt
+			contentTokens := len(m.ToolResult.Content) / cpt
+			partsTokens := heuristicContentParts(m.ToolResult.Parts, cpt)
+			total += max(contentTokens, partsTokens)
 		}
-		// Media parts are not free: a multimodal message carries image/audio bytes
-		// that the provider bills. Count each part's inline byte length (URL-sourced
-		// parts contribute only their reference length) so a multimodal message is
-		// not undercounted and the compaction budget is not silently blown.
-		for _, p := range m.Parts {
-			total += (len(p.Data) + len(p.URL) + len(p.MIMEType)) / cpt
+		total += heuristicContentParts(m.Parts, cpt)
+	}
+	return total
+}
+
+func heuristicContentParts(parts []session.Content, cpt int) int {
+	total := 0
+	for _, p := range parts {
+		dataBytes := len(p.Data)
+		if dataBytes > 0 && (p.Kind == session.MediaImage || p.Kind == session.MediaAudio) {
+			dataBytes = ((dataBytes + 2) / 3) * 4
 		}
+		// Resource metadata is conservatively counted because shared provider routing
+		// may project it into a model-visible textual block. Inline media bytes use
+		// their base64 wire length; fixed overhead covers framing only.
+		bytes := len(p.BlockKind) + len(p.Kind) + len(p.MIMEType) + dataBytes +
+			len(p.URL) + len(p.Text) + len(p.Name) + len(p.Title) + len(p.Description) +
+			len(p.LastModified)
+		if p.Size != 0 {
+			bytes += len(strconv.FormatInt(p.Size, 10))
+		}
+		if p.Priority != 0 {
+			bytes += len(strconv.FormatFloat(p.Priority, 'g', -1, 64))
+		}
+		for _, audience := range p.Audience {
+			bytes += len(audience)
+		}
+		total += perContentPartOverhead + bytes/cpt
 	}
 	return total
 }

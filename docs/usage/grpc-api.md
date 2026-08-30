@@ -14,6 +14,7 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session |
 | `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; ownership, kind, state, liveness, and lease are revalidated at execution |
 | `DeleteSession(DeleteSessionRequest) → DeleteSessionResponse` | unary | permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply |
+| `CompactSession(CompactSessionRequest) → CompactSessionResponse` | unary | force one configured compaction pass on an owned main chat at an idle or terminal boundary; creates no conversation turn and returns `compacted` to distinguish a rewrite from a successful no-op |
 | `CloseSession(CloseSessionRequest) → CloseSessionResponse` | unary | end a session and release its server-side resources (learned rules, per-session engine/workspace); idempotent |
 | `ForkSession(ForkSessionRequest) → ForkSessionResponse` | unary | create a new peer session whose conversation history is a snapshot of an existing session's, inheriting the source's mode, workspace, limits, and provider/model/profile labels (same provider and model only; ADR 0065). An optional `reasoning_effort` override changes ONLY the fork's effort tier — provider/model always inherit (ADR 0068). The source must be at a turn boundary (idle/terminal); a running/awaiting source is `FAILED_PRECONDITION`. No streaming — returns the new session id |
 | `PreflightSessionAdoption(PreflightSessionAdoptionRequest) → PreflightSessionAdoptionResponse` | unary | authenticate and authorize one legacy `unknown` source, then return stable eligibility/binding reason codes. Workspace/environment and provider/model are mandatory explicit bindings; no omitted binding falls back to the current default |
@@ -22,6 +23,27 @@ Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 | `ApprovePlan(ApprovePlanRequest) → stream Event` | server-stream | atomically resolve a parked **plan-approval** ask (a `PresentPlan` call surfaced in plan mode, issue #206 / [ADR 0069](../adr/0069-plan-approval-gate.md)) and — on an ALLOW verdict — start a FRESH continuation run carrying the proceed message, streaming BOTH runs' events on one stream. `target_mode` selects the verdict: `DEFAULT` → allow-once (flip to default), `ACCEPT_EDITS` → allow-always (flip to accept-edits), `PLAN`/`UNSPECIFIED` → deny (iterate, no flip, no continuation run). A live run is rejected (`FAILED_PRECONDITION` — use the `Converse` `resume_approval` frame for an in-flight run); a session not `awaiting` a `PlanOriginated` ask is `FAILED_PRECONDITION` (`ErrNotAwaitingPlan`); an unknown session is `NOT_FOUND`. |
 | `StreamSessionEvents(StreamSessionEventsRequest) → stream Event` | server-stream | replay a session's durable event log (cloud-native Phase 3a read-back); an unknown id yields an empty stream; `UNIMPLEMENTED` when no durable `EventLog` is wired. **Replays the FULL timeline, including the log-only `approval`/`compaction_archive`/`user_prompt` events a live `Converse` skips** — a client opening a past session gets the verdicts and user prompts, which ARE the transcript |
 | `ListSessions(ListSessionsRequest) → ListSessionsResponse` | unary | the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore` |
+
+**Manual compaction.** Check
+`CreateSessionResponse.capabilities.manual_compaction` before offering this action.
+Call `CompactSession` with the owned session ID. The server runs the configured
+compactor once even when the automatic 0.8 threshold has not been reached. It does
+not start `Converse`, add a user message, or create a model turn. A cascade pass may
+still invoke its summarization model through the compaction slot.
+
+`compacted=true` means the shorter history was saved. `compacted=false` is a
+successful no-op for an empty, identical, or non-reducing candidate; nothing is
+saved and no compaction events are appended. Idle, completed, cancelled, and failed
+main chats are legal and retain their state. Running or awaiting sessions, scheduled
+sessions, delegation children, and an in-process live run return
+`FAILED_PRECONDITION`. Another replica holding the mutation lease also returns
+`FAILED_PRECONDITION`. An absent or foreign-owned ID returns `NOT_FOUND`, avoiding an
+ownership oracle; normal transport authentication still applies. A save failure is
+`INTERNAL`. Once save succeeds, later event-log append failure does not change the
+successful response or roll back the compacted snapshot.
+
+The capability is additive. New clients reading an old server see false and should
+hide the action. Calling an old server's unknown method returns `UNIMPLEMENTED`.
 
 **Inventory & introspection** (read-only; most are snapshots taken at startup):
 

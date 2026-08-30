@@ -3822,11 +3822,11 @@ func engineDepsForProvider(
 	// own Model/TokenCounter/PromptConfig/ContextWindow stay on the session model.
 	// When no slot resolves (the byte-identical default) the compactor is built on the
 	// session model+counter exactly as before. O5: keying the compactor's Counter to
-	// the compaction model is sound — the CascadeCompactor's BudgetTokens is
-	// window-derived (defaultContextWindowTokens × ratio in buildCompactor), NOT
-	// keyed to the live conversation, so swapping the counter's tokenizer cannot break
-	// the cascade budget math; only the summary LLM call's Model is the load-bearing
-	// swap (the heuristic compactor has no Model/Counter at all, so it is unaffected).
+	// the compaction model is sound — the configured CascadeCompactor BudgetTokens
+	// is window-derived and retained for manual compaction, while the automatic loop
+	// supplies a request-local budget derived from the live session window and complete
+	// request. The tier-4 Model remains the load-bearing slot swap (the heuristic
+	// compactor has no Model/Counter at all, so it is unaffected).
 	compactorCfg, compactorCounter := modelCfg, counter
 	if cm, ok := resolveSlotModel(cfg, slotCompaction, model); ok {
 		compactorCfg = modelCfg
@@ -4594,8 +4594,10 @@ func buildTokenCounterWithDecision(cfg Config) (agent.TokenCounter, diagFact) {
 
 // buildCompactor selects the Compactor from cfg.Compaction. The default
 // ("heuristic"/empty) returns the single-summary HeuristicCompactor. "cascade"
-// returns the tiered CascadeCompactor reducing toward defaultCompactionTargetRatio
-// (below the trigger ratio, for hysteresis).
+// returns the tiered CascadeCompactor with a configured
+// defaultCompactionTargetRatio budget used by explicit/manual calls. Automatic
+// compaction overrides it request-locally from the live window and irreducible
+// complete-request overhead.
 //
 // It does NOT log — the build-once composition fact is emitted ONCE in Build via
 // the injected Diagnostics (see logBuildConfigFacts); this builder runs per

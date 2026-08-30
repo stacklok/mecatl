@@ -389,6 +389,13 @@ func TestSteer_SurvivesCompactionBoundary(t *testing.T) {
 		EnableSteer:     true,
 	})
 	sess := newSession(t, session.Limits{})
+	seed := []session.Message{session.NewUserMessage("older goal")}
+	for i := 0; i < 20; i++ {
+		seed = append(seed, session.NewAssistantMessage(strings.Repeat("settled work ", 20), "", nil))
+	}
+	if err := sess.SeedHistory(seed); err != nil {
+		t.Fatalf("SeedHistory: %v", err)
+	}
 	ws := memfs.NewWorkspace("/ws")
 
 	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "go"})

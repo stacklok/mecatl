@@ -1011,6 +1011,7 @@ type Service struct {
 // s.mu) so the latest token/expiry is what a Release sends.
 type heldLease struct {
 	lease  port.Lease
+	ctx    context.Context
 	cancel context.CancelFunc
 }
 
@@ -2010,6 +2011,9 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// recomputed per sink (the CreateSession echo and the Session snapshot
 		// re-hydration path both carry this one value).
 		Steer: s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
+		// Manual compaction uses the configured engine, or a per-session engine
+		// derived under the same service construction semantics.
+		ManualCompaction: s.cfg.Engine != nil,
 	}
 }
 
@@ -2379,6 +2383,93 @@ func (s *Service) WithAuthorizedSession(ctx context.Context, id session.SessionI
 		return nil, err
 	}
 	return sess, nil
+}
+
+// CompactSession applies one configured compaction pass to an owned main-chat
+// session at a turn boundary. caller is the verified transport principal; it is
+// bound to ctx only when the context has no principal, and a mismatch is rejected.
+// The operation is serialized against run entry and cross-process mutations.
+// A successful no-op neither saves nor appends events.
+//
+//nolint:gocyclo // explicit authorization, state, liveness, lease, and persistence gates stay ordered.
+func (s *Service) CompactSession(ctx context.Context, id session.SessionID, caller *session.Principal) (agent.ManualCompactionResult, error) {
+	contextCaller := session.PrincipalFromContext(ctx)
+	if caller != nil && contextCaller != nil && !caller.SameIdentity(contextCaller) {
+		return agent.ManualCompactionResult{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	if caller != nil && contextCaller == nil {
+		ctx = session.WithPrincipal(ctx, caller)
+	}
+	if isDelegationChildSessionID(id) {
+		return agent.ManualCompactionResult{}, fmt.Errorf("%w: delegation-child sessions cannot be compacted directly", ErrFailedPrecondition)
+	}
+	absent, err := s.managementOwnershipPreflight(ctx, id, false)
+	if err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	if absent {
+		return agent.ManualCompactionResult{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	sess, _, err := s.managementTarget(ctx, id, false)
+	if err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	defer release()
+	compactCtx, stopCompact, leaseHeld := s.mutationLeaseContext(ctx, id)
+	defer stopCompact()
+	sess, _, err = s.managementTarget(ctx, id, false)
+	if err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	eng, _, err := s.engineAndEnvironmentFor(ctx, sess)
+	if err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	result, err := eng.CompactSession(compactCtx, sess)
+	if err != nil {
+		return agent.ManualCompactionResult{}, err
+	}
+	if !result.Changed {
+		return result, nil
+	}
+	// The storage port has no lease-token CAS, so this is not fencing: it is the
+	// narrowest available pre-save loss check. Cancellation also lets a cooperative
+	// long-running compactor stop as soon as the renewer declares loss.
+	if !leaseHeld() {
+		return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
+	}
+	if err := s.cfg.Store.Save(compactCtx, sess); err != nil {
+		return agent.ManualCompactionResult{}, fmt.Errorf("%w: persist compacted session: %v", ErrInternal, err)
+	}
+
+	appendCtx := context.WithoutCancel(ctx)
+	events := []session.Event{
+		{Type: session.EvCompaction, Text: result.Summary},
+		{Type: session.EvCompactionArchive, CompactionArchive: &session.CompactionArchivePayload{Replaced: result.Archive}},
+	}
+	for _, ev := range events {
+		if err := s.appendEvent(appendCtx, id, ev); err != nil {
+			s.cfg.Diagnostics.Log(appendCtx, port.LevelWarn, "manual compaction event append failed; compacted snapshot remains committed", "session", string(id), "event", string(ev.Type), "error", err)
+		}
+	}
+	return result, nil
 }
 
 // RenameSession applies an explicit operator title change to an owned main
@@ -5104,6 +5195,28 @@ func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID
 	return func() { s.releaseLease(id) }, nil
 }
 
+func (s *Service) mutationLeaseContext(parent context.Context, id session.SessionID) (context.Context, func(), func() bool) {
+	s.mu.Lock()
+	h := s.heldLeases[id]
+	leasingRequired := s.cfg.SessionLease != nil && !s.leaseDisabled
+	s.mu.Unlock()
+	if !leasingRequired || h == nil {
+		return parent, func() {}, func() bool { return true }
+	}
+	ctx, cancel := context.WithCancel(parent)
+	stop := context.AfterFunc(h.ctx, cancel)
+	cleanup := func() {
+		stop()
+		cancel()
+	}
+	stillHeld := func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.heldLeases[id] == h && h.ctx.Err() == nil
+	}
+	return ctx, cleanup, stillHeld
+}
+
 // acquireLease takes (or confirms) the cross-process single-writer lease for id
 // (cloud-native Phase 4). It is called at the run-entry seam AFTER the
 // per-session runEntryMu so same-process exclusion stays cheap and the
@@ -5183,7 +5296,7 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		cancel()
 		return nil
 	}
-	s.heldLeases[id] = &heldLease{lease: lease, cancel: cancel}
+	s.heldLeases[id] = &heldLease{lease: lease, ctx: renewCtx, cancel: cancel}
 	s.mu.Unlock()
 	go s.renewLoop(renewCtx, id)
 	return nil

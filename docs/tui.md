@@ -542,7 +542,8 @@ empty server session in the current workspace, using the current effective model
 reasoning-effort, and permission mode, then clears the conversation and scrollback
 only after that session is ready; `/help` opens the keys-&-features overlay.
 These commands are *always* available because they are client-owned commands (with
-`/clear` using the existing session-create RPC); `/mcp` (browse
+`/clear` using the existing session-create RPC); `/compact` (force one server-side
+history compaction pass), `/mcp` (browse
 the MCP inventory), `/agents` (browse the agent-definition inventory — the
 resolved registry the `Subagent` tool routes delegations to), `/team` (the unified
 agents overlay pinned to the Teams tab — same surface as `ctrl+a`, which picks a
@@ -555,9 +556,10 @@ learning proposals), `/reflect` (explicitly reflect the current completed sessio
 (switch to a sibling git worktree), and `/schedule` (browse & manage scheduled
 tasks) appear
 only when the connected server advertises those capabilities (and, for
-`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/dream`/`/models`/`/worktrees`/`/schedule`, the matching client
-collaborator is wired). The fixed palette order is
-`clear, help, mcp, agents, team, skills, soul, usermodel, reflections, reflect, dream, models, effort, worktrees, schedule, learning, learning-sensitivity` (locked by a test).
+`/compact`/`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/dream`/`/models`/`/worktrees`/`/schedule`, the matching client
+collaborator is wired). The fixed palette order starts
+`clear, help, session, retry, compact`, then the available inventory, model,
+workspace, schedule, and operator-setting commands (locked by a test).
 `/learning` is local embedded-server operator-settings UX: each invocation selects the
 next Off→Review→Auto value in `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving
 unrelated YAML and comments. `/learning-sensitivity` independently cycles
@@ -575,13 +577,31 @@ the mode or sensitivity on the remote server host and restart that server.
 `/agents` and `/team` are distinct: `/agents` is the **definition inventory** (a
 palette-only `ListAgents` snapshot, gated on `caps.agents`), while `/team` opens
 the **live overlay** of a team that has actually run (gated on `caps.teams`).
-These never reach the model — a bare built-in line is intercepted and run
-locally, including while a run is streaming. Gated-off builtins are hidden from
-the palette and help overlay; typing one anyway blocks the send with a warning
-(it never reaches the model). Unknown slash commands and built-ins with arguments
-remain model-facing input, so workspace commands keep their server-side expansion.
-(`/compact` is a planned follow-up: it needs a server RPC that does not
-exist yet.)
+These never reach the model: a bare built-in line is intercepted locally even
+while a run is streaming, although commands such as `/compact` then enforce their
+own idle-only boundary. Gated-off builtins are hidden from the palette and help
+overlay; typing one anyway blocks the send with a warning. Unknown slash commands
+remain model-facing input so workspace commands keep their server-side expansion.
+A recognized built-in with arguments is also model-facing except `/compact`, whose
+argument form is rejected locally to prevent an accidental prompt-template fallback.
+
+**`/compact` (manual model-history compaction).** This built-in appears in the
+palette and help only when `ServerCapabilities.manual_compaction` is true and the
+client RPC collaborator is wired. Type the bare command with no arguments while the
+session is idle. Mecatui blocks prompt submission until the unary request finishes,
+so a new run cannot overtake the rewrite. The server also serializes the operation
+against run entry and any configured session lease.
+
+The operation runs the configured compactor once without waiting for the automatic
+0.8 trigger. It sends no chat prompt, creates no model turn, and keeps the visible
+scrollback. A changed response appends `Model history compacted.` as a scrollback
+notice; a successful no-op appends `Model history is already compact.` Existing
+cards are not removed because scrollback is the user's transcript, while the server's
+model-facing persisted history is what changed. The cascade strategy may need its
+summary tier, which can make a compaction-slot model call and incur that model cost.
+`/compact` is refused during a run or pending approval. An older server leaves the
+capability false, so the command is hidden and a directly typed bare command gets a
+local unavailable warning rather than reaching the model.
 
 **`/soul` (read-only persona inspection).** Gated on `caps.soul` AND a wired soul
 fetcher. It fires `GetSoul` (a build-time snapshot the server takes once at
@@ -992,7 +1012,7 @@ show the plain prompt-hint card.
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
-| `/` | slash-command palette (built-in `/clear`, `/help`; caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
+| `/` | slash-command palette (built-in `/clear`, `/help`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
 | `alt+m` | cycle the current session permission mode: **default → plan → accept-edits → default**. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `ctrl+g` | select all prompt text (rebindable as `SelectAll`; inside the `/models` picker, the existing `SetGlobalDefault` binding is used instead) |
@@ -1777,7 +1797,8 @@ queue to the engine steer path:
 - `enter` mid-run sends a `steer` frame on the live Converse stream instead of
   staging locally, **except that a bare recognized TUI built-in** (such as `/help`
   or `/clear`) still runs locally. Unknown slash commands, workspace commands, and
-  built-ins with arguments remain model-facing input. Each steer mints a fresh client
+  built-ins with arguments remain model-facing input, except `/compact` with arguments,
+  which is rejected locally. Each steer mints a fresh client
   `message_id` and the frame carries ONLY that line's text; the engine's single-slot
   inbox **appends** each frame into the one pending bundle (merged with a blank-line
   separator) and drains the bundle at the **next turn boundary**, recording it as an

@@ -9,6 +9,7 @@
     method func (*BashStatusTool).ReadOnly() bool
     method func (*BashStatusTool).Spec() tool.ToolSpec
     method func (*Engine).Capabilities() port.ProviderCapabilities
+    method func (*Engine).CompactSession(ctx context.Context, sess *session.Session) (ManualCompactionResult, error)
     method func (*Engine).ContextWindow() int
     method func (*Engine).HasTool(name string) bool
     method func (*Engine).Model() string
@@ -209,6 +210,7 @@ type HeuristicTokenCounter struct{CharsPerToken int}
 type InspectMemberTool struct{}
 type InspectSubagentTool struct{}
 type LRUForkReaper struct{}
+type ManualCompactionResult struct{Changed bool; Archive []session.Message; Summary string}
 type MemberBuild struct{Engine *Engine; Mode session.PermissionMode; Limits session.Limits; Close func() error; MCPToolNames []string; IsolateReadOnly bool}
 type MemberDisposition string
 type MemberEngine func(spec MemberSpec, routedModel string) MemberBuild

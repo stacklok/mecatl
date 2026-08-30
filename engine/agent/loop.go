@@ -31,7 +31,12 @@ import (
 
 // defaultCompactionRatio is the fraction of the context window at which the loop
 // triggers compaction when Deps.CompactionRatio is unset.
-const defaultCompactionRatio = 0.8
+const (
+	defaultCompactionRatio = 0.8
+	// compactionTargetRatio is the complete-request size the automatic cascade
+	// reduces toward after subtracting request-local irreducible overhead.
+	compactionTargetRatio = 0.6
+)
 
 // defaultNoProgressNudges is the safety-net cap applied in NewEngine when
 // Deps.MaxNoProgressNudges is zero (unset). It bounds how many continuation nudges
@@ -1244,11 +1249,14 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			turnStart = e.deps.Clock.Now()
 		}
 
-		// Step 3: compaction seam (mutates history in place when it triggers).
-		e.maybeCompact(ctx, r, sess, turnIdx)
+		// Step 3: assemble the complete provider request once, then compact against
+		// exactly that model-visible shape. On a successful replacement maybeCompact
+		// updates only the request's persisted-history suffix.
+		req := e.buildRequest(ctx, r, sess, env)
+		e.maybeCompact(ctx, r, sess, turnIdx, &req)
 
-		// Step 4: build the request and consume the model stream.
-		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, sess, env, turnIdx)
+		// Step 4: consume the already-accounted provider request.
+		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, req, turnIdx)
 		// Provider-reported usage is spend, not semantic visibility. Record it even
 		// when the stream fails so retries, cumulative budgets, and EvResult remain
 		// honest without retaining failed-attempt content.
@@ -1893,9 +1901,9 @@ func (l *turnLatency) summary() turnTiming {
 	return l.timing
 }
 
-// runTurn builds the LLMRequest, calls Stream, and assembles the chunk sequence
-// into a single assistant Message. It emits message.delta events for text. It
-// honours ctx cancellation mid-stream by returning context.Canceled.
+// runTurn sends an already-assembled LLMRequest and folds the model stream into
+// a single assistant Message. It emits message.delta events for text. It honours
+// ctx cancellation mid-stream by returning context.Canceled.
 //
 // It also measures, via the injected Clock (never time.Now directly, so tests
 // drive it with a fake clock): TTFT — the elapsed time from the start of the
@@ -1909,8 +1917,7 @@ func (l *turnLatency) summary() turnTiming {
 // but is NOT a streamed token, so it never pollutes the gap series. A turn with
 // no observable output at all reports no TTFT; a turn with fewer than two
 // streaming content deltas reports no inter-token summary (there is no gap).
-func (e *Engine) runTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
-	req := e.buildRequest(ctx, r, sess, env)
+func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
 	seq, err := e.deps.LLM.Stream(ctx, req)
 	if err != nil {
 		return session.Message{}, session.Usage{}, session.StopNone, turnTiming{}, fmt.Errorf("agent: start stream: %w", err)
@@ -2121,12 +2128,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	})
 	// Build a NEW slice — fragments first, then the persisted conversation — so
 	// Conversation.Messages is never mutated and the prefix is byte-stable per run.
-	msgs := sess.Conversation.Messages
-	if len(r.fragments) > 0 {
-		msgs = make([]session.Message, 0, len(r.fragments)+len(sess.Conversation.Messages))
-		msgs = append(msgs, r.fragments...)
-		msgs = append(msgs, sess.Conversation.Messages...)
-	}
+	msgs := requestMessages(r.fragments, sess.Conversation.Messages)
 	system := build(cfg)
 	// Append the shell-less posture clause to the VOLATILE suffix (issue #462
 	// review) ONLY when the loop owns the system prompt — i.e. the DEFAULT builder
@@ -2152,6 +2154,15 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	}
 }
 
+func requestMessages(fragments, persisted []session.Message) []session.Message {
+	if len(fragments) == 0 {
+		return persisted
+	}
+	msgs := make([]session.Message, 0, len(fragments)+len(persisted))
+	msgs = append(msgs, fragments...)
+	return append(msgs, persisted...)
+}
+
 func (e *Engine) refreshOperatorProfile(ctx context.Context, r *Run, cfg *prompt.Config) {
 	if e.deps.OperatorProfileSource == nil {
 		return
@@ -2173,10 +2184,22 @@ func (e *Engine) refreshOperatorProfile(ctx context.Context, r *Run, cfg *prompt
 	}
 }
 
-// maybeCompact runs the Compactor when the estimated history token count crosses
-// the threshold. It replaces the conversation in place and emits a compaction
-// Event. It reports whether compaction ran.
-func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session, turnIdx int) bool {
+func estimateRequestTokens(counter TokenCounter, req port.LLMRequest) int {
+	total := countLayered(counter, req.System) + counter.CountMessages(req.Messages)
+	for _, spec := range req.Tools {
+		total += perToolSpecOverhead
+		total += counter.Count(spec.Name)
+		total += counter.Count(spec.Description)
+		total += countBytes(counter, spec.Schema)
+	}
+	return total
+}
+
+// maybeCompact runs the Compactor when the estimated complete provider request
+// crosses the threshold. It replaces the conversation in place, updates only the
+// request's message suffix, and emits a compaction Event. It reports whether
+// compaction ran.
+func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session, turnIdx int, req *port.LLMRequest) bool {
 	// Resolve the window LIVE here (the self-correction point): a live-catalog
 	// refresh after construction is observed on this next check without an engine
 	// rebuild. A nil resolver or a <=0 return disables compaction (zero disables).
@@ -2188,10 +2211,25 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 		return false
 	}
 	threshold := int(float64(window) * e.deps.CompactionRatio)
-	if e.deps.TokenCounter.CountMessages(sess.Conversation.Messages) < threshold {
+	requestTokens := estimateRequestTokens(e.deps.TokenCounter, *req)
+	if requestTokens < threshold {
 		return false
 	}
-	compacted, summary, err := e.deps.Compactor.Compact(ctx, sess.Conversation)
+	// Derive the cascade target from the same complete-request measurement. System
+	// text, ephemeral fragments, and tool schemas are irreducible here, so only the
+	// remaining budget is available to persisted history. A floor of one keeps the
+	// budget meaningful when overhead alone is already above the target; candidate
+	// admission below still requires reduction.
+	persistedTokens := e.deps.TokenCounter.CountMessages(sess.Conversation.Messages)
+	irreducible := requestTokens - persistedTokens
+	if irreducible < 0 {
+		irreducible = 0
+	}
+	budget := int(float64(window)*compactionTargetRatio) - irreducible
+	if budget < 1 {
+		budget = 1
+	}
+	result, compacted, err := e.compactionCandidate(ctx, sess.Conversation, budget)
 	if err != nil {
 		// Compaction is best-effort: a failure must not abort the run. Keep the
 		// existing history and continue — but no longer SILENTLY: surface the
@@ -2204,12 +2242,7 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 		r.diag.Log(ctx, port.LevelWarn, "compaction failed; continuing without compaction", "error", err)
 		return false
 	}
-	// Last line of defense: never hand the session a history that would orphan a
-	// tool result. A compactor SHOULD have caught this and returned the sentinel,
-	// but validate again before ReplaceHistory and degrade-and-continue (same
-	// branch, same WARN) rather than risk a provider HTTP 400 that bricks the run.
-	if err := session.ValidateToolPairing(compacted); err != nil {
-		r.diag.Log(ctx, port.LevelWarn, "compaction failed; continuing without compaction", "error", err)
+	if !result.Changed {
 		return false
 	}
 	// Capture the pre-compaction history BEFORE ReplaceHistory mutates it (cloud-native
@@ -2226,7 +2259,11 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 		r.diag.Log(ctx, port.LevelWarn, "compaction produced history the session rejected; continuing without compaction", "error", err)
 		return false
 	}
-	e.emit(r, session.Event{Type: session.EvCompaction, Turn: turnIdx, Text: summary})
+	// The system prompt, advertised tools, and ephemeral prefix were already
+	// assembled and measured. Preserve them byte-for-byte and replace only the
+	// persisted-history suffix that compaction changed.
+	req.Messages = requestMessages(r.fragments, sess.Conversation.Messages)
+	e.emit(r, session.Event{Type: session.EvCompaction, Turn: turnIdx, Text: result.Summary})
 	// Emit the durable non-destructive archive of the span the replace just dropped.
 	// The loop only EMITS it; the server relay Appends it to port.EventLog (the loop
 	// stays storage-agnostic — it never imports the log port). No-leak: `archived` is

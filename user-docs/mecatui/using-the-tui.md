@@ -24,6 +24,7 @@ When a tool needs permission, a modal shows what it wants to do. Read the reques
 ## Change the conversation settings
 
 - `/models` starts a new session on the selected model and keeps the conversation. **Switching models is expensive as it clears caches.**
+- `/compact` asks a capable server to compact the current session's model history once. Use the bare command with no arguments while idle. It sends no prompt, keeps visible scrollback, and reports changed or already compact; a cascade summary may still cost model tokens.
 - `/effort` forks the conversation onto the chosen reasoning-effort tier. Unsupported tiers are reported rather than silently applied.
 - `/clear` starts over; `/session` shows the active session details.
 

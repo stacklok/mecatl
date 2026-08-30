@@ -1733,3 +1733,68 @@ func TestSnapshotCauseMirrorsEventCauseContract(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceHistoryAtBoundaryStateAndMetadataContract(t *testing.T) {
+	setups := []struct {
+		name  string
+		legal bool
+		setup func(*Session)
+	}{
+		{"idle", true, func(*Session) {}},
+		{"running", false, func(s *Session) { mustOK(t, s.BeginTurn()) }},
+		{"awaiting", false, func(s *Session) {
+			mustOK(t, s.BeginTurn())
+			mustOK(t, s.PauseForApproval(PendingAsk{AskID: "ask", Tool: "Read"}))
+		}},
+		{"completed", true, func(s *Session) { mustOK(t, s.BeginTurn()); mustOK(t, s.Complete()) }},
+		{"cancelled", true, func(s *Session) { mustOK(t, s.Cancel()) }},
+		{"failed", true, func(s *Session) { mustOK(t, s.BeginTurn()); mustOK(t, s.Fail()); mustOK(t, s.RecordLastError("boom")) }},
+	}
+	for _, tc := range setups {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestSession(Limits{MaxTurns: 9})
+			mustOK(t, s.RecordUserPrompt("original", nil))
+			tc.setup(s)
+			s.Counters = Counters{Turns: 7, ToolCalls: 3, ConsecutiveFailures: 2}
+			s.Usage = Usage{InputTokens: 101, OutputTokens: 17}
+			s.ProviderID, s.ModelID, s.Profile = "provider", "model", "no-fs"
+			s.EnvironmentRef = EnvironmentRef{Kind: "remote", ID: "env"}
+			s.Owner = &Principal{Issuer: "issuer", Subject: "owner", GrantType: GrantTypeUser}
+			replacement := []Message{NewUserMessage("compacted")}
+			before := *s
+			beforeConversation := *s.Conversation
+			before.Conversation = &beforeConversation
+
+			err := s.ReplaceHistoryAtBoundary(replacement)
+			if !tc.legal {
+				if !errors.Is(err, ErrIllegalTransition) {
+					t.Fatalf("error = %v, want ErrIllegalTransition", err)
+				}
+				if !reflect.DeepEqual(*s, before) {
+					t.Fatal("rejected replacement mutated aggregate")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReplaceHistoryAtBoundary: %v", err)
+			}
+			before.Conversation.Messages = replacement
+			if !reflect.DeepEqual(*s, before) {
+				t.Fatal("replacement changed metadata beyond conversation history")
+			}
+		})
+	}
+
+	t.Run("invalid pairing is atomic", func(t *testing.T) {
+		s := newTestSession(Limits{})
+		mustOK(t, s.RecordUserPrompt("original", nil))
+		before := CloneMessages(s.Conversation.Messages)
+		orphan := []Message{NewToolMessage(NewToolResult("missing", "bad"))}
+		if err := s.ReplaceHistoryAtBoundary(orphan); err == nil {
+			t.Fatal("accepted orphaned tool result")
+		}
+		if !reflect.DeepEqual(s.Conversation.Messages, before) {
+			t.Fatal("invalid replacement mutated history")
+		}
+	})
+}

@@ -69,6 +69,10 @@ func sessionsSurface(m *Model) *sessionsState {
 }
 
 func (m Model) bindSessionID(id string) Model {
+	if id != m.sessionID {
+		m.compactPending = false
+		m.compactRequestToken++
+	}
 	m.sessionID = id
 	m.sessionState = ""
 	m.sessionCreatedAt = 0

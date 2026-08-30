@@ -67,6 +67,9 @@ type Capabilities struct {
 	// merge-queue (issue #228) byte-identical — it never sends a steer frame the
 	// server would only ack too_late.
 	Steer bool
+	// ManualCompaction gates the bodyless out-of-band session compaction action.
+	// Older servers leave it false, hiding /compact.
+	ManualCompaction bool
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -100,6 +103,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		LegacyAdoption:    c.GetLegacyAdoption(),
 		ManualDream:       manualDreamCapabilitiesFrom(c.GetManualDream()),
 		Steer:             c.GetSteer(),
+		ManualCompaction:  c.GetManualCompaction(),
 	}
 }
 

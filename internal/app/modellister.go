@@ -647,9 +647,11 @@ func mergeCustomProviderFloor(reg *providerRegistry, providerID string, live []m
 	}
 	out := append([]modelEntry(nil), floor...)
 	for _, model := range live {
-		if model.ID != floor[0].ID {
-			out = append(out, model)
+		if model.ID == floor[0].ID {
+			out[0] = model
+			continue
 		}
+		out = append(out, model)
 	}
 	return out
 }

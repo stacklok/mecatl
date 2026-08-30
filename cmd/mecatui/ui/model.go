@@ -120,6 +120,7 @@ type Deps struct {
 	UserModel   client.UserModelLister  // user-model inspection for the /usermodel panel; nil disables it
 	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
 	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
+	Compactor   client.SessionCompactor // out-of-band session compaction; nil disables /compact
 	Models      client.ModelLister      // selectable-model discovery for the /models picker; nil disables it
 	Worktrees   client.WorktreeLister   // worktree discovery for the /worktrees overlay (issue #102); nil disables it
 	// Sched is the schedule discovery + management surface for the /schedule overlay
@@ -470,6 +471,9 @@ type Model struct {
 	sessionTitle string
 	statusMsg    string
 	fatalErr     string
+
+	compactPending      bool
+	compactRequestToken uint64
 
 	width  int
 	height int

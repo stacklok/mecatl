@@ -58,6 +58,10 @@ service HarnessService {
   // DeleteSession physically removes an idle main session and its sidecars.
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
 
+  // CompactSession applies one manual compaction pass to an owned main-chat
+  // session at a turn boundary. It creates no model turn.
+  rpc CompactSession(CompactSessionRequest) returns (CompactSessionResponse);
+
   // ForkSession creates a new peer session whose conversation history is a
   // snapshot of an existing session's, inheriting the source's mode, workspace,
   // limits, and provider/model/profile labels. Same provider and model only;
@@ -576,6 +580,10 @@ message ServerCapabilities {
   // engine reports too_late on its disarmed inbox), never silently dropped.
   // Additive: an older server leaves it false.
   bool steer = 24;
+  // manual_compaction is true when the server can apply an out-of-band
+  // compaction pass to an idle owned session. Gates the client's /compact action.
+  // Additive: an older server leaves it false.
+  bool manual_compaction = 25;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -3167,4 +3175,14 @@ message DreamReceipt {
   int32 conflicted_source_count = 6;
   int32 skipped_source_count = 7;
   int32 failed_source_count = 8;
+}
+
+// CompactSessionRequest identifies the owned main-chat session to compact.
+message CompactSessionRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// CompactSessionResponse reports whether the compactor reduced model history.
+message CompactSessionResponse {
+  bool compacted = 1;
 }

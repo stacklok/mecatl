@@ -160,6 +160,18 @@ func (h *HarnessServer) DeleteSession(ctx context.Context, req *mecatlv1.DeleteS
 	return &mecatlv1.DeleteSessionResponse{}, nil
 }
 
+// CompactSession applies one out-of-band compaction pass to an owned session.
+func (h *HarnessServer) CompactSession(ctx context.Context, req *mecatlv1.CompactSessionRequest) (*mecatlv1.CompactSessionResponse, error) {
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	result, err := h.svc.CompactSession(ctx, session.SessionID(req.GetSessionId()), session.PrincipalFromContext(ctx))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.CompactSessionResponse{Compacted: result.Changed}, nil
+}
+
 // ForkSession creates a peer session from an existing session's history snapshot
 // (ADR 0065). The new session inherits the source's mode, workspace, limits, and
 // provider/model/profile labels; same provider and model only, with the ONE

@@ -49,6 +49,7 @@ const (
 	HarnessService_CloseSession_FullMethodName             = "/mecatl.v1.HarnessService/CloseSession"
 	HarnessService_RenameSession_FullMethodName            = "/mecatl.v1.HarnessService/RenameSession"
 	HarnessService_DeleteSession_FullMethodName            = "/mecatl.v1.HarnessService/DeleteSession"
+	HarnessService_CompactSession_FullMethodName           = "/mecatl.v1.HarnessService/CompactSession"
 	HarnessService_ForkSession_FullMethodName              = "/mecatl.v1.HarnessService/ForkSession"
 	HarnessService_PreflightSessionAdoption_FullMethodName = "/mecatl.v1.HarnessService/PreflightSessionAdoption"
 	HarnessService_AdoptSession_FullMethodName             = "/mecatl.v1.HarnessService/AdoptSession"
@@ -131,6 +132,9 @@ type HarnessServiceClient interface {
 	RenameSession(ctx context.Context, in *RenameSessionRequest, opts ...grpc.CallOption) (*RenameSessionResponse, error)
 	// DeleteSession physically removes an idle main session and its sidecars.
 	DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error)
+	// CompactSession applies one manual compaction pass to an owned main-chat
+	// session at a turn boundary. It creates no model turn.
+	CompactSession(ctx context.Context, in *CompactSessionRequest, opts ...grpc.CallOption) (*CompactSessionResponse, error)
 	// ForkSession creates a new peer session whose conversation history is a
 	// snapshot of an existing session's, inheriting the source's mode, workspace,
 	// limits, and provider/model/profile labels. Same provider and model only;
@@ -463,6 +467,16 @@ func (c *harnessServiceClient) DeleteSession(ctx context.Context, in *DeleteSess
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_DeleteSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) CompactSession(ctx context.Context, in *CompactSessionRequest, opts ...grpc.CallOption) (*CompactSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompactSessionResponse)
+	err := c.cc.Invoke(ctx, HarnessService_CompactSession_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1065,6 +1079,9 @@ type HarnessServiceServer interface {
 	RenameSession(context.Context, *RenameSessionRequest) (*RenameSessionResponse, error)
 	// DeleteSession physically removes an idle main session and its sidecars.
 	DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error)
+	// CompactSession applies one manual compaction pass to an owned main-chat
+	// session at a turn boundary. It creates no model turn.
+	CompactSession(context.Context, *CompactSessionRequest) (*CompactSessionResponse, error)
 	// ForkSession creates a new peer session whose conversation history is a
 	// snapshot of an existing session's, inheriting the source's mode, workspace,
 	// limits, and provider/model/profile labels. Same provider and model only;
@@ -1353,6 +1370,9 @@ func (UnimplementedHarnessServiceServer) RenameSession(context.Context, *RenameS
 }
 func (UnimplementedHarnessServiceServer) DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteSession not implemented")
+}
+func (UnimplementedHarnessServiceServer) CompactSession(context.Context, *CompactSessionRequest) (*CompactSessionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CompactSession not implemented")
 }
 func (UnimplementedHarnessServiceServer) ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ForkSession not implemented")
@@ -1656,6 +1676,24 @@ func _HarnessService_DeleteSession_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).DeleteSession(ctx, req.(*DeleteSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_CompactSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompactSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).CompactSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_CompactSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).CompactSession(ctx, req.(*CompactSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2609,6 +2647,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteSession",
 			Handler:    _HarnessService_DeleteSession_Handler,
+		},
+		{
+			MethodName: "CompactSession",
+			Handler:    _HarnessService_CompactSession_Handler,
 		},
 		{
 			MethodName: "ForkSession",

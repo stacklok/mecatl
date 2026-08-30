@@ -10,8 +10,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	serveradapter "github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func customProviderConfig() Config {
@@ -252,6 +255,56 @@ func TestInvariant_custom_provider_live_metadata_conservative(t *testing.T) {
 	}
 	if info := projectModelEntry(reg, definition.ID, fresh[0]); info.GetContextLimit() != defaultContextWindowTokens {
 		t.Errorf("unknown custom live metadata context limit = %d, want conservative floor %d", info.GetContextLimit(), defaultContextWindowTokens)
+	}
+}
+
+func TestInvariant_custom_provider_matching_live_model_replaces_floor_metadata(t *testing.T) {
+	const (
+		model         = "gpt-5.6-terra"
+		contextWindow = 1_050_000
+	)
+	modelServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("models path = %q, want /v1/models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-5.6-terra","display_name":"GPT-5.6 Terra","context_window":1050000}]}`))
+	}))
+	defer modelServer.Close()
+
+	workspace := t.TempDir()
+	operator := writeOperatorSettingsFile(t, "providers:\n  gateway:\n    base_url: "+modelServer.URL+"/v1\n    default_model: "+model+"\n    api_flavor: openai-responses\n    auth:\n      method: api_key\n")
+	built, err := Build(context.Background(), Config{
+		Workspace:               workspace,
+		NoSoul:                  true,
+		PermissionsConventional: true,
+		permConfigEnv:           isolatedPermConfigEnv(t),
+		PermissionConfigs:       []string{operator},
+		DefaultProvider:         "gateway",
+		DefaultModel:            model,
+		CustomProviderAPIKeys:   map[string]string{"gateway": "gateway-key"},
+		liveModelHTTPClient:     modelServer.Client(),
+		liveModelRefreshSync:    true,
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("ok"))
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	models := built.Service.ListModels(context.Background())
+	if len(models) != 1 || models[0].GetProviderId() != "gateway" || models[0].GetId() != model || models[0].GetContextLimit() != contextWindow {
+		t.Fatalf("listed models = %v, want one gateway/%s row with context limit %d", models, model, contextWindow)
+	}
+
+	selected, err := built.Service.CreateSessionWithProvider(context.Background(), workspace, session.ModeDefault, defaultLimits(),
+		serveradapter.ProviderSelector{ProviderID: "gateway", ModelID: model})
+	if err != nil {
+		t.Fatalf("CreateSessionWithProvider: %v", err)
+	}
+	if got := built.Service.ResolvedModel(selected.ID).ContextWindow; got != contextWindow {
+		t.Errorf("resolved context window = %d, want %d", got, contextWindow)
 	}
 }
 

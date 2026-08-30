@@ -131,6 +131,17 @@ var _ Compactor = CascadeCompactor{}
 // history would orphan a tool pairing (ErrCompactionWouldOrphan). In both error
 // cases the ORIGINAL history is returned alongside the error (abort-to-original).
 func (c CascadeCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+	return c.compact(ctx, conv)
+}
+
+// compactToBudget applies a request-local automatic-compaction budget without
+// changing the configured budget used by manual compaction.
+func (c CascadeCompactor) compactToBudget(ctx context.Context, conv *session.Conversation, budget int) ([]session.Message, string, error) {
+	c.BudgetTokens = budget
+	return c.compact(ctx, conv)
+}
+
+func (c CascadeCompactor) compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
 	counter := c.counter()
 	keep := cascadeKeepLastTurns
 	if c.KeepLastTurns > 0 {

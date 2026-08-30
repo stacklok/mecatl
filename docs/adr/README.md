@@ -82,6 +82,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0010 — Semantic memory recall](./0010-semantic-memory-recall.md)
 - [0011 — Soul & user-model](./0011-soul-and-user-model.md)
 - [0012 — Compaction](./0012-compaction.md)
+- [0244 — Count the full request and expose durable manual compaction](./0244-full-request-and-manual-compaction.md) *(supersedes ADR 0025's `/compact` deferral only)*
 - [0106 — Optional completion-learning seam](./0106-optional-learning-seam.md)
 - [0107 — Operator-profile memory lifecycle](./0107-operator-profile-memory-lifecycle.md)
 - [0109 — Evidence-backed reflection and durable staged learning](./0109-staged-learning-proposals.md)

@@ -261,6 +261,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"LoadSessionWithMCP":        {KindCallerOwned, "delegates to LoadSession's authorizeSession before mounting client MCP"},
 	"SetMode":                   {KindCallerOwned, "authorizes via GetSession before changing the session's permission mode"},
 	"RenameSession":             {KindCallerOwned, "authorizes via GetSession, then revalidates ownership, kind, state, liveness, and lease under runEntryMu before persisting"},
+	"CompactSession":            {KindCallerOwned, "binds the verified caller, then revalidates ownership, chat purpose, state, liveness, and lease under runEntryMu before saving and appending events"},
 	"DeleteSession":             {KindCallerOwned, "authorizes via GetSession, then revalidates ownership, kind, state, liveness, and lease under runEntryMu before physical deletion"},
 	"ForkSession":               {KindCallerOwned, "authorizes the SOURCE session (authorizeSession) before copying its history to a new owned session"},
 	"PreflightSessionAdoption":  {KindCallerOwned, "loads and authorizes the legacy source from the verified caller context before reporting eligibility"},

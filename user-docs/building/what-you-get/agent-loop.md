@@ -138,7 +138,12 @@ On the wire: the gRPC `Converse` stream carries the verdict in a `ResumeApproval
 
 ## Context limits & compaction
 
-mecatl manages the model's context window automatically. Before each turn, it estimates the token cost of the current conversation. If the conversation is approaching the limit (by default, 80% of the model's context window), the loop compresses it before making the next call.
+mecatl manages the model's context window automatically. Before each turn, it estimates
+the complete model-visible request: system instructions, ephemeral fragments, persisted
+messages, typed tool results, and advertised tool schemas. If that estimate reaches 80%
+of the model's context window by default, the loop compresses persisted history before
+making the next call. The other request layers are fixed overhead and cannot be removed
+by compaction.
 
 Two compaction strategies ship out of the box:
 
@@ -151,7 +156,10 @@ Both strategies guarantee:
 - The **kept tail never starts on an orphaned tool result**. A tool result whose matching call was compacted away causes a provider error; the compactor always snaps forward past any such orphans.
 - If the compacted slice is still invalid (orphaned pairs), the compactor **aborts and keeps the original history** rather than emit a broken conversation.
 
-You do not interact with compaction directly. It fires automatically and the run continues.
+Automatic compaction continues the run after a successful pass. In mecatui, a server
+that advertises manual compaction also exposes bare `/compact` at an idle boundary. It
+forces one pass without a chat turn and keeps visible scrollback; the cascade strategy
+may still spend tokens on its summarization model. See [Context windows](/features/context-windows.md).
 
 ### Where "the model's context window" comes from
 

@@ -57,38 +57,30 @@ import (
 // PRESERVATION MECHANISM — first-user-pin, NOT back-snap (why the task is turn 0).
 // The compactor preserves the task two ways: the role-aware BACK-SNAP keeps the
 // recentUserTurnsKept (=3) most-recent user turns verbatim, and the FIRST-USER-PIN
-// keeps the first user turn verbatim across ANY number of compactions. These specs
-// deliberately lean on the first-user-pin: the task is the FIRST user turn, so it
-// survives VERBATIM no matter how many times compaction re-fires below.
+// keeps the first user turn verbatim across successful reducing compactions. These
+// specs deliberately lean on the first-user-pin: the task is the FIRST user turn,
+// so it survives VERBATIM through the cascade summaries below.
 //
-// Why not back-snap here: back-snap only protects RECENT user turns, but the Reads
-// that grow history re-trip the threshold every turn, so compaction RE-FIRES at
-// each Read turn. By the final turn the three most-recent user turns are the Reads —
-// any non-first task would have aged OUT of the back-snap window and been
-// summarised. The first-user-pin is the only verbatim guarantee that holds across
-// multiple compactions, so it is what a deterministic survival test must use. The
-// back-snap's exact kept-tail composition is covered DETERMINISTICALLY by the
-// offline engine/agent unit tests (and the phase-3 archive gate).
+// Why not back-snap here: back-snap only protects RECENT user turns. The sized Reads
+// grow the complete request until cascade compaction can replace enough older history
+// with a smaller tier-4 summary. By the final turn the three most-recent user turns
+// are Reads — any non-first task could age OUT of the back-snap window and be
+// summarised. The first-user-pin is the deterministic verbatim guarantee; the
+// back-snap's exact kept-tail composition is covered DETERMINISTICALLY by the offline
+// engine/agent unit tests (and the phase-3 archive gate).
 //
 // THE COMPACTION-TRIGGER ARITHMETIC (why the window value below is what it is).
-// The trigger counts CONVERSATION MESSAGES ONLY — engine/agent/loop.go
-// (maybeCompact) calls TokenCounter.CountMessages(sess.Conversation.Messages),
-// and the spawn runs the default --tokenizer heuristic, so the denominator is
-// HeuristicTokenCounter.CountMessages: ~len(text+toolresult bodies)/4 plus a fixed
-// ~4 tokens/message and ~4/tool-call. The system prompt and tool catalog are NOT
-// in it (those are billed INPUT, not the trigger denominator) — so a tiny window
-// like 10000 would NEVER fire here. The controllable lever is the Read tool RESULT
-// size, which is deterministic: the harness fixture compaction-input.txt (~8KB;
-// ~9KB once Read adds 1-based line-number prefixes) contributes ~2250
-// conversation-tokens per Read. With the window below (compactionWindowDefault =
-// 2000 → threshold 0.8 × 2000 = 1600):
-//   - turn 0 (the TASK) accumulates only ~50 conversation-tokens — WELL under 1600,
-//     so the task is recorded (and pinned) before any compaction;
-//   - the first sized Read (turn 1) pushes history to ~2300 conversation-tokens;
-//   - maybeCompact runs at the TOP of each turn, so the threshold is first crossed
-//     at the TOP of turn 2 (history from turns 0-1 ≈ 2300 > 1600) — compaction
-//     fires during the bury turns and re-fires on each later Read turn. The task
-//     (turn 0) is the first-user-pin, so it is kept VERBATIM through every one.
+// maybeCompact accounts for the COMPLETE next request: the system prompt, tool
+// catalog, conversation, and other request overhead all contribute, not conversation
+// messages alone. Crossing the 0.8 × context-window threshold is necessary but not
+// sufficient: cascade treats a candidate that does not reduce that complete request
+// as a no-op and emits no EvCompaction. The controllable compactible portion is the
+// Read tool RESULT size. The harness fixture compaction-input.txt (~8KB; ~9KB once
+// Read adds 1-based line-number prefixes) contributes roughly 2250 tokens per Read.
+// With compactionWindowDefault = 2000 (threshold 1600), the task turn stays small,
+// while four sized Read turns provide enough old history for a reducing tier-4
+// cascade summary. This deliberately proves a real replacement rather than treating
+// a threshold crossing or a non-reducing attempt as compaction.
 //
 // ANTI-VACUITY: the structural survival assertion is meaningless unless compaction
 // actually fired. The gating spec therefore fails loudly if no EvCompaction was
@@ -97,15 +89,16 @@ import (
 // make the (recorded) behavioural outcome look like a survival.
 
 // compactionWindowDefault is the --context-window-override the spawn uses. The
-// trigger fires at 0.8 × this (= 1600 conversation-tokens). It is sized against the
-// per-Read accumulation documented above (one ~2250-token sized Read crosses it),
-// NOT against billed input. Env-overridable via MECATL_E2E_COMPACTION_WINDOW for
-// tuning. NOTE: this is deliberately tiny for the test; an operator must NOT set
-// --context-window-override this low in production (it would compact every turn).
+// complete-request threshold is 0.8 × this (= 1600 tokens). It is deliberately tiny
+// so four sized Reads deterministically create a reducing cascade candidate. Env-
+// overridable via MECATL_E2E_COMPACTION_WINDOW for tuning. NOTE: this is deliberately
+// tiny for the test; an operator must NOT set --context-window-override this low in
+// production (it can compact frequently when a reducing candidate exists).
 const compactionWindowDefault = "2000"
 
 // compactionInputFile is the sized harness fixture the bury turns Read to grow
-// conversation history deterministically (see fixtures.go / e2e/fixtures/workspace).
+// compactible request history deterministically (see fixtures.go /
+// e2e/fixtures/workspace).
 const compactionInputFile = "compaction-input.txt"
 
 // compactionTaskPrompt is the turn-0 FIRST USER TURN — the distinctive task. Being
@@ -127,7 +120,7 @@ const compactionTaskPrompt = `Remember this instruction for later: when I say th
 const compactionPinFragment = "when I say the word GO"
 
 // compactionReadPrompt grows history deterministically by Reading the sized
-// fixture (~2250 conversation-tokens per Read — the controllable lever).
+// fixture (~2250 compactible tokens per Read — the controllable lever).
 var compactionReadPrompt = `Read the file ` + compactionInputFile +
 	` in the workspace and reply with the single word ok.`
 
@@ -276,12 +269,12 @@ func compactionDriveBuryTurns(ctx ginkgo.SpecContext) (*harness.Local, []*harnes
 	ginkgo.GinkgoHelper()
 	window := envOrDefault("MECATL_E2E_COMPACTION_WINDOW", compactionWindowDefault)
 	// --max-run-tokens is a SAFETY RAIL (not the test's cost control — the small
-	// window + fixed turn count bound that); 150000 sits comfortably above the
-	// scenario's natural multi-turn usage. --context-window-override forces the
-	// small compaction window.
+	// window + fixed turn count bound that); 300000 covers both this scenario and
+	// the model-slot companion that shares the override. --context-window-override
+	// forces the small compaction window.
 	spawn, err := harness.NewLocalWith(
 		"--context-window-override", window,
-		"--max-run-tokens", envOrDefault("MECATL_E2E_COMPACTION_MAX_RUN_TOKENS", "150000"),
+		"--max-run-tokens", envOrDefault("MECATL_E2E_COMPACTION_MAX_RUN_TOKENS", "300000"),
 	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "spawn local mecated with --context-window-override")
 	logTail := func() string { return "\n--- mecated log tail ---\n" + spawn.LogTail(4096) }
@@ -314,9 +307,8 @@ func compactionDriveBuryTurns(ctx ginkgo.SpecContext) (*harness.Local, []*harnes
 	// Turn 0 (FIRST USER TURN = the DISTINCTIVE task) — kept VERBATIM by the
 	// first-user-pin across every compaction below.
 	buryTurn("compaction-0-task", compactionTaskPrompt)
-	// Turns 1-4: grow history deterministically; the first Read crosses the
-	// threshold so compaction first fires at the TOP of turn 2 and re-fires on each
-	// later Read turn.
+	// Turns 1-4: grow enough compactible history for a reducing tier-4 cascade
+	// summary; threshold crossings that cannot reduce the complete request are no-ops.
 	buryTurn("compaction-1-read", compactionReadPrompt)
 	buryTurn("compaction-2-read", compactionReadPrompt)
 	buryTurn("compaction-3-read", compactionReadPrompt)

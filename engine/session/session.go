@@ -656,6 +656,26 @@ func (s *Session) ReplaceHistory(messages []Message) error {
 	return nil
 }
 
+// ReplaceHistoryAtBoundary atomically replaces conversation history while no
+// turn is in flight. It is the manual-compaction seam: legal from idle and all
+// terminal states, and rejected from running or awaiting so an out-of-band
+// rewrite cannot race a model turn or invalidate a pending approval. It changes
+// only Conversation.Messages; lifecycle state and all other aggregate metadata
+// are preserved.
+//
+// The replacement must satisfy ValidateToolPairing so the resulting history is
+// provider-replayable in both directions.
+func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
+	if s.State == StateRunning || s.State == StateAwaiting {
+		return fmt.Errorf("%w: ReplaceHistoryAtBoundary from %q", ErrIllegalTransition, s.State)
+	}
+	if err := ValidateToolPairing(messages); err != nil {
+		return fmt.Errorf("ReplaceHistoryAtBoundary: %w", err)
+	}
+	s.Conversation.Messages = messages
+	return nil
+}
+
 // SeedHistory atomically seeds a FRESH (idle) session's conversation history with
 // messages. It is the IDLE-state sibling of ReplaceHistory (which is running-only,
 // the compaction seam): SeedHistory exists for the fork:true Subagent child, whose

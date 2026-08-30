@@ -77,8 +77,14 @@ func (succeedingCompactor) Compact(context.Context, *session.Conversation) ([]se
 // hugeTokenCounter reports an over-threshold count so maybeCompact always trips.
 type hugeTokenCounter struct{}
 
-func (hugeTokenCounter) Count(string) int                    { return 1 << 20 }
-func (hugeTokenCounter) CountMessages([]session.Message) int { return 1 << 20 }
+func (hugeTokenCounter) Count(string) int { return 1 << 20 }
+func (hugeTokenCounter) CountMessages(messages []session.Message) int {
+	total := 0
+	for _, message := range messages {
+		total += len(message.Text) + 1
+	}
+	return total
+}
 
 // TestCompactionReplaceRejectedEmitsWarn covers the SECOND compaction-failure WARN
 // branch (loop.go maybeCompact): the compactor SUCCEEDS but the session rejects the
@@ -103,11 +109,15 @@ func TestCompactionReplaceRejectedEmitsWarn(t *testing.T) {
 	// A freshly-created session is StateIdle (NOT StateRunning), so ReplaceHistory
 	// rejects with an illegal-transition error — exactly the branch under test.
 	sess := session.New("sess-replace", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	if err := sess.SeedHistory([]session.Message{session.NewUserMessage(strings.Repeat("history", 20))}); err != nil {
+		t.Fatalf("SeedHistory: %v", err)
+	}
 	original := append([]session.Message(nil), sess.Conversation.Messages...)
 
 	// Bind the run-scoped diag the way Engine.Run does, then call maybeCompact.
 	r := &Run{diag: e.bindRunDiag(sess.ID)}
-	compacted := e.maybeCompact(context.Background(), r, sess, 0)
+	req := port.LLMRequest{}
+	compacted := e.maybeCompact(context.Background(), r, sess, 0, &req)
 
 	if compacted {
 		t.Fatal("maybeCompact reported it compacted, want false (ReplaceHistory rejected the replacement)")

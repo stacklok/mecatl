@@ -266,6 +266,9 @@ func TestCapabilities(t *testing.T) {
 			if got == nil {
 				t.Fatalf("capabilities not populated on CreateSession response")
 			}
+			if !got.GetManualCompaction() {
+				t.Fatal("manual_compaction = false with a configured engine")
+			}
 			if got.GetMcp() != tc.want.GetMcp() ||
 				got.GetSlashCommands() != tc.want.GetSlashCommands() ||
 				got.GetMemory() != tc.want.GetMemory() ||
