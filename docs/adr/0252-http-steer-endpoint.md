@@ -54,9 +54,13 @@ HTTP entry point, on the same terms the gRPC one already has.
   optional `expected_run_id` — identical semantics to the gRPC oneof arm
   (which carries both text and parts per [ADR 0251](./0251-multimodal-steer.md))
   and to the existing `approve`/`cancel` HTTP bodies' optional
-  `expected_run_id` (PR #828). Dropping parts would regress exactly the
-  browser clients this endpoint exists for to text-only steer, one release
-  behind the gRPC path.
+  `expected_run_id` (PR #828). Parts decode and validate through the SAME
+  path the prompt body already uses (`toContentParts` →
+  `session.NewContent` + `session.ValidateMediaParts`) and are gated by the
+  same `ProviderCapabilities()` check the ACP prompt path uses — no second
+  validation path. Dropping parts would regress exactly the browser clients
+  this endpoint exists for to text-only steer, one release behind the gRPC
+  path.
 - **Same outcome vocabulary, over HTTP status + body.** The closed
   `SteerOutcome` enum (`accepted`/`appended`/`retracted`/`none_pending`/
   `too_late`) that already rides the gRPC ack is returned as the HTTP
