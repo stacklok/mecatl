@@ -232,12 +232,26 @@ The `redisstore` adapter reuses `sessnap.Marshal`/`Unmarshal` — the same snaps
 
 ## Production Helm chart
 
-`deploy/helm/mecak8s/` is the production deployment contract. It creates no Redis StatefulSet and will not render until the operator supplies an external Redis endpoint, a credentials Secret reference when a configured key needs reading, and exactly one image selector: a signed release tag or a digest. A real-provider deployment (`mockProvider: false`) also fails closed unless both server TLS and OIDC caller authentication are enabled. TLS protects transport but does not identify callers; OIDC identifies callers but does not encrypt transport. For local-only or trusted-mesh deployments that provide both controls externally, the deliberately conspicuous `security.allowUnsafeRealProvider: true` bypass is available and annotates the pod as unsafe. The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, exact namespaced Lease RBAC, and no agent PVC. It ships no general NetworkPolicy — the agent's egress set depends on your provider, MCP, and API-server endpoints, so network isolation belongs to the cluster's own policy layer rather than to a chart that cannot know them. The `oidc.*` values additionally render a narrow raw-driver NetworkPolicy when caller identity is enabled.
+`deploy/helm/mecak8s/` defines the production deployment contract.
+It creates no Redis StatefulSet.
+Set an external Redis endpoint.
+Set a credentials Secret reference when a configured key needs reading.
+The image defaults to `v<chart-version>`.
+This default keeps ranged Helm upgrades aligned with released images.
+Set a signed release tag or digest only to override the default.
+A real-provider deployment (`mockProvider: false`) requires server TLS and OIDC caller authentication.
+TLS does not authenticate callers.
+OIDC does not encrypt transport.
+Use `security.allowUnsafeRealProvider: true` only for local deployments or trusted meshes that provide both controls externally.
+This bypass annotates the pod as unsafe.
+The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, and namespaced Lease RBAC.
+The chart creates no agent PVC and ships no general NetworkPolicy.
+The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
+The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
-  --set image.tag=v<release-version> \
   --set redis.endpoint=redis.example.internal:6379 \
   --set redis.credentialsSecret=mecak8s-redis \
   --set tls.enabled=true \

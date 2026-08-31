@@ -2867,7 +2867,7 @@ the DATA framing + the "only memory"/"preserved verbatim" framing, via
 `mockllm.WithRequestObserver`), budget-in-instruction, empty-summary
 abort, missing-sections/over-long acceptance, pairing preservation, and LLM-error abort.
 
-**Full-request trigger accounting and manual compaction (ADR 0259).** The user-visible
+**Full-request trigger accounting and manual compaction (ADR 0276).** The user-visible
 failure was a provider context rejection before automatic compaction fired. History-only
 accounting omitted prompt layers that are sent on every call. `engine/agent/loop.go`
 (`estimateRequestTokens`) now measures the already-built `port.LLMRequest`: rendered
@@ -3328,7 +3328,7 @@ fails closed for a missing/unknown `config daemon` subcommand — it never
 reaches `run()`/listeners. `--config` stays an advanced serve-only, explicit
 flag; ACP help excludes it. See ADR 0088.
 
-### Remote mecatui OIDC client authentication (ADR 0260)
+### Remote mecatui OIDC client authentication (ADR 0277)
 
 The command taxonomy is deliberately explicit. `mecatui llm login` is the existing
 ToolHive gateway login and has no server/session meaning. `mecatui login ADDRESS` is

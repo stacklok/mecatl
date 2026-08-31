@@ -459,7 +459,7 @@ The shared private-HTTPS path reuses a finite, owner-closed scoped keep-alive po
 every new dial re-resolves DNS and intersects the approved addresses while retaining
 HTTPS, origin, CA, hostname, and redirect safeguards. Kind remote login is available after fixture setup with host aliases and
 the public CA, but is a live qualification path, not ordinary offline-test coverage.
-See [ADR 0258](adr/0258-bounded-scoped-https-keepalive-oidc.md), [ADR 0260](adr/0260-remote-mecatui-oidc.md) and [ADR 0257](adr/0257-remote-mecatui-logout-budget.md).
+See [ADR 0275](adr/0275-bounded-scoped-https-keepalive-oidc.md), [ADR 0277](adr/0277-remote-mecatui-oidc.md) and [ADR 0274](adr/0274-remote-mecatui-logout-budget.md).
 
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against

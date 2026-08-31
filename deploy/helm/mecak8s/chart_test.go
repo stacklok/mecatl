@@ -435,8 +435,12 @@ func TestMecak8sHelmChart_Scenario1_ProductionValuesRequireExternalRedis(t *test
 		t.Fatal("production render did not use the configured digest image")
 	}
 	args = append(productionArgs(), "--set", "image.digest=,image.tag=")
-	if _, err := helm(t, args...); err == nil {
-		t.Fatal("production render accepted an image without a tag or digest")
+	rendered, err = helm(t, args...)
+	if err != nil {
+		t.Fatalf("render chart-version image: %v", err)
+	}
+	if !strings.Contains(rendered, "ghcr.io/stacklok/mecatl/mecak8s:v0.2.0") {
+		t.Fatal("production render did not default the image tag from the chart version")
 	}
 	args = append(productionArgs(), "--set", "image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	if _, err := helm(t, args...); err == nil {

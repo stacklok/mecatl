@@ -397,10 +397,10 @@ jobs:
           subject-digest: ${{ steps.build.outputs.image_digest }}
           push-to-registry: true
 
-  # The chart has no image-digest dependency on the image jobs, so it can publish
-  # in parallel.
+  # Publish the chart only after its default image tag exists.
   publish-helm-chart:
     name: Package, publish, sign Helm chart
+    needs: publish-mecak8s
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -438,12 +438,11 @@ jobs:
           echo "chart_version=$CHART_VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved chart version: $CHART_VERSION (from ${VERSION})"
 
-      # Bare `helm lint` renders with an empty values.yaml, which trips this
-      # chart's required-field guards (image.tag, redis.endpoint, ...) and its
-      # secure real-provider TLS/OIDC contract. Lint with the same minimal
-      # production-shaped overrides that target already uses.
+      # Bare `helm lint` renders with an empty values.yaml, which trips the
+      # Redis and secure real-provider guards. Lint with the minimal production
+      # overrides that target already uses. The chart version supplies the image tag.
       - name: helm lint
-        run: helm lint "${CHART_PATH}" --set image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+        run: helm lint "${CHART_PATH}" --set redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
 
       - name: helm package
         env:

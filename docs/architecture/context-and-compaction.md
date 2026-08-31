@@ -97,7 +97,7 @@ The operation is exposed as gRPC `CompactSession` and bodyless HTTP
 `POST /v1/sessions/{id}/compact`. `ServerCapabilities.manual_compaction` lets clients
 hide it when talking to an older server. Mecatui uses that bit for its bare `/compact`
 built-in; the command is local control flow and never becomes model input. These
-additive decisions are recorded in [ADR 0259](../adr/0259-full-request-and-manual-compaction.md).
+additive decisions are recorded in [ADR 0276](../adr/0276-full-request-and-manual-compaction.md).
 
 ## Prerequisites
 

@@ -49,6 +49,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0232 — Steer-while-running: inject a user message into an in-flight run](./0232-steer-while-running.md)
 - [0251 — Multimodal steer preserves prompt content](./0251-multimodal-steer.md)
 - [0252 — HTTP steer endpoint: `POST /v1/sessions/{id}/steer`](./0252-http-steer-endpoint.md)
+- [0270 — SDK mocking testkit: vendor the proven unary pattern, defer streaming](./0253-sdk-mocking-testkit.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)
@@ -59,13 +60,13 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0048 — mecak8s: Kubernetes-native agent harness (storage-free, managed-service state)](./0048-mecak8s.md)
 - [0233 — Secure external Redis on the shared connection layer](./0233-secure-external-redis.md)
 - [0237 — Listener-scoped workspace authority](./0237-listener-scoped-workspace-authority.md)
-- [0260 — Remote mecatui OIDC client authentication](./0260-remote-mecatui-oidc.md) *(supersedes 0253–0256)*
-- [0258 — Bounded scoped HTTPS keep-alive reuse for OIDC](./0258-bounded-scoped-https-keepalive-oidc.md) *(supersedes ADR 0235's keep-alive policy and ADR 0260's credential-recovery classification only)*
-- [0253 — Activity-gated remote OIDC refresh](./0253-activity-gated-remote-oidc-refresh.md) *(superseded by 0260)*
-- [0254 — Recover remote TUI authentication without replaying ownership-ambiguous work](./0254-tui-reauth-owner-recovery.md) *(superseded by 0260)*
-- [0255 — Safe target logout for remote mecatui OIDC](./0255-remote-mecatui-logout.md) *(superseded by 0260)*
-- [0256 — Remote mecatui OIDC client login](./0256-remote-mecatui-oidc-login.md) *(superseded by 0260)*
-- [0257 — Remote logout provider budget](./0257-remote-mecatui-logout-budget.md) *(supersedes ADR 0260's logout provider budget only)*
+- [0277 — Remote mecatui OIDC client authentication](./0277-remote-mecatui-oidc.md) *(supersedes 0253–0256)*
+- [0275 — Bounded scoped HTTPS keep-alive reuse for OIDC](./0275-bounded-scoped-https-keepalive-oidc.md) *(supersedes ADR 0235's keep-alive policy and ADR 0277's credential-recovery classification only)*
+- [0270 — Activity-gated remote OIDC refresh](./0270-activity-gated-remote-oidc-refresh.md) *(superseded by 0260)*
+- [0271 — Recover remote TUI authentication without replaying ownership-ambiguous work](./0271-tui-reauth-owner-recovery.md) *(superseded by 0260)*
+- [0272 — Safe target logout for remote mecatui OIDC](./0272-remote-mecatui-logout.md) *(superseded by 0260)*
+- [0273 — Remote mecatui OIDC client login](./0273-remote-mecatui-oidc-login.md) *(superseded by 0260)*
+- [0274 — Remote logout provider budget](./0274-remote-mecatui-logout-budget.md) *(supersedes ADR 0277's logout provider budget only)*
 - [0059 — Scheduled tasks](./0059-scheduled-tasks.md)
 - [0065 — Conversation fork: peer session from a history snapshot](./0065-conversation-fork.md)
 - [0073 — Schedule tool](./0073-schedule-tool.md)
@@ -86,7 +87,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0010 — Semantic memory recall](./0010-semantic-memory-recall.md)
 - [0011 — Soul & user-model](./0011-soul-and-user-model.md)
 - [0012 — Compaction](./0012-compaction.md)
-- [0259 — Count the full request and expose durable manual compaction](./0259-full-request-and-manual-compaction.md) *(supersedes ADR 0025's `/compact` deferral only)*
+- [0276 — Count the full request and expose durable manual compaction](./0276-full-request-and-manual-compaction.md) *(supersedes ADR 0025's `/compact` deferral only)*
 - [0106 — Optional completion-learning seam](./0106-optional-learning-seam.md)
 - [0107 — Operator-profile memory lifecycle](./0107-operator-profile-memory-lifecycle.md)
 - [0109 — Evidence-backed reflection and durable staged learning](./0109-staged-learning-proposals.md)

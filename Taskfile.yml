@@ -373,8 +373,8 @@ tasks:
       caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
       cluster, so it runs in CI and on a laptop.
     vars:
-      PROD_SET: image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
-      SAFE_SET: image.tag=v0.0.0,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+      PROD_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
+      SAFE_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
     preconditions:
       - sh: command -v helm >/dev/null 2>&1
         msg: "helm is not installed (https://helm.sh/docs/intro/install/)"
