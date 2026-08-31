@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,6 +82,51 @@ func Run(t *testing.T, factory Factory) {
 		stored := mustGet(t, h.Repository, p, running.ID)
 		if stored != running {
 			t.Fatalf("stale CAS changed stored record: got=%+v want=%+v", stored, running)
+		}
+	})
+
+	t.Run("concurrent CAS permits one claim owner", func(t *testing.T) {
+		h := newHarness(t, factory)
+		ctx := context.Background()
+		p := partition(t, "concurrent-cas")
+		now := baseTime()
+		created := mustCreate(t, h.Repository, p, fixture(t, "concurrent-cas"))
+
+		const contenders = 16
+		start := make(chan struct{})
+		results := make(chan error, contenders)
+		var wg sync.WaitGroup
+		for range contenders {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, _, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, now, now.Add(time.Minute))
+				results <- err
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(results)
+
+		succeeded := 0
+		conflicted := 0
+		for err := range results {
+			switch {
+			case err == nil:
+				succeeded++
+			case errors.Is(err, learning.ErrAttemptVersionConflict):
+				conflicted++
+			default:
+				t.Fatalf("concurrent AcquireClaim error = %v", err)
+			}
+		}
+		if succeeded != 1 || conflicted != contenders-1 {
+			t.Fatalf("concurrent AcquireClaim successes=%d conflicts=%d, want 1 and %d", succeeded, conflicted, contenders-1)
+		}
+		stored := mustGet(t, h.Repository, p, created.ID)
+		if stored.State != learning.AttemptRunning || stored.ClaimGeneration != 1 {
+			t.Fatalf("stored concurrent winner = %+v", stored)
 		}
 	})
 
