@@ -2,9 +2,9 @@
 id: 12-attempt-worker-reconciliation
 title: Drive claimed attempts through distinct terminal outcomes
 blocked_by: [11-fenced-reflection-boundary]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/12-attempt-worker-reconciliation"
+worktree: ".scratch/worktrees/12-attempt-worker-reconciliation"
 issue: ""
 retries: 0
 last_error: ""
