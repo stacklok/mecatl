@@ -13,10 +13,65 @@ import (
 // inspect the registry and retry.
 var ErrIncompleteEnrollment = errors.New("clientauth: enrollment incomplete")
 
+// ErrTargetChanged means the target's registry or credential state at commit
+// time no longer matches the ExpectedTarget/ExpectedCredential snapshot the
+// caller supplied. Enroll performs no write in this case; the caller should
+// report a distinct recovery reason rather than either silently succeeding
+// (which could resurrect a logged-out target or clobber a newer enrollment)
+// or crashing.
+var ErrTargetChanged = errors.New("clientauth: target changed during sign-in")
+
+// ExpectedCredentialState is Enroll's optional precondition on the enrolled
+// identity's OWN credential state (not the registry's connection metadata --
+// see EnrollmentConfig.ExpectedTarget for that), captured before an
+// interactive step that can run arbitrarily long.
+type ExpectedCredentialState struct {
+	Found   bool
+	Version credentialstore.Version
+}
+
 // EnrollmentConfig supplies the two durable halves of an enrollment.
 type EnrollmentConfig struct {
 	Registry    *Registry
 	Credentials *Credentials
+	// ExpectedTarget, when non-nil, is the target's connection snapshot taken
+	// BEFORE an interactive step (e.g. a browser OAuth exchange) that can run
+	// arbitrarily long. Enroll then requires the target's state at commit
+	// time to match this snapshot exactly, returning ErrTargetChanged
+	// otherwise -- closing the gap between a reauthentication preflight and
+	// its eventual write-back, across which another process could log the
+	// target out. A nil ExpectedTarget (the default, used by a fresh
+	// enrollment) enrolls unconditionally.
+	ExpectedTarget *[]Connection
+	// ExpectedCredential, when non-nil, is the SAME identity's own credential
+	// snapshot taken at the same preflight time. ExpectedTarget alone cannot
+	// detect a newer credential enrolled for the identical identity (the
+	// registry's connection metadata is unchanged; only the credential
+	// store's version moved), so this closes that half of the same race:
+	// Enroll rejects with ErrTargetChanged rather than overwrite a credential
+	// newer than the one the caller preflighted against. A credential that
+	// was corrupt at preflight time is deliberately left unconstrained here
+	// (nil) -- Enroll's existing corrupt-record repair path handles that.
+	ExpectedCredential *ExpectedCredentialState
+}
+
+// checkExpectedTarget reports whether current matches cfg.ExpectedTarget (or
+// whether no such precondition was requested at all).
+func (cfg EnrollmentConfig) checkExpectedTarget(current []Connection) bool {
+	return cfg.ExpectedTarget == nil || sameConnections(current, *cfg.ExpectedTarget)
+}
+
+// checkExpectedCredential reports whether current matches
+// cfg.ExpectedCredential (or whether no such precondition was requested, or
+// the credential is under repair -- see ExpectedCredential's doc comment).
+func (cfg EnrollmentConfig) checkExpectedCredential(current credentialSnapshot) bool {
+	if cfg.ExpectedCredential == nil || current.unusable {
+		return true
+	}
+	if current.found != cfg.ExpectedCredential.Found {
+		return false
+	}
+	return !current.found || current.record.Version.Equal(cfg.ExpectedCredential.Version)
 }
 
 type credentialSnapshot struct {
@@ -51,11 +106,17 @@ func Enroll(ctx context.Context, conn Connection, token Token, cfg EnrollmentCon
 	if err != nil {
 		return err
 	}
+	if !cfg.checkExpectedTarget(oldEntries) {
+		return ErrTargetChanged
+	}
 	snapshots, err := snapshotEnrollmentCredentials(ctx, cfg.Credentials, id, oldEntries)
 	if err != nil {
 		return err
 	}
 	newSnapshot := snapshots[0]
+	if !cfg.checkExpectedCredential(newSnapshot) {
+		return ErrTargetChanged
+	}
 	written, err := storeEnrollmentCredential(ctx, cfg.Credentials, id, token, newSnapshot)
 	if err != nil {
 		return err

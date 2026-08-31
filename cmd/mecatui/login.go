@@ -102,6 +102,18 @@ type preparedSavedLogin struct {
 	registry *clientauth.Registry
 	creds    *clientauth.Credentials
 	close    func()
+	// expectedTarget, when non-nil, is the target's connection snapshot taken
+	// HERE, before the interactive browser OAuth exchange runs (which can
+	// take arbitrarily long). It is threaded into Enroll as
+	// EnrollmentConfig.ExpectedTarget so a concurrent logout for the same
+	// target during that wait is detected rather than silently resurrected.
+	// nil for a fresh enrollment, which has no prior state to preserve.
+	expectedTarget *[]clientauth.Connection
+	// expectedCredential is the SAME identity's own credential snapshot taken
+	// at the same preflight time -- see EnrollmentConfig.ExpectedCredential;
+	// expectedTarget alone cannot detect a newer credential enrolled for the
+	// identical identity.
+	expectedCredential *clientauth.ExpectedCredentialState
 }
 
 func prepareSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (preparedSavedLogin, error) {
@@ -155,12 +167,40 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 		closeStore()
 		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	if _, err := creds.Load(ctx, conn.Identity); err != nil &&
-		!errors.Is(err, credentialstore.ErrNotFound) && !errors.Is(err, clientauth.ErrCorrupt) {
+	rec, loadErr := creds.Load(ctx, conn.Identity)
+	var expectedCredential *clientauth.ExpectedCredentialState
+	switch {
+	case loadErr == nil:
+		expectedCredential = &clientauth.ExpectedCredentialState{Found: true, Version: rec.Version}
+	case errors.Is(loadErr, credentialstore.ErrNotFound):
+		expectedCredential = &clientauth.ExpectedCredentialState{Found: false}
+	case errors.Is(loadErr, clientauth.ErrCorrupt):
+		// Leave nil: Enroll's existing corrupt-record repair path is
+		// unconstrained by this precondition.
+	default:
 		closeStore()
 		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore}, nil
+	all, err := registry.List()
+	if err != nil {
+		closeStore()
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	var expected []clientauth.Connection
+	// Canonicalize defensively (matching Enroll's own discipline) rather than
+	// trust the caller's conn.Identity.Target is already canonical -- a
+	// mismatch here would silently see zero existing entries and misreport
+	// every reauth as a changed target.
+	target := conn.Identity.Target
+	if canon, canonErr := conn.Identity.Canonical(); canonErr == nil {
+		target = canon.Target
+	}
+	for _, existing := range all {
+		if existing.Identity.Target == target {
+			expected = append(expected, existing)
+		}
+	}
+	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: &expected, expectedCredential: expectedCredential}, nil
 }
 
 // runSavedRemoteLogin performs the ordinary OIDC flow for an already-saved public
@@ -209,7 +249,10 @@ func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, no
 	if err != nil {
 		return signinError(err)
 	}
-	if err := clientauth.Enroll(ctx, conn, token, clientauth.EnrollmentConfig{Registry: prepared.registry, Credentials: prepared.creds}); err != nil {
+	if err := clientauth.Enroll(ctx, conn, token, clientauth.EnrollmentConfig{Registry: prepared.registry, Credentials: prepared.creds, ExpectedTarget: prepared.expectedTarget, ExpectedCredential: prepared.expectedCredential}); err != nil {
+		if errors.Is(err, clientauth.ErrTargetChanged) {
+			return &client.AuthError{Reason: client.AuthTargetChanged}
+		}
 		return &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
 	return nil

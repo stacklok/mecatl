@@ -58,24 +58,25 @@ func runRemoteLogout(address string, args []string) error {
 		// Called at most once per logout, with every retained connection needing
 		// revocation, so one scoped client (its dial-approval policy spans every
 		// retained issuer) is reused for the whole operation instead of rebuilt
-		// per credential (ADR 0258's bounded-keep-alive intent).
+		// per credential (ADR 0258's bounded-keep-alive intent). Each issuer's
+		// own CA maps ONLY to that issuer's own endpoint -- scopedhttps.NewClient
+		// verifies each connection against its dialed endpoint's own pool only,
+		// never a union, so one retained connection's CA can never authenticate
+		// a different retained connection's issuer.
 		HTTPClientOwned: func(ctx context.Context, conns []clientauth.Connection) (*http.Client, bool, error) {
-			endpoints := make([]string, 0, len(conns))
-			seen := make(map[string]bool, len(conns))
-			var caPEM []byte
+			endpointCAs := make(map[string][]byte, len(conns))
 			for _, conn := range conns {
 				ca, err := os.ReadFile(conn.IssuerCAFile)
 				if err != nil {
 					return nil, false, err
 				}
-				caPEM = append(caPEM, ca...)
-				caPEM = append(caPEM, '\n')
-				if !seen[conn.Identity.Issuer] {
-					seen[conn.Identity.Issuer] = true
-					endpoints = append(endpoints, conn.Identity.Issuer)
-				}
+				// Two retained connections can share an issuer with different
+				// CA files (e.g. a rotation where the registry still has a
+				// stale entry) -- union rather than overwrite, so the pool
+				// scopedhttps builds for that issuer's host accepts either.
+				endpointCAs[conn.Identity.Issuer] = append(append(endpointCAs[conn.Identity.Issuer], ca...), '\n')
 			}
-			client, err := scopedhttps.NewClient(ctx, endpoints, caPEM)
+			client, err := scopedhttps.NewClient(ctx, endpointCAs)
 			return client, true, err
 		},
 	})

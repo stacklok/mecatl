@@ -182,6 +182,12 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 		client, err = clientFor(cleanupCtx, conns)
 	}
 	if err != nil {
+		// A partially-constructed owned client (client non-nil alongside a
+		// non-nil error) still needs its idle-connection cleanup -- the builder
+		// failed some step after opening connections, not before.
+		if owned && client != nil {
+			client.CloseIdleConnections()
+		}
 		// The one operation-wide client failed to build; every retained
 		// credential's revocation is unattempted.
 		for _, item := range revoke {

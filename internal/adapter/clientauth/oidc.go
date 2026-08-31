@@ -429,7 +429,7 @@ func oidcClient(ctx context.Context, id Identity, cfg LoginConfig) (*http.Client
 		if len(cfg.TrustedCAPEM) == 0 {
 			return nil, errors.New("private HTTPS issuer requires a CA bundle")
 		}
-		return scopedhttps.NewClient(ctx, []string{id.Issuer}, cfg.TrustedCAPEM)
+		return scopedhttps.NewSingleIssuerClient(ctx, []string{id.Issuer}, cfg.TrustedCAPEM)
 	}
 	if cfg.HTTPClient != nil {
 		return cfg.HTTPClient, nil

@@ -23,7 +23,6 @@ func TestAuthTokenSourceMapsOnlyRecoveryCauses(t *testing.T) {
 		{"session expired", &clientauth.LoginRequiredError{Cause: clientauth.SessionExpired}, client.AuthSessionExpired},
 		{"credential unusable", &clientauth.LoginRequiredError{Cause: clientauth.CredentialUnusable}, client.AuthCredentialUnusable},
 		{"cleanup", errors.Join(errors.New("remove failed"), clientauth.ErrCredentialCleanup), client.AuthCredentialCleanup},
-		{"issuer", clientauth.ErrDiscovery, client.AuthStorageUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := mapAuthTokenSource(authTokenSourceFunc(func(context.Context) (string, error) { return "", tc.err }))
@@ -43,6 +42,12 @@ func TestAuthTokenSourcePreservesUnclassifiedErrors(t *testing.T) {
 		clientauth.ErrTokenExchange,
 		errors.New("token validation failed"),
 		&clientauth.LoginRequiredError{Cause: unknownCause},
+		// ErrDiscovery means the issuer was unreachable, its TLS was
+		// untrusted, or JWKS failed to load -- an infrastructure/network
+		// problem, not evidence the local keyring/registry/store is broken.
+		// It must remain unclassified rather than steer the user toward
+		// local-storage recovery.
+		clientauth.ErrDiscovery,
 	} {
 		source := mapAuthTokenSource(authTokenSourceFunc(func(context.Context) (string, error) { return "", want }))
 		_, got := source.Token(t.Context())

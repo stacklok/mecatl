@@ -53,7 +53,7 @@ tasks:
             sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
           done
           echo 'Added (or already present):'
-          task mecak8s:kind-hosts-show
+          task mecak8s-vmcp:kind-hosts-show
 
   kind-hosts-remove:
     desc: Remove only the exact temporary Kind aliases from /etc/hosts
@@ -156,7 +156,7 @@ tasks:
     #   THV_OPERATOR_CHART=<path>/deploy/charts/operator \
     #   THV_VERSION_FLAG= \
     #   THV_IMAGE_SETS='--set operator.image=... --set operator.vmcpImage=...' \
-    #   task mecak8s:vmcp-setup
+    #   task mecak8s-vmcp:vmcp-setup
     vars:
       THV_CRDS_CHART: '{{.THV_CRDS_CHART | default "oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds"}}'
       THV_OPERATOR_CHART: '{{.THV_OPERATOR_CHART | default "oci://ghcr.io/stacklok/toolhive/toolhive-operator"}}'

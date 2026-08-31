@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	clientTimeout      = 15 * time.Second
-	maxIdleConnections = 8
-	maxIdlePerHost     = 2
-	idleConnTimeout    = 30 * time.Second
+	clientTimeout       = 15 * time.Second
+	tlsHandshakeTimeout = 10 * time.Second
+	maxIdleConnections  = 8
+	maxIdlePerHost      = 2
+	idleConnTimeout     = 30 * time.Second
 )
 
 type approvedEndpoint struct {
@@ -31,35 +32,44 @@ type approvedEndpoint struct {
 
 type policy struct {
 	endpoints map[string]approvedEndpoint
+	// hostRoots holds each approved hostname's OWN trusted CA pool, isolated
+	// from every other hostname's pool -- see verifyConnection.
+	hostRoots map[string]*x509.CertPool
 	lookup    func(context.Context, string) ([]net.IP, error)
 }
 
-// NewClient constructs an HTTPS-only client restricted to endpoints. Each
-// endpoint must resolve to a private address at construction and at every dial.
-// The supplied PEM bundle is the complete set of trusted TLS roots.
-func NewClient(ctx context.Context, endpoints []string, trustedCAPEM []byte) (*http.Client, error) {
-	roots, err := rootsFromPEM(trustedCAPEM)
-	if err != nil {
-		return nil, err
-	}
-	policy, err := newPolicy(ctx, endpoints, defaultLookup)
+// NewClient constructs an HTTPS-only client restricted to endpoints, one
+// scoped connection-pool lifecycle for every endpoint in endpointCAs. Each
+// endpoint must resolve to a private address at construction and at every
+// dial. endpointCAs maps each approved HTTPS endpoint URL to the exact CA PEM
+// bundle trusted for THAT endpoint's own hostname -- never a shared/unioned
+// pool. Two endpoints on different hosts, each supplying its own CA, are kept
+// isolated: a certificate presented for host B is verified ONLY against B's
+// own pool, never against A's, so a compromised or overly permissive CA
+// configured for one endpoint can never authenticate a connection to another.
+func NewClient(ctx context.Context, endpointCAs map[string][]byte) (*http.Client, error) {
+	policy, err := newPolicy(ctx, endpointCAs, defaultLookup)
 	if err != nil {
 		return nil, err
 	}
 	transport := &http.Transport{
-		DialContext: policy.dialContext,
-		// Keep-alive is intentional: dialContext already re-validates the dial
+		// DialTLSContext (not DialContext + TLSClientConfig): the standard
+		// library has no client-side per-ServerName root-pool hook (that
+		// exists only server-side, via GetConfigForClient), and TLS SNI is
+		// never sent for an IP-literal dial target, so per-endpoint root
+		// isolation requires performing the handshake here, per dial, against
+		// exactly the dialed endpoint's own pool with an explicit ServerName.
+		DialTLSContext: policy.dialTLS,
+		// Keep-alive is intentional: dialTLS already re-validates the dial
 		// target against the approved IP set on every new connection, so an
 		// established connection is at least as trustworthy as a fresh one and
 		// reusing it avoids paying a resolver round trip per request (a
 		// "cluster.local"-suffixed host costs a deterministic ~5s stall per
 		// lookup on a macOS client, since that TLD forces mDNS resolution).
-		TLSHandshakeTimeout:   10 * time.Second,
 		MaxIdleConns:          maxIdleConnections,
 		MaxIdleConnsPerHost:   maxIdlePerHost,
 		IdleConnTimeout:       idleConnTimeout,
 		ResponseHeaderTimeout: clientTimeout,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
 	}
 	return &http.Client{
 		Transport: scopedTransport{policy: policy, next: transport},
@@ -70,6 +80,31 @@ func NewClient(ctx context.Context, endpoints []string, trustedCAPEM []byte) (*h
 	}, nil
 }
 
+// NewSingleIssuerClient is NewClient's convenience form for the common case
+// of one issuer's own endpoints (e.g. its discovery document and JWKS URI)
+// all trusting the SAME CA bundle.
+func NewSingleIssuerClient(ctx context.Context, endpoints []string, trustedCAPEM []byte) (*http.Client, error) {
+	endpointCAs := make(map[string][]byte, len(endpoints))
+	for _, endpoint := range endpoints {
+		endpointCAs[endpoint] = trustedCAPEM
+	}
+	return NewClient(ctx, endpointCAs)
+}
+
+// verifyPeerChain verifies a peer's certificate chain against the given
+// pool, independent of TLS's own automatic verification path.
+func verifyPeerChain(certs []*x509.Certificate, roots *x509.CertPool, dnsName string) error {
+	if len(certs) == 0 {
+		return errors.New("no peer certificates presented")
+	}
+	intermediates := x509.NewCertPool()
+	for _, cert := range certs[1:] {
+		intermediates.AddCert(cert)
+	}
+	_, err := certs[0].Verify(x509.VerifyOptions{DNSName: dnsName, Roots: roots, Intermediates: intermediates})
+	return err
+}
+
 func rootsFromPEM(pemBytes []byte) (*x509.CertPool, error) {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(pemBytes) {
@@ -78,9 +113,10 @@ func rootsFromPEM(pemBytes []byte) (*x509.CertPool, error) {
 	return roots, nil
 }
 
-func newPolicy(ctx context.Context, rawEndpoints []string, lookup func(context.Context, string) ([]net.IP, error)) (policy, error) {
+func newPolicy(ctx context.Context, endpointCAs map[string][]byte, lookup func(context.Context, string) ([]net.IP, error)) (policy, error) {
 	endpoints := make(map[string]approvedEndpoint)
-	for _, raw := range rawEndpoints {
+	hostRoots := make(map[string]*x509.CertPool)
+	for raw, ca := range endpointCAs {
 		if raw == "" {
 			continue
 		}
@@ -93,6 +129,20 @@ func newPolicy(ctx context.Context, rawEndpoints []string, lookup func(context.C
 		if port == "" {
 			port = "443"
 		}
+		roots, err := rootsFromPEM(ca)
+		if err != nil {
+			return policy{}, fmt.Errorf("HTTPS endpoint %q: %w", raw, err)
+		}
+		// Two endpoints sharing one host (e.g. an issuer's discovery doc and
+		// its JWKS URI) legitimately share one pool; a distinct host always
+		// gets its own -- roots are never merged ACROSS hosts.
+		if existing, ok := hostRoots[host]; ok {
+			roots = existing
+			if !roots.AppendCertsFromPEM(ca) {
+				return policy{}, fmt.Errorf("HTTPS endpoint %q: trusted CA bundle contains no certificates", raw)
+			}
+		}
+		hostRoots[host] = roots
 		key := net.JoinHostPort(host, port)
 		if _, ok := endpoints[key]; ok {
 			continue
@@ -106,7 +156,7 @@ func newPolicy(ctx context.Context, rawEndpoints []string, lookup func(context.C
 	if len(endpoints) == 0 {
 		return policy{}, errors.New("no HTTPS endpoints approved")
 	}
-	return policy{endpoints: endpoints, lookup: lookup}, nil
+	return policy{endpoints: endpoints, hostRoots: hostRoots, lookup: lookup}, nil
 }
 
 func defaultLookup(ctx context.Context, host string) ([]net.IP, error) {
@@ -150,7 +200,7 @@ func (p policy) endpoint(host, port string) (approvedEndpoint, bool) {
 	return endpoint, ok
 }
 
-func (p policy) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func (p policy) dialTLS(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, fmt.Errorf("invalid HTTPS dial address %q: %w", address, err)
@@ -173,7 +223,32 @@ func (p policy) dialContext(ctx context.Context, network, address string) (net.C
 		return nil, fmt.Errorf("HTTPS target %q no longer resolves to an approved private address", address)
 	}
 	sort.Strings(candidates)
-	return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(candidates[0], port))
+	rawConn, err := (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(candidates[0], port))
+	if err != nil {
+		return nil, err
+	}
+	// ServerName is set explicitly to the approved hostname rather than left
+	// to derive from the dial address (an IP literal, for which TLS never
+	// sends SNI) -- required both for correct hostname verification and so a
+	// server presenting SNI-routed certificates sees the right name. RootCAs
+	// is ONLY this endpoint's own pool: a handshake against endpoint B is
+	// never checked against endpoint A's roots, however many other approved
+	// endpoints this policy also covers.
+	tlsConn := tls.Client(rawConn, &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         endpoint.host,
+		InsecureSkipVerify: true, // #nosec G402 -- verifyPeerChain below performs the full manual chain+hostname verification this normally does, against this endpoint's own pool
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			return verifyPeerChain(cs.PeerCertificates, p.hostRoots[endpoint.host], endpoint.host)
+		},
+	})
+	handshakeCtx, cancel := context.WithTimeout(ctx, tlsHandshakeTimeout)
+	defer cancel()
+	if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
+		_ = rawConn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
 }
 
 type scopedTransport struct {

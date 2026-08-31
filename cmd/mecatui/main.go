@@ -459,7 +459,11 @@ func connectRestartIntent(final tea.Model) (ui.ConnectRestartIntent, bool) {
 }
 
 func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, options runOptions) error {
-	deps := ui.Deps{Ctx: ctx, Theme: th, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
+	// Same non-interactive-stdin signal as the ordinary ui.Deps construction
+	// (line ~344): this path is reached from a disconnected/non-interactive
+	// startup failure before that construction ever runs, so it must compute
+	// its own headless posture rather than default to false (browser launch).
+	deps := ui.Deps{Ctx: ctx, Theme: th, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID, NoBrowser: !term.IsTerminal(int(os.Stdin.Fd()))}
 	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
 	finalModel, runErr := prog.Run()
 	if intent, ok := connectRestartIntent(finalModel); ok {

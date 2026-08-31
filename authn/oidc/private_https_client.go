@@ -8,5 +8,5 @@ import (
 )
 
 func newPrivateHTTPSClient(ctx context.Context, cfg Config) (*http.Client, error) {
-	return scopedhttps.NewClient(ctx, []string{cfg.Issuer, cfg.JWKSURI}, cfg.TrustedCAPEM)
+	return scopedhttps.NewSingleIssuerClient(ctx, []string{cfg.Issuer, cfg.JWKSURI}, cfg.TrustedCAPEM)
 }

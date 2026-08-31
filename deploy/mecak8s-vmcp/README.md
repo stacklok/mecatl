@@ -12,7 +12,7 @@ credential broker, SPIFFE, sidecars, or mecatui remote login.
 - Yardstick `v1.1.1`, commit `e5b8908ed6f53c1171ac805d82cf858d2982fa19e`,
   image `ghcr.io/stackloklabs/yardstick/yardstick-server:1.1.1`
 
-`versions.yaml` records the pins. `task mecak8s:vmcp-status` captures the actual
+`versions.yaml` records the pins. `task mecak8s-vmcp:vmcp-status` captures the actual
 Pod image IDs; the mecatl ToolHive Go-module version is not runtime proof.
 
 ## Scope
@@ -45,9 +45,9 @@ passwords.
 ## Lifecycle
 
 ```sh
-task mecak8s:vmcp-check
-task mecak8s:vmcp-setup
-task mecak8s:vmcp-status
+task mecak8s-vmcp:vmcp-check
+task mecak8s-vmcp:vmcp-setup
+task mecak8s-vmcp:vmcp-status
 kind delete cluster --name=mecatl-dev
 ```
 
@@ -80,10 +80,10 @@ them when finished. These tasks require `sudo`, never modify `/etc/hosts`
 silently, and removal creates `/etc/hosts.bak`:
 
 ```sh
-task mecak8s:kind-hosts-show
-task mecak8s:kind-hosts-add
+task mecak8s-vmcp:kind-hosts-show
+task mecak8s-vmcp:kind-hosts-add
 # use the browser/client journey
-task mecak8s:kind-hosts-remove
+task mecak8s-vmcp:kind-hosts-remove
 ```
 
 The exact entries managed by these tasks are:
@@ -113,7 +113,7 @@ the public fixture CA to `.scratch/` (the CA is public, but do not export or
 print any private-key Secret item):
 
 ```sh
-task mecak8s:kind-hosts-add
+task mecak8s-vmcp:kind-hosts-add
 # connect to mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local:18081
 kubectl --kubeconfig=deploy/mecak8s-vmcp/kconfig.yaml --context=kind-mecatl-dev \
   --namespace=mecatl-vmcp get secret fixture-ca -o jsonpath='{.data.tls\.crt}' | base64 --decode > .scratch/mecak8s-vmcp-ca.crt
@@ -176,8 +176,8 @@ and JWKS at `https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl/p
 there use that HTTPS URL as `iss`.
 
 Pods use that Service-DNS name directly. For temporary host access, run
-`task mecak8s:kind-hosts-add`; remove the exact aliases with
-`task mecak8s:kind-hosts-remove` when finished. The host and pod therefore use
+`task mecak8s-vmcp:kind-hosts-add`; remove the exact aliases with
+`task mecak8s-vmcp:kind-hosts-remove` when finished. The host and pod therefore use
 the same HTTPS issuer URL, with the Kind mapping bound to loopback only. The `keycloak-tls` certificate covers the Service DNS name, `localhost`, and `127.0.0.1`.
 Mecak8s trusts the fixture CA through its direct `--oidc-ca-cert-file` flag and
 admits only this private HTTPS Service issuer; it does not use the deprecated
@@ -228,7 +228,7 @@ Keycloak's built-ins and drops the `sub` claim).
 
 ### Getting a delegated token
 
-Requires the loopback aliases from `task mecak8s:kind-hosts-add` (Keycloak is
+Requires the loopback aliases from `task mecak8s-vmcp:kind-hosts-add` (Keycloak is
 reached by its in-cluster name, so one URL works from host and pod alike), plus a
 port-forward for vMCP:
 

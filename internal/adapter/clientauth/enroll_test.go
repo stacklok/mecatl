@@ -512,3 +512,107 @@ func TestEnrollReconcilesAcceptedCredentialOnlyCrashState(t *testing.T) {
 		t.Fatalf("reconciled credential = %#v, %v", rec.Token, err)
 	}
 }
+
+// TestEnrollDetectsTargetLoggedOutDuringSignIn pins the reauthentication CAS
+// precondition: if the target is logged out (e.g. `mecatui logout`) WHILE an
+// interactive browser sign-in for that same target is still in progress, the
+// eventual Enroll call must not resurrect it. The snapshot passed as
+// ExpectedTarget is what a preflight captured before the (arbitrarily long)
+// browser wait; targetSnapshot's fresh read at commit time no longer matches
+// it once logout has run.
+func TestEnrollDetectsTargetLoggedOutDuringSignIn(t *testing.T) {
+	reg, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	id := identity("logged-out-during-signin.example:443")
+	if _, err := creds.Upsert(t.Context(), id, Token{AccessToken: "old", TokenType: "Bearer"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Upsert(Connection{Identity: id}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reauth preflight's snapshot, captured before the browser flow.
+	preflight, err := reg.targetSnapshot(id.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Concurrent logout while the browser flow is still in progress.
+	if _, err := reg.DeleteTarget(id.Target, preflight); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := creds.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := creds.Delete(t.Context(), id, rec.Version); err != nil {
+		t.Fatal(err)
+	}
+
+	// The browser flow finally completes; Enroll runs with the STALE preflight
+	// snapshot as its precondition.
+	err = Enroll(t.Context(), Connection{Identity: id}, Token{AccessToken: "new", TokenType: "Bearer"}, EnrollmentConfig{
+		Registry: reg, Credentials: creds, ExpectedTarget: &preflight,
+	})
+	if !errors.Is(err, ErrTargetChanged) {
+		t.Fatalf("Enroll error = %v, want ErrTargetChanged", err)
+	}
+	if _, err := reg.FindTarget(id.Target); !IsNotEnrolled(err) {
+		t.Fatalf("logged-out target was resurrected: %v", err)
+	}
+	if _, err := creds.Load(t.Context(), id); !IsNotEnrolled(err) {
+		t.Fatalf("logged-out credential was resurrected: %v", err)
+	}
+}
+
+// TestEnrollDetectsNewerEnrollmentDuringSignIn pins the other half of the same
+// CAS precondition: if a NEWER enrollment lands for the same target while an
+// older interactive browser sign-in is still in progress, the older sign-in's
+// eventual Enroll call must not clobber it.
+func TestEnrollDetectsNewerEnrollmentDuringSignIn(t *testing.T) {
+	reg, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	id := identity("newer-enrollment-during-signin.example:443")
+	if _, err := creds.Upsert(t.Context(), id, Token{AccessToken: "old", TokenType: "Bearer"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Upsert(Connection{Identity: id}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stale reauth preflight's snapshot, captured before its browser flow.
+	stale, err := reg.targetSnapshot(id.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleRec, err := creds.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleCred := &ExpectedCredentialState{Found: true, Version: staleRec.Version}
+
+	// A newer, faster enrollment for the SAME target completes first.
+	newer := Token{AccessToken: "newer", TokenType: "Bearer"}
+	if err := Enroll(t.Context(), Connection{Identity: id}, newer, EnrollmentConfig{Registry: reg, Credentials: creds}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stale, slower browser flow finally completes; its Enroll call runs
+	// with the OLD preflight snapshot as its precondition.
+	err = Enroll(t.Context(), Connection{Identity: id}, Token{AccessToken: "stale", TokenType: "Bearer"}, EnrollmentConfig{
+		Registry: reg, Credentials: creds, ExpectedTarget: &stale, ExpectedCredential: staleCred,
+	})
+	if !errors.Is(err, ErrTargetChanged) {
+		t.Fatalf("Enroll error = %v, want ErrTargetChanged", err)
+	}
+	rec, err := creds.Load(t.Context(), id)
+	if err != nil || rec.Token.AccessToken != newer.AccessToken {
+		t.Fatalf("newer enrollment was clobbered: %#v, %v", rec.Token, err)
+	}
+}

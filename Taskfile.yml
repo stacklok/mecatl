@@ -22,6 +22,9 @@ includes:
   mecak8s:
     taskfile: deploy/mecak8s-kind/Taskfile.yml
     dir: .
+  mecak8s-vmcp:
+    taskfile: deploy/mecak8s-vmcp/Taskfile.yml
+    dir: .
 
 vars:
   PKG: github.com/stacklok/mecatl

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -59,7 +60,7 @@ func TestNewClientRejectsInvalidEndpoint(t *testing.T) {
 		"https://",
 	} {
 		t.Run(endpoint, func(t *testing.T) {
-			_, err := newPolicy(context.Background(), []string{endpoint}, defaultLookup)
+			_, err := newPolicy(context.Background(), map[string][]byte{endpoint: unrelatedCertPEM(t)}, defaultLookup)
 			if err == nil || !strings.Contains(err.Error(), "invalid HTTPS endpoint") {
 				t.Fatalf("newPolicy(%q) error = %v, want invalid endpoint", endpoint, err)
 			}
@@ -128,11 +129,11 @@ func TestPolicyRejectsDNSAddressDrift(t *testing.T) {
 		}
 		return []net.IP{net.ParseIP("127.0.0.2")}, nil
 	}
-	policy, err := newPolicy(context.Background(), []string{"https://issuer.test"}, lookup)
+	policy, err := newPolicy(context.Background(), map[string][]byte{"https://issuer.test": unrelatedCertPEM(t)}, lookup)
 	if err != nil {
 		t.Fatalf("newPolicy: %v", err)
 	}
-	if _, err := policy.dialContext(context.Background(), "tcp", "issuer.test:443"); err == nil || !strings.Contains(err.Error(), "no longer resolves to an approved private address") {
+	if _, err := policy.dialTLS(context.Background(), "tcp", "issuer.test:443"); err == nil || !strings.Contains(err.Error(), "no longer resolves to an approved private address") {
 		t.Fatalf("DNS-pinned dial accepted changed address: %v", err)
 	}
 }
@@ -154,7 +155,7 @@ func TestClientRejectsWrongCA(t *testing.T) {
 	target := httptest.NewTLSServer(http.NotFoundHandler())
 	t.Cleanup(target.Close)
 
-	client, err := NewClient(context.Background(), []string{target.URL}, unrelatedCertPEM(t))
+	client, err := NewClient(context.Background(), map[string][]byte{target.URL: unrelatedCertPEM(t)})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -164,9 +165,94 @@ func TestClientRejectsWrongCA(t *testing.T) {
 	}
 }
 
+// TestClientRejectsCertSignedByADifferentApprovedEndpointsCA reproduces the
+// union-of-CAs bug this policy must never regress into: endpoint B's server
+// presents a certificate signed by endpoint A's CA -- a CA this SAME client
+// legitimately trusts, just for a different endpoint. A pool that unions
+// every approved endpoint's CAs into one shared RootCAs would accept this
+// (CA A is present); this policy must reject it, since B's own approved pool
+// contains only CA B.
+func TestClientRejectsCertSignedByADifferentApprovedEndpointsCA(t *testing.T) {
+	caAKey, caACert := generateTestCA(t, "endpoint-a CA")
+	_, caBCert := generateTestCA(t, "endpoint-b CA")
+
+	// The server for "endpoint B" presents a leaf certificate signed by CA A,
+	// not CA B -- the forged shape the bug would accept.
+	forged := httptest.NewUnstartedServer(http.NotFoundHandler())
+	forged.TLS = &tls.Config{Certificates: []tls.Certificate{issueLeafCert(t, caAKey, caACert, "endpoint-b.test")}}
+	forged.StartTLS()
+	t.Cleanup(forged.Close)
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(forged.URL, "https://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("127.0.0.1")}, nil }
+
+	p, err := newPolicy(context.Background(), map[string][]byte{
+		"https://endpoint-a.test:" + port: certPEM(caACert),
+		"https://endpoint-b.test:" + port: certPEM(caBCert), // B's OWN correct CA -- never A's
+	}, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.dialTLS(context.Background(), "tcp", "endpoint-b.test:"+port); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("dialTLS to endpoint B accepted a cert signed by endpoint A's CA: %v", err)
+	}
+}
+
+// generateTestCA returns a self-signed CA key and certificate.
+func generateTestCA(t *testing.T, commonName string) (*rsa.PrivateKey, *x509.Certificate) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	return key, cert
+}
+
+// issueLeafCert returns a tls.Certificate for dnsName, signed by the given CA.
+func issueLeafCert(t *testing.T, caKey *rsa.PrivateKey, caCert *x509.Certificate, dnsName string) tls.Certificate {
+	t.Helper()
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: dnsName},
+		DNSNames:     []string{dnsName},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: leafKey}
+}
+
 func newTestClient(t *testing.T, srv *httptest.Server) *http.Client {
 	t.Helper()
-	client, err := NewClient(context.Background(), []string{srv.URL}, certPEM(srv.Certificate()))
+	client, err := NewClient(context.Background(), map[string][]byte{srv.URL: certPEM(srv.Certificate())})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

@@ -35,9 +35,11 @@ func (s authTokenSource) Token(ctx context.Context) (string, error) {
 	if errors.Is(err, clientauth.ErrCredentialCleanup) {
 		return "", &client.AuthError{Reason: client.AuthCredentialCleanup}
 	}
-	if errors.Is(err, clientauth.ErrDiscovery) {
-		return "", &client.AuthError{Reason: client.AuthStorageUnavailable}
-	}
+	// ErrDiscovery means the issuer was unreachable, its TLS was untrusted, or
+	// JWKS failed to load -- an infrastructure/network problem, not evidence
+	// the local keyring/registry/store is broken. Return it unwrapped so it
+	// falls through AuthFailure's deliberate unclassified case instead of
+	// steering the user toward local-storage recovery.
 	return "", err
 }
 

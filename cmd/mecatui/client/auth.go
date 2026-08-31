@@ -26,6 +26,12 @@ const (
 	AuthStorageUnavailable AuthReason = "storage_unavailable" // #nosec G101 -- closed diagnostic label, not a credential.
 	// AuthCredentialCleanup means rejected-credential cleanup needs a retry.
 	AuthCredentialCleanup AuthReason = "credential_cleanup" // #nosec G101 -- closed diagnostic label, not a credential.
+	// AuthTargetChanged means the saved target changed (a concurrent logout,
+	// or a newer enrollment for the same target) while an interactive
+	// reauthentication was in progress. The completed sign-in was discarded
+	// rather than risk resurrecting a logged-out target or clobbering the
+	// newer enrollment; retrying reauthentication is safe.
+	AuthTargetChanged AuthReason = "target_changed" // #nosec G101 -- closed diagnostic label, not a credential.
 	// AuthRejected means the remote server rejected a supplied bearer.
 	AuthRejected AuthReason = "rejected"
 )
@@ -60,7 +66,7 @@ func localAuthFailure(err error) (AuthReason, bool) {
 		return "", false
 	}
 	switch local.Reason {
-	case AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthStorageUnavailable, AuthCredentialCleanup, AuthRejected:
+	case AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthStorageUnavailable, AuthCredentialCleanup, AuthTargetChanged, AuthRejected:
 		return local.Reason, true
 	default:
 		return "", false
