@@ -40,7 +40,7 @@ const corsMaxAgeSeconds = "600"
 //
 // This is the LOCAL-DEVELOPMENT path. The production browser path remains a
 // same-origin BFF that injects bearer credentials server-side and enforces its
-// own Origin/CSRF policy. See ADR 0244.
+// own Origin/CSRF policy. See ADR 0248.
 type CORSPolicy struct {
 	// origins is the exact-match allowlist. A map because the decision is exact
 	// equality; there is deliberately no pattern, prefix, or suffix structure to

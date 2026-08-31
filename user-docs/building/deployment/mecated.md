@@ -146,7 +146,7 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | `--tls-key` | `""` | PEM server private key |
 | `--client-ca` | `""` | PEM client-CA bundle; enables mTLS (requires `--tls-cert`/`--tls-key`) |
 | `--cors-origins` | `""` (off) | Allow a browser at this **exact** origin to call the HTTP API; repeatable. Local development only — see [Browsers and CORS](#browsers-and-cors) |
-| `--deployment-id` | `""` | Optional opaque label for this deployment, echoed on `GetServerInfo`. Never inferred from the host |
+| `--deployment-id` | `""` | Optional opaque label for this deployment, echoed on `GetCompatibilityInfo`. Never inferred from the host |
 | `--rate-limit` | `0` (off) | Sustained per-client request rate in req/s; with OIDC, also limits rejected bearer validation per direct transport peer IP |
 | `--rate-burst` | `0` (derived) | Token-bucket burst; zero derives a sane default from `--rate-limit`, including the OIDC rejected-token bucket |
 | `--oidc-issuer` | `""` (off) | OIDC issuer URL whose tokens identify callers; setting it turns caller identity on. See [Caller identity](#caller-identity-oidc) |

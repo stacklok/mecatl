@@ -460,7 +460,7 @@ type config struct {
 	// (ADR 0248). Sanitised by sanitizeDeploymentID before it reaches app.Config.
 	deploymentID string
 	// corsOrigins is the EXACT-match browser origin allowlist for the HTTP API
-	// (ADR 0244). Empty (the default) installs no CORS middleware at all.
+	// (ADR 0248). Empty (the default) installs no CORS middleware at all.
 	corsOrigins stringList
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.

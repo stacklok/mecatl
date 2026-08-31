@@ -3,6 +3,7 @@ package server_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func corsServer(t *testing.T, origins ...string) *httptest.Server {
 	if err != nil {
 		t.Fatalf("NewCORSPolicy(%v): %v", origins, err)
 	}
-	svc := serverInfoService(t, "", "", port.ProviderCapabilities{})
+	svc := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	srv := httptest.NewServer(policy.Middleware(server.NewHTTPHandler(svc)))
 	t.Cleanup(srv.Close)
 	return srv
@@ -52,7 +53,7 @@ func do(t *testing.T, srv *httptest.Server, method, path, origin string, preflig
 // TestSDKServerEnablers_Scenario3_ExactOriginAllowed is AC3.1.
 func TestSDKServerEnablers_Scenario3_ExactOriginAllowed(t *testing.T) {
 	srv := corsServer(t, testOrigin)
-	resp := do(t, srv, http.MethodGet, "/v1/server-info", testOrigin, "")
+	resp := do(t, srv, http.MethodGet, "/v1/compatibility", testOrigin, "")
 
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != testOrigin {
 		t.Errorf("Access-Control-Allow-Origin = %q, want the exact origin %q", got, testOrigin)
@@ -88,7 +89,7 @@ func TestSDKServerEnablers_Scenario3_NearMissOriginsRejected(t *testing.T) {
 	}
 	for _, nm := range nearMisses {
 		t.Run(nm.origin, func(t *testing.T) {
-			resp := do(t, srv, http.MethodGet, "/v1/server-info", nm.origin, "")
+			resp := do(t, srv, http.MethodGet, "/v1/compatibility", nm.origin, "")
 			if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
 				t.Errorf("origin %q (%s) was granted Access-Control-Allow-Origin %q", nm.origin, nm.why, got)
 			}
@@ -119,7 +120,7 @@ func TestADR_0244_NoWildcardWithCredentials(t *testing.T) {
 	// And no configuration produces a "*" on the wire.
 	srv := corsServer(t, testOrigin, "https://second.example.com")
 	for _, origin := range []string{testOrigin, "https://second.example.com", "https://unlisted.example.com", ""} {
-		resp := do(t, srv, http.MethodGet, "/v1/server-info", origin, "")
+		resp := do(t, srv, http.MethodGet, "/v1/compatibility", origin, "")
 		if got := resp.Header.Get("Access-Control-Allow-Origin"); got == "*" {
 			t.Fatalf("origin %q produced a wildcard Access-Control-Allow-Origin", origin)
 		}
@@ -179,6 +180,76 @@ func TestSDKServerEnablers_Scenario3_PreflightDoesNotInvokeHandler(t *testing.T)
 	}
 }
 
+// TestADR_0244_PreflightEchoesRequestedHeaders covers the header-echo path,
+// which the review found had no test at all — the near-miss table asserts
+// methods, origin, and status, but nothing ever sent
+// Access-Control-Request-Headers to see what came back.
+//
+// The echo is the real spec of that branch, and it is the branch where getting
+// it wrong is worst: publishing a fixed header list silently breaks any client
+// needing a header we did not predict, while echoing to an UNVALIDATED origin
+// would tell an attacker's page which headers it may send. Both failure modes
+// are invisible without an assertion here, because a browser enforces them and
+// a Go test client does not.
+func TestADR_0244_PreflightEchoesRequestedHeaders(t *testing.T) {
+	policy, err := server.NewCORSPolicy([]string{testOrigin})
+	if err != nil {
+		t.Fatalf("NewCORSPolicy: %v", err)
+	}
+	srv := httptest.NewServer(policy.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+	defer srv.Close()
+
+	preflight := func(t *testing.T, origin, reqHeaders string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodOptions, srv.URL+"/v1/sessions", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		if reqHeaders != "" {
+			req.Header.Set("Access-Control-Request-Headers", reqHeaders)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("preflight: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+
+	t.Run("an allowed origin gets its requested headers echoed", func(t *testing.T) {
+		// Deliberately a header nobody would hardcode: a fixed allow-list would
+		// pass a test that only ever asked for Content-Type.
+		const want = "authorization, content-type, x-mecatl-idempotency-key"
+		resp := preflight(t, testOrigin, want)
+		if got := resp.Header.Get("Access-Control-Allow-Headers"); got != want {
+			t.Errorf("Access-Control-Allow-Headers = %q, want the request echoed back as %q", got, want)
+		}
+		// Vary must name the request header too, or a shared cache will serve one
+		// origin's allowed-header set to a request that asked for a different one.
+		if got := resp.Header.Values("Vary"); !slices.Contains(got, "Access-Control-Request-Headers") {
+			t.Errorf("Vary = %v, want it to include Access-Control-Request-Headers", got)
+		}
+	})
+
+	t.Run("a refused origin gets no echo", func(t *testing.T) {
+		resp := preflight(t, "https://unlisted.example.com", "authorization")
+		if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "" {
+			t.Errorf("a refused origin was told it may send %q; the echo must be gated on the allowlist", got)
+		}
+	})
+
+	t.Run("no requested headers means no echo header", func(t *testing.T) {
+		resp := preflight(t, testOrigin, "")
+		if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "" {
+			t.Errorf("Access-Control-Allow-Headers = %q with nothing requested; it should be absent, not empty-or-invented", got)
+		}
+	})
+}
+
 // TestSDKServerEnablers_Scenario3_DefaultOffUnchanged is AC3.5.
 //
 // With no --cors-origins the policy is nil, Middleware returns the handler
@@ -203,11 +274,11 @@ func TestSDKServerEnablers_Scenario3_DefaultOffUnchanged(t *testing.T) {
 		t.Fatalf("NewCORSPolicy(blank entries) = %v, want a nil policy", blank)
 	}
 
-	svc := serverInfoService(t, "", "", port.ProviderCapabilities{})
+	svc := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	srv := httptest.NewServer(policy.Middleware(server.NewHTTPHandler(svc)))
 	defer srv.Close()
 
-	resp := do(t, srv, http.MethodGet, "/v1/server-info", testOrigin, "")
+	resp := do(t, srv, http.MethodGet, "/v1/compatibility", testOrigin, "")
 	for _, h := range []string{"Access-Control-Allow-Origin", "Access-Control-Allow-Credentials", "Access-Control-Allow-Methods"} {
 		if got := resp.Header.Get(h); got != "" {
 			t.Errorf("with CORS off, %s = %q, want it absent", h, got)
