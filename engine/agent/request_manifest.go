@@ -12,6 +12,14 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+func (e *Engine) emitRequestManifest(r *Run, sess *session.Session, env tool.Environment, req port.LLMRequest, turn int) {
+	if !e.deps.EnableDurableEvidence {
+		return
+	}
+	manifest := e.requestManifest(r, sess, env, req)
+	e.emit(r, session.Event{Type: session.EvRequestManifest, Turn: turn, RequestManifest: &manifest})
+}
+
 func (e *Engine) requestManifest(r *Run, sess *session.Session, env tool.Environment, req port.LLMRequest) session.RequestManifestPayload {
 	messageBytes, _ := json.Marshal(req.Messages)
 	payload := session.RequestManifestPayload{

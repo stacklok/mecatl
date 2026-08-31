@@ -215,6 +215,25 @@ func TestEngineDepsCarryWallClock(t *testing.T) {
 	}
 }
 
+func TestRequestManifestGatePropagatesToEveryEngineShape(t *testing.T) {
+	provider, store, policy, hooks, mcpP, instr := depsTestFixture(t)
+	for _, enabled := range []bool{false, true} {
+		cfg := Config{Model: "model", enableDurableEvidence: enabled}
+		reg := regForTest(provider, providerOpenAI, cfg.Model)
+		base := baseEngineDeps(cfg, reg, provider, store, policy, hooks, mcpP, instr)
+		perSession := engineDepsForProvider(cfg, provider, cfg.Model, fixedDefaultWindow, store, policy, hooks, mcpP, instr)
+		child := childEngineDepsForProvider(cfg, "member:lead", provider, cfg.Model, fixedDefaultWindow, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+		defaultChild := childEngineDeps(cfg, "task", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
+		for name, deps := range map[string]agent.Deps{
+			"main": base, "per-session": perSession, "child/provider": child, "child/default": defaultChild,
+		} {
+			if deps.EnableDurableEvidence != enabled {
+				t.Errorf("enabled=%v %s EnableDurableEvidence=%v", enabled, name, deps.EnableDurableEvidence)
+			}
+		}
+	}
+}
+
 // --- validateDefaultModel fail-fast posture (issue #21) -------------------------
 //
 // The server-configured deployment-wide default (--default-provider /

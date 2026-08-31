@@ -189,6 +189,12 @@ type Deps struct {
 	// Sink, when non-nil, also receives every Event the loop emits, in addition
 	// to the Run.Events() channel which is always the primary surface.
 	Sink port.EventSink
+	// EnableDurableEvidence emits debugger-only request manifests and accepts
+	// sanitized provider-attempt observations. It is opt-in because constructing
+	// that evidence requires hashing/counting, contexts, maps, and slices; hosts
+	// should enable it only when their relay persists events to a durable EventLog
+	// for later inspection. Sink presence is not a durability signal.
+	EnableDurableEvidence bool
 	// Diagnostics is the general-purpose operational logging seam (optional; nil →
 	// port.NopDiagnostics, applied in NewEngine, so the engine never nil-panics and
 	// stays silent when no sink is injected). It is DISTINCT from ToolCallRecorder
@@ -1326,10 +1332,11 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 		req := e.buildRequest(ctx, r, sess, env)
 		e.maybeCompact(ctx, r, sess, turnIdx, &req)
 
-		// Step 4: persist the content-safe structural manifest immediately before the
-		// provider receives this exact final request.
-		manifest := e.requestManifest(r, sess, env, req)
-		e.emit(r, session.Event{Type: session.EvRequestManifest, Turn: turnIdx, RequestManifest: &manifest})
+		// Step 4: when durable evidence is configured, emit the content-safe
+		// structural manifest immediately before the provider receives this exact
+		// final request. The helper keeps the gate outside requestManifest: the
+		// disabled/default path must not pay for hashing, counting, maps, or slices.
+		e.emitRequestManifest(r, sess, env, req, turnIdx)
 		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, req, turnIdx)
 		// Provider-reported usage is spend, not semantic visibility. Record it even
 		// when the stream fails so retries, cumulative budgets, and EvResult remain
@@ -1992,17 +1999,19 @@ func (l *turnLatency) summary() turnTiming {
 // no observable output at all reports no TTFT; a turn with fewer than two
 // streaming content deltas reports no inter-token summary (there is no gap).
 func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
-	ctx = port.WithAttemptObserver(ctx, func(observation session.NetworkAttemptPayload) {
-		id, ok := port.SessionIDFromContext(r.ctx)
-		if !ok {
-			return
-		}
-		canonical, ok := session.CanonicalNetworkAttempt(observation, id, r.serial, turnIdx)
-		if !ok {
-			return
-		}
-		e.emit(r, session.Event{Type: session.EvNetworkAttempt, Turn: turnIdx, NetworkAttempt: &canonical})
-	})
+	if e.deps.EnableDurableEvidence {
+		ctx = port.WithAttemptObserver(ctx, func(observation session.NetworkAttemptPayload) {
+			id, ok := port.SessionIDFromContext(r.ctx)
+			if !ok {
+				return
+			}
+			canonical, ok := session.CanonicalNetworkAttempt(observation, id, r.serial, turnIdx)
+			if !ok {
+				return
+			}
+			e.emit(r, session.Event{Type: session.EvNetworkAttempt, Turn: turnIdx, NetworkAttempt: &canonical})
+		})
+	}
 	seq, err := e.deps.LLM.Stream(ctx, req)
 	if err != nil {
 		return session.Message{}, session.Usage{}, session.StopNone, turnTiming{}, fmt.Errorf("agent: start stream: %w", err)
@@ -2204,13 +2213,20 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		if e.deps.Instructions == nil {
 			return
 		}
-		discovered, manifest, aerr := prompt.AssembleWithManifest(ctx, env.Workspace(), e.deps.Instructions)
+		var (
+			discovered []session.Message
+			aerr       error
+		)
+		if e.deps.EnableDurableEvidence {
+			discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, env.Workspace(), e.deps.Instructions)
+		} else {
+			discovered, aerr = e.deps.Instructions.Assemble(ctx, env.Workspace())
+		}
 		if aerr != nil {
 			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing without turn-0 fragments", "error", aerr)
 			return
 		}
 		r.fragments = discovered
-		r.fragmentManifest = manifest
 	})
 	// Build a NEW slice — fragments first, then the persisted conversation — so
 	// Conversation.Messages is never mutated and the prefix is byte-stable per run.

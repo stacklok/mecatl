@@ -408,8 +408,8 @@ view exposes only failed or policy-interesting attempts captured by the provider
 resilience wrapper: run/turn and attempt correlation, elapsed/backoff, retry disposition,
 stream progress, decision/suppression reason, sanitized failure class, validated statuses,
 and a closed correlation kind with a fixed domain-separated SHA-256 digest. Raw provider codes
-and raw correlation IDs are never retained. The loop canonicalizes the entire producer-controlled
-observation before emitting log-only `network.attempt`
+and raw correlation IDs are never retained. When a durable EventLog is configured, the loop
+canonicalizes the entire producer-controlled observation before emitting log-only `network.attempt`
 events and the relay persists them, preserving the EventLog ownership rule. They have no
 public protobuf projection and every ordinary client relay suppresses them, including direct
 Team gRPC and HTTP/SSE; only the
@@ -417,7 +417,8 @@ target-bound `InspectSession` network view exposes them to the debug model. Raw 
 URLs/queries, headers, bodies, prompts, tool arguments, credentials, cookies, and environment
 values are never retained. Availability, pagination, scan completeness, and truncation are
 explicit; successful-attempt timing and per-phase DNS/TCP/TLS durations are honestly
-unavailable. Independently, every model turn emits a log-only `request.manifest` immediately
+unavailable. Independently, when a durable EventLog is configured, every model turn emits a
+log-only `request.manifest` immediately
 before `LLMProvider.Stream`, after compaction and all final request filtering. It records only
 provider/model/reasoning-effort labels when safely available, the resolved context window,
 final tool-name order, closed catalog/overlay/MCP source labels, observed tool projection

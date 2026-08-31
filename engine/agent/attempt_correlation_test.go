@@ -88,7 +88,7 @@ func TestAttemptObserverRejectsProducerControlledPayloadsAtLoopChokePoint(t *tes
 		{Attempt: 1, MaxAttempts: 2, RetryDisposition: "retryable", StreamProgress: "precommit", Decision: "retry", FailureClass: secrets[2]},
 		{SessionID: "forged", RunSerial: 999, Turn: 999, Attempt: 1, MaxAttempts: 2, RetryDisposition: "retryable", StreamProgress: "precommit", Decision: "retry", FailureClass: "connect", CorrelationKind: "request", CorrelationDigest: digest},
 	}}
-	engine := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
+	engine := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test", EnableDurableEvidence: true})
 	sess := session.New("target", session.ModeDefault, "/ws", session.Limits{}, time.Now())
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
 	var attempts []session.NetworkAttemptPayload

@@ -209,9 +209,11 @@ EventLog activity and aggregate performance are non-authoritative, optional, and
 incomplete. Performance therefore keeps `complete: false`; `scan_complete` only reports that
 an available log reached EOF. `internal/adapter/llmresilience/llmresilience.go`
 (`logAttemptDecision`) also builds one `session.NetworkAttemptPayload` from the same sanitized
-decision and metadata classification used by diagnostics. A run-local `port.AttemptObserver`
+decision and metadata classification used by diagnostics. When
+`agent.Deps.EnableDurableEvidence` is enabled, a run-local `port.AttemptObserver`
 returns it to `engine/agent/loop.go` (`runTurn`), which emits the log-only
 `network.attempt`; the server relay persists it through the ordinary EventLog path. The
+disabled/default path does not install the observer context. The
 adapter never appends directly. It has no public protobuf projection; every ordinary client
 relay suppresses it, including live, durable read-back, and direct Team gRPC/HTTP streams,
 leaving the target-bound `InspectSession` view as its only
@@ -228,9 +230,13 @@ phase timing. Transcript pages contain at most 20 rows, activity 100,
 performance 50 turns/10,000 scanned events, and every response is bounded to 64 KiB after
 canonical fencing and framing neutralisation.
 
-The loop also emits `session.EvRequestManifest` once per turn after `buildRequest` and
+The loop also emits `session.EvRequestManifest` once per turn when the explicit
+`agent.Deps.EnableDurableEvidence` gate is enabled, after `buildRequest` and
 `maybeCompact` have produced the exact final `port.LLMRequest`, immediately before `runTurn`
-invokes the provider. `engine/agent/request_manifest.go` canonical-JSON encodes the neutral
+invokes the provider. Composition enables the gate exactly when its relay has a durable
+EventLog, for main, per-session, and child engine shapes; a live `port.EventSink` is not a
+durability proxy. The disabled/default path skips the manifest builder entirely, including
+JSON encoding, counting, maps, and slices. `engine/agent/request_manifest.go` canonical-JSON encodes the neutral
 message slice only to calculate message count/bytes. Prompt components retain kind,
 provenance, and byte count, but no content digest: a digest would create an offline oracle.
 `prompt.AssembleWithManifest` classifies built-in project/soul/memory/rules/user-model

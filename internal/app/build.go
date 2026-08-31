@@ -588,6 +588,9 @@ type Config struct {
 	// operatorProfileSource is composition-only wiring inherited by user-facing
 	// delegation engines. Internal-purpose classifier/reviewer/judge engines clear it.
 	operatorProfileSource prompt.OperatorProfileSource
+	// enableDurableEvidence is derived from the actual EventLog selected by Build.
+	// Every user-facing engine inherits it; Sink is deliberately not a proxy.
+	enableDurableEvidence bool
 
 	// Skills: explicit directories (highest precedence) plus the conventional
 	// project/user locations when SkillsConventional is set. SkillsDraftDir enables
@@ -1720,6 +1723,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, err
 	}
+	// Request manifests exist solely as retained debugger evidence. Derive the
+	// engine gate from the EventLog selected by composition, never from the live
+	// EventSink, and do it before building main, per-session, and child engines.
+	cfg.enableDurableEvidence = eventLog != nil
 	// Agent seam (Phase C2): resolve the agent-definition registry EXACTLY
 	// ONCE for the whole composition — the build-time catalog's Subagent/Team
 	// tools, the per-session engine factory, the ListAgents snapshot, and the
@@ -3945,10 +3952,11 @@ func engineDepsForProvider(
 		// store (StoreDir) holds current state. The Service additionally persists on
 		// entering awaiting and at run end; both share this store, so the latest
 		// snapshot is always current for auto-resume after a restart.
-		Store:            store,
-		SessionLiveness:  cfg.sessionLiveness,
-		Sink:             cfg.Sink,
-		ToolCallRecorder: cfg.ToolCallRecorder,
+		Store:                 store,
+		SessionLiveness:       cfg.sessionLiveness,
+		Sink:                  cfg.Sink,
+		EnableDurableEvidence: cfg.enableDurableEvidence,
+		ToolCallRecorder:      cfg.ToolCallRecorder,
 		// Clock: the production wall clock (issue #53). Before it was wired here the
 		// field was left nil, which silently zeroed EVERY latency observation —
 		// EvTurnEnd.DurationMs/TTFT/inter-token and tool queued/took. Children inherit
@@ -5941,10 +5949,11 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		// channel — this is DISTINCT from Sink/ToolCallRecorder (telemetry/audit),
 		// which are role-scoped via the scoper above (or OFF without one). The role
 		// tags every line the child emits with "agent"=<role>.
-		Diagnostics:      cfg.diag(),
-		Role:             role,
-		Sink:             sink,
-		ToolCallRecorder: recorder,
+		Diagnostics:           cfg.diag(),
+		Role:                  role,
+		Sink:                  sink,
+		EnableDurableEvidence: cfg.enableDurableEvidence,
+		ToolCallRecorder:      recorder,
 		// Clock: the production wall clock (issue #53) — children time their tool
 		// calls/turns regardless of whether the role-scoped telemetry pair is wired.
 		Clock: wallclock.Clock{},

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -52,6 +53,25 @@ func (s *manifestSink) Emit(_ context.Context, ev session.Event) {
 }
 func (s *manifestSink) Seen() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.seen }
 
+func TestRequestManifestDisabledByDefault(t *testing.T) {
+	sink := &manifestSink{}
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
+		if sink.Seen() {
+			t.Error("default Deps emitted request.manifest before provider Stream")
+		}
+	})}, mockllm.TextTurn("done"))
+	eng := newEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Sink: sink})
+	run := eng.Run(context.Background(), session.New("manifest-off", session.ModeDefault, "/ws", session.Limits{}, time.Time{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"})
+	for _, ev := range drain(run) {
+		if ev.Type == session.EvRequestManifest {
+			t.Fatal("zero/default Deps emitted request.manifest")
+		}
+	}
+	if sink.Seen() {
+		t.Fatal("live EventSink incorrectly enabled request manifests")
+	}
+}
+
 func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 	const secret = "manifest-secret-canary"
 	cat := tool.NewCatalog()
@@ -76,7 +96,8 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 	})}, mockllm.TextTurn("done"))
 	eng := newEngine(agent.Deps{
 		LLM: provider, Catalog: cat, Sink: sink, ProgressiveTools: true,
-		Model: "safe-model", ContextWindow: func() int { return 8192 },
+		EnableDurableEvidence: true,
+		Model:                 "safe-model", ContextWindow: func() int { return 8192 },
 		Instructions: customManifestInstructions{secret: secret},
 	})
 	sess := authoritySession(t, "Allowed", tool.BashToolName, "Mutating", "Shadow", "mcp__github__issues")

@@ -124,7 +124,7 @@ func TestEstablishErrorTerminatesStopError(t *testing.T) {
 		PerAttemptTimeout: time.Second,
 	})
 
-	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), EnableDurableEvidence: true})
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
@@ -213,7 +213,7 @@ func TestStreamRateLimitErrorIsRetried(t *testing.T) {
 		BaseBackoff: time.Millisecond, // fast for tests
 	})
 
-	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), EnableDurableEvidence: true})
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
@@ -345,7 +345,7 @@ func TestFirstChunkErrorTerminatesStopError(t *testing.T) {
 		PerAttemptTimeout: time.Second,
 	})
 
-	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), EnableDurableEvidence: true})
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})

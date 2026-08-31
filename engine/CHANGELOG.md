@@ -46,9 +46,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Content-safe request manifests** — adds `session.EvRequestManifest`,
   `RequestManifestPayload` and its closed prompt/tool metadata (including
   catalog/overlay/MCP source labels), plus
-  `prompt.AssembleWithManifest`/`InstructionManifest`. The loop emits the log-only manifest
+  `prompt.AssembleWithManifest`/`InstructionManifest`, and the opt-in
+  `agent.Deps.EnableDurableEvidence` gate. The loop emits the log-only manifest
   from the final provider-neutral request without retaining prompt, message, tool-spec, or
-  provider-private bodies. Built-in instruction assemblers report provenance; custom
+  provider-private bodies. Hosts enable it only when their relay has durable EventLog
+  retention; zero/default Deps skip all manifest construction. Built-in instruction assemblers report provenance; custom
   `InstructionAssembler` implementations remain compatible as `custom`/`unknown`. Added
   (minor).
 
@@ -76,6 +78,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   All four additions are **Added = minor**. `Event` and `RunRequest` gain a field, which breaks external UNKEYED struct literals — but both are already routinely constructed keyed, and `Event` is a wide event-payload struct nobody builds positionally.
 
 ### Changed
+
+- **`agent.Deps.EnableDurableEvidence`** — adds the explicit opt-in gate for
+  debugger-only request-manifest construction/emission and sanitized network-attempt capture. The zero value preserves the allocation-sensitive
+  default loop; composition enables it only alongside durable EventLog retention. Adding a field
+  to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a
+  minor bump).
 
 - **`agent.Run.EnqueueSteer`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
 

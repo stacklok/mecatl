@@ -20,9 +20,19 @@ type IncarnationID string
 
 // NewIncarnationID mints an opaque session-incarnation identity.
 func NewIncarnationID() IncarnationID {
-	var b [incarnationBytes]byte
-	_, _ = rand.Read(b[:])
-	return IncarnationID("inc_" + strings.ToLower(incarnationEncoding.EncodeToString(b[:])))
+	var random [incarnationBytes]byte
+	_, _ = rand.Read(random[:])
+	var encoded [26]byte
+	incarnationEncoding.Encode(encoded[:], random[:])
+	for i, c := range encoded {
+		if c >= 'A' && c <= 'Z' {
+			encoded[i] = c + ('a' - 'A')
+		}
+	}
+	var id [4 + len(encoded)]byte
+	copy(id[:], "inc_")
+	copy(id[4:], encoded[:])
+	return IncarnationID(string(id[:]))
 }
 
 // Valid reports whether i has the closed syntax of a minted or deterministic

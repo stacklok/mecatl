@@ -135,7 +135,7 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 					CorrelationKind: "request", CorrelationDigest: digest,
 				},
 			}}
-			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"})
+			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model", EnableDurableEvidence: true})
 			svc, err := server.NewService(server.Config{
 				Engine: engine, Store: memstore.New(), EventLog: log,
 				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -264,7 +264,7 @@ func observedAttemptTeamService(t *testing.T, log port.EventLog, logID session.S
 			cat.MustRegister(tl)
 		}
 		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{
-			LLM: llm, Catalog: cat, Policy: allow, Model: "mock",
+			LLM: llm, Catalog: cat, Policy: allow, Model: "mock", EnableDurableEvidence: true,
 			Sink: durableEventSink{log: log, id: logID},
 		})}
 	}

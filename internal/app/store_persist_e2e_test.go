@@ -3,14 +3,53 @@ package app
 import (
 	"context"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
+
+type durableEvidenceSink struct{ manifest atomic.Bool }
+
+func (s *durableEvidenceSink) Emit(_ context.Context, ev session.Event) {
+	if ev.Type == session.EvRequestManifest {
+		s.manifest.Store(true)
+	}
+}
+
+func TestBuildDisablesDurableEvidenceWithoutEventLog(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	sink := &durableEvidenceSink{}
+	cfg := Config{
+		Workspace: workspace, NoSoul: true, MemoryDir: t.TempDir(),
+		SessionStoreURL: startSessionStoreDriver(t, memstore.New()), Sink: sink,
+		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}), liveModelHTTPClient: offlineHTTPClient(),
+		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
+			return mockllm.New(mockllm.TextTurn("done"))
+		},
+	}
+	built, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	srv := httptest.NewServer(server.NewHTTPHandler(built.Service))
+	defer srv.Close()
+	promptOverHTTP(t, srv.URL, string(sess.ID), "hello", func(sseEvent) {})
+	if sink.manifest.Load() {
+		t.Fatal("app.Build enabled durable evidence with a nil EventLog")
+	}
+}
 
 // TestStorePersistsAcrossBuildsE2E is the issue-#79 durable-store gate through
 // the FULL composition (app.Build + server.Service over the HTTP SSE relay),
@@ -84,9 +123,10 @@ func TestStorePersistsAcrossBuildsE2E(t *testing.T) {
 		t.Fatalf("loaded state = %q, want completed", loaded.State)
 	}
 
-	// The durable event log replays the recorded timeline, including the result.
+	// The durable event log replays the recorded timeline, including the result
+	// and the pre-provider request manifest enabled by composition.
 	var logged int
-	var loggedResult bool
+	var loggedResult, loggedManifest bool
 	for ev, rerr := range store.Read(ctx, sess.ID) {
 		if rerr != nil {
 			t.Fatalf("EventLog.Read: %v", rerr)
@@ -95,11 +135,17 @@ func TestStorePersistsAcrossBuildsE2E(t *testing.T) {
 		if ev.Type == session.EvResult {
 			loggedResult = true
 		}
+		if ev.Type == session.EvRequestManifest {
+			loggedManifest = true
+		}
 	}
 	if logged == 0 {
 		t.Fatal("EventLog.Read yielded no events — the durable event log did not persist")
 	}
 	if !loggedResult {
 		t.Errorf("EventLog.Read yielded %d events but none was the terminal EvResult", logged)
+	}
+	if !loggedManifest {
+		t.Error("app.Build wired a durable EventLog but emitted no request manifest")
 	}
 }
