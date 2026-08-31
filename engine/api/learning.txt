@@ -1,4 +1,16 @@
     ifacemethod func (AdmissionPolicy).Decide(AdmissionRequest) AdmissionDecision
+    ifacemethod func (AttemptRepository).Abandon(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) (AttemptRecord, error)
+    ifacemethod func (AttemptRepository).AcquireClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time, time.Time) (AttemptRecord, AttemptClaim, error)
+    ifacemethod func (AttemptRepository).Checkpoint(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, AttemptCheckpoint) (AttemptRecord, error)
+    ifacemethod func (AttemptRepository).Create(context.Context, AttemptPartition, AttemptCreate) (AttemptRecord, error)
+    ifacemethod func (AttemptRepository).Delete(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) error
+    ifacemethod func (AttemptRepository).DeleteTerminalBefore(context.Context, AttemptPartition, time.Time, int) (int, error)
+    ifacemethod func (AttemptRepository).Finalize(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, AttemptFinalization) (AttemptRecord, error)
+    ifacemethod func (AttemptRepository).Get(context.Context, AttemptPartition, AttemptID) (AttemptRecord, bool, error)
+    ifacemethod func (AttemptRepository).List(context.Context, AttemptPartition, AttemptList) (AttemptPage, error)
+    ifacemethod func (AttemptRepository).ReleaseClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time) (AttemptRecord, error)
+    ifacemethod func (AttemptRepository).RenewClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, time.Time) (AttemptRecord, AttemptClaim, error)
+    ifacemethod func (AttemptRepository).Retry(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) (AttemptRecord, error)
     ifacemethod func (Observer).Observe(context.Context, Trajectory) error
     ifacemethod func (ProposalRepository).ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error)
     ifacemethod func (ProposalRepository).ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error)
@@ -26,8 +38,15 @@
     method func (AdmissionProvenance).Validate(expected AttemptSource, expectedPrompt CurrentPromptBinding) error
     method func (AdmissionReason).Valid() bool
     method func (AlwaysPolicy).Decide(req AdmissionRequest) AdmissionDecision
+    method func (AttemptCheckpoint).Validate() error
+    method func (AttemptCheckpointStage).CanAdvanceTo(next AttemptCheckpointStage) bool
+    method func (AttemptCheckpointStage).Valid() bool
     method func (AttemptClaim).Valid() bool
+    method func (AttemptClaim).ValidAt(now time.Time) bool
+    method func (AttemptCreate).Validate() error
     method func (AttemptFailureCode).Valid() bool
+    method func (AttemptFinalization).Validate() error
+    method func (AttemptList).Validate() error
     method func (AttemptOutcome).Valid() bool
     method func (AttemptSource).Valid() bool
     method func (AttemptState).Terminal() bool
@@ -74,6 +93,11 @@ const AdmissionHostRequested AdmissionClass = "host_requested"
 const AdmissionSkipped AdmissionClass = "skipped"
 const AdmissionWeighted AdmissionClass = "weighted"
 const AttemptAbandoned AttemptState = "abandoned"
+const AttemptCheckpointEvidenceVerified AttemptCheckpointStage = "evidence_verified"
+const AttemptCheckpointNone AttemptCheckpointStage = ""
+const AttemptCheckpointProposalLinked AttemptCheckpointStage = "proposal_linked"
+const AttemptCheckpointReflectionComplete AttemptCheckpointStage = "reflection_complete"
+const AttemptCheckpointSkillLinked AttemptCheckpointStage = "skill_linked"
 const AttemptCompleted AttemptState = "completed"
 const AttemptFailed AttemptState = "failed"
 const AttemptOutcomeAbandoned AttemptOutcome = "abandoned"
@@ -92,6 +116,7 @@ const Conservative Sensitivity = 1
 const DecisionApprove DecisionKind = "approve"
 const DecisionDefer DecisionKind = "defer"
 const DecisionReject DecisionKind = "reject"
+const DefaultAttemptPageSize untyped int = 50
 const DefaultProposalPageSize untyped int = 50
 const DefaultSkillPageSize untyped int = 50
 const Eager Sensitivity = 3
@@ -110,8 +135,10 @@ const FailurePublicationFailed AttemptFailureCode = "publication_failed"
 const FailureRetryExhausted AttemptFailureCode = "retry_exhausted"
 const FailureUnavailable AttemptFailureCode = "unavailable"
 const MaxAttemptCallerBytes untyped int = 1024
+const MaxAttemptDeleteBatch untyped int = 200
 const MaxAttemptIDBytes untyped int = 96
 const MaxAttemptLinkIDBytes untyped int = 128
+const MaxAttemptPageSize untyped int = 200
 const MaxAttemptVersionBytes untyped int = 128
 const MaxCandidateBodyBytes untyped int = 8192
 const MaxCandidateDescriptionBytes untyped int = 2048
@@ -209,6 +236,7 @@ const SkillStaged SkillState = "staged"
 const ValidationAccept ValidationDisposition = "accept"
 const ValidationExactDuplicate ValidationDisposition = "exact_duplicate"
 const ValidationSimilarStageHint ValidationDisposition = "similar_stage_hint"
+func DeriveAttemptPartition(identity string) (AttemptPartition, error)
 func DetectSignals(in Input) []Signal
 func DetectSignalsScoped(in Input, scope DetectionScope) []Signal
 func DeterministicAttemptID(caller string, source AttemptSource) (AttemptID, error)
@@ -229,6 +257,7 @@ func ProjectInput(in Input) (Projection, error)
 func ResolveEvidence(in Input, ref EvidenceRef) error
 func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
 func SkillVersionID(bundle SkillBundle) (VersionID, error)
+func ValidAttemptTransition(from AttemptState, to AttemptState) bool
 func ValidLearnedSkillName(name string) bool
 func ValidateAttemptRecord(record AttemptRecord) error
 func ValidateCandidate(in Input, candidate Candidate) error
@@ -250,13 +279,21 @@ type AdmissionProvenance struct{Class AdmissionClass "json:\"class\""; Source At
 type AdmissionReason string
 type AdmissionRequest struct{Input Input}
 type AlwaysPolicy struct{}
+type AttemptCheckpoint struct{Stage AttemptCheckpointStage; ProposalID ProposalID; SkillID SkillID}
+type AttemptCheckpointStage string
 type AttemptClaim struct{Generation ClaimGeneration "json:\"generation\""; ExpiresAt time.Time "json:\"expires_at\""}
+type AttemptCreate struct{ID AttemptID; Provenance AdmissionProvenance}
 type AttemptFailureCode string
+type AttemptFinalization struct{State AttemptState; Outcome AttemptOutcome; FailureCode AttemptFailureCode}
 type AttemptGeneration uint64
 type AttemptID string
+type AttemptList struct{After AttemptID; Limit int; State AttemptState}
 type AttemptOutcome string
-type AttemptProjection struct{ID AttemptID "json:\"id\""; Version AttemptVersion "json:\"version\""; State AttemptState "json:\"state\""; Outcome AttemptOutcome "json:\"outcome,omitempty\""; FailureCode AttemptFailureCode "json:\"failure_code,omitempty\""; Source AttemptSource "json:\"source\""; AttemptGeneration AttemptGeneration "json:\"attempt_generation\""; ClaimGeneration ClaimGeneration "json:\"claim_generation,omitempty\""; ClaimExpiresAt time.Time "json:\"claim_expires_at,omitempty\""; ProposalID ProposalID "json:\"proposal_id,omitempty\""; SkillID SkillID "json:\"skill_id,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
-type AttemptRecord struct{ID AttemptID "json:\"id\""; Version AttemptVersion "json:\"version\""; State AttemptState "json:\"state\""; Outcome AttemptOutcome "json:\"outcome,omitempty\""; FailureCode AttemptFailureCode "json:\"failure_code,omitempty\""; Provenance AdmissionProvenance "json:\"provenance\""; AttemptGeneration AttemptGeneration "json:\"attempt_generation\""; ClaimGeneration ClaimGeneration "json:\"claim_generation,omitempty\""; ClaimExpiresAt time.Time "json:\"claim_expires_at,omitempty\""; ProposalID ProposalID "json:\"proposal_id,omitempty\""; SkillID SkillID "json:\"skill_id,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type AttemptPage struct{Records []AttemptRecord; Next AttemptID}
+type AttemptPartition string
+type AttemptProjection struct{ID AttemptID "json:\"id\""; Version AttemptVersion "json:\"version\""; State AttemptState "json:\"state\""; Outcome AttemptOutcome "json:\"outcome,omitempty\""; FailureCode AttemptFailureCode "json:\"failure_code,omitempty\""; Source AttemptSource "json:\"source\""; AttemptGeneration AttemptGeneration "json:\"attempt_generation\""; ClaimGeneration ClaimGeneration "json:\"claim_generation,omitempty\""; ClaimExpiresAt time.Time "json:\"claim_expires_at,omitempty\""; CheckpointStage AttemptCheckpointStage "json:\"checkpoint_stage,omitempty\""; ProposalID ProposalID "json:\"proposal_id,omitempty\""; SkillID SkillID "json:\"skill_id,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type AttemptRecord struct{ID AttemptID "json:\"id\""; Version AttemptVersion "json:\"version\""; State AttemptState "json:\"state\""; Outcome AttemptOutcome "json:\"outcome,omitempty\""; FailureCode AttemptFailureCode "json:\"failure_code,omitempty\""; Provenance AdmissionProvenance "json:\"provenance\""; AttemptGeneration AttemptGeneration "json:\"attempt_generation\""; ClaimGeneration ClaimGeneration "json:\"claim_generation,omitempty\""; ClaimExpiresAt time.Time "json:\"claim_expires_at,omitempty\""; CheckpointStage AttemptCheckpointStage "json:\"checkpoint_stage,omitempty\""; ProposalID ProposalID "json:\"proposal_id,omitempty\""; SkillID SkillID "json:\"skill_id,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type AttemptRepository interface{Abandon(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) (AttemptRecord, error); AcquireClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time, time.Time) (AttemptRecord, AttemptClaim, error); Checkpoint(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, AttemptCheckpoint) (AttemptRecord, error); Create(context.Context, AttemptPartition, AttemptCreate) (AttemptRecord, error); Delete(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) error; DeleteTerminalBefore(context.Context, AttemptPartition, time.Time, int) (int, error); Finalize(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, AttemptFinalization) (AttemptRecord, error); Get(context.Context, AttemptPartition, AttemptID) (AttemptRecord, bool, error); List(context.Context, AttemptPartition, AttemptList) (AttemptPage, error); ReleaseClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time) (AttemptRecord, error); RenewClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, time.Time) (AttemptRecord, AttemptClaim, error); Retry(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) (AttemptRecord, error)}
 type AttemptSource struct{SessionID session.SessionID "json:\"session_id\""; RunID DurableRunID "json:\"run_id\""; CanonicalDigest CanonicalDigest "json:\"canonical_digest\""}
 type AttemptState string
 type AttemptVersion string
@@ -334,6 +371,12 @@ type Trajectory struct{SessionID session.SessionID; Workspace string; Stop sessi
 type ValidatedSkillActivator interface{ActivateValidated(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
 type ValidationDisposition string
 type VersionID string
+var ErrAttemptClaimConflict error
+var ErrAttemptClaimLost error
+var ErrAttemptCreateConflict error
+var ErrAttemptNotFound error
+var ErrAttemptTransition error
+var ErrAttemptVersionConflict error
 var ErrInvalidAttempt error
 var ErrInvalidCandidate error
 var ErrInvalidEvidence error

@@ -196,36 +196,44 @@ type AttemptClaim struct {
 
 func (c AttemptClaim) Valid() bool { return c.Generation > 0 && !c.ExpiresAt.IsZero() }
 
+// ValidAt reports whether the claim is live at now. Expiry is exclusive so a
+// successor may acquire at exactly ExpiresAt.
+func (c AttemptClaim) ValidAt(now time.Time) bool {
+	return c.Valid() && !now.IsZero() && now.Before(c.ExpiresAt)
+}
+
 type AttemptRecord struct {
-	ID                AttemptID           `json:"id"`
-	Version           AttemptVersion      `json:"version"`
-	State             AttemptState        `json:"state"`
-	Outcome           AttemptOutcome      `json:"outcome,omitempty"`
-	FailureCode       AttemptFailureCode  `json:"failure_code,omitempty"`
-	Provenance        AdmissionProvenance `json:"provenance"`
-	AttemptGeneration AttemptGeneration   `json:"attempt_generation"`
-	ClaimGeneration   ClaimGeneration     `json:"claim_generation,omitempty"`
-	ClaimExpiresAt    time.Time           `json:"claim_expires_at,omitempty"`
-	ProposalID        ProposalID          `json:"proposal_id,omitempty"`
-	SkillID           SkillID             `json:"skill_id,omitempty"`
-	CreatedAt         time.Time           `json:"created_at"`
-	UpdatedAt         time.Time           `json:"updated_at"`
+	ID                AttemptID              `json:"id"`
+	Version           AttemptVersion         `json:"version"`
+	State             AttemptState           `json:"state"`
+	Outcome           AttemptOutcome         `json:"outcome,omitempty"`
+	FailureCode       AttemptFailureCode     `json:"failure_code,omitempty"`
+	Provenance        AdmissionProvenance    `json:"provenance"`
+	AttemptGeneration AttemptGeneration      `json:"attempt_generation"`
+	ClaimGeneration   ClaimGeneration        `json:"claim_generation,omitempty"`
+	ClaimExpiresAt    time.Time              `json:"claim_expires_at,omitempty"`
+	CheckpointStage   AttemptCheckpointStage `json:"checkpoint_stage,omitempty"`
+	ProposalID        ProposalID             `json:"proposal_id,omitempty"`
+	SkillID           SkillID                `json:"skill_id,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 }
 
 type AttemptProjection struct {
-	ID                AttemptID          `json:"id"`
-	Version           AttemptVersion     `json:"version"`
-	State             AttemptState       `json:"state"`
-	Outcome           AttemptOutcome     `json:"outcome,omitempty"`
-	FailureCode       AttemptFailureCode `json:"failure_code,omitempty"`
-	Source            AttemptSource      `json:"source"`
-	AttemptGeneration AttemptGeneration  `json:"attempt_generation"`
-	ClaimGeneration   ClaimGeneration    `json:"claim_generation,omitempty"`
-	ClaimExpiresAt    time.Time          `json:"claim_expires_at,omitempty"`
-	ProposalID        ProposalID         `json:"proposal_id,omitempty"`
-	SkillID           SkillID            `json:"skill_id,omitempty"`
-	CreatedAt         time.Time          `json:"created_at"`
-	UpdatedAt         time.Time          `json:"updated_at"`
+	ID                AttemptID              `json:"id"`
+	Version           AttemptVersion         `json:"version"`
+	State             AttemptState           `json:"state"`
+	Outcome           AttemptOutcome         `json:"outcome,omitempty"`
+	FailureCode       AttemptFailureCode     `json:"failure_code,omitempty"`
+	Source            AttemptSource          `json:"source"`
+	AttemptGeneration AttemptGeneration      `json:"attempt_generation"`
+	ClaimGeneration   ClaimGeneration        `json:"claim_generation,omitempty"`
+	ClaimExpiresAt    time.Time              `json:"claim_expires_at,omitempty"`
+	CheckpointStage   AttemptCheckpointStage `json:"checkpoint_stage,omitempty"`
+	ProposalID        ProposalID             `json:"proposal_id,omitempty"`
+	SkillID           SkillID                `json:"skill_id,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 }
 
 func ProjectAttempt(record AttemptRecord) (AttemptProjection, error) {
@@ -236,7 +244,8 @@ func ProjectAttempt(record AttemptRecord) (AttemptProjection, error) {
 		ID: record.ID, Version: record.Version, State: record.State, Outcome: record.Outcome,
 		FailureCode: record.FailureCode, Source: record.Provenance.Source,
 		AttemptGeneration: record.AttemptGeneration, ClaimGeneration: record.ClaimGeneration,
-		ClaimExpiresAt: record.ClaimExpiresAt, ProposalID: record.ProposalID, SkillID: record.SkillID,
+		ClaimExpiresAt: record.ClaimExpiresAt, CheckpointStage: record.CheckpointStage,
+		ProposalID: record.ProposalID, SkillID: record.SkillID,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }
@@ -248,20 +257,19 @@ func ValidateAttemptRecord(record AttemptRecord) error {
 	invalid := func() error { return fmt.Errorf("%w: record", ErrInvalidAttempt) }
 	if !validOpaque(string(record.ID), MaxAttemptIDBytes) || !strings.HasPrefix(string(record.ID), "attempt-") ||
 		!validOpaque(string(record.Version), MaxAttemptVersionBytes) || !record.State.Valid() || !record.Outcome.Valid() ||
-		!record.FailureCode.Valid() || record.AttemptGeneration == 0 || record.CreatedAt.IsZero() || record.UpdatedAt.Before(record.CreatedAt) ||
-		!validOptionalOpaque(string(record.ProposalID), MaxAttemptLinkIDBytes) || !validOptionalOpaque(string(record.SkillID), MaxAttemptLinkIDBytes) ||
+		!record.FailureCode.Valid() || !validStoredCheckpoint(record.CheckpointStage, record.ProposalID, record.SkillID) ||
+		record.AttemptGeneration == 0 || record.CreatedAt.IsZero() || record.UpdatedAt.Before(record.CreatedAt) ||
+		!validOptionalAttemptLink(string(record.ProposalID)) || !validOptionalAttemptLink(string(record.SkillID)) ||
 		!record.Provenance.valid() {
 		return invalid()
 	}
-	if (record.ClaimGeneration == 0) != record.ClaimExpiresAt.IsZero() {
+	if (record.State == AttemptRunning) != (record.ClaimGeneration > 0) ||
+		(record.ClaimGeneration == 0) != record.ClaimExpiresAt.IsZero() {
 		return invalid()
 	}
 	switch record.State {
 	case AttemptQueued, AttemptRunning:
 		if record.Outcome != AttemptOutcomeNone || record.FailureCode != FailureNone {
-			return invalid()
-		}
-		if record.State == AttemptRunning && record.ClaimGeneration == 0 {
 			return invalid()
 		}
 	case AttemptCompleted:
@@ -280,6 +288,22 @@ func ValidateAttemptRecord(record AttemptRecord) error {
 	return nil
 }
 
+func validStoredCheckpoint(stage AttemptCheckpointStage, proposalID ProposalID, skillID SkillID) bool {
+	if !stage.Valid() {
+		return false
+	}
+	switch stage {
+	case AttemptCheckpointNone, AttemptCheckpointEvidenceVerified, AttemptCheckpointReflectionComplete:
+		return proposalID == "" && skillID == ""
+	case AttemptCheckpointProposalLinked:
+		return proposalID != "" && skillID == ""
+	case AttemptCheckpointSkillLinked:
+		return skillID != ""
+	default:
+		return false
+	}
+}
+
 func validDigest(value CanonicalDigest) bool {
 	text := string(value)
 	if len(text) != sha256.Size*2 || strings.ToLower(text) != text {
@@ -289,8 +313,8 @@ func validDigest(value CanonicalDigest) bool {
 	return err == nil
 }
 
-func validOptionalOpaque(value string, limit int) bool {
-	return value == "" || validOpaque(value, limit)
+func validOptionalAttemptLink(value string) bool {
+	return value == "" || validOpaque(value, MaxAttemptLinkIDBytes)
 }
 
 func validOpaque(value string, limit int) bool {
