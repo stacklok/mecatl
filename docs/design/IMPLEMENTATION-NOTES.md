@@ -7671,10 +7671,11 @@ required** and it is portable across Anthropic Messages / OpenAI Responses / Cha
 Completions.
 
 **Engine (`engine/agent/steer.go`).** A `Run`-scoped, single-slot, append-default
-**mutex** inbox (a `sync.Mutex` + `{closed, pending, has}` triple — every
-transition is ONE critical section). At most one pending steer bundle per run:
-a second `EnqueueSteer` on the occupied slot **APPENDS** (`pending += "\n\n" +
-text`, outcome `SteerAppended`) — replacing a pending bundle is the explicit
+**mutex** inbox atomically owns `{text, parts}`. At most one pending steer bundle
+per run: a second `EnqueueSteerContent` appends text with a blank line only when
+both fragments are non-empty and appends validated `session.Content` parts in
+fragment order (issue #861, ADR 0248). `EnqueueSteer` remains the text-only
+wrapper. Replacing a pending bundle is the explicit
 cancel-then-resend (`CancelSteer`, then a fresh steer with a fresh `message_id`).
 `CancelSteer` retracts; the boundary drain commits the merged bundle as ONE user
 message. The outcome is a closed enum (`accepted`/`appended`/`retracted`/
@@ -7697,22 +7698,24 @@ recorded into durable history before the inbox closes, never closed unconsumed.
 **Injection seam.** The drain (`drainPendingSteer`) rides the SAME Step 2a
 turn-boundary seam in `runLoop` as `injectBackgroundNotice`/`drainPendingDelivery`
 (sequenced by `runBoundaryInjections`, BEFORE `BeginTurn` and the pre-turn-terminal
-checks), recording via `recordContinuation` (`RecordUserPrompt` + the log-only
-`EvUserPrompt`). History at that boundary always ends on a user prompt / tool
+checks), recording via `RecordUserPromptWithParts` plus the log-only
+`EvUserPrompt`. History at that boundary always ends on a user prompt / tool
 result / nudge, so the steer is appended **after** the settled tool results — never
 inside a `tool_use` pair (`session.ValidateToolPairing` holds), it rehydrates under
 ADR 0038, and the byte-stable prompt prefix stays a valid cache prefix (the steer
 costs no prompt-cache rebuild beyond normal history growth). The drain emits
-`EvSteer` carrying the committed text — the authoritative echo; the client renders
-the echoed truth (recorded == streamed == model-view).
+`EvSteer` carrying the committed text and media parts — the authoritative echo;
+the client renders the echoed truth (recorded == streamed == model-view).
 
 **Wire (gRPC-only v1).** A `steer`/`steer_cancel` oneof arm on the bidi `Converse`
-stream, a `ServerCapabilities.steer` bit (additive grow, computed once in
-composition), and the `EvSteer` echo. The routing has ONE owner —
+stream, `ServerCapabilities.steer` plus additive `multimodal_steer` bits (both
+computed from the same engine enablement in composition), and the `EvSteer` echo.
+Mecatui requires both bits for native steer; otherwise every mid-run input stays in
+the local merge queue, so an older text-only steer server cannot discard field 3. The routing has ONE owner —
 `Service.Steer`/`Service.CancelSteer` (`internal/adapter/server/service.go`); the
 gRPC handler is a dumb frame→Service mapper. **Correlation (watermark).** Every
 frame carries a client-minted `message_id`; the ack lane echoes its own frame's
-id on each outcome. The engine inbox parks text only, so the Service keeps a
+id on each outcome. The engine inbox parks text and media together, while the Service keeps a
 per-session FIFO of the ordered frame ids (`trackSteerMessageID`/
 `LookupSteerMessageID`/`dropSteerMessageID`); on drain the relay pops the whole
 list and stamps the `EvSteer` echo with the LATEST (tail) id — the **watermark**

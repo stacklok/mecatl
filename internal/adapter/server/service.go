@@ -2039,7 +2039,8 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// path the engine did not arm, and it is computed HERE, once, never
 		// recomputed per sink (the CreateSession echo and the Session snapshot
 		// re-hydration path both carry this one value).
-		Steer: s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
+		Steer:           s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
+		MultimodalSteer: s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
 		// Manual compaction uses the configured engine, or a per-session engine
 		// derived under the same service construction semantics.
 		ManualCompaction: s.cfg.Engine != nil,
@@ -3629,6 +3630,11 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 // the EvSteer drain echo can echo it (LookupSteerMessageID); the ACK-side echo
 // is the caller's own frame field (it never crosses the Service).
 func (s *Service) Steer(ctx context.Context, id session.SessionID, text, messageID string) (agent.SteerOutcome, bool, *agent.Run, error) {
+	return s.SteerContent(ctx, id, text, nil, messageID)
+}
+
+// SteerContent is the multimodal sibling of Steer.
+func (s *Service) SteerContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID string) (agent.SteerOutcome, bool, *agent.Run, error) {
 	// Authorize before touching the in-memory registry or the run-entry funnel:
 	// a steer injects caller input into a run / drives a follow-up, so a foreign
 	// request must be absence-equivalent (ErrNotFound), mirroring Cancel/Approve.
@@ -3639,7 +3645,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text, message
 	// engine disarmed steer (EnableSteer off) reports too_late; it is PROMOTED
 	// rather than dropped — same lost-race contract as a closed inbox.
 	if run, ok := s.LookupRun(id); ok {
-		outcome, err := run.EnqueueSteer(text)
+		outcome, err := run.EnqueueSteerContent(text, parts)
 		if err == nil && outcome != agent.SteerTooLate {
 			// Track BOTH accepted (new bundle) and appended (merged into the pending
 			// bundle): the watermark echo needs the full ordered id-list of the
@@ -3667,7 +3673,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text, message
 	// promoted steer pays the wait — the shared funnel stays byte-identical, so
 	// a concurrent legitimate prompt on the same live session is never wrongly
 	// delayed.
-	promotedRun, err := s.promotedSteerRun(ctx, id, text)
+	promotedRun, err := s.promotedSteerRun(ctx, id, text, parts)
 	if err != nil {
 		return agent.SteerTooLate, false, nil, err
 	}
@@ -3683,8 +3689,8 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text, message
 // byte-identical: only the promoted steer waits out a drain, so a prompt on a
 // genuinely-live session is not slowed by the grace. An unknown session id
 // surfaces ErrNotFound from the first funnel call.
-func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string) (*agent.Run, error) {
-	run, err := s.StartRunContent(ctx, id, text, nil)
+func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
+	run, err := s.StartRunContent(ctx, id, text, parts)
 	if err == nil {
 		return run, nil // no live run blocked the entry — promoted immediately
 	}
@@ -3704,7 +3710,7 @@ func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, te
 	// Registry cleared: the original relay finished and the run's final terminal
 	// state is durable. Drive the follow-up through the hardened funnel, which
 	// now sees the terminal state and reopens it.
-	return s.StartRunContent(ctx, id, text, nil)
+	return s.StartRunContent(ctx, id, text, parts)
 }
 
 // CancelSteer retracts the session's live run's PENDING (un-drained) steer,

@@ -784,7 +784,17 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 // drop). Every ack echoes the frame's client-minted message_id.
 func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.SessionID, frame *mecatlv1.Steer, rl *runRelay, ho *steerHandoff) {
 	text, msgID := frame.GetText(), frame.GetMessageId()
-	outcome, promoted, promotedRun, err := h.svc.Steer(ctx, id, text, msgID)
+	parts, perr := contentFromProto(frame.GetParts())
+	if perr != nil || (text == "" && len(parts) == 0) {
+		reason := "empty"
+		if perr != nil {
+			reason = "invalid_content"
+		}
+		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "invalid steer frame", "session", string(id), "reason", reason, "part_count", len(frame.GetParts()))
+		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE, Text: valid(text), MessageId: valid(msgID)})
+		return
+	}
+	outcome, promoted, promotedRun, err := h.svc.SteerContent(ctx, id, text, parts, msgID)
 	switch {
 	case err != nil:
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "steer route failed", "session", string(id), "error", err)

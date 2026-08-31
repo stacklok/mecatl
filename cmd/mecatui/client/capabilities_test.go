@@ -40,6 +40,8 @@ func TestCapabilitiesFrom(t *testing.T) {
 				ModelSelection:   true,
 				Image:            true,
 				Audio:            true,
+				Steer:            true,
+				MultimodalSteer:  true,
 				ManualCompaction: true,
 			},
 			want: Capabilities{
@@ -55,8 +57,15 @@ func TestCapabilitiesFrom(t *testing.T) {
 				ModelSelection:   true,
 				Image:            true,
 				Audio:            true,
+				Steer:            true,
+				MultimodalSteer:  true,
 				ManualCompaction: true,
 			},
+		},
+		{
+			name: "text-only steer server keeps multimodal false",
+			in:   &mecatlv1.ServerCapabilities{Steer: true},
+			want: Capabilities{Steer: true},
 		},
 		{
 			name: "manual compaction maps independently",

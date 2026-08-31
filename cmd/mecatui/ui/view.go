@@ -903,8 +903,6 @@ func (m Model) renderSteer() string {
 		b.WriteString(muted.Render("⏳ steer queued · " + hk.editBack + " edit · " + hk.cancel + " retract"))
 	case steerPromoted:
 		b.WriteString(th.Style("ctxWarn").Render("↪ steer sent as a follow-up (run had already ended)"))
-	case steerFailed:
-		b.WriteString(th.Style("warning").Render("✕ steer not sent (promotion failed) · ↑ to edit · esc to drop"))
 	case steerRetracted:
 		b.WriteString(muted.Render("✕ steer retracted"))
 	}

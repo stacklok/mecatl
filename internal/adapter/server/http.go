@@ -242,6 +242,8 @@ type serverCapabilitiesJSON struct {
 	StorageCleanup    bool                              `json:"storage_cleanup"`
 	LegacyAdoption    bool                              `json:"legacy_adoption"`
 	ManualDream       *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
+	Steer             bool                              `json:"steer"`
+	MultimodalSteer   bool                              `json:"multimodal_steer"`
 	ManualCompaction  bool                              `json:"manual_compaction"`
 	Posture           string                            `json:"posture,omitempty"`
 }
@@ -269,6 +271,8 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		StorageCleanup:    c.GetStorageCleanup(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
 		ManualDream:       c.GetManualDream(),
+		Steer:             c.GetSteer(),
+		MultimodalSteer:   c.GetMultimodalSteer(),
 		ManualCompaction:  c.GetManualCompaction(),
 		Posture:           c.GetPosture(),
 	}

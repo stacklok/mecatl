@@ -467,6 +467,8 @@ type SteerPayload struct {
 	// recorded into history and replayed to the model (the recorded == streamed
 	// == model-view invariant).
 	Text string
+	// Parts carries the committed non-text media in fragment order.
+	Parts []Content
 }
 
 // UserPromptPayload is the structured detail carried by an EvUserPrompt Event: the

@@ -293,6 +293,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"Cancel":                   {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
 	"CancelChild":              {KindCallerOwned, "authorizes the PARENT session via GetSession before reaching into its child registry"},
 	"Steer":                    {KindCallerOwned, "authorizes via GetSession before enqueueing to the live run's inbox or promoting through StartRunContent"},
+	"SteerContent":             {KindCallerOwned, "multimodal sibling of Steer with the same GetSession authorization and run-entry promotion path"},
 	"CancelSteer":              {KindCallerOwned, "authorizes via GetSession before reaching into the live run's steer inbox"},
 	"Persist":                  {KindCallerOwned, "authorizes via GetSession before consulting the live run registry"},
 

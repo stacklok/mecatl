@@ -3,7 +3,7 @@
 **Phase:** capability — mid-run user input (steer)
 **Status:** landed (reworked through review rounds, 2026-08-18). Settled in the #512 design discussion; rounds 2–3 rework landed on the same branch (Ozz review, then ad-hoc live-test findings).
 **Issue:** [stacklok/mecatl#512](https://github.com/stacklok/mecatl/issues/512).
-**ADR:** ADR-0228 (lands with this plan) — the steer **as-shipped** contract: engine append-default single-slot inbox, watermark `message_id` correlation, drain echo, promote-on-terminal-race + sequential active-run handoff, gate.
+**ADR:** ADR-0232 (landed with this plan) — the original steer **as-shipped at that time** contract: engine append-default single-slot inbox, watermark `message_id` correlation, drain echo, promote-on-terminal-race + sequential active-run handoff, gate. ADR-0248 later superseded only the text-only payload/capability portion with multimodal steer; the historical acceptance scenarios below otherwise remain the record of ADR-0232.
 **Accumulator branch:** `feat/steer-while-running` (PR #570).
 
 The smallest set of work that lets a user inject a message into an **in-flight** run — Claude Code's "steer while running" — instead of waiting for the run to end and submitting a fresh prompt. Today mecatl's queue is purely client-side and turn-terminal ([`cmd/mecatui/ui/update.go`](../../cmd/mecatui/ui/update.go) `m.queued` / `drainQueue`): a typed line is staged and submitted as a brand-new follow-up run only when the current run ends. This plan adds an engine-side steer path so a long multi-tool run can be nudged mid-flight.
@@ -62,7 +62,7 @@ At most one pending steer *bundle* per run. A second `steer` while one is pendin
 
 **Work:**
 - engine app (`engine/agent`): the inbox's `EnqueueSteer(text) → {accepted | appended | too_late}` / `CancelSteer() → {retracted | none_pending}` / drain transitions; an enum-typed outcome.
-- The drain emits `EvSteer` carrying the committed merged bundle + the watermark `message_id` (the tail of the bundle's ordered id-list at the Service wire-correlation layer — the engine inbox is text-only).
+- The original drain emitted `EvSteer` carrying the committed merged text + the watermark `message_id`; ADR-0248 later added ordered media parts to that same echo. The watermark remains the tail of the Service wire-correlation id list.
 - The Service per-session FIFO (`trackSteerMessageID`/`LookupSteerMessageID`/`dropSteerMessageID`) tracks the ordered id-list; the drain echo pops the tail as the watermark the client splits its queue on.
 
 **Acceptance:**
@@ -121,14 +121,14 @@ While a run is parked `awaiting` on a permission or plan ask, the loop is suspen
 The steer rides the existing bidi `Converse` stream as a new `ConverseRequest` oneof arm alongside `prompt` / `resume_approval` / `cancel` / `cancel_child` ([`harness.proto`](../../contracts/proto/mecatl/v1/harness.proto)). The server advertises the feature via a new `ServerCapabilities` bit ([`internal/adapter/server.Service.capabilities()`](../../internal/adapter/server/service.go)), following the additive-grow discipline documented on the message (`a new feature adds a new bool field; old clients ignore it, new clients read an old server as false`). See [`AGENTS.md` — capability truth / the ServerCapabilities additive rule](../../AGENTS.md).
 
 **Work:**
-- contracts (`contracts/proto`): `Steer` + `SteerCancel` messages, a `steer` / `steer_cancel` oneof arm on `ConverseRequest`, a `ServerCapabilities.steer` bit, and the `EvSteer` echo on the event stream; `task generate` regenerates `contracts/gen`.
+- contracts (`contracts/proto`), as landed under ADR-0232: `Steer` + `SteerCancel` messages, a `steer` / `steer_cancel` oneof arm on `ConverseRequest`, a `ServerCapabilities.steer` bit, and the `EvSteer` echo. ADR-0248 later added media fields and `multimodal_steer`; `task generate` regenerates `contracts/gen`.
 - engine app (`engine/agent`): a `Run`-facing steer entry point the gRPC handler drives (`Engine.Steer`/`Run.EnqueueSteer`), and the `EvSteer` event projection.
 - composition (`internal/adapter/server`): the `Converse` handler routes steer frames to the live run's inbox and relays the outcome back to the client.
 
 **Acceptance:**
 - AC5.1: A client can send a `steer` frame mid-run on the `Converse` stream and observe the injected message + the `EvSteer` echo on the same stream.
   - verify: `TestSteer_ConverseFrameRoundTrip`
-- AC5.2: `ServerCapabilities` advertises `steer` true when the feature is enabled and false/absent when not; an old server (no field) reads as false. The bit is computed **once** in composition (`Service.capabilities()`) and is consistent across every sink that surfaces it (the `CreateSession` echo and any re-hydration path) — the single-composition-computed-intersection invariant ([`AGENTS.md` — capability truth](../../AGENTS.md)); never recomputed per sink.
+- AC5.2 (historical ADR-0232 gate): `ServerCapabilities` advertises `steer` true when the feature is enabled and false/absent when not; an old server reads false. ADR-0248 adds a second `multimodal_steer` bit that new clients also require before native steer, preserving compatibility with text-only steer servers. Both bits are computed **once** in composition (`Service.capabilities()`) and remain consistent across the CreateSession echo and rehydrated Session snapshot.
   - verify: `TestSteer_CapabilityAdvertised`; `TestSteer_CapabilitySingleSource`
 - AC5.3: `task generate` keeps `contracts/gen` in sync; the new oneof arm does not change the behaviour of existing arms.
   - verify: inspection — `buf generate` output committed; existing Converse control frames unchanged.
@@ -143,7 +143,7 @@ The client-side merge and the engine-side slot are **distinct mechanisms that mu
 
 **Work:**
 - composition (`internal/app` / `cmd/*`): the steer enable knob wired through `app.Build` into the engine deps + the `ServerCapabilities` bit; default on.
-- `cmd/mecatui`: read the `steer` capability; when present, `enter` mid-run sends a `steer` frame instead of only staging locally, and the queue card reflects the authoritative echoed/acked state (pending → sent → too-late-promoted). When absent, keep the #228 local-queue behaviour byte-identical.
+- `cmd/mecatui`: originally read `steer`; after ADR-0248 it requires both `steer` and `multimodal_steer`. Only then does `enter` mid-run send a native frame and render its acked lifecycle. When either bit is absent, the #228 local queue owns all mid-run text and media.
 
 **Acceptance:**
 - AC6.1: With steer enabled (default), the capability is advertised and a mid-run input reaches the model without a separate follow-up run.

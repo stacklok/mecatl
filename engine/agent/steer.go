@@ -78,9 +78,14 @@ type steerInbox struct {
 	// cancel is none_pending.
 	closed bool
 	// pending parks the single pending steer (valid only when has is true).
-	pending string
+	pending steerContent
 	// has records whether pending is occupied (the single-slot bit).
 	has bool
+}
+
+type steerContent struct {
+	text  string
+	parts []session.Content
 }
 
 // newSteerInbox mints an armed (open, empty-slot) inbox.
@@ -93,7 +98,12 @@ func newSteerInbox() *steerInbox {
 // (accepted/appended/too_late) — never an error for the ordinary too-late
 // race (that outcome is what the Service promotes on).
 func (r *Run) EnqueueSteer(text string) (SteerOutcome, error) {
-	return r.enqueueSteer(text)
+	return r.EnqueueSteerContent(text, nil)
+}
+
+// EnqueueSteerContent enqueues a text, media, or mixed steer atomically.
+func (r *Run) EnqueueSteerContent(text string, parts []session.Content) (SteerOutcome, error) {
+	return r.enqueueSteerContent(text, parts)
 }
 
 // CancelSteer is the wire-facing steer-cancel entry point: a live run's
@@ -121,22 +131,40 @@ func (r *Run) CancelSteer() (SteerOutcome, error) {
 // byte-identical downstream. ONE critical section: the closed/full check and
 // the park are indivisible.
 func (r *Run) enqueueSteer(text string) (SteerOutcome, error) {
+	return r.enqueueSteerContent(text, nil)
+}
+
+func (r *Run) enqueueSteerContent(text string, parts []session.Content) (SteerOutcome, error) {
 	if r.steer == nil {
 		return SteerTooLate, nil
 	}
 	repaired := session.ToValidUTF8(text)
+	if repaired == "" && len(parts) == 0 {
+		return SteerTooLate, fmt.Errorf("agent: steer text or parts required")
+	}
+	ownedParts := append([]session.Content(nil), parts...)
+	if err := session.ValidateMediaParts(ownedParts); err != nil {
+		return SteerTooLate, fmt.Errorf("agent: validate steer parts: %w", err)
+	}
 	r.steer.mu.Lock()
 	defer r.steer.mu.Unlock()
 	if r.steer.closed {
 		return SteerTooLate, nil
 	}
 	if r.steer.has {
-		// Append-default (round-3): merge into the pending bundle with a blank-line
-		// separator; it still drains as ONE bundle. (Was reject-on-full; dropped.)
-		r.steer.pending = r.steer.pending + "\n\n" + repaired
+		combinedParts := append(append([]session.Content(nil), r.steer.pending.parts...), ownedParts...)
+		if err := session.ValidateMediaParts(combinedParts); err != nil {
+			return SteerTooLate, fmt.Errorf("agent: validate combined steer parts: %w", err)
+		}
+		if r.steer.pending.text != "" && repaired != "" {
+			r.steer.pending.text += "\n\n"
+		}
+		r.steer.pending.text += repaired
+		r.steer.pending.parts = combinedParts
 		return SteerAppended, nil
 	}
-	r.steer.pending, r.steer.has = repaired, true
+	r.steer.pending = steerContent{text: repaired, parts: ownedParts}
+	r.steer.has = true
 	return SteerAccepted, nil
 }
 
@@ -154,7 +182,7 @@ func (r *Run) cancelSteer() (SteerOutcome, error) {
 	if !r.steer.has {
 		return SteerNonePending, nil
 	}
-	r.steer.pending, r.steer.has = "", false
+	r.steer.pending, r.steer.has = steerContent{}, false
 	return SteerRetracted, nil
 }
 
@@ -164,17 +192,22 @@ func (r *Run) cancelSteer() (SteerOutcome, error) {
 // following turn (only run-terminal closes the inbox). A nil inbox is the
 // no-op (steer disabled). ONE critical section: take+clear.
 func (r *Run) drainSteer() (string, bool) {
+	content, ok := r.drainSteerContent()
+	return content.text, ok
+}
+
+func (r *Run) drainSteerContent() (steerContent, bool) {
 	if r.steer == nil {
-		return "", false
+		return steerContent{}, false
 	}
 	r.steer.mu.Lock()
 	defer r.steer.mu.Unlock()
 	if !r.steer.has {
-		return "", false
+		return steerContent{}, false
 	}
-	text := r.steer.pending
-	r.steer.pending, r.steer.has = "", false
-	return text, true
+	content := r.steer.pending
+	r.steer.pending, r.steer.has = steerContent{}, false
+	return content, true
 }
 
 // hasSteer reports whether a steer is currently PARKED in the inbox. The
@@ -234,11 +267,11 @@ func (r *Run) closeSteer() {
 // (a recorded-then-lost steer must not silently vanish; the operator sees the
 // fault).
 func (e *Engine) drainPendingSteer(ctx context.Context, r *Run, sess *session.Session) error {
-	text, ok := r.drainSteer()
+	content, ok := r.drainSteerContent()
 	if !ok {
 		return nil
 	}
-	return e.commitSteer(ctx, r, sess, text)
+	return e.commitSteer(ctx, r, sess, content)
 }
 
 // closeSteerDrained is the terminate-path steer hook: it drains any PARKED
@@ -254,9 +287,9 @@ func (e *Engine) closeSteerDrained(ctx context.Context, r *Run, sess *session.Se
 	if r.steer == nil {
 		return
 	}
-	text, ok := r.drainSteer()
+	content, ok := r.drainSteerContent()
 	if ok {
-		if err := e.commitSteer(ctx, r, sess, text); err != nil {
+		if err := e.commitSteer(ctx, r, sess, content); err != nil {
 			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
 				fmt.Errorf("agent: record steer on terminal close: %w", err), false)
 			return
@@ -277,12 +310,13 @@ func (e *Engine) closeSteerDrained(ctx context.Context, r *Run, sess *session.Se
 // like every other. The EvSteer echo is emitted AFTER the record succeeds (a
 // recorded-then-unrecorded steer must not echo) and BEFORE the upcoming
 // turn.start, so the echo precedes the turn it feeds on the wire.
-func (e *Engine) commitSteer(ctx context.Context, r *Run, sess *session.Session, text string) error {
-	if err := e.recordContinuation(r, sess, sess.Counters.Turns, text); err != nil {
+func (e *Engine) commitSteer(ctx context.Context, r *Run, sess *session.Session, content steerContent) error {
+	if err := sess.RecordUserPromptWithParts(content.text, content.parts, nil); err != nil {
 		return fmt.Errorf("agent: record steer: %w", err)
 	}
+	e.emitUserPrompt(r, sess.Counters.Turns, content.text, content.parts)
 	e.emit(r, session.Event{Type: session.EvSteer, Turn: sess.Counters.Turns,
-		Steer: &session.SteerPayload{Text: text}})
+		Steer: &session.SteerPayload{Text: content.text, Parts: content.parts}})
 	e.save(ctx, r, sess)
 	return nil
 }

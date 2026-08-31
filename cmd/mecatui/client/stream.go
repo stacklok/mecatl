@@ -262,8 +262,13 @@ func (s *Stream) SendCancelChild(childID string) error {
 // messageID is the client-minted correlation key the server echoes verbatim on
 // the ack and the drain echo; empty degrades to text-order matching.
 func (s *Stream) SendSteer(text, messageID string) error {
+	return s.SendSteerContent(text, MediaResult{}, messageID)
+}
+
+// SendSteerContent is the multimodal sibling of SendSteer.
+func (s *Stream) SendSteerContent(text string, media MediaResult, messageID string) error {
 	return s.sendFrame(&mecatlv1.ConverseRequest{
-		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: text, MessageId: messageID}},
+		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: text, MessageId: messageID, Parts: media.Parts}},
 	})
 }
 

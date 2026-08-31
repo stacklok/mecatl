@@ -47,6 +47,27 @@ func TestSteer_WatermarkSplitOnQueuedAck(t *testing.T) {
 	}
 }
 
+func TestSteer_WatermarkPrefixDrainPreservesSuffixMediaForEditBack(t *testing.T) {
+	m, _ := newSteerModel(t, true)
+	m = startRunning(t, m, "initial")
+	m.steer = &steerState{Phase: steerSent, Sends: []steerQueuedSend{
+		{ID: "steer-0001", Text: "first", Draft: "first"},
+		{ID: "steer-0002", Text: "second", Draft: "second [Image #2]", Staged: map[string]stagedAttachment{"[Image #2]": {mime: "image/png", data: []byte("suffix")}}},
+	}}
+	m.steer.Text = joinSteerSends(m.steer.Sends)
+	mm, _ := m.Update(client.SteerEchoMsg{Text: "first", MessageID: "steer-0001"})
+	m = mm.(Model)
+	if m.steer == nil || len(m.steer.Sends) != 1 || m.steer.Sends[0].ID != "steer-0002" {
+		t.Fatalf("watermark did not retain suffix: %#v", m.steer)
+	}
+	mm, cmd := m.editBackQueue()
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if m.prompt.Value() != "second [Image #2]" || string(m.stagedMedia["[Image #2]"].data) != "suffix" {
+		t.Fatalf("suffix media did not survive edit-back: draft=%q staged=%#v", m.prompt.Value(), m.stagedMedia)
+	}
+}
+
 // TestSteer_AppendAckAdvancesPhase is R5-2: an "appended" ack scopes any
 // queued id and only advances the lifecycle phase (the queue itself only
 // splits on the echo, never on an ack).

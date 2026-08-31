@@ -1763,8 +1763,11 @@ queue to the engine steer path:
   staging locally, **except that a bare recognized TUI built-in** (such as `/help`
   or `/clear`) still runs locally. Unknown slash commands and workspace commands
   remain model-facing input. Recognized built-ins with arguments retain the input
-  and show a local argument warning. Each steer mints a fresh client
-  `message_id` and the frame carries ONLY that line's text; the engine's single-slot
+  and show a local argument warning. The same attachment preparation used by an
+  idle prompt also runs here: `@` mentions, staged image markers, aggregate caps,
+  marker stripping, mixed text+media, and media-only input all retain their
+  ordinary prompt semantics. Each steer mints a fresh client `message_id`; the
+  frame carries that fragment's text and media parts. The engine's single-slot
   inbox **appends** each frame into the one pending bundle (merged with a blank-line
   separator) and drains the bundle at the **next turn boundary**, recording it as an
   ordinary user continuation — so the model is nudged *mid-flight*, no waiting for
@@ -1794,12 +1797,16 @@ queue to the engine steer path:
   send is never re-sent — the watermark split keeps the queue honest). A late
   `none_pending` ack means the drain won — the steer shipped as sent. `esc` on a
   pending/queued steer **retracts** it (`steer_cancel`) before it would cancel
-  the run.
+  the run. Text and attachment bytes share this lifecycle: `↑` restores both to
+  the draft, the drain watermark releases the landed prefix, and a successful
+  retract drops both.
 
-When the capability is **absent** (an older server, or steer disabled), none of this
-engages: mid-run input keeps the #228 local merge-queue behaviour **byte-identical**
-(staged, merged, and drained as a follow-up prompt when the run ends), and no `steer`
-frame is ever sent.
+When either `steer` or the additive `multimodal_steer` capability is **absent**
+(an older text-only steer server, or steer disabled), none of this engages: all
+mid-run input, including attachment bytes, stays in the #228 local merge queue
+(staged, merged, and drained as one marker-free follow-up prompt when the run ends),
+and no `steer` frame is ever sent. Requiring both bits prevents an older server from
+silently discarding an unknown media field.
 
 ## Theming
 

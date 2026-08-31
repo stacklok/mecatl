@@ -67,6 +67,10 @@ type Capabilities struct {
 	// merge-queue (issue #228) byte-identical — it never sends a steer frame the
 	// server would only ack too_late.
 	Steer bool
+	// MultimodalSteer is additive capability negotiation for Content parts on
+	// steer frames. Native steer requires both bits; an older steer-capable server
+	// leaves this false, so all mid-run input stays in the local merge queue.
+	MultimodalSteer bool
 	// ManualCompaction gates the bodyless out-of-band session compaction action.
 	// Older servers leave it false, hiding /compact.
 	ManualCompaction bool
@@ -103,6 +107,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		LegacyAdoption:    c.GetLegacyAdoption(),
 		ManualDream:       manualDreamCapabilitiesFrom(c.GetManualDream()),
 		Steer:             c.GetSteer(),
+		MultimodalSteer:   c.GetMultimodalSteer(),
 		ManualCompaction:  c.GetManualCompaction(),
 	}
 }

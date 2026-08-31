@@ -31,7 +31,10 @@ unavailable unless the selected deployment explicitly advertises it.
 ## Send multimodal content
 
 The gRPC `Converse` prompt carries optional text plus repeated `Content` parts.
-A prompt must contain text, at least one part, or both. Each media part must name
+A prompt must contain text, at least one part, or both. The same shape is supported
+by mid-run `Steer` frames and their committed echoes, so images/audio staged while
+a run is active reach the next turn boundary without becoming literal attachment
+markers. Each media part must name
 its kind and MIME type and must use exactly one source: inline bytes or a URL.
 
 Conceptually:

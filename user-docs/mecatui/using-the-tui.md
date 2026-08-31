@@ -9,9 +9,9 @@ Assistant text streams into the conversation as it arrives. Tool calls appear as
 
 ## Keep working while a run is active
 
-You can type while the agent is running. Press `enter` to steer the current run; the message is applied at the next safe turn boundary. If the server does not support steering, it becomes a queued follow-up instead. Several queued lines become one next prompt. Bare recognized TUI commands such as `/help` and `/clear` still run locally while a run streams. Unknown slash commands, workspace commands, and built-ins with arguments remain model-facing input.
+You can type while the agent is running. Press `enter` to steer the current run; the message is applied at the next safe turn boundary. Images and other supported staged media travel with the steer, including media-only input. If the server does not support steering, it becomes a queued follow-up instead. Several queued lines become one next prompt. Bare recognized TUI commands such as `/help` and `/clear` still run locally while a run streams. Unknown slash commands, workspace commands, and built-ins with arguments remain model-facing input.
 
-With an empty input, press `↑` to bring a pending steer or queued follow-up back for editing. `esc` clears staged text first, then the pending message, then cancels the in-flight run, so cancellation is not a single accidental keypress.
+With an empty input, press `↑` to bring a pending steer or queued follow-up back for editing together with its staged media. `esc` clears staged text first, then retracts the pending text and attachments together, then cancels the in-flight run, so cancellation is not a single accidental keypress.
 
 ## When a model stream fails
 

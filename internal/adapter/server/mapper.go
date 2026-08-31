@@ -36,6 +36,9 @@ func contentFromProto(parts []*mecatlv1.Content) ([]session.Content, error) {
 	if len(parts) == 0 {
 		return nil, nil
 	}
+	if len(parts) > session.MaxPromptMediaParts {
+		return nil, fmt.Errorf("prompt has too many media parts: %d (limit %d)", len(parts), session.MaxPromptMediaParts)
+	}
 	out := make([]session.Content, 0, len(parts))
 	for i, p := range parts {
 		if p == nil {
@@ -183,7 +186,7 @@ func toProto(ev session.Event) *mecatlv1.Event {
 // The text is operator-supplied (producer-influenced), so it rides the valid()
 // backstop like every other non-harness string.
 func toProtoSteer(p session.SteerPayload) *mecatlv1.SteerEcho {
-	return &mecatlv1.SteerEcho{Text: valid(p.Text)}
+	return &mecatlv1.SteerEcho{Text: valid(p.Text), Parts: contentToProto(p.Parts)}
 }
 
 // toProtoParallel maps a session.ParallelPayload to its proto Parallel form: the

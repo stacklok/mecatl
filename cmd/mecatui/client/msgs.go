@@ -540,6 +540,7 @@ type SteerOutcomeMsg struct {
 // matches the echo to the frame it sent.
 type SteerEchoMsg struct {
 	Text      string
+	Parts     []ContentBlock
 	MessageID string
 }
 
@@ -1154,7 +1155,7 @@ func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 		// The steer-inbox DRAIN echo (committed text) + the authoritative
 		// steer.outcome ack ride this dispatcher (not EventToMsg's main switch) to
 		// keep EventToMsg under the cyclomatic-complexity bound.
-		return SteerEchoMsg{Text: ev.GetSteer().GetText(), MessageID: ev.GetSteer().GetMessageId()}
+		return SteerEchoMsg{Text: ev.GetSteer().GetText(), Parts: contentPartsFromProto(ev.GetSteer().GetParts()), MessageID: ev.GetSteer().GetMessageId()}
 	case "steer.outcome":
 		return steerOutcomeMsg(ev.GetSteerOutcome())
 	default:

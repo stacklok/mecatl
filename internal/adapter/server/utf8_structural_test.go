@@ -102,6 +102,7 @@ var harnessTokenFields = map[string]bool{
 	// MIME is an IANA machine token, byte-exact by contract (see RepairToolResult).
 	".ToolResult.Parts[].MIMEType":                              true,
 	".UserPrompt.Parts[].MIMEType":                              true,
+	".Steer.Parts[].MIMEType":                                   true,
 	".CompactionArchive.Replaced[].Parts[].MIMEType":            true,
 	".CompactionArchive.Replaced[].ToolCalls[].ID":              true,
 	".CompactionArchive.Replaced[].ToolResult.CallID":           true,

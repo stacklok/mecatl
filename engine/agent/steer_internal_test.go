@@ -1,9 +1,79 @@
 package agent
 
 import (
+	"reflect"
 	"sync"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/session"
 )
+
+func TestSteerAggregateRejectionIsAtomic(t *testing.T) {
+	r := &Run{steer: newSteerInbox()}
+	parts := make([]session.Content, session.MaxPromptMediaParts)
+	for i := range parts {
+		part, err := session.NewImageContent("image/png", []byte{byte(i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts[i] = part
+	}
+	if got, err := r.enqueueSteerContent("kept", parts); err != nil || got != SteerAccepted {
+		t.Fatalf("initial enqueue = %q, %v", got, err)
+	}
+	before := steerContent{text: r.steer.pending.text, parts: append([]session.Content(nil), r.steer.pending.parts...)}
+	extra, err := session.NewAudioContent("audio/wav", []byte("overflow"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.enqueueSteerContent("rejected", []session.Content{extra}); err == nil || got != SteerTooLate {
+		t.Fatalf("over-cap append = %q, %v", got, err)
+	}
+	if r.steer.pending.text != before.text || !reflect.DeepEqual(r.steer.pending.parts, before.parts) {
+		t.Fatalf("rejection mutated pending content: before=%#v after=%#v", before, r.steer.pending)
+	}
+
+	// Content.Data is immutable by domain convention, but the caller-owned slice
+	// backing array is not: replacing an element after enqueue must not rewrite the inbox.
+	parts[0] = extra
+	if !reflect.DeepEqual(r.steer.pending.parts, before.parts) {
+		t.Fatal("inbox retained caller slice backing array")
+	}
+}
+
+func TestSteerMultimodalAppendAndCancel(t *testing.T) {
+	r := &Run{steer: newSteerInbox()}
+	image, err := session.NewImageContent("image/png", []byte("one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	audio, err := session.NewAudioContent("audio/wav", []byte("two"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.enqueueSteerContent("first", []session.Content{image}); err != nil || got != SteerAccepted {
+		t.Fatalf("first = %q, %v", got, err)
+	}
+	if got, err := r.enqueueSteerContent("", []session.Content{audio}); err != nil || got != SteerAppended {
+		t.Fatalf("media-only append = %q, %v", got, err)
+	}
+	if got, err := r.enqueueSteerContent("last", nil); err != nil || got != SteerAppended {
+		t.Fatalf("text append = %q, %v", got, err)
+	}
+	content, ok := r.drainSteerContent()
+	if !ok || content.text != "first\n\nlast" || len(content.parts) != 2 || content.parts[0].Kind != session.MediaImage || content.parts[1].Kind != session.MediaAudio {
+		t.Fatalf("drain = %#v, %v", content, ok)
+	}
+	if _, err := r.enqueueSteerContent("", []session.Content{image}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.cancelSteer(); got != SteerRetracted {
+		t.Fatalf("cancel = %q", got)
+	}
+	if _, ok := r.drainSteerContent(); ok {
+		t.Fatal("cancel left multimodal steer pending")
+	}
+}
 
 // TestSteer_InboxLinearizable (R2-3): the mutex inbox makes the finding-#1
 // deadlock shape impossible BY CONSTRUCTION — every transition (enqueue /
