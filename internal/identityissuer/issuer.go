@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -61,12 +62,14 @@ type manifestKey struct {
 
 // Issuer contains a fully validated immutable key generation.
 type Issuer struct {
-	trustDomain string
-	audience    string
-	tokenTTL    time.Duration
-	clockSkew   time.Duration
-	key         *ecdsa.PrivateKey
-	kid         string
+	trustDomain    string
+	audience       string
+	tokenTTL       time.Duration
+	clockSkew      time.Duration
+	key            *ecdsa.PrivateKey
+	kid            string
+	bundleMu       sync.Mutex
+	bundleSequence uint64
 }
 
 // Load validates configuration before reading any key item, then constructs an issuer
