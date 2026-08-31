@@ -249,22 +249,19 @@ func TestSteer_ConverseCancelRetracts(t *testing.T) {
 	}
 }
 
-// TestSteer_CapabilityAdvertised is AC5.2 half one: ServerCapabilities.steer is
-// true when the engine's steer knob is armed, false when it is not — read over
-// the gRPC CreateSession echo, the same surface every client reads. An old
-// server (no field) reads as false by the proto3 default.
+// TestSteer_CapabilityAdvertised verifies ServerCapabilities.steer is true
+// when the engine's steer knob is armed and false when runtime-disabled, read
+// over the gRPC CreateSession echo used by clients.
 func TestSteer_CapabilityAdvertised(t *testing.T) {
 	on := capsFromCreate(t, newSteerService(t, mockllm.New(mockllm.TextTurn("x")), nil))
-	if !on.GetSteer() || !on.GetMultimodalSteer() {
-		t.Fatalf("steer caps = steer:%v multimodal:%v, want both true (EnableSteer armed)", on.GetSteer(), on.GetMultimodalSteer())
+	if !on.GetSteer() {
+		t.Fatal("steer capability = false, want true (EnableSteer armed)")
 	}
 
-	// Steer knob OFF: the bit reads false (newSteerService always arms it, so
-	// build a plain service here — EnableSteer unset is the byte-identical
-	// no-steer posture).
+	// Steer knob OFF: newSteerService always arms it, so build a plain service.
 	off := capsFromCreate(t, newService(t, mockllm.New(mockllm.TextTurn("x")), allowRules()))
-	if off.GetSteer() || off.GetMultimodalSteer() {
-		t.Fatalf("steer caps = steer:%v multimodal:%v, want both false (EnableSteer off)", off.GetSteer(), off.GetMultimodalSteer())
+	if off.GetSteer() {
+		t.Fatal("steer capability = true, want false (EnableSteer off)")
 	}
 }
 

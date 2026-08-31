@@ -600,23 +600,17 @@ message ServerCapabilities {
   // health and this deployment has a management authorizer.
   bool storage_health = 23;
   // steer is true when the server's engines arm the mid-run steer inbox
-  // (steer-while-running, issue #512): a client may then send `steer` /
-  // `steer_cancel` frames on the live Converse stream and render the EvSteer
-  // drain echo. When false (an older server, or steer disabled in
-  // composition), the client keeps its local merge-queue behaviour — a steer
-  // frame sent to such a server is promoted to a fresh follow-up run (the
-  // engine reports too_late on its disarmed inbox), never silently dropped.
-  // Additive: an older server leaves it false.
+  // (steer-while-running, issue #512): a client may then send multimodal
+  // `steer` / `steer_cancel` frames on the live Converse stream and render the
+  // EvSteer drain echo. When false because steer is disabled in composition,
+  // the client keeps its local merge-queue behaviour — a steer frame sent to
+  // such a server is promoted to a fresh follow-up run (the engine reports
+  // too_late on its disarmed inbox), never silently dropped.
   bool steer = 24;
   // manual_compaction is true when the server can apply an out-of-band
-  // compaction pass to an idle owned session. Gates the client's /compact action.
-  // Additive: an older server leaves it false.
+  // session compaction pass to an idle owned session. Gates the client's
+  // /compact action.
   bool manual_compaction = 25;
-  // multimodal_steer is true when steer frames preserve Content parts. New
-  // clients require BOTH steer and this bit before sending media natively, so
-  // an older text-only steer server cannot silently discard unknown field 3.
-  // Additive: an older server leaves it false.
-  bool multimodal_steer = 26;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.

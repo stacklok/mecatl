@@ -69,7 +69,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 
 	b.WriteString("\n" + muted.Render("While a run is streaming") + "\n")
 	streamingSubmit := "queue a follow-up (sends when the turn ends)"
-	if caps.Steer && caps.MultimodalSteer {
+	if caps.Steer {
 		streamingSubmit = "steer the current run (applies at the next turn boundary; bare built-ins stay local)"
 	}
 	writeHelpRows(&b, th, []helpRow{

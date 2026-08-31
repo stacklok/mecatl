@@ -7672,10 +7672,9 @@ Completions.
 
 **Engine (`engine/agent/steer.go`).** A `Run`-scoped, single-slot, append-default
 **mutex** inbox atomically owns `{text, parts}`. At most one pending steer bundle
-per run: a second `EnqueueSteerContent` appends text with a blank line only when
+per run: a second `EnqueueSteer` appends text with a blank line only when
 both fragments are non-empty and appends validated `session.Content` parts in
-fragment order (issue #861, ADR 0248). `EnqueueSteer` remains the text-only
-wrapper. Replacing a pending bundle is the explicit
+fragment order (issue #861, ADR 0248). Replacing a pending bundle is the explicit
 cancel-then-resend (`CancelSteer`, then a fresh steer with a fresh `message_id`).
 `CancelSteer` retracts; the boundary drain commits the merged bundle as ONE user
 message. The outcome is a closed enum (`accepted`/`appended`/`retracted`/
@@ -7708,10 +7707,9 @@ costs no prompt-cache rebuild beyond normal history growth). The drain emits
 the client renders the echoed truth (recorded == streamed == model-view).
 
 **Wire (gRPC-only v1).** A `steer`/`steer_cancel` oneof arm on the bidi `Converse`
-stream, `ServerCapabilities.steer` plus additive `multimodal_steer` bits (both
-computed from the same engine enablement in composition), and the `EvSteer` echo.
-Mecatui requires both bits for native steer; otherwise every mid-run input stays in
-the local merge queue, so an older text-only steer server cannot discard field 3. The routing has ONE owner —
+stream, the `ServerCapabilities.steer` runtime gate, and the `EvSteer` echo. Mecatui
+uses native multimodal steer when the bit is true; otherwise every mid-run input
+stays in the local merge queue. The routing has ONE owner —
 `Service.Steer`/`Service.CancelSteer` (`internal/adapter/server/service.go`); the
 gRPC handler is a dumb frame→Service mapper. **Correlation (watermark).** Every
 frame carries a client-minted `message_id`; the ack lane echoes its own frame's

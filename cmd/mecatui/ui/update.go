@@ -2328,10 +2328,9 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 	if text == "" && len(m.stagedMedia) == 0 && len(m.stagedPastes) == 0 {
 		return m, nil
 	}
-	// Native multimodal steer requires BOTH additive capability bits. If either
-	// is absent (including a text-only older steer server), the local queue owns
-	// all mid-run text and media so unknown field 3 cannot be silently dropped.
-	if m.caps.Steer && m.caps.MultimodalSteer && m.stream != nil {
+	// Native multimodal steer is enabled by the single steer capability. When it
+	// is runtime-disabled, the local queue owns all mid-run text and media.
+	if m.caps.Steer && m.stream != nil {
 		return m.sendSteer(text)
 	}
 	if len(m.queued) >= maxQueued {
@@ -2454,7 +2453,7 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 	m.steer.Text = joinSteerSends(m.steer.Sends)
 	stream := m.stream
 	sendMsg := func() tea.Msg {
-		if err := stream.SendSteerContent(text, media, id); err != nil {
+		if err := stream.SendSteer(text, media, id); err != nil {
 			return client.StreamErrMsg{Err: err}
 		}
 		return nil

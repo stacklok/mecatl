@@ -153,7 +153,7 @@ func TestSteer_LiveRunEnqueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outc, promoted, _, err := svc.SteerContent(ctx, sess.ID, "steer mid-flight", []session.Content{image}, "")
+	outc, promoted, _, err := svc.Steer(ctx, sess.ID, "steer mid-flight", []session.Content{image}, "")
 	if err != nil {
 		t.Fatalf("Steer on a live run: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestSteer_TerminalRacePromotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outc, promoted, run2, err := svc.SteerContent(ctx, sess.ID, "", []session.Content{image}, "")
+	outc, promoted, run2, err := svc.Steer(ctx, sess.ID, "", []session.Content{image}, "")
 	if err != nil {
 		t.Fatalf("Steer: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestSteer_PromotionUsesRunEntryFunnel(t *testing.T) {
 	promote := func(t *testing.T, f fixture) {
 		t.Helper()
 		ctx := context.Background()
-		outc, promoted, run, err := f.svc.Steer(ctx, f.sess.ID, "promoted follow-up", "")
+		outc, promoted, run, err := f.svc.Steer(ctx, f.sess.ID, "promoted follow-up", nil, "")
 		if err != nil {
 			t.Fatalf("Steer: %v", err)
 		}

@@ -105,11 +105,7 @@ func TestHelpAnnotationsTrackCaps(t *testing.T) {
 	if !strings.Contains(allOn, "Type / to browse") {
 		t.Errorf("all-on help SHOULD advertise the / palette:\n%s", allOn)
 	}
-	legacySteer := stripANSIstr(m_helpBody(client.Capabilities{Steer: true}))
-	if !strings.Contains(legacySteer, "queue a follow-up") || strings.Contains(legacySteer, "steer the current run") {
-		t.Errorf("text-only older steer server must advertise the safe local queue:\n%s", legacySteer)
-	}
-	steer := stripANSIstr(m_helpBody(client.Capabilities{Steer: true, MultimodalSteer: true}))
+	steer := stripANSIstr(m_helpBody(client.Capabilities{Steer: true}))
 	if !strings.Contains(steer, "steer the current run") {
 		t.Errorf("steer-capable help should describe mid-run steering:\n%s", steer)
 	}

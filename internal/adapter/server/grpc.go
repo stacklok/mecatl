@@ -794,7 +794,7 @@ func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.Session
 		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE, Text: valid(text), MessageId: valid(msgID)})
 		return
 	}
-	outcome, promoted, promotedRun, err := h.svc.SteerContent(ctx, id, text, parts, msgID)
+	outcome, promoted, promotedRun, err := h.svc.Steer(ctx, id, text, parts, msgID)
 	switch {
 	case err != nil:
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "steer route failed", "session", string(id), "error", err)

@@ -2039,8 +2039,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// path the engine did not arm, and it is computed HERE, once, never
 		// recomputed per sink (the CreateSession echo and the Session snapshot
 		// re-hydration path both carry this one value).
-		Steer:           s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
-		MultimodalSteer: s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
+		Steer: s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
 		// Manual compaction uses the configured engine, or a per-session engine
 		// derived under the same service construction semantics.
 		ManualCompaction: s.cfg.Engine != nil,
@@ -3629,12 +3628,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 // caller supplied none). On an accepted steer it parks in the session's FIFO so
 // the EvSteer drain echo can echo it (LookupSteerMessageID); the ACK-side echo
 // is the caller's own frame field (it never crosses the Service).
-func (s *Service) Steer(ctx context.Context, id session.SessionID, text, messageID string) (agent.SteerOutcome, bool, *agent.Run, error) {
-	return s.SteerContent(ctx, id, text, nil, messageID)
-}
-
-// SteerContent is the multimodal sibling of Steer.
-func (s *Service) SteerContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID string) (agent.SteerOutcome, bool, *agent.Run, error) {
+func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID string) (agent.SteerOutcome, bool, *agent.Run, error) {
 	// Authorize before touching the in-memory registry or the run-entry funnel:
 	// a steer injects caller input into a run / drives a follow-up, so a foreign
 	// request must be absence-equivalent (ErrNotFound), mirroring Cancel/Approve.
@@ -3645,7 +3639,7 @@ func (s *Service) SteerContent(ctx context.Context, id session.SessionID, text s
 	// engine disarmed steer (EnableSteer off) reports too_late; it is PROMOTED
 	// rather than dropped — same lost-race contract as a closed inbox.
 	if run, ok := s.LookupRun(id); ok {
-		outcome, err := run.EnqueueSteerContent(text, parts)
+		outcome, err := run.EnqueueSteer(text, parts)
 		if err == nil && outcome != agent.SteerTooLate {
 			// Track BOTH accepted (new bundle) and appended (merged into the pending
 			// bundle): the watermark echo needs the full ordered id-list of the

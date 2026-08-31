@@ -70,13 +70,11 @@ func (g *firstTurnGate) awaitEntered() { <-g.entered }
 // release lets the parked first model call proceed. Idempotent.
 func (g *firstTurnGate) release() { g.relOnce.Do(func() { close(g.proceed) }) }
 
-// steerEnqueue enqueues a steer on a live run via the test seam (task 01 adds
-// only the unexported enqueue; the wire-facing entry point is a later task). It
-// asserts the enqueue was accepted (the task-01 tests enqueue into an empty
-// slot on a live run).
+// steerEnqueue enqueues a text-only steer through the canonical entry point. It
+// asserts the enqueue was accepted (these tests enqueue into an empty live slot).
 func steerEnqueue(t *testing.T, r *agent.Run, text string) {
 	t.Helper()
-	outcome, err := agent.EnqueueSteerForTest(r, text)
+	outcome, err := agent.EnqueueSteerForTest(r, text, nil)
 	if err != nil {
 		t.Fatalf("enqueue steer %q: %v", text, err)
 	}
@@ -579,8 +577,8 @@ func TestSteer_PendingSteerLostOnRestart(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 02 — the single-slot inbox contract (round-2 rework: supersede DROPPED
-// in favour of slot_full reject) + the cancel contract + the drain echo.
+// Task 02 — the single-slot inbox's append-default contract, the cancel
+// contract, and the drain echo.
 // ---------------------------------------------------------------------------
 
 // steerEnqueueOutcome enqueues a steer and returns the engine's authoritative
@@ -589,7 +587,7 @@ func TestSteer_PendingSteerLostOnRestart(t *testing.T) {
 // silently pass.
 func steerEnqueueOutcome(t *testing.T, r *agent.Run, text string) agent.SteerOutcome {
 	t.Helper()
-	outcome, err := agent.EnqueueSteerForTest(r, text)
+	outcome, err := agent.EnqueueSteerForTest(r, text, nil)
 	if err != nil {
 		t.Fatalf("enqueue steer %q returned an error %v — task 02 returns a SteerOutcome, not an error", text, err)
 	}
@@ -617,13 +615,12 @@ func steerEchoes(evs []session.Event) []string {
 	return out
 }
 
-// TestSteer_SlotFullRejects (R2-1): at most one steer is pending per run; a
-// second enqueue on the FULL slot is REJECTED with slot_full ("cancel first"),
-// leaving the pending steer INTACT — there is no supersede path. Only the
-// parked text is ever drained / recorded / echoed / replayed.
-func TestSteer_SlotFullRejects(t *testing.T) {
+// TestSteer_AppendMultipleMerges (R2-1): at most one steer bundle is pending
+// per run; subsequent enqueues append to that bundle. The merged text is
+// drained, recorded, echoed, and replayed as one continuation.
+func TestSteer_AppendMultipleMerges(t *testing.T) {
 	const parked = "steer: the parked instruction"
-	const rejected = "steer: rejected — cancel first"
+	const appended = "steer: appended instruction"
 	gate := newFirstTurnGate()
 	rec := gate.rec
 	llm := mockllm.NewWith(
@@ -646,10 +643,10 @@ func TestSteer_SlotFullRejects(t *testing.T) {
 	if got := steerEnqueueOutcome(t, r, parked); got != agent.SteerAccepted {
 		t.Fatalf("first enqueue outcome = %q, want %q", got, agent.SteerAccepted)
 	}
-	// APPEND (round-3): a second enqueue on the occupied slot APPENDS (the old
-	// slot_full reject is gone) — the bundle's text grows by "\n\n"+rejected.
-	if got := steerEnqueueOutcome(t, r, rejected); got != agent.SteerAppended {
-		t.Fatalf("second enqueue outcome = %q, want %q (a full slot appends)", got, agent.SteerAppended)
+	// Append a second steer to the occupied slot; the bundle grows by
+	// "\n\n"+appended.
+	if got := steerEnqueueOutcome(t, r, appended); got != agent.SteerAppended {
+		t.Fatalf("second enqueue outcome = %q, want %q (an occupied slot appends)", got, agent.SteerAppended)
 	}
 	// A third enqueue appends too — the bundle keeps growing in the single slot.
 	if got := steerEnqueueOutcome(t, r, "steer: third"); got != agent.SteerAppended {
@@ -661,8 +658,8 @@ func TestSteer_SlotFullRejects(t *testing.T) {
 	if res := lastResult(t, evs); res.Stop != session.StopEndTurn {
 		t.Fatalf("terminal stop = %q (err %q)", res.Stop, res.Error)
 	}
-	// The merged bundle (parked + rejected + third) drains as ONE continuation.
-	merged := parked + "\n\n" + rejected + "\n\nsteer: third"
+	// The merged bundle (parked + appended + third) drains as ONE continuation.
+	merged := parked + "\n\n" + appended + "\n\nsteer: third"
 	if !userTextIn(sess.Conversation.Messages, merged) {
 		t.Fatalf("merged steer %q not recorded: %+v", merged, sess.Conversation.Messages)
 	}
@@ -677,11 +674,10 @@ func TestSteer_SlotFullRejects(t *testing.T) {
 	}
 }
 
-// TestSteer_NoSupersedePath (R2-2): the supersede contract is GONE — a second
-// enqueue NEVER replaces the parked steer. Explicit replace = cancel-then-
-// resend: the cancel retracts the parked steer (retracted), and only then does
-// a fresh enqueue win the (now empty) slot (accepted). The interim second
-// enqueue reports slot_full, not superseded.
+// TestSteer_NoSupersedePath: the old supersede behavior is gone — a second
+// enqueue appends to the pending bundle. Explicit replacement is
+// cancel-then-resend: cancel retracts the bundle, and a fresh enqueue is
+// accepted into the empty slot.
 func TestSteer_NoSupersedePath(t *testing.T) {
 	const first = "steer: v1 (retracted by the explicit replace)"
 	const second = "steer: v2 (the resent instruction)"
@@ -705,9 +701,8 @@ func TestSteer_NoSupersedePath(t *testing.T) {
 	if got := steerEnqueueOutcome(t, r, first); got != agent.SteerAccepted {
 		t.Fatalf("first enqueue outcome = %q, want %q", got, agent.SteerAccepted)
 	}
-	// APPEND (round-3): a second enqueue on the occupied slot APPENDS to v1 — it
-	// does NOT replace (the old supersede/slot_full are gone). Append ≠ replace:
-	// an explicit replace is still cancel-then-resend.
+	// Append to the single pending bundle and then cancel it; cancel retracts the
+	// whole merged bundle.
 	if got := steerEnqueueOutcome(t, r, second); got != agent.SteerAppended {
 		t.Fatalf("second enqueue on an occupied slot outcome = %q, want %q (append, not replace)", got, agent.SteerAppended)
 	}
@@ -922,15 +917,15 @@ func TestSteer_InboxConcurrentSafe(t *testing.T) {
 	<-gate.started // the run is genuinely mid-flight, inside dispatch
 
 	// Hammer the inbox from several goroutines while the run is live: enqueues
-	// (into the single slot — slot_full rejects expected) and cancels (retract)
-	// racing the boundary drain.
+	// append to the pending bundle and cancels retract it, racing the boundary
+	// drain.
 	var wg sync.WaitGroup
 	for g := 0; g < 8; g++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 25; i++ {
-				outcome, err := agent.EnqueueSteerForTest(r, "steer: racer")
+				outcome, err := agent.EnqueueSteerForTest(r, "steer: racer", nil)
 				if err != nil {
 					t.Errorf("enqueue returned error %v — task 02 returns a SteerOutcome", err)
 					return

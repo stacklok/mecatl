@@ -18,7 +18,7 @@ func TestSteerAggregateRejectionIsAtomic(t *testing.T) {
 		}
 		parts[i] = part
 	}
-	if got, err := r.enqueueSteerContent("kept", parts); err != nil || got != SteerAccepted {
+	if got, err := r.EnqueueSteer("kept", parts); err != nil || got != SteerAccepted {
 		t.Fatalf("initial enqueue = %q, %v", got, err)
 	}
 	before := steerContent{text: r.steer.pending.text, parts: append([]session.Content(nil), r.steer.pending.parts...)}
@@ -26,7 +26,7 @@ func TestSteerAggregateRejectionIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := r.enqueueSteerContent("rejected", []session.Content{extra}); err == nil || got != SteerTooLate {
+	if got, err := r.EnqueueSteer("rejected", []session.Content{extra}); err == nil || got != SteerTooLate {
 		t.Fatalf("over-cap append = %q, %v", got, err)
 	}
 	if r.steer.pending.text != before.text || !reflect.DeepEqual(r.steer.pending.parts, before.parts) {
@@ -51,26 +51,26 @@ func TestSteerMultimodalAppendAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := r.enqueueSteerContent("first", []session.Content{image}); err != nil || got != SteerAccepted {
+	if got, err := r.EnqueueSteer("first", []session.Content{image}); err != nil || got != SteerAccepted {
 		t.Fatalf("first = %q, %v", got, err)
 	}
-	if got, err := r.enqueueSteerContent("", []session.Content{audio}); err != nil || got != SteerAppended {
+	if got, err := r.EnqueueSteer("", []session.Content{audio}); err != nil || got != SteerAppended {
 		t.Fatalf("media-only append = %q, %v", got, err)
 	}
-	if got, err := r.enqueueSteerContent("last", nil); err != nil || got != SteerAppended {
+	if got, err := r.EnqueueSteer("last", nil); err != nil || got != SteerAppended {
 		t.Fatalf("text append = %q, %v", got, err)
 	}
-	content, ok := r.drainSteerContent()
+	content, ok := r.drainSteer()
 	if !ok || content.text != "first\n\nlast" || len(content.parts) != 2 || content.parts[0].Kind != session.MediaImage || content.parts[1].Kind != session.MediaAudio {
 		t.Fatalf("drain = %#v, %v", content, ok)
 	}
-	if _, err := r.enqueueSteerContent("", []session.Content{image}); err != nil {
+	if _, err := r.EnqueueSteer("", []session.Content{image}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := r.cancelSteer(); got != SteerRetracted {
 		t.Fatalf("cancel = %q", got)
 	}
-	if _, ok := r.drainSteerContent(); ok {
+	if _, ok := r.drainSteer(); ok {
 		t.Fatal("cancel left multimodal steer pending")
 	}
 }
@@ -88,35 +88,35 @@ func TestSteer_InboxLinearizable(t *testing.T) {
 	// channel was a non-atomic "observe full → receive → send" replace window.
 	r := &Run{steer: newSteerInbox()}
 
-	if outcome, _ := r.enqueueSteer("steer: v1"); outcome != SteerAccepted {
+	if outcome, _ := r.EnqueueSteer("steer: v1", nil); outcome != SteerAccepted {
 		t.Fatalf("first enqueue = %q, want %q", outcome, SteerAccepted)
 	}
 	// Occupied slot: the second enqueue APPENDS in the same critical section —
 	// the pending bundle's text grows by "\n\n"+v2 (append is the default; the
 	// old reject-on-full/supersede was dropped).
-	if outcome, _ := r.enqueueSteer("steer: v2"); outcome != SteerAppended {
+	if outcome, _ := r.EnqueueSteer("steer: v2", nil); outcome != SteerAppended {
 		t.Fatalf("enqueue on an occupied slot = %q, want %q", outcome, SteerAppended)
 	}
 	// The merged bundle drains ONCE as the appended text (v1 + "\n\n" + v2).
-	text, ok := r.drainSteer()
-	if !ok || text != "steer: v1\n\nsteer: v2" {
-		t.Fatalf("drain = (%q, %v), want (%q, true) — the appended bundle commits exactly once", text, ok, "steer: v1\n\nsteer: v2")
+	content, ok := r.drainSteer()
+	if !ok || content.text != "steer: v1\n\nsteer: v2" {
+		t.Fatalf("drain = (%q, %v), want (%q, true) — the appended bundle commits exactly once", content.text, ok, "steer: v1\n\nsteer: v2")
 	}
 	// The drained slot is EMPTY: a second drain commits nothing (no
 	// double-commit) and a cancel finds nothing (no resurrection).
-	if text, ok := r.drainSteer(); ok {
-		t.Fatalf("second drain = (%q, %v), want empty — the drain must take+clear atomically", text, ok)
+	if content, ok := r.drainSteer(); ok {
+		t.Fatalf("second drain = (%q, %v), want empty — the drain must take+clear atomically", content.text, ok)
 	}
 	if outcome, _ := r.cancelSteer(); outcome != SteerNonePending {
 		t.Fatalf("cancel after the drain = %q, want %q (the drained steer is gone)", outcome, SteerNonePending)
 	}
 	// A post-drain enqueue lands in the re-emptied slot (the inbox stays open
 	// until close); close then flips too_late / none_pending deterministically.
-	if outcome, _ := r.enqueueSteer("steer: v3"); outcome != SteerAccepted {
+	if outcome, _ := r.EnqueueSteer("steer: v3", nil); outcome != SteerAccepted {
 		t.Fatalf("post-drain enqueue = %q, want %q", outcome, SteerAccepted)
 	}
 	r.closeSteer()
-	if outcome, _ := r.enqueueSteer("steer: too late"); outcome != SteerTooLate {
+	if outcome, _ := r.EnqueueSteer("steer: too late", nil); outcome != SteerTooLate {
 		t.Fatalf("enqueue after close = %q, want %q", outcome, SteerTooLate)
 	}
 	// close does NOT drain: a steer parked at close is retracted by the cancel
@@ -154,7 +154,7 @@ func TestSteerInboxConcurrentTransitions(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
-				switch outcome, _ := r.enqueueSteer("steer: internal racer"); outcome {
+				switch outcome, _ := r.EnqueueSteer("steer: internal racer", nil); outcome {
 				case SteerAccepted, SteerAppended, SteerTooLate:
 				default:
 					t.Errorf("enqueue outcome %q is not a defined SteerOutcome", outcome)
@@ -174,7 +174,7 @@ func TestSteerInboxConcurrentTransitions(t *testing.T) {
 	// Close the inbox (run terminal) and confirm the too-late contract holds
 	// against a final racing enqueue/cancel.
 	r.closeSteer()
-	if outcome, _ := r.enqueueSteer("steer: after close"); outcome != SteerTooLate {
+	if outcome, _ := r.EnqueueSteer("steer: after close", nil); outcome != SteerTooLate {
 		t.Fatalf("enqueue after close = %q, want %q", outcome, SteerTooLate)
 	}
 	if outcome, _ := r.cancelSteer(); outcome != SteerNonePending {

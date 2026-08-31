@@ -24,7 +24,7 @@ func newSteerModel(t *testing.T, steerCap bool) (Model, *fakeConv) {
 	t.Helper()
 	recv := &fakeRecver{}
 	send := &fakeSender{}
-	conv := &fakeConv{recv: recv, send: send, caps: client.Capabilities{Steer: steerCap, MultimodalSteer: steerCap}}
+	conv := &fakeConv{recv: recv, send: send, caps: client.Capabilities{Steer: steerCap}}
 	m := newTestModelFromDeps(Deps{
 		Session:     conv,
 		Conv:        conv,
@@ -207,43 +207,12 @@ func TestSteer_FailedAckRestoresCorrelatedAttachment(t *testing.T) {
 	}
 }
 
-func TestSteer_OlderTextOnlyServerQueuesMediaLocally(t *testing.T) {
-	m, conv := newSteerModel(t, true)
-	m.caps.MultimodalSteer = false
-	m.caps.Image = true
-	m = startRunning(t, m, "first")
-	m.prompt.Rewrite("inspect [Image #1]")
-	m.stagedMedia = map[string]stagedAttachment{"[Image #1]": {mime: "image/png", data: []byte{0x01, 0x02, 0x03}}}
-	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = mm.(Model)
-	runBatchLeaves(cmd)
-	if got := steerFrames(conv.send); len(got) != 0 {
-		t.Fatalf("old text-only steer server received native frame: %#v", got)
-	}
-	if len(m.queued) != 1 || m.queued[0] != "inspect" || strings.Contains(m.queued[0], "[Image #1]") {
-		t.Fatalf("local queue text = %#v", m.queued)
-	}
-	mm, cmd = m.Update(client.ResultMsg{Stop: "end_turn"})
-	m = mm.(Model)
-	runBatchLeaves(cmd)
-	frames := conv.send.frames()
-	prompt := frames[len(frames)-1].GetPrompt()
-	if prompt.GetText() != "inspect" || len(prompt.GetParts()) != 1 {
-		t.Fatalf("queued prompt = text %q parts %#v", prompt.GetText(), prompt.GetParts())
-	}
-	part := prompt.GetParts()[0]
-	if part.GetKind().String() != "KIND_IMAGE" || part.GetMimeType() != "image/png" || string(part.GetData()) != string([]byte{0x01, 0x02, 0x03}) {
-		t.Fatalf("queued attachment = kind %s mime %q data %v", part.GetKind(), part.GetMimeType(), part.GetData())
-	}
-}
-
-// TestSteer_DisabledFallsBackToLocalQueue is the TUI half of AC6.2: with the steer
-// capability ABSENT (an old server, or the operator disabled it), `enter` mid-run
-// stages into the client-side merge-queue EXACTLY as #228 — no steer frame is sent,
-// the queue holds the merged text, and a clean end drains it through the ordinary
-// prompt path. Byte-identical to the pre-steer behaviour.
-func TestSteer_DisabledFallsBackToLocalQueue(t *testing.T) {
-	m, conv := newSteerModel(t, false) // capability ABSENT
+// TestSteer_RuntimeDisabledFallsBackToLocalQueue verifies that runtime feature
+// disabling preserves the client-side queue: `enter` mid-run sends no steer
+// frame, the queue holds merged text, and a clean end drains it through the
+// ordinary prompt path.
+func TestSteer_RuntimeDisabledFallsBackToLocalQueue(t *testing.T) {
+	m, conv := newSteerModel(t, false) // runtime feature disabled
 	m = startRunning(t, m, "first")
 
 	m = enqueue(t, m, "second")

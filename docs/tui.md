@@ -1801,12 +1801,10 @@ queue to the engine steer path:
   the draft, the drain watermark releases the landed prefix, and a successful
   retract drops both.
 
-When either `steer` or the additive `multimodal_steer` capability is **absent**
-(an older text-only steer server, or steer disabled), none of this engages: all
-mid-run input, including attachment bytes, stays in the #228 local merge queue
-(staged, merged, and drained as one marker-free follow-up prompt when the run ends),
-and no `steer` frame is ever sent. Requiring both bits prevents an older server from
-silently discarding an unknown media field.
+When `steer` is **false** because the feature is runtime-disabled, none of this
+engages: all mid-run input, including attachment bytes, stays in the #228 local
+merge queue (staged, merged, and drained as one marker-free follow-up prompt when
+the run ends), and no `steer` frame is ever sent.
 
 ## Theming
 

@@ -312,16 +312,15 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
 - **The run-scoped mutex inbox** (`engine/agent/steer.go` (`steerInbox`)). Each
   `Run` carries a single-slot pending-steer box guarded by one mutex
   (`{closed, pending, has}`); every transition is one critical section.
-  `engine/agent/steer.go` (`Run.EnqueueSteerContent`) parks text and/or validated
+  `engine/agent/steer.go` (`Run.EnqueueSteer`) parks text and/or validated
   `session.Content` media when the slot is empty (`accepted`), and **appends** into
   the pending bundle when one is already pending (`appended`): a blank-line
   separator is added only when both text fragments are non-empty, while parts
   append in fragment order. The combined media bundle is validated atomically.
-  `Run.EnqueueSteer` remains the text-only wrapper. Replacing a
-  pending bundle is an explicit `Run.CancelSteer`-then-resend. The inbox reports
-  `too_late` once it closes at run terminal. Steer text is repaired to valid
-  UTF-8 at ingress (`session.ToValidUTF8`) so recorded history, the echo, and
-  the model view stay byte-identical. The outcome is the closed enum
+  Replacing a pending bundle is an explicit `Run.CancelSteer`-then-resend. The
+  inbox reports `too_late` once it closes at run terminal. Steer text is repaired
+  to valid UTF-8 at ingress (`session.ToValidUTF8`) so recorded history, the echo,
+  and the model view stay byte-identical. The outcome is the closed enum
   `engine/agent/steer.go` (`SteerOutcome`): `accepted` / `appended` /
   `retracted` / `none_pending` / `too_late`.
 - **The Step 2a drain** (`engine/agent/steer.go` (`drainPendingSteer`)) runs in
@@ -333,11 +332,10 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
   echoed to the client as `EvSteer` carrying the committed text and media parts —
   the engine is the sole authority on what landed. This multimodal extension is
   specified by [ADR 0248](../adr/0248-multimodal-steer.md).
-- **Backward-compatible capability negotiation.** `ServerCapabilities.steer` says
-  the inbox exists; additive `multimodal_steer` says field 3 media is preserved.
-  Mecatui requires both for native steer and otherwise retains all mid-run text and
-  media in its local merge queue, preventing a text-only older server from silently
-  discarding unknown parts.
+- **Capability gate.** `ServerCapabilities.steer` says the multimodal inbox is
+  enabled. Mecatui uses native steer when it is true and otherwise retains all
+  mid-run text and media in its local merge queue; this supports runtime feature
+  disabling without duplicating capability state.
 - **The clean-exit continue-run rule** (`engine/agent/loop.go`
   (`finishTurnNoTools`)). A would-be clean end (meaningful text, benign stop)
   while a steer is still parked does NOT terminate: the loop re-enters step 2

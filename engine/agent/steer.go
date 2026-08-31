@@ -93,48 +93,12 @@ func newSteerInbox() *steerInbox {
 	return &steerInbox{}
 }
 
-// EnqueueSteer is the wire-facing steer entry point: a live run's Service
-// routes an operator steer here. It reports the authoritative SteerOutcome
-// (accepted/appended/too_late) — never an error for the ordinary too-late
-// race (that outcome is what the Service promotes on).
-func (r *Run) EnqueueSteer(text string) (SteerOutcome, error) {
-	return r.EnqueueSteerContent(text, nil)
-}
-
-// EnqueueSteerContent enqueues a text, media, or mixed steer atomically.
-func (r *Run) EnqueueSteerContent(text string, parts []session.Content) (SteerOutcome, error) {
-	return r.enqueueSteerContent(text, parts)
-}
-
-// CancelSteer is the wire-facing steer-cancel entry point: a live run's
-// Service routes an operator steer_cancel here. It retracts the PENDING
-// (un-drained) steer and reports the authoritative SteerOutcome
-// (retracted/none_pending) — a steer that already drained at a turn boundary
-// is ordinary recorded history and cannot be retracted (the cancel reports
-// none_pending then: the drain won).
-func (r *Run) CancelSteer() (SteerOutcome, error) {
-	return r.cancelSteer()
-}
-
-// enqueueSteer parks a steer for draining at the next turn boundary. It is
-// safe to call from any goroutine while the run is in-flight (the wire-facing
-// caller runs on a different goroutine than the loop). It returns the
-// authoritative SteerOutcome: SteerAccepted (empty slot), SteerAppended (the
-// slot is occupied — merge into the pending bundle), or SteerTooLate (the run
-// is terminal / steer not live). A nil inbox (EnableSteer off — the byte-
-// identical no-steer posture) reports SteerTooLate.
-//
-// The text is repaired to valid UTF-8 BEFORE it enters the inbox (the
-// two-layer UTF-8 rule's semantic-repair layer, issue #402): steer text is
-// operator prose, always safe to repair (no byte-exact exception), and
-// repairing at ingress keeps recorded history == EvSteer echo == model-view
-// byte-identical downstream. ONE critical section: the closed/full check and
-// the park are indivisible.
-func (r *Run) enqueueSteer(text string) (SteerOutcome, error) {
-	return r.enqueueSteerContent(text, nil)
-}
-
-func (r *Run) enqueueSteerContent(text string, parts []session.Content) (SteerOutcome, error) {
+// EnqueueSteer enqueues a text, media, or mixed steer atomically. It is the
+// wire-facing steer entry point: a live run's Service routes an operator steer
+// here. It reports the authoritative SteerOutcome (accepted/appended/too_late)
+// — never an error for the ordinary too-late race (that outcome is what the
+// Service promotes on).
+func (r *Run) EnqueueSteer(text string, parts []session.Content) (SteerOutcome, error) {
 	if r.steer == nil {
 		return SteerTooLate, nil
 	}
@@ -168,6 +132,16 @@ func (r *Run) enqueueSteerContent(text string, parts []session.Content) (SteerOu
 	return SteerAccepted, nil
 }
 
+// CancelSteer is the wire-facing steer-cancel entry point: a live run's
+// Service routes an operator steer_cancel here. It retracts the PENDING
+// (un-drained) steer and reports the authoritative SteerOutcome
+// (retracted/none_pending) — a steer that already drained at a turn boundary
+// is ordinary recorded history and cannot be retracted (the cancel reports
+// none_pending then: the drain won).
+func (r *Run) CancelSteer() (SteerOutcome, error) {
+	return r.cancelSteer()
+}
+
 // cancelSteer retracts the pending steer (if any). It is safe to call from any
 // goroutine. It returns SteerRetracted when a pending steer was retracted, or
 // SteerNonePending when the slot was empty / the run is terminal (nothing to
@@ -191,12 +165,7 @@ func (r *Run) cancelSteer() (SteerOutcome, error) {
 // enqueued after this boundary's drain but before the next is accepted for the
 // following turn (only run-terminal closes the inbox). A nil inbox is the
 // no-op (steer disabled). ONE critical section: take+clear.
-func (r *Run) drainSteer() (string, bool) {
-	content, ok := r.drainSteerContent()
-	return content.text, ok
-}
-
-func (r *Run) drainSteerContent() (steerContent, bool) {
+func (r *Run) drainSteer() (steerContent, bool) {
 	if r.steer == nil {
 		return steerContent{}, false
 	}
@@ -267,7 +236,7 @@ func (r *Run) closeSteer() {
 // (a recorded-then-lost steer must not silently vanish; the operator sees the
 // fault).
 func (e *Engine) drainPendingSteer(ctx context.Context, r *Run, sess *session.Session) error {
-	content, ok := r.drainSteerContent()
+	content, ok := r.drainSteer()
 	if !ok {
 		return nil
 	}
@@ -287,7 +256,7 @@ func (e *Engine) closeSteerDrained(ctx context.Context, r *Run, sess *session.Se
 	if r.steer == nil {
 		return
 	}
-	content, ok := r.drainSteerContent()
+	content, ok := r.drainSteer()
 	if ok {
 		if err := e.commitSteer(ctx, r, sess, content); err != nil {
 			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
