@@ -2,9 +2,9 @@
 id: 13-explicit-worker-vertical-slice
 title: Wire the explicit durable learning worker vertical slice
 blocked_by: [08-attempt-driver-repository, 12-attempt-worker-reconciliation]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/13-explicit-worker-vertical-slice"
+worktree: ".scratch/worktrees/13-explicit-worker-vertical-slice"
 issue: ""
 retries: 0
 last_error: ""
