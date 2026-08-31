@@ -3,7 +3,7 @@
 **Phase:** capability — mid-run user input (steer)
 **Status:** landed (reworked through review rounds, 2026-08-18). Settled in the #512 design discussion; rounds 2–3 rework landed on the same branch (Ozz review, then ad-hoc live-test findings).
 **Issue:** [stacklok/mecatl#512](https://github.com/stacklok/mecatl/issues/512).
-**ADR:** ADR-0232 defines the steer timing, inbox, correlation, promotion, and runtime gate; ADR-0248 defines its multimodal payload and attachment lifecycle.
+**ADR:** ADR-0232 defines the steer timing, inbox, correlation, promotion, and runtime gate; ADR-0251 defines its multimodal payload and attachment lifecycle.
 **Accumulator branch:** `feat/steer-while-running` (PR #570).
 
 The smallest set of work that lets a user inject a message into an **in-flight** run — Claude Code's "steer while running" — instead of waiting for the run to end and submitting a fresh prompt. Today mecatl's queue is purely client-side and turn-terminal ([`cmd/mecatui/ui/update.go`](../../cmd/mecatui/ui/update.go) `m.queued` / `drainQueue`): a typed line is staged and submitted as a brand-new follow-up run only when the current run ends. This plan adds an engine-side steer path so a long multi-tool run can be nudged mid-flight.
@@ -62,7 +62,7 @@ At most one pending steer *bundle* per run. A second `steer` while one is pendin
 
 **Work:**
 - engine app (`engine/agent`): the inbox's `EnqueueSteer(text, parts) → {accepted | appended | too_late}` / `CancelSteer() → {retracted | none_pending}` / drain transitions; an enum-typed outcome.
-- The original drain emitted `EvSteer` carrying the committed merged text + the watermark `message_id`; ADR-0248 later added ordered media parts to that same echo. The watermark remains the tail of the Service wire-correlation id list.
+- The original drain emitted `EvSteer` carrying the committed merged text + the watermark `message_id`; ADR-0251 later added ordered media parts to that same echo. The watermark remains the tail of the Service wire-correlation id list.
 - The Service per-session FIFO (`trackSteerMessageID`/`LookupSteerMessageID`/`dropSteerMessageID`) tracks the ordered id-list; the drain echo pops the tail as the watermark the client splits its queue on.
 
 **Acceptance:**

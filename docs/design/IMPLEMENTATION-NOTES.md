@@ -7674,7 +7674,7 @@ Completions.
 **mutex** inbox atomically owns `{text, parts}`. At most one pending steer bundle
 per run: a second `EnqueueSteer` appends text with a blank line only when
 both fragments are non-empty and appends validated `session.Content` parts in
-fragment order (issue #861, ADR 0248). Replacing a pending bundle is the explicit
+fragment order (issue #861, ADR 0251). Replacing a pending bundle is the explicit
 cancel-then-resend (`CancelSteer`, then a fresh steer with a fresh `message_id`).
 `CancelSteer` retracts; the boundary drain commits the merged bundle as ONE user
 message. The outcome is a closed enum (`accepted`/`appended`/`retracted`/

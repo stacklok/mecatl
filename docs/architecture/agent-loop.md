@@ -331,7 +331,7 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
   `RecordUserPromptWithParts` (plus the log-only `EvUserPrompt`), persisted, then
   echoed to the client as `EvSteer` carrying the committed text and media parts —
   the engine is the sole authority on what landed. This multimodal extension is
-  specified by [ADR 0248](../adr/0248-multimodal-steer.md).
+  specified by [ADR 0251](../adr/0251-multimodal-steer.md).
 - **Capability gate.** `ServerCapabilities.steer` says the multimodal inbox is
   enabled. Mecatui uses native steer when it is true and otherwise retains all
   mid-run text and media in its local merge queue; this supports runtime feature

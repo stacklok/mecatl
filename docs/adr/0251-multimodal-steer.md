@@ -1,4 +1,4 @@
-# ADR 0248 — Multimodal steer preserves prompt content
+# ADR 0251 — Multimodal steer preserves prompt content
 
 - Status: Accepted
 - Date: 2026-08-31
