@@ -65,7 +65,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "debug",
 		synopsis: "debug SESSION_ID [flags]",
-		purpose:  "diagnose a stored session in a separate no-filesystem analysis session",
+		purpose:  "diagnose a stored session by full ID or its 12-character header ID in a separate no-filesystem analysis session; ambiguous header IDs require the full ID",
 		resolve: func(args []string) invocationResolution {
 			return resolveDebugCommand(modeLocal, "", args)
 		},

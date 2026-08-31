@@ -308,7 +308,7 @@ const headerIdentityPad = 4
 // pressure. The ws: segment is shown only when the active workspace differs from the
 // launch workspace (Deps.Workspace) — no noise when not switched (issue #102).
 func (m Model) headerIdentityParts(sid, withNext string) []string {
-	parts := []string{"mecatui", "session " + short(sid)}
+	parts := []string{"mecatui", "session " + client.DisplaySessionID(sid)}
 	// Model segment: the EFFECTIVE model the server resolved THIS session to (set once
 	// on SessionReadyMsg). The header only CHOOSES which known string to display; it
 	// never resolves a default itself. While connecting there is NO model segment.
@@ -1088,14 +1088,6 @@ func (m Model) renderFatal() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
 	}
 	return card
-}
-
-// short truncates a long id for the header.
-func short(s string) string {
-	if len(s) <= 12 {
-		return s
-	}
-	return s[:12]
 }
 
 // maxModelLen caps the model name shown in the header so a long provider-scoped

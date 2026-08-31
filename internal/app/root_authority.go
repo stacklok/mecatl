@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/cedarauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
 )
 
 const (
@@ -100,7 +101,14 @@ func mcpResourceCapabilities(manager *mcp.Manager) []string {
 // mintRootAuthority establishes a complete root capability set from the catalog
 // assembled for the session. Child derivation consumes this carried value later;
 // it is not performed at the composition root.
-func mintRootAuthority(catalog *tool.Catalog, resources []string, _ session.SessionKind) session.Authority {
+func mintRootAuthority(catalog *tool.Catalog, resources []string, kind session.SessionKind) session.Authority {
+	if kind == session.SessionKindDebug {
+		return session.Authority{
+			CapabilitySet:      governance.CapabilitySet{Tools: []string{sessiondebug.ToolName}},
+			Provenance:         rootAuthorityProvenance,
+			DefinitionIdentity: rootAuthorityDefinition,
+		}
+	}
 	tools := catalog.Tools()
 	names := make([]string, 0, len(tools)+len(resources))
 	for _, registered := range tools {

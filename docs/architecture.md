@@ -369,7 +369,12 @@ inventory without first creating a session, then continue/inspect through the ex
 authoritative transcript path or create only when the operator requests a new chat.
 The sibling `mecatui debug SESSION_ID` and `mecatui connect ADDRESS debug SESSION_ID`
 forms create a separate durable `debug` session whose trusted relationship metadata binds
-one authorized target. That engine has no filesystem, carries a stable-prefix debugging
+one authorized target. The proto-free client uses the same 12-byte helper as the
+header: only an exact header-width reference is resolved against the caller-filtered
+inventory, exact full-ID matches win, and ambiguity fails before creation. Longer IDs
+bypass inventory lookup; an unmatched short reference is still sent unchanged so the
+server preserves its absence-shaped authorization response and remains the final authority.
+That engine has no filesystem, carries a stable-prefix debugging
 contract, and exposes exactly the target-bound `InspectSession` tool; the model cannot
 choose another target. Snapshot status and transcript are authoritative sources; the
 transcript projection includes bounded textual/structured message and tool-result parts,

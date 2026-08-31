@@ -133,8 +133,11 @@ or fallback:
   quit without a session. Inspection `esc` returns to the startup inventory.
 
 - **`mecatui debug SESSION_ID [flags]`** — create a separate durable no-filesystem
-  analysis session permanently bound to that stored target. The invocation is the
-  consent gesture: before entering the TUI, mecatui warns that the target transcript
+  analysis session permanently bound to that stored target. `SESSION_ID` may be the
+  full opaque ID or the exact 12-byte ID shown in the TUI header. A unique
+  header ID resolves through the caller-visible inventory; if it is ambiguous,
+  mecatui creates nothing and asks for the full ID. The invocation is the consent
+  gesture: before entering the TUI, mecatui warns that the target transcript
   and diagnostic evidence may contain prompts, outputs, tool arguments/results, file
   paths, and secrets and will be sent to the selected model. It then submits a default
   diagnostic prompt automatically. The target is never resumed, leased, mutated, or
@@ -281,9 +284,12 @@ mecatui debug 01JOPAQUETARGET
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARGET
 ```
 
-These commands do not attach to or continue the target. They authorize it, create a
-separate durable no-filesystem debug session, print a privacy disclosure, and submit a
-default diagnostic prompt. The disclosure is load-bearing: target prompts, model output,
+These commands accept either the full opaque session ID or the exact 12-byte ID
+shown in the TUI header. The short form is resolved from the caller-visible session
+inventory. If more than one visible session shares it, no debug session is created and
+mecatui asks for the full ID. These commands do not attach to or continue the target.
+They authorize it, create a separate durable no-filesystem debug session, print a privacy
+disclosure, and submit a default diagnostic prompt. The disclosure is load-bearing: target prompts, model output,
 tool arguments/results, paths, and secrets can be sent to the selected model. Running the
 command is the consent gesture.
 
