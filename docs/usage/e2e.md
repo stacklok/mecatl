@@ -36,9 +36,9 @@ is the absolute workspace root on the server host, `MECATL_E2E_METRICS_URL`
 enables the metrics spec, `MECATL_E2E_AUTH_TOKEN` supplies a bearer token.
 Remote runs write artifacts to `.scratch/e2e-artifacts/`.
 
-In CI the suite runs as the **non-blocking** `e2e-live` workflow (nightly +
-manual dispatch + the `e2e-live` PR label) — see
-`.github/workflows/README.md`.
+In CI the suite runs as the **non-blocking**
+[`e2e-live` workflow](../../.github/workflows/e2e-live.yml) (nightly + manual
+dispatch + the `e2e-live` PR label).
 
 ---
 

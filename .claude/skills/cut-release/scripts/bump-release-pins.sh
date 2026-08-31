@@ -10,9 +10,9 @@
 #   .github/workflows/mecatequi-reusable.yml  (the three `uses:` pins + the header comment)
 #   .github/actions/check-reusable-pins.sh    (the EXPECTED_TAG default, in lockstep)
 #
-# It does NOT touch the illustrative tag refs in docs/usage.md or .github/workflows/README.md
-# (a release MAY bump those too, but they don't gate the release). It does NOT commit, tag,
-# or push — that's the human/agent's job (see SKILL.md), so the version choice and the tag
+# It does NOT touch the illustrative tag refs in docs/usage/mecatequi-ci.md (a release MAY
+# bump those too, but they don't gate the release). It does NOT commit, tag, or push —
+# that's the human/agent's job (see SKILL.md), so the version choice and the tag
 # annotation stay deliberate.
 #
 # Usage: scripts/bump-release-pins.sh vX.Y.Z   (run from the repo root)
