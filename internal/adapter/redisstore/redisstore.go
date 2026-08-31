@@ -104,6 +104,7 @@ var (
 	_ port.PrunableStore        = (*Store)(nil)
 	_ port.SessionMetadataPager = (*Store)(nil)
 	_ port.EventLog             = (*Store)(nil)
+	_ port.SessionLineageReader = (*Store)(nil)
 )
 
 // Store is the Redis-backed SessionStore + EventLog + PrunableStore +

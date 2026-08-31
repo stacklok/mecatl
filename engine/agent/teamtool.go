@@ -586,11 +586,12 @@ func teamRoster(members []TeamMemberArg) []session.TeamMemberSpec {
 func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event, bool) {
 	ev := te.Event
 	base := &session.TeamPayload{
-		ParentCallID:    parentCallID,
-		TeamID:          teamID,
-		Member:          te.Member,
-		MemberSessionID: te.MemberSessionID,
-		InnerKind:       ev.Type,
+		ParentCallID:      parentCallID,
+		TeamID:            teamID,
+		Member:            te.Member,
+		MemberSessionID:   te.MemberSessionID,
+		MemberIncarnation: te.MemberIncarnation,
+		InnerKind:         ev.Type,
 	}
 	switch ev.Type {
 	case session.EvMessageDelta:

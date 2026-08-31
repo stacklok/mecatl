@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -15,6 +16,27 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp/source"
 )
+
+func TestIncarnationsAreNotProjectedToNormalClients(t *testing.T) {
+	incarnation := session.NewIncarnationID()
+	for _, ev := range []session.Event{
+		{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ChildID: "child", ChildIncarnation: incarnation}},
+		{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{ChildID: "child", ChildIncarnation: incarnation}},
+		{Type: session.EvTeamMember, Team: &session.TeamPayload{MemberSessionID: "child", MemberIncarnation: incarnation}},
+	} {
+		out := toProto(ev).ProtoReflect()
+		var payload protoreflect.Message
+		for i := 0; i < out.Descriptor().Fields().Len(); i++ {
+			field := out.Descriptor().Fields().Get(i)
+			if field.Kind() == protoreflect.MessageKind && out.Has(field) {
+				payload = out.Get(field).Message()
+			}
+		}
+		if payload != nil && (payload.Descriptor().Fields().ByName("child_incarnation") != nil || payload.Descriptor().Fields().ByName("member_incarnation") != nil) {
+			t.Fatalf("event %q exposes internal incarnation on the client wire", ev.Type)
+		}
+	}
+}
 
 // TestToProtoTable round-trips every EventType and each structured submessage
 // through toProto, asserting the proto shape matches the domain Event.

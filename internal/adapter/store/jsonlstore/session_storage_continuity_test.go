@@ -150,7 +150,7 @@ func TestSessionStorageContinuity_Scenario1_V1PromotionFidelity(t *testing.T) {
 	id := session.SessionID("parallel-fidelity")
 	want, err := session.NewParallelBranch(id, session.ModePlan, "/workspace", session.Limits{
 		MaxTurns: 9, MaxToolCalls: 13, MaxConsecutiveFailures: 3,
-	}, time.Unix(1700000000, 123).UTC(), "parent-1", "call-1", 2)
+	}, time.Unix(1700000000, 123).UTC(), "parent-1", session.NewIncarnationID(), "call-1", 2)
 	if err != nil {
 		t.Fatalf("NewParallelBranch: %v", err)
 	}

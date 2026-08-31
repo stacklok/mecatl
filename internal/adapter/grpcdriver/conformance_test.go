@@ -11,6 +11,7 @@ import (
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
 	"github.com/stacklok/mecatl/engine/adapter/leaseconformance"
+	"github.com/stacklok/mecatl/engine/adapter/lineageconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
@@ -40,6 +41,22 @@ func TestGRPCSessionStoreConformance(t *testing.T) {
 		})
 		return mustNewSessionStore(t, conn)
 	})
+}
+
+func TestGRPCSessionLineageConformance(t *testing.T) {
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
+	})
+	lineageconformance.Run(t, mustNewSessionStore(t, conn))
+	restarted := mustNewSessionStore(t, conn)
+	root, loadErr := restarted.Load(t.Context(), "root")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	result, err := restarted.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: "root", RootIncarnation: root.Incarnation(), Limit: 10})
+	if err != nil || len(result.Records) != 2 || result.Records[0].ID != "root" {
+		t.Fatalf("lineage after client restart: records=%+v err=%v", result.Records, err)
+	}
 }
 
 // TestGRPCSessionStorePrunableConformance runs the shared PrunableStore

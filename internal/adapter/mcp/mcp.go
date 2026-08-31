@@ -852,6 +852,57 @@ func (m *Manager) Tools() []tool.Tool {
 	return all
 }
 
+// SelectedTools returns only direct tools from the named connected servers.
+// ceiling, when non-empty, is an exact persisted tool-name ceiling: every name
+// must still be advertised and no newly advertised tool is returned. The view
+// borrows this Manager and never owns or closes a connection.
+func (m *Manager) SelectedTools(names, ceiling []string) ([]tool.Tool, error) {
+	if len(names) == 0 {
+		if len(ceiling) != 0 {
+			return nil, errors.New("mcp: tool ceiling requires selected servers")
+		}
+		return nil, nil
+	}
+	if m == nil {
+		return nil, errors.New("mcp: no global manager is configured")
+	}
+	var selected []tool.Tool
+	for _, name := range names {
+		s, err := m.byName(name)
+		if err != nil {
+			return nil, err
+		}
+		tools := s.Tools()
+		if len(tools) == 0 {
+			return nil, fmt.Errorf("mcp: selected server %q advertises no tools", name)
+		}
+		selected = append(selected, tools...)
+	}
+	if len(ceiling) == 0 {
+		return selected, nil
+	}
+	current := make(map[string]tool.Tool, len(selected))
+	for _, candidate := range selected {
+		name := candidate.Spec().Name
+		if _, exists := current[name]; exists {
+			return nil, fmt.Errorf("mcp: duplicate selected tool %q", name)
+		}
+		current[name] = candidate
+	}
+	if len(current) != len(ceiling) {
+		return nil, fmt.Errorf("mcp: selected debug tool set changed (current=%d persisted=%d)", len(current), len(ceiling))
+	}
+	bounded := make([]tool.Tool, 0, len(ceiling))
+	for _, name := range ceiling {
+		candidate, ok := current[name]
+		if !ok {
+			return nil, fmt.Errorf("mcp: persisted debug tool %q is no longer available", name)
+		}
+		bounded = append(bounded, candidate)
+	}
+	return bounded, nil
+}
+
 // Provider is the read-side seam over the connected MCP servers' resources and
 // prompts. It is what the resource/prompt meta-tools and the prompt expander are
 // built against, and is the surface a later (gRPC) stage consumes to expose

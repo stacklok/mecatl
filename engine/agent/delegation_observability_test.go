@@ -93,6 +93,22 @@ func TestDelegationObservability_Scenario2_SubagentProjectsBoundedPreviews(t *te
 	evs, _ := newObservedSubagentRun(t)
 	ps := collectSubagent(evs)
 
+	var startIncarnation, endIncarnation session.IncarnationID
+	for _, p := range ps {
+		if p == nil {
+			continue
+		}
+		if p.Goal != "" {
+			startIncarnation = p.ChildIncarnation
+		}
+		if p.Stop != "" {
+			endIncarnation = p.ChildIncarnation
+		}
+	}
+	if !startIncarnation.Valid() || startIncarnation != endIncarnation {
+		t.Fatalf("subagent lifecycle did not bind one child incarnation: start=%q end=%q", startIncarnation, endIncarnation)
+	}
+
 	var callArgs, callBody, msgText, resultText *session.SubagentPayload
 	for _, p := range ps {
 		if p == nil {
@@ -299,7 +315,7 @@ func TestInvariant_gauntlet7_no_child_content_in_parent_conversation(t *testing.
 // exist ONLY as the clampPreview-fed previews (Text/Detail, ADR 0079).
 func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 	allowed := map[string]bool{
-		"ParentCallID": true, "ChildID": true, "Goal": true, "Background": true,
+		"ParentCallID": true, "ChildID": true, "ChildIncarnation": true, "Goal": true, "Background": true,
 		"RoutedCategory": true, "RoutedModel": true, "Model": true,
 		// RoutingReason (issue #397) is the bare-metadata REASON the child was not
 		// routed (a session.RoutingReason* gate const or a bounded harness/composition

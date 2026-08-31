@@ -234,7 +234,7 @@ type SubagentStatusTool struct{}
 type SubagentTool struct{}
 type Supervisor struct{}
 type SupervisorOption func(*Supervisor)
-type TeamEvent struct{Member string; MemberSessionID string; Event session.Event; ContextWindow int}
+type TeamEvent struct{Member string; MemberSessionID string; MemberIncarnation session.IncarnationID; Event session.Event; ContextWindow int}
 type TeamMemberArg struct{Name string "json:\"name\""; Role string "json:\"role\""; Mutating bool "json:\"mutating,omitempty\""}
 type TeamMemberEngineFactory func(t *team.Team, spec MemberSpec, routedModel string) MemberBuild
 type TeamOption func(*TeamTool)

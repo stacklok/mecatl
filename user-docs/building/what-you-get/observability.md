@@ -169,7 +169,13 @@ Decision metadata never includes a raw error. The same sanitized classification 
 log-only `network.attempt` event emitted by the agent loop and persisted by the ordinary
 EventLog relay. A dedicated session debugger can read this target-correlated evidence through
 `InspectSession {"view":"network"}`; it includes bounded retry/terminal decisions and safe
-transport/provider classifications, not request/response content or credentials. No session
+transport/provider classifications, not request/response content or credentials. The same
+single tool exposes `related`, `delegation`, `history`, and `manifest`: related retained
+sessions are addressed only with target-bound opaque handles, compaction archives remain
+pageable, team/task/finding and parent-result facts come only from typed events, and request
+manifests contain tool decisions and digests but no prompt bodies. Every view reports incomplete
+scan/projection/retention honestly; snapshot latest-run counters are distinct from EventLog
+lifetime totals. No session
 ID is added to metric labels.
 
 ---

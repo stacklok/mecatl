@@ -69,6 +69,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	// ── Session (shared) ──────────────────────────────────────────────────
 	"workspace":     {group: groupSession, common: true, local: true, connect: true},
 	"mode":          {group: groupSession, common: true, local: true, connect: true},
+	"debug-mcp":     {group: groupSession, common: true, local: true, connect: true},
 	"resume":        {group: groupSession, common: true, local: true, connect: true},
 	"resume-latest": {group: groupSession, common: true, local: true, connect: true},
 	"prompt":        {group: groupSession, common: true, local: true, connect: true},

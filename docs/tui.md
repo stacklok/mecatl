@@ -282,7 +282,14 @@ a usage error; choose one startup intent explicitly.
 ```sh
 mecatui debug 01JOPAQUETARGET
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARGET
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARGET --debug-mcp github
 ```
+
+`--debug-mcp NAME` is repeatable and selects only already-configured server-global
+streaming-HTTP MCP servers. The debugger may draft a GitHub-like issue without calling the
+server. After reviewing it, send a new current prompt such as `Publish this issue now`;
+each mutating call opens an approval card even under yolo/configured allow. Allow once sends
+one request. A later mutation asks again; Allow always is deliberately not learned.
 
 These commands accept either the full opaque session ID or the exact 12-byte ID
 shown in the TUI header. The short form is resolved from the caller-visible session
@@ -299,9 +306,15 @@ fields without blocking diagnosis or exposing the raw error. The disclosure is l
 tool arguments/results, paths, and secrets can be sent to the selected model. Running the
 command is the consent gesture.
 
-The debug model has exactly one tool, `InspectSession`, permanently bound by the server to
-the command's target. The model can request bounded `status`, `transcript`, `activity`,
-`performance`, and `network` views, but cannot supply or change the target ID. Snapshot
+The debug model always has `InspectSession`, permanently bound by the server to
+the command's target. It can request bounded `status`, `transcript`, `activity`,
+`performance`, `network`, `related`, `delegation`, `history`, and `manifest` views, but
+cannot supply or change the target ID. `related` returns opaque handles for currently
+retained descendants admitted by the server's ownership posture and evidence-backed
+incarnation-specific tombstone/status rows; use a returned
+handle to inspect a child transcript. `history` separates current, compaction-archive, and
+event-reconstructed histories. Status names latest-run counters, cumulative snapshot usage,
+and lifetime EventLog counters separately. Snapshot
 transcript is the authoritative history. Activity, performance, and network depend on EventLog
 availability and report scan/page completeness explicitly. Network contains only sanitized
 failed/interesting resilience-attempt decisions and classifications; no raw error, URL,

@@ -2,6 +2,7 @@ package prompt_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -44,5 +45,29 @@ func TestRootAssemblerEmptyWorkspace(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %d messages, want 0", len(got))
+	}
+}
+
+func TestAssembleWithManifestPreservesMessagesAndReportsBuiltInProvenance(t *testing.T) {
+	ws := memfs.NewWorkspace("/proj")
+	if err := ws.Write(context.Background(), "AGENTS.md", []byte("byte-stable instructions")); err != nil {
+		t.Fatal(err)
+	}
+	assembler := prompt.NewMultiAssembler(prompt.RootAssembler{})
+	want, err := assembler.Assemble(context.Background(), ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, manifest, err := prompt.AssembleWithManifest(context.Background(), ws, assembler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifest assembly changed messages: got %+v want %+v", got, want)
+	}
+	if len(manifest) != 1 || manifest[0] != (prompt.InstructionManifest{
+		Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject,
+	}) {
+		t.Fatalf("manifest = %+v", manifest)
 	}
 }

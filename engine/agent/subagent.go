@@ -193,7 +193,8 @@ type parentCaps struct {
 	// authorization ever runs. Empty for a caps-less drive (plain
 	// Execute/ExecuteObserved, no parent session threaded) — the legacy
 	// call-id-only id, unaffected outside real dispatch.
-	parentSessionID session.SessionID
+	parentSessionID   session.SessionID
+	parentIncarnation session.IncarnationID
 }
 
 // inheritOwner stamps the parent session's owner onto a freshly-minted child
@@ -2269,7 +2270,7 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 // still on disk — because this is the only place that sees the resumed session's
 // PERSISTED workspace before buildChildSession re-homes it. See editsSurvived's
 // doc-comment on the named result below and resumeWritableNote.
-func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID, parentID session.SessionID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
 	// priorWorkspace is the resumed child's PERSISTED workspace root, captured here
@@ -2310,7 +2311,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
 	// The path comparison is the honest test and needs no new persisted field.
 	editsSurvived = writable && priorWorkspace != "" && priorWorkspace == env.Workspace().Root()
-	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, resumedChild, runEnv.Workspace().Root(), limits, forkHistory)
+	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, parentIncarnation, resumedChild, runEnv.Workspace().Root(), limits, forkHistory)
 	if !bok {
 		_ = cleanupWS()
 		return nil, tool.Environment{}, noop, "", false, errRes, false
@@ -2527,7 +2528,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// Resume load + fork + session build (see prepareChildSession). The cleanup is
 	// always non-nil and tears the worktree down after the child fully drains (the
 	// run is drained below in this call), so a deferred cleanup is correct.
-	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, caps.parentSessionID, limits, forkHistory)
+	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, caps.parentSessionID, caps.parentIncarnation, limits, forkHistory)
 	if !ok {
 		return errResult, nil
 	}
@@ -2571,13 +2572,14 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// UI). No child content.
 	if emit != nil {
 		emit(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{
-			ParentCallID:   string(call.ID),
-			ChildID:        string(childID),
-			Goal:           subagentGoal(args),
-			RoutedCategory: routedCategory,
-			RoutedModel:    routedModel,
-			RoutingReason:  routingReasonPayload(routingReason),
-			Model:          engine.Model(),
+			ParentCallID:     string(call.ID),
+			ChildID:          string(childID),
+			ChildIncarnation: child.Incarnation(),
+			Goal:             subagentGoal(args),
+			RoutedCategory:   routedCategory,
+			RoutedModel:      routedModel,
+			RoutingReason:    routingReasonPayload(routingReason),
+			Model:            engine.Model(),
 		}})
 	}
 
@@ -2633,7 +2635,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 
 	if emit != nil {
 		emit(subagentEndEvent(call.ID, childID, stop, cause, subagentEndMetrics{
-			toolCount: toolCount, usage: usage, durationMs: engine.now().Sub(start).Milliseconds(),
+			incarnation: child.Incarnation(), toolCount: toolCount, usage: usage, durationMs: engine.now().Sub(start).Milliseconds(),
 		}))
 	}
 
@@ -2897,7 +2899,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		return
 	}
 	defer func() { _ = cleanupWS() }()
-	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.caps.parentSessionID, b.resumed, runEnv.Workspace().Root(), b.limits, b.forkHistory)
+	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.caps.parentSessionID, b.caps.parentIncarnation, b.resumed, runEnv.Workspace().Root(), b.limits, b.forkHistory)
 	if !ok {
 		endOnError(errResult)
 		return
@@ -2952,7 +2954,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 
 	if b.emit != nil {
 		b.emit(subagentEndEvent(b.call.ID, b.childID, st, cause, subagentEndMetrics{
-			toolCount: toolCount, usage: usage, durationMs: b.engine.now().Sub(start).Milliseconds(),
+			incarnation: child.Incarnation(), toolCount: toolCount, usage: usage, durationMs: b.engine.now().Sub(start).Milliseconds(),
 		}))
 	}
 	t.fireSubagentStop(ctx, child)
@@ -3128,9 +3130,10 @@ func routingReasonPayload(reason string) string {
 // measurements, as opposed to the outcome. The background PRE-RUN failure site has none of
 // them (nothing ran), which is the only difference between the three emit sites.
 type subagentEndMetrics struct {
-	toolCount  int
-	usage      session.Usage
-	durationMs int64
+	incarnation session.IncarnationID
+	toolCount   int
+	usage       session.Usage
+	durationMs  int64
 }
 
 // subagentEndEvent builds the EvSubagentEnd event. It exists so that setting
@@ -3142,13 +3145,14 @@ type subagentEndMetrics struct {
 // status line with no test firing.
 func subagentEndEvent(parentCallID session.ToolCallID, childID session.SessionID, stop session.StopReason, cause string, m subagentEndMetrics) session.Event {
 	return session.Event{Type: session.EvSubagentEnd, Subagent: &session.SubagentPayload{
-		ParentCallID: string(parentCallID),
-		ChildID:      string(childID),
-		ToolCount:    m.toolCount,
-		Usage:        m.usage,
-		Stop:         stop,
-		Cause:        subagentCausePayload(cause),
-		DurationMs:   m.durationMs,
+		ParentCallID:     string(parentCallID),
+		ChildID:          string(childID),
+		ChildIncarnation: m.incarnation,
+		ToolCount:        m.toolCount,
+		Usage:            m.usage,
+		Stop:             stop,
+		Cause:            subagentCausePayload(cause),
+		DurationMs:       m.durationMs,
 	}}
 }
 
@@ -4105,7 +4109,7 @@ func (t *SubagentTool) forkChildEnvironment(ctx context.Context, callID session.
 // torn down, and without the re-home the re-persisted snapshot would record a dead
 // path. (The child's prompt cwd is independently sourced from the engine's PromptConfig
 // and is NOT affected by this field.)
-func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, resumedChild *session.Session, root string, limits session.Limits, forkHistory []session.Message) (*session.Session, session.ToolResult, bool) {
+func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, resumedChild *session.Session, root string, limits session.Limits, forkHistory []session.Message) (*session.Session, session.ToolResult, bool) {
 	if resumedChild == nil {
 		// When a named agent def pins limits, the child runs under THOSE; otherwise it uses
 		// the Subagent tool's default limits.
@@ -4117,7 +4121,7 @@ func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, par
 			child = session.New(childID, t.childMode, root, limits, t.childEngine.now())
 			err = child.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
 		} else {
-			child, err = session.NewSubagent(childID, t.childMode, root, limits, t.childEngine.now(), parentID, callID)
+			child, err = session.NewSubagent(childID, t.childMode, root, limits, t.childEngine.now(), parentID, parentIncarnation, callID)
 		}
 		if err != nil {
 			return nil, session.NewToolError(callID,

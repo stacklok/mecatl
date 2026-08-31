@@ -808,6 +808,8 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		AdoptionSourceSessionId: valid(string(adoptionSourceID(s))),
 		Kind:                    string(s.Kind),
 		Relationship:            toProtoSessionRelationship(s.Relationship),
+		DebugMcpServers:         validStrings(s.DebugMCPServers),
+		DebugMcpTools:           validStrings(s.DebugMCPTools),
 	}
 }
 

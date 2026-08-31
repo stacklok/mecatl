@@ -40,6 +40,16 @@ the operation is never replayed automatically. See
 snapshots (lazily re-listed on the next read); live catalog refresh is
 deferred to a later phase — see [ADR 0057](../adr/0057-mcp-server-notifications.md).
 
+A dedicated debug session can borrow only direct tools from explicitly named, already
+connected server-global MCP servers. It persists the names and the exact initial tool-name
+ceiling, excludes resource/query meta-tools and all inline/client configuration, and fails
+closed if the current direct tool set differs at all on restart. Every selected call,
+including an outbound read and a tool marked read-only, requires a fresh interactive approval;
+deny remains absolute, headless denies, and approval is never learned. This is the hardened
+GitHub-like draft-then-publish boundary in
+[ADR 0257](../adr/0257-session-debugger-hardening.md), not a general MCP permission
+exception.
+
 The adapter optionally owns an authorization-code `OAuthController` when an embedding
 supplies `ServerConfig.OAuth`. One official SDK handler, durable credential source,
 authorization singleflight, and dedicated hardened HTTP client live for the whole

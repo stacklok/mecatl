@@ -58,6 +58,8 @@ type SessionStore struct {
 	list           bool
 	metadataPaging bool
 	delete         bool
+	lineage        bool
+	create         bool
 }
 
 // compile-time assertions that SessionStore satisfies the base port and keeps
@@ -66,9 +68,11 @@ type SessionStore struct {
 // port sentinels without advertising those operations to inventory consumers.
 var (
 	_ port.SessionStore         = (*SessionStore)(nil)
+	_ port.SessionCreator       = (*SessionStore)(nil)
 	_ port.PrunableStore        = (*SessionStore)(nil)
 	_ port.SessionMetadataPager = (*SessionStore)(nil)
 	_ port.SessionDeleteSupport = (*SessionStore)(nil)
+	_ port.SessionLineageReader = (*SessionStore)(nil)
 )
 
 const sessionCapabilityTimeout = 5 * time.Second
@@ -90,6 +94,8 @@ func NewSessionStore(ctx context.Context, conn grpc.ClientConnInterface) (*Sessi
 	st.list = caps.GetList()
 	st.metadataPaging = caps.GetMetadataPaging()
 	st.delete = caps.GetDelete()
+	st.lineage = caps.GetLineage()
+	st.create = caps.GetCreate()
 	return st, nil
 }
 
@@ -110,6 +116,24 @@ func (st *SessionStore) Save(ctx context.Context, s *session.Session) error {
 		Snapshot:  &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: line},
 	}); err != nil {
 		return rpcErr(ctx, "save", err)
+	}
+	return nil
+}
+
+// Create atomically publishes s when the negotiated driver supports SessionCreator.
+func (st *SessionStore) Create(ctx context.Context, s *session.Session) error {
+	if !st.create {
+		return fmt.Errorf("grpcdriver: create: unsupported")
+	}
+	line, err := sessnap.Marshal(s)
+	if err != nil {
+		return err
+	}
+	if _, err := st.client.Create(ctx, &driverv1.SaveRequest{SessionId: string(s.ID), Snapshot: &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: line}}); err != nil {
+		if status.Code(err) == codes.AlreadyExists {
+			return fmt.Errorf("grpcdriver: create %q: %w", s.ID, port.ErrSessionAlreadyExists)
+		}
+		return rpcErr(ctx, "create", err)
 	}
 	return nil
 }
@@ -173,6 +197,96 @@ func (st *SessionStore) List(ctx context.Context) ([]port.StoredSession, error) 
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// ReadSessionLineage asks the trusted driver for bounded content-free direct edges.
+func (st *SessionStore) ReadSessionLineage(ctx context.Context, query port.SessionLineageQuery) (port.SessionLineageResult, error) {
+	if err := port.ValidateSessionLineageQuery(query); err != nil {
+		return port.SessionLineageResult{}, err
+	}
+	if !st.lineage {
+		return port.SessionLineageResult{}, fmt.Errorf("grpcdriver: lineage: %w", port.ErrSessionLineageUnsupported)
+	}
+	resp, err := st.client.ReadLineage(ctx, &driverv1.ReadSessionLineageRequest{RootSessionId: string(query.RootID), RootIncarnation: string(query.RootIncarnation), Limit: int32(query.Limit)}) // #nosec G115 -- bounded to 256
+	if err != nil {
+		return port.SessionLineageResult{}, rpcErr(ctx, "read lineage", err)
+	}
+	if len(resp.GetRecords()) > query.Limit {
+		return port.SessionLineageResult{}, fmt.Errorf("grpcdriver: lineage response exceeds requested limit")
+	}
+	result := port.SessionLineageResult{Truncated: resp.GetTruncated(), Records: make([]port.SessionLineageRecord, 0, len(resp.GetRecords()))}
+	for _, entry := range resp.GetRecords() {
+		row, err := lineageRecordFromProto(entry)
+		if err != nil {
+			return port.SessionLineageResult{}, err
+		}
+		if row.ID != query.RootID && !lineageRecordDirectlyRelated(row, query) {
+			return port.SessionLineageResult{}, fmt.Errorf("grpcdriver: lineage response escaped requested incarnation")
+		}
+		result.Records = append(result.Records, row)
+	}
+	if err := validateLineageOrder(result.Records, query.RootID); err != nil {
+		return port.SessionLineageResult{}, err
+	}
+	return result, nil
+}
+
+func lineageRecordDirectlyRelated(row port.SessionLineageRecord, query port.SessionLineageQuery) bool {
+	rel := row.Relationship
+	return rel.ParentSessionID == query.RootID && rel.ParentIncarnation == query.RootIncarnation ||
+		rel.OriginSessionID == query.RootID && rel.OriginIncarnation == query.RootIncarnation ||
+		rel.DebugTargetID == query.RootID && rel.DebugTargetIncarnation == query.RootIncarnation
+}
+
+func lineageRecordFromProto(entry *driverv1.SessionLineageEntry) (port.SessionLineageRecord, error) {
+	rel := session.SessionRelationship{
+		ParentSessionID: session.SessionID(entry.GetParentSessionId()), ParentIncarnation: session.IncarnationID(entry.GetParentIncarnation()), CallID: session.ToolCallID(entry.GetCallId()),
+		ScheduleName: entry.GetScheduleName(), OriginSessionID: session.SessionID(entry.GetOriginSessionId()), OriginIncarnation: session.IncarnationID(entry.GetOriginIncarnation()),
+		TeamID: entry.GetTeamId(), MemberName: entry.GetMemberName(), DebugTargetID: session.SessionID(entry.GetDebugTargetSessionId()), DebugTargetIncarnation: session.IncarnationID(entry.GetDebugTargetIncarnation()),
+	}
+	if entry.BranchIndex != nil {
+		index := int(entry.GetBranchIndex())
+		rel.BranchIndex = &index
+	}
+	row := port.SessionLineageRecord{ID: session.SessionID(entry.GetSessionId()), Kind: session.SessionKind(entry.GetKind()), Relationship: rel, State: port.SessionLineageState(entry.GetState()), Incarnation: entry.GetIncarnation()}
+	if len(entry.GetOwnerScope()) != len(row.OwnerScope) {
+		return port.SessionLineageRecord{}, fmt.Errorf("grpcdriver: invalid lineage owner scope")
+	}
+	copy(row.OwnerScope[:], entry.GetOwnerScope())
+	if ts := entry.GetDeletedAt(); ts != nil {
+		if ts.CheckValid() != nil {
+			return port.SessionLineageRecord{}, fmt.Errorf("grpcdriver: invalid lineage deletion time")
+		}
+		row.DeletedAt = ts.AsTime()
+	}
+	if row.ID == "" || !session.IncarnationID(row.Incarnation).Valid() || session.ValidateSessionMetadata(row.Kind, row.Relationship) != nil ||
+		(row.State != port.SessionLineageRetained && row.State != port.SessionLineagePruned) ||
+		(row.State == port.SessionLineageRetained && !row.DeletedAt.IsZero()) || (row.State == port.SessionLineagePruned && row.DeletedAt.IsZero()) {
+		return port.SessionLineageRecord{}, fmt.Errorf("grpcdriver: invalid lineage response")
+	}
+	return row, nil
+}
+
+func validateLineageOrder(records []port.SessionLineageRecord, root session.SessionID) error {
+	for i := 1; i < len(records); i++ {
+		if !lineageWireLess(records[i-1], records[i], root) {
+			return fmt.Errorf("grpcdriver: lineage records out of order")
+		}
+	}
+	return nil
+}
+
+func lineageWireLess(a, b port.SessionLineageRecord, root session.SessionID) bool {
+	if (a.ID == root) != (b.ID == root) {
+		return a.ID == root
+	}
+	if a.ID != b.ID {
+		return a.ID < b.ID
+	}
+	if a.State != b.State {
+		return a.State == port.SessionLineageRetained
+	}
+	return a.Incarnation < b.Incarnation
 }
 
 func metadataAfter(row port.SessionDiscoveryMeta, cursor *port.SessionMetadataCursor) bool {
@@ -329,13 +443,16 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 		Kind:            session.SessionKind(entry.GetKind()),
 		EstimatedBytes:  entry.GetEstimatedBytes(),
 		Relationship: session.SessionRelationship{
-			ParentSessionID: session.SessionID(entry.GetParentSessionId()),
-			CallID:          session.ToolCallID(entry.GetCallId()),
-			ScheduleName:    entry.GetScheduleName(),
-			OriginSessionID: session.SessionID(entry.GetOriginSessionId()),
-			TeamID:          entry.GetTeamId(),
-			MemberName:      entry.GetMemberName(),
-			DebugTargetID:   session.SessionID(entry.GetDebugTargetSessionId()),
+			ParentSessionID:        session.SessionID(entry.GetParentSessionId()),
+			ParentIncarnation:      session.IncarnationID(entry.GetParentIncarnation()),
+			CallID:                 session.ToolCallID(entry.GetCallId()),
+			ScheduleName:           entry.GetScheduleName(),
+			OriginSessionID:        session.SessionID(entry.GetOriginSessionId()),
+			OriginIncarnation:      session.IncarnationID(entry.GetOriginIncarnation()),
+			TeamID:                 entry.GetTeamId(),
+			MemberName:             entry.GetMemberName(),
+			DebugTargetID:          session.SessionID(entry.GetDebugTargetSessionId()),
+			DebugTargetIncarnation: session.IncarnationID(entry.GetDebugTargetIncarnation()),
 		},
 	}
 	if entry.GetModifiedAt() != nil {

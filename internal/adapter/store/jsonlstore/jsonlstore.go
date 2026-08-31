@@ -166,6 +166,7 @@ type Store struct {
 	// coordinate by their stable cross-process flock identity instead.
 	mu                        sync.Mutex
 	inventoryMu               sync.Mutex
+	lineageMu                 sync.Mutex
 	snapshot                  snapshotOps
 	durability                SnapshotDurabilityCapability
 	tempOwner                 string
@@ -178,11 +179,12 @@ type Store struct {
 // compile-time assertions that Store satisfies both ports plus the optional
 // retention seam and the durable event log.
 var (
-	_ port.SessionStore     = (*Store)(nil)
-	_ port.SessionCreator   = (*Store)(nil)
-	_ port.ToolCallRecorder = (*Store)(nil)
-	_ port.PrunableStore    = (*Store)(nil)
-	_ port.EventLog         = (*Store)(nil)
+	_ port.SessionStore         = (*Store)(nil)
+	_ port.SessionCreator       = (*Store)(nil)
+	_ port.ToolCallRecorder     = (*Store)(nil)
+	_ port.PrunableStore        = (*Store)(nil)
+	_ port.EventLog             = (*Store)(nil)
+	_ port.SessionLineageReader = (*Store)(nil)
 )
 
 // New constructs a Store writing under dir, creating dir if needed. The dir is
@@ -577,7 +579,12 @@ func (st *Store) Save(ctx context.Context, s *session.Session) error {
 		}
 		generation := st.tempGeneration.Add(1)
 		pattern := snapshotTempPattern(path, st.tempOwner, generation)
-		return replaceCurrentSnapshot(path, data, modifiedAt, pattern, st.snapshot, st.durability, nil)
+		return st.withLineageLock(context.WithoutCancel(ctx), func() error {
+			if err := replaceCurrentSnapshot(path, data, modifiedAt, pattern, st.snapshot, st.durability, nil); err != nil {
+				return err
+			}
+			return st.updateLineageLocked(retainedLineageRecord(s))
+		})
 	})
 }
 
@@ -624,7 +631,12 @@ func (st *Store) Create(ctx context.Context, s *session.Session) error {
 		}
 		generation := st.tempGeneration.Add(1)
 		pattern := snapshotTempPattern(path, st.tempOwner, generation)
-		return replaceCurrentSnapshot(path, data, modifiedAt, pattern, st.snapshot, st.durability, nil)
+		return st.withLineageLock(context.WithoutCancel(ctx), func() error {
+			if err := replaceCurrentSnapshot(path, data, modifiedAt, pattern, st.snapshot, st.durability, nil); err != nil {
+				return err
+			}
+			return st.updateLineageLocked(retainedLineageRecord(s))
+		})
 	})
 }
 
@@ -835,7 +847,12 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 		return err
 	}
 	return st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-		return st.deleteSessionFamilyLocked(id)
+		return st.withLineageLock(context.WithoutCancel(ctx), func() error {
+			if err := st.pruneLineageLocked(id); err != nil {
+				return err
+			}
+			return st.deleteSessionFamilyLocked(id)
+		})
 	})
 }
 
@@ -853,7 +870,12 @@ func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.Ses
 		}
 		for _, row := range rows {
 			if row.ID == expected.ID && port.SessionDiscoveryMetaEqual(row, expected) {
-				if err := st.deleteSessionFamilyLocked(expected.ID); err != nil {
+				if err := st.withLineageLock(context.WithoutCancel(ctx), func() error {
+					if err := st.pruneLineageLocked(expected.ID); err != nil {
+						return err
+					}
+					return st.deleteSessionFamilyLocked(expected.ID)
+				}); err != nil {
 					return err
 				}
 				deleted = true

@@ -130,6 +130,11 @@ const (
 	// proto event-type string verbatim (no proto enum; the wire type field is a
 	// string passthrough, like EvNoProgress).
 	EvRecoverNotice EventType = "recover_notice"
+	// EvRequestManifest is emitted after the final provider-neutral request has been
+	// assembled and compacted, immediately before the provider Stream call. It is a
+	// log-only, content-safe structural manifest: bounded counts and closed
+	// prompt/tool metadata, with no request bodies.
+	EvRequestManifest EventType = "request.manifest"
 	// EvNetworkAttempt is a log-only, provider-neutral record of one failed or
 	// otherwise interesting LLM transport attempt. The resilience wrapper creates
 	// the sanitized payload through its single decision-classification path; the
@@ -532,6 +537,68 @@ type ResultPayload struct {
 	Progress StreamProgress
 }
 
+// RequestManifestPayload is a content-free description of the exact neutral
+// request handed to the provider. It retains only closed provenance/decision
+// tokens, identifiers, and byte/count metadata; it deliberately carries no
+// content digest that could become an offline oracle.
+type RequestManifestPayload struct {
+	Provider        string                   `json:"provider,omitempty"`
+	Model           string                   `json:"model,omitempty"`
+	ReasoningEffort string                   `json:"reasoning_effort,omitempty"`
+	ContextWindow   int                      `json:"context_window,omitempty"`
+	ToolNames       []string                 `json:"tool_names"`
+	ToolDecisions   []RequestToolDecision    `json:"tool_decisions"`
+	MessageCount    int                      `json:"message_count"`
+	MessageBytes    int                      `json:"message_bytes"`
+	Prompt          []RequestPromptComponent `json:"prompt"`
+}
+
+// RequestToolDecision records a decision the final request assembly actually
+// observed. Name is a model-visible tool identifier; Source and Decision are
+// closed tokens.
+type RequestToolDecision struct {
+	Name     string `json:"name"`
+	Source   string `json:"source"`
+	Decision string `json:"decision"`
+}
+
+// Request tool source and decision tokens form closed vocabularies.
+const (
+	RequestToolSourceCatalog = "catalog"
+	RequestToolSourceOverlay = "overlay"
+	RequestToolSourceMCP     = "mcp"
+
+	RequestToolAdvertised        = "advertised"
+	RequestToolDisclosureHidden  = "disclosure_hidden"
+	RequestToolModeFiltered      = "mode_filtered"
+	RequestToolAuthorityFiltered = "authority_filtered"
+	RequestToolMountUnavailable  = "mount_unavailable"
+	RequestToolShadowed          = "shadowed"
+)
+
+// RequestPromptComponent identifies one prompt component without retaining it.
+// Kind and Provenance are closed tokens; Bytes is the encoded component size.
+type RequestPromptComponent struct {
+	Kind       string `json:"kind"`
+	Provenance string `json:"provenance"`
+	Bytes      int    `json:"bytes"`
+}
+
+// Request prompt kind and provenance tokens form a closed vocabulary.
+const (
+	RequestPromptSystem        = "system"
+	RequestPromptInstruction   = "instruction"
+	RequestProvenanceStable    = "stable"
+	RequestProvenanceVolatile  = "volatile"
+	RequestProvenanceProject   = "project"
+	RequestProvenanceSoul      = "soul"
+	RequestProvenanceMemory    = "memory"
+	RequestProvenanceRules     = "rules"
+	RequestProvenanceUserModel = "user_model"
+	RequestProvenanceCustom    = "custom"
+	RequestProvenanceUnknown   = "unknown"
+)
+
 // NetworkAttemptPayload is bounded, sanitized evidence about one failed or
 // interesting provider attempt. Durations are whole milliseconds; zero means
 // unavailable/not applicable. Classification values are closed vocabularies
@@ -738,6 +805,9 @@ type SubagentPayload struct {
 	// ChildID is the child session id, distinguishing concurrent subagents. Set on
 	// all three kinds.
 	ChildID string
+	// ChildIncarnation is internal durable correlation metadata. It is persisted in
+	// the event log but deliberately omitted from client/model projections.
+	ChildIncarnation IncarnationID
 	// Goal is a short, plain-text label for the delegated task (the Subagent call's
 	// description, or a truncation of its prompt). Set on EvSubagentStart only.
 	Goal string
@@ -890,6 +960,8 @@ type ParallelPayload struct {
 	// address a branch (CancelChild) WITHOUT deriving the id grammar. Set on the
 	// branch_start and branch_end kinds. It is an id, never branch content.
 	ChildID string
+	// ChildIncarnation is internal durable correlation metadata, never projected.
+	ChildIncarnation IncarnationID
 	// BranchLabel is the humanized 1-based branch label ("branch-1" …). Set on the
 	// branch_start kind.
 	BranchLabel string
@@ -1222,6 +1294,8 @@ type TeamPayload struct {
 	// can address a member (CancelChild) WITHOUT deriving the id grammar. Set on
 	// EvTeamMember only. It is an id, never member content.
 	MemberSessionID string
+	// MemberIncarnation is internal durable correlation metadata, never projected.
+	MemberIncarnation IncarnationID
 	// InnerKind is the member's underlying session event kind being projected
 	// (e.g. "message.delta", "tool.call", "tool.result", "turn.end", "result").
 	// Set on EvTeamMember only. permission.ask is never projected.
@@ -1318,6 +1392,9 @@ type Event struct {
 	// ModelRetry is set on EvModelRetry and carries the prior failed terminal's
 	// typed facts for durable reconstruction without parsing Text.
 	ModelRetry *ModelRetryPayload
+	// RequestManifest is set on EvRequestManifest. It is log-only structural
+	// evidence about the final request and contains no model-visible bodies.
+	RequestManifest *RequestManifestPayload
 	// NetworkAttempt is set on EvNetworkAttempt. It is log-only sanitized
 	// transport/provider evidence emitted by the loop from the resilience observer.
 	NetworkAttempt *NetworkAttemptPayload

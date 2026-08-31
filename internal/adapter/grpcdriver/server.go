@@ -115,6 +115,28 @@ func (s *sessionStoreServer) Save(ctx context.Context, req *driverv1.SaveRequest
 	return &driverv1.SaveResponse{}, nil
 }
 
+// Create decodes the snapshot and delegates atomic first publication when supported.
+func (s *sessionStoreServer) Create(ctx context.Context, req *driverv1.SaveRequest) (*driverv1.SaveResponse, error) {
+	creator, ok := s.store.(port.SessionCreator)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support atomic create")
+	}
+	if req.GetSessionId() == "" || req.GetSnapshot() == nil || req.GetSnapshot().GetFormat() != SnapshotFormat || len(req.GetSnapshot().GetPayload()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "valid session_id and snapshot are required")
+	}
+	sess, err := sessnap.Unmarshal(req.GetSnapshot().GetPayload())
+	if err != nil || string(sess.ID) != req.GetSessionId() {
+		return nil, status.Error(codes.InvalidArgument, "snapshot does not match session_id")
+	}
+	if err := creator.Create(ctx, sess); err != nil {
+		if errors.Is(err, port.ErrSessionAlreadyExists) {
+			return nil, status.Error(codes.AlreadyExists, err.Error())
+		}
+		return nil, storeStatus(err)
+	}
+	return &driverv1.SaveResponse{}, nil
+}
+
 // Load fetches the session from the wrapped store and re-encodes it into the
 // envelope. A store not-found (port.ErrSessionNotFound) maps to NOT_FOUND.
 func (s *sessionStoreServer) Load(ctx context.Context, req *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
@@ -141,9 +163,53 @@ func (s *sessionStoreServer) Capabilities(context.Context, *driverv1.SessionStor
 	if support, ok := s.store.(port.SessionDeleteSupport); ok {
 		deleteSupported = support.SupportsSessionDelete()
 	}
+	_, lineage := s.store.(port.SessionLineageReader)
+	_, creator := s.store.(port.SessionCreator)
 	return &driverv1.SessionStoreCapabilitiesResponse{
-		List: prunable, MetadataPaging: pager, Delete: deleteSupported,
+		List: prunable, MetadataPaging: pager, Delete: deleteSupported, Lineage: lineage, Create: creator,
 	}, nil
+}
+
+// ReadLineage serves the optional content-free durable lineage seam.
+func (s *sessionStoreServer) ReadLineage(ctx context.Context, req *driverv1.ReadSessionLineageRequest) (*driverv1.ReadSessionLineageResponse, error) {
+	reader, ok := s.store.(port.SessionLineageReader)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support lineage")
+	}
+	query := port.SessionLineageQuery{RootID: session.SessionID(req.GetRootSessionId()), RootIncarnation: session.IncarnationID(req.GetRootIncarnation()), Limit: int(req.GetLimit())}
+	if err := port.ValidateSessionLineageQuery(query); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	result, err := reader.ReadSessionLineage(ctx, query)
+	if err != nil {
+		return nil, storeStatus(err)
+	}
+	if len(result.Records) > query.Limit {
+		return nil, status.Error(codes.Internal, "lineage reader exceeded requested limit")
+	}
+	resp := &driverv1.ReadSessionLineageResponse{Truncated: result.Truncated, Records: make([]*driverv1.SessionLineageEntry, 0, len(result.Records))}
+	for _, row := range result.Records {
+		entry := &driverv1.SessionLineageEntry{
+			SessionId: string(row.ID), Kind: string(row.Kind), State: string(row.State),
+			ParentSessionId: string(row.Relationship.ParentSessionID), ParentIncarnation: string(row.Relationship.ParentIncarnation), CallId: string(row.Relationship.CallID),
+			ScheduleName: row.Relationship.ScheduleName, OriginSessionId: string(row.Relationship.OriginSessionID), OriginIncarnation: string(row.Relationship.OriginIncarnation),
+			TeamId: row.Relationship.TeamID, MemberName: row.Relationship.MemberName,
+			DebugTargetSessionId: string(row.Relationship.DebugTargetID), DebugTargetIncarnation: string(row.Relationship.DebugTargetIncarnation),
+			OwnerScope: append([]byte(nil), row.OwnerScope[:]...), Incarnation: row.Incarnation,
+		}
+		if row.Relationship.BranchIndex != nil {
+			if *row.Relationship.BranchIndex > 1<<31-1 {
+				return nil, status.Error(codes.Internal, "lineage branch index exceeds protocol range")
+			}
+			index := int32(*row.Relationship.BranchIndex) // #nosec G115 -- range checked and domain requires non-negative
+			entry.BranchIndex = &index
+		}
+		if !row.DeletedAt.IsZero() {
+			entry.DeletedAt = timestamppb.New(row.DeletedAt)
+		}
+		resp.Records = append(resp.Records, entry)
+	}
+	return resp, nil
 }
 
 // List serves the retention seam by type-asserting the wrapped backend for
@@ -236,10 +302,10 @@ func metadataToProto(meta port.SessionDiscoveryMeta) (*driverv1.SessionMetadataE
 		SessionId: string(meta.ID), State: string(meta.State), Turns: int32(meta.Turns),
 		ModelId: meta.ModelID, Title: meta.Title, TitleProvenance: string(meta.TitleProvenance),
 		Workspace: meta.Workspace, Kind: string(meta.Kind), EstimatedBytes: meta.EstimatedBytes,
-		ParentSessionId: string(meta.Relationship.ParentSessionID), CallId: string(meta.Relationship.CallID),
-		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID),
+		ParentSessionId: string(meta.Relationship.ParentSessionID), ParentIncarnation: string(meta.Relationship.ParentIncarnation), CallId: string(meta.Relationship.CallID),
+		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID), OriginIncarnation: string(meta.Relationship.OriginIncarnation),
 		TeamId: meta.Relationship.TeamID, MemberName: meta.Relationship.MemberName,
-		DebugTargetSessionId: valid(string(meta.Relationship.DebugTargetID)),
+		DebugTargetSessionId: valid(string(meta.Relationship.DebugTargetID)), DebugTargetIncarnation: string(meta.Relationship.DebugTargetIncarnation),
 	}
 	if !meta.ModifiedAt.IsZero() {
 		entry.ModifiedAt = timestamppb.New(meta.ModifiedAt)

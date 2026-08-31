@@ -97,6 +97,11 @@ type SessionMeta struct {
 	// when unset. Opaque to the domain; carried so the rehydrated session re-mints
 	// the same-effort per-session engine via the factory.
 	ReasoningEffort string
+	// DebugMCPServers and DebugMCPTools are the durable selected global MCP names
+	// and exact direct-tool ceiling for a debug session.
+	DebugMCPServers        []string
+	DebugMCPTools          []string
+	DebugTargetFingerprint string
 	// Title and TitleProvenance are authoritative creation/discovery metadata when
 	// supplied. A legacy empty title is derived from the first genuine user event.
 	Title           string
@@ -105,6 +110,10 @@ type SessionMeta struct {
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
 	Relationship session.SessionRelationship
+	// Incarnation and Owner are immutable creation identity. Empty Incarnation is
+	// legacy metadata and folds to the deterministic prefix-disjoint legacy token.
+	Incarnation session.IncarnationID
+	Owner       *session.Principal
 	// Authority is the plain derived-capability payload supplied with creation
 	// metadata. Nil is a documented pre-feature legacy record; a present payload
 	// is validated and bound before reconstruction proceeds.
@@ -157,6 +166,12 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := restoreAuthority(s, meta.Authority); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	if err := s.RestoreLabels(meta.Owner, session.Authority{}); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreIncarnation(meta.Incarnation); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
 	// Inert creation labels — opaque to the domain, restored by direct assignment
 	// exactly as sessnap.Restore does (these are authoritative exported values, not
 	// state transitions).
@@ -164,6 +179,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
+	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
+	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
+	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
 	if meta.AdoptionSourceID != "" || meta.AdoptionRequestDigest != "" {
 		s.Adoption = &session.AdoptionMetadata{
 			AdoptionSourceID:      meta.AdoptionSourceID,

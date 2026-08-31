@@ -7,6 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
 	"github.com/stacklok/mecatl/engine/adapter/leaseconformance"
+	"github.com/stacklok/mecatl/engine/adapter/lineageconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/storeconformance"
 	"github.com/stacklok/mecatl/engine/port"
@@ -20,6 +21,10 @@ func TestMemstoreConformance(t *testing.T) {
 	storeconformance.Run(t, func(*testing.T) port.SessionStore {
 		return memstore.New()
 	})
+}
+
+func TestMemstoreLineageConformance(t *testing.T) {
+	lineageconformance.Run(t, memstore.New())
 }
 
 func TestMemstoreSessionCreatorConformance(t *testing.T) {

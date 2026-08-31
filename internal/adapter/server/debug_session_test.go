@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func debugTestService(t *testing.T, store port.SessionStore, ownerEnforced bool,
 		Engine: debugTestEngine("shared"), Store: store,
 		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:               func() time.Time { return time.Unix(1700000000, 0).UTC() },
-		OwnershipEnforced: ownerEnforced, DebugSessionEngine: factory,
+		OwnershipEnforced: ownerEnforced, DebugSessionEngine: factory, DebugMCP: true,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -42,12 +43,16 @@ func debugTestService(t *testing.T, store port.SessionStore, ownerEnforced bool,
 }
 
 func debugFactory(calls *int) server.DebugSessionEngineFactory {
-	return func(_ context.Context, _ server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, target session.SessionID) (server.SessionEngineResult, error) {
+	return func(_ context.Context, _ server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, target session.SessionID, fingerprint string, _ *session.Principal, selected, _ []string) (server.SessionEngineResult, error) {
 		*calls++
-		if profile != server.ProfileNoFS || target == "" {
+		if profile != server.ProfileNoFS || target == "" || fingerprint == "" {
 			return server.SessionEngineResult{}, errors.New("invalid debug factory inputs")
 		}
-		return server.SessionEngineResult{Engine: debugTestEngine("debug"), BuiltForMode: mode}, nil
+		var mounted []string
+		for _, name := range selected {
+			mounted = append(mounted, "mcp__"+name+"__tool")
+		}
+		return server.SessionEngineResult{Engine: debugTestEngine("debug"), BuiltForMode: mode, DebugMCPTools: mounted}, nil
 	}
 }
 
@@ -117,6 +122,22 @@ func TestDebugSessionCreateRulesAndOwnershipConcealment(t *testing.T) {
 	if _, err := svc.CreateSessionWithProfile(alice, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID), server.WithSourceSession(target.ID)); !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("debug/source relationship rule: %v", err)
 	}
+	if _, err := svc.CreateSessionWithProfile(alice, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugMCP([]string{"github"})); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("debug MCP without target: %v", err)
+	}
+	if _, err := svc.CreateSessionWithProfile(alice, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID), server.WithDebugMCP([]string{"github", "github"})); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("duplicate debug MCP: %v", err)
+	}
+	if _, err := svc.CreateSessionWithProfile(alice, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID), server.WithDebugMCP([]string{"bad/name"})); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("invalid debug MCP name: %v", err)
+	}
+	debug, err := svc.CreateSessionWithProfile(alice, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID), server.WithDebugMCP([]string{"github", "slack"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(debug.DebugMCPServers, ",") != "github,slack" || strings.Join(debug.DebugMCPTools, ",") != "mcp__github__tool,mcp__slack__tool" {
+		t.Fatalf("persisted debug MCP labels = %v/%v", debug.DebugMCPServers, debug.DebugMCPTools)
+	}
 }
 
 func TestDebugSessionGRPCProjectionAndCapability(t *testing.T) {
@@ -129,13 +150,13 @@ func TestDebugSessionGRPCProjectionAndCapability(t *testing.T) {
 	}
 	h := server.NewHarnessServer(svc)
 	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Profile: string(server.ProfileNoFS), DebugTargetSessionId: string(target.ID),
+		Profile: string(server.ProfileNoFS), DebugTargetSessionId: string(target.ID), DebugMcpServers: []string{"github"},
 	})
 	if err != nil {
 		t.Fatalf("grpc CreateSession: %v", err)
 	}
-	if !created.GetCapabilities().GetSessionDebug() {
-		t.Fatal("session_debug capability is false with a debug factory")
+	if !created.GetCapabilities().GetSessionDebug() || !created.GetCapabilities().GetDebugMcp() {
+		t.Fatal("session_debug/debug_mcp capability is false with a debug MCP factory")
 	}
 	got, err := h.GetSession(context.Background(), &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()})
 	if err != nil {
@@ -143,6 +164,79 @@ func TestDebugSessionGRPCProjectionAndCapability(t *testing.T) {
 	}
 	if got.GetSession().GetKind() != string(session.SessionKindDebug) || got.GetSession().GetRelationship().GetDebugTargetSessionId() != string(target.ID) {
 		t.Fatalf("grpc debug identity = kind %q relationship %+v", got.GetSession().GetKind(), got.GetSession().GetRelationship())
+	}
+	if strings.Join(got.GetSession().GetDebugMcpServers(), ",") != "github" || strings.Join(got.GetSession().GetDebugMcpTools(), ",") != "mcp__github__tool" {
+		t.Fatalf("grpc debug MCP labels = %v/%v", got.GetSession().GetDebugMcpServers(), got.GetSession().GetDebugMcpTools())
+	}
+}
+
+func TestPersistedDebugSessionRejectsTargetReplacement(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	calls := 0
+	svc1 := debugTestService(t, store, false, debugFactory(&calls))
+	target, err := svc1.CreateSession(ctx, "/target", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	debug, err := svc1.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if debug.DebugTargetFingerprint == "" || debug.DebugTargetFingerprint != session.DebugTargetFingerprint(target) {
+		t.Fatal("debug target incarnation was not persisted")
+	}
+	svc1.CloseSession(debug.ID)
+	if err := store.Delete(ctx, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	replacement := session.New(target.ID, session.ModeDefault, "/target", session.Limits{}, target.CreatedAt)
+	if replacement.Incarnation() == target.Incarnation() || replacement.ID != target.ID || replacement.CreatedAt != target.CreatedAt {
+		t.Fatal("replacement did not preserve identical ID/time while changing only incarnation")
+	}
+	if err := store.Create(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	svc2 := debugTestService(t, store, false, debugFactory(&calls))
+	if _, err := svc2.StartRun(ctx, debug.ID, "diagnose replacement"); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("replacement target rehydration = %v, want inaccessible", err)
+	}
+}
+
+func TestPersistedDebugSessionRehydrationUsesStableOwnerIdentity(t *testing.T) {
+	store := memstore.New()
+	calls := 0
+	owner := &session.Principal{Issuer: "issuer-a", Subject: "subject", GrantType: session.GrantTypeUser, Name: "before"}
+	createCtx := session.WithPrincipal(context.Background(), owner)
+	svc1 := debugTestService(t, store, true, debugFactory(&calls))
+	target, err := svc1.CreateSession(createCtx, "/target", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	debug, err := svc1.CreateSessionWithProfile(createCtx, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc1.CloseSession(debug.ID)
+
+	svc2 := debugTestService(t, store, true, debugFactory(&calls))
+	changedMetadata := session.WithPrincipal(context.Background(), &session.Principal{Issuer: owner.Issuer, Subject: owner.Subject, GrantType: session.GrantTypeClientCredentials, Name: "after"})
+	run, err := svc2.StartRun(changedMetadata, debug.ID, "diagnose")
+	if err != nil {
+		t.Fatalf("same identity after restart: %v", err)
+	}
+	for range run.Events() {
+	}
+	svc2.CloseSession(debug.ID)
+
+	for _, foreign := range []*session.Principal{
+		{Issuer: "issuer-b", Subject: owner.Subject},
+		{Issuer: owner.Issuer, Subject: "other-subject"},
+	} {
+		svc := debugTestService(t, store, true, debugFactory(&calls))
+		if _, err := svc.StartRun(session.WithPrincipal(context.Background(), foreign), debug.ID, "diagnose"); !errors.Is(err, server.ErrNotFound) {
+			t.Fatalf("foreign identity %+v was not concealed: %v", foreign, err)
+		}
 	}
 }
 

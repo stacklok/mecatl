@@ -413,6 +413,16 @@ type Session struct {
 	// the factory instead of falling to the operator default. Write-once creation
 	// label set by the composition root after New (no mutator).
 	ReasoningEffort string
+	// DebugMCPServers and DebugMCPTools are inert, durable labels for a debug
+	// session's explicitly selected server-global MCP mount. DebugMCPTools is the
+	// exact creation-time tool-name ceiling; rehydration requires exact equality
+	// with the selected servers' current direct tool set.
+	DebugMCPServers []string
+	DebugMCPTools   []string
+	// DebugTargetFingerprint binds a debug session to the target incarnation that
+	// was authorized at creation. It is internal evidence only and is never
+	// projected to clients or the model.
+	DebugTargetFingerprint string
 	// Title is a human-readable session label seeded ONCE from the first genuine
 	// user prompt (via SetTitle, called from the loop's recordPrompt), clamped to
 	// maxTitleRunes (120) runes. Subsequent prompts do NOT overwrite it (set-once).
@@ -447,6 +457,10 @@ type Session struct {
 	Adoption *AdoptionMetadata
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
+
+	// incarnation is minted once by New and replaced only while idle during
+	// restoration of persisted creation metadata.
+	incarnation IncarnationID
 
 	// authorityBound records that Authority was stamped through BindAuthority.
 	// A zero Authority with this marker is impossible: BindAuthority validates the
@@ -532,6 +546,7 @@ func New(id SessionID, mode PermissionMode, workspace string, limits Limits, cre
 		Workspace:    workspace,
 		Kind:         SessionKindMain,
 		CreatedAt:    createdAt,
+		incarnation:  NewIncarnationID(),
 	}
 }
 

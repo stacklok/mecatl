@@ -35,7 +35,7 @@ func TestWithRootAuthorityStampsOnlyDirectTeamMembers(t *testing.T) {
 	})
 
 	t.Run("parent team remains for child derivation", func(t *testing.T) {
-		sup := makeSupervisor(WithRootAuthority(root), withParentCaps(parentCaps{parentSessionID: "parent"}))
+		sup := makeSupervisor(WithRootAuthority(root), withParentCaps(parentCaps{parentSessionID: "parent", parentIncarnation: session.NewIncarnationID()}))
 		if err := sup.AddMember(context.Background(), MemberSpec{Name: "worker"}); err != nil {
 			t.Fatalf("AddMember: %v", err)
 		}

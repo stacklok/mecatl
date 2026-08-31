@@ -27,11 +27,20 @@
 const DefaultOperatorProfileMaxBytes untyped int = 8192
 const DefaultOperatorProfileMaxEntries untyped int = 32
 const DefaultOperatorProfileMaxRunes untyped int = 4096
+const InstructionKindTurn0 untyped string = "instruction"
+const InstructionProvenanceCustom untyped string = "custom"
+const InstructionProvenanceMemory untyped string = "memory"
+const InstructionProvenanceProject untyped string = "project"
+const InstructionProvenanceRules untyped string = "rules"
+const InstructionProvenanceSoul untyped string = "soul"
+const InstructionProvenanceUnknown untyped string = "unknown"
+const InstructionProvenanceUserModel untyped string = "user_model"
 const MaxCommandDescriptionRunes untyped int = 80
 const MaxRuleBytes untyped int = 20480
 const RuleOriginDriver RuleOrigin = "driver"
 const RuleOriginProject RuleOrigin = "project"
 const RuleOriginUser RuleOrigin = "user"
+func AssembleWithManifest(ctx context.Context, ws tool.Workspace, a InstructionAssembler) ([]session.Message, []InstructionManifest, error)
 func Build(cfg Config) Layered
 func DefaultRole() string
 func DefaultTone() string
@@ -54,6 +63,7 @@ type Config struct{Role string; Tone string; Safety string; Tools []tool.ToolSpe
 type DirCommandExpander struct{}
 type Env struct{Cwd string; OS string; Model string; Date string; Mode string; Shell string; GitStatus string}
 type InstructionAssembler interface{Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)}
+type InstructionManifest struct{Kind string; Provenance string}
 type Layered struct{StablePrefix string; VolatileSuffix string}
 type MemoryIndexAssembler struct{Src MemoryIndexSource; MaxEntries int; MaxBytes int}
 type MemoryIndexSource interface{Index(ctx context.Context) ([]tool.MemoryEntry, error)}

@@ -1367,6 +1367,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		// value that is already collision-safe across owners — see
 		// parentCaps.parentSessionID.
 		caps.parentSessionID = sess.ID
+		caps.parentIncarnation = sess.Incarnation()
 	}
 	// The OPT-IN headless ask reviewer: bind the engine's reviewer + THIS run's
 	// breaker + the timeout into a closure resolveChildAsk consults on the headless

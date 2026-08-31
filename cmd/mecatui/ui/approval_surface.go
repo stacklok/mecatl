@@ -64,11 +64,12 @@ type approvalSurface struct {
 	resolvedAsks     map[string]struct{}
 
 	// Immutable inputs captured at Open.
-	deps        surfaceDeps
-	render      approvalRender
-	sessionID   string
-	modelID     string
-	expandTools bool
+	deps         surfaceDeps
+	render       approvalRender
+	sessionID    string
+	modelID      string
+	debugSession bool
+	expandTools  bool
 
 	// hits is the current render frame's verdict hit map.
 	hits map[HitID]client.Verdict
@@ -230,6 +231,10 @@ func isChildAsk(askID, sessionID string) bool {
 	return strings.Contains(askID, ":") && !strings.HasPrefix(askID, sessionID+":")
 }
 
+func (s *approvalSurface) isDebugMCPMutationAsk(msg client.PermissionAskMsg) bool {
+	return s.debugSession && strings.HasPrefix(msg.Tool, "mcp__") && strings.Contains(msg.Reason, "debug MCP call")
+}
+
 // applyPermissionAsk dedupes a known askID, enqueues a second ask behind an
 // already-open modal, or opens the modal head. The surface records the phase the
 // first ask interrupted; Model applies phase chrome at the reducer boundary.
@@ -246,7 +251,7 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 		Args:           msg.Args,
 		Reason:         msg.Reason,
 		focusedVerdict: client.VerdictAllowOnce,
-		offerAlways:    !isChildAsk(msg.AskID, s.sessionID),
+		offerAlways:    !isChildAsk(msg.AskID, s.sessionID) && !s.isDebugMCPMutationAsk(msg),
 	}
 	if open {
 		s.enqueue(next)

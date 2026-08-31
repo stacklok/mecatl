@@ -36,14 +36,17 @@ const (
 //
 //revive:disable-next-line:exported // SessionRelationship distinguishes it from unrelated relationships.
 type SessionRelationship struct {
-	ScheduleName    string     `json:"schedule_name,omitempty"`
-	OriginSessionID SessionID  `json:"origin_session_id,omitempty"`
-	ParentSessionID SessionID  `json:"parent_session_id,omitempty"`
-	CallID          ToolCallID `json:"call_id,omitempty"`
-	BranchIndex     *int       `json:"branch_index,omitempty"`
-	TeamID          string     `json:"team_id,omitempty"`
-	MemberName      string     `json:"member_name,omitempty"`
-	DebugTargetID   SessionID  `json:"debug_target_id,omitempty"`
+	ScheduleName           string        `json:"schedule_name,omitempty"`
+	OriginSessionID        SessionID     `json:"origin_session_id,omitempty"`
+	OriginIncarnation      IncarnationID `json:"origin_incarnation,omitempty"`
+	ParentSessionID        SessionID     `json:"parent_session_id,omitempty"`
+	ParentIncarnation      IncarnationID `json:"parent_incarnation,omitempty"`
+	CallID                 ToolCallID    `json:"call_id,omitempty"`
+	BranchIndex            *int          `json:"branch_index,omitempty"`
+	TeamID                 string        `json:"team_id,omitempty"`
+	MemberName             string        `json:"member_name,omitempty"`
+	DebugTargetID          SessionID     `json:"debug_target_id,omitempty"`
+	DebugTargetIncarnation IncarnationID `json:"debug_target_incarnation,omitempty"`
 }
 
 // ErrInvalidSessionMetadata marks an invalid kind/relationship combination.
@@ -85,26 +88,33 @@ func ValidateSessionMetadata(kind SessionKind, rel SessionRelationship) error {
 	return nil
 }
 
+func validRelatedIncarnation(id SessionID, incarnation IncarnationID) bool {
+	return incarnation == "" || id != "" && incarnation.Valid()
+}
+
 func validScheduledRelationship(rel SessionRelationship) bool {
 	forbidden := rel
 	forbidden.ScheduleName = ""
 	forbidden.OriginSessionID = ""
-	return rel.ScheduleName != "" && forbidden == (SessionRelationship{})
+	forbidden.OriginIncarnation = ""
+	return rel.ScheduleName != "" && validRelatedIncarnation(rel.OriginSessionID, rel.OriginIncarnation) && forbidden == (SessionRelationship{})
 }
 
 func validSubagentRelationship(rel SessionRelationship) bool {
 	forbidden := rel
 	forbidden.ParentSessionID = ""
+	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
-	return rel.ParentSessionID != "" && rel.CallID != "" && forbidden == (SessionRelationship{})
+	return rel.ParentSessionID != "" && rel.CallID != "" && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
 func validParallelBranchRelationship(rel SessionRelationship) bool {
 	forbidden := rel
 	forbidden.ParentSessionID = ""
+	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
 	forbidden.BranchIndex = nil
-	return rel.ParentSessionID != "" && rel.CallID != "" && rel.BranchIndex != nil && *rel.BranchIndex >= 0 && forbidden == (SessionRelationship{})
+	return rel.ParentSessionID != "" && rel.CallID != "" && rel.BranchIndex != nil && *rel.BranchIndex >= 0 && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
 func validTeamMemberRelationship(rel SessionRelationship) bool {
@@ -112,13 +122,15 @@ func validTeamMemberRelationship(rel SessionRelationship) bool {
 	forbidden.TeamID = ""
 	forbidden.MemberName = ""
 	forbidden.ParentSessionID = ""
-	return rel.TeamID != "" && rel.MemberName != "" && forbidden == (SessionRelationship{})
+	forbidden.ParentIncarnation = ""
+	return rel.TeamID != "" && rel.MemberName != "" && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
 func validDebugRelationship(rel SessionRelationship) bool {
 	forbidden := rel
 	forbidden.DebugTargetID = ""
-	return rel.DebugTargetID != "" && forbidden == (SessionRelationship{})
+	forbidden.DebugTargetIncarnation = ""
+	return rel.DebugTargetID != "" && validRelatedIncarnation(rel.DebugTargetID, rel.DebugTargetIncarnation) && forbidden == (SessionRelationship{})
 }
 
 // RestoreSessionMetadata validates and restores persisted creation metadata.
@@ -147,35 +159,41 @@ func cloneSessionRelationship(rel SessionRelationship) SessionRelationship {
 }
 
 // NewScheduled constructs a validated scheduler-fire session.
-func NewScheduled(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, scheduleName string, origin SessionID) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindScheduled, SessionRelationship{ScheduleName: scheduleName, OriginSessionID: origin})
+func NewScheduled(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, scheduleName string, origin SessionID, originIncarnation IncarnationID) (*Session, error) {
+	return newRelated(id, mode, workspace, limits, createdAt, SessionKindScheduled, SessionRelationship{ScheduleName: scheduleName, OriginSessionID: origin, OriginIncarnation: originIncarnation})
 }
 
 // NewSubagent constructs a validated Subagent child session.
-func NewSubagent(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, call ToolCallID) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindSubagent, SessionRelationship{ParentSessionID: parent, CallID: call})
+func NewSubagent(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID) (*Session, error) {
+	return newRelated(id, mode, workspace, limits, createdAt, SessionKindSubagent, SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: call})
 }
 
 // NewParallelBranch constructs a validated Parallel branch session.
-func NewParallelBranch(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, call ToolCallID, branchIndex int) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindParallelBranch, SessionRelationship{ParentSessionID: parent, CallID: call, BranchIndex: &branchIndex})
+func NewParallelBranch(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID, branchIndex int) (*Session, error) {
+	return newRelated(id, mode, workspace, limits, createdAt, SessionKindParallelBranch, SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: call, BranchIndex: &branchIndex})
 }
 
 // NewTeamMember constructs a validated team-member session. parent is optional
 // for a directly-driven team and is present for a tool-driven team.
-func NewTeamMember(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, teamID, member string, parent SessionID) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindTeamMember, SessionRelationship{TeamID: teamID, MemberName: member, ParentSessionID: parent})
+func NewTeamMember(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, teamID, member string, parent SessionID, parentIncarnation IncarnationID) (*Session, error) {
+	return newRelated(id, mode, workspace, limits, createdAt, SessionKindTeamMember, SessionRelationship{TeamID: teamID, MemberName: member, ParentSessionID: parent, ParentIncarnation: parentIncarnation})
 }
 
 // NewDebug constructs a validated diagnostic session bound to target. It starts
 // with an empty conversation; target history is never copied into it.
-func NewDebug(id SessionID, mode PermissionMode, limits Limits, createdAt time.Time, target SessionID) (*Session, error) {
-	return newRelated(id, mode, "", limits, createdAt, SessionKindDebug, SessionRelationship{DebugTargetID: target})
+func NewDebug(id SessionID, mode PermissionMode, limits Limits, createdAt time.Time, target SessionID, targetIncarnation IncarnationID) (*Session, error) {
+	return newRelated(id, mode, "", limits, createdAt, SessionKindDebug, SessionRelationship{DebugTargetID: target, DebugTargetIncarnation: targetIncarnation})
 }
 
 func newRelated(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, kind SessionKind, rel SessionRelationship) (*Session, error) {
 	if err := ValidateSessionMetadata(kind, rel); err != nil {
 		return nil, err
+	}
+	if kind == SessionKindScheduled && rel.OriginSessionID != "" && !rel.OriginIncarnation.Valid() ||
+		(kind == SessionKindSubagent || kind == SessionKindParallelBranch) && !rel.ParentIncarnation.Valid() ||
+		kind == SessionKindTeamMember && rel.ParentSessionID != "" && !rel.ParentIncarnation.Valid() ||
+		kind == SessionKindDebug && !rel.DebugTargetIncarnation.Valid() {
+		return nil, fmt.Errorf("%w: new related session requires related incarnation", ErrInvalidSessionMetadata)
 	}
 	s := New(id, mode, workspace, limits, createdAt)
 	s.Kind = kind

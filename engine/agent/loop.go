@@ -706,6 +706,7 @@ type Run struct {
 	// written once (under fragmentsOnce) and read on every turn of the SAME goroutine
 	// (the run loop is single-goroutine for buildRequest), so the Once is belt-and-braces.
 	fragments             []session.Message
+	fragmentManifest      []prompt.InstructionManifest
 	fragmentsOnce         sync.Once
 	operatorProfile       []tool.MemoryEntry
 	operatorProfileLoaded bool
@@ -1325,7 +1326,10 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 		req := e.buildRequest(ctx, r, sess, env)
 		e.maybeCompact(ctx, r, sess, turnIdx, &req)
 
-		// Step 4: consume the already-accounted provider request.
+		// Step 4: persist the content-safe structural manifest immediately before the
+		// provider receives this exact final request.
+		manifest := e.requestManifest(r, sess, env, req)
+		e.emit(r, session.Event{Type: session.EvRequestManifest, Turn: turnIdx, RequestManifest: &manifest})
 		asst, usage, streamStop, timing, err := e.runTurn(ctx, r, req, turnIdx)
 		// Provider-reported usage is spend, not semantic visibility. Record it even
 		// when the stream fails so retries, cumulative budgets, and EvResult remain
@@ -2200,12 +2204,13 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		if e.deps.Instructions == nil {
 			return
 		}
-		discovered, aerr := e.deps.Instructions.Assemble(ctx, env.Workspace())
+		discovered, manifest, aerr := prompt.AssembleWithManifest(ctx, env.Workspace(), e.deps.Instructions)
 		if aerr != nil {
 			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing without turn-0 fragments", "error", aerr)
 			return
 		}
 		r.fragments = discovered
+		r.fragmentManifest = manifest
 	})
 	// Build a NEW slice — fragments first, then the persisted conversation — so
 	// Conversation.Messages is never mutated and the prefix is byte-stable per run.

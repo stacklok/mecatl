@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
+	"github.com/stacklok/mecatl/engine/adapter/lineageconformance"
 	"github.com/stacklok/mecatl/engine/adapter/storeconformance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -22,6 +23,27 @@ func TestJSONLStoreConformance(t *testing.T) {
 		}
 		return st
 	})
+}
+
+func TestJSONLStoreLineageConformance(t *testing.T) {
+	dir := t.TempDir()
+	st, err := jsonlstore.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineageconformance.Run(t, st)
+	reopened, err := jsonlstore.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := reopened.Load(t.Context(), "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := reopened.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: "root", RootIncarnation: root.Incarnation(), Limit: 10})
+	if err != nil || len(result.Records) != 2 || result.Records[0].ID != "root" {
+		t.Fatalf("lineage after restart: records=%+v err=%v", result.Records, err)
+	}
 }
 
 func TestJSONLStoreSessionCreatorConformance(t *testing.T) {

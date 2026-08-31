@@ -72,6 +72,18 @@ not — a retry does not recover them. That guarantee is deliberately bounded: i
 covers durably-appended events, and a total backend outage combined with loss of
 the process holding the watchers leaves a gap nothing can report.
 
+**Dedicated debugger creation.** Set `CreateSessionRequest.profile = "no-fs"`, leave
+`workspace` empty, and set `debug_target_session_id` to the exact authorized target.
+Optional repeated `debug_mcp_servers` names only already-configured server-global
+streaming-HTTP MCP servers. The response advertises `session_debug`/`debug_mcp` and persists
+the selected names plus exact tool ceiling. The resulting conversation uses ordinary
+`Converse`; `InspectSession` returns target-incarnation-bound evidence, and every selected
+MCP call—including tools marked read-only—surfaces a fresh ordinary `PermissionAsk` that the
+client resolves with `ResumeApproval`. Denies remain absolute, headless calls deny, and
+allow-always executes only the current call: it is not learned and the next call asks again.
+The target is never entered, leased, or
+mutated by evidence reads. See [ADR 0256](../adr/0256-session-debugger-evidence-and-reporting.md).
+
 **Manual compaction.** Check
 `CreateSessionResponse.capabilities.manual_compaction` before offering this action.
 Call `CompactSession` with the owned session ID. The server runs the configured

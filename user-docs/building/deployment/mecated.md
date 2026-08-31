@@ -384,7 +384,13 @@ a checked-in file weakening a security checker would be a downgrade.
 | `--toolhive-group` | `""` (default group) | ToolHive group to discover from |
 
 `--mcp-server` uses streaming-HTTP transport only. mecatl never speaks stdio MCP
-directly; ToolHive stdio backends are HTTP-proxied and fine.
+directly; ToolHive stdio backends are HTTP-proxied and fine. A `mecatui connect … debug
+SESSION_ID --debug-mcp NAME` session can borrow only the named server's direct tools. The
+selection and exact direct tool set persist across restart; any addition, removal, or rename
+fails closed. Every selected call—including tools marked read-only—requires a fresh interactive
+approval even under yolo. Denies remain absolute, headless calls deny, and allow-always is not
+learned. The intended flow is diagnose
+and draft first, then send a separate current publication request and approve exactly that call.
 
 ### Skills
 

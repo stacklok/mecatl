@@ -333,8 +333,8 @@ func TestStreamSessionEventsGRPC(t *testing.T) {
 		t.Errorf("gRPC replay user_prompt.Text = %q, want %q (payload must survive toProto)", firstPrompt, "go")
 	}
 	for _, kind := range replayed {
-		if kind == string(session.EvNetworkAttempt) {
-			t.Fatal("gRPC replay exposed debugger-only network-attempt evidence")
+		if kind == string(session.EvNetworkAttempt) || kind == string(session.EvRequestManifest) {
+			t.Fatalf("gRPC replay exposed debugger-only evidence %q", kind)
 		}
 	}
 }
@@ -378,8 +378,8 @@ func TestStreamSessionEventsHTTP_SSE(t *testing.T) {
 		if err := json.Unmarshal(f, &ev); err != nil {
 			t.Fatalf("decode SSE frame: %v (frame=%s)", err, f)
 		}
-		if ev.GetType() == string(session.EvNetworkAttempt) {
-			t.Fatal("HTTP SSE replay exposed debugger-only network-attempt evidence")
+		if ev.GetType() == string(session.EvNetworkAttempt) || ev.GetType() == string(session.EvRequestManifest) {
+			t.Fatalf("HTTP SSE replay exposed debugger-only evidence %q", ev.GetType())
 		}
 		if ev.GetType() == "approval" {
 			sawApproval = true

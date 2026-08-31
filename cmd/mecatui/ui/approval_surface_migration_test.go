@@ -10,6 +10,18 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
+func TestDebugMCPAskHidesAllowAlways(t *testing.T) {
+	m := newTestModelFromDeps(Deps{Theme: debugTheme(), DebugTarget: "target"})
+	m.sessionID = "debug"
+	m = applyAll(m, client.PermissionAskMsg{AskID: "debug:1:c", Tool: "mcp__github__create_issue", Reason: "debug MCP call requires fresh current operator approval"})
+	if approvalSurfaceOf(t, m).ask.offerAlways {
+		t.Fatal("mutating debug MCP ask offered Allow Always")
+	}
+	if got := visibleApprovalVerdicts(approvalSurfaceOf(t, m).ask); len(got) != 2 {
+		t.Fatalf("visible verdicts = %v, want allow-once and deny", got)
+	}
+}
+
 func TestSurfaceApprovalMigration_Scenario1_DynamicSurfaceQueue(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: debugTheme()})
 	m.sessionID = "session-1"

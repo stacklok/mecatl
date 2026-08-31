@@ -1220,7 +1220,7 @@ func TestBuildChildGCSweepsStaleJSONLChild(t *testing.T) {
 	}
 	bg := context.Background()
 	created := time.Now().Add(-48 * time.Hour)
-	child, err := session.NewSubagent("subagent-stale", session.ModeDefault, "/ws", session.Limits{}, created, "parent", "call")
+	child, err := session.NewSubagent("subagent-stale", session.ModeDefault, "/ws", session.Limits{}, created, "parent", session.NewIncarnationID(), "call")
 	if err != nil {
 		t.Fatalf("NewSubagent: %v", err)
 	}
@@ -1278,7 +1278,7 @@ func TestBuildAutomaticRetentionRespectsAnotherLocalInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore.New: %v", err)
 	}
-	child, err := session.NewSubagent("subagent-protected", session.ModeDefault, "/ws", session.Limits{}, time.Now().Add(-48*time.Hour), "parent", "call")
+	child, err := session.NewSubagent("subagent-protected", session.ModeDefault, "/ws", session.Limits{}, time.Now().Add(-48*time.Hour), "parent", session.NewIncarnationID(), "call")
 	if err != nil {
 		t.Fatalf("NewSubagent: %v", err)
 	}

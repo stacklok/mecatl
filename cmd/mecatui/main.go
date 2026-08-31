@@ -176,7 +176,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	if err != nil {
 		return err
 	}
-	emitDebugPrivacyWarning(os.Stderr, cfg.debugTarget)
+	emitDebugPrivacyWarning(os.Stderr, cfg.debugTarget, cfg.debugMCP...)
 
 	// UNIVERSAL global-slog floor: redirect the stdlib default to io.Discard (or, under
 	// --quiet, still discard) BEFORE transport setup or the Bubble Tea program.
@@ -274,7 +274,7 @@ func runWithOptions(argv []string, options runOptions) error {
 
 	connectionMode := resolveConnectionMode(cfg)
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode, debugTarget: cfg.debugTarget},
+		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
 		Conv:                   cl,
 		MCP:                    cl,
 		Cmds:                   cl,
@@ -587,6 +587,9 @@ func initialPromptForConfig(cfg config) string {
 		return prompt
 	}
 	if cfg.debugTarget != "" {
+		if len(cfg.debugMCP) > 0 {
+			return defaultDebugPrompt + " Selected reporting servers are available: " + strings.Join(cfg.debugMCP, ", ") + ". Their availability does not authorize publication or sending."
+		}
 		return defaultDebugPrompt
 	}
 	return ""
@@ -601,9 +604,12 @@ func launchSelections(store *selectionStore, workspace, debugTarget string) (cli
 	return initial, workspaceDefault, set, store.LoadGlobalDefault()
 }
 
-func emitDebugPrivacyWarning(w io.Writer, target string) {
+func emitDebugPrivacyWarning(w io.Writer, target string, servers ...string) {
 	if target != "" {
 		_, _ = fmt.Fprintln(w, "mecatui: PRIVACY: bounded evidence from the target session sent to the configured model may include prompts, assistant output, tool arguments and results, file paths, and secrets")
+		if len(servers) > 0 {
+			_, _ = fmt.Fprintf(w, "mecatui: PRIVACY: selected reporting servers available to this debug session: %s\n", strings.Join(servers, ", "))
+		}
 	}
 }
 
@@ -1314,6 +1320,7 @@ type sessionAdapter struct {
 	workspace   string
 	mode        string
 	debugTarget string
+	debugMCP    []string
 }
 
 func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
@@ -1321,7 +1328,7 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 		if mode == "" {
 			mode = s.mode
 		}
-		id, target, caps, resolved, err := s.cl.CreateDebugSession(ctx, s.debugTarget, client.ModeFromString(mode), sel)
+		id, target, caps, resolved, err := s.cl.CreateDebugSession(ctx, s.debugTarget, client.ModeFromString(mode), sel, s.debugMCP...)
 		if target != "" {
 			s.debugTarget = target
 		}

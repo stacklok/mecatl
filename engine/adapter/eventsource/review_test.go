@@ -242,7 +242,8 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     SetTitle)
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
-	//     Profile, ProviderID, ModelID, ReasoningEffort, Title, TitleProvenance,
+	//     Profile, ProviderID, ModelID, ReasoningEffort, DebugMCPServers,
+	//     DebugMCPTools, DebugTargetFingerprint, Title, TitleProvenance,
 	//     Kind, Relationship, CreatedAt; adoption metadata is supplied via
 	//     SessionMeta and restored as optional Session.Adoption metadata
 	//   not-event-carried identity labels (ADR 0204/0214): Owner, Authority,
@@ -254,7 +255,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
 		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
-		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "Kind": {},
+		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "Adoption": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
 	}

@@ -29,11 +29,12 @@ func openApprovalSurface(m *Model) *approvalSurface {
 		return s
 	}
 	s := &approvalSurface{
-		deps:        m.surfaceDeps(),
-		sessionID:   m.sessionID,
-		modelID:     m.resolvedSessionModel.ModelID,
-		render:      newApprovalRender(m.rend),
-		expandTools: m.expandTools,
+		deps:         m.surfaceDeps(),
+		sessionID:    m.sessionID,
+		modelID:      m.resolvedSessionModel.ModelID,
+		debugSession: m.deps.DebugTarget != "",
+		render:       newApprovalRender(m.rend),
+		expandTools:  m.expandTools,
 	}
 	m.modal = s
 	return s

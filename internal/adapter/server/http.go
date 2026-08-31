@@ -177,7 +177,8 @@ type createSessionBody struct {
 	SourceSessionID string `json:"source_session_id,omitempty"`
 	// DebugTargetSessionID creates a separate no-fs diagnostic session bound to
 	// one authorized target; it never copies target conversation state.
-	DebugTargetSessionID string `json:"debug_target_session_id,omitempty"`
+	DebugTargetSessionID string   `json:"debug_target_session_id,omitempty"`
+	DebugMCPServers      []string `json:"debug_mcp_servers,omitempty"`
 }
 
 type limitsIn struct {
@@ -249,6 +250,7 @@ type serverCapabilitiesJSON struct {
 	StorageCleanup    bool                              `json:"storage_cleanup"`
 	LegacyAdoption    bool                              `json:"legacy_adoption"`
 	SessionDebug      bool                              `json:"session_debug"`
+	DebugMCP          bool                              `json:"debug_mcp"`
 	ManualDream       *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
 	Steer             bool                              `json:"steer"`
 	ManualCompaction  bool                              `json:"manual_compaction"`
@@ -278,6 +280,7 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		StorageCleanup:    c.GetStorageCleanup(),
 		LegacyAdoption:    c.GetLegacyAdoption(),
 		SessionDebug:      c.GetSessionDebug(),
+		DebugMCP:          c.GetDebugMcp(),
 		ManualDream:       c.GetManualDream(),
 		Steer:             c.GetSteer(),
 		ManualCompaction:  c.GetManualCompaction(),
@@ -419,6 +422,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.DebugTargetSessionID != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(body.DebugTargetSessionID)))
+	}
+	if len(body.DebugMCPServers) > 0 {
+		opts = append(opts, WithDebugMCP(body.DebugMCPServers))
 	}
 	sess, err := h.svc.CreateSessionWithProfile(r.Context(), body.Workspace, modeFromString(body.Mode), limits, sel, profile, opts...)
 	if err != nil {
@@ -2103,8 +2109,8 @@ func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request
 	// (they ARE the transcript). So relay ALL events through toProto, including the
 	// three log-only kinds. They are already metadata-only/redacted by construction
 	// (gauntlet #7). Do NOT copy the live-relay filter here.
-	// NetworkAttempt remains debugger-only even on durable read-back; it has no
-	// public proto projection and is read only by target-bound InspectSession.
+	// RequestManifest and NetworkAttempt remain debugger-only even on durable
+	// read-back; neither has a public proto projection.
 	enc := json.NewEncoder(w)
 	for ev, iterErr := range events {
 		if iterErr != nil {

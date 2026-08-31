@@ -73,6 +73,8 @@ type Capabilities struct {
 	// SessionDebug advertises dedicated no-filesystem sessions bound to one stored
 	// target. False is fail-closed for older servers.
 	SessionDebug bool
+	// DebugMCP gates explicit selected global MCP mounts for debug sessions.
+	DebugMCP bool
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -108,6 +110,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Steer:             c.GetSteer(),
 		ManualCompaction:  c.GetManualCompaction(),
 		SessionDebug:      c.GetSessionDebug(),
+		DebugMCP:          c.GetDebugMcp(),
 	}
 }
 

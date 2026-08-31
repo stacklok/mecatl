@@ -36,6 +36,10 @@ A debugger is intentionally different from continuing a chat:
 mecatui debug 01JOPAQUESESSIONID
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUESESSIONID
 
+# Add one or more already-configured global reporting servers by name.
+mecatui debug 01JOPAQUESESSIONID --debug-mcp github
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUESESSIONID --debug-mcp github
+
 # Replace the automatic diagnosis question with a focused one.
 mecatui debug 01JOPAQUESESSIONID \
   --prompt "Why did the final tool call fail?"
@@ -63,15 +67,27 @@ mecatui debug 01JOPAQUESESSIONID \
    objective. Runtime context is compatibility/transport context, not target evidence; a
    safely classified remote lookup failure does not block launch or reveal its raw error.
 6. Ask follow-up questions normally. The debugger can inspect bounded status,
-   transcript, activity, performance, and network views for only that target. Event-derived
-   views report availability/completeness. Network includes sanitized failed/interesting
+   transcript, activity, performance, network, related, delegation, history, and manifest
+   views for the target and retained related handles. Related rows distinguish retained
+   children from pruned tombstones without accepting arbitrary session IDs. History includes
+   compaction archives; status separates latest-run, cumulative snapshot, and lifetime counters.
+   Event-derived views report availability/completeness. Network includes sanitized failed/interesting
    attempt decisions and classes, never raw errors, URLs, headers, bodies, prompts, tool
    arguments, or credentials; successful-attempt and per-phase DNS/TCP/TLS timing are not measured.
 7. Quit normally when finished. The target remains unchanged and unleased; the
    debug conversation is stored separately.
 
 The debugger cannot switch targets, browse the filesystem, run a shell, or act
-on the target. It never resumes, approves, cancels, steers, or mutates the
+on the target. By default it has only `InspectSession`. Repeatable `--debug-mcp NAME`
+selects direct tools from already-configured server-global streaming-HTTP MCP servers;
+unknown/disconnected/tool-empty names fail, and no URL, headers, inline/client MCP,
+stdio, or resource/query meta-tools are accepted. Mutating MCP tools always ask for a
+one-call interactive approval (including under yolo); Deny still wins, headless mutation
+is refused, and Allow Always applies only to the current call and is not learned. Ask the debugger to draft an
+issue/message first, then explicitly request publication in a later prompt and approve the
+resulting call once. A second mutation asks again.
+
+It never resumes, approves, cancels, steers, or mutates the
 original session. `/clear`, `/sessions`, `/models`, `/effort`, and `/worktrees`
 are hidden in debug mode because they could replace the analysis binding.
 

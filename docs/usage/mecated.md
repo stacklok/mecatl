@@ -427,6 +427,13 @@ window (retryable) and the **post-first-chunk** stream (terminal).
 | `--toolhive` | `true` | discover MCP servers from the **running ToolHive workloads** (the embedded ToolHive library lists already-running workloads and reads their HTTP proxy URLs; mecatl **never** starts or spawns a workload). Fails soft to zero servers when no container runtime is reachable. Same trust class as `--mcp-server`. |
 | `--toolhive-group` | `""` | ToolHive group to discover workloads from (empty → the `default` group). Only consulted with `--toolhive`. |
 
+A connected client can create a target-bound debugger with
+`mecatui connect ADDRESS debug SESSION_ID --debug-mcp NAME`. `NAME` must be one of these
+server-global streaming-HTTP registrations; no URL/header is accepted from the debug create.
+Only direct tools in the persisted initial ceiling are mounted. Unannotated or mutating calls
+always ask interactively—even under yolo or a configured allow—and no allow-always decision is
+learned. Draft first, then make a separate current publication request and approve that one call.
+
 Operator-tier `mcp.servers` profiles are wired through the same resolver for login and
 serve. For a mutable local OAuth profile, keep the client secret and canonical base64
 32-byte store key in referenced `MECATL_*` variables, then run

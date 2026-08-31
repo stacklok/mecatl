@@ -130,6 +130,18 @@ RunTeam path has its own member cancel: the `CancelTeammate(team_id, member)` un
 (HTTP `POST /v1/teams/{id}/members/cancel`, issue #29) reaches a running team's
 member directly through `Supervisor.CancelMember` — no parent registry on that path.
 
+Dedicated session debugging does not reuse `InspectSubagent`'s raw child-id input. The
+`InspectSession related` view traverses validated Subagent, Parallel, Team, and scheduled
+relationships from one authorized root only when both parent/origin ID and opaque persisted
+incarnation match, and returns opaque incarnation-bound handles only for
+retained descendants admitted by the deployment's ownership posture. When ownership is
+enforced, equality is stable issuer+subject identity rather than display/grant metadata;
+without enforcement, owner comparisons are omitted. `delegation` projects typed lifecycle and parent-result facts;
+pruned children remain visible only as content-free tombstones, including across same-ID
+recreation, and retained child
+transcripts are read through revalidated scope handles. This keeps unrelated session IDs
+unprobeable and makes retention gaps explicit ([ADR 0258](../adr/0258-cryptographic-session-incarnations.md)).
+
 **Background Bash jobs ride the same registry as a NON-delegation family**
 (`docs/adr/0201-background-bash.md`). A `background: true` call on the `Bash`
 tool registers a `bash-cmd` entry (`bashcmd-<callID>` — a bare process, NO child

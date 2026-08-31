@@ -84,10 +84,10 @@ func TestInvariant_non_main_sessions_cannot_start_as_chat(t *testing.T) {
 	t.Parallel()
 	created := time.Unix(0, 0)
 	branch := 2
-	scheduled, scheduledErr := session.NewScheduled("opaque-scheduled", session.ModeDefault, "/ws", session.Limits{}, created, "nightly", "")
-	subagent, subagentErr := session.NewSubagent("opaque-subagent", session.ModeDefault, "/ws", session.Limits{}, created, "parent", "call")
-	parallel, parallelErr := session.NewParallelBranch("opaque-parallel", session.ModeDefault, "/ws", session.Limits{}, created, "parent", "call", branch)
-	team, teamErr := session.NewTeamMember("opaque-team", session.ModeDefault, "/ws", session.Limits{}, created, "team", "worker", "parent")
+	scheduled, scheduledErr := session.NewScheduled("opaque-scheduled", session.ModeDefault, "/ws", session.Limits{}, created, "nightly", "", "")
+	subagent, subagentErr := session.NewSubagent("opaque-subagent", session.ModeDefault, "/ws", session.Limits{}, created, "parent", session.NewIncarnationID(), "call")
+	parallel, parallelErr := session.NewParallelBranch("opaque-parallel", session.ModeDefault, "/ws", session.Limits{}, created, "parent", session.NewIncarnationID(), "call", branch)
+	team, teamErr := session.NewTeamMember("opaque-team", session.ModeDefault, "/ws", session.Limits{}, created, "team", "worker", "parent", session.NewIncarnationID())
 	fixtures := []struct {
 		name string
 		sess *session.Session
@@ -113,7 +113,7 @@ func TestInvariant_non_main_sessions_cannot_start_as_chat(t *testing.T) {
 func TestADR_0108_SchedulerPurposeOnlyDrivesScheduled(t *testing.T) {
 	t.Parallel()
 	svc, store := runPurposeService(t, false)
-	scheduledSession, scheduledErr := session.NewScheduled("custom-fire-id", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0), "nightly", "")
+	scheduledSession, scheduledErr := session.NewScheduled("custom-fire-id", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0), "nightly", "", "")
 	scheduled := mustRelatedSession(t, scheduledSession, scheduledErr)
 	if err := store.Save(context.Background(), scheduled); err != nil {
 		t.Fatalf("Save scheduled: %v", err)

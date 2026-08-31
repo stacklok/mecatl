@@ -59,6 +59,24 @@ func TestDebugHelpDocumentsBothCanonicalForms(t *testing.T) {
 	}
 }
 
+func TestDebugMCPFlagsRepeatAndRejectNonDebug(t *testing.T) {
+	res := resolveInvocation([]string{"mecatui", "connect", "example.test:9443", "debug", "target", "--debug-mcp", "github", "--debug-mcp=slack"})
+	cfg, err := parseRunConfig(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.debugMCP, ",") != "github,slack" {
+		t.Fatalf("debug MCP selection = %v", cfg.debugMCP)
+	}
+	if prompt := initialPromptForConfig(cfg); !strings.Contains(prompt, "github, slack") || !strings.Contains(prompt, "does not authorize publication") {
+		t.Fatalf("debug prompt does not disclose selected servers without authority: %q", prompt)
+	}
+	plain := config{debugMCP: []string{"github"}}
+	if err := plain.validate(); err == nil || !strings.Contains(err.Error(), "only with the debug command") {
+		t.Fatalf("non-debug --debug-mcp error = %v", err)
+	}
+}
+
 func TestDebugPrivacyWarningUsesRuntimeEmissionPathAndNamesSensitiveEvidence(t *testing.T) {
 	var out bytes.Buffer
 	emitDebugPrivacyWarning(&out, "target")

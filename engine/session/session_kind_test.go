@@ -16,6 +16,7 @@ import (
 func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 	t.Parallel()
 	created := time.Unix(1700000000, 0).UTC()
+	parentIncarnation := session.NewIncarnationID()
 	tests := []struct {
 		name string
 		new  func() (*session.Session, error)
@@ -26,20 +27,20 @@ func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 			return session.New("main-1", session.ModeDefault, "/ws", session.Limits{}, created), nil
 		}, kind: session.SessionKindMain},
 		{name: "scheduled", new: func() (*session.Session, error) {
-			return session.NewScheduled("sched-1", session.ModePlan, "/ws", session.Limits{}, created, "nightly", "origin-1")
-		}, kind: session.SessionKindScheduled, rel: session.SessionRelationship{ScheduleName: "nightly", OriginSessionID: "origin-1"}},
+			return session.NewScheduled("sched-1", session.ModePlan, "/ws", session.Limits{}, created, "nightly", "origin-1", parentIncarnation)
+		}, kind: session.SessionKindScheduled, rel: session.SessionRelationship{ScheduleName: "nightly", OriginSessionID: "origin-1", OriginIncarnation: parentIncarnation}},
 		{name: "subagent", new: func() (*session.Session, error) {
-			return session.NewSubagent("sub-1", session.ModeDefault, "/ws", session.Limits{}, created, "parent-1", "call-1")
-		}, kind: session.SessionKindSubagent, rel: session.SessionRelationship{ParentSessionID: "parent-1", CallID: "call-1"}},
+			return session.NewSubagent("sub-1", session.ModeDefault, "/ws", session.Limits{}, created, "parent-1", parentIncarnation, "call-1")
+		}, kind: session.SessionKindSubagent, rel: session.SessionRelationship{ParentSessionID: "parent-1", ParentIncarnation: parentIncarnation, CallID: "call-1"}},
 		{name: "parallel branch", new: func() (*session.Session, error) {
-			return session.NewParallelBranch("parallel-1", session.ModeDefault, "/ws", session.Limits{}, created, "parent-1", "call-2", 3)
-		}, kind: session.SessionKindParallelBranch, rel: session.SessionRelationship{ParentSessionID: "parent-1", CallID: "call-2", BranchIndex: intPtr(3)}},
+			return session.NewParallelBranch("parallel-1", session.ModeDefault, "/ws", session.Limits{}, created, "parent-1", parentIncarnation, "call-2", 3)
+		}, kind: session.SessionKindParallelBranch, rel: session.SessionRelationship{ParentSessionID: "parent-1", ParentIncarnation: parentIncarnation, CallID: "call-2", BranchIndex: intPtr(3)}},
 		{name: "team member", new: func() (*session.Session, error) {
-			return session.NewTeamMember("team-member-1", session.ModeDefault, "/ws", session.Limits{}, created, "team-1", "reviewer", "parent-1")
-		}, kind: session.SessionKindTeamMember, rel: session.SessionRelationship{TeamID: "team-1", MemberName: "reviewer", ParentSessionID: "parent-1"}},
+			return session.NewTeamMember("team-member-1", session.ModeDefault, "/ws", session.Limits{}, created, "team-1", "reviewer", "parent-1", parentIncarnation)
+		}, kind: session.SessionKindTeamMember, rel: session.SessionRelationship{TeamID: "team-1", MemberName: "reviewer", ParentSessionID: "parent-1", ParentIncarnation: parentIncarnation}},
 		{name: "debug", new: func() (*session.Session, error) {
-			return session.NewDebug("debug-1", session.ModeDefault, session.Limits{}, created, "target-1")
-		}, kind: session.SessionKindDebug, rel: session.SessionRelationship{DebugTargetID: "target-1"}},
+			return session.NewDebug("debug-1", session.ModeDefault, session.Limits{}, created, "target-1", parentIncarnation)
+		}, kind: session.SessionKindDebug, rel: session.SessionRelationship{DebugTargetID: "target-1", DebugTargetIncarnation: parentIncarnation}},
 	}
 
 	for _, tc := range tests {
@@ -64,12 +65,12 @@ func TestSessionContinuityUX_Scenario1_KindRelationshipRoundTrip(t *testing.T) {
 				t.Errorf("snapshot metadata = (%q, %+v), want (%q, %+v)", got.Kind, got.Relationship, tc.kind, tc.rel)
 			}
 
-			meta := eventsource.SessionMeta{ID: want.ID, Mode: want.Mode, Workspace: want.Workspace, Limits: want.Limits, CreatedAt: want.CreatedAt, Kind: want.Kind, Relationship: want.Relationship}
+			meta := eventsource.SessionMeta{ID: want.ID, Incarnation: want.Incarnation(), Mode: want.Mode, Workspace: want.Workspace, Limits: want.Limits, CreatedAt: want.CreatedAt, Kind: want.Kind, Relationship: want.Relationship}
 			folded, err := eventsource.Fold(meta, iter.Seq2[session.Event, error](func(func(session.Event, error) bool) {}))
 			if err != nil {
 				t.Fatalf("eventsource.Fold: %v", err)
 			}
-			if folded.Kind != tc.kind || !reflect.DeepEqual(folded.Relationship, tc.rel) {
+			if folded.Kind != tc.kind || !reflect.DeepEqual(folded.Relationship, tc.rel) || folded.Incarnation() != want.Incarnation() {
 				t.Errorf("event-source metadata = (%q, %+v), want (%q, %+v)", folded.Kind, folded.Relationship, tc.kind, tc.rel)
 			}
 

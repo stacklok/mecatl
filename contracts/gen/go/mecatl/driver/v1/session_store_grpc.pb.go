@@ -60,9 +60,11 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SessionStoreService_Save_FullMethodName         = "/mecatl.driver.v1.SessionStoreService/Save"
+	SessionStoreService_Create_FullMethodName       = "/mecatl.driver.v1.SessionStoreService/Create"
 	SessionStoreService_Load_FullMethodName         = "/mecatl.driver.v1.SessionStoreService/Load"
 	SessionStoreService_List_FullMethodName         = "/mecatl.driver.v1.SessionStoreService/List"
 	SessionStoreService_PageMetadata_FullMethodName = "/mecatl.driver.v1.SessionStoreService/PageMetadata"
+	SessionStoreService_ReadLineage_FullMethodName  = "/mecatl.driver.v1.SessionStoreService/ReadLineage"
 	SessionStoreService_Delete_FullMethodName       = "/mecatl.driver.v1.SessionStoreService/Delete"
 	SessionStoreService_Capabilities_FullMethodName = "/mecatl.driver.v1.SessionStoreService/Capabilities"
 )
@@ -80,6 +82,8 @@ type SessionStoreServiceClient interface {
 	// Save persists the snapshot under session_id, overwriting any prior
 	// snapshot for the same id (a later Save wins).
 	Save(ctx context.Context, in *SaveRequest, opts ...grpc.CallOption) (*SaveResponse, error)
+	// Create atomically publishes only when session_id is absent.
+	Create(ctx context.Context, in *SaveRequest, opts ...grpc.CallOption) (*SaveResponse, error)
 	// Load returns the most recent snapshot saved under session_id. A session
 	// id that was never saved MUST return NOT_FOUND — the harness maps that to
 	// its port.ErrSessionNotFound sentinel; any other error is an
@@ -91,6 +95,11 @@ type SessionStoreServiceClient interface {
 	// PageMetadata returns one owner-filtered keyset page when the backend
 	// implements the optional port.SessionMetadataPager capability.
 	PageMetadata(ctx context.Context, in *PageSessionMetadataRequest, opts ...grpc.CallOption) (*PageSessionMetadataResponse, error)
+	// ReadLineage returns the current retained root, applicable historical root
+	// tombstones, and directly related content-free records. Records with the
+	// same session id are distinct incarnations and MUST NOT be collapsed.
+	// Available only when the backend implements port.SessionLineageReader.
+	ReadLineage(ctx context.Context, in *ReadSessionLineageRequest, opts ...grpc.CallOption) (*ReadSessionLineageResponse, error)
 	// Delete removes the snapshot stored under session_id, idempotently: an
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
@@ -112,6 +121,16 @@ func (c *sessionStoreServiceClient) Save(ctx context.Context, in *SaveRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SaveResponse)
 	err := c.cc.Invoke(ctx, SessionStoreService_Save_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionStoreServiceClient) Create(ctx context.Context, in *SaveRequest, opts ...grpc.CallOption) (*SaveResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveResponse)
+	err := c.cc.Invoke(ctx, SessionStoreService_Create_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +161,16 @@ func (c *sessionStoreServiceClient) PageMetadata(ctx context.Context, in *PageSe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PageSessionMetadataResponse)
 	err := c.cc.Invoke(ctx, SessionStoreService_PageMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionStoreServiceClient) ReadLineage(ctx context.Context, in *ReadSessionLineageRequest, opts ...grpc.CallOption) (*ReadSessionLineageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadSessionLineageResponse)
+	err := c.cc.Invoke(ctx, SessionStoreService_ReadLineage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +210,8 @@ type SessionStoreServiceServer interface {
 	// Save persists the snapshot under session_id, overwriting any prior
 	// snapshot for the same id (a later Save wins).
 	Save(context.Context, *SaveRequest) (*SaveResponse, error)
+	// Create atomically publishes only when session_id is absent.
+	Create(context.Context, *SaveRequest) (*SaveResponse, error)
 	// Load returns the most recent snapshot saved under session_id. A session
 	// id that was never saved MUST return NOT_FOUND — the harness maps that to
 	// its port.ErrSessionNotFound sentinel; any other error is an
@@ -192,6 +223,11 @@ type SessionStoreServiceServer interface {
 	// PageMetadata returns one owner-filtered keyset page when the backend
 	// implements the optional port.SessionMetadataPager capability.
 	PageMetadata(context.Context, *PageSessionMetadataRequest) (*PageSessionMetadataResponse, error)
+	// ReadLineage returns the current retained root, applicable historical root
+	// tombstones, and directly related content-free records. Records with the
+	// same session id are distinct incarnations and MUST NOT be collapsed.
+	// Available only when the backend implements port.SessionLineageReader.
+	ReadLineage(context.Context, *ReadSessionLineageRequest) (*ReadSessionLineageResponse, error)
 	// Delete removes the snapshot stored under session_id, idempotently: an
 	// unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
 	// harness client and mapped to success).
@@ -212,6 +248,9 @@ type UnimplementedSessionStoreServiceServer struct{}
 func (UnimplementedSessionStoreServiceServer) Save(context.Context, *SaveRequest) (*SaveResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Save not implemented")
 }
+func (UnimplementedSessionStoreServiceServer) Create(context.Context, *SaveRequest) (*SaveResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
+}
 func (UnimplementedSessionStoreServiceServer) Load(context.Context, *LoadRequest) (*LoadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Load not implemented")
 }
@@ -220,6 +259,9 @@ func (UnimplementedSessionStoreServiceServer) List(context.Context, *ListSession
 }
 func (UnimplementedSessionStoreServiceServer) PageMetadata(context.Context, *PageSessionMetadataRequest) (*PageSessionMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PageMetadata not implemented")
+}
+func (UnimplementedSessionStoreServiceServer) ReadLineage(context.Context, *ReadSessionLineageRequest) (*ReadSessionLineageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReadLineage not implemented")
 }
 func (UnimplementedSessionStoreServiceServer) Delete(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
@@ -262,6 +304,24 @@ func _SessionStoreService_Save_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SessionStoreServiceServer).Save(ctx, req.(*SaveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionStoreService_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionStoreServiceServer).Create(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionStoreService_Create_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionStoreServiceServer).Create(ctx, req.(*SaveRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -320,6 +380,24 @@ func _SessionStoreService_PageMetadata_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SessionStoreService_ReadLineage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadSessionLineageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionStoreServiceServer).ReadLineage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionStoreService_ReadLineage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionStoreServiceServer).ReadLineage(ctx, req.(*ReadSessionLineageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SessionStoreService_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteSessionRequest)
 	if err := dec(in); err != nil {
@@ -368,6 +446,10 @@ var SessionStoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SessionStoreService_Save_Handler,
 		},
 		{
+			MethodName: "Create",
+			Handler:    _SessionStoreService_Create_Handler,
+		},
+		{
 			MethodName: "Load",
 			Handler:    _SessionStoreService_Load_Handler,
 		},
@@ -378,6 +460,10 @@ var SessionStoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PageMetadata",
 			Handler:    _SessionStoreService_PageMetadata_Handler,
+		},
+		{
+			MethodName: "ReadLineage",
+			Handler:    _SessionStoreService_ReadLineage_Handler,
 		},
 		{
 			MethodName: "Delete",

@@ -185,13 +185,20 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 				}
 			}
 			for _, typ := range wireTypes {
-				if typ == string(session.EvNetworkAttempt) {
-					t.Fatalf("live %s stream exposed network.attempt: %v", transport, wireTypes)
+				if typ == string(session.EvNetworkAttempt) || typ == string(session.EvRequestManifest) {
+					t.Fatalf("live %s stream exposed debugger-only event %q: %v", transport, typ, wireTypes)
 				}
 			}
 			logged := readEventLog(t, log, sess.ID)
 			var attempts []session.NetworkAttemptPayload
+			var manifests []session.RequestManifestPayload
 			for _, ev := range logged {
+				if ev.Type == session.EvRequestManifest {
+					if ev.RequestManifest == nil {
+						t.Fatal("durable request.manifest has nil payload")
+					}
+					manifests = append(manifests, *ev.RequestManifest)
+				}
 				if ev.Type == session.EvNetworkAttempt {
 					if ev.NetworkAttempt == nil {
 						t.Fatal("durable network.attempt has nil payload")
@@ -201,6 +208,9 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 			}
 			if len(attempts) != 1 || attempts[0].SessionID != sess.ID || attempts[0].RunSerial < 1 || attempts[0].Turn != 0 || attempts[0].CorrelationDigest != digest {
 				t.Fatalf("durable attempts = %+v", attempts)
+			}
+			if len(manifests) != 1 || manifests[0].Model != "test-model" || manifests[0].MessageCount != 1 || manifests[0].MessageBytes <= 0 {
+				t.Fatalf("durable request manifests = %+v", manifests)
 			}
 			encoded, err := json.Marshal(logged)
 			if err != nil {
@@ -326,20 +336,21 @@ func TestDirectTeamTransportsOmitNetworkAttemptWithoutAffectingDurableObservatio
 
 			var ordinary bool
 			for _, typ := range wireTypes {
-				if typ == string(session.EvNetworkAttempt) {
-					t.Fatalf("direct Team %s stream exposed network.attempt: %v", transport, wireTypes)
+				if typ == string(session.EvNetworkAttempt) || typ == string(session.EvRequestManifest) {
+					t.Fatalf("direct Team %s stream exposed debugger-only event %q: %v", transport, typ, wireTypes)
 				}
 				ordinary = ordinary || typ == string(session.EvTurnStart) || typ == string(session.EvMessageDelta)
 			}
 			if !ordinary {
 				t.Fatalf("direct Team %s stream omitted ordinary member events: %v", transport, wireTypes)
 			}
-			var durableAttempt bool
+			var durableAttempt, durableManifest bool
 			for _, ev := range readEventLog(t, log, logID) {
 				durableAttempt = durableAttempt || ev.Type == session.EvNetworkAttempt
+				durableManifest = durableManifest || ev.Type == session.EvRequestManifest
 			}
-			if !durableAttempt {
-				t.Fatal("transport filtering removed network.attempt from durable observation")
+			if !durableAttempt || !durableManifest {
+				t.Fatalf("transport filtering removed debugger-only durable observation: attempt=%t manifest=%t", durableAttempt, durableManifest)
 			}
 		})
 	}

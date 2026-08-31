@@ -161,6 +161,8 @@ type TeamEvent struct {
 	// the team.member projection so a client can address the member (CancelChild)
 	// without deriving the id grammar. The same for every event of a given member.
 	MemberSessionID string
+	// MemberIncarnation binds internal durable event correlation to this member lifetime.
+	MemberIncarnation session.IncarnationID
 	// Event is the underlying session Event (turn.start, tool.call, result, ...).
 	Event session.Event
 	// ContextWindow is the producing member engine's context window in tokens
@@ -863,7 +865,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
-	sess, err := session.NewTeamMember(s.sessionID(spec.Name), mode, ws.Workspace().Root(), limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID)
+	sess, err := session.NewTeamMember(s.sessionID(spec.Name), mode, ws.Workspace().Root(), limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
 	if err != nil {
 		if cleanup != nil {
 			_ = cleanup()
@@ -1644,7 +1646,7 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 				usage = ev.Result.Usage
 			}
 		}
-		te := TeamEvent{Member: m.spec.Name, MemberSessionID: string(m.sess.ID), Event: ev, ContextWindow: m.engine.ContextWindow()}
+		te := TeamEvent{Member: m.spec.Name, MemberSessionID: string(m.sess.ID), MemberIncarnation: m.sess.Incarnation(), Event: ev, ContextWindow: m.engine.ContextWindow()}
 		// The forward is a guarded send, not a bare one: a consumer that stops
 		// draining the PARENT stream parks the forwarder (sink → safeEmit), fills
 		// evCh, and would park this member goroutine forever — wedging Run (g.Wait

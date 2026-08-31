@@ -567,6 +567,12 @@ message CreateSessionRequest {
   // combined with source_session_id, and never copies or mutates target history.
   // Missing and foreign-owned targets are both reported as NotFound.
   string debug_target_session_id = 9;
+
+  // debug_mcp_servers explicitly selects already-configured server-global
+  // streaming-HTTP MCP servers for this debug session. Legal only with a debug
+  // target; names are bounded and unique. No URL, header, or inline MCP config is
+  // accepted, and selection never implies publication authority.
+  repeated string debug_mcp_servers = 10;
 }
 
 // GetServerInfoRequest asks for the sanitized diagnostic display endpoint of the
@@ -752,6 +758,9 @@ message ServerCapabilities {
   // session_debug is true when this server can create and rehydrate dedicated
   // no-filesystem debug sessions.
   bool session_debug = 26;
+  // debug_mcp is true when debug sessions may explicitly borrow selected direct
+  // tools from configured server-global streaming-HTTP MCP servers.
+  bool debug_mcp = 27;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -1368,6 +1377,10 @@ message Session {
   // kind and relationship preserve the durable trusted-producer identity.
   string kind = 14;
   SessionRelationship relationship = 15;
+  // Selected global server names and the exact creation-time direct-tool ceiling.
+  // These contain no URLs, headers, credentials, or inline MCP configuration.
+  repeated string debug_mcp_servers = 16;
+  repeated string debug_mcp_tools = 17;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The

@@ -26,6 +26,38 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `LogRecordGap` is a log-record ENVELOPE variant, never a `session.Event`. A gap is a fact about delivery rather than something that happened in the run, so `session.Event`, the proto `Event` message, and the event kind-parity surface all gain nothing; a gap occupies a real append position so cursors advance past it correctly, and the legacy `EventLog.Read` SKIPS it, preserving that port's contract of returning only events.
 
   All additions are **Added = minor**: new types and functions alongside an untouched `EventLog`, with no existing signature changed.
+- **Cryptographic session incarnations and incarnation-bound lineage** — adds the
+  opaque `session.IncarnationID`, a 128-bit `crypto/rand` identity minted by every
+  `session.New`, persisted by `sessnap.Snapshot` and `eventsource.SessionMeta`, plus a
+  prefix-disjoint deterministic identity for legacy snapshots. Related-session
+  constructors and `SessionRelationship` now carry the parent/origin/target
+  incarnation; delegation events carry internal child incarnations; and
+  `port.SessionLineageQuery` requires the root incarnation. The constructor and query
+  signature changes are breaking (pre-v1 minor); the new identity APIs are Added.
+
+- **Durable selected debug MCP ceiling and target incarnation** — adds
+  `session.Session.DebugMCPServers`, `DebugMCPTools`, and
+  `DebugTargetFingerprint` plus their `sessnap.Snapshot` and `eventsource.SessionMeta`
+  fields, and adds `session.IncarnationFingerprint` /
+  `DebugTargetFingerprint`. The MCP fields persist only bounded configured server names
+  and exact model-facing direct-tool names; the non-projectable fingerprint binds target
+  ID, cryptographic incarnation, and owner scope. Added (minor).
+
+- **Content-safe request manifests** — adds `session.EvRequestManifest`,
+  `RequestManifestPayload` and its closed prompt/tool metadata (including
+  catalog/overlay/MCP source labels), plus
+  `prompt.AssembleWithManifest`/`InstructionManifest`. The loop emits the log-only manifest
+  from the final provider-neutral request without retaining prompt, message, tool-spec, or
+  provider-private bodies. Built-in instruction assemblers report provenance; custom
+  `InstructionAssembler` implementations remain compatible as `custom`/`unknown`. Added
+  (minor).
+
+- **Durable session lineage port** — adds the optional `port.SessionLineageReader`,
+  bounded `SessionLineageQuery`/`SessionLineageResult`, content-free
+  `SessionLineageRecord`, and closed retained/pruned `SessionLineageState`. Store
+  adapters can expose authoritative direct relationships and deletion tombstones
+  without widening the minimal `SessionStore` or loading transcript content.
+  Added (minor).
 
 - **`agent.Run.RunID()`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — reports the run's host-minted identity, or `""` when none was supplied.
 
@@ -48,6 +80,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`agent.Run.EnqueueSteer`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
 
 - **`session.SteerPayload.Parts`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — adds the committed media parts to the steer echo. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+
+- **`session.Event.RequestManifest`** — adds the log-only, content-safe final-request
+  manifest payload. Adding a field to an exported struct breaks external unkeyed literals,
+  so this is Changed/breaking (pre-v1 a minor bump).
 
 - **`session.Event.NetworkAttempt`** — adds the log-only sanitized provider-attempt
   payload used by the dedicated debugger. Adding a field to an exported struct breaks

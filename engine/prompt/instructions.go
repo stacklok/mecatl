@@ -7,6 +7,75 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+// InstructionManifest identifies the provenance of one message returned by an
+// InstructionAssembler without retaining or duplicating its body. Kind and
+// Provenance are closed tokens consumed by the request-manifest builder.
+type InstructionManifest struct {
+	Kind       string
+	Provenance string
+}
+
+// Instruction manifest kind and provenance tokens form a closed vocabulary.
+const (
+	InstructionKindTurn0           = "instruction"
+	InstructionProvenanceProject   = "project"
+	InstructionProvenanceSoul      = "soul"
+	InstructionProvenanceMemory    = "memory"
+	InstructionProvenanceRules     = "rules"
+	InstructionProvenanceUserModel = "user_model"
+	InstructionProvenanceCustom    = "custom"
+	InstructionProvenanceUnknown   = "unknown"
+)
+
+// AssembleWithManifest runs an assembler exactly once and returns one metadata row per
+// resulting message. Built-in assemblers retain their known provenance; custom
+// assemblers remain compatible and are honestly labelled custom/unknown.
+func AssembleWithManifest(ctx context.Context, ws tool.Workspace, a InstructionAssembler) ([]session.Message, []InstructionManifest, error) {
+	if a == nil {
+		return nil, nil, nil
+	}
+	if multi, ok := a.(MultiAssembler); ok {
+		var messages []session.Message
+		var manifest []InstructionManifest
+		for _, child := range multi.Assemblers {
+			childMessages, childManifest, err := AssembleWithManifest(ctx, ws, child)
+			if err != nil {
+				return nil, nil, err
+			}
+			messages = append(messages, childMessages...)
+			manifest = append(manifest, childManifest...)
+		}
+		return messages, manifest, nil
+	}
+	messages, err := a.Assemble(ctx, ws)
+	if err != nil {
+		return nil, nil, err
+	}
+	kind, provenance := instructionAssemblerManifest(a)
+	manifest := make([]InstructionManifest, len(messages))
+	for i := range manifest {
+		manifest[i] = InstructionManifest{Kind: kind, Provenance: provenance}
+	}
+	return messages, manifest, nil
+}
+
+func instructionAssemblerManifest(a InstructionAssembler) (kind, provenance string) {
+	switch a.(type) {
+	case RootAssembler, *RootAssembler:
+		return InstructionKindTurn0, InstructionProvenanceProject
+	case SoulAssembler, *SoulAssembler:
+		return InstructionKindTurn0, InstructionProvenanceSoul
+	case MemoryIndexAssembler, *MemoryIndexAssembler:
+		return InstructionKindTurn0, InstructionProvenanceMemory
+	case RulesAssembler, *RulesAssembler:
+		return InstructionKindTurn0, InstructionProvenanceRules
+	case UserModelAssembler, *UserModelAssembler:
+		return InstructionKindTurn0, InstructionProvenanceUserModel
+	default:
+		return InstructionProvenanceCustom, InstructionProvenanceUnknown
+	}
+}
+
 // InstructionAssembler resolves the ordered set of project-instruction messages
 // for a workspace, returned as user-role messages to be recorded once at the
 // start of a run.

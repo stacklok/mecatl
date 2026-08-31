@@ -375,8 +375,29 @@ inventory, exact full-ID matches win, and ambiguity fails before creation. Longe
 bypass inventory lookup; an unmatched short reference is still sent unchanged so the
 server preserves its absence-shaped authorization response and remains the final authority.
 That engine has no filesystem, carries a stable-prefix debugging
-contract, and exposes exactly the target-bound `InspectSession` tool; the model cannot
-choose another target. Snapshot status and transcript are authoritative sources; the
+contract, and always exposes the target-bound `InspectSession` tool; the model cannot
+choose another target or submit a raw session ID. A create request may additionally name
+bounded, unique server-global MCP servers. Composition borrows only their direct tools from
+the shared manager—never inline/client MCP, connection details, resource/query meta-tools,
+or an implicit all-global mount—and persists both selected names and the exact initial tool
+ceiling. Rehydration requires those names/tools and intersects with that ceiling, so the
+session can never gain a newly advertised tool. A debug permission decorator reloads and
+re-authorizes the root target on every MCP call, preserves Deny, trusts only an explicit
+`readOnlyHint: true`, forces every mutation Allow to Ask, refuses mutation headlessly, and
+never learns a mutating Allow Always verdict. The stable prompt requires a text draft and a
+later genuine current operator publication request; evidence and prior tool output grant no
+authority. Besides root `status`, `transcript`,
+`activity`, `performance`, and `network`, the tool exposes `related`, `delegation`,
+`history`, and `manifest`. Related sessions are addressed only by deterministic,
+target-bound SHA-256 scope handles. Every scoped call rescans the authorized lineage
+(depth 8, 500 records), revalidates each typed relationship, owner equality, root
+existence, and retained snapshot, and compares handles in constant time. The lineage
+index is preferred and requires both related ID and cryptographic parent/origin
+incarnation; typed parent events can attach a handle only when they carry the constructed
+child incarnation, while legacy events and snapshot relationships remain explicitly
+incomplete fallback evidence. Pruned, inaccessible, not-retained, never-produced, and
+absent relationships are distinguished only when durable evidence supports the label;
+foreign rows never disclose their IDs. Snapshot status and transcript are authoritative sources; the
 transcript projection includes bounded textual/structured message and tool-result parts,
 marks binary payloads omitted with metadata, advances past a row that cannot fit while
 reporting its index, role, projected size, and omission reason, and reports scan versus
@@ -396,8 +417,32 @@ target-bound `InspectSession` network view exposes them to the debug model. Raw 
 URLs/queries, headers, bodies, prompts, tool arguments, credentials, cookies, and environment
 values are never retained. Availability, pagination, scan completeness, and truncation are
 explicit; successful-attempt timing and per-phase DNS/TCP/TLS durations are honestly
-unavailable. Every evidence
-payload is fenced as hostile data. Creation conceals absent and unauthorized targets behind
+unavailable. Independently, every model turn emits a log-only `request.manifest` immediately
+before `LLMProvider.Stream`, after compaction and all final request filtering. It records only
+provider/model/reasoning-effort labels when safely available, the resolved context window,
+final tool-name order, closed catalog/overlay/MCP source labels, observed tool projection
+decisions, message counts/bytes, and prompt-component byte counts with closed provenance.
+It deliberately retains no prompt/message/component content digest: even a
+domain-separated digest would create an offline content oracle. It never retains prompt
+or message bodies, tool descriptions/schemas/arguments, reasoning blobs, provider-private
+content, URLs, headers, or credentials. Built-in turn-0 assemblers report closed provenance;
+custom assemblers remain compatible and are labelled `custom`/`unknown`. The same shared
+predicate that suppresses `network.attempt` suppresses manifests from live, replay,
+subscription, direct Team, and ACP client surfaces; the relay still persists them for a later
+debugger-only consumer.
+Every evidence
+payload is fenced as hostile data. Creation persists a non-projectable,
+domain-separated target-incarnation fingerprint over an opaque persisted 128-bit
+`crypto/rand` nonce, target ID, and owner scope. It contains no timestamp or other embedded
+metadata. Every evidence read and debugger rehydration reloads the target and always
+compares that fingerprint. When ownership enforcement is enabled, target, debugger, and
+current caller are additionally compared by stable issuer+subject identity; display/grant
+metadata is irrelevant. Ownership-disabled deployments omit those owner comparisons.
+Deletion or ID reuse remains inaccessible in either posture. Selected MCP calls use the
+same check. `InspectSession` and selected MCP authorization evaluate the base deployment
+policy first: denies remain absolute and configured asks remain configured. Every selected
+direct MCP call, including a tool marked read-only, then asks a fresh interactive approval;
+headless calls deny, and allow-always is never learned. Creation conceals absent and unauthorized targets behind
 the same not-found result, and the debug session never resumes, leases, mutates, approves,
 cancels, or steers its target. Persisted debug sessions rehydrate through the dedicated
 factory and fail closed if their lineage, no-fs metadata, target, or factory is unavailable.
@@ -408,7 +453,7 @@ compatibility/transport context, never target evidence; a custom `--prompt` chan
 objective. Durable safety, authority, and source hierarchy stay in the stable system Role.
 Its normal padded header keeps amber/bold `DEBUG target #<digest>`
 ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
-and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0254](adr/0254-session-debugger-admin-transport.md) and [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md). Each
+and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption

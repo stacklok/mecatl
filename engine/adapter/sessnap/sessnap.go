@@ -31,16 +31,17 @@ import (
 // struct with JSON tags so it serializes deterministically regardless of the
 // (untagged) layout of the domain types.
 type Snapshot struct {
-	ID         session.SessionID      `json:"id"`
-	State      session.State          `json:"state"`
-	Mode       session.PermissionMode `json:"mode"`
-	Limits     session.Limits         `json:"limits"`
-	Counters   session.Counters       `json:"counters"`
-	Workspace  string                 `json:"workspace"`
-	CreatedAt  time.Time              `json:"created_at"`
-	Messages   []messageDTO           `json:"messages"`
-	Pending    *session.PendingAsk    `json:"pending,omitempty"`
-	StopReason session.StopReason     `json:"stop_reason,omitempty"`
+	ID          session.SessionID      `json:"id"`
+	State       session.State          `json:"state"`
+	Mode        session.PermissionMode `json:"mode"`
+	Limits      session.Limits         `json:"limits"`
+	Counters    session.Counters       `json:"counters"`
+	Workspace   string                 `json:"workspace"`
+	CreatedAt   time.Time              `json:"created_at"`
+	Incarnation session.IncarnationID  `json:"incarnation,omitempty"`
+	Messages    []messageDTO           `json:"messages"`
+	Pending     *session.PendingAsk    `json:"pending,omitempty"`
+	StopReason  session.StopReason     `json:"stop_reason,omitempty"`
 	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
@@ -61,6 +62,13 @@ type Snapshot struct {
 	// — additive, no version bump. Persisting it lets a restarted process re-mint the
 	// SAME per-session engine (the same-effort adapter) via the factory.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// DebugMCPServers names only the configured server-global MCP servers selected
+	// for a debug session. DebugMCPTools is the exact direct-tool ceiling captured
+	// at creation; neither field contains URLs, headers, or connection details.
+	DebugMCPServers []string `json:"debug_mcp_servers,omitempty"`
+	DebugMCPTools   []string `json:"debug_mcp_tools,omitempty"`
+	// DebugTargetFingerprint is the non-projectable target-incarnation binding.
+	DebugTargetFingerprint string `json:"debug_target_fingerprint,omitempty"`
 	// Title is the session's human-readable label seeded from the first genuine
 	// user prompt. omitempty keeps a pre-Title snapshot with no "title" key
 	// decoding to "" — additive, no format-tag bump (the same precedent as
@@ -189,22 +197,26 @@ func Of(s *session.Session) (Snapshot, error) {
 		relationship.BranchIndex = &branchIndex
 	}
 	snap := Snapshot{
-		ID:              s.ID,
-		State:           s.State,
-		Mode:            s.Mode,
-		Limits:          s.Limits,
-		Counters:        s.Counters,
-		Workspace:       s.Workspace,
-		EnvironmentRef:  s.EnvironmentRef,
-		Profile:         s.Profile,
-		ProviderID:      s.ProviderID,
-		ModelID:         s.ModelID,
-		ReasoningEffort: s.ReasoningEffort,
-		Title:           s.Title,
-		TitleProvenance: s.TitleProvenance,
-		Kind:            s.Kind,
-		Relationship:    relationship,
-		CreatedAt:       s.CreatedAt,
+		ID:                     s.ID,
+		State:                  s.State,
+		Mode:                   s.Mode,
+		Limits:                 s.Limits,
+		Counters:               s.Counters,
+		Workspace:              s.Workspace,
+		EnvironmentRef:         s.EnvironmentRef,
+		Profile:                s.Profile,
+		ProviderID:             s.ProviderID,
+		ModelID:                s.ModelID,
+		ReasoningEffort:        s.ReasoningEffort,
+		DebugMCPServers:        append([]string(nil), s.DebugMCPServers...),
+		DebugMCPTools:          append([]string(nil), s.DebugMCPTools...),
+		DebugTargetFingerprint: s.DebugTargetFingerprint,
+		Title:                  s.Title,
+		TitleProvenance:        s.TitleProvenance,
+		Kind:                   s.Kind,
+		Relationship:           relationship,
+		CreatedAt:              s.CreatedAt,
+		Incarnation:            s.Incarnation(),
 		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
 		// alias (and later mutate) the aggregate's own principal.
 		Owner:            s.Owner.Clone(),
@@ -266,6 +278,9 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.ProviderID = snap.ProviderID
 	s.ModelID = snap.ModelID
 	s.ReasoningEffort = snap.ReasoningEffort
+	s.DebugMCPServers = append([]string(nil), snap.DebugMCPServers...)
+	s.DebugMCPTools = append([]string(nil), snap.DebugMCPTools...)
+	s.DebugTargetFingerprint = snap.DebugTargetFingerprint
 	s.EnvironmentRef = snap.EnvironmentRef
 	s.Adoption = snap.Clone()
 	// RunID restores by direct assignment, like Profile/Title above: it is an
@@ -279,6 +294,9 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	// parameter (that widening is Changed/breaking; this stays Added/minor).
 	if err := s.RestoreLabels(snap.Owner, session.Authority{}); err != nil {
 		return nil, fmt.Errorf("sessnap: restore labels: %w", err)
+	}
+	if err := s.RestoreIncarnation(snap.Incarnation); err != nil {
+		return nil, fmt.Errorf("sessnap: restore incarnation: %w", err)
 	}
 
 	// The cumulative usage to seed (a nil pointer => the zero Usage, the pre-Usage

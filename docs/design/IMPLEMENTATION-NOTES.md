@@ -169,16 +169,32 @@ automatic, or client-transcript-upload path.
 
 A debug session is a normal durable conversation for the analyst, but its authority is
 not normal. `engine/session/kind.go` (`SessionKindDebug`) persists an exact
-`DebugTargetID` relationship. `internal/adapter/server/service.go`
+`DebugTargetID` plus `DebugTargetIncarnation` relationship. `internal/adapter/server/service.go`
 (`validateDebugCreate`) requires the no-fs profile, empty workspace, no carryover,
 schedule, or client-MCP relationship, and a distinct target ID. Target authorization
 uses the ordinary ownership check but maps absent and unauthorized targets to the same
 not-found result.
 
 Composition's `internal/app/build.go` (`debugSessionEngineFactory`) constructs a fresh
-per-session engine with an exact one-tool catalog. `internal/adapter/sessiondebug/sessiondebug.go`
+per-session engine containing target-bound `InspectSession` plus only direct tools from
+explicitly selected server-global MCP names. `internal/adapter/mcp/mcp.go`
+(`Manager.SelectedTools`) borrows the shared manager without reconnecting or owning its
+lifecycle and requires exact equality with the persisted tool-name ceiling; unknown,
+disconnected, tool-empty, added, removed, or renamed-on-restart selections fail closed, and
+meta-tools are never part of this view. `internal/adapter/sessiondebug/permission.go`
+(`PermissionPolicy`) delegates every call to the base deployment policy first, preserving
+Deny and configured Ask provenance. It grants `InspectSession` only as a lower debugger floor;
+for selected MCP calls it revalidates the target incarnation and, when enabled, stable
+issuer+subject owner/principal identity, turns every otherwise-admitted call (including a
+positive read-only hint) into a fresh interactive Ask, denies all selected calls headlessly,
+and never learns an Allow Always verdict. `internal/adapter/sessiondebug/mcpguard.go` (`BindSelectedMCP`) repeats the same check
+at execution after an approval wait. The durable server names, exact tool ceiling, and
+non-projectable target-incarnation fingerprint and the session's persisted opaque 128-bit
+`crypto/rand` `IncarnationID` live on `session.Session`/`sessnap.Snapshot`;
+none carries URLs, headers, or credentials. `internal/adapter/sessiondebug/sessiondebug.go`
 (`New`) binds `InspectSession` to the trusted target; its arguments select only
-`status`, `transcript`, `activity`, `performance`, or `network`, never a session ID. Snapshot
+`status`, `transcript`, `activity`, `performance`, `network`, `related`, `delegation`,
+`history`, or `manifest`, never a session ID. Snapshot
 status and paged transcript use the authoritative snapshot. Transcript rows project
 model-visible `Message.Parts` and preferred `ToolResult.Parts`; bounded textual and
 structured values remain visible, while binary/media bytes become explicit metadata-only
@@ -210,7 +226,55 @@ The `network` view pages 50 rows while scanning at most 10,000 events and explic
 availability, completeness, truncation, and the absence of successful-attempt and DNS/TCP/TLS
 phase timing. Transcript pages contain at most 20 rows, activity 100,
 performance 50 turns/10,000 scanned events, and every response is bounded to 64 KiB after
-canonical fencing and framing neutralisation. All evidence is repaired to valid UTF-8 and wrapped with `governance.FenceUntrusted` before it
+canonical fencing and framing neutralisation.
+
+The loop also emits `session.EvRequestManifest` once per turn after `buildRequest` and
+`maybeCompact` have produced the exact final `port.LLMRequest`, immediately before `runTurn`
+invokes the provider. `engine/agent/request_manifest.go` canonical-JSON encodes the neutral
+message slice only to calculate message count/bytes. Prompt components retain kind,
+provenance, and byte count, but no content digest: a digest would create an offline oracle.
+`prompt.AssembleWithManifest` classifies built-in project/soul/memory/rules/user-model
+assemblers without parsing rendered text; an arbitrary existing assembler still runs once and
+is honestly tagged `custom`/`unknown`. Tool names preserve the final request order, and each
+observed decision carries only a closed `catalog`, run `overlay`, or canonical MCP source label.
+Tool projection decisions are derived only at gates the loop observes: advertised,
+progressive-disclosure body hidden, mode filtered, carried-authority filtered, shell mount
+unavailable, or catalog entry shadowed by a run overlay. A profile-specific catalog that never
+contained a tool supplies no invented exclusion reason, and no adapter-private MCP discovery or
+mount failure is guessed. Payload values contain no prompt/message bodies, tool
+schemas/descriptions/arguments, reasoning blobs, URLs, headers, credentials, or
+provider-private content. The relay persists the event before the shared debugger-only
+predicate suppresses it from normal live, replay, subscription, direct-Team, and ACP surfaces.
+`InspectSession` projects manifests with bounded pagination. Its `history` catalog separately
+addresses the current snapshot, every retained `compaction.archive`, and the EventLog
+reconstruction with target-bound history handles; pages reuse the transcript projection, so
+pre-compaction tool calls/results remain visible without mutating the snapshot. `delegation`
+uses only typed subagent, parallel, team, and schedule payloads, including task, finding,
+disposition, error-round, stop, and parent CallID-to-ToolResult facts; it never parses prose or
+claims causality. Status labels snapshot counters as `latest_run_counters` and cumulative
+snapshot usage separately, while its EventLog lifetime aggregate groups RunID-bearing runs
+(legacy terminal boundaries otherwise) and sums TurnEnd usage exactly once.
+
+`related` prefers `port.SessionLineageReader`, requiring both the root ID and its
+incarnation, and supplements it with typed parent-event evidence only when the event carries
+the constructed child's incarnation. It returns only deterministic target-bound SHA-256 scope
+handles containing the child incarnation. Durable rows are keyed by `(session ID, incarnation)`, so recreation preserves
+old tombstones beside the current retained row while descendants match only the exact
+parent/origin incarnation. Legacy ID-only edges and events degrade without an inspectable
+handle rather than guessing. A selected child scope
+returns only its descendants, never sibling branches/members. Every scoped call rescans
+at most depth 8 / 500 records and revalidates root/child incarnation, each typed edge, the
+deployment ownership posture, and retained state. Enforced ownership compares only stable
+issuer+subject identity; changed display/grant metadata remains valid, while ownership-disabled
+deployments omit owner filtering consistently. Pruned, inaccessible, not-retained, never-produced, and absent labels are
+emitted only from supporting evidence; unsupported/unavailable and scan/retention/projection
+completeness remain explicit. Foreign rows never expose raw IDs.
+
+This evidence and approval boundary is [ADR 0257](../adr/0257-session-debugger-hardening.md),
+with cryptographic incarnation and edge semantics superseded by
+[ADR 0258](../adr/0258-cryptographic-session-incarnations.md); ADR 0257 supersedes ADR 0256 where stricter.
+
+All evidence is repaired to valid UTF-8 and wrapped with `governance.FenceUntrusted` before it
 reaches the model.
 
 `applyDebugSessionPosture` adds the trusted stable-prefix contract: inspect status

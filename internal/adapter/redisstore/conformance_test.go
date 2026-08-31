@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
+	"github.com/stacklok/mecatl/engine/adapter/lineageconformance"
 	"github.com/stacklok/mecatl/engine/adapter/storeconformance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -40,6 +41,31 @@ func newTestStore(t *testing.T) port.SessionStore {
 // against the Redis-backed store over an in-process miniredis (fully offline).
 func TestRedisStoreConformance(t *testing.T) {
 	storeconformance.Run(t, newTestStore)
+}
+
+func TestRedisStoreLineageConformance(t *testing.T) {
+	mr := miniredis.RunT(t)
+	st, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineageconformance.Run(t, st)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	root, err := reopened.Load(t.Context(), "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := reopened.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: "root", RootIncarnation: root.Incarnation(), Limit: 10})
+	if err != nil || len(result.Records) != 2 || result.Records[0].ID != "root" {
+		t.Fatalf("lineage after restart: records=%+v err=%v", result.Records, err)
+	}
 }
 
 func TestRedisStoreSessionCreatorConformance(t *testing.T) {

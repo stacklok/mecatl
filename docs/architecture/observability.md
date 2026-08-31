@@ -301,6 +301,16 @@
   (ADR 0038). See `docs/adr/0027-cloud-native.md` Phase 3 and the
   `eventlogconformance` suite.
 
+  A dedicated debug session is a fourth bounded consumer of the same durable facts. Its
+  target-bound `InspectSession` projections expose compaction archives, content-free request
+  manifests, sanitized network attempts, typed delegation, and latest-run versus lifetime
+  counters without widening ordinary client streams. Lineage comes from a bounded
+  `SessionLineageReader` plus typed-event fallback; retained descendants receive opaque
+  incarnation-bound, revalidated handles, while pruned snapshots remain content-free
+  tombstones keyed separately from a later same-ID incarnation. Event-log
+  retention and scan limits are reported rather than inferred. See
+  [ADR 0256](../adr/0256-session-debugger-evidence-and-reporting.md).
+
   > **Two `Load` implementations, one port.** mecatl's own adapters (memstore,
   > jsonlstore, the remote driver) implement `Load` by **snapshot-deserialize**
   > (`sessnap`) — byte-identical including the reasoning-replay fields. An

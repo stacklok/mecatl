@@ -55,6 +55,9 @@ service SessionStoreService {
   // snapshot for the same id (a later Save wins).
   rpc Save(SaveRequest) returns (SaveResponse);
 
+  // Create atomically publishes only when session_id is absent.
+  rpc Create(SaveRequest) returns (SaveResponse);
+
   // Load returns the most recent snapshot saved under session_id. A session
   // id that was never saved MUST return NOT_FOUND — the harness maps that to
   // its port.ErrSessionNotFound sentinel; any other error is an
@@ -68,6 +71,12 @@ service SessionStoreService {
   // PageMetadata returns one owner-filtered keyset page when the backend
   // implements the optional port.SessionMetadataPager capability.
   rpc PageMetadata(PageSessionMetadataRequest) returns (PageSessionMetadataResponse);
+
+  // ReadLineage returns the current retained root, applicable historical root
+  // tombstones, and directly related content-free records. Records with the
+  // same session id are distinct incarnations and MUST NOT be collapsed.
+  // Available only when the backend implements port.SessionLineageReader.
+  rpc ReadLineage(ReadSessionLineageRequest) returns (ReadSessionLineageResponse);
 
   // Delete removes the snapshot stored under session_id, idempotently: an
   // unknown id is success (a NOT_FOUND from a thin driver is tolerated by the
@@ -200,6 +209,9 @@ message SessionMetadataEntry {
   string title_provenance = 22;
   int64 estimated_bytes = 23;
   string debug_target_session_id = 24;
+  string parent_incarnation = 25;
+  string origin_incarnation = 26;
+  string debug_target_incarnation = 27;
 }
 
 message PageSessionMetadataResponse {
@@ -213,6 +225,44 @@ message SessionStoreCapabilitiesResponse {
   bool list = 1;
   bool metadata_paging = 2;
   bool delete = 3;
+  bool lineage = 4;
+  bool create = 5;
+}
+
+message ReadSessionLineageRequest {
+  string root_session_id = 1 [(buf.validate.field).string.min_len = 1];
+  int32 limit = 2;
+  string root_incarnation = 3 [(buf.validate.field).string.min_len = 1];
+}
+
+// SessionLineageEntry is content-free durable relationship metadata. It must
+// never gain transcript, title, model, tool, event, or workspace fields.
+message SessionLineageEntry {
+  string session_id = 1;
+  string kind = 2;
+  string parent_session_id = 3;
+  string call_id = 4;
+  optional int32 branch_index = 5;
+  string schedule_name = 6;
+  string origin_session_id = 7;
+  string team_id = 8;
+  string member_name = 9;
+  string debug_target_session_id = 10;
+  string parent_incarnation = 11;
+  string origin_incarnation = 12;
+  string debug_target_incarnation = 13;
+  reserved 14 to 15;
+  string state = 16;
+  google.protobuf.Timestamp deleted_at = 17;
+  // owner_scope is a non-reversible SHA-256 token; Principal PII is forbidden.
+  bytes owner_scope = 18;
+  // incarnation distinguishes delete/recreate crash boundaries without content.
+  string incarnation = 19;
+}
+
+message ReadSessionLineageResponse {
+  repeated SessionLineageEntry records = 1;
+  bool truncated = 2;
 }
 
 // DeleteSessionRequest asks for the snapshot under session_id to be removed.

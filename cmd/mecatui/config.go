@@ -33,6 +33,8 @@ type config struct {
 	// debugTarget binds a dedicated no-filesystem analysis session to one stored
 	// target. It comes only from the command grammar, never from a flag.
 	debugTarget string
+	// debugMCP selects configured server-global MCP servers by name for a debug session.
+	debugMCP []string
 	// helpAll is true when --help-all was passed; it requests the exhaustive
 	// flag listing and exits 0 before transport resolution.
 	helpAll   bool
@@ -354,6 +356,10 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.SetOutput(out)
 	fs.StringVar(&cfg.workspace, "workspace", "", "absolute workspace root for a new session (default: cwd); an adopted session keeps its stored workspace")
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
+	fs.Func("debug-mcp", "debug sessions only: select one already-configured server-global streaming-HTTP MCP server by name (repeatable)", func(value string) error {
+		cfg.debugMCP = append(cfg.debugMCP, value)
+		return nil
+	})
 	fs.StringVar(&cfg.resumeID, "resume", "", "start by continuing the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session (mutually exclusive with --resume-latest)")
 	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "start by continuing the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions (mutually exclusive with --resume); when none exists, start a new chat instead of failing")
 	fs.StringVar(&cfg.prompt, "prompt", "", "seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both --prompt and --prompt-file may be given (literal first)")
@@ -528,6 +534,16 @@ func validateResumeSelectors(cfg config) error {
 	}
 	if n > 1 {
 		return errors.New("--resume and --resume-latest are mutually exclusive")
+	}
+	return nil
+}
+
+func validateLaunchSelectors(cfg config) error {
+	if err := validateResumeSelectors(cfg); err != nil {
+		return err
+	}
+	if cfg.debugTarget == "" && len(cfg.debugMCP) > 0 {
+		return errors.New("--debug-mcp is allowed only with the debug command")
 	}
 	return nil
 }
@@ -763,7 +779,7 @@ func (c config) validate() error {
 	if c.listThemes {
 		return nil
 	}
-	if err := validateResumeSelectors(c); err != nil {
+	if err := validateLaunchSelectors(c); err != nil {
 		return err
 	}
 	if c.debugTarget != "" {

@@ -127,9 +127,36 @@ The invocation itself is consent:
 mecatui prints a privacy warning because stored prompts, outputs, tool arguments/results,
 paths, and secrets may be sent to the selected model.
 
-The debug engine has an empty workspace, the no-filesystem profile, and exactly one
-read-only tool, `InspectSession`. Its status and transcript views come from the target
-snapshot; activity and performance are optional EventLog projections. The `network` view
+The debug engine has an empty workspace, the no-filesystem profile, and the
+read-only `InspectSession` tool. Add repeatable `--debug-mcp NAME` flags to expose direct
+tools from only those already-configured server-global streaming-HTTP MCP servers:
+
+```sh
+mecatui debug SESSION_ID --debug-mcp github
+mecatui connect ADDRESS debug SESSION_ID --debug-mcp github --debug-mcp slack
+```
+
+Unknown, disconnected, duplicate, or tool-empty selections fail creation. No inline/client
+MCP configuration, URL, header, stdio transport, resource tool, or query meta-tool is accepted.
+The selected server names and exact initial tool-name ceiling are persisted; restart requires
+every selected server/tool still to exist and never adds newly advertised tools. Read-only
+annotations are honored, while absent/false means mutating. Every mutating call requires a
+fresh interactive approval even under configured/yolo/learned Allow; Deny remains absolute,
+headless use is denied, and Allow Always executes only the current call without learning.
+The model must draft an outward action first and may call a mutating reporting tool only after
+a later genuine current operator request explicitly asks to publish/send it.
+
+InspectSession's status and transcript views come from the target
+snapshot; activity and performance are optional EventLog projections. `related` returns only
+opaque target-bound handles for inspectable same-owner retained descendants; those handles can
+scope every ordinary view without accepting raw session IDs. `delegation` reports typed
+subagent/parallel/team/schedule evidence and parent result linkage. `history` catalogs the
+current snapshot, retained compaction archives, and retained-event reconstruction with separate
+opaque handles, and `manifest` lists content-free request manifests. Each reports scan,
+projection, and retention gaps explicitly; a pruned, inaccessible, absent, never-produced, or
+not-retained child is labelled only when the available lineage/event evidence proves it.
+Snapshot latest-run counters and cumulative usage are named separately from lifetime EventLog
+aggregates. The `network` view
 shows bounded failed/interesting resilience attempts with retry/terminal decisions, elapsed
 and safe failure classes, validated provider statuses, and closed correlation kinds with fixed
 SHA-256 digests. It never exposes raw provider codes, correlation IDs, errors, URLs, headers, bodies, prompts,

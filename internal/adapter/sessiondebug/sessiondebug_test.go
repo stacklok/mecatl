@@ -18,13 +18,17 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
-func execute(t *testing.T, inspect tool.Tool, args string) session.ToolResult {
+func executeAs(ctx context.Context, t *testing.T, inspect tool.Tool, args string) session.ToolResult {
 	t.Helper()
-	got, err := inspect.Execute(context.Background(), session.NewToolCall("call", ToolName, []byte(args)), tool.Environment{})
+	got, err := inspect.Execute(ctx, session.NewToolCall("call", ToolName, []byte(args)), tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	return got
+}
+
+func execute(t *testing.T, inspect tool.Tool, args string) session.ToolResult {
+	return executeAs(context.Background(), t, inspect, args)
 }
 
 func seededTarget(t *testing.T, messages []session.Message) (*memstore.Store, *session.Session) {
@@ -321,7 +325,7 @@ func TestNetworkEvidenceIsolationPaginationAndAvailability(t *testing.T) {
 		}
 	}
 	first := execute(t, New(target.ID, store, log), `{"view":"network","limit":2}`)
-	for _, want := range []string{`"available":true`, `"complete":false`, `"scan_complete":true`, `"matched_attempts":3`, `"invalid_attempts_omitted":2`, `"next_offset":2`, `"target"`, `"failure_class":"connect"`} {
+	for _, want := range []string{`"available":true`, `"complete":false`, `"scan_complete":true`, `"matched_attempts":3`, `"invalid_attempts_omitted":2`, `"next_offset":2`, `"failure_class":"connect"`} {
 		if !strings.Contains(first.Content, want) {
 			t.Fatalf("network first page missing %q: %s", want, first.Content)
 		}
@@ -334,8 +338,8 @@ func TestNetworkEvidenceIsolationPaginationAndAvailability(t *testing.T) {
 			t.Fatalf("network evidence leaked producer token %q: %s", secret, first.Content)
 		}
 	}
-	if strings.Contains(first.Content, `"attempt":99`) || strings.Contains(first.Content, `"session_id":"other"`) {
-		t.Fatalf("network evidence crossed target boundary: %s", first.Content)
+	if strings.Contains(first.Content, `"session_id"`) || strings.Contains(first.Content, `"attempt":99`) {
+		t.Fatalf("network evidence exposed a raw session id or crossed target boundary: %s", first.Content)
 	}
 	last := execute(t, New(target.ID, store, log), `{"view":"network","offset":2,"limit":2}`)
 	if !strings.Contains(last.Content, `"complete":false`) || !strings.Contains(last.Content, `"invalid_attempts_omitted":2`) || strings.Contains(last.Content, "next_offset") {
@@ -378,10 +382,26 @@ func TestNetworkEvidencePersistsAcrossJSONLStoreRestart(t *testing.T) {
 	if err := store1.Append(context.Background(), target.ID, session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &observation}); err != nil {
 		t.Fatal(err)
 	}
+	manifest := session.RequestManifestPayload{Model: "restart-model", ToolNames: []string{"Read"}, MessageCount: 1, MessageBytes: 7}
+	if err := store1.Append(context.Background(), target.ID, session.Event{Type: session.EvRequestManifest, RequestManifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
 
 	store2, err := jsonlstore.New(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var restoredManifest *session.RequestManifestPayload
+	for ev, readErr := range store2.Read(context.Background(), target.ID) {
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if ev.Type == session.EvRequestManifest {
+			restoredManifest = ev.RequestManifest
+		}
+	}
+	if restoredManifest == nil || restoredManifest.Model != "restart-model" || strings.Join(restoredManifest.ToolNames, ",") != "Read" {
+		t.Fatalf("restarted request manifest = %+v", restoredManifest)
 	}
 	got := execute(t, New(target.ID, store2, store2), `{"view":"network"}`)
 	for _, want := range []string{`"failure_class":"timeout"`, `"elapsed_ms":42`, `"suppression_reason":"attempts_exhausted"`, `"complete":true`} {
@@ -415,7 +435,7 @@ func TestPerformanceReduction(t *testing.T) {
 
 func TestPerformanceBounds(t *testing.T) {
 	store, target := seededTarget(t, nil)
-	view := New(target.ID, store, generatedLog{count: maxPerformanceScan + 1}).(*inspectTool).performanceView(context.Background())
+	view := New(target.ID, store, generatedLog{count: maxPerformanceScan + 1}).(*inspectTool).performanceView(context.Background(), target.ID)
 	if view.Scanned != maxPerformanceScan || len(view.Turns) != maxPerformanceRows || !view.Truncated || view.Complete {
 		t.Fatalf("performance bounds = scanned %d turns %d truncated %v complete %v", view.Scanned, len(view.Turns), view.Truncated, view.Complete)
 	}

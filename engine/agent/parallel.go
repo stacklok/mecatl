@@ -448,7 +448,8 @@ type branchResult struct {
 	// WithParallelStore persists under — one id scheme (childSessionID), no divergence.
 	// Empty only in the zero-value-emitter unit tests, which never persist. Not a content
 	// field: it is prefix+callID+index, never any branch summary/output (gauntlet #7).
-	childID string
+	childID          string
+	childIncarnation session.IncarnationID
 
 	// usage is the branch child run's cumulative token accounting, captured for the
 	// run-total carried on parallel.end. Not serialized into the result text;
@@ -583,16 +584,17 @@ func (e branchEmitter) branchEnd(res branchResult, stop session.StopReason, usag
 		return
 	}
 	e.emit(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
-		ParentCallID: e.parentCallID,
-		Kind:         session.ParallelBranchEnd,
-		BranchIndex:  res.index,
-		ChildID:      e.branchChildID(res.index),
-		ToolCount:    toolCount,
-		Failed:       res.failed,
-		Workspace:    res.childRoot,
-		Stop:         stop,
-		Usage:        usage,
-		DurationMs:   dur.Milliseconds(),
+		ParentCallID:     e.parentCallID,
+		Kind:             session.ParallelBranchEnd,
+		BranchIndex:      res.index,
+		ChildID:          e.branchChildID(res.index),
+		ChildIncarnation: res.childIncarnation,
+		ToolCount:        toolCount,
+		Failed:           res.failed,
+		Workspace:        res.childRoot,
+		Stop:             stop,
+		Usage:            usage,
+		DurationMs:       dur.Milliseconds(),
 	}})
 }
 
@@ -1073,7 +1075,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		childSess, err = session.NewParallelBranch(
 			t.childSessionID(caps.parentSessionID, callID, i), t.childMode,
 			childEnv.Workspace().Root(), t.limits, branchEngine.now(),
-			caps.parentSessionID, callID, i)
+			caps.parentSessionID, caps.parentIncarnation, callID, i)
 	}
 	if err != nil {
 		res.failed = true
@@ -1081,6 +1083,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))
 		return res, session.StopError
 	}
+	res.childIncarnation = childSess.Incarnation()
 	// The branch is attributed to the PARENT session's owner (ADR 0204 decision 4),
 	// or carries delegated authority when the parent run is authority-bound.
 	if caps.authorityBound {

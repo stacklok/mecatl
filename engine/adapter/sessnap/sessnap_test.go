@@ -24,6 +24,9 @@ func runningSession(t *testing.T) *session.Session {
 	s.ProviderID = "openrouter"
 	s.ModelID = "anthropic/claude-3.5-sonnet"
 	s.ReasoningEffort = "high"
+	s.DebugMCPServers = []string{"github"}
+	s.DebugMCPTools = []string{"mcp__github__get_issue"}
+	s.DebugTargetFingerprint = "internal-incarnation-token"
 	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}
 	s.SetTitle("Fix the flaky CI job")
 	if err := s.BeginTurn(); err != nil {
@@ -83,6 +86,12 @@ func assertEquivalent(t *testing.T, got, want *session.Session) {
 	}
 	if got.ReasoningEffort != want.ReasoningEffort {
 		t.Errorf("ReasoningEffort = %q, want %q", got.ReasoningEffort, want.ReasoningEffort)
+	}
+	if !reflect.DeepEqual(got.DebugMCPServers, want.DebugMCPServers) || !reflect.DeepEqual(got.DebugMCPTools, want.DebugMCPTools) {
+		t.Errorf("debug MCP labels = %v/%v, want %v/%v", got.DebugMCPServers, got.DebugMCPTools, want.DebugMCPServers, want.DebugMCPTools)
+	}
+	if got.DebugTargetFingerprint != want.DebugTargetFingerprint {
+		t.Errorf("DebugTargetFingerprint was not preserved")
 	}
 	if got.EnvironmentRef != want.EnvironmentRef {
 		t.Errorf("EnvironmentRef = %+v, want %+v", got.EnvironmentRef, want.EnvironmentRef)

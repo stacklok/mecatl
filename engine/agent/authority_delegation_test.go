@@ -27,7 +27,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario4_ChildGetsIntersectionOnEverySeam(
 	childEngine := NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
 	store := memstore.New()
 	subagent := NewSubagentTool(childEngine, WithSubagentStore(store)).(*SubagentTool)
-	caps := parentCaps{authority: parent, authorityBound: true, parentSessionID: "parent"}
+	caps := parentCaps{authority: parent, authorityBound: true, parentSessionID: "parent", parentIncarnation: session.NewIncarnationID()}
 	if _, err := subagent.ExecuteWithParent(context.Background(), session.ToolCall{ID: "sub", Name: subagentToolName, Args: []byte(`{"prompt":"work"}`)}, env, nil, caps); err != nil {
 		t.Fatalf("Subagent: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestManagedSpecialistAuthorityCeilingIsModeSpecific(t *testing.T) {
 		WithAgentWritableEngineFactory(func(string) (*Engine, bool) { return writableEngine, true }),
 	).(*SubagentTool)
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent"}, memfs.NewWorkspace("/ws"), nil)
-	caps := parentCaps{authority: authorityParent(), authorityBound: true, parentSessionID: "parent"}
+	caps := parentCaps{authority: authorityParent(), authorityBound: true, parentSessionID: "parent", parentIncarnation: session.NewIncarnationID()}
 
 	for _, tc := range []struct {
 		id       session.ToolCallID
@@ -132,7 +132,7 @@ func TestWritableResumeRefusesPersistedReadOnlyAuthorityBeforeDrive(t *testing.T
 	result, err := subagent.ExecuteWithParent(context.Background(), session.ToolCall{
 		ID: "resume", Name: subagentToolName,
 		Args: []byte(`{"prompt":"now edit","resume":"subagent-old","mode":"read-write"}`),
-	}, env, nil, parentCaps{authority: authorityParent(), authorityBound: true, parentSessionID: "parent"})
+	}, env, nil, parentCaps{authority: authorityParent(), authorityBound: true, parentSessionID: "parent", parentIncarnation: session.NewIncarnationID()})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent: %v", err)
 	}

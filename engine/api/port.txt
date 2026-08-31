@@ -60,6 +60,7 @@
     ifacemethod func (SessionLease).Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error)
     ifacemethod func (SessionLease).Release(ctx context.Context, l Lease) error
     ifacemethod func (SessionLease).Renew(ctx context.Context, l Lease) (Lease, error)
+    ifacemethod func (SessionLineageReader).ReadSessionLineage(ctx context.Context, query SessionLineageQuery) (SessionLineageResult, error)
     ifacemethod func (SessionLiveness).IsLive(session.SessionID) bool
     ifacemethod func (SessionLiveness).Register(ctx context.Context, id session.SessionID, cancel context.CancelFunc) (release func(), err error)
     ifacemethod func (SessionMetadataPager).PageSessionMetadata(ctx context.Context, request SessionMetadataPageRequest) (SessionMetadataPage, error)
@@ -97,6 +98,7 @@ const LevelInfo Level = 1
 const LevelWarn Level = 2
 const LogRecordEvent LogRecordKind = "event"
 const LogRecordGap LogRecordKind = "gap"
+const MaxSessionLineageRecords untyped int = 256
 const MisfireFireOnceNow MisfirePolicy = 0
 const MisfireSkip MisfirePolicy = 1
 const PendingFireSessionID session.SessionID = "pending"
@@ -104,6 +106,8 @@ const RetryDispositionPermanent session.RetryDisposition = 2
 const RetryDispositionRetryable session.RetryDisposition = 1
 const RetryDispositionUnknown session.RetryDisposition = 0
 const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
+const SessionLineagePruned SessionLineageState = "pruned"
+const SessionLineageRetained SessionLineageState = "retained"
 const SessionMigrationCancelled SessionMigrationState = "cancelled"
 const SessionMigrationCompleted SessionMigrationState = "completed"
 const SessionMigrationPlanned SessionMigrationState = "planned"
@@ -127,6 +131,7 @@ func SessionDiscoveryMetaEqual(a SessionDiscoveryMeta, b SessionDiscoveryMeta) b
 func SessionIDFromContext(ctx context.Context) (session.SessionID, bool)
 func SetAttemptTurnIndex(ctx context.Context, index int) bool
 func TurnIndexFromContext(ctx context.Context) (int, bool)
+func ValidateSessionLineageQuery(query SessionLineageQuery) error
 func WithAttemptObserver(ctx context.Context, observer AttemptObserver) context.Context
 func WithRunAttemptContext(ctx context.Context, id session.SessionID, serial int64) context.Context
 func WithRunSerial(ctx context.Context, serial int64) context.Context
@@ -185,6 +190,11 @@ type SessionCreator interface{Create(ctx context.Context, s *session.Session) er
 type SessionDeleteSupport interface{SupportsSessionDelete() bool}
 type SessionDiscoveryMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; TitleProvenance session.TitleProvenance; Owner *session.Principal; Workspace string; Kind session.SessionKind; Relationship session.SessionRelationship; EstimatedBytes int64}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
+type SessionLineageQuery struct{RootID session.SessionID; RootIncarnation session.IncarnationID; Limit int}
+type SessionLineageReader interface{ReadSessionLineage(ctx context.Context, query SessionLineageQuery) (SessionLineageResult, error)}
+type SessionLineageRecord struct{ID session.SessionID; Kind session.SessionKind; Relationship session.SessionRelationship; OwnerScope [32]byte; Incarnation string; State SessionLineageState; DeletedAt time.Time}
+type SessionLineageResult struct{Records []SessionLineageRecord; Truncated bool}
+type SessionLineageState string
 type SessionLiveness interface{IsLive(session.SessionID) bool; Register(ctx context.Context, id session.SessionID, cancel context.CancelFunc) (release func(), err error)}
 type SessionMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; Owner *session.Principal}
 type SessionMetadataCursor struct{ModifiedAt time.Time; ID session.SessionID; Generation string; Scope string; Continuation string}
@@ -209,6 +219,7 @@ type TriggerSpec struct{Cron string; OneShot time.Time}
 var ErrCursorExpired error
 var ErrCursorMalformed error
 var ErrFireNowOverlap error
+var ErrInvalidSessionLineageQuery error
 var ErrLeaseHeld error
 var ErrLeaseUnsupported error
 var ErrPruneUnsupported error
@@ -216,6 +227,7 @@ var ErrScheduleAlreadyExists error
 var ErrScheduleNotFound error
 var ErrScheduleUnsupported error
 var ErrSessionAlreadyExists error
+var ErrSessionLineageUnsupported error
 var ErrSessionMetadataCursorRestart error
 var ErrSessionMetadataPagingUnsupported error
 var ErrSessionNotFound error

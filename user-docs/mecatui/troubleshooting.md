@@ -48,9 +48,12 @@ identity, and session ID. A persisted debugger also fails closed after restart i
 bound target or dedicated debug-engine support is unavailable; it never falls back to an
 ordinary chat.
 
-The debugger's activity, performance, and network views require an EventLog and report when
-evidence is unavailable or incomplete. Use the authoritative transcript for conversation
-conclusions. Network evidence covers failed/interesting resilience attempts with sanitized
+The debugger's activity, performance, network, delegation, history, and manifest views require
+retained EventLog evidence and report when evidence is unavailable or incomplete. `related`
+uses opaque handles for retained same-owner children and can report a content-free pruned
+tombstone; raw unrelated session IDs are not valid handles. Use the authoritative transcript for conversation
+conclusions. Status separates latest-run counters and cumulative snapshot usage from bounded
+lifetime EventLog counters. Network evidence covers failed/interesting resilience attempts with sanitized
 retry decisions and DNS/connect/TLS/timeout/reset/rate-limit/breaker classes. It deliberately
 contains no raw errors, URLs, headers, bodies, prompts, tool arguments, or credentials, and
 does not claim successful-attempt or per-phase DNS/TCP/TLS timing. Live target following, raw

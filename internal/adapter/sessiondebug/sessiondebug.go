@@ -5,6 +5,7 @@ package sessiondebug
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -28,30 +29,89 @@ const (
 	maxProjectedText     = 8 << 10
 	maxProjectedPartText = 1 << 10
 	maxProjectedItems    = 8
+	maxRelatedSessions   = 500
+	maxRelatedDepth      = 8
+	maxHistoryRows       = 20
+	maxManifestRows      = 50
+	maxDelegationRows    = 100
+	maxLineageEventScan  = 10_000
+	errLogNotConfigured  = "event log is not configured"
+	errLogReadFailed     = "event log read failed"
 )
 
 type inspectArgs struct {
-	View   string `json:"view"`
-	Offset int    `json:"offset,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	View          string `json:"view"`
+	ScopeHandle   string `json:"scope_handle,omitempty"`
+	HistoryHandle string `json:"history_handle,omitempty"`
+	Offset        int    `json:"offset,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
 }
 
 type inspectTool struct {
-	target session.SessionID
-	store  port.SessionStore
-	log    port.EventLog
+	target              session.SessionID
+	expectedFingerprint string
+	expectedOwnerScope  [32]byte
+	ownershipEnforced   bool
+	store               port.SessionStore
+	log                 port.EventLog
 }
 
-// New constructs an InspectSession tool permanently bound to target.
+// New constructs an InspectSession tool from the target's current incarnation.
+// Composition uses NewBound so authorization and construction share one read.
 func New(target session.SessionID, store port.SessionStore, log port.EventLog) tool.Tool {
-	return &inspectTool{target: target, store: store, log: log}
+	current, err := store.Load(context.Background(), target)
+	if err != nil || current == nil {
+		return NewBound(target, "", nil, false, store, log)
+	}
+	return NewBound(target, session.DebugTargetFingerprint(current), current.Owner, false, store, log)
+}
+
+// NewBound constructs an InspectSession tool permanently bound to one authorized
+// target incarnation and owner scope.
+func NewBound(target session.SessionID, expectedFingerprint string, expectedOwner *session.Principal, ownershipEnforced bool, store port.SessionStore, log port.EventLog) tool.Tool {
+	return &inspectTool{
+		target: target, expectedFingerprint: expectedFingerprint,
+		expectedOwnerScope: session.PrincipalScopeHash(expectedOwner),
+		ownershipEnforced:  ownershipEnforced, store: store, log: log,
+	}
+}
+
+func (t *inspectTool) loadTarget(ctx context.Context) (*session.Session, error) {
+	target, err := t.store.Load(ctx, t.target)
+	if err != nil || target == nil || target.ID != t.target ||
+		session.DebugTargetFingerprint(target) != t.expectedFingerprint ||
+		t.ownershipEnforced && session.PrincipalScopeHash(target.Owner) != t.expectedOwnerScope {
+		return nil, errors.New("debug target is stale or inaccessible")
+	}
+	if t.ownershipEnforced {
+		principal := session.PrincipalFromContext(ctx)
+		if principal == nil || session.PrincipalScopeHash(principal) != t.expectedOwnerScope {
+			return nil, errors.New("debug target is stale or inaccessible")
+		}
+	}
+	return target, nil
+}
+
+func (t *inspectTool) revalidateScope(ctx context.Context, binding *lineageNode) error {
+	root, err := t.loadTarget(ctx)
+	if err != nil {
+		return err
+	}
+	if binding == nil {
+		return nil
+	}
+	candidate, err := t.store.Load(ctx, binding.ID)
+	if err != nil || !t.validScopedSession(root, candidate, *binding) {
+		return errors.New("scope handle is stale or inaccessible")
+	}
+	return nil
 }
 
 func (*inspectTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name:        ToolName,
-		Description: "Inspect read-only evidence for the single session bound to this debug session. Call status first, then transcript; activity, performance, and network are bounded event-log views. Use network for latency, retry, provider, or transport symptoms.",
-		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance","network"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
+		Description: "Inspect bounded read-only evidence rooted at the debug target. Start with status and related; use returned opaque scope/history handles to inspect retained authorized descendants and archived history. Raw session IDs are never accepted.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance","network","related","delegation","history","manifest"]},"scope_handle":{"type":"string"},"history_handle":{"type":"string"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
 	}
 }
 
@@ -65,25 +125,48 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	if args.Offset < 0 || args.Limit < 0 {
 		return session.NewToolError(call.ID, "offset must be non-negative and limit must be positive when set"), nil
 	}
-	target, err := t.store.Load(ctx, t.target)
+	root, err := t.loadTarget(ctx)
 	if err != nil {
-		return session.NewToolError(call.ID, "target snapshot unavailable: "+safeLine(err.Error())), nil
+		return session.NewToolError(call.ID, err.Error()), nil
+	}
+	graph := t.scanLineage(ctx, root)
+	target, scope, scopeBinding, err := t.resolveScope(ctx, root, graph, args.ScopeHandle)
+	if err != nil {
+		return session.NewToolError(call.ID, err.Error()), nil
 	}
 
 	var value any
 	switch args.View {
 	case "status":
-		value = statusView(target)
+		value = t.statusView(ctx, target, scope)
 	case "transcript":
 		value = transcriptView(target, args.Offset, args.Limit)
 	case "activity":
-		value = t.activityView(ctx, args.Offset, args.Limit)
+		value = t.activityView(ctx, target.ID, args.Offset, args.Limit)
 	case "performance":
-		value = t.performanceView(ctx)
+		value = t.performanceView(ctx, target.ID)
 	case "network":
-		value = t.networkView(ctx, args.Offset, args.Limit)
+		value = t.networkView(ctx, target.ID, args.Offset, args.Limit)
+	case "related":
+		value = t.relatedView(graph, scope, args.Offset, args.Limit)
+	case "delegation":
+		value = t.delegationView(ctx, target, graph, args.Offset, args.Limit)
+	case "history":
+		value, err = t.historyView(ctx, target, scope, args.HistoryHandle, args.Offset, args.Limit)
+	case "manifest":
+		value = t.manifestView(ctx, target.ID, args.Offset, args.Limit)
 	default:
-		return session.NewToolError(call.ID, "view must be one of status, transcript, activity, performance, network"), nil
+		return session.NewToolError(call.ID, "view must be one of status, transcript, activity, performance, network, related, delegation, history, manifest"), nil
+	}
+	if err != nil {
+		return session.NewToolError(call.ID, safeLine(err.Error())), nil
+	}
+	// Close the evidence-read TOCTOU window: deletion, replacement, owner, or
+	// lineage-edge changes while a store/log projection was being read invalidate
+	// the result. Root views need only the root reload; scoped views also revalidate
+	// the exact descendant incarnation the opaque handle was minted for.
+	if validateErr := t.revalidateScope(ctx, scopeBinding); validateErr != nil {
+		return session.NewToolError(call.ID, validateErr.Error()), nil
 	}
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -97,32 +180,36 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 }
 
 type statusEvidence struct {
-	View           string              `json:"view"`
-	Target         session.SessionID   `json:"target_session_id"`
-	State          session.State       `json:"state"`
-	Kind           session.SessionKind `json:"kind"`
-	Profile        string              `json:"profile,omitempty"`
-	Provider       string              `json:"provider,omitempty"`
-	Model          string              `json:"model,omitempty"`
-	Limits         session.Limits      `json:"limits"`
-	Counters       session.Counters    `json:"counters"`
-	Usage          session.Usage       `json:"usage"`
-	CreatedAt      string              `json:"created_at"`
-	Stop           session.StopReason  `json:"stop,omitempty"`
-	LastError      string              `json:"last_error,omitempty"`
-	RepairedFields []string            `json:"repaired_fields,omitempty"`
-	PendingAsk     *pendingAskEvidence `json:"pending_ask,omitempty"`
+	View                    string              `json:"view"`
+	Scope                   string              `json:"scope"`
+	Target                  session.SessionID   `json:"target_session_id,omitempty"`
+	State                   session.State       `json:"state"`
+	Kind                    session.SessionKind `json:"kind"`
+	Profile                 string              `json:"profile,omitempty"`
+	Provider                string              `json:"provider,omitempty"`
+	Model                   string              `json:"model,omitempty"`
+	Limits                  session.Limits      `json:"limits"`
+	LatestRunCounters       session.Counters    `json:"latest_run_counters"`
+	SnapshotCumulativeUsage session.Usage       `json:"snapshot_cumulative_usage"`
+	Lifetime                lifetimeEvidence    `json:"lifetime_event_log"`
+	CreatedAt               string              `json:"created_at"`
+	Stop                    session.StopReason  `json:"stop,omitempty"`
+	LastError               string              `json:"last_error,omitempty"`
+	RepairedFields          []string            `json:"repaired_fields,omitempty"`
+	PendingAsk              *pendingAskEvidence `json:"pending_ask,omitempty"`
 }
 
 type pendingAskEvidence struct {
-	AskID  string             `json:"ask_id"`
 	Tool   string             `json:"tool"`
 	CallID session.ToolCallID `json:"call_id,omitempty"`
 	Origin string             `json:"origin"`
 }
 
-func statusView(s *session.Session) statusEvidence {
-	out := statusEvidence{View: "status", Target: s.ID, State: s.State, Kind: s.Kind, Limits: s.Limits, Counters: s.Counters, Usage: s.Usage, CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
+func (t *inspectTool) statusView(ctx context.Context, s *session.Session, scope string) statusEvidence {
+	out := statusEvidence{View: "status", Scope: scope, State: s.State, Kind: s.Kind, Limits: s.Limits, LatestRunCounters: s.Counters, SnapshotCumulativeUsage: s.Usage, Lifetime: t.lifetimeView(ctx, s.ID), CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
+	if scope == rootScope {
+		out.Target = s.ID
+	}
 	set := func(name, value string, dst *string) {
 		var repaired bool
 		*dst, repaired = safeLineRepair(value)
@@ -138,12 +225,8 @@ func statusView(s *session.Session) statusEvidence {
 		out.Stop = stop
 	}
 	if ask, ok := s.PendingAsk(); ok {
-		askID, askIDRepaired := safeLineRepair(ask.AskID)
 		toolName, toolRepaired := safeLineRepair(ask.Tool)
-		out.PendingAsk = &pendingAskEvidence{AskID: askID, Tool: toolName, CallID: ask.Call, Origin: askOrigin(ask.Origin())}
-		if askIDRepaired {
-			out.RepairedFields = append(out.RepairedFields, "pending_ask.ask_id")
-		}
+		out.PendingAsk = &pendingAskEvidence{Tool: toolName, CallID: ask.Call, Origin: askOrigin(ask.Origin())}
 		if toolRepaired {
 			out.RepairedFields = append(out.RepairedFields, "pending_ask.tool")
 		}
@@ -451,15 +534,15 @@ type activityRow struct {
 	TTFT         int64              `json:"ttft_ms,omitempty"`
 }
 
-func (t *inspectTool) activityView(ctx context.Context, offset, requested int) activityEvidence {
+func (t *inspectTool) activityView(ctx context.Context, target session.SessionID, offset, requested int) activityEvidence {
 	limit := boundedLimit(requested, maxActivityRows)
 	out := activityEvidence{View: "activity", Available: t.log != nil, Authoritative: false, Complete: false, Offset: offset, Limit: limit, Rows: []activityRow{}}
 	if t.log == nil {
-		out.Error = "event log is not configured"
+		out.Error = errLogNotConfigured
 		return out
 	}
 	seen := 0
-	for ev, err := range t.log.Read(ctx, t.target) {
+	for ev, err := range t.log.Read(ctx, target) {
 		if err != nil {
 			out.Error = safeLine(err.Error())
 			return out
@@ -546,14 +629,14 @@ type performanceTurn struct {
 	Usage            session.Usage `json:"usage"`
 }
 
-func (t *inspectTool) performanceView(ctx context.Context) performanceEvidence {
+func (t *inspectTool) performanceView(ctx context.Context, target session.SessionID) performanceEvidence {
 	out := performanceEvidence{View: "performance", Available: t.log != nil, Authoritative: false, Complete: false, Turns: []performanceTurn{}}
 	if t.log == nil {
-		out.Error = "event log is not configured"
+		out.Error = errLogNotConfigured
 		return out
 	}
 	out.ScanComplete = true
-	for ev, err := range t.log.Read(ctx, t.target) {
+	for ev, err := range t.log.Read(ctx, target) {
 		if err != nil {
 			out.Error = safeLine(err.Error())
 			out.ScanComplete = false
@@ -597,41 +680,59 @@ func (t *inspectTool) performanceView(ctx context.Context) performanceEvidence {
 }
 
 type networkEvidence struct {
-	View                    string                          `json:"view"`
-	Available               bool                            `json:"available"`
-	Authoritative           bool                            `json:"authoritative"`
-	Coverage                string                          `json:"coverage"`
-	SuccessfulAttemptsTimed bool                            `json:"successful_attempts_timed"`
-	Complete                bool                            `json:"complete"`
-	ScanComplete            bool                            `json:"scan_complete"`
-	Truncated               bool                            `json:"truncated"`
-	Error                   string                          `json:"error,omitempty"`
-	Offset                  int                             `json:"offset"`
-	Limit                   int                             `json:"limit"`
-	ScannedEvents           int                             `json:"scanned_events"`
-	TotalMatched            int                             `json:"matched_attempts"`
-	InvalidOmitted          int                             `json:"invalid_attempts_omitted,omitempty"`
-	NextOffset              *int                            `json:"next_offset,omitempty"`
-	Attempts                []session.NetworkAttemptPayload `json:"attempts"`
+	View                    string                   `json:"view"`
+	Available               bool                     `json:"available"`
+	Authoritative           bool                     `json:"authoritative"`
+	Coverage                string                   `json:"coverage"`
+	SuccessfulAttemptsTimed bool                     `json:"successful_attempts_timed"`
+	Complete                bool                     `json:"complete"`
+	ScanComplete            bool                     `json:"scan_complete"`
+	Truncated               bool                     `json:"truncated"`
+	Error                   string                   `json:"error,omitempty"`
+	Offset                  int                      `json:"offset"`
+	Limit                   int                      `json:"limit"`
+	ScannedEvents           int                      `json:"scanned_events"`
+	TotalMatched            int                      `json:"matched_attempts"`
+	InvalidOmitted          int                      `json:"invalid_attempts_omitted,omitempty"`
+	NextOffset              *int                     `json:"next_offset,omitempty"`
+	Attempts                []networkAttemptEvidence `json:"attempts"`
 }
 
-func (t *inspectTool) networkView(ctx context.Context, offset, requested int) networkEvidence {
+type networkAttemptEvidence struct {
+	RunSerial         int64  `json:"run_serial"`
+	Turn              int    `json:"turn"`
+	Attempt           int    `json:"attempt"`
+	MaxAttempts       int    `json:"max_attempts"`
+	ElapsedMs         int64  `json:"elapsed_ms"`
+	RetryDisposition  string `json:"retry_disposition"`
+	StreamProgress    string `json:"stream_progress"`
+	Decision          string `json:"decision"`
+	SuppressionReason string `json:"suppression_reason,omitempty"`
+	BackoffMs         int64  `json:"backoff_ms"`
+	FailureClass      string `json:"failure_class"`
+	HTTPStatus        int    `json:"http_status,omitempty"`
+	InBandStatus      int    `json:"in_band_status,omitempty"`
+	CorrelationKind   string `json:"correlation_kind,omitempty"`
+	CorrelationDigest string `json:"correlation_digest,omitempty"`
+}
+
+func (t *inspectTool) networkView(ctx context.Context, target session.SessionID, offset, requested int) networkEvidence {
 	limit := boundedLimit(requested, maxNetworkRows)
 	out := networkEvidence{
 		View: "network", Available: t.log != nil, Authoritative: false,
 		Coverage:                "failed and policy-interesting attempts observed by the shared resilience wrapper; no request bodies, headers, URLs, raw errors, per-phase DNS/TCP/TLS timing, or successful-attempt timing",
 		SuccessfulAttemptsTimed: false, Offset: offset, Limit: limit,
-		Attempts: []session.NetworkAttemptPayload{},
+		Attempts: []networkAttemptEvidence{},
 	}
 	if t.log == nil {
-		out.Error = "event log is not configured"
+		out.Error = errLogNotConfigured
 		return out
 	}
 	out.ScanComplete = true
 	matched := 0
-	for ev, err := range t.log.Read(ctx, t.target) {
+	for ev, err := range t.log.Read(ctx, target) {
 		if err != nil {
-			out.Error = "event log read failed"
+			out.Error = errLogReadFailed
 			out.ScanComplete = false
 			break
 		}
@@ -645,12 +746,12 @@ func (t *inspectTool) networkView(ctx context.Context, offset, requested int) ne
 			continue
 		}
 		row := *ev.NetworkAttempt
-		if !validNetworkAttempt(row, t.target) {
+		if !validNetworkAttempt(row, target) {
 			out.InvalidOmitted++
 			continue
 		}
 		if matched >= offset && len(out.Attempts) < limit {
-			out.Attempts = append(out.Attempts, row)
+			out.Attempts = append(out.Attempts, projectNetworkAttempt(row))
 		}
 		matched++
 	}
@@ -662,6 +763,10 @@ func (t *inspectTool) networkView(ctx context.Context, offset, requested int) ne
 	}
 	out.Complete = out.ScanComplete && out.NextOffset == nil && out.InvalidOmitted == 0
 	return out
+}
+
+func projectNetworkAttempt(row session.NetworkAttemptPayload) networkAttemptEvidence {
+	return networkAttemptEvidence{row.RunSerial, row.Turn, row.Attempt, row.MaxAttempts, row.ElapsedMs, row.RetryDisposition, row.StreamProgress, row.Decision, row.SuppressionReason, row.BackoffMs, row.FailureClass, row.HTTPStatus, row.InBandStatus, row.CorrelationKind, row.CorrelationDigest}
 }
 
 func validNetworkAttempt(row session.NetworkAttemptPayload, target session.SessionID) bool {

@@ -60,6 +60,9 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if target := req.GetDebugTargetSessionId(); target != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(target)))
 	}
+	if names := req.GetDebugMcpServers(); len(names) > 0 {
+		opts = append(opts, WithDebugMCP(names))
+	}
 	sess, err := h.svc.CreateSessionWithProfile(ctx, req.GetWorkspace(), modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
 	if err != nil {
 		return nil, toStatus(err)
@@ -1210,8 +1213,8 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 	// user prompts (they ARE the transcript). So relay ALL events through toProto,
 	// including the three log-only kinds. They are already metadata-only/redacted by
 	// construction (gauntlet #7). Do NOT copy the live-relay filter here.
-	// NetworkAttempt remains debugger-only even on durable read-back; it has no
-	// public proto projection and is read only by target-bound InspectSession.
+	// RequestManifest and NetworkAttempt remain debugger-only even on durable
+	// read-back; neither has a public proto projection.
 	for ev, iterErr := range events {
 		if iterErr != nil {
 			return status.Error(codes.Internal, iterErr.Error())
@@ -1367,7 +1370,7 @@ func toProtoWatchEnvelope(env WatchEnvelope) *mecatlv1.WatchSessionEventsRespons
 // EvUserPrompt stay skipped (they are persistence-only; the client holds its
 // own verdict/compaction/prompt view).
 func isPublicEvent(ev session.Event) bool {
-	return ev.Type != session.EvNetworkAttempt
+	return ev.Type != session.EvNetworkAttempt && ev.Type != session.EvRequestManifest
 }
 
 func relayLiveEvent(ev session.Event) bool {

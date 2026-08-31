@@ -390,7 +390,8 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// HARNESS-derived addressing handle (the CancelChild target, D16), never
 		// branch content: it is composed of the id prefix + the parent call id + the
 		// branch index, none of which a branch authors.
-		"ChildID": true,
+		"ChildID":          true,
+		"ChildIncarnation": true,
 		// RoutedCategory / RoutedModel are the OPT-IN model router's classification for
 		// this branch (ADR 0034): a CATEGORY label (operator-authored taxonomy name) and a
 		// concrete MODEL id — bare metadata, never the branch prompt, summary, or the
