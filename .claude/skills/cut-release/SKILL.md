@@ -129,8 +129,8 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
 - **Tag and commit must match.** The pushed tag must point at the commit that carries the bumped
   pins, or the pin gate fails the release. Step 4 → 5 ordering guarantees this.
 - **Annotated tags only** (`git tag -a`), matching prior releases — they carry a tagger + message.
-- **Don't bump the illustrative doc refs** unless asked — the `@vX.Y.Z` examples in `docs/usage.md`
-  and `.github/workflows/README.md` are illustrative and do NOT gate the release. The script
+- **Don't bump illustrative documentation refs** unless asked — the `@vX.Y.Z` examples in
+  `docs/usage/mecatequi-ci.md` are illustrative and do NOT gate the release. The script
   deliberately leaves them alone.
 - **Commit trailer:** end the commit message with the repo's `Co-Authored-By` trailer (see AGENTS.md).
 - **If the release run fails on the pin gate**, the tag's commit didn't have the pins bumped — the

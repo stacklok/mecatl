@@ -5,6 +5,16 @@
 # Package discovery is always dynamic via `go list ./...`. root-a is the
 # deliberately maintained expensive-package shard; root-b automatically gets
 # every other non-UI root package, including newly added packages.
+#
+# To rebalance, dispatch ci.yml with race_timing=true at a fixed commit ref and
+# inspect both race-timing-root-{a,b} JSONL artifacts. Compare package totals and
+# slow tests, not only job elapsed time:
+#   jq -c 'select((.Action == "pass" or .Action == "fail") and (.Elapsed != null)) | {Package, Test, Action, Elapsed}' *.jsonl
+#   jq -s 'map(select(.Test != null)) | sort_by(.Elapsed) | reverse' *.jsonl
+# Move packages in root_a_packages and update root-race-packages_test.sh in the
+# same change. Run task test:root-race-partition, task test:race-root-a, and
+# task test:race-root-b. Re-dispatch the same ref; use several same-ref runs when
+# runner variance makes the result unclear.
 set -euo pipefail
 
 readonly ui_package='github.com/stacklok/mecatl/cmd/mecatui/ui'

@@ -1,63 +1,9 @@
-# ════════════════════════════════════════════════════════════════════════════════════
-# mecatequi-reusable — the REUSABLE (`workflow_call`) entry point. A consumer adopts
-# mecatequi with a ~15-line caller workflow instead of vendoring the whole split-privilege
-# job graph plus the glue scripts (extract-prompt.sh, publish.sh). Caller sketch:
+# Reusable mecatequi workflow. See docs/usage/mecatequi-ci.md for setup and
+# docs/adr/0028-mecatequi.md for the split-privilege design.
 #
-#   jobs:
-#     mecatequi:
-#       uses: stacklok/mecatl/.github/workflows/mecatequi-reusable.yml@v0.0.4
-#       secrets:
-#         openrouter-key: ${{ secrets.OPENROUTER_CI_TOKEN }}
-#         publish-app-id: ${{ secrets.RELEASE_APP_ID }}
-#         publish-app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-#       with:
-#         label: ready-for-agent
-#         model: anthropic/claude-sonnet-4.6
-#         default-provider: openrouter
-#
-# THIS IS THE RECOMMENDED ADOPTION PATH. The hand-rolled template
-# .github/workflows/mecatequi-example.yml remains the ESCAPE HATCH for a consumer that
-# needs to customise the job graph itself (a custom author-gate job, an extra approval
-# stage, a different trigger). Full design: docs/adr/0028-mecatequi.md §5.
-# ════════════════════════════════════════════════════════════════════════════════════
-#
-# THE TOKEN BOUNDARY INVARIANT (the whole point — and why this is a reusable WORKFLOW, not
-# just a composite action). A reusable workflow can hold multiple jobs each with its OWN
-# `permissions:`, so it preserves the split-privilege model a single composite action
-# cannot:
-#   - The `implement` job RUNS THE AGENT but holds NO GitHub write token (contents: read,
-#     no id-token, no write). Its only secrets are the LLM keys. If the agent is hijacked
-#     by a prompt-injection in untrusted issue text, the blast radius is the rotatable LLM
-#     key — it cannot push code, open PRs, or comment.
-#   - The `publish` job HOLDS THE WRITE TOKEN but RUNS NO AGENT CODE. It only applies the
-#     produced patch as DATA (git apply) and posts the summary as text.
-# The step that can write to GitHub never runs agent code; the step that runs agent code
-# never holds a write token. The secret-scoping proof: the publish-token secrets are
-# interpolated ONLY in the `publish` job, so GitHub never materialises them in `implement`.
-#
-# INJECTION SAFETY: untrusted issue text never appears in a ${{ }} interpolation inside a
-# run: body or as an argv token. The mecatequi-extract-prompt action reads
-# $GITHUB_EVENT_PATH with jq into a file; the file reaches the binary via --prompt-file;
-# the binary fences it. Every event-derived value crosses via env:/inputs, never inline.
-#
-# SIBLING-ACTION REFS ARE FULL-PATH, PINNED LITERALS (the reusable-workflow wrinkle).
-# Inside a workflow called as `uses: owner/repo/.github/workflows/X.yml@ref`, a
-# `uses: ./.github/actions/Y` would resolve to the CALLER's checkout, NOT mecatl's — so the
-# three sibling actions below are referenced by FULL path
-# `stacklok/mecatl/.github/actions/<name>@v0.0.21`. GitHub AUTO-FETCHES a `uses:` action from
-# mecatl at that ref (no consumer vendoring, no mecatl checkout in the consumer). Expressions
-# are ILLEGAL in `uses:`, so the ref is a HARDCODED literal tag.
-#
-# PINNING RATIONALE — these are FIRST-PARTY same-repo actions, so they pin to the VERSION
-# TAG @v0.0.4, NOT a SHA. The supply-chain SHA-pin rule defends against a THIRD-PARTY action
-# whose tag a compromised maintainer could re-point; these actions live in THIS repo and are
-# released together, so a SHA would be (a) impossible to write before the release commit
-# exists (a chicken-and-egg bootstrap) and (b) no stronger than the tag (we control both).
-# THE RELEASE-PROCESS COST: every release tag MUST bump these three @v0.0.4 pins in the SAME
-# tagged commit, or the tag ships pins pointing at the PREVIOUS version (version skew). The
-# `lint:reusable-pins` Taskfile target mechanically asserts all three equal the release tag.
-# Third-party actions (checkout, upload/download-artifact, create-github-app-token) stay
-# SHA-pinned with a `# vX.Y.Z` comment per the house set (see .github/workflows/README.md).
+# Sibling actions require full repository paths because local paths resolve in the
+# caller's checkout. Their literal version tags are checked by
+# .github/actions/check-reusable-pins.sh.
 
 name: mecatequi (reusable)
 
@@ -191,16 +137,8 @@ on:
       anthropic-key:
         description: Anthropic API key (ANTHROPIC_API_KEY). Optional.
         required: false
-      # THE PUBLISH TOKEN — the one real interface decision (issue #69). Supports BOTH forms;
-      # the consumer wires whichever they have. App-token minting is consumer-specific (their
-      # own GitHub App id/key), so it cannot be hidden behind a default:
-      #   1. publish-app-id + publish-app-private-key -> a SHORT-LIVED installation token is
-      #      minted in the publish job (the stronger posture: a JIT token scoped to exactly
-      #      this repo's contents + pull-requests + issues, no standing grant); OR
-      #   2. publish-token -> a pre-minted token (e.g. a fine-grained PAT) the consumer
-      #      manages; OR
-      #   3. neither -> the publish job falls back to the standing GITHUB_TOKEN grant (with a
-      #      ::warning::). Zero-config, but a standing broad grant — the weakest form.
+      # Publish credentials are resolved in the publish job: prefer a short-lived GitHub
+      # App installation token, then a pre-minted token, then GITHUB_TOKEN as fallback.
       publish-token:
         description: Pre-minted GitHub token for the publish job (contents+PR+issues write). Optional.
         required: false
@@ -319,28 +257,19 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
 
-      # AGENT SELF-VERIFICATION TOOLCHAIN. The mecatequi action bakes in a `--instructions`
-      # framing asking the agent to run the repo's build/lint/test and make them green before
-      # finishing. The action now PROVISIONS `task` (go-task) + golangci-lint itself (before it
-      # runs the binary), so a plain Go consumer's `task lint` / `task test` work out of the box
-      # with zero config here. For a project toolchain beyond that (buf, protoc plugins, node,
-      # system packages) pass the `setup-script` input below — operator-supplied, TRUSTED shell
-      # the action runs in THIS job before the binary. Go for the binary build is provisioned by
-      # the action too.
+      # The action provides Go, task, and golangci-lint. Use setup-script only for
+      # additional project-specific tools needed by repository verification.
 
-      # Extract the UNTRUSTED prompt from the event JSON into a file via jq — never an inline
-      # ${{ }} of the body. FULL-PATH sibling-action ref (see the header): `./` would resolve
-      # to the caller's checkout, not mecatl's, so this must be the @v0.0.4-pinned full path.
+      # Extract the untrusted prompt from the event file rather than interpolating event text.
+      # A full repository path is required because local action paths resolve in the caller's checkout.
       - name: Extract prompt
         id: prompt
         uses: stacklok/mecatl/.github/actions/mecatequi-extract-prompt@v0.0.21
         with:
           out-file: ${{ runner.temp }}/prompt.txt
 
-      # The LLM keys reach the binary via the JOB-level env: block above, NOT a step env
-      # here — step-level env on a `uses:` step does not propagate into the composite action's
-      # internal steps, and the binary reads the key from the process environment. FULL-PATH
-      # sibling-action ref, @v0.0.4-pinned.
+      # The LLM keys reach the composite action through the job-level environment above;
+      # step-level env on a `uses:` step does not propagate to its internal steps.
       - name: mecatequi
         id: mecatequi
         uses: stacklok/mecatl/.github/actions/mecatequi@v0.0.21
@@ -470,10 +399,8 @@ jobs:
           # The value never appears in the log: it is piped to the file, not echoed.
           echo "GH_TOKEN=${gh_token}" >> "${GITHUB_ENV}"
 
-      # publish.sh applies the patch as DATA (git apply) and posts text — never agent output
-      # as code. It reads GH_TOKEN from the process environment, resolved into $GITHUB_ENV by
-      # the step above (a job-scoped write, the only delivery that reaches a composite's
-      # internal step). FULL-PATH sibling-action ref, @v0.0.4.
+      # publish.sh applies the patch as data and reads the resolved GH_TOKEN from the
+      # job environment; it never executes agent output.
       - name: Publish
         uses: stacklok/mecatl/.github/actions/mecatequi-publish@v0.0.21
         with:
