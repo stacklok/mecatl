@@ -82,8 +82,25 @@ const defaultMetricsAddr = "127.0.0.1:9090"
 // addresses, TLS, auth, rate limiting, metrics, tracing) is serve-time state
 // owned by this binary.
 type config struct {
-	grpcAddr           string
-	httpAddr           string
+	grpcAddr string
+	httpAddr string
+	// grpcUnixSocket serves gRPC on a UNIX-domain socket INSTEAD of a TCP port
+	// (issue #821 Scenario 8) — what a locally spawned daemon wants: no port, and
+	// reachability governed by filesystem permission rather than by "any local
+	// process". Mutually exclusive with an explicitly configured --grpc-addr,
+	// rejected at startup by validateDaemonHosting.
+	grpcUnixSocket string
+	// grpcAddrFromFile records that the daemon config file supplied grpc_addr, so
+	// the --grpc-unix-socket exclusion sees a FILE-configured TCP address too —
+	// tcpGRPCConfigured folds it with cliExplicit["grpc-addr"].
+	grpcAddrFromFile bool
+	// readyFile is the path of the atomically-published readiness document, written
+	// only after composition and every listener are up. Empty writes nothing.
+	readyFile string
+	// lifetimePipeFD is an INHERITED read-end descriptor whose EOF means the
+	// spawning parent died; the daemon then stops through the ordinary shutdown
+	// path. 0 disables it (0/1/2 are the standard streams, never a lifetime pipe).
+	lifetimePipeFD     int
 	workspace          string
 	workspaceAuthority string
 	model              string
@@ -1279,8 +1296,14 @@ func mergeDaemonConfig(cfg *config, dc *daemonconfig.Config) {
 	if cfg.cliExplicit == nil {
 		cfg.cliExplicit = make(map[string]bool)
 	}
-	if !cfg.cliExplicit["grpc-addr"] && dc.GRPCAddr != nil {
-		cfg.grpcAddr = *dc.GRPCAddr
+	if dc.GRPCAddr != nil {
+		// Recorded even when the CLI wins, because the exclusion in AC8.1 is about
+		// what the operator ASKED for: a file that names grpc_addr alongside
+		// --grpc-unix-socket is the same contradiction whichever value would win.
+		cfg.grpcAddrFromFile = true
+		if !cfg.cliExplicit["grpc-addr"] {
+			cfg.grpcAddr = *dc.GRPCAddr
+		}
 	}
 	if !cfg.cliExplicit["http-addr"] && dc.HTTPAddr != nil {
 		cfg.httpAddr = *dc.HTTPAddr
@@ -1334,13 +1357,32 @@ func loadAndMergeDaemonConfig(cfg *config, acp bool, load configLoader) error {
 	return nil
 }
 
+// tcpGRPCConfigured reports whether the operator asked for a TCP gRPC listener,
+// from EITHER source — an explicit --grpc-addr or a daemon config file's
+// grpc_addr. It is distinct from "--grpc-addr is non-empty", which is always
+// true: the flag carries a loopback default. --grpc-unix-socket suppresses that
+// default and contradicts a deliberate request, which is the exclusion AC8.1
+// specifies.
+func (c config) tcpGRPCConfigured() bool {
+	return c.cliExplicit["grpc-addr"] || c.grpcAddrFromFile
+}
+
 // workspaceAuthorityForListeners derives mecated's API workspace policy from both
-// API listeners. Any non-loopback listener is a network boundary, so it wins over
-// a loopback sibling. An explicit operator selection wins over topology.
+// API listeners. Any listener that is a network boundary wins over a local
+// sibling. An explicit operator selection wins over topology.
+//
+// "Network boundary" is listenerIsNetworkBoundary's three-way decision, not a
+// loopback string test: a UNIX-socket gRPC listener and a DISABLED HTTP listener
+// are both strictly narrower than the loopback TCP bind that already grants
+// client-selected authority, so a gRPC-over-socket daemon keeps it. Reading an
+// empty --http-addr as "not loopback" would have demanded --workspace from
+// exactly the local spawned daemon that has no network surface at all.
 func workspaceAuthorityForListeners(cfg config) (server.WorkspaceAuthority, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.workspaceAuthority)) {
 	case "":
-		if isLoopbackHostPort(cfg.grpcAddr) && isLoopbackHostPort(cfg.httpAddr) {
+		grpcNetwork := listenerIsNetworkBoundary(cfg.grpcAddr, cfg.grpcUnixSocket != "")
+		httpNetwork := listenerIsNetworkBoundary(cfg.httpAddr, false)
+		if !grpcNetwork && !httpNetwork {
 			return server.WorkspaceAuthorityClientSelected, nil
 		}
 		return server.WorkspaceAuthorityServerAssigned, nil
@@ -1419,6 +1461,12 @@ func validateEffectiveConfig(cfg config) error {
 	if err := validateDeploymentID(cfg.deploymentID); err != nil {
 		return err
 	}
+	// Daemon-hosting topology (issue #821 Scenario 8): the socket/TCP exclusion,
+	// the socket path bounds, the lifetime-pipe descriptor, and the ready-file
+	// path. Validated here so a file-supplied value cannot bypass it either.
+	if err := validateDaemonHosting(cfg); err != nil {
+		return err
+	}
 	// Build the policy purely to validate it: a malformed origin must fail at
 	// STARTUP, where the operator is present, rather than becoming a silently
 	// dead allowlist entry that looks identical to a working one.
@@ -1485,7 +1533,13 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.grpcAddr, "grpc-addr", defaultGRPCAddr,
 		"gRPC listen address (defaults to loopback; set --auth-token and/or --tls-cert before binding non-loopback)")
 	fs.StringVar(&cfg.httpAddr, "http-addr", defaultHTTPAddr,
-		"HTTP/SSE listen address (defaults to loopback; set --auth-token and/or --tls-cert before binding non-loopback)")
+		"HTTP/SSE listen address (defaults to loopback; set --auth-token and/or --tls-cert before binding non-loopback). EMPTY DISABLES the HTTP/SSE listener AND the --metrics-addr admin listener together, so a gRPC-only daemon opens no HTTP port at all")
+	fs.StringVar(&cfg.grpcUnixSocket, "grpc-unix-socket", "",
+		"absolute path of a UNIX-domain socket to serve gRPC on INSTEAD of a TCP port; opens no TCP port. Mutually exclusive with an explicitly configured --grpc-addr (rejected at startup). The socket is created owner-only, inside an owner-only directory this process creates if missing; a stale socket left by a dead process is removed, while one a live process is accepting on refuses the start")
+	fs.StringVar(&cfg.readyFile, "ready-file", "",
+		"absolute path to write a JSON readiness document to, ATOMICALLY (temp file + rename) and only AFTER composition and every listener are up, so a spawning parent can wait on the path instead of racing a connect loop. Carries the pid, the transport, the bound gRPC/HTTP addresses, and the non-secret compatibility descriptor — never a credential. Empty writes nothing")
+	fs.IntVar(&cfg.lifetimePipeFD, "lifetime-pipe-fd", 0,
+		"file descriptor of an INHERITED pipe whose read end this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes to it — it has nothing to remember. 0 (default) disables; 0/1/2 are the standard streams and are rejected")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
 	fs.StringVar(&cfg.workspaceAuthority, "workspace-authority", "", "workspace authority: client-selected or server-assigned (default derives from gRPC + HTTP/SSE listener topology)")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
@@ -1898,108 +1952,76 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 
 	// --- HTTP: health endpoints mounted OUTSIDE auth/rate-limit; the API mux
 	// wrapped in the auth middleware. The readiness probe reports ready as soon
-	// as the engine/service are wired (they are, by the time serve runs). ---
-	httpMux := http.NewServeMux()
-	server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
-	httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc))
-	httpSrv := &http.Server{
-		Addr:              cfg.httpAddr,
-		Handler:           httpMux,
-		ReadHeaderTimeout: 10 * time.Second,
-		TLSConfig:         tlsCfg,
+	// as the engine/service are wired (they are, by the time serve runs).
+	//
+	// An EMPTY --http-addr disables the HTTP/SSE surface entirely (AC8.2): a
+	// gRPC-over-socket daemon spawned by a local parent has no use for a second
+	// transport, and leaving one bound would falsify the no-TCP-port guarantee
+	// --grpc-unix-socket exists to give. httpSrv is nil in that case, and every
+	// consumer below (the serve goroutine, shutdown) branches on nil rather than
+	// on the address, so there is one decision, not three. ---
+	var httpSrv *http.Server
+	if cfg.httpAddr != "" {
+		httpMux := http.NewServeMux()
+		server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
+		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc))
+		httpSrv = &http.Server{
+			Addr:              cfg.httpAddr,
+			Handler:           httpMux,
+			ReadHeaderTimeout: 10 * time.Second,
+			TLSConfig:         tlsCfg,
+		}
 	}
 
-	// The admin endpoint runs on a separate loopback listener: it carries
-	// /metrics (read-only, secret-free) PLUS the runtime-introspection surface —
-	// pprof, expvar (/debug/vars), and the FlightRecorder snapshot
-	// (/debug/flightrecorder). An empty --metrics-addr disables the whole mux.
-	//
-	// SECURITY: pprof/FlightRecorder/expvar output can embed prompt text, file
-	// paths, and goroutine stacks. This listener is loopback-bound by default and
-	// MUST stay loopback — these endpoints are never mounted on the public
-	// gRPC/HTTP service surface (decision 6 in docs/adr/0018-perf-observability.md).
-	var metricsSrv *http.Server
-	adminPaths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
-	if cfg.metricsAddr != "" {
-		adminMux := telemetry.NewAdminMux(reg, recorder)
-		// Perf MCP server: mount /mcp on the SAME loopback admin mux. It is
-		// UNAUTHENTICATED and its output can embed goroutine-derived function names
-		// and timing, so a non-loopback --metrics-addr with --perf-mcp is REFUSED
-		// (decision 6 + the security review's CWE-306 Low finding). That refusal is
-		// enforced fail-closed in parseFlags (config validation), BEFORE serve()
-		// binds anything — so by the time we reach here the address is loopback.
-		if cfg.perfMCP {
-			adminMux.Handle("/mcp", mcpperf.Handler(mcpperf.Deps{
-				Snapshot:  telemetry.Snapshot,
-				Gatherer:  reg,
-				Recorder:  recorder, // nil-able: /debug/flightrecorder disabled ⇒ capture tool reports unavailable
-				Profiler:  mcpperf.NewProfiler(),
-				SlowTurns: slowTurnSource(slowTurns),
-				Clock:     time.Now,
-				Logger:    slog.Default(),
-			}))
-			adminPaths += " /mcp"
-		}
-		metricsSrv = &http.Server{
-			Addr:              cfg.metricsAddr,
-			Handler:           adminMux,
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-	}
+	metricsSrv, adminPaths := buildAdminServer(cfg, reg, recorder, slowTurns)
 
 	// Caller identity counts as authentication: an OIDC deployment may carry no
 	// static token at all, and warning "NO authentication" there would be false.
 	authed := auth != nil && (cfg.authToken != "" || cfg.oidc.Enabled() || tlsCfg != nil)
-	warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
-	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
+	logListenerPosture(cfg, authed)
 
-	grpcLis, err := net.Listen("tcp", cfg.grpcAddr)
+	// Every listener is bound BEFORE anything serves, so the ready file (written
+	// below) can honestly mean "reachable" — a bind failure is still a startup
+	// error at this point, not a dead daemon a parent has already been told about.
+	lis, err := bindListeners(cfg, httpSrv != nil, metricsSrv != nil)
 	if err != nil {
-		return fmt.Errorf("listen grpc %q: %w", cfg.grpcAddr, err)
+		return err
+	}
+	defer lis.closeUnserved()
+
+	// The inherited lifetime pipe: EOF on it means the spawning parent is gone.
+	// Adopted here, after the binds, so a startup failure exits without having
+	// claimed a descriptor the parent may still be using.
+	parent, err := openLifetimePipe(cfg.lifetimePipeFD)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	if parent.Enabled() {
+		slog.Info("watching the inherited lifetime pipe; EOF on it stops this daemon gracefully", "fd", cfg.lifetimePipeFD)
+	}
+
+	// AC8.3: published only now — composition is complete (app.Build ran before
+	// serve) and every listener is bound. A parent that sees this file can dial
+	// immediately.
+	if err := publishReadyFile(cfg, svc, lis); err != nil {
+		return err
 	}
 
 	errCh := make(chan error, 3)
 
-	go func() {
-		slog.Info("gRPC server listening", "addr", grpcLis.Addr().String())
-		if serveErr := grpcSrv.Serve(grpcLis); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
-			errCh <- fmt.Errorf("grpc serve: %w", serveErr)
-		}
-	}()
-
-	go func() {
-		slog.Info("HTTP/SSE server listening", "addr", cfg.httpAddr, "tls", tlsCfg != nil)
-		// ListenAndServeTLS with empty cert/key paths uses the certificate already
-		// loaded into TLSConfig.Certificates by buildTLSConfig.
-		var serveErr error
-		if tlsCfg != nil {
-			serveErr = httpSrv.ListenAndServeTLS("", "")
-		} else {
-			serveErr = httpSrv.ListenAndServe()
-		}
-		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("http serve: %w", serveErr)
-		}
-	}()
-
-	if metricsSrv != nil {
-		go func() {
-			if cfg.perfMCP {
-				slog.Info("admin server listening (loopback; /mcp is UNAUTHENTICATED perf MCP — keep loopback)", "addr", cfg.metricsAddr, "paths", adminPaths)
-			} else {
-				slog.Info("admin server listening (loopback)", "addr", cfg.metricsAddr, "paths", adminPaths)
-			}
-			if serveErr := metricsSrv.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				errCh <- fmt.Errorf("metrics serve: %w", serveErr)
-			}
-		}()
-	} else {
-		slog.Info("metrics endpoint DISABLED (--metrics-addr empty)")
-	}
+	lis.serveGRPC(grpcSrv, errCh)
+	lis.serveHTTP(httpSrv, tlsCfg, errCh)
+	lis.serveAdmin(metricsSrv, cfg, adminPaths, errCh)
 
 	select {
 	case <-ctx.Done():
 		slog.Info("shutdown signal received; stopping servers")
+	case <-parent.Closed():
+		// AC8.5: the parent-crash path. Same graceful shutdown as a signal — the
+		// daemon has an in-flight run's session to persist either way, and a
+		// parent that died is precisely when abandoning that would be felt.
+		slog.Info("lifetime pipe closed (the spawning parent exited); stopping servers")
 	case err := <-errCh:
 		slog.Error("server failed; shutting down", "err", err)
 		shutdown(grpcSrv, httpSrv, metricsSrv)
@@ -2007,6 +2029,230 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 	}
 
 	shutdown(grpcSrv, httpSrv, metricsSrv)
+	return nil
+}
+
+// boundListeners holds the listeners serve bound before anything started
+// serving, so readiness is observable and a bind failure is still a clean
+// startup error. httpLis / metricsLis are nil when their surface is disabled.
+type boundListeners struct {
+	grpc    grpcListener
+	http    net.Listener
+	metrics net.Listener
+	// served records that ownership passed to the servers, so closeUnserved is a
+	// no-op on the success path (the servers own their listeners from then on).
+	served bool
+}
+
+// bindListeners binds every enabled listener up front. A failure closes whatever
+// already bound: a half-bound daemon that returns an error must not leave a
+// socket file or a held port behind for the next attempt to trip over.
+func bindListeners(cfg config, wantHTTP, wantMetrics bool) (boundListeners, error) {
+	var lis boundListeners
+	grpcLis, err := listenGRPC(cfg)
+	if err != nil {
+		return boundListeners{}, err
+	}
+	lis.grpc = grpcLis
+	if wantHTTP {
+		httpLis, httpErr := net.Listen("tcp", cfg.httpAddr)
+		if httpErr != nil {
+			lis.closeUnserved()
+			return boundListeners{}, fmt.Errorf("listen http %q: %w", cfg.httpAddr, httpErr)
+		}
+		lis.http = httpLis
+	}
+	if wantMetrics {
+		metricsLis, metricsErr := net.Listen("tcp", cfg.metricsAddr)
+		if metricsErr != nil {
+			lis.closeUnserved()
+			return boundListeners{}, fmt.Errorf("listen admin %q: %w", cfg.metricsAddr, metricsErr)
+		}
+		lis.metrics = metricsLis
+	}
+	return lis, nil
+}
+
+// closeUnserved releases listeners that never reached a server. Once
+// serveGRPC/serveHTTP/serveAdmin have run, the servers own them and their own
+// Shutdown/GracefulStop closes them — closing here as well would race that.
+func (l *boundListeners) closeUnserved() {
+	if l.served {
+		return
+	}
+	for _, c := range []io.Closer{l.grpc.Listener, l.http, l.metrics} {
+		if c != nil {
+			_ = c.Close()
+		}
+	}
+}
+
+// serveGRPC hands the bound gRPC listener to the server.
+func (l *boundListeners) serveGRPC(grpcSrv *grpc.Server, errCh chan<- error) {
+	l.served = true
+	transport, addr := l.grpc.transport, l.grpc.Addr().String()
+	go func() {
+		slog.Info("gRPC server listening", "transport", transport, "addr", addr)
+		if serveErr := grpcSrv.Serve(l.grpc.Listener); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+			errCh <- fmt.Errorf("grpc serve: %w", serveErr)
+		}
+	}()
+}
+
+// serveHTTP hands the bound HTTP listener to the server, or logs the disabled
+// posture when there is none. ServeTLS with empty cert/key paths uses the
+// certificate already loaded into TLSConfig.Certificates by buildTLSConfig,
+// exactly as ListenAndServeTLS did.
+func (l *boundListeners) serveHTTP(httpSrv *http.Server, tlsCfg *tls.Config, errCh chan<- error) {
+	if httpSrv == nil {
+		slog.Info("HTTP/SSE listener DISABLED (--http-addr empty); gRPC is the only API surface, and the admin/metrics listener is disabled with it")
+		return
+	}
+	l.served = true
+	addr := l.http.Addr().String()
+	go func() {
+		slog.Info("HTTP/SSE server listening", "addr", addr, "tls", tlsCfg != nil)
+		var serveErr error
+		if tlsCfg != nil {
+			serveErr = httpSrv.ServeTLS(l.http, "", "")
+		} else {
+			serveErr = httpSrv.Serve(l.http)
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("http serve: %w", serveErr)
+		}
+	}()
+}
+
+// serveAdmin hands the bound loopback admin listener to the server, or logs the
+// disabled posture when there is none.
+func (l *boundListeners) serveAdmin(metricsSrv *http.Server, cfg config, adminPaths string, errCh chan<- error) {
+	if metricsSrv == nil {
+		if cfg.metricsAddr != "" && cfg.httpAddr == "" {
+			slog.Info("admin/metrics endpoint DISABLED with the HTTP listener (--http-addr empty)", "metrics_addr", cfg.metricsAddr)
+		} else {
+			slog.Info("metrics endpoint DISABLED (--metrics-addr empty)")
+		}
+		return
+	}
+	l.served = true
+	addr := l.metrics.Addr().String()
+	go func() {
+		if cfg.perfMCP {
+			slog.Info("admin server listening (loopback; /mcp is UNAUTHENTICATED perf MCP — keep loopback)", "addr", addr, "paths", adminPaths)
+		} else {
+			slog.Info("admin server listening (loopback)", "addr", addr, "paths", adminPaths)
+		}
+		if serveErr := metricsSrv.Serve(l.metrics); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("metrics serve: %w", serveErr)
+		}
+	}()
+}
+
+// buildAdminServer assembles the loopback admin/observability server —
+// /metrics plus the pprof/expvar/FlightRecorder runtime-introspection surface,
+// and, when --perf-mcp is set, the read-only perf MCP endpoint. It returns nil
+// when the surface is disabled, together with the space-separated path list the
+// startup log reports.
+//
+// The admin mux is disabled by an empty --metrics-addr (as always) AND by an
+// empty --http-addr (AC8.2). Tying it to the HTTP surface is deliberate: both
+// are TCP listeners the operator did not have to ask for, and "--http-addr
+// disables the HTTP listeners" would be a lie if a second one on port 9090
+// survived it — a spawned local daemon would still be holding a port.
+//
+// SECURITY: pprof/FlightRecorder/expvar output can embed prompt text, file
+// paths, and goroutine stacks. This listener is loopback-bound by default and
+// MUST stay loopback — these endpoints are never mounted on the public
+// gRPC/HTTP service surface (decision 6 in docs/adr/0018-perf-observability.md).
+func buildAdminServer(cfg config, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) (*http.Server, string) {
+	adminPaths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
+	if cfg.metricsAddr == "" || cfg.httpAddr == "" {
+		return nil, adminPaths
+	}
+	adminMux := telemetry.NewAdminMux(reg, recorder)
+	// Perf MCP server: mount /mcp on the SAME loopback admin mux. It is
+	// UNAUTHENTICATED and its output can embed goroutine-derived function names
+	// and timing, so a non-loopback --metrics-addr with --perf-mcp is REFUSED
+	// (decision 6 + the security review's CWE-306 Low finding). That refusal is
+	// enforced fail-closed in parseFlags (config validation), BEFORE serve()
+	// binds anything — so by the time we reach here the address is loopback.
+	if cfg.perfMCP {
+		adminMux.Handle("/mcp", mcpperf.Handler(mcpperf.Deps{
+			Snapshot:  telemetry.Snapshot,
+			Gatherer:  reg,
+			Recorder:  recorder, // nil-able: /debug/flightrecorder disabled ⇒ capture tool reports unavailable
+			Profiler:  mcpperf.NewProfiler(),
+			SlowTurns: slowTurnSource(slowTurns),
+			Clock:     time.Now,
+			Logger:    slog.Default(),
+		}))
+		adminPaths += " /mcp"
+	}
+	return &http.Server{
+		Addr:              cfg.metricsAddr,
+		Handler:           adminMux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}, adminPaths
+}
+
+// logListenerPosture logs the trust assumption of each API listener that exists.
+//
+// A UNIX socket and a disabled listener each get their own line rather than
+// being fed to warnIfNonLoopback: that helper's vocabulary is loopback-vs-not,
+// and neither case is either. Calling it with an empty address would emit the
+// prominent unauthenticated-network WARNING for a listener that does not exist —
+// the kind of false alarm that teaches operators to ignore the real one.
+func logListenerPosture(cfg config, authed bool) {
+	if cfg.grpcUnixSocket != "" {
+		slog.Info("gRPC bound to a UNIX-domain socket (no TCP port); reachability is filesystem permission on the socket path",
+			"flag", "grpc-unix-socket", "socket", cfg.grpcUnixSocket, "authenticated", authed)
+	} else {
+		warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
+	}
+	if cfg.httpAddr == "" {
+		slog.Info("HTTP/SSE listener not configured (--http-addr empty); no HTTP surface is exposed", "flag", "http-addr")
+		return
+	}
+	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
+}
+
+// publishReadyFile writes the readiness document when --ready-file is set
+// (AC8.3), and is a no-op otherwise.
+//
+// The descriptive half comes from Service.CompatibilityInfo — the SAME
+// projection GetCompatibilityInfo serves, already vetted for exposure to an
+// authenticated caller — not from cfg. That is the AC8.4 discipline: reading the
+// raw config here would make the file's safety depend on every future reviewer
+// noticing that a newly added field is a credential. The vetted projection has
+// exactly one job, and adding a secret to it would break its own tests first.
+//
+// Capabilities are deliberately dropped from that projection: the ready file is
+// an unauthenticated local artefact, and ADR 0245 keeps operator configuration
+// out of the equivalent unauthenticated-shaped surface. A parent that wants the
+// capability set can ask for it over the socket it just learned about.
+func publishReadyFile(cfg config, svc *server.Service, lis boundListeners) error {
+	if cfg.readyFile == "" {
+		return nil
+	}
+	info := svc.CompatibilityInfo(context.Background())
+	doc := readyDoc{
+		Schema:      readyDocSchema,
+		PID:         os.Getpid(),
+		Transport:   lis.grpc.transport,
+		GRPCAddress: lis.grpc.Addr().String(),
+		SocketPath:  lis.grpc.socketPath,
+		APIMajor:    info.GetApiMajor(),
+		Features:    info.GetFeatures(),
+		Deployment:  info.GetDeployment(),
+	}
+	if lis.http != nil {
+		doc.HTTPAddress = lis.http.Addr().String()
+	}
+	if err := writeReadyFile(cfg.readyFile, doc); err != nil {
+		return err
+	}
+	slog.Info("ready file published", "path", cfg.readyFile, "transport", doc.Transport, "grpc_address", doc.GRPCAddress)
 	return nil
 }
 
@@ -2172,12 +2418,16 @@ func storeKind(cfg config) string {
 }
 
 // shutdown gracefully stops the servers, bounding the HTTP drains with a
-// timeout. metricsSrv may be nil when the /metrics endpoint is disabled.
+// timeout. httpSrv may be nil when --http-addr is empty (the HTTP/SSE surface is
+// disabled, AC8.2); metricsSrv may be nil when the admin endpoint is disabled by
+// an empty --metrics-addr or with the HTTP surface.
 func shutdown(grpcSrv *grpc.Server, httpSrv, metricsSrv *http.Server) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		slog.Warn("http graceful shutdown", "err", err)
+	if httpSrv != nil {
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("http graceful shutdown", "err", err)
+		}
 	}
 	if metricsSrv != nil {
 		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {

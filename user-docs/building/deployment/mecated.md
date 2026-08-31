@@ -139,8 +139,11 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | Flag | Default | Notes |
 |---|---|---|
 | `--grpc-addr` | `127.0.0.1:8080` | gRPC listen address |
-| `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address |
+| `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address. **Empty disables the HTTP/SSE listener and the admin listener together** — see [Hosting a spawned daemon](#hosting-a-spawned-daemon) |
 | `--metrics-addr` | `127.0.0.1:9090` | Prometheus + admin listener; empty disables it |
+| `--grpc-unix-socket` | `""` (off) | Serve gRPC on a UNIX-domain socket instead of a TCP port. Mutually exclusive with a configured `--grpc-addr`. See [Hosting a spawned daemon](#hosting-a-spawned-daemon) |
+| `--ready-file` | `""` (off) | Absolute path to write a JSON readiness document to, atomically, once every listener is up |
+| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe; EOF on it stops the daemon gracefully (the parent-crash path) |
 | `--auth-token` | `""` (off) | Bearer token required on every request; also `MECATL_AUTH_TOKEN` |
 | `--tls-cert` | `""` | PEM server certificate; enables TLS on both listeners when paired with `--tls-key` |
 | `--tls-key` | `""` | PEM server private key |
@@ -694,6 +697,89 @@ see [Scheduled tasks](/building/what-you-get/scheduled-tasks.md#host-composition
 
 ---
 
+## Hosting a spawned daemon
+
+If something else launches `mecated` — an SDK, an editor extension, a wrapper CLI —
+the parent needs three things a network daemon does not: a private endpoint, a way
+to know when the server is reachable, and a way for the daemon to notice the parent
+died. Four flags cover it.
+
+```sh
+mecated serve \
+  --grpc-unix-socket /run/user/1000/myapp/mecated.sock \
+  --http-addr "" \
+  --ready-file /run/user/1000/myapp/ready.json \
+  --lifetime-pipe-fd 3
+```
+
+**`--grpc-unix-socket`** serves gRPC on a socket and opens **no TCP port at all**.
+Dial it as `unix:///run/user/1000/myapp/mecated.sock`. Reachability is filesystem
+permission on one path, which is strictly narrower than a loopback port that any
+local process may connect to. Some details worth knowing:
+
+- The socket is created **owner-only**, inside an owner-only (`0700`) directory that
+  mecated creates if it is missing. If the directory already exists mecated leaves
+  its mode alone — it will not chmod your `/tmp` or your systemd `RuntimeDirectory` —
+  but it logs a warning when that directory is reachable beyond you.
+- A **stale socket** left behind by a process that was killed is removed on start. A
+  socket a **live** process is still accepting on refuses the start instead, because
+  removing it would silently steal the running daemon's address.
+- `--grpc-unix-socket` **suppresses** the `--grpc-addr` default. Setting both — on the
+  command line or in a config file — is rejected at startup rather than resolved by a
+  precedence rule you would have to look up.
+- Socket paths are short by kernel rule: `sockaddr_un` stores at most 103 bytes on
+  macOS and 107 on Linux. mecated checks this at startup and tells you the path, its
+  length, and the limit, instead of letting `bind` fail with a bare `EINVAL`.
+
+**An empty `--http-addr`** disables the HTTP/SSE listener *and* the `--metrics-addr`
+admin listener. They go together deliberately: both are TCP listeners you did not
+have to ask for, and "HTTP is off" would not be true if a second one on port 9090
+survived it. `--perf-mcp` is refused in this mode, since the listener it mounts on no
+longer exists.
+
+**`--ready-file`** removes the startup race. The file is published **atomically**
+(temp file plus rename, so a poller sees the whole document or nothing) and only
+**after** composition finishes and every listener is bound — so the moment the path
+exists, you can dial:
+
+```json
+{
+  "schema": "mecated-ready/1",
+  "pid": 5821,
+  "transport": "unix",
+  "grpc_address": "/run/user/1000/myapp/mecated.sock",
+  "socket_path": "/run/user/1000/myapp/mecated.sock",
+  "api_major": 1,
+  "features": ["server_info"],
+  "deployment": "eu-west-1 staging"
+}
+```
+
+The descriptive half comes from the same projection `GetCompatibilityInfo` serves,
+so `api_major` and `features` let a parent refuse an incompatible daemon before its
+first RPC. The field set is a short allowlist and carries **no credential, TLS
+detail, or capability set** — the file is a local artefact with no authentication in
+front of it, and it is written `0600`. Ask over the socket for anything more.
+
+The file is **not removed on shutdown**: removing it on a graceful exit but not on
+a `SIGKILL` would be a guarantee you could not rely on, so treat it as possibly
+stale and check the `pid`. A restart over the same path overwrites it atomically.
+
+**`--lifetime-pipe-fd`** is the parent-crash path. Create a pipe, pass the read end
+to the child as a descriptor, and hold the write end without ever writing to it. If
+the parent exits — cleanly, or by `SIGKILL`, or by crashing — the kernel closes its
+descriptors, the daemon's read end sees EOF, and it shuts down through the same
+graceful path a `SIGTERM` takes, persisting session state on the way out. The parent
+has nothing to remember. Bytes on the pipe are read and discarded: it is a liveness
+signal, never a control channel. `0`, `1`, and `2` are rejected — treating stdin's
+EOF as "the parent died" would stop the daemon the moment you started it from a
+non-interactive shell.
+
+All four flags are off by default, and a daemon that sets none of them behaves
+exactly as before.
+
+---
+
 ## Graceful shutdown
 
 On `SIGINT` or `SIGTERM`, mecated shuts down all three listeners with a 10-second
@@ -704,6 +790,9 @@ Background subagent children owned by active sessions are cancelled when their p
 run is cancelled (the harness cancels runs on shutdown). A session's state is
 persisted (if `--store-dir` is set) before the process exits; interrupted runs are
 recoverable from the snapshot.
+
+EOF on an inherited `--lifetime-pipe-fd` takes this same path — see
+[Hosting a spawned daemon](#hosting-a-spawned-daemon).
 
 ---
 

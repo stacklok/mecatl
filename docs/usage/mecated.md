@@ -101,7 +101,10 @@ root, or wait for a future opaque scoped-grant design. See [ADR
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--grpc-addr` | `127.0.0.1:8080` | gRPC listen address (loopback; **unauthenticated unless** the security & transport flags below are set) |
-| `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address (loopback; **unauthenticated unless** the security & transport flags below are set) |
+| `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address (loopback; **unauthenticated unless** the security & transport flags below are set). **EMPTY DISABLES** the HTTP/SSE listener **and the `--metrics-addr` admin listener together** — see the spawned-daemon-hosting note below. |
+| `--grpc-unix-socket` | `""` (off) | absolute path of a UNIX-domain socket to serve gRPC on **instead of a TCP port**; opens **no TCP port**. **Mutually exclusive** with a *configured* `--grpc-addr` (explicit flag or config-file `grpc_addr`) — rejected at startup. The socket is created **owner-only** inside an owner-only (`0700`) directory mecated creates when missing; a **stale** socket from a dead process is removed, one a **live** process is accepting on **refuses the start**. Path length is validated against `sockaddr_un.sun_path` (103 usable bytes on Darwin, 107 on Linux). **See the spawned-daemon-hosting note below.** |
+| `--ready-file` | `""` (off) | absolute path to write a JSON readiness document to, **atomically** (temp file + rename) and only **after** composition and every listener are up — so a spawning parent waits on a path instead of racing a connect loop. Carries pid, transport, bound gRPC/HTTP addresses, and the non-secret compatibility descriptor (`api_major`/`features`/`deployment`) — **never** a credential, TLS detail, or capability set. **See the spawned-daemon-hosting note below.** |
+| `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe whose read end mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes. `0` disables; `0`/`1`/`2` are the standard streams and are **rejected**. **See the spawned-daemon-hosting note below.** |
 | `--workspace` | current working dir | default session workspace root |
 | `--workspace-authority` | topology-derived | `client-selected` or `server-assigned`. Loopback-only gRPC + HTTP/SSE keeps local client workspace/worktree selection; any public, wildcard, or mixed listener assigns `--workspace` server-side and requires filesystem requests to leave `workspace` empty. Set `server-assigned` explicitly behind a reverse proxy. A network filesystem deployment without `--workspace` fails before listeners start. |
 | `--model` | `""` | model identifier sent to the provider. Empty → the server-configured default (`--default-model`, when set), else the selected provider's built-in default: `gpt-5` (OpenAI), `openai/gpt-5` (OpenRouter), `claude-sonnet-4-6` (Anthropic). |
@@ -486,6 +489,129 @@ The four OIDC flags are identical on `mecak8s`. Two things to be clear about
   token before its expiry. The cache is process-local and unpersisted, so a restart
   fetches keys again. `--oidc-max-jwks-staleness=0` is the explicit, risk-accepting
   unbounded-cache escape hatch.
+
+### Spawned-daemon hosting: UDS, HTTP-disable, ready file, lifetime pipe
+
+When something else launches `mecated` — an SDK's `spawn()`, an editor extension,
+a wrapper CLI — the parent needs three things the network daemon shape does not
+provide: a **private endpoint**, a **readiness barrier**, and a way for the child
+to notice the **parent died**. Four flags cover it, all off by default, and a
+daemon that sets none of them is byte-identical to the pre-Scenario-8 binary
+([ADR 0248](../adr/0248-sdk-compatibility-and-error-contract.md); issue
+[#821](https://github.com/stacklok/mecatl/issues/821) Scenario 8).
+
+```sh
+mecated serve \
+  --grpc-unix-socket /run/user/1000/myapp/mecated.sock \
+  --http-addr "" \
+  --ready-file /run/user/1000/myapp/ready.json \
+  --lifetime-pipe-fd 3
+```
+
+**`--grpc-unix-socket`** binds gRPC on a UNIX-domain socket and opens **no TCP
+port**. Dial target: `unix:///run/user/1000/myapp/mecated.sock`. It is a genuine
+security narrowing, not just an ergonomic one — a loopback TCP port is reachable
+by every local process, while a socket is reachable only through filesystem
+permission on one path.
+
+- **Permissions (owner-only).** The socket is created owner-only *at bind time*,
+  under an owner-only umask, rather than chmod'ed afterwards: a chmod that follows
+  `bind` leaves a real window in which the socket is connectable, and on a socket
+  carrying an unauthenticated local harness API that window is command execution.
+  The parent **directory** is the primary defence and is created `0700` when it
+  does not exist. An **existing** directory is left alone — chmod'ing an
+  operator's `/tmp`, `XDG_RUNTIME_DIR`, or systemd `RuntimeDirectory` would be a
+  worse outcome than the risk it closes — but a group/world-reachable one draws a
+  startup `WARN` naming the directory.
+- **Stale vs live.** A socket inode looks identical whether or not anyone is
+  listening, so the check is behavioural: mecated **dials** it. A refused connect
+  proves the inode is a corpse and it is unlinked (with an `INFO`); a successful
+  connect proves a **live** peer and mecated **refuses to start** — unlinking a
+  live daemon's socket silently steals its address, and the new process then
+  answers RPCs the old one's clients meant for it.
+- **Mutual exclusion.** The socket **suppresses** the `--grpc-addr` default.
+  Configuring TCP gRPC as well — an explicit `--grpc-addr` **or** a daemon-config
+  `grpc_addr` — is **rejected at startup**. Silently ignoring it would leave the
+  operator believing a port was open; silently opening one would falsify the
+  no-TCP-port guarantee the flag exists to give.
+- **Path length.** `sockaddr_un.sun_path` is a fixed array: **103** usable bytes on
+  Darwin, **107** on Linux. mecated validates the length at startup and names the
+  path, its length, and the limit, instead of surfacing `bind`'s bare `EINVAL`. On
+  macOS the default `TMPDIR` (`/var/folders/xy/…/T/`) already consumes about half
+  the budget, so this fires in practice.
+- **Workspace authority.** A UNIX socket is **not** a network boundary
+  ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)), so a
+  socket-only daemon keeps `client-selected` authority and does **not** require
+  `--workspace`.
+
+**An empty `--http-addr`** disables the HTTP/SSE listener **and the admin/metrics
+listener**. The coupling is deliberate: both are TCP listeners the operator never
+asked for, and "the HTTP listeners are disabled" would be false while a second one
+sat on `--metrics-addr`'s default port 9090 — a spawned daemon promised no TCP
+port would still be holding one. `--perf-mcp` is **refused** in this mode, since
+the listener it mounts `/mcp` on no longer exists.
+
+**`--ready-file`** removes the startup race. It is published **atomically** — a
+temp file in the same directory, fsync'ed, then renamed over the target, so a
+polling parent observes the complete document or nothing, never a truncated prefix
+it would have to distinguish from a corrupt one — and only **after** composition
+finishes and **every** listener is bound. The instant the path exists, the socket
+is dialable.
+
+```json
+{
+  "schema": "mecated-ready/1",
+  "pid": 5821,
+  "transport": "unix",
+  "grpc_address": "/run/user/1000/myapp/mecated.sock",
+  "socket_path": "/run/user/1000/myapp/mecated.sock",
+  "api_major": 1,
+  "features": ["server_info"],
+  "deployment": "eu-west-1 staging"
+}
+```
+
+`http_address` appears only when the HTTP listener is enabled; absence is the
+honest signal, not an empty string that reads like a bind to every interface. The
+descriptive half (`api_major`/`features`/`deployment`) is read from the **same
+`GetCompatibilityInfo` projection** both transports serve — never from raw config
+— so a parent can refuse an incompatible daemon before its first RPC, and the
+file's safety does not depend on a future reviewer noticing that a newly added
+config field is a credential.
+
+The field set is a short **allowlist**, pinned structurally by a test, and it
+carries **no credential, no authentication or TLS detail, and no capability set** —
+the same exclusions [ADR 0245](../adr/0245-safe-build-diagnostics.md) draws around
+`GetServerInfo`. The listener addresses are the one deliberate difference, and only
+because they are the file's entire purpose: they are the endpoint the parent itself
+configured, echoed back resolved. A parent that wants the operator-enabled
+capability set asks for it over the socket it just learned about. The file itself
+is `0600`, since it names a socket path a local peer could otherwise have to
+discover.
+
+The file is deliberately **not removed on shutdown**. Removing it on a graceful
+exit but not on a `SIGKILL` would be a guarantee no parent could actually rely on,
+so it is not offered at all — a parent must treat the file as possibly stale
+regardless, which is what the `pid` field is for. A restart over the same path
+simply overwrites it atomically.
+There is deliberately **no** `features` identifier for daemon hosting: a client
+cannot query the server before spawning it, and one that has read the ready file
+has already proved the build supports it.
+
+**`--lifetime-pipe-fd`** is the parent-crash path. The parent creates a pipe,
+passes the **read end** to the child as an inherited descriptor, and holds the
+write end **without ever writing to it**. If the parent exits — cleanly, by
+`SIGKILL`, or by crashing — the kernel closes its descriptors, the read end sees
+EOF, and mecated stops through the **same graceful shutdown** a `SIGTERM` takes,
+persisting session state on the way out. The parent has nothing to remember, which
+is what makes it survive a crash rather than only a clean exit.
+
+Bytes on the pipe are read and **discarded**: this is a liveness signal, never a
+control channel — interpreting bytes on it would hand an unauthenticated local
+writer a way to steer the daemon. A parent that does send a heartbeat is therefore
+tolerated rather than mistaken for a dead one. `0` means "not configured", and
+`0`/`1`/`2` are **rejected**: treating stdin's EOF as "the parent died" would stop
+the daemon the moment it was started from any non-interactive shell.
 
 ### Observability (the loopback admin listener)
 
