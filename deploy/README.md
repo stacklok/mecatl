@@ -115,10 +115,13 @@ subject)` that owns it. With the verifier enabled, callers can access only
 their own records; historical ownerless records are deliberately unavailable
 rather than adopted.
 
+The chart uses `v<chart-version>` when both image selectors are empty. This keeps
+ranged Helm upgrades aligned with released images. Set `image.tag` or
+`image.digest` only to override that default.
+
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
-  --set image.tag=v<release-version> \
   --set redis.endpoint=redis.example.internal:6379 \
   --set redis.credentialsSecret=mecak8s-redis \
   --set tls.enabled=true \

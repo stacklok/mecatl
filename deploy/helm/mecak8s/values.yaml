@@ -3,9 +3,8 @@ fullnameOverride: ""
 
 image:
   repository: ghcr.io/stacklok/mecatl/mecak8s
-  # Supply exactly one immutable release selector at install time: a signed
-  # release tag or a digest. This chart supports the enterprise distribution's
-  # version-tag release model as well as digest-pinned images.
+  # Leave both selectors empty to use v<chart-version>. Set a signed release
+  # tag or digest to override that default.
   digest: ""
   tag: ""
   pullPolicy: IfNotPresent

@@ -88,12 +88,32 @@ all identical to `mecated`'s (see §3).
 
 #### Production Helm chart (`deploy/helm/mecak8s/`)
 
-The production contract is the Helm chart. It never installs Redis: an install must provide an externally managed Redis endpoint and a Secret reference when any Secret key is configured. A real-provider install (`mockProvider: false`) also requires both server TLS and OIDC caller authentication; TLS alone is not caller auth and OIDC alone is not transport encryption. Chart 0.2.0 makes this fail closed. The visibly unsafe `security.allowUnsafeRealProvider: true` bypass is limited to local or trusted-mesh deployments and stamps the pod template with `mecatl.stacklok.com/unsafe-real-provider: "true"`. The CA-bundle Secret key is optional: leaving `redis.caKey` empty selects system-trust TLS and mounts no Secret unless an ACL key is also set. ACL password/username Secret keys are optional; a username key requires a password key. Supply exactly one agent image selector: a signed release tag (the enterprise distribution model) or a digest. The chart preserves the storage-free restricted workload, bounded resources, rolling update, probes, PDB, and namespaced Lease RBAC. It ships **no** general NetworkPolicy: network isolation is the cluster's job, and a policy the chart cannot keep complete (the agent's egress depends on the operator's provider, MCP, and API-server endpoints) is worse than none. The `oidc.*` values additionally render a narrow raw-driver NetworkPolicy when caller identity is enabled.
+The Helm chart defines the production contract.
+It never installs Redis.
+Set an externally managed Redis endpoint.
+Set a Secret reference when any configured key needs reading.
+A real-provider install (`mockProvider: false`) requires server TLS and OIDC caller authentication.
+TLS does not authenticate callers.
+OIDC does not encrypt transport.
+Chart 0.2.0 enforces this requirement.
+Use `security.allowUnsafeRealProvider: true` only for local deployments or trusted meshes.
+This bypass stamps the pod template with `mecatl.stacklok.com/unsafe-real-provider: "true"`.
+Leave `redis.caKey` empty to select system-trust TLS.
+This option mounts no Secret unless an ACL key is set.
+ACL password and username Secret keys are optional.
+A username key requires a password key.
+The image defaults to `v<chart-version>`.
+This default keeps ranged Helm upgrades aligned with released images.
+Set a signed release tag or digest only to override the default.
+The chart preserves the restricted, storage-free workload.
+It also preserves bounded resources, rolling updates, probes, the PDB, and namespaced Lease RBAC.
+The chart ships no general NetworkPolicy.
+The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
+The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
-  --set image.tag=v<release-version> \
   --set redis.endpoint=redis.example.internal:6379 \
   --set redis.credentialsSecret=mecak8s-redis \
   --set tls.enabled=true \
@@ -288,7 +308,6 @@ kubectl create secret tls mecak8s-tls --namespace mecatl \
 
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl \
   --set image.repository=registry.example/mecak8s \
-  --set image.tag=v<release-version> \
   --set redis.endpoint=redis.example.internal:6379 \
   --set redis.credentialsSecret=mecak8s-redis \
   --set tls.enabled=true \

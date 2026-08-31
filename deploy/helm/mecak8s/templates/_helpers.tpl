@@ -17,10 +17,7 @@ app.kubernetes.io/component: agent
 {{- define "mecak8s.validateImage" -}}
 {{- $_ := required "image.repository is required" .Values.image.repository -}}
 {{- if and .Values.image.digest .Values.image.tag -}}
-{{- fail "set exactly one of image.digest or image.tag" -}}
-{{- end -}}
-{{- if and (not .Values.image.digest) (not .Values.image.tag) -}}
-{{- fail "set one of image.digest or image.tag" -}}
+{{- fail "set at most one of image.digest or image.tag" -}}
 {{- end -}}
 {{- end -}}
 {{- define "mecak8s.redisPort" -}}
