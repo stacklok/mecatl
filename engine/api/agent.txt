@@ -18,6 +18,7 @@
     method func (*Engine).Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run
     method func (*Engine).SteerEnabled() bool
     method func (*EvidenceReflector).Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error)
+    method func (*EvidenceReflector).ReflectProjection(ctx context.Context, projection learning.Projection) (learning.Outcome, error)
     method func (*EvidenceReflector).RequestTokenEstimate(in learning.Input) (int, error)
     method func (*InspectMemberTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*InspectMemberTool).ReadOnly() bool

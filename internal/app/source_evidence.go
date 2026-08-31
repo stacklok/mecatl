@@ -22,6 +22,22 @@ type learningEvidenceGapOracle interface {
 	LearningEvidenceGap(context.Context, session.SessionID, learning.DurableRunID) (bool, error)
 }
 
+type canonicalEvidenceReflector interface {
+	ReflectProjection(context.Context, learning.Projection) (learning.Outcome, error)
+}
+
+func reflectAttemptEvidence(ctx context.Context, loader *learningEvidenceLoader, reflector canonicalEvidenceReflector, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Outcome, learning.AttemptFailureCode, error) {
+	if reflector == nil {
+		return learning.Outcome{}, learning.FailureEvidenceUnavailable, nil
+	}
+	projection, failure := loader.Load(ctx, partition, attempt)
+	if failure != learning.FailureNone {
+		return learning.Outcome{}, failure, nil
+	}
+	outcome, err := reflector.ReflectProjection(ctx, projection)
+	return outcome, learning.FailureNone, err
+}
+
 func newLearningEvidenceLoader(sessions port.SessionStore, events port.EventLog) *learningEvidenceLoader {
 	loader := &learningEvidenceLoader{sessions: sessions, events: events}
 	loader.gaps, _ = events.(learningEvidenceGapOracle)
@@ -121,6 +137,11 @@ func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.At
 	if err != nil || learning.CanonicalDigest(digest) != provenance.Source.CanonicalDigest {
 		return unavailable()
 	}
+	signals := learning.DetectSignals(input)
+	if provenance.Class == learning.AdmissionHostRequested {
+		signals = append(signals, learning.Signal{Kind: learning.SignalHostRequested})
+	}
+	input = learning.NewInput(trajectory, runEvents, signals, nil)
 	projection, err := learning.ProjectInput(input)
 	if err != nil {
 		return unavailable()

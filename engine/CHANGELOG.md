@@ -69,6 +69,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   without widening the minimal `SessionStore` or loading transcript content.
   Added (minor).
 
+- **Restart-safe canonical evidence reflection** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `agent.EvidenceReflector.ReflectProjection` accepts only a bounded canonical `learning.Projection`, revalidates its content-addressed evidence metadata, and applies the canonical governance untrusted fence before the provider boundary. Added (minor).
+
 - **Storage-neutral durable learning attempt repository contract** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `learning.AttemptRepository` defines idempotent create, opaque-version CAS, a closed lifecycle transition table, expiring generation-fenced claim acquire/renew/release, monotonic reconciliation checkpoints, terminal finalization, retry/abandon, bounded partitioned listing, retention, deletion, and typed conflicts. Added (minor).
 
 - **Content-free learning attempt values** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `learning.AttemptRecord`, `AttemptProjection`, `AdmissionProvenance`, exact source/current-prompt bindings, deterministic caller-partitioned IDs, closed lifecycle/outcome/failure vocabularies, fenced claim generations, bounds, and validation establish the storage-neutral domain contract for durable learning attempts. Added (minor).

@@ -131,6 +131,19 @@ func (r *EvidenceReflector) buildRequest(in learning.Input) (port.LLMRequest, er
 	if err != nil {
 		return port.LLMRequest{}, err
 	}
+	return r.buildProjectionRequest(projection)
+}
+
+func (r *EvidenceReflector) buildProjectionRequest(projection learning.Projection) (port.LLMRequest, error) {
+	if len(projection.Events) > r.limits.Events || len(projection.Existing) > r.limits.Existing {
+		return port.LLMRequest{}, fmt.Errorf("%w: input collection exceeds configured limit", ErrReflectionLimits)
+	}
+	if len(projection.Signals) == 0 {
+		return port.LLMRequest{}, nil
+	}
+	if _, err := canonicalProjectionInput(projection); err != nil {
+		return port.LLMRequest{}, err
+	}
 	payload, err := json.Marshal(projection)
 	if err != nil {
 		return port.LLMRequest{}, fmt.Errorf("%w: encode input: %v", ErrReflectionLimits, err)
@@ -163,6 +176,95 @@ func (r *EvidenceReflector) Reflect(ctx context.Context, in learning.Input) (lea
 		return learning.Outcome{}, err
 	}
 	return ParseReflectionOutcome(in, output, r.limits)
+}
+
+// ReflectProjection performs reflection across a restart-safe boundary that
+// accepts only the bounded canonical learning projection. It rejects projections
+// that are not reproducible from their own content-addressed evidence metadata.
+func (r *EvidenceReflector) ReflectProjection(ctx context.Context, projection learning.Projection) (learning.Outcome, error) {
+	if err := ctx.Err(); err != nil {
+		return learning.Outcome{}, err
+	}
+	in, err := canonicalProjectionInput(projection)
+	if err != nil {
+		return learning.Outcome{}, err
+	}
+	request, err := r.buildProjectionRequest(projection)
+	if err != nil {
+		return learning.Outcome{}, err
+	}
+	if len(request.Messages) == 0 {
+		return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	}
+	output, err := r.callProvider(ctx, request)
+	if err != nil {
+		return learning.Outcome{}, err
+	}
+	return ParseReflectionOutcome(in, output, r.limits)
+}
+
+func canonicalProjectionInput(projection learning.Projection) (learning.Input, error) {
+	messages := make([]session.Message, len(projection.Messages))
+	for i, projected := range projection.Messages {
+		message := session.Message{Role: projected.Role, Text: projected.Text, Parts: projectionParts(projected.Parts)}
+		for _, call := range projected.ToolCalls {
+			message.ToolCalls = append(message.ToolCalls, session.ToolCall{ID: call.ID, Name: call.Name})
+		}
+		if projected.ToolResult != nil {
+			message.ToolResult = &session.ToolResult{CallID: projected.ToolResult.CallID, Content: projected.ToolResult.Content, IsError: projected.ToolResult.IsError, Parts: projectionParts(projected.ToolResult.Parts)}
+		}
+		messages[i] = message
+	}
+	events := make([]learning.EvidenceEventData, len(projection.Events))
+	for i, projected := range projection.Events {
+		events[i] = learning.EvidenceEventData{Type: projected.Type, Seq: projected.Seq, Turn: projected.Turn, Text: projected.Text, Stop: projected.Stop}
+		if projected.ToolCall != nil {
+			call := *projected.ToolCall
+			events[i].ToolCall = &call
+		}
+		if projected.ToolResult != nil {
+			result := *projected.ToolResult
+			result.Parts = append([]learning.PartProjection(nil), projected.ToolResult.Parts...)
+			events[i].ToolResult = &result
+		}
+	}
+	trajectory := learning.NewTrajectory(projection.SessionID, "", projection.Stop, session.Usage{}, messages)
+	in := learning.Input{Trajectory: trajectory, Events: events, Existing: append([]learning.ExistingFact(nil), projection.Existing...)}
+	for _, projected := range projection.Signals {
+		signal := learning.Signal{Kind: projected.Kind}
+		for _, handle := range projected.Evidence {
+			ref, err := learning.ResolveEvidenceHandle(in, handle)
+			if err != nil {
+				return learning.Input{}, fmt.Errorf("%w: projected signal evidence: %v", ErrReflectionLimits, err)
+			}
+			signal.Evidence = append(signal.Evidence, ref)
+		}
+		in.Signals = append(in.Signals, signal)
+	}
+	canonical, err := learning.ProjectInput(in)
+	if err != nil {
+		return learning.Input{}, err
+	}
+	got, marshalErr := json.Marshal(canonical)
+	if marshalErr != nil {
+		return learning.Input{}, fmt.Errorf("%w: encode canonical projection", ErrReflectionLimits)
+	}
+	want, marshalErr := json.Marshal(projection)
+	if marshalErr != nil || !bytes.Equal(got, want) {
+		return learning.Input{}, fmt.Errorf("%w: projection is not canonical", ErrReflectionLimits)
+	}
+	return in, nil
+}
+
+func projectionParts(projected []learning.PartProjection) []session.Content {
+	parts := make([]session.Content, len(projected))
+	for i, part := range projected {
+		parts[i] = session.Content{BlockKind: session.BlockKind(part.Kind), MIMEType: part.MIMEType, Text: part.Text, Name: part.Name, Title: part.Title, Description: part.Description}
+		if part.Binary {
+			parts[i].Data = []byte{0}
+		}
+	}
+	return parts
 }
 
 func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) ([]byte, error) {
