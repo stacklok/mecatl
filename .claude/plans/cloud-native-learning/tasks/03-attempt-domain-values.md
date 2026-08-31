@@ -2,7 +2,7 @@
 id: 03-attempt-domain-values
 title: Define content-free learning attempt values and provenance
 blocked_by: [02-direct-draft-inactivity]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
