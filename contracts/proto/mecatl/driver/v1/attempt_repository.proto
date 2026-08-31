@@ -1,0 +1,160 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl driver API: the remote learning-attempt repository protocol.
+//
+// This transport carries only the bounded, content-free learning domain record:
+// opaque partitions, identifiers, versions and digests; closed lifecycle values;
+// generations; timestamps; and proposal/skill links. It never carries prompts,
+// transcript/event content, paths, principals, credentials, headers, diagnostics,
+// or backend error text. AttemptErrorDetail is the closed safe error vocabulary.
+// Caller ownership enforcement and caller-facing RPC separation are added by the
+// application boundary; this service is the infrastructure repository seam.
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+service AttemptRepositoryService {
+  rpc CreateAttempt(CreateAttemptRequest) returns (AttemptRecordResponse);
+  rpc GetAttempt(GetAttemptRequest) returns (GetAttemptResponse);
+  rpc ListAttempts(ListAttemptsRequest) returns (ListAttemptsResponse);
+  rpc AcquireAttemptClaim(AttemptClaimMutationRequest) returns (AttemptClaimResponse);
+  rpc RenewAttemptClaim(AttemptClaimMutationRequest) returns (AttemptClaimResponse);
+  rpc CheckpointAttempt(CheckpointAttemptRequest) returns (AttemptRecordResponse);
+  rpc ReleaseAttemptClaim(AttemptClaimMutationRequest) returns (AttemptRecordResponse);
+  rpc FinalizeAttempt(FinalizeAttemptRequest) returns (AttemptRecordResponse);
+  rpc RetryAttempt(AttemptMutationRequest) returns (AttemptRecordResponse);
+  rpc AbandonAttempt(AttemptMutationRequest) returns (AttemptRecordResponse);
+  rpc DeleteAttempt(AttemptMutationRequest) returns (DeleteAttemptResponse);
+  rpc DeleteTerminalAttemptsBefore(DeleteTerminalAttemptsBeforeRequest) returns (DeleteTerminalAttemptsBeforeResponse);
+}
+
+enum AttemptErrorCode {
+  ATTEMPT_ERROR_CODE_UNSPECIFIED = 0;
+  ATTEMPT_ERROR_CODE_INVALID = 1;
+  ATTEMPT_ERROR_CODE_NOT_FOUND = 2;
+  ATTEMPT_ERROR_CODE_CREATE_CONFLICT = 3;
+  ATTEMPT_ERROR_CODE_VERSION_CONFLICT = 4;
+  ATTEMPT_ERROR_CODE_TRANSITION = 5;
+  ATTEMPT_ERROR_CODE_CLAIM_CONFLICT = 6;
+  ATTEMPT_ERROR_CODE_CLAIM_LOST = 7;
+}
+
+message AttemptErrorDetail {
+  AttemptErrorCode code = 1;
+}
+
+message AttemptProvenance {
+  string admission_class = 1 [(buf.validate.field).string.max_len = 32];
+  string session_id = 2 [(buf.validate.field).string.max_len = 128];
+  string run_id = 3 [(buf.validate.field).string.max_len = 256];
+  string canonical_digest = 4 [(buf.validate.field).string.max_len = 128];
+  int32 prompt_ordinal = 5;
+  string prompt_digest = 6 [(buf.validate.field).string.max_len = 128];
+  string prompt_origin = 7 [(buf.validate.field).string.max_len = 32];
+  string binding = 8 [(buf.validate.field).string.max_len = 128];
+}
+
+message AttemptRecord {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string version = 2 [(buf.validate.field).string.max_len = 128];
+  string state = 3 [(buf.validate.field).string.max_len = 32];
+  string outcome = 4 [(buf.validate.field).string.max_len = 32];
+  string failure_code = 5 [(buf.validate.field).string.max_len = 32];
+  AttemptProvenance provenance = 6 [(buf.validate.field).required = true];
+  uint64 attempt_generation = 7;
+  uint64 claim_generation = 8;
+  google.protobuf.Timestamp claim_expires_at = 9;
+  string checkpoint_stage = 10 [(buf.validate.field).string.max_len = 32];
+  string proposal_id = 11 [(buf.validate.field).string.max_len = 128];
+  string skill_id = 12 [(buf.validate.field).string.max_len = 128];
+  google.protobuf.Timestamp created_at = 13 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 14 [(buf.validate.field).required = true];
+}
+
+message AttemptClaim {
+  uint64 generation = 1;
+  google.protobuf.Timestamp expires_at = 2 [(buf.validate.field).required = true];
+}
+
+message CreateAttemptRequest {
+  string partition = 1 [(buf.validate.field).string.max_len = 128];
+  string id = 2 [(buf.validate.field).string.max_len = 96];
+  AttemptProvenance provenance = 3 [(buf.validate.field).required = true];
+}
+
+message GetAttemptRequest {
+  string partition = 1 [(buf.validate.field).string.max_len = 128];
+  string id = 2 [(buf.validate.field).string.max_len = 96];
+}
+
+message GetAttemptResponse {
+  bool found = 1;
+  AttemptRecord record = 2;
+}
+
+message ListAttemptsRequest {
+  string partition = 1 [(buf.validate.field).string.max_len = 128];
+  string after = 2 [(buf.validate.field).string.max_len = 96];
+  int32 limit = 3;
+  string state = 4 [(buf.validate.field).string.max_len = 32];
+}
+
+message ListAttemptsResponse {
+  repeated AttemptRecord records = 1;
+  string next = 2 [(buf.validate.field).string.max_len = 96];
+}
+
+message AttemptMutationRequest {
+  string partition = 1 [(buf.validate.field).string.max_len = 128];
+  string id = 2 [(buf.validate.field).string.max_len = 96];
+  string expected_version = 3 [(buf.validate.field).string.max_len = 128];
+  google.protobuf.Timestamp now = 4 [(buf.validate.field).required = true];
+}
+
+message AttemptClaimMutationRequest {
+  string partition = 1 [(buf.validate.field).string.max_len = 128];
+  string id = 2 [(buf.validate.field).string.max_len = 96];
+  string expected_version = 3 [(buf.validate.field).string.max_len = 128];
+  AttemptClaim claim = 4;
+  google.protobuf.Timestamp now = 5 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+message CheckpointAttemptRequest {
+  AttemptClaimMutationRequest mutation = 1 [(buf.validate.field).required = true];
+  string stage = 2 [(buf.validate.field).string.max_len = 32];
+  string proposal_id = 3 [(buf.validate.field).string.max_len = 128];
+  string skill_id = 4 [(buf.validate.field).string.max_len = 128];
+}
+
+message FinalizeAttemptRequest {
+  AttemptClaimMutationRequest mutation = 1 [(buf.validate.field).required = true];
+  string state = 2 [(buf.validate.field).string.max_len = 32];
+  string outcome = 3 [(buf.validate.field).string.max_len = 32];
+  string failure_code = 4 [(buf.validate.field).string.max_len = 32];
+}
+
+message DeleteTerminalAttemptsBeforeRequest {
+  string partition = 1 [(buf.validate.field).string.max_len = 128];
+  google.protobuf.Timestamp before = 2 [(buf.validate.field).required = true];
+  int32 limit = 3;
+}
+
+message AttemptRecordResponse {
+  AttemptRecord record = 1 [(buf.validate.field).required = true];
+}
+
+message AttemptClaimResponse {
+  AttemptRecord record = 1 [(buf.validate.field).required = true];
+  AttemptClaim claim = 2 [(buf.validate.field).required = true];
+}
+
+message DeleteAttemptResponse {}
+
+message DeleteTerminalAttemptsBeforeResponse {
+  int32 deleted = 1;
+}
