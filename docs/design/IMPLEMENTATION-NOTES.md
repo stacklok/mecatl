@@ -3328,7 +3328,7 @@ fails closed for a missing/unknown `config daemon` subcommand — it never
 reaches `run()`/listeners. `--config` stays an advanced serve-only, explicit
 flag; ACP help excludes it. See ADR 0088.
 
-### Remote mecatui OIDC client authentication (ADR 0244)
+### Remote mecatui OIDC client authentication (ADR 0252)
 
 The command taxonomy is deliberately explicit. `mecatui llm login` is the existing
 ToolHive gateway login and has no server/session meaning. `mecatui login ADDRESS` is

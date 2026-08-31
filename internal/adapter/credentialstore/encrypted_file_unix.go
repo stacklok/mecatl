@@ -45,6 +45,22 @@ func canonicalPrivateRoot(root string) (string, error) {
 	return physical, nil
 }
 
+func validateExistingPrivateRoot(root string) error {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return unavailable("inspect credential root", err)
+	}
+	return validatePrivateDirInfo(info)
+}
+
+func validateExistingPrivateDir(root *os.Root, name string) error {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return unavailable("inspect credential namespace", err)
+	}
+	return validatePrivateDirInfo(info)
+}
+
 func ensurePrivateRoot(root string, syncDir func(*os.File) error) error {
 	canonicalRoot, err := canonicalPrivateRoot(root)
 	if err != nil {

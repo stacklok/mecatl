@@ -21,3 +21,8 @@ func NewEncryptedFile(_, _ string, _ []byte) (*EncryptedFileStore, error) {
 func (*EncryptedFileStore) ReplaceCorrupt(context.Context, []byte, []byte) (Record, error) {
 	return Record{}, ErrUnavailable
 }
+
+// OpenExistingEncryptedFile is unavailable on unsupported platforms.
+func OpenExistingEncryptedFile(root, namespace string, key []byte) (*EncryptedFileStore, error) {
+	return nil, ErrUnavailable
+}

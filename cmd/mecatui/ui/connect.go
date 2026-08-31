@@ -57,6 +57,7 @@ type connectState struct {
 	failedTarget           string
 	resumeSessionID        string
 	targets                []ConnectTarget
+	targetsUnavailable     bool
 	cursor                 int
 }
 
@@ -90,7 +91,7 @@ func (m Model) onConnectKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		cmd := m.prompt.Focus()
 		return m, cmd, true
 	}
-	if m.connect.loading {
+	if m.connect.loading || m.connect.targetsUnavailable {
 		return m, nil, true
 	}
 	if msg.String() == keyMenuUp && m.connect.cursor > 0 {
@@ -155,6 +156,7 @@ func (m Model) updateConnectMsg(msg tea.Msg) (tea.Model, bool) {
 	m.connect.loading = false
 	if result.err != nil {
 		m.connect.err = "saved targets are unavailable"
+		m.connect.targetsUnavailable = true
 		return m, true
 	}
 	m.connect.targets = result.targets
@@ -191,7 +193,7 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 		b.WriteString(prefix + sanitizeTerminal(target.Target) + "\n")
 		b.WriteString("   " + sanitizeTerminal(target.Issuer) + " · " + sanitizeTerminal(target.ClientID) + " · " + sanitizeTerminal(target.Audience) + "\n")
 	}
-	if m.connect.reason != client.AuthRejected {
+	if !m.connect.targetsUnavailable && m.connect.reason != client.AuthRejected {
 		newRow := len(m.connect.targets)
 		prefix := "  "
 		if m.connect.cursor == newRow {

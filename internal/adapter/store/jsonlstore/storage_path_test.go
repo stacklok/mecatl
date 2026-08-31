@@ -12,9 +12,13 @@ func TestStoreNormalizesRootAndConfinesInventoryNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	// Lexical normalization only — symlinks in the operator's path survive, so the
-	// expectation must not be run through filepath.EvalSymlinks.
-	wantRoot := filepath.Join(base, "store")
+	// Canonical normalization resolves existing ancestors, including platform
+	// aliases such as macOS /var -> /private/var.
+	physicalBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(base): %v", err)
+	}
+	wantRoot := filepath.Join(physicalBase, "store")
 	if st.resolver.dir != wantRoot {
 		t.Fatalf("normalized store root = %q, want %q", st.resolver.dir, wantRoot)
 	}
@@ -39,12 +43,32 @@ func TestStoreNormalizesRootAndConfinesInventoryNames(t *testing.T) {
 	}
 }
 
+func TestStoreCanonicalizesExistingSymlinkAncestorWithoutFollowingConfiguredRoot(t *testing.T) {
+	base := t.TempDir()
+	configured := filepath.Join(base, "store")
+	st, err := New(configured)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	physicalBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(base): %v", err)
+	}
+	want := filepath.Join(physicalBase, "store")
+	if st.resolver.dir != want {
+		t.Fatalf("canonical store root = %q, want %q", st.resolver.dir, want)
+	}
+	if _, err := os.Lstat(filepath.Join(st.resolver.dir, canonicalDirName)); err != nil {
+		t.Fatalf("canonical directory was not created: %v", err)
+	}
+}
+
 func TestStoreRejectsEmptyRoot(t *testing.T) {
 	if _, err := New(""); err == nil {
 		t.Fatal("New(\"\") succeeded, want error")
 	}
 }
-
 func TestStoreRejectsConfiguredRootAndAncestorSymlinksWithoutTargetMutation(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

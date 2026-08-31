@@ -199,7 +199,7 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 	}
 	client, err := oidcClient(ctx, id, cfg)
 	if err != nil {
-		return nil, ErrDiscovery
+		return nil, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
 	ownsClient := cfg.HTTPClient == nil
 	closeOnFailure := ownsClient
@@ -423,6 +423,9 @@ func safeValidationError(err error) error {
 }
 func oidcClient(ctx context.Context, id Identity, cfg LoginConfig) (*http.Client, error) {
 	if cfg.PrivateHTTPS {
+		if cfg.HTTPClient != nil {
+			return nil, errors.New("custom HTTP client is not allowed with private HTTPS issuer mode")
+		}
 		if len(cfg.TrustedCAPEM) == 0 {
 			return nil, errors.New("private HTTPS issuer requires a CA bundle")
 		}

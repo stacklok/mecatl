@@ -1,10 +1,10 @@
-# ADR 0244 — Remote mecatui OIDC client authentication
+# ADR 0252 — Remote mecatui OIDC client authentication
 
 - Status: Accepted
 - Date: 2026-08-28
 - Scope: `mecatui` remote OIDC enrollment, credential lifecycle, connection recovery, and logout
-- Supersedes: ADR 0245, ADR 0246, ADR 0247, ADR 0248
-- Superseded by: ADR 0249 (logout provider budget only)
+- Supersedes: ADR 0253, ADR 0254, ADR 0255, ADR 0256
+- Superseded by: ADR 0257 (logout provider budget only)
 
 ## Context
 

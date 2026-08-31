@@ -43,6 +43,10 @@ adm -X POST "$KCROOT/admin/realms/$REALM/client-scopes" -H 'Content-Type: applic
    "config":{"included.custom.audience":"$VMCP_AUDIENCE","access.token.claim":"true","id.token.claim":"false"}}]}
 JSON
 SCOPE_ID=$(adm "$KCROOT/admin/realms/$REALM/client-scopes" | jq -r '.[]|select(.name=="mcp:read")|.id')
+# offline_access is a Keycloak built-in scope. It must remain in the filtered
+# export, be optional on the desktop client, and be paired with its realm role
+# below or Keycloak refuses to issue a refresh token.
+OFFLINE_SCOPE_ID=$(adm "$KCROOT/admin/realms/$REALM/client-scopes" | jq -r '.[]|select(.name=="offline_access")|.id')
 
 for c in vmcp-browser mecatui-kind; do
   case $c in
@@ -60,6 +64,7 @@ done
 # without asking) and OPTIONAL on the browser client (which only establishes identity).
 CID=$(adm "$KCROOT/admin/realms/$REALM/clients" | jq -r '.[]|select(.clientId=="mecatui-kind")|.id')
 adm -X PUT "$KCROOT/admin/realms/$REALM/clients/$CID/default-client-scopes/$SCOPE_ID" >/dev/null
+adm -X PUT "$KCROOT/admin/realms/$REALM/clients/$CID/optional-client-scopes/$OFFLINE_SCOPE_ID" >/dev/null
 BID=$(adm "$KCROOT/admin/realms/$REALM/clients" | jq -r '.[]|select(.clientId=="vmcp-browser")|.id')
 adm -X PUT "$KCROOT/admin/realms/$REALM/clients/$BID/optional-client-scopes/$SCOPE_ID" >/dev/null
 
@@ -69,9 +74,10 @@ adm -X PUT "$KCROOT/admin/realms/$REALM/clients/$BID/optional-client-scopes/$SCO
 # for a fresh realm, so committing them is review noise that hides the ~50 lines that
 # are actually a decision. We keep ONLY:
 #
-#   clientScopes : basic (supplies `sub`), profile, email, and our mcp:read
+#   clientScopes : basic (supplies `sub`), profile, email, offline_access, and our mcp:read
 #   clients      : the two fixture clients
-#   users        : re-attached below, since partial-export omits them
+#   realm role   : offline_access, required for refresh-token issuance
+#   users        : re-attached below, with the offline_access role
 #
 # The built-ins are KEPT RATHER THAN OMITTED because a realm import that declares a
 # `clientScopes` array REPLACES Keycloak's built-ins instead of merging -- dropping
@@ -79,12 +85,13 @@ adm -X PUT "$KCROOT/admin/realms/$REALM/clients/$BID/optional-client-scopes/$SCO
 # from the export rather than hand-written, for the same reason.
 #
 # Note: partial-export is a POST endpoint; a GET returns 404.
-KEEP_SCOPES='["basic","profile","email","mcp:read"]'
+KEEP_SCOPES='["basic","profile","email","offline_access","mcp:read"]'
 KEEP_CLIENTS='["vmcp-browser","mecatui-kind"]'
 adm -X POST "$KCROOT/admin/realms/$REALM/partial-export?exportClients=true&exportGroupsAndRoles=true" \
 | jq --argjson keepScopes "$KEEP_SCOPES" --argjson keepClients "$KEEP_CLIENTS" '
     {realm, enabled, sslRequired, accessTokenLifespan, ssoSessionIdleTimeout}
     + {clientScopes: [.clientScopes[] | select(.name as $n | $keepScopes | index($n))]}
+    + {roles: {realm: [.roles.realm[] | select(.name == "offline_access")]}}
     + {clients: [.clients[]
         | select(.clientId as $c | $keepClients | index($c))
         # Prune scope references to the ones that survive the filter above; a client
@@ -96,8 +103,8 @@ adm -X POST "$KCROOT/admin/realms/$REALM/partial-export?exportClients=true&expor
 | jq --argjson users '[
   {"username":"alice","enabled":true,"emailVerified":true,"email":"alice@example.com",
    "firstName":"Alice","lastName":"Example",
-   "credentials":[{"type":"password","value":"Secret123","temporary":false}]},
+   "credentials":[{"type":"password","value":"Secret123","temporary":false}],"realmRoles":["offline_access"]},
   {"username":"bob","enabled":true,"emailVerified":true,"email":"bob@example.com",
    "firstName":"Bob","lastName":"Example",
-   "credentials":[{"type":"password","value":"Secret123","temporary":false}]}
+   "credentials":[{"type":"password","value":"Secret123","temporary":false}],"realmRoles":["offline_access"]}
 ]' '. + {users: $users}'

@@ -1,9 +1,9 @@
-# ADR 0250 — Bounded scoped HTTPS keep-alive reuse for OIDC
+# ADR 0258 — Bounded scoped HTTPS keep-alive reuse for OIDC
 
 - Status: Accepted
 - Date: 2026-08-30
 - Scope: private HTTPS OIDC transport connection reuse and remote mecatui recovery
-- Supersedes: ADR 0235 (keep-alive policy); ADR 0244 (credential-recovery storage classification only)
+- Supersedes: ADR 0235 (keep-alive policy); ADR 0252 (credential-recovery storage classification only)
 
 ## Context
 
@@ -14,7 +14,7 @@ is safe only if an idle connection cannot turn a previously approved address int
 permanent routing decision, and if the transport has a bounded lifetime and cleanup
 owner.
 
-ADR 0244 describes recovery for an unusable local credential, but its broad recovery
+ADR 0252 describes recovery for an unusable local credential, but its broad recovery
 wording can conflate repairable encrypted-record corruption with unavailable local
 storage or issuer trust. Those failures have different safe next actions.
 
@@ -33,7 +33,7 @@ origin checks. Retain HTTPS-only admission, same-origin and endpoint validation,
 redirect refusal, explicit CA roots, and Go TLS hostname verification. Caller-owned
 HTTP clients remain rejected in private HTTPS mode.
 
-Supersede only ADR 0244's broad credential-recovery classification as follows:
+Supersede only ADR 0252's broad credential-recovery classification as follows:
 repairable, atomically proven corruption of the local credential record may use the
 same-target browser-free reauthentication path while its transaction and identity
 preconditions hold. Unavailable or unreadable local storage, missing keyring access,
@@ -59,8 +59,8 @@ of corruption.
 ## See also
 
 - [ADR 0235 — Scoped private HTTPS OIDC transport](./0235-scoped-private-https-oidc-transport.md)
-- [ADR 0244 — Remote mecatui OIDC client authentication](./0244-remote-mecatui-oidc.md)
-- [ADR 0249 — Remote mecatui logout budget](./0249-remote-mecatui-logout-budget.md)
+- [ADR 0252 — Remote mecatui OIDC client authentication](./0252-remote-mecatui-oidc.md)
+- [ADR 0257 — Remote mecatui logout budget](./0257-remote-mecatui-logout-budget.md)
 - [TUI guide](../tui.md)
 
 ---

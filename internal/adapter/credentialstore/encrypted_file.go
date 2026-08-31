@@ -120,6 +120,60 @@ func NewEncryptedFile(root, namespace string, key []byte) (*EncryptedFileStore, 
 	return store, nil
 }
 
+// OpenExistingEncryptedFile opens an already-created encrypted-file namespace
+// without creating or changing the root or namespace permissions.
+func OpenExistingEncryptedFile(root, namespace string, key []byte) (*EncryptedFileStore, error) {
+	if err := validateNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("open existing encrypted credential store: %w", err)
+	}
+	if err := validateEncryptionKey(key); err != nil {
+		return nil, fmt.Errorf("open existing encrypted credential store: %w", err)
+	}
+	if root == "" || !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("open existing encrypted credential store: %w", ErrUnavailable)
+	}
+	ownedKey := bytes.Clone(key)
+	ok := false
+	defer func() {
+		if !ok {
+			clear(ownedKey)
+			runtime.KeepAlive(ownedKey)
+		}
+	}()
+
+	root = filepath.Clean(root)
+	canonicalRoot, err := canonicalPrivateRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open existing encrypted credential store: %w", err)
+	}
+	root = canonicalRoot
+	if err := validateExistingPrivateRoot(root); err != nil {
+		return nil, fmt.Errorf("open existing encrypted credential store: %w", err)
+	}
+	rootHandle, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, unavailable("open credential root", err)
+	}
+	defer func() { _ = rootHandle.Close() }()
+	nsName := namespacePhysicalName([]byte(namespace))
+	if err := validateExistingPrivateDir(rootHandle, nsName); err != nil {
+		return nil, err
+	}
+	nsRoot, err := rootHandle.OpenRoot(nsName)
+	if err != nil {
+		return nil, unavailable("open credential namespace", err)
+	}
+	store := &EncryptedFileStore{
+		key:       ownedKey,
+		namespace: []byte(namespace),
+		nsPath:    filepath.Join(root, nsName),
+		nsRoot:    nsRoot,
+		ops:       defaultFileOps(),
+	}
+	ok = true
+	return store, nil
+}
+
 // Get returns the authenticated current record.
 func (s *EncryptedFileStore) Get(ctx context.Context, key []byte) (Record, error) {
 	if err := validateRecordKey(key); err != nil {

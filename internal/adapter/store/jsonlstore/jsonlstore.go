@@ -193,9 +193,12 @@ func New(dir string) (*Store, error) {
 	return newStoreWithSnapshotOps(dir, defaultSnapshotOps())
 }
 
-// normalizeStoreRoot makes dir absolute and lexically clean. Symlink rejection is
-// performed separately for every hierarchy component before the store writes through
-// the configured path.
+// normalizeStoreRoot makes dir absolute and canonicalizes the deepest existing
+// ancestor. This matters on systems such as macOS where the system temporary
+// directory is reached through a /var symlink. The configured root itself (or
+// the deepest existing ancestor when the root is new) must not be a symlink:
+// callers cannot use this normalization to redirect the store through a
+// user-controlled root symlink.
 func normalizeStoreRoot(dir string) (string, error) {
 	if dir == "" {
 		return "", errors.New("jsonlstore: store dir is empty")
@@ -204,7 +207,36 @@ func normalizeStoreRoot(dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("jsonlstore: normalize dir: %w", err)
 	}
-	return root, nil
+	root = filepath.Clean(root)
+
+	existing := root
+	var missing []string
+	for {
+		info, err := os.Lstat(existing)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("jsonlstore: store path component %q is a symlink", existing)
+			}
+			break
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("jsonlstore: inspect store dir: %w", err)
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", errors.New("jsonlstore: store dir has no existing ancestor")
+		}
+		missing = append(missing, filepath.Base(existing))
+		existing = parent
+	}
+	physical, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", fmt.Errorf("jsonlstore: canonicalize store dir: %w", err)
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		physical = filepath.Join(physical, missing[i])
+	}
+	return filepath.Clean(physical), nil
 }
 
 // createDurableDirectoryHierarchy publishes every adapter-created directory before

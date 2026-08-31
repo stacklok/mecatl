@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -342,16 +341,9 @@ func (p *KeyringProvider) withLock(ctx context.Context, create bool) ([]byte, er
 }
 
 func legacyCredentialExists(root string) bool {
-	// Keep this protocol calculation byte-identical to credentialstore's stable
-	// namespacePhysicalName. An empty namespace can be left by merely opening a
-	// store and is not evidence that this root used clientauth's legacy global key.
-	framed := []byte("mecatl/credentialstore/namespace/v1")
-	var length [4]byte
-	binary.BigEndian.PutUint32(length[:], uint32(len(credentialNamespace)))
-	framed = append(framed, length[:]...)
-	framed = append(framed, credentialNamespace...)
-	digest := sha256.Sum256(framed)
-	entries, err := os.ReadDir(filepath.Join(root, "ns-v1-"+hex.EncodeToString(digest[:])))
+	// An empty namespace can be left by merely opening a store and is not
+	// evidence that this root used clientauth's legacy global key.
+	entries, err := os.ReadDir(filepath.Join(root, credentialstore.NamespacePhysicalName(credentialNamespace)))
 	if err != nil {
 		return false
 	}
@@ -411,19 +403,6 @@ func OpenExistingStore(ctx context.Context, root string, keys ExistingKeyProvide
 	if err != nil {
 		return nil, err
 	}
-	if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
-		if statErr == nil {
-			statErr = os.ErrNotExist
-		}
-		return nil, fmt.Errorf("%w: existing credential store: %w", ErrKeyUnavailable, statErr)
-	}
-	nsPath := filepath.Join(root, credentialstore.NamespacePhysicalName(credentialNamespace))
-	if info, statErr := os.Stat(nsPath); statErr != nil || !info.IsDir() {
-		if statErr == nil {
-			statErr = os.ErrNotExist
-		}
-		return nil, fmt.Errorf("%w: existing credential namespace: %w", ErrKeyUnavailable, statErr)
-	}
 	key, err := keys.ExistingStoreKey(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrKeyUnavailable, err)
@@ -432,7 +411,11 @@ func OpenExistingStore(ctx context.Context, root string, keys ExistingKeyProvide
 		return nil, ErrKeyUnavailable
 	}
 	defer clear(key)
-	return credentialstore.NewEncryptedFile(root, credentialNamespace, key)
+	store, err := credentialstore.OpenExistingEncryptedFile(root, credentialNamespace, key)
+	if err != nil {
+		return nil, fmt.Errorf("%w: existing credential store: %w", ErrKeyUnavailable, err)
+	}
+	return store, nil
 }
 
 type rootedKeyProvider interface{ storeRoot() string }
@@ -670,11 +653,6 @@ func (c *Connection) UnmarshalJSON(data []byte) error {
 		c.IssuerCAFile = wire.LegacyCAFile
 	}
 	return nil
-}
-
-type registryFile struct {
-	Version     int          `json:"version"`
-	Connections []Connection `json:"connections"`
 }
 
 type registryRawFile struct {
@@ -1009,14 +987,6 @@ func (r *Registry) lockTarget(ctx context.Context, target string) (func(), error
 		return nil, fmt.Errorf("clientauth: protect target transaction lock: %w", err)
 	}
 	return func() { _ = lock.Unlock() }, nil
-}
-
-func (r *Registry) write(all []Connection) error {
-	rows := make([]registryRow, 0, len(all))
-	for _, conn := range all {
-		rows = append(rows, registryRow{connection: conn, valid: true})
-	}
-	return r.writeRows(rows)
 }
 
 func (r *Registry) writeRows(rows []registryRow) error {

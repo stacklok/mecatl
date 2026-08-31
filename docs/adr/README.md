@@ -57,12 +57,13 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0048 — mecak8s: Kubernetes-native agent harness (storage-free, managed-service state)](./0048-mecak8s.md)
 - [0233 — Secure external Redis on the shared connection layer](./0233-secure-external-redis.md)
 - [0237 — Listener-scoped workspace authority](./0237-listener-scoped-workspace-authority.md)
-- [0244 — Remote mecatui OIDC client authentication](./0244-remote-mecatui-oidc.md) *(supersedes 0245–0248)*
-- [0250 — Bounded scoped HTTPS keep-alive reuse for OIDC](./0250-bounded-scoped-https-keepalive-oidc.md) *(supersedes ADR 0235's keep-alive policy and ADR 0244's credential-recovery classification only)*
-- [0245 — Activity-gated remote OIDC refresh](./0245-activity-gated-remote-oidc-refresh.md) *(superseded by 0244)*
-- [0246 — Recover remote TUI authentication without replaying ownership-ambiguous work](./0246-tui-reauth-owner-recovery.md) *(superseded by 0244)*
-- [0247 — Safe target logout for remote mecatui OIDC](./0247-remote-mecatui-logout.md) *(superseded by 0244)*
-- [0248 — Remote mecatui OIDC client login](./0248-remote-mecatui-oidc-login.md) *(superseded by 0244)*
+- [0252 — Remote mecatui OIDC client authentication](./0252-remote-mecatui-oidc.md) *(supersedes 0253–0256)*
+- [0258 — Bounded scoped HTTPS keep-alive reuse for OIDC](./0258-bounded-scoped-https-keepalive-oidc.md) *(supersedes ADR 0235's keep-alive policy and ADR 0252's credential-recovery classification only)*
+- [0253 — Activity-gated remote OIDC refresh](./0253-activity-gated-remote-oidc-refresh.md) *(superseded by 0252)*
+- [0254 — Recover remote TUI authentication without replaying ownership-ambiguous work](./0254-tui-reauth-owner-recovery.md) *(superseded by 0252)*
+- [0255 — Safe target logout for remote mecatui OIDC](./0255-remote-mecatui-logout.md) *(superseded by 0252)*
+- [0256 — Remote mecatui OIDC client login](./0256-remote-mecatui-oidc-login.md) *(superseded by 0252)*
+- [0257 — Remote logout provider budget](./0257-remote-mecatui-logout-budget.md) *(supersedes ADR 0252's logout provider budget only)*
 - [0059 — Scheduled tasks](./0059-scheduled-tasks.md)
 - [0065 — Conversation fork: peer session from a history snapshot](./0065-conversation-fork.md)
 - [0073 — Schedule tool](./0073-schedule-tool.md)

@@ -21,6 +21,7 @@ import (
 
 	authoidc "github.com/stacklok/mecatl/authn/oidc"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
 type refreshFixture struct {
@@ -148,6 +149,57 @@ type failingRefreshSaveStore struct {
 
 func (s failingRefreshSaveStore) Put(context.Context, []byte, []byte, *credentialstore.Version) (credentialstore.Record, error) {
 	return credentialstore.Record{}, s.err
+}
+
+func TestLoginRejectsCustomClientWithPrivateHTTPSBeforeRequest(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, errors.New("request must not be sent")
+	})}
+
+	_, err := Login(t.Context(), LoginConfig{
+		Identity: identity("private.example:443"),
+		Presenter: PresenterFunc(func(context.Context, string) (oauthlogin.Result, error) {
+			t.Fatal("presenter must not be called")
+			return oauthlogin.Result{}, nil
+		}),
+		HTTPClient:   client,
+		PrivateHTTPS: true,
+		TrustedCAPEM: []byte("unused"),
+	})
+	if !errors.Is(err, ErrDiscovery) || !strings.Contains(err.Error(), "custom HTTP client is not allowed with private HTTPS issuer mode") {
+		t.Fatalf("Login error = %v, want private HTTPS custom-client rejection", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("requests = %d, want 0", got)
+	}
+}
+
+func TestNewRefreshSourceRejectsCustomClientWithPrivateHTTPSBeforeRequest(t *testing.T) {
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return nil, errors.New("request must not be sent")
+	})}
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source, err := NewRefreshSource(t.Context(), credentials(t), LoginConfig{
+		Identity:     identity("private.example:443"),
+		Registry:     registry,
+		HTTPClient:   client,
+		PrivateHTTPS: true,
+		TrustedCAPEM: []byte("unused"),
+	})
+	if source != nil || !errors.Is(err, ErrDiscovery) || !strings.Contains(err.Error(), "custom HTTP client is not allowed with private HTTPS issuer mode") {
+		t.Fatalf("NewRefreshSource = (%#v, %v), want nil private HTTPS custom-client rejection", source, err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("requests = %d, want 0", got)
+	}
 }
 
 func TestRefreshRotationSurvivesTransientValidationFailure(t *testing.T) {

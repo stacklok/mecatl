@@ -122,10 +122,19 @@ kubectl --kubeconfig=deploy/mecak8s-vmcp/kconfig.yaml --context=kind-mecatl-dev 
 A normal-terminal `mecatui login` then `connect` flow with custom-CA TLS and OIDC
 Authorization Code + PKCE is available. After `kind-hosts-add`, use the documented
 Service-DNS host aliases and export the public fixture CA to `.scratch/`; then enroll
-with `mecatui login <mecak8s-host>:18081 --issuer <fixture-https-issuer> --client-id
-mecatui-kind --audience http://127.0.0.1:18080/mcp --tls-ca <exported-fixture-ca>` and connect with
-`mecatui connect <mecak8s-host>:18081 --tls --tls-ca <exported-fixture-ca>`. The login uses
-Authorization Code + PKCE, not device flow. For SSH or another headless host, add
+with:
+
+```sh
+mecatui login <mecak8s-host>:18081 --issuer <fixture-https-issuer> --client-id mecatui-kind --audience http://127.0.0.1:18080/mcp \
+  --tls-ca <exported-fixture-ca> --scopes openid,profile,mcp:read,offline_access
+```
+
+Then connect with `mecatui connect <mecak8s-host>:18081 --tls --tls-ca <exported-fixture-ca>`.
+The login uses Authorization Code + PKCE, not device flow. `offline_access` is optional on
+`mecatui-kind`, and the fixture users hold Keycloak's `offline_access` realm role, so this
+explicit request receives a refresh token. Mecatui stores it with the login and uses it to
+refresh the access token; omit the scope when a refreshable login is not needed. For SSH or
+another headless host, add
 `--no-browser`, open the printed URL in a browser on the operator workstation, and
 forward the fixed callback port back to the login host:
 

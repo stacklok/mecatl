@@ -63,8 +63,9 @@ func TestStatusCustomization_Scenario3_CommandAndTemplateShareSurfaces(t *testin
 
 func TestStatusCustomization_Scenario3_CommandBoundaryIsLocalAndSecretFree(t *testing.T) {
 	dir := t.TempDir()
+	physicalDir := physicalPath(t, dir)
 	t.Setenv("STATUS_SECRET", "do-not-leak")
-	source := NewCommandSource(commandTest(dir, "boundary", dir))
+	source := NewCommandSource(commandTest(dir, "boundary", physicalDir))
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	source.Submit(Input{Workspace: Workspace{Location: "remote", Path: "/untrusted/remote"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
 	waitStatusChange(t, source)
@@ -110,6 +111,15 @@ func commandTest(dir string, args ...string) Command {
 		panic("unknown test command mode")
 	}
 	return Command{Path: "/bin/sh", Args: append([]string{"-c", script, "--"}, extra...), LaunchDir: dir}
+}
+
+func physicalPath(t *testing.T, path string) string {
+	t.Helper()
+	physical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", path, err)
+	}
+	return physical
 }
 
 func waitStatusChange(t *testing.T, source Source) {
@@ -171,7 +181,8 @@ func TestStatusLineCommandEnvironmentIsExactAllowlist(t *testing.T) {
 
 func TestStatusLineCommandCWDUsesLocalSessionWorkspace(t *testing.T) {
 	launch, workspace := t.TempDir(), t.TempDir()
-	result, err := runCommand(context.Background(), commandTest(launch, "boundary", workspace), Input{Workspace: Workspace{Location: "local", Path: workspace}})
+	physicalWorkspace := physicalPath(t, workspace)
+	result, err := runCommand(context.Background(), commandTest(launch, "boundary", physicalWorkspace), Input{Workspace: Workspace{Location: "local", Path: workspace}})
 	if err != nil || !strings.Contains(string(result), "command header") {
 		t.Fatalf("local workspace CWD was not used: err=%v result=%q", err, result)
 	}

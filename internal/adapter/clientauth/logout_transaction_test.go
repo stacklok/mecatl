@@ -54,7 +54,10 @@ func TestLogoutRegistryCASWinnerIsPreserved(t *testing.T) {
 		if stage != "precommit" {
 			return nil
 		}
-		body, marshalErr := json.Marshal(registryFile{Version: 1, Connections: []Connection{{Identity: winnerID}}})
+		body, marshalErr := json.Marshal(struct {
+			Version     int          `json:"version"`
+			Connections []Connection `json:"connections"`
+		}{Version: 1, Connections: []Connection{{Identity: winnerID}}})
 		if marshalErr != nil {
 			return marshalErr
 		}

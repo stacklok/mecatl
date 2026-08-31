@@ -140,3 +140,32 @@ func TestSavedRemoteLoginPreflightsLocalStorageBeforeRuntime(t *testing.T) {
 		t.Fatal("OIDC runtime opened before local credential preflight")
 	}
 }
+
+func TestExistingSavedRemoteLoginMissingStoreDoesNotLaunchBrowserOrCreateState(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	originalRuntime := newRemoteLoginRuntime
+	t.Cleanup(func() { newRemoteLoginRuntime = originalRuntime })
+	opened := false
+	newRemoteLoginRuntime = func(oauthlogin.Options) (*oauthlogin.Runtime, error) {
+		opened = true
+		return nil, errors.New("runtime must not open")
+	}
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runExistingSavedRemoteLogin(t.Context(), clientauth.Connection{IssuerCAFile: caFile}, false)
+	var authErr *client.AuthError
+	if !errors.As(err, &authErr) || authErr.Reason != client.AuthStorageUnavailable {
+		t.Fatalf("reauthentication error = %v, want storage unavailable", err)
+	}
+	if opened {
+		t.Fatal("OIDC runtime opened despite missing saved credential state")
+	}
+	if _, err := os.Stat(filepath.Join(xdg.ConfigHome, "mecatl")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reauthentication created credential root: %v", err)
+	}
+}

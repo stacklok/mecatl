@@ -23,7 +23,11 @@ func TestSessionStorageContinuity_Scenario1_AtomicCrashRecovery(t *testing.T) {
 
 	t.Run("temporary replacement shares destination directory", func(t *testing.T) {
 		dir := t.TempDir()
-		expected := filepath.Join(dir, canonicalDirName)
+		physicalDir, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatalf("EvalSymlinks(temp dir): %v", err)
+		}
+		expected := filepath.Join(physicalDir, canonicalDirName)
 		ops := defaultSnapshotOps()
 		createTemp := ops.createTemp
 		ops.createTemp = func(gotDir, pattern string) (*os.File, error) {
@@ -165,7 +169,11 @@ func TestSessionStorageContinuity_Scenario1_AtomicCrashRecovery(t *testing.T) {
 
 func TestStoreInitializationDurablyPublishesCreatedDirectories(t *testing.T) {
 	base := t.TempDir()
-	root := filepath.Join(base, "parent", "store")
+	physicalBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(base): %v", err)
+	}
+	root := filepath.Join(physicalBase, "parent", "store")
 	ops := defaultSnapshotOps()
 	syncDir := ops.syncDir
 	var synced []string
@@ -180,8 +188,8 @@ func TestStoreInitializationDurablyPublishesCreatedDirectories(t *testing.T) {
 	catalog := filepath.Join(canonical, inventoryCatalogDirName)
 	migrationRegistry := filepath.Join(canonical, migrationJobsDir)
 	wantPrefix := []string{
-		filepath.Join(base, "parent"), base,
-		root, filepath.Join(base, "parent"),
+		filepath.Join(physicalBase, "parent"), physicalBase,
+		root, filepath.Join(physicalBase, "parent"),
 		canonical, root,
 		catalog, canonical,
 		migrationRegistry, canonical,

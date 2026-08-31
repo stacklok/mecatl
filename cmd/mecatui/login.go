@@ -25,9 +25,10 @@ import (
 const savedLoginCallbackTimeout = 5 * time.Minute
 
 var (
-	executeRemoteLogin    = runSavedRemoteLogin
-	newRemoteLoginRuntime = oauthlogin.New
-	prepareSavedLogin     = prepareSavedRemoteLogin
+	executeRemoteLogin        = runSavedRemoteLogin
+	newRemoteLoginRuntime     = oauthlogin.New
+	prepareSavedLogin         = prepareSavedRemoteLogin
+	prepareExistingSavedLogin = prepareExistingSavedRemoteLogin
 )
 
 type notifyContextFunc func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
@@ -131,15 +132,56 @@ func prepareSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (p
 	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore}, nil
 }
 
+// prepareExistingSavedRemoteLogin opens only existing saved-target state. It is
+// used by TUI reauthentication so a broken or removed local store is recovered
+// in the UI rather than starting an enrollment browser flow.
+func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (preparedSavedLogin, error) {
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	registry, err := clientauth.OpenExistingRegistry(root)
+	if err != nil {
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	keys, err := clientauth.NewExistingKeyringProvider(root)
+	if err != nil {
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	store, err := clientauth.OpenExistingStore(ctx, root, keys)
+	if err != nil {
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	closeStore := func() { _ = store.Close() }
+	creds, err := clientauth.NewCredentials(store)
+	if err != nil {
+		closeStore()
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	if _, err := creds.Load(ctx, conn.Identity); err != nil &&
+		!errors.Is(err, credentialstore.ErrNotFound) && !errors.Is(err, clientauth.ErrCorrupt) {
+		closeStore()
+		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore}, nil
+}
+
 // runSavedRemoteLogin performs the ordinary OIDC flow for an already-saved public
 // target. It runs only after Bubble Tea has exited; neither the UI nor its restart
 // intent receives OAuth material.
 func runSavedRemoteLogin(ctx context.Context, conn clientauth.Connection, noBrowser bool) error {
+	return runSavedRemoteLoginWith(ctx, conn, noBrowser, prepareSavedLogin)
+}
+
+// runExistingSavedRemoteLogin reauthenticates a saved target without initializing
+// replacement local storage.
+func runExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connection, noBrowser bool) error {
+	return runSavedRemoteLoginWith(ctx, conn, noBrowser, prepareExistingSavedLogin)
+}
+
+func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, noBrowser bool, prepare func(context.Context, clientauth.Connection) (preparedSavedLogin, error)) error {
 	ca, err := os.ReadFile(conn.IssuerCAFile)
 	if err != nil {
 		return &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	prepared, err := prepareSavedLogin(ctx, conn)
+	prepared, err := prepare(ctx, conn)
 	if err != nil {
 		return err
 	}

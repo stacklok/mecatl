@@ -467,7 +467,10 @@ func TestTargetCanonicalizesNumericPortAndRegistryLegacyIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := Connection{Identity: identity("host.example:0443")}
-	body, err := json.Marshal(registryFile{Version: 1, Connections: []Connection{legacy}})
+	body, err := json.Marshal(struct {
+		Version     int          `json:"version"`
+		Connections []Connection `json:"connections"`
+	}{Version: 1, Connections: []Connection{legacy}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1213,7 +1216,10 @@ func TestRegistryOmitsInvalidEntriesWithoutBlockingOthers(t *testing.T) {
 	dir := t.TempDir()
 	bad := Connection{Identity: identity("relative-ca.example:443"), IssuerCAFile: "issuer-ca.pem"}
 	good := Connection{Identity: identity("unrelated-target.example:443"), IssuerCAFile: "/ca.pem"}
-	body, err := json.Marshal(registryFile{Version: 1, Connections: []Connection{bad, good}})
+	body, err := json.Marshal(struct {
+		Version     int          `json:"version"`
+		Connections []Connection `json:"connections"`
+	}{Version: 1, Connections: []Connection{bad, good}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1317,6 +1323,93 @@ func TestRegistryPrecommitFailureCleansUniqueTemporary(t *testing.T) {
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".clientauth-connections-") && strings.HasSuffix(entry.Name(), ".tmp") {
 			t.Fatalf("temporary registry file survived failure: %s", entry.Name())
+		}
+	}
+}
+
+func TestOpenExistingStoreDoesNotRepairExistingDirectoryModes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "root")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := bytesOf(12)
+	store, err := credentialstore.NewEncryptedFile(root, credentialNamespace, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+
+	if _, err := OpenExistingStore(t.Context(), root, fakeKeys{key: key}); !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("unsafe existing root error = %v", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("existing-only store open changed root mode to %#o", got)
+	}
+}
+
+func TestOpenExistingStoreMissingKeyLeavesCiphertextUntouched(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "root")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := bytesOf(13)
+	store, err := credentialstore.NewEncryptedFile(root, credentialNamespace, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(t.Context(), []byte("record"), []byte("ciphertext must remain"), nil); err != nil {
+		t.Fatal(err)
+	}
+	namespace := filepath.Join(root, credentialstore.NamespacePhysicalName(credentialNamespace))
+	before, err := os.ReadDir(namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := make(map[string][]byte, len(before))
+	for _, entry := range before {
+		if entry.Type().IsRegular() {
+			contents[entry.Name()], err = os.ReadFile(filepath.Join(namespace, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := OpenExistingStore(t.Context(), root, fakeKeys{err: errors.New("missing key")}); !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("missing key error = %v", err)
+	}
+	after, err := os.ReadDir(namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("existing-only open changed namespace entries: before=%v after=%v", before, after)
+	}
+	for i, entry := range before {
+		if after[i].Name() != entry.Name() || after[i].Type() != entry.Type() {
+			t.Fatalf("existing-only open changed namespace entry: before=%v after=%v", before, after)
+		}
+		if entry.Type().IsRegular() {
+			body, readErr := os.ReadFile(filepath.Join(namespace, entry.Name()))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !bytes.Equal(body, contents[entry.Name()]) {
+				t.Fatalf("existing-only open changed ciphertext %q", entry.Name())
+			}
 		}
 	}
 }

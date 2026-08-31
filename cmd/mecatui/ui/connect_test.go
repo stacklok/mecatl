@@ -85,7 +85,18 @@ func TestConnectListFailureIsSanitized(t *testing.T) {
 	if m.connect.err != "saved targets are unavailable" {
 		t.Fatalf("error = %q", m.connect.err)
 	}
-	if strings.Contains(m.View().Content, "secret") {
+	out := stripANSIstr(m.View().Content)
+	if strings.Contains(out, "secret") {
 		t.Fatal("raw list error leaked")
+	}
+	if strings.Contains(out, "Sign in to a new target") {
+		t.Fatalf("storage-unavailable panel offered enrollment: %s", out)
+	}
+	for range 2 {
+		mm, cmd, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = mm.(Model)
+		if !handled || cmd != nil || m.connect.confirm || m.connectIntent != nil {
+			t.Fatalf("enter must not confirm unavailable targets: connect=%#v intent=%#v cmd=%v", m.connect, m.connectIntent, cmd)
+		}
 	}
 }

@@ -142,7 +142,10 @@ func duplicateLogoutState(t *testing.T) (*Registry, *Credentials, string, []Conn
 	second := identity(target)
 	second.Issuer = "https://second.example"
 	entries := []Connection{{Identity: first}, {Identity: second}}
-	if err := reg.write(entries); err != nil {
+	if err := reg.writeRows([]registryRow{
+		{connection: entries[0], valid: true},
+		{connection: entries[1], valid: true},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for _, conn := range entries {

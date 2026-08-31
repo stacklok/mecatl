@@ -226,3 +226,33 @@ func TestEncryptedFileLocationBoundAAD(t *testing.T) {
 		t.Fatalf("copied envelope = %v", err)
 	}
 }
+
+func TestOpenExistingEncryptedFileLeavesRootAndNamespaceUntouched(t *testing.T) {
+	key := bytes.Repeat([]byte{3}, 32)
+	root := filepath.Join(t.TempDir(), "root")
+	if _, err := OpenExistingEncryptedFile(root, "namespace", key); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing root error = %v", err)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing root was created: %v", err)
+	}
+
+	store := openFileStore(t, root, "namespace", key)
+	namespace := store.nsPath
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(namespace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExistingEncryptedFile(root, "namespace", key); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("unsafe namespace error = %v", err)
+	}
+	info, err := os.Stat(namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("existing-only open changed namespace mode to %#o", got)
+	}
+}
