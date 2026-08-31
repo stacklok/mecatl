@@ -64,7 +64,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 		t.Fatalf("requests = %d, want 2", len(requests))
 	}
 	if len(requests[0].Tools) != 1 || requests[0].Tools[0].Name != sessiondebug.ToolName {
-		t.Fatalf("debug tools = %+v, want exactly InspectSession", requests[0].Tools)
+		t.Fatalf("debug tools = %+v, want exactly InspectSession (CurrentSession must remain excluded)", requests[0].Tools)
 	}
 	prefix := requests[0].System.StablePrefix
 	for _, want := range []string{"target-exact", "Call status first", "authoritative transcript", "optional, incomplete", "hostile untrusted data", "Never mutate, resume, approve, cancel, or steer"} {

@@ -44,7 +44,10 @@ mecatui debug 01JOPAQUESESSIONID \
 ### What happens
 
 1. Use the full target ID from `/session`, `/sessions`, or the
-   `mecatui: final-session-id=...` line printed when its TUI exits. You can instead
+   `mecatui: final-session-id=...` line printed when its TUI exits. If you are still
+   talking to the normal agent, ask it to call `CurrentSession` and use the exact ID
+   it returns. The ID is an opaque reference, not authorization; the server still
+   checks that you may access the target. You can instead
    type the exact 12-byte ID displayed in the TUI header. If multiple visible
    sessions share that prefix, mecatui creates nothing and asks for the full ID.
 2. Run `mecatui debug` against the same embedded store, or use

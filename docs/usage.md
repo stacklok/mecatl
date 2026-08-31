@@ -114,6 +114,11 @@ exists, the TUI fails, or a signal interrupts/forces exit; stdout is unchanged. 
 
 ## Debug a stored session
 
+When you are in a normal agent conversation and do not already have its ID, ask the agent
+to call `CurrentSession`. Pass the exact returned value to `mecatui debug`; the ID is an
+opaque correlation reference, not authorization, and the server still enforces target
+ownership.
+
 Use `mecatui debug SESSION_ID` against the embedded store, or
 `mecatui connect ADDRESS debug SESSION_ID` against a running server. `SESSION_ID`
 may be the full opaque ID or the exact 12-byte ID displayed in the TUI header.

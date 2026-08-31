@@ -75,6 +75,7 @@
     method func (HeuristicTokenCounter).Count(text string) int
     method func (HeuristicTokenCounter).CountMessages(msgs []session.Message) int
 const BashCmdJobPrefix untyped string = "bashcmd-"
+const CurrentSessionToolName untyped string = "CurrentSession"
 const DefaultAskReviewMaxDenies untyped int = 3
 const DefaultPreservedForkCap untyped int = 8
 const DispositionDone MemberDisposition = "done"
@@ -105,6 +106,7 @@ func MemberToolNames() map[string]struct{}
 func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool
 func NewBashStatusTool() tool.Tool
 func NewBashTool() tool.Tool
+func NewCurrentSessionTool() tool.Tool
 func NewEngine(deps Deps) *Engine
 func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
 func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge

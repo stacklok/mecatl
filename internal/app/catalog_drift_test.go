@@ -95,6 +95,7 @@ func fullyLoadedCfg(t *testing.T) Config {
 // pinned here too — it is registered unconditionally by assembleCatalog, but
 // without this entry a drop from BOTH paths would keep the equality green.
 var requiredFamilyTools = []string{
+	agent.CurrentSessionToolName,
 	"Subagent",
 	"InspectSubagent",
 	"SubagentStatus",
@@ -377,6 +378,16 @@ func TestBackgroundBashCatalogWiring(t *testing.T) {
 	if _, isAgent := childBash.(agent.BashTool); !isAgent {
 		t.Fatalf("child Bash is %T, want agent.BashTool (child background parity)", childBash)
 	}
+	if _, ok := explorer.Lookup(agent.CurrentSessionToolName); !ok {
+		t.Fatal("read-only explorer catalog lost CurrentSession")
+	}
+	if _, ok := writableExplorerCatalog(runner, "test writable explorer").Lookup(agent.CurrentSessionToolName); !ok {
+		t.Fatal("writable explorer catalog lost CurrentSession")
+	}
+	parallel := parallelChildDeps(cfg, regForTest(oa, providerOpenAI, cfg.Model), oa, providerOpenAI, cfg.Model, runner)
+	if _, ok := parallel.Catalog.Lookup(agent.CurrentSessionToolName); !ok {
+		t.Fatal("Parallel branch catalog lost CurrentSession")
+	}
 	if _, ok := explorer.Lookup("BashStatus"); ok {
 		t.Fatal("read-only explorer catalog must NOT contain BashStatus (main-catalog-only channel)")
 	}
@@ -407,6 +418,18 @@ func TestBackgroundBashCatalogWiring(t *testing.T) {
 	}
 	if _, isAgent := base[tools.BashToolName].(agent.BashTool); !isAgent {
 		t.Fatalf("base Bash is %T, want agent.BashTool (child background parity)", base[tools.BashToolName])
+	}
+	if !defEng.HasTool(agent.CurrentSessionToolName) {
+		t.Fatal("def-scoped engine lost CurrentSession")
+	}
+	foundCurrent := false
+	for _, n := range defNames {
+		if n == agent.CurrentSessionToolName {
+			foundCurrent = true
+		}
+	}
+	if !foundCurrent {
+		t.Fatalf("def-scoped effective names %v omit CurrentSession", defNames)
 	}
 	if defEng.HasTool("BashStatus") {
 		t.Fatal("def-scoped engine must NOT contain BashStatus (main-catalog-only channel)")

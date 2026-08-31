@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -24,6 +25,7 @@ var inspectToolNames = []string{
 	// background-Bash jobs' status/collect/cancel channel), floor-scoped
 	// alongside SubagentStatus in defaultRules().
 	"BashStatus",
+	agent.CurrentSessionToolName,
 }
 
 // TestInspectToolsDefaultExplicitAllow proves all three child-observability tools
@@ -77,6 +79,19 @@ func TestConfiguredDenyOverridesInspectAllow(t *testing.T) {
 		session.NewToolCall("id", "SubagentStatus", json.RawMessage(`{}`)), nil)
 	if got.Effect != governance.Deny {
 		t.Fatalf("a configured Deny on SubagentStatus must win over the built-in-floor Allow; got %v", got.Effect)
+	}
+}
+
+func TestConfiguredRulesOverrideCurrentSessionAllow(t *testing.T) {
+	for _, effect := range []governance.Effect{governance.Ask, governance.Deny} {
+		rules := append(defaultRules(), governance.Rule{
+			Scope: governance.ScopeUser, Tool: agent.CurrentSessionToolName, Effect: effect,
+		})
+		got := permpolicy.NewPolicy(rules, nil).Evaluate(context.Background(), "s1", session.ModeDefault,
+			session.NewToolCall("id", agent.CurrentSessionToolName, json.RawMessage(`{}`)), nil)
+		if got.Effect != effect {
+			t.Errorf("configured %v on CurrentSession resolved to %v", effect, got.Effect)
+		}
 	}
 }
 

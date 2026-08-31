@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -426,6 +427,10 @@ func bashScopeMissReason(cfg Config) string {
 	}
 }
 
+func agentDefAllowsCurrentSession(def agents.AgentDef) bool {
+	return !slices.Contains(def.DisallowedTools, agent.CurrentSessionToolName)
+}
+
 // scopedToolNamesMode computes a def's effective tool NAME set as a pure set
 // operation over the AVAILABLE base tools:
 //
@@ -801,6 +806,9 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		// adds the MCP tools that were successfully registered in the read-only engine;
 		// writable core scoping alone does not include definition-provided tools.
 		writableNames, _ := scopedToolNamesMode(def, base, true, runner != nil, bashScopeMissReason(cfg))
+		if agentDefAllowsCurrentSession(def) {
+			writableNames = append(writableNames, agent.CurrentSessionToolName)
+		}
 		for _, name := range names {
 			if strings.HasPrefix(name, "mcp__") {
 				writableNames = append(writableNames, name)
@@ -888,6 +896,10 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 			continue
 		}
 		classified.mustRegister(registered, &entry)
+	}
+	if agentDefAllowsCurrentSession(def) {
+		registerCurrentSession(classified)
+		names = append(names, agent.CurrentSessionToolName)
 	}
 
 	// Per-agent MCP: a def's mcpServers add the referenced/inline servers' tools to

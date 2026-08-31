@@ -653,6 +653,7 @@ func TestNoFSChildCatalogExactDelta(t *testing.T) {
 		memory.InspectMemoryToolName, memory.ForgetMemoryToolName, memory.UndoMemoryToolName,
 		memory.RememberUserToolName, memory.RecallUserToolName, memory.SearchUserModelToolName,
 		memory.InspectUserMemoryToolName, memory.ForgetUserMemoryToolName, memory.UndoUserMemoryToolName,
+		agent.CurrentSessionToolName,
 		// The no-fs core tier: WebFetch + FetchMcpResource (outbound reads) + WebSearch
 		// (search-then-fetch discovery). FetchMcpResource is an outbound read with no
 		// filesystem need (issue #223 Phase 2).

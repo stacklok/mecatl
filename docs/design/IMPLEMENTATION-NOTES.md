@@ -165,6 +165,26 @@ automatic, or client-transcript-upload path.
 
 ---
 
+## Current running session identity
+
+`engine/agent/currentsession.go` (`NewCurrentSessionTool`) is the zero-argument, read-only
+identity affordance for normal main and delegated-agent catalogs. Execution reads only
+`engine/port/sessioncontext.go` (`SessionIDFromContext`); a missing, empty, or invalid-UTF-8
+value is a model-visible tool error. This late binding is load-bearing: child runs receive
+their own run context and therefore cannot report a parent ID captured during composition.
+
+`internal/app/catalog.go` (`registerCurrentSession`) classifies and registers the tool as
+`server.KindDerived` across shared/per-session, no-fs, explorer, writable, Parallel,
+specialist, and Team member catalog paths. `internal/app/build.go` (`defaultRules`) gives it
+a tool-name-exact `governance.ScopeBuiltinDefault` Allow that configured Ask or Deny rules
+can override; agent-definition `disallowed_tools` remains authoritative. IDs are not injected
+into prompt layers, `tool.Environment`, shell variables, request/protobuf types, or store
+lookups; after the tool is called, its result follows ordinary conversation history and
+subsequent provider requests. The dedicated debug factory deliberately bypasses all of these
+registration paths and retains the exact `{InspectSession}` catalog from ADR 0248.
+
+---
+
 ## Dedicated session debugger
 
 A debug session is a normal durable conversation for the analyst, but its authority is

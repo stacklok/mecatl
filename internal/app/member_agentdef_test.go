@@ -30,6 +30,20 @@ func editCall() *mockllm.Provider {
 	return mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done"))
 }
 
+func TestTeamMemberCatalogsIncludeCurrentSession(t *testing.T) {
+	cfg := Config{Workspace: t.TempDir(), Model: "m"}
+	def := agents.AgentDef{Name: "specialist", Tools: []string{"Read"}}
+	tm := team.New("t")
+	factory := memberFactoryForTest(cfg, mockllm.New(mockllm.TextTurn("x")), hookexec.New(nil), regOf(def), nil, nil, false, nil)
+
+	for _, spec := range []agent.MemberSpec{{Name: "default"}, {Name: "named", AgentType: def.Name}} {
+		build := factory(tm, spec, "")
+		if !build.Engine.HasTool(agent.CurrentSessionToolName) {
+			t.Errorf("member %+v catalog lost CurrentSession", spec)
+		}
+	}
+}
+
 // TestMemberMutatingDefKeepsEditWhenMutating proves a Mutating member whose def lists
 // Edit actually dispatches an Edit tool.call (the tool is in the catalog), end to end
 // through the supervisor against a forked memfs workspace.

@@ -6081,6 +6081,7 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
 	classified.mustRegister(tools.ReadTool{}, workspace)
 	classified.mustRegister(tools.GrepTool{}, workspace)
 	classified.mustRegister(tools.GlobTool{}, workspace)
+	registerCurrentSession(classified)
 	if runner != nil {
 		// agent.NewBashTool, NOT the fstools one: the child's Bash reaches its
 		// OWN run's child registry through the dispatch seam, so `background:
@@ -6101,6 +6102,7 @@ func writableExplorerCatalog(runner tool.CommandRunner, surface string) *tool.Ca
 	for _, t := range []tool.Tool{tools.ReadTool{}, tools.GrepTool{}, tools.GlobTool{}} {
 		classified.mustRegister(t, workspace)
 	}
+	registerCurrentSession(classified)
 	if runner != nil {
 		classified.mustRegister(agent.NewBashTool(), workspace)
 	}
@@ -7241,11 +7243,13 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// mutating-tool backstop. It stays false for a Mutating member (its flag
 			// already drives the force-copy fork) and for a base-sharing read-only
 			// member (no shell).
-			isolateReadOnly bool
+			isolateReadOnly       bool
+			currentSessionAllowed = true
 		)
 
 		def, defined := lookupMemberDef(cfg.diag(), reg, spec)
 		if defined {
+			currentSessionAllowed = agentDefAllowsCurrentSession(def)
 			// Scope the def over the member's AVAILABLE base, allowing mutating tools
 			// (Edit/Write/Bash) only for a Mutating member — it runs in an isolated
 			// fork, and Bash is now workspace-aware (BashTool reads its runner from the
@@ -7325,6 +7329,9 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// scopes none keeps the inert default (memberHooks unchanged), preserving the
 			// historical defined-member engine shape.
 			memberHooks = defHookRunner(cfg, def, memberHooks)
+			if currentSessionAllowed {
+				names = append(names, agent.CurrentSessionToolName)
+			}
 			cfg.diag().Log(context.Background(), port.LevelInfo, "team member adopts agent def",
 				"member", spec.Name, "agent", def.Name, "tools", strings.Join(names, ","),
 				"model", model, "mode", mode, "mutating", spec.Mutating,
@@ -7351,6 +7358,10 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// routedModel (router off, miss, or zero-caps RunTeam), so the default is
 			// byte-identical to today.
 			model, windowFn, pc = applyMemberRoute(cfg, provReg, parentProviderID, routedModel, model, windowFn, pc)
+		}
+
+		if currentSessionAllowed {
+			registerCurrentSession(classified)
 		}
 
 		// Team coordination tools ALWAYS, in both branches: they bypass the def
@@ -7988,6 +7999,7 @@ const SoulApplyAction = "soul:apply"
 // entries below; guarded by internal/app/inspect_perm_test.go.
 func defaultRules() []governance.Rule {
 	return []governance.Rule{
+		{Scope: governance.ScopeBuiltinDefault, Tool: agent.CurrentSessionToolName, Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Read", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Grep", Effect: governance.Allow},
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Glob", Effect: governance.Allow},

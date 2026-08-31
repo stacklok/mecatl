@@ -367,6 +367,11 @@ works with no daemon. The `sessions` launch intent is orthogonal to that transpo
 `mecatui sessions` and `mecatui connect ADDRESS sessions` enter the same stored-session
 inventory without first creating a session, then continue/inspect through the existing
 authoritative transcript path or create only when the operator requests a new chat.
+Normal main and delegated-agent catalogs also expose the zero-argument, read-only
+`CurrentSession` tool. It resolves the running agent's exact session ID from the run context
+at execution time, so a child reports its own ID rather than its parent's. The opaque value
+supports correlation and the handoff to `mecatui debug`; it grants no authority and is never
+injected literally into the system prompt. See [ADR 0250](adr/0250-current-session-tool.md).
 The sibling `mecatui debug SESSION_ID` and `mecatui connect ADDRESS debug SESSION_ID`
 forms create a separate durable `debug` session whose trusted relationship metadata binds
 one authorized target. The proto-free client uses the same 12-byte helper as the
@@ -375,7 +380,9 @@ inventory, exact full-ID matches win, and ambiguity fails before creation. Longe
 bypass inventory lookup; an unmatched short reference is still sent unchanged so the
 server preserves its absence-shaped authorization response and remains the final authority.
 That engine has no filesystem, carries a stable-prefix debugging
-contract, and exposes exactly the target-bound `InspectSession` tool; the model cannot
+contract, and exposes exactly the target-bound `InspectSession` tool; `CurrentSession` is
+intentionally excluded from this dedicated catalog, preserving ADR 0248's `{InspectSession}`
+boundary. The model cannot
 choose another target. Snapshot status and transcript are authoritative sources; the
 transcript projection includes bounded textual/structured message and tool-result parts,
 marks binary payloads omitted with metadata, advances past a row that cannot fit while

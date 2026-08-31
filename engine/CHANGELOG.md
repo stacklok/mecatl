@@ -45,6 +45,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`agent.NewCurrentSessionTool` and `agent.CurrentSessionToolName`** ([ADR 0250](../docs/adr/0250-current-session-tool.md)) — expose a zero-argument, read-only tool that returns the running agent's exact context-bound session ID for correlation and debugger handoff. Added (minor).
+
 - **Manual session compaction core** — `session.ReplaceHistoryAtBoundary` provides
   the pairing-validated, non-active aggregate rewrite seam; `agent.Engine.CompactSession`
   and `agent.ManualCompactionResult` run the configured compactor once and expose the

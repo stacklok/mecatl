@@ -222,6 +222,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	// name+mode check is defense-in-depth on top of that projection gate.
 	classified.mustRegister(agent.NewPresentPlanTool(), classification(server.KindDerived,
 		"signals plan approval only within the current authorized run"))
+	registerCurrentSession(classified)
 
 	classified.capture(server.ClassificationEntry{Kind: server.KindSharedInfrastructure,
 		Rationale: "server-global MCP tools are process-wide configured infrastructure shared by every caller"}, func() {
@@ -276,6 +277,11 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		closeFn = func() error { return nil }
 	}
 	return cat, closeFn
+}
+
+func registerCurrentSession(classified *classifiedCatalog) {
+	classified.mustRegister(agent.NewCurrentSessionTool(), classification(server.KindDerived,
+		"derived from the current authorized run context and grants no authority"))
 }
 
 // mountGlobalMCP mounts the server-global MCP tools (cfg.MCPServers + ToolHive),
@@ -634,6 +640,7 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 		// over the SAME process-wide provider as the main catalog (a.searchProvider).
 		cat.MustRegister(tools.NewWebSearchTool(a.searchProvider))
 	})
+	registerCurrentSession(classified)
 	classified.capture(server.ClassificationEntry{Kind: server.KindSharedInfrastructure,
 		Rationale: "server-global MCP tools are process-wide configured infrastructure shared by every caller"}, func() {
 		if a.globalMgr != nil {

@@ -91,7 +91,7 @@ func TestADR_0233_AuthorityEvaluator_VerticalSlice(t *testing.T) {
 		t.Fatal("managed specialist child has no derived authority")
 	}
 	sort.Strings(childAuthority.CapabilitySet.Tools)
-	if got, want := childAuthority.CapabilitySet.Tools, []string{"Grep", "Read"}; !sameStrings(got, want) {
+	if got, want := childAuthority.CapabilitySet.Tools, []string{"CurrentSession", "Grep", "Read"}; !sameStrings(got, want) {
 		built.Close()
 		t.Fatalf("child tools = %v, want %v", got, want)
 	}
