@@ -104,7 +104,7 @@ func TestApproveFallsBackToStore(t *testing.T) {
 	if err := svc2.Approve(context.Background(), sess.ID, "ask-1", session.VerdictAllowOnce); !errors.Is(err, server.ErrNoActiveRun) {
 		t.Fatalf("Approve known/runless = %v, want ErrNoActiveRun", err)
 	}
-	if err := svc2.Cancel(context.Background(), sess.ID); !errors.Is(err, server.ErrNoActiveRun) {
+	if err := svc2.Cancel(context.Background(), sess.ID, ""); !errors.Is(err, server.ErrNoActiveRun) {
 		t.Fatalf("Cancel known/runless = %v, want ErrNoActiveRun", err)
 	}
 

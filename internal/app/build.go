@@ -878,6 +878,13 @@ type Config struct {
 	// foldOperatorPosture (CLI out-ranks YAML). PostureStrict (zero) is the
 	// fail-closed default. See internal/app/posture.go.
 	Posture Posture
+	// DeploymentID is an OPTIONAL, opaque, operator-set label for this deployment,
+	// surfaced on GetCompatibilityInfo (ADR 0248). Empty by default. It is NEVER inferred
+	// from hostname, pod name, or environment: infrastructure topology is not
+	// something an authenticated caller is owed, and a label the operator did not
+	// choose is a leak with no consenting author. Set via mecated --deployment-id,
+	// which bounds and validates it before it reaches here.
+	DeploymentID string
 	// LooseChildSubstitution loosens the built-in substitution Ask floor for
 	// CHILD/subagent/branch engines (childEvaluatorOptions adds WithLooseSubstitution
 	// when set), turning OFF the child prompt-injection defense so a $()/backtick/
@@ -1855,6 +1862,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// ServerCapabilities echo as CHROME (a client renders a "⚠ auto"/"⚠ yolo" badge).
 		// NOT session state — see server.Config.Posture.
 		Posture: cfg.Posture.String(),
+		// DeploymentID: the operator-set, opaque deployment label surfaced on
+		// GetCompatibilityInfo (ADR 0248). It is passed through VERBATIM and is never
+		// derived here from hostname, pod name, or environment — an inferred label
+		// would leak infrastructure topology to any authenticated caller. Empty is
+		// the default and the overwhelmingly common case.
+		DeploymentID: cfg.DeploymentID,
 		// DefaultResolvedModel: the EFFECTIVE provider+model the DEFAULT/shared engine
 		// resolved to (the registry default provider + the already-resolved cfg.Model +
 		// the context window for that pair), computed ONCE here in composition. Same

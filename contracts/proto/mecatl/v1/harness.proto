@@ -31,6 +31,27 @@ import "google/protobuf/timestamp.proto";
 // HarnessService is the mecatl API: unary session setup/inspection plus
 // the bidi Converse stream that drives one agent run.
 service HarnessService {
+  // GetCompatibilityInfo returns the deployment's compatibility descriptor: the
+  // API major, the operator-enabled ServerCapabilities, the build's supported
+  // feature identifiers, and an optional operator-set deployment label. It is
+  // the FIRST call a client makes — it answers "what may I do with this
+  // server?" WITHOUT creating a probe session (the ServerCapabilities echo
+  // otherwise rides CreateSessionResponse only).
+  //
+  // DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
+  // BUILD is this?" and ADR 0245 draws an explicit privacy boundary around it:
+  // its response must never carry capabilities, configuration, or auth details.
+  // This one is exactly those things — negotiation input, not identity — so
+  // folding the two would either breach that boundary or overload one message
+  // with two audiences. Build identity therefore lives ONLY on GetServerInfo,
+  // and a client that wants both makes both calls.
+  //
+  // A server that does not implement this RPC (UNIMPLEMENTED) is below the
+  // SDK compatibility floor; a client fails loudly rather than inferring a
+  // legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and
+  // UNIMPLEMENTED stay distinguishable. See ADR 0248.
+  rpc GetCompatibilityInfo(GetCompatibilityInfoRequest) returns (GetCompatibilityInfoResponse);
+
   // CreateSession allocates a new server-side session and returns its id.
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
 
@@ -501,6 +522,54 @@ message GetServerInfoResponse {
   // only scheme, host, optional port, and an escaped clean path; userinfo, query,
   // fragment, controls, and invalid or oversized values are omitted.
   string llm_provider_display_endpoint = 3;
+}
+
+// GetCompatibilityInfoRequest is empty: the descriptor is deployment-wide and
+// identical for every caller. It exists so the RPC can grow request fields
+// additively without a signature change.
+message GetCompatibilityInfoRequest {}
+
+// GetCompatibilityInfoResponse is the deployment's compatibility descriptor (ADR 0248).
+//
+// It deliberately carries TWO different vocabularies side by side, because they
+// answer different questions and conflating them is a bug:
+//
+//   - `capabilities` answers "what has this OPERATOR enabled?" — it changes with
+//     operator config. `bash: false` means the operator ran --no-bash.
+//   - `features` answers "what does this BUILD implement?" — it changes when
+//     mecatl is upgraded.
+//
+// A client that reads a disabled capability as version skew will reject a
+// correctly-configured deployment; a client that infers protocol support from an
+// operator toggle will call an RPC the server has never heard of.
+message GetCompatibilityInfoResponse {
+  // api_major is the wire-contract major version. It starts at 1 and bumps ONLY
+  // on a genuine break; additive changes are announced through `features`
+  // instead. A client gates on api_major + feature identifiers, NEVER on a
+  // server/package semver comparison.
+  int32 api_major = 1;
+  // capabilities is the SAME ServerCapabilities projection CreateSessionResponse
+  // echoes — the operator-enabled feature set — served here so a client can read
+  // it without creating a probe session. Media (image/audio) here is a
+  // SERVER-WIDE hint for UI chrome only: the per-session
+  // CreateSessionResponse.session_capabilities echo remains authoritative for
+  // whether a given session may send media.
+  ServerCapabilities capabilities = 2;
+  // features are the build's supported feature identifiers as OPEN STRINGS, not
+  // an enum — the EvNoProgress/StopBudget string-passthrough discipline. An
+  // unrecognised identifier is ignored by an older client; a new one is a minor
+  // release, never a wire-compat event. Identifiers are stable once published.
+  //
+  // A feature that is only reachable on some listeners is advertised only on a
+  // listener that permits it, so this set is "what this build implements AND
+  // this listener permits" (see ADR 0237 / ADR 0248).
+  repeated string features = 3;
+  // deployment is an OPTIONAL, opaque, bounded, operator-set label for this
+  // deployment. It is empty by default and is NEVER derived from hostname, pod
+  // name, or environment — infrastructure topology is not something an
+  // authenticated caller is owed, and a label the operator did not choose is a
+  // leak with no consenting author. Set via mecated --deployment-id.
+  string deployment = 4;
 }
 
 // ServerCapabilities reports which optional features this server has ENABLED,
@@ -1315,6 +1384,21 @@ message ResumeApproval {
   // always (which additionally LEARNS a per-session allow rule for the matching
   // tool + exact pattern). Preferred over `allow`; UNSPECIFIED falls back to it.
   ApprovalVerdict verdict = 3;
+  // expected_run_id, when set, scopes this control to ONE run: the server
+  // refuses it if the session's current run is a different one, and the newer
+  // run is left untouched.
+  //
+  // It closes a real race, not a hypothetical one. Controls are addressed at a
+  // SESSION, so a control still in flight when a run ends would otherwise land
+  // on whatever run started next — approving a tool call the user never saw, or
+  // cancelling work they did not ask to stop. `seq` cannot distinguish the two
+  // runs (it restarts each run), so before run ids there was no way to express
+  // "this one".
+  //
+  // EMPTY is the legacy behaviour exactly: the control applies to whatever run
+  // is current. Existing clients are unaffected; a client that knows the run id
+  // it is acting on should always send it.
+  string expected_run_id = 4;
 }
 
 // ApprovalVerdict is the client's three-way resolution of a permission.ask,
@@ -1337,7 +1421,15 @@ enum ApprovalVerdict {
 
 // Cancel aborts the in-flight run. The loop observes the cancellation and
 // terminates with a result carrying stop = "cancelled".
-message Cancel {}
+message Cancel {
+  // expected_run_id, when set, scopes the cancel to ONE run: the server refuses
+  // it if the session's current run is a different one. Cancelling the wrong run
+  // is the most costly stale-control outcome — it destroys work rather than
+  // merely permitting it — so a client that knows which run it is stopping
+  // should always send this. Empty keeps the legacy "cancel whatever is running"
+  // behaviour.
+  string expected_run_id = 1;
+}
 
 // CancelChild cancels ONE child of the in-flight run, addressed by its child
 // SESSION id — the same handle the model reads on the Subagent result's
@@ -1379,6 +1471,26 @@ message Steer {
   // parts carries image/audio content alongside text, using the same validated
   // wire shape as Prompt.parts. A media-only steer is valid.
   repeated Content parts = 3;
+  // expected_run_id, when set, scopes this control to ONE run: the server
+  // refuses it if the session's current run is a different one, and the newer
+  // run is left untouched.
+  //
+  // It closes a real race, not a hypothetical one. Controls are addressed at a
+  // SESSION, so a control still in flight when a run ends would otherwise land
+  // on whatever run started next — approving a tool call the user never saw, or
+  // cancelling work they did not ask to stop. `seq` cannot distinguish the two
+  // runs (it restarts each run), so before run ids there was no way to express
+  // "this one".
+  //
+  // EMPTY is the legacy behaviour exactly: the control applies to whatever run
+  // is current. Existing clients are unaffected; a client that knows the run id
+  // it is acting on should always send it.
+  //
+  // On a steer it is additionally STRICT: supplying it means "steer this run or
+  // nothing". A steer that loses the terminal race is normally PROMOTED into a
+  // fresh follow-up run; with expected_run_id set it is refused instead, because
+  // a caller naming a specific run did not ask to start a different one.
+  string expected_run_id = 4;
 }
 
 // SteerCancel retracts the run's PENDING (un-drained) steer, if any. It is
@@ -1389,6 +1501,21 @@ message SteerCancel {
   // message_id is the CLIENT-MINTED correlation key, echoed verbatim on the
   // steer.outcome ack (same contract as Steer.message_id).
   string message_id = 1;
+  // expected_run_id, when set, scopes this control to ONE run: the server
+  // refuses it if the session's current run is a different one, and the newer
+  // run is left untouched.
+  //
+  // It closes a real race, not a hypothetical one. Controls are addressed at a
+  // SESSION, so a control still in flight when a run ends would otherwise land
+  // on whatever run started next — approving a tool call the user never saw, or
+  // cancelling work they did not ask to stop. `seq` cannot distinguish the two
+  // runs (it restarts each run), so before run ids there was no way to express
+  // "this one".
+  //
+  // EMPTY is the legacy behaviour exactly: the control applies to whatever run
+  // is current. Existing clients are unaffected; a client that knows the run id
+  // it is acting on should always send it.
+  string expected_run_id = 2;
 }
 
 // SteerOutcome is the AUTHORITATIVE result of a steer inbox transition,
@@ -1509,6 +1636,23 @@ message Event {
   // model_retry carries the typed failed terminal consumed by a model.retry
   // lifecycle boundary. Clients and event-source hosts must not parse text.
   ModelRetry model_retry = 21;
+  // run_id is the opaque, server-minted identity of the run that emitted this
+  // event (ADR 0249). It is stamped by the agent loop, so every event a run
+  // emits carries it on both the gRPC and HTTP/SSE surfaces.
+  //
+  // It is OPAQUE: it encodes nothing and exists only to be compared for
+  // equality. A client uses it to know which run an event belongs to — `seq` is
+  // monotonic WITHIN a run and restarts each run, so it cannot distinguish two
+  // runs of one session — and to address controls at a specific run rather than
+  // "whatever is running now".
+  //
+  // EMPTY IS MEANINGFUL, not missing: it means the event is SESSION-scoped
+  // rather than run-scoped. The schedule.* lifecycle events are emitted outside
+  // any run and legitimately carry no id. A client following one run filters on
+  // an exact match and so never sees them; a client showing a session timeline
+  // includes them.
+  string run_id = 22;
+
 }
 
 // ModelRetry identifies the failed-step retry intent being driven.

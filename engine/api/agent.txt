@@ -38,6 +38,7 @@
     method func (*Run).CancelSteer() (SteerOutcome, error)
     method func (*Run).EnqueueSteer(text string, parts []session.Content) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
+    method func (*Run).RunID() string
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleQueryTool).ReadOnly() bool
     method func (*ScheduleQueryTool).Spec() tool.ToolSpec
@@ -224,7 +225,7 @@ type ParallelTool struct{}
 type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
 type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
 type Run struct{}
-type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; AskIDDiscriminator string}
+type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
 type SteerOutcome string

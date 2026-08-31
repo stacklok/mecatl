@@ -42,6 +42,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	HarnessService_GetCompatibilityInfo_FullMethodName     = "/mecatl.v1.HarnessService/GetCompatibilityInfo"
 	HarnessService_CreateSession_FullMethodName            = "/mecatl.v1.HarnessService/CreateSession"
 	HarnessService_GetServerInfo_FullMethodName            = "/mecatl.v1.HarnessService/GetServerInfo"
 	HarnessService_GetSession_FullMethodName               = "/mecatl.v1.HarnessService/GetSession"
@@ -113,6 +114,26 @@ const (
 // HarnessService is the mecatl API: unary session setup/inspection plus
 // the bidi Converse stream that drives one agent run.
 type HarnessServiceClient interface {
+	// GetCompatibilityInfo returns the deployment's compatibility descriptor: the
+	// API major, the operator-enabled ServerCapabilities, the build's supported
+	// feature identifiers, and an optional operator-set deployment label. It is
+	// the FIRST call a client makes — it answers "what may I do with this
+	// server?" WITHOUT creating a probe session (the ServerCapabilities echo
+	// otherwise rides CreateSessionResponse only).
+	//
+	// DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
+	// BUILD is this?" and ADR 0245 draws an explicit privacy boundary around it:
+	// its response must never carry capabilities, configuration, or auth details.
+	// This one is exactly those things — negotiation input, not identity — so
+	// folding the two would either breach that boundary or overload one message
+	// with two audiences. Build identity therefore lives ONLY on GetServerInfo,
+	// and a client that wants both makes both calls.
+	//
+	// A server that does not implement this RPC (UNIMPLEMENTED) is below the
+	// SDK compatibility floor; a client fails loudly rather than inferring a
+	// legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and
+	// UNIMPLEMENTED stay distinguishable. See ADR 0248.
+	GetCompatibilityInfo(ctx context.Context, in *GetCompatibilityInfoRequest, opts ...grpc.CallOption) (*GetCompatibilityInfoResponse, error)
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error)
 	// GetServerInfo returns only the composed server build identity. It is authenticated
@@ -405,6 +426,16 @@ type harnessServiceClient struct {
 
 func NewHarnessServiceClient(cc grpc.ClientConnInterface) HarnessServiceClient {
 	return &harnessServiceClient{cc}
+}
+
+func (c *harnessServiceClient) GetCompatibilityInfo(ctx context.Context, in *GetCompatibilityInfoRequest, opts ...grpc.CallOption) (*GetCompatibilityInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCompatibilityInfoResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetCompatibilityInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *harnessServiceClient) CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error) {
@@ -1073,6 +1104,26 @@ type HarnessService_ApprovePlanClient = grpc.ServerStreamingClient[Event]
 // HarnessService is the mecatl API: unary session setup/inspection plus
 // the bidi Converse stream that drives one agent run.
 type HarnessServiceServer interface {
+	// GetCompatibilityInfo returns the deployment's compatibility descriptor: the
+	// API major, the operator-enabled ServerCapabilities, the build's supported
+	// feature identifiers, and an optional operator-set deployment label. It is
+	// the FIRST call a client makes — it answers "what may I do with this
+	// server?" WITHOUT creating a probe session (the ServerCapabilities echo
+	// otherwise rides CreateSessionResponse only).
+	//
+	// DISTINCT FROM GetServerInfo below, deliberately. That RPC answers "which
+	// BUILD is this?" and ADR 0245 draws an explicit privacy boundary around it:
+	// its response must never carry capabilities, configuration, or auth details.
+	// This one is exactly those things — negotiation input, not identity — so
+	// folding the two would either breach that boundary or overload one message
+	// with two audiences. Build identity therefore lives ONLY on GetServerInfo,
+	// and a client that wants both makes both calls.
+	//
+	// A server that does not implement this RPC (UNIMPLEMENTED) is below the
+	// SDK compatibility floor; a client fails loudly rather than inferring a
+	// legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and
+	// UNIMPLEMENTED stay distinguishable. See ADR 0248.
+	GetCompatibilityInfo(context.Context, *GetCompatibilityInfoRequest) (*GetCompatibilityInfoResponse, error)
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error)
 	// GetServerInfo returns only the composed server build identity. It is authenticated
@@ -1367,6 +1418,9 @@ type HarnessServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedHarnessServiceServer struct{}
 
+func (UnimplementedHarnessServiceServer) GetCompatibilityInfo(context.Context, *GetCompatibilityInfoRequest) (*GetCompatibilityInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetCompatibilityInfo not implemented")
+}
 func (UnimplementedHarnessServiceServer) CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateSession not implemented")
 }
@@ -1572,6 +1626,24 @@ func RegisterHarnessServiceServer(s grpc.ServiceRegistrar, srv HarnessServiceSer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&HarnessService_ServiceDesc, srv)
+}
+
+func _HarnessService_GetCompatibilityInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCompatibilityInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetCompatibilityInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetCompatibilityInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetCompatibilityInfo(ctx, req.(*GetCompatibilityInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _HarnessService_CreateSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -2658,6 +2730,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "mecatl.v1.HarnessService",
 	HandlerType: (*HarnessServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetCompatibilityInfo",
+			Handler:    _HarnessService_GetCompatibilityInfo_Handler,
+		},
 		{
 			MethodName: "CreateSession",
 			Handler:    _HarnessService_CreateSession_Handler,

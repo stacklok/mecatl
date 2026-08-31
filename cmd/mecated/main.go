@@ -456,6 +456,12 @@ type config struct {
 	// settings.yaml posture: key raises it). The resolved tier is reported by the
 	// structured `operator posture` startup diagnostic emitted by app.Build.
 	posture string
+	// deploymentID is the operator-set opaque label surfaced on GetServerInfo
+	// (ADR 0248). Sanitised by sanitizeDeploymentID before it reaches app.Config.
+	deploymentID string
+	// corsOrigins is the EXACT-match browser origin allowlist for the HTTP API
+	// (ADR 0248). Empty (the default) installs no CORS middleware at all.
+	corsOrigins stringList
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
@@ -1152,6 +1158,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// YAML-only allow-all tier cannot escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
+		DeploymentID:   cfg.deploymentID,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
@@ -1238,6 +1245,7 @@ func posturePreCheckConfig(cfg config, diag port.Diagnostics) app.Config {
 		PermissionConfigs:       cfg.permissionConfigs,
 		Posture:                 app.ParsePosture(cfg.posture),
 		PostureFlagSet:          cfg.postureFlagSet,
+		DeploymentID:            cfg.deploymentID,
 		AllowAllTools:           cfg.allowAllTools,
 		TrustProject:            cfg.trustProject,
 		Headless:                cfg.headless,
@@ -1387,8 +1395,34 @@ func validateWorkspaceAuthority(cfg config) error {
 // the earlier CLI-only guard is still caught (review fix #1). The rate_limit=0
 // and rate_burst=0 meanings (disable / derive) are preserved: only negative and
 // non-finite (NaN/Inf) values are rejected (review fix #5).
+// buildAPIHandler assembles the authenticated HTTP API handler, wrapping it in
+// the CORS policy when one is configured.
+//
+// The ORDER IS LOAD-BEARING: CORS wraps OUTSIDE auth. A browser preflight is an
+// unauthenticated OPTIONS request — the CORS specification forbids sending
+// credentials on it — so a policy installed inside the auth middleware would 401
+// every preflight and cross-origin access would never work at all. Wrapping
+// outside is safe because a preflight is answered from headers alone: it never
+// reaches a handler, never touches a session, and never returns data. The real
+// request that follows still passes through auth normally.
+//
+// A nil policy (no --cors-origins, the default) returns the authenticated
+// handler unchanged, so the default path is byte-identical.
+func buildAPIHandler(corsPolicy *server.CORSPolicy, auth *server.Authenticator, svc *server.Service) http.Handler {
+	return corsPolicy.Middleware(auth.Middleware(server.NewHTTPHandler(svc)))
+}
+
 func validateEffectiveConfig(cfg config) error {
 	if err := validateWorkspaceAuthority(cfg); err != nil {
+		return err
+	}
+	if err := validateDeploymentID(cfg.deploymentID); err != nil {
+		return err
+	}
+	// Build the policy purely to validate it: a malformed origin must fail at
+	// STARTUP, where the operator is present, rather than becoming a silently
+	// dead allowlist entry that looks identical to a working one.
+	if _, err := server.NewCORSPolicy(cfg.corsOrigins); err != nil {
 		return err
 	}
 	// --perf-mcp rides the admin listener, so it is meaningless without one.
@@ -1603,6 +1637,11 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		"ALIAS for --posture yolo (dangerous): allow-all server-wide AND loosen the substitution floor for CHILDREN too — a subagent's $()/backtick/heredoc command AUTO-RUNS (child prompt-injection defense OFF). A Deny in ANY scope and any DELIBERATELY configured Ask still apply (see docs/adr/0022-allow-all-posture.md). Isolated/ephemeral/single-tenant ONLY. Refused when running as root (euid 0) unless MECATL_SANDBOX=1 (or IS_SANDBOX=1) declares an isolated environment.")
 	fs.StringVar(&cfg.posture, "posture", "",
 		"OPERATOR POSTURE LADDER (strict < trusted < auto < yolo): strict (default) prompts every mutate; trusted honours a project's ALLOW rules (= --trust-project); auto adds allow-all + main substitution loosening (recommended UNATTENDED default, child injection-defense ON); yolo additionally auto-runs $()/backtick/heredoc in CHILDREN (injection-defense OFF, isolated single-tenant only). --yolo/--trust-project are aliases. auto/yolo are refused as root outside MECATL_SANDBOX. An unknown value fails closed to strict with a WARN.")
+
+	fs.StringVar(&cfg.deploymentID, "deployment-id", "",
+		fmt.Sprintf("OPTIONAL opaque label for this deployment, echoed on GetCompatibilityInfo so a client can tell one mecated from another (ADR 0248). Empty by default and NEVER inferred: mecatl will not derive it from hostname, pod name, or environment, because a label you did not choose leaks infrastructure topology to every authenticated caller. Printable single-line text only, max %d bytes; a longer or non-printable value is rejected at startup.", maxDeploymentIDLen))
+
+	fs.Var(&cfg.corsOrigins, "cors-origins", "allow a browser at this EXACT origin (scheme://host[:port]) to call the HTTP API; repeatable. Matching is exact — no wildcard, no suffix or subdomain match, because this API can start agent runs and a suffix match on \"example.com\" would also admit \"evil-example.com\". \"*\" and \"null\" are refused: this policy sends credentials, and wildcard-with-credentials is forbidden. Empty (the default) installs no CORS middleware and responses are unchanged. LOCAL DEVELOPMENT ONLY — the production browser path is a same-origin BFF that injects bearer credentials server-side")
 
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"OPERATOR REASONING-EFFORT TIER (ADR 0055): auto (default — unset, the provider's own default applies) or low/medium/high/xhigh/max. OpenAI supports low/medium/high only, so xhigh/max are clamped down to high (with a WARN); Anthropic maps all five. Empty = unset (honours the operator-global settings.yaml reasoning-effort: key if present). A per-session CreateSession reasoning_effort out-ranks this default. A model with no reasoning support drops it. Operator-tier only; a project-tier reasoning-effort: key is ignored with a WARN. An unknown value fail-softs to unset with a WARN.")
@@ -1831,7 +1870,7 @@ func readAskReviewerPolicy(path string) (string, error) {
 // orchestrators can probe without credentials. The gRPC health service shares
 // the server-wide interceptors and therefore requires credentials when auth is on.
 func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
-	tlsCfg, auth, err := buildEdge(ctx, cfg)
+	tlsCfg, auth, corsPolicy, err := buildEdge(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -1862,7 +1901,7 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 	// as the engine/service are wired (they are, by the time serve runs). ---
 	httpMux := http.NewServeMux()
 	server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
-	httpMux.Handle("/", auth.Middleware(server.NewHTTPHandler(svc)))
+	httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc))
 	httpSrv := &http.Server{
 		Addr:              cfg.httpAddr,
 		Handler:           httpMux,
@@ -1979,27 +2018,35 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 // it must outlive any request. EVERY failure here is fatal and the daemon
 // refuses to start — silently falling back to the unauthenticated path would
 // turn an authenticated deployment into an open one (ADR 0204).
-func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authenticator, error) {
+func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authenticator, *server.CORSPolicy, error) {
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	// The browser origin allowlist is edge configuration in exactly the same
+	// sense as TLS and bearer auth: it decides who may reach the listeners.
+	// Building it here means a malformed origin fails startup through the ONE
+	// error path serve already handles, and no caller has to remember a second.
+	corsPolicy, err := server.NewCORSPolicy(cfg.corsOrigins)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	// Logged BEFORE construction so it appears even if the validator then fails
 	// to build.
 	warnInsecureIssuer(cfg.oidc)
 	if err := cliconfig.ValidateOIDCAuthToken(cfg.oidc, cfg.authToken); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	validator, err := cliconfig.OIDCValidator(ctx, cfg.oidc)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	return tlsCfg, server.NewAuthenticator(server.SecurityConfig{
 		AuthToken: cfg.authToken,
 		RateLimit: cfg.rateLimit,
 		RateBurst: cfg.rateBurst,
 		Validator: validator,
-	}), nil
+	}), corsPolicy, nil
 }
 
 // warnIfNonLoopback logs the API trust assumption for the given bind address.

@@ -168,6 +168,8 @@ var flagMetaByFlag = map[string]flagMeta{
 
 	// ── Posture & permissions (both) ─────────────────────────────────────
 	"posture":                   {group: groupPermissions, common: true, acp: acpInclude},
+	"deployment-id":             {group: groupServer, common: false, acp: acpInclude},
+	"cors-origins":              {group: groupSecurity, common: false, acp: acpExclude},
 	"yolo":                      {group: groupPermissions, common: true, acp: acpInclude},
 	"trust-project":             {group: groupPermissions, common: true, acp: acpInclude},
 	"permissions-conventional":  {group: groupPermissions, common: true, acp: acpInclude},

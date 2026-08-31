@@ -599,6 +599,9 @@ type Run struct {
 	// colon-free) value, else the process-global "r<serial>" fallback. Resolved
 	// once in startRun. See newAskID + RunRequest.AskIDDiscriminator + ADR-0044.
 	askDiscriminator string
+	// runID is the host-minted identity stamped onto every event this run emits
+	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
+	runID string
 	// ctx is the run's context, captured at Engine.Run. Engine.emit forwards it
 	// to the injected EventSink so telemetry adapters can read a trace span from
 	// it and correlate spans/metrics to the originating request. Each run (including
@@ -772,6 +775,30 @@ type RunRequest struct {
 	// read-parallel path); a structured-output SubmitResult records into a per-run sink
 	// and performs no workspace mutation, so it is read-only.
 	ExtraTools []tool.Tool
+	// RunID is the opaque, host-minted identity of THIS run (ADR 0249).
+	//
+	// It does two things and nothing else. Every event this run emits is stamped
+	// with it at Run.emit/emitOrAbort, beside the existing Seq stamp, so no relay,
+	// transport, or persistence path downstream can omit it. And when
+	// AskIDDiscriminator is empty it also SUPPLIES the ask discriminator, which
+	// is what ADR 0044 always meant by "a durable host passes its own RunID" —
+	// so a durable host sets ONE field, not two carrying the same value.
+	//
+	// HOST CONTRACT (inherited from AskIDDiscriminator, because it feeds it): the
+	// value must be UNIQUE per run-ATTEMPT and STABLE across processes for the
+	// SAME attempt, or the CWE-863 askID replay guard weakens. It should be
+	// colon-free; a colon-bearing value still stamps events fine but cannot serve
+	// as an ask discriminator (the askID grammar would be ambiguous), so the run
+	// falls back to the process-global serial for asks and logs a WARN.
+	//
+	// Empty (the zero value) is the legacy behaviour exactly: events carry an
+	// empty RunID and asks use the process-global serial. mecatui, mecademo, and
+	// tests pass nothing and are unaffected.
+	//
+	// The loop's licence over this value is deliberately narrow: STAMP it, and
+	// DERIVE the ask discriminator from it. It must never be branched on, logged,
+	// sent to a provider, or used to reach storage — see ADR 0249's consequences.
+	RunID string
 	// AskIDDiscriminator, when non-empty, REPLACES the trailing process-global
 	// "r<serial>" component of every askID minted this run (see agent.newAskID),
 	// making the askID reconstructable across processes from persisted state. The
@@ -796,6 +823,17 @@ type RunRequest struct {
 	// bypass the colon/empty fallback.
 	AskIDDiscriminator string
 }
+
+// RunID reports the opaque, host-minted identity of this run (ADR 0249), or ""
+// when the host supplied none.
+//
+// It exists so a caller holding a *Run can ASK which run it holds, rather than
+// inferring it from the session aggregate. That distinction matters for stale
+// controls: a control addressed at a specific run must be compared against the
+// run it would actually affect, and a session's aggregate is a step removed from
+// that (it names the session's CURRENT run, which after a terminal race may not
+// be the one the caller is holding).
+func (r *Run) RunID() string { return r.runID }
 
 // Events returns the channel of domain Events for this run. It is closed when the
 // run ends (after the terminal result Event has been delivered).
@@ -993,9 +1031,47 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 // terminal — it never silently completes. The pending tool executes EXACTLY ONCE on
 // the allow path and NOT AT ALL on a precondition failure or a deny.
 func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run {
-	return e.startRun(ctx, sess, RunRequest{}, func(ctx context.Context, r *Run) {
+	// The resumed run CONTINUES the run that parked awaiting this ask — it is not
+	// a new one — so it carries that run's identity forward, read from the session
+	// the host restored it onto (ADR 0249). This is what makes a cross-process
+	// Approve after a restart the SAME run to every observer.
+	//
+	// The fallback is deliberately confined to THIS seam. A prompt entry must
+	// never read the id off the session: a reused session still carries the id of
+	// the run that just ended, and inheriting it would silently attribute a brand
+	// new run's events to the previous one.
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, func(ctx context.Context, r *Run) {
 		e.driveFromAwaiting(ctx, r, sess, env, askID, verdict)
 	})
+}
+
+// askDiscriminatorFor resolves the trailing askID component for a run, and
+// reports whether a supplied value was REJECTED for containing a colon.
+//
+// Precedence: an explicit AskIDDiscriminator wins; otherwise RunID supplies it
+// (ADR 0249 decision 2), which is what lets a durable host set ONE field and get
+// both a stamped run identity and reconstructable askIDs — the arrangement ADR
+// 0044 described as "a durable host passes its own RunID". The derivation is a
+// DEFAULT, not a constraint: a caller needing a discriminator that is NOT the run
+// id still sets the field directly.
+//
+// A colon is REJECTED rather than sanitised. The askID grammar is
+// "<sessionID>:<n>:<callID>:<discriminator>", so a colon makes it ambiguous — and
+// stripping one could collapse two distinct host ids onto a single askID,
+// re-opening the CWE-863 replay collision the discriminator exists to close.
+// Falling back to the process-global serial is the safe answer.
+//
+// It is a free function, not a method, precisely so the precedence is testable
+// without launching a run goroutine.
+func askDiscriminatorFor(req RunRequest, serial int64) (value string, colonRejected bool) {
+	d := req.AskIDDiscriminator
+	if d == "" {
+		d = req.RunID
+	}
+	if d != "" && !strings.Contains(d, ":") {
+		return d, false
+	}
+	return fmt.Sprintf("r%d", serial), d != ""
 }
 
 // startRun mints a Run with the full concurrency preamble (events buffer, ask
@@ -1035,20 +1111,14 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 		// engine with no injected sink stays silent.
 		diag: e.bindRunDiag(sess.ID),
 	}
-	// Resolve the trailing askID discriminator once (ADR-0044): a host-supplied,
-	// colon-free value makes the run's askIDs reconstructable across processes;
-	// otherwise fall back to the process-global serial. A colon would make the
-	// askID grammar ambiguous, so it is rejected (fall back) with a WARN rather
-	// than minted — sanitizing by stripping could collapse two distinct host ids
-	// onto one askID and re-open the CWE-863 replay collision.
-	if d := req.AskIDDiscriminator; d != "" && !strings.Contains(d, ":") {
-		r.askDiscriminator = d
-	} else {
-		if d != "" {
-			r.diag.Log(ctx, port.LevelWarn, "ask-id discriminator contains a colon; falling back to run serial", "session", string(sess.ID))
-		}
-		r.askDiscriminator = fmt.Sprintf("r%d", r.serial)
+	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
+	// askDiscriminatorFor for the precedence and the colon rule.
+	r.runID = req.RunID
+	resolved, colonRejected := askDiscriminatorFor(req, r.serial)
+	if colonRejected {
+		r.diag.Log(ctx, port.LevelWarn, "ask-id discriminator contains a colon; falling back to run serial", "session", string(sess.ID))
 	}
+	r.askDiscriminator = resolved
 	// An interactive engine's run installs the child-ask router so a subagent's
 	// surfaced ask can be routed back through this (parent) Run.Approve. A headless or
 	// child engine leaves it nil (no human to surface to; a child never surfaces
@@ -2301,6 +2371,13 @@ func (e *Engine) bindRunDiag(id session.SessionID) port.Diagnostics {
 // contract — and is still returned for sink mirroring.
 func (r *Run) emit(ev session.Event) session.Event {
 	ev.Seq = r.seq.Add(1)
+	// The run labels its own events with run-scoped identity. Seq answers "where
+	// in this run", RunID answers "which run" — Seq restarts every run, so it
+	// cannot distinguish two runs of one session. Stamping here rather than at a
+	// relay is ADR 0249 decision 4: there is no single downstream chokepoint that
+	// feeds BOTH the durable log and the client wire, so any other placement means
+	// stamping at ~9 sites by hand. Empty when the host minted no id.
+	ev.RunID = r.runID
 	select {
 	case r.events <- ev:
 		return ev
@@ -2339,6 +2416,9 @@ func (r *Run) emit(ev session.Event) session.Event {
 // arms only ever claim a send that would genuinely park.
 func (r *Run) emitOrAbort(ev session.Event, abort <-chan struct{}) bool {
 	ev.Seq = r.seq.Add(1)
+	// Same stamp as emit — see the note there. These two are the ONLY sites a run
+	// hands an event outward, which is what makes the guarantee structural.
+	ev.RunID = r.runID
 	select {
 	case r.events <- ev:
 		return true

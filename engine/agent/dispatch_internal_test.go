@@ -98,3 +98,71 @@ func TestNewAskIDDiscriminatorPreservesPrefix(t *testing.T) {
 		t.Fatalf("a host discriminator must preserve the %q prefix isChildAsk consumes; got %q", string(sessionID)+":", askID)
 	}
 }
+
+// TestADR_0245_RunIDIsTheAskDiscriminator is AC4.2: a host that sets ONLY
+// RunRequest.RunID gets reconstructable askIDs, because the run id SUPPLIES the
+// ask discriminator.
+//
+// This is the arrangement ADR 0044 wrote in terms of a run id that did not yet
+// exist ("A durable host passes its own RunID"). Before ADR 0249 the seam was
+// real but unused: nothing in the repo set AskIDDiscriminator, so the property
+// was theoretical.
+func TestADR_0245_RunIDIsTheAskDiscriminator(t *testing.T) {
+	cases := []struct {
+		name         string
+		req          RunRequest
+		want         string
+		wantRejected bool
+		why          string
+	}{
+		{
+			name: "run id supplies the discriminator",
+			req:  RunRequest{RunID: "run_abc"},
+			want: "run_abc",
+			why:  "a durable host sets ONE field and gets both the event stamp and reconstructable askIDs",
+		},
+		{
+			name: "explicit discriminator wins over run id",
+			req:  RunRequest{RunID: "run_abc", AskIDDiscriminator: "explicit"},
+			want: "explicit",
+			why:  "the derivation is a DEFAULT, not a constraint — a caller needing a non-run-id discriminator can still set one",
+		},
+		{
+			name: "neither set falls back to the serial",
+			req:  RunRequest{},
+			want: "r7",
+			why:  "an in-memory host that supplies nothing keeps the exact legacy behaviour",
+		},
+		{
+			name:         "colon-bearing run id is rejected, not sanitised",
+			req:          RunRequest{RunID: "run:abc"},
+			want:         "r7",
+			wantRejected: true,
+			why:          "stripping a colon could collapse two distinct host ids onto one askID, re-opening the CWE-863 replay collision",
+		},
+		{
+			name:         "colon-bearing explicit discriminator is rejected too",
+			req:          RunRequest{AskIDDiscriminator: "a:b"},
+			want:         "r7",
+			wantRejected: true,
+			why:          "the colon rule is about the askID grammar, so it binds whichever field supplied the value",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, rejected := askDiscriminatorFor(tc.req, 7)
+			if got != tc.want {
+				t.Errorf("discriminator = %q, want %q: %s", got, tc.want, tc.why)
+			}
+			if rejected != tc.wantRejected {
+				t.Errorf("colonRejected = %v, want %v: %s", rejected, tc.wantRejected, tc.why)
+			}
+		})
+	}
+
+	// And the resolved value really does land in the minted askID.
+	d, _ := askDiscriminatorFor(RunRequest{RunID: "run_xyz"}, 1)
+	if got := newAskID("sess-1", 0, "call-1", d); got != "sess-1:0:call-1:run_xyz" {
+		t.Errorf("askID = %q, want the run id as its trailing component", got)
+	}
+}

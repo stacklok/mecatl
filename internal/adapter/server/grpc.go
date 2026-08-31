@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -745,9 +746,15 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 		case *mecatlv1.ConverseRequest_ResumeApproval:
 			if k.ResumeApproval != nil {
 				ra := k.ResumeApproval
+				if h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
+					break
+				}
 				ct.active().Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
 			}
 		case *mecatlv1.ConverseRequest_Cancel:
+			if k.Cancel != nil && h.staleStreamControl(ctx, id, "cancel", k.Cancel.GetExpectedRunId(), ct.active()) {
+				break
+			}
 			ct.active().Cancel()
 		case *mecatlv1.ConverseRequest_CancelChild:
 			if k.CancelChild != nil {
@@ -773,6 +780,33 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 	}
 }
 
+// staleStreamControl reports whether a Converse control frame names a run that
+// is no longer the active one, refusing it if so (ADR 0249).
+//
+// The refusal is SILENT to the client, and that asymmetry is deliberate rather
+// than an oversight. Converse's approve and cancel frames are fire-and-forget:
+// the stream carries no per-control ack to put a typed error on, so the choices
+// are refuse-and-log or tear down the whole stream over one stale frame. Tearing
+// down would punish a client for a race it cannot avoid. A caller that needs the
+// typed ErrStaleRunControl uses the HTTP control endpoints, which return it; the
+// steer frame is the exception on this stream because it already HAS an ack
+// channel, so it reports too_late.
+//
+// The operator-visible half is the diagnostic below: nothing in the event
+// taxonomy reports a refused control, so without it a stale approve would vanish
+// without trace.
+func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) bool {
+	if expected == "" || run == nil {
+		return false
+	}
+	if err := checkExpectedRun(expected, run.RunID()); err != nil {
+		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "stale control frame refused",
+			"session", string(id), "frame", frame, "expected_run", valid(expected), "active_run", valid(run.RunID()))
+		return true
+	}
+	return false
+}
+
 // handleSteerFrame routes one steer frame through the Service (the single
 // routing owner — the handler is a dumb frame→Service mapper, mirroring how
 // the Approve/Cancel frames route). The Service decides live-enqueue vs
@@ -784,6 +818,7 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 // drop). Every ack echoes the frame's client-minted message_id.
 func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.SessionID, frame *mecatlv1.Steer, rl *runRelay, ho *steerHandoff) {
 	text, msgID := frame.GetText(), frame.GetMessageId()
+	expectedRunID := frame.GetExpectedRunId()
 	parts, perr := contentFromProto(frame.GetParts())
 	if perr != nil || (text == "" && len(parts) == 0) {
 		reason := "empty"
@@ -794,7 +829,7 @@ func (h *HarnessServer) handleSteerFrame(ctx context.Context, id session.Session
 		enqueueSteerAck(ctx, rl.acks, &mecatlv1.SteerAck{Outcome: mecatlv1.SteerOutcome_STEER_OUTCOME_TOO_LATE, Text: valid(text), MessageId: valid(msgID)})
 		return
 	}
-	outcome, promoted, promotedRun, err := h.svc.Steer(ctx, id, text, parts, msgID)
+	outcome, promoted, promotedRun, err := h.svc.Steer(ctx, id, text, parts, msgID, expectedRunID)
 	switch {
 	case err != nil:
 		h.svc.Diagnostics().Log(ctx, port.LevelWarn, "steer route failed", "session", string(id), "error", err)
@@ -944,6 +979,22 @@ func (h *HarnessServer) GetMcpPrompt(ctx context.Context, req *mecatlv1.GetMcpPr
 		msgs = append(msgs, toProtoMcpPromptMessage(m))
 	}
 	return &mecatlv1.GetMcpPromptResponse{Description: res.Description, Messages: msgs}, nil
+}
+
+// GetCompatibilityInfo returns the deployment's compatibility descriptor
+// (ADR 0248).
+//
+// Distinct from GetServerInfo above, which answers "which BUILD is this?" under
+// ADR 0245's privacy boundary. This answers "what may I do with this server?"
+// and carries exactly the capabilities/configuration that boundary keeps out of
+// the identity response.
+//
+// It is authenticated like every other RPC, which keeps UNAUTHENTICATED and
+// UNIMPLEMENTED distinguishable at the client: the SDK treats UNIMPLEMENTED as
+// "below the compatibility floor" and fails loudly, so an auth failure must not
+// be able to masquerade as one.
+func (h *HarnessServer) GetCompatibilityInfo(ctx context.Context, _ *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+	return h.svc.CompatibilityInfo(ctx), nil
 }
 
 // ListMcpSources returns the resolved MCP source inventory snapshot.
@@ -1489,134 +1540,49 @@ func toProtoCleanupJob(job CleanupJob) *mecatlv1.CleanupJob {
 }
 
 // toStatus maps service sentinel errors to gRPC status codes.
-//
-//nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
 func toStatus(err error) error {
-	switch {
-	case errors.Is(err, ErrManagementUnauthorized):
-		return status.Error(codes.PermissionDenied, err.Error())
-	case errors.Is(err, ErrStorageHealthBackend):
-		return status.Error(codes.Internal, err.Error())
-	case errors.Is(err, ErrMigrationUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrMigrationConflict):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, ErrMigrationBackend):
-		return status.Error(codes.Internal, err.Error())
-	case errors.Is(err, ErrCleanupPlanStale):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, ErrCleanupUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrCleanupBackend):
-		return status.Error(codes.Internal, err.Error())
-	case errors.Is(err, ErrInvalidArgument):
-		return status.Error(codes.InvalidArgument, err.Error())
-	case errors.Is(err, ErrNotFound):
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ErrTeamNotFound):
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ErrChildNotFound):
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ErrLearningUnavailable):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrProposalConflict):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, ErrDreamUnavailable):
-		return status.Error(codes.Unimplemented, ErrDreamUnavailable.Error())
-	case errors.Is(err, ErrDreamNotFound):
-		return status.Error(codes.NotFound, ErrDreamNotFound.Error())
-	case errors.Is(err, ErrDreamInProgress):
-		return status.Error(codes.Aborted, ErrDreamInProgress.Error())
-	case errors.Is(err, ErrDreamConflict):
-		return status.Error(codes.FailedPrecondition, ErrDreamConflict.Error())
-	case errors.Is(err, ErrDreamTerminalConflict):
-		return status.Error(codes.AlreadyExists, ErrDreamTerminalConflict.Error())
-	case errors.Is(err, ErrDreamCapacity):
-		return status.Error(codes.ResourceExhausted, ErrDreamCapacity.Error())
-	case errors.Is(err, ErrDreamGenerateFailed):
-		return status.Error(codes.Internal, ErrDreamGenerateFailed.Error())
-	case errors.Is(err, ErrDreamApplyFailed):
-		return status.Error(codes.Internal, ErrDreamApplyFailed.Error())
-	case errors.Is(err, ErrDreamDeadline):
-		return status.Error(codes.DeadlineExceeded, ErrDreamDeadline.Error())
-	case errors.Is(err, ErrDreamRequestFailed):
-		return status.Error(codes.Internal, ErrDreamRequestFailed.Error())
-	case errors.Is(err, ErrFailedStepRetryIneligible):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrFailedPrecondition):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrNoActiveRun):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrNotAwaitingPlan):
-		// ApprovePlan precondition (issue #206, Wave 4): the session is not parked
-		// awaiting a plan-originated ask. FailedPrecondition (HTTP 409).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrSessionLeasedElsewhere):
-		// Cloud-native Phase 4: another replica holds the session's single-writer
-		// lease. Well-formed request, transiently owned elsewhere — FailedPrecondition
-		// (consistent with ErrNoActiveRun; HTTP maps it to 409 Conflict).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrUnavailable):
-		// ADR 0048 drain gate: this replica is draining (graceful shutdown) and
-		// refuses new run-entries. Unavailable (HTTP 503) so the client retries a
-		// survivor.
-		return status.Error(codes.Unavailable, err.Error())
-	case errors.Is(err, ErrNoMCPProvider):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTeamsDisabled):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTeamRunning):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTeamNotRunning):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrTooManyTeams):
-		return status.Error(codes.ResourceExhausted, err.Error())
-	case errors.Is(err, ErrTooManySessionEngines):
-		return status.Error(codes.ResourceExhausted, err.Error())
-	case errors.Is(err, ErrNoScheduleStore):
-		// The configured store backend does not implement ScheduleStore: the
-		// schedule RPCs are not available on this deployment. Unimplemented.
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrNoEventLog):
-		// No durable EventLog (cloud-native Phase 3a) is configured: the
-		// StreamSessionEvents read-back surface is not available on this
-		// deployment. Unimplemented (HTTP 501).
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrSessionDeleteUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, port.ErrSessionMetadataCursorRestart):
-		return status.Error(codes.Aborted, err.Error())
-	case errors.Is(err, port.ErrSessionMetadataPagingUnsupported):
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrSchedulerNotRunning):
-		// A ScheduleStore is available but no in-process scheduler is wired to
-		// drive a manual FireNow. FailedPrecondition (HTTP 412), distinct from
-		// ErrNoScheduleStore's Unimplemented (the store itself works fine).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrScheduleDisabled):
-		// FireNow on a paused/done schedule. FailedPrecondition (HTTP 412).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrScheduleExhausted):
-		// FireNow on an already-fired one-shot. FailedPrecondition (HTTP 412).
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrFireNowOverlap):
-		// FireNow singleton-overlap skip. FailedPrecondition (HTTP 412) — the
-		// schedule exists and is well-formed, it is just running.
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrScheduleNotLeader):
-		// FireNow on a standby (non-leader) replica. FailedPrecondition (HTTP
-		// 412); the message names the leader to redirect to.
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, port.ErrScheduleNotFound):
-		// A schedule/fire not found from the store. NotFound (HTTP 404).
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, port.ErrScheduleUnsupported):
-		// The backend can never store schedules (a sticky-disable case).
-		// Unimplemented (HTTP 501).
-		return status.Error(codes.Unimplemented, err.Error())
-	case errors.Is(err, ErrInternal):
-		return status.Error(codes.Internal, err.Error())
-	default:
-		return status.Error(codes.Internal, err.Error())
-	}
+	return statusForEntry(classifyError(err), err)
 }
+
+// statusForEntry builds the gRPC status for a classified error, attaching the
+// stable mecatl code as a google.rpc.ErrorInfo detail.
+//
+// ErrorInfo is the standard carrier for exactly this (a machine-readable
+// `Reason` plus a `Domain` that scopes it), so a client reads the same
+// identifier the HTTP surface puts in the problem body's `code`. gRPC status
+// codes are far coarser than the domain — a dozen distinct conditions collapse
+// onto FailedPrecondition — so without the detail a gRPC caller simply cannot
+// tell them apart, and the SDK's "same normalized errors on both transports"
+// promise would be false on the gRPC side.
+//
+// The message stays err.Error(), unchanged from before this registry landed, and
+// is repaired to valid UTF-8: it can carry a downstream's error text, and
+// invalid UTF-8 in a status message is the marshal-time fault AGENTS.md
+// documents. If attaching the detail fails (it can only fail on a marshal
+// error), the bare status is returned — a missing detail degrades a client to
+// the old coarse behaviour, whereas dropping the status entirely would lose the
+// error.
+func statusForEntry(entry errorCodeEntry, err error) error {
+	st := status.New(entry.GRPC, session.ToValidUTF8(err.Error()))
+	withDetail, derr := st.WithDetails(&errdetails.ErrorInfo{
+		// Reason carries entry.Code VERBATIM, in lower_snake_case. AIP-193
+		// conventionally spells Reason in UPPER_SNAKE_CASE; that convention is
+		// deliberately NOT followed, and this is not an oversight to correct.
+		// AC2.2 requires the IDENTICAL string on both transports, and the HTTP
+		// problem body's `code`/`type` are lowercase to match RFC 9457 style.
+		// Upper-casing here would give one error identity two spellings, and
+		// every SDK a case conversion to know about. ADR 0248 decision 7 records
+		// the trade; TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity
+		// fails if the two ever diverge.
+		Reason: entry.Code,
+		Domain: errorDomain,
+	})
+	if derr != nil {
+		return st.Err()
+	}
+	return withDetail.Err()
+}
+
+// errorDomain scopes the ErrorInfo Reason above, per the google.rpc.ErrorInfo
+// contract that a Reason is unique only within its Domain.
+const errorDomain = "mecatl.stacklok.com"

@@ -107,7 +107,7 @@ func TestApproveAfterRestartE2E(t *testing.T) {
 	}
 	defer built2.Close()
 
-	run2, err := built2.Service.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce)
+	run2, err := built2.Service.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce, "")
 	if err != nil {
 		t.Fatalf("ApproveRun after restart: %v (want a rehydrated resume, not ErrNoActiveRun)", err)
 	}

@@ -295,7 +295,7 @@ func TestCrossProcessDoubleExecutionPreventedByLease(t *testing.T) {
 	}
 	defer built2.Close()
 
-	_, err = built2.Service.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce)
+	_, err = built2.Service.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce, "")
 	if !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 		t.Fatalf("ApproveRun on #2 while #1 holds the lease = %v, want ErrSessionLeasedElsewhere", err)
 	}

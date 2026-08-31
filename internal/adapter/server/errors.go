@@ -34,6 +34,18 @@ var (
 	ErrCleanupUnsupported = errors.New("server: session cleanup is unsupported")
 	// ErrCleanupBackend is the sanitized stable maintenance failure.
 	ErrCleanupBackend = errors.New("server: storage maintenance failed")
+	// ErrStaleRunControl is returned when a control (approve / cancel / steer)
+	// carries an expected_run_id that does NOT name the run it would affect
+	// (ADR 0249). The control is refused and the current run is left untouched.
+	//
+	// It is a PRECONDITION-class failure, not a bad request: the request is
+	// well-formed and the caller's belief was simply overtaken by events — the run
+	// they meant to act on has already ended and another has begun. Adapters map
+	// it to Aborted / HTTP 409 Conflict, alongside the other
+	// you-lost-a-race sentinels (ErrMigrationConflict, ErrProposalConflict), so a
+	// client can distinguish "retry against the current run" from "fix your
+	// arguments".
+	ErrStaleRunControl = errors.New("server: control targets a run that is no longer current")
 	// ErrInvalidArgument signals a malformed or missing required field.
 	ErrInvalidArgument = errors.New("server: invalid argument")
 	// ErrNotFound signals an unknown session id.
