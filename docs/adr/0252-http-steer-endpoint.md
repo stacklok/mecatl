@@ -60,10 +60,17 @@ HTTP entry point, on the same terms the gRPC one already has.
 - **Same outcome vocabulary, over HTTP status + body.** The closed
   `SteerOutcome` enum (`accepted`/`appended`/`retracted`/`none_pending`/
   `too_late`) that already rides the gRPC ack is returned as the HTTP
-  response body on `200`. A stale `expected_run_id` is refused as `409` +
-  `application/problem+json`, code `stale_run_control` — reusing the
-  registry from [ADR 0248](./0248-sdk-compatibility-and-error-contract.md),
-  not a bespoke error path.
+  response body on `200`. The single `409` + `application/problem+json`,
+  code `stale_run_control` — reusing the registry from
+  [ADR 0248](./0248-sdk-compatibility-and-error-contract.md), not a bespoke
+  error path — covers **two distinct refusals** that both funnel through
+  the same sentinel: (1) an `expected_run_id` naming a run that is not the
+  session's current one, and (2) strict steer (ADR 0249): `expected_run_id`
+  is set *and* the named run has already gone terminal, which deliberately
+  refuses rather than promotes — the caller asked to say something to run
+  X, not to start a new run. Case 2 is the one an SDK author most needs
+  stated, since it is the opposite of the unqualified-steer promotion
+  default described below.
 - **A promoted follow-up run is drained by the handler, never handed back
   bare.** `Service.Steer` can return a *registered* `promotedRun` whose
   caller "must drain + FinishRun" (`service.go`'s own doc comment) — the
