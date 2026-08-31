@@ -415,6 +415,32 @@ func (s *Store) List(ctx context.Context, partition learning.AttemptPartition, q
 	return page, err
 }
 
+type PendingAttempt struct {
+	Partition learning.AttemptPartition
+	Record    learning.AttemptRecord
+}
+
+// Pending returns every nonterminal attempt for Build-time process recovery.
+func (s *Store) Pending(ctx context.Context) (pending []PendingAttempt, err error) {
+	err = s.locked(ctx, false, func(doc *document) error {
+		for partition, values := range doc.Partitions {
+			for _, record := range values.Records {
+				if !record.State.Terminal() {
+					pending = append(pending, PendingAttempt{Partition: learning.AttemptPartition(partition), Record: record})
+				}
+			}
+		}
+		sort.Slice(pending, func(i, j int) bool {
+			if pending[i].Partition == pending[j].Partition {
+				return pending[i].Record.ID < pending[j].Record.ID
+			}
+			return pending[i].Partition < pending[j].Partition
+		})
+		return nil
+	})
+	return pending, err
+}
+
 func current(part partitionDocument, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
 	record, found := part.Records[id]
 	if !found {

@@ -1771,6 +1771,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, err
 	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
+	attempts, attemptErr := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets)
+	if attemptErr != nil {
+		mcpClose()
+		agentClose()
+		storeClose()
+		commandConnClose()
+		return nil, fmt.Errorf("start durable learning attempt recovery: %w", attemptErr)
+	}
+	if attempts != nil {
+		previousClose := mcpClose
+		mcpClose = func() { attempts.Close(); previousClose() }
+	}
 
 	// Stash the resolved skill seam's command-bridge inputs onto the Build-scope
 	// cfg (the commandSource precedent) so buildCommandLister — which runs HERE,
@@ -4994,16 +5006,18 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	var reflectionCoordinator *reflectionCoordinator
 	if userModelStore != nil && provider != nil {
 		if base := resolveUserModelDir(cfg.UserModelDir); base != "" {
-			attempts, attemptErr := attemptstore.New(filepath.Join(base, "learning-attempts"))
-			if attemptErr != nil {
-				mcpClose()
-				return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build learning attempt store: %w", attemptErr)
+			if cfg.LearningMode != learning.Off || cfg.operatorLearningMode != learning.Off {
+				attempts, attemptErr := attemptstore.New(filepath.Join(base, "learning-attempts"))
+				if attemptErr != nil {
+					mcpClose()
+					return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build learning attempt store: %w", attemptErr)
+				}
+				attemptRepository = attempts
+				reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
+				previousClose := mcpClose
+				mcpClose = func() { reflectionCoordinator.Close(); previousClose() }
 			}
-			attemptRepository = attempts
 			reflectionDir := filepath.Join(base, "reflections")
-			reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
-			previousClose := mcpClose
-			mcpClose = func() { reflectionCoordinator.Close(); previousClose() }
 			if cfg.LearningMode == learning.Off {
 				if _, statErr := os.Stat(filepath.Join(reflectionDir, "proposals.json")); statErr == nil {
 					store, openErr := reflectionstore.New(reflectionDir)

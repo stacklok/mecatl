@@ -1225,17 +1225,16 @@ process/principal count and reserved-token windows, trajectory-digest in-flight 
 24-hour/1024-entry completed-digest LRU. Reservation uses the selected provider/model token counter
 for bounded canonical input plus a 4096-token output cap. It happens after queue capacity succeeds
 and before provider work; failure, timeout, and abstention still consume it. Queue-full does not.
-The controller, coordinator queues, and caches reset on restart; durable proposals remain
-idempotent. Shutdown rejects admission, cancels active jobs, joins workers, and performs no catch-up.
-Budgets are process-local, so multiple replicas multiply aggregate capacity.
+The controller and weighted-admission caches reset on restart, while admitted work is authoritative in the durable attempt repository. Review/auto composition starts one bounded Build-owned recovery worker when nonterminal attempts exist; it reloads the exact source session and RunID-bound event evidence, rebuilds only the canonical projection, and invokes the reflector across the shared untrusted fence. Proposal/skill publication and terminal attempt finalization remain claim-fenced and idempotent. `Built.Close` cancels and joins this worker. Durable proposals and attempts remain
+idempotent. Budgets are process-local, so multiple replicas multiply aggregate capacity.
 
 Review and auto share admission; only downstream staging/promotion differs. Auto promotes operator
 facts only from explicit principal-authored current-prompt evidence and project facts only at the
 exact trusted configured root. Tool/assistant/repository/history-only evidence stages for review.
 Authenticated explicit reflection carries host-requested provenance and bypasses automatic policy,
 cooldown, budgets, and completed cache while retaining provider, queue, timeout, ownership, and
-stage/promotion controls. In off mode there is no automatic observer, controller, coordinator worker,
-or provider call; persistence initializes lazily for explicit operations. The gRPC and HTTP surfaces expose explicit completed-session
+stage/promotion controls. In off mode there is no automatic observer, attempt repository, coordinator worker,
+or recovery worker; explicit reflection uses the pre-existing synchronous lazy proposal path and creates no durable attempt. The gRPC and HTTP surfaces expose explicit completed-session
 reflection, bounded caller-partitioned list/detail, CAS approve/reject, and compensating undo;
 capability bits keep older/unconfigured servers honest. Source-session ownership and proposal
 principal are verified, project partitions remain reviewable but project promotion is root/trust-gated, and evidence detail reports only

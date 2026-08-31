@@ -4229,7 +4229,7 @@ manual surface in v1. No provider/model identity is projected.
 owns one dormant Build-lifetime scheduling coordinator in every mode, never one goroutine per completion. Workers start only after first admission, so Off starts none until explicit reflection. Its global and per-principal
 queues are count- and byte-bounded, preserve principal FIFO, and rotate principals fairly; default concurrency is one.
 The effective receipt cap is at least queue capacity plus workers. Oversized raw trajectory/event input is rejected before projection/marshal and queue allocation.
-`internal/app/reflection_observer.go` (`createDurableAttempt`) now verifies the trajectory's exact non-empty ADR-0249 RunID by reloading the source session from the authoritative `SessionStore`, derives the caller/session/run/canonical-digest attempt ID and current-principal-prompt binding, and idempotently creates the `AttemptRepository` record BEFORE returning `queued`. A create error or absent/mismatched persisted RunID refuses admission without queuing. A duplicate converges to the existing durable attempt; a queued duplicate may rejoin the local coordinator, while running/terminal state remains repository-authoritative.
+`internal/app/reflection_observer.go` (`createDurableAttempt`) now verifies the trajectory's exact non-empty ADR-0249 RunID by reloading the source session from the authoritative `SessionStore`, derives the caller/session/run/canonical-digest attempt ID and current-principal-prompt binding, and idempotently creates the `AttemptRepository` record BEFORE returning `queued`. A create error or absent/mismatched persisted RunID refuses admission without queuing. A duplicate converges to the existing durable attempt; a queued duplicate may rejoin the local coordinator, while running/terminal state remains repository-authoritative. On Build replacement, `internal/app/attempt_recovery.go` (`startAttemptRecovery`) enumerates nonterminal local attempts and starts one bounded recovery worker only when work exists. It reloads the persisted source provider/model and exact RunID event sequence through `learningEvidenceLoader`, sends only the canonical projection through `EvidenceReflector.ReflectProjection` (which applies the governance fence), and advances the same claim-fenced proposal/skill and terminal checkpoints.
 Every job has a timeout and runs only under the Build lifecycle context, so automatic work detaches from request cancellation only
 after the observer has copied the verified session principal and bounded trajectory. `Built.Close`
 stops local scheduling, publishes closed receipts for queued waiters, clears pending state, cancels active work, and joins workers. Queue-full, duplicate, completion, and failure diagnostics carry only bounded
@@ -4258,9 +4258,9 @@ cooldown, completed-digest LRU, and canonical digest excluding `ExistingFact`; c
 runs its reservation callback after duplicate/capacity checks and before provider work, so queue-full
 cannot spend a reservation. Terminal failures still call completion and retain the reservation.
 Authenticated explicit reflection carries `SignalHostRequested`, bypasses this controller, and joins
-an identical in-flight digest. Off constructs no automatic controller/coordinator worker; explicit Off
-runs synchronously against lazy proposal persistence. `Close` cancels and joins; no startup/shutdown
-sweep exists. Every process gets an independent budget and restart resets all controller state.
+an identical in-flight digest. Off constructs no attempt repository, automatic controller, coordinator worker, or recovery worker; explicit Off
+runs synchronously against lazy proposal persistence and creates no durable attempt. `Built.Close` cancels and joins both coordinator and recovery workers. Automatic budget/cooldown state still has no startup/shutdown
+sweep; admitted nonterminal attempts are the distinct durable workflow and are recovered at Build startup. Every process gets an independent budget and restart resets all controller state.
 
 **Evaluated and validated agent-owned skills (#510; ADR 0111, superseded in part by ADR 0224):**
 `engine/adapter/skilllifecycle.Pipeline` is a state-aware, idempotent resume over

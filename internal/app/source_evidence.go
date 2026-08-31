@@ -47,11 +47,15 @@ func newLearningEvidenceLoader(sessions port.SessionStore, events port.EventLog)
 // Load reconstructs evidence using the attempt's repository partition as the
 // private owner authority. Caller identity in ctx is deliberately irrelevant:
 // a worker cannot substitute either a user or system principal for that binding.
-//
-//nolint:gocyclo // the fail-closed source, owner, run, archive, and digest checks form one boundary
 func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Projection, learning.AttemptFailureCode) {
-	unavailable := func() (learning.Projection, learning.AttemptFailureCode) {
-		return learning.Projection{}, learning.FailureEvidenceUnavailable
+	_, projection, failure := l.loadInput(ctx, partition, attempt)
+	return projection, failure
+}
+
+//nolint:gocyclo // the fail-closed source, owner, run, archive, and digest checks form one boundary
+func (l *learningEvidenceLoader) loadInput(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Input, learning.Projection, learning.AttemptFailureCode) {
+	unavailable := func() (learning.Input, learning.Projection, learning.AttemptFailureCode) {
+		return learning.Input{}, learning.Projection{}, learning.FailureEvidenceUnavailable
 	}
 	if l == nil || l.sessions == nil || l.events == nil || partition == "" {
 		return unavailable()
@@ -146,7 +150,7 @@ func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.At
 	if err != nil {
 		return unavailable()
 	}
-	return projection, learning.FailureNone
+	return input, projection, learning.FailureNone
 }
 
 //nolint:gocyclo // exact-run ordering and compaction form a deliberately closed event state machine
