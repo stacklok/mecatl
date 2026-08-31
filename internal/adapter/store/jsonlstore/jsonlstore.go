@@ -761,12 +761,26 @@ const EventLogFormat = "eventlog-json/1"
 // sites terse; the two are the one constant).
 const eventLogFormat = EventLogFormat
 
-// eventLogRecord is one .events.jsonl line: a format tag plus the verbatim
-// session.Event JSON. The event is stored as already-redacted JSON (the relay is
-// the redaction boundary); the tag lets Read validate the encoding version.
+// eventLogRecord is one .events.jsonl line. Exactly ONE of the three shapes is
+// populated, discriminated by the format tag V:
+//
+//   - eventLogFormat        → Ev, the verbatim session.Event JSON
+//   - eventLogGenerationTag → G, the log's generation (the header record)
+//   - eventLogGapTag        → R, why an append failed at this position
+//
+// The event is stored as already-redacted JSON (the relay is the redaction
+// boundary); the tag lets Read validate the encoding version.
+//
+// G and R are omitempty so an EVENT record marshals byte-for-byte as it did
+// before cursors existed. That is not cosmetic: logs written by the previous
+// version must stay readable, and logs written by this one must stay readable by
+// anything that only understands the event tag except for the two new record
+// kinds it is required to reject loudly.
 type eventLogRecord struct {
 	V  string          `json:"v"`
-	Ev json.RawMessage `json:"ev"`
+	Ev json.RawMessage `json:"ev,omitempty"`
+	G  string          `json:"g,omitempty"`
+	R  string          `json:"r,omitempty"`
 }
 
 // List returns one row per logical session id. IDs come from latest snapshots,
@@ -1015,30 +1029,13 @@ func (st *Store) toolCallAppendPath(id session.SessionID) (string, error) {
 // It uses the same stable per-family cross-process mutation identity as
 // Save/Delete/ToolCall. A nil return means the newline-committed record has
 // been file-synced and its containing directory has been synced on every append.
+//
+// It is AppendEvent with the cursor discarded — one append path, so a caller
+// that does not want a position cannot end up on a different code path with
+// different locking or a missing generation header.
 func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
-	if err := validateSessionID(id); err != nil {
-		return err
-	}
-	if err := st.requireAppendDurability(appendStrict); err != nil {
-		return err
-	}
-	evJSON, err := json.Marshal(ev)
-	if err != nil {
-		return fmt.Errorf("jsonlstore: marshal event: %w", err)
-	}
-	line, err := json.Marshal(eventLogRecord{V: eventLogFormat, Ev: evJSON})
-	if err != nil {
-		return fmt.Errorf("jsonlstore: marshal event record: %w", err)
-	}
-	if recordSize := len(line) + 1; recordSize > maxEventRecordSize {
-		return fmt.Errorf("jsonlstore: event record is %d bytes including newline, exceeds %d-byte limit", recordSize, maxEventRecordSize)
-	}
-	return st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-		if err := st.prepareWrite(id); err != nil {
-			return err
-		}
-		return st.appendLine(st.resolver.canonicalPath(id, kindEvents), line, appendStrict)
-	})
+	_, err := st.AppendEvent(ctx, id, ev)
+	return err
 }
 
 // Read scans the per-session event log and yields every recorded event in append
@@ -1059,41 +1056,9 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			completeSize int64
 		)
 		err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-			path, present, err := st.resolver.readablePath(id, kindEvents)
-			if err != nil || !present {
-				return err
-			}
-			var root *os.Root
-			var name string
-			switch path {
-			case st.resolver.canonicalPath(id, kindEvents):
-				root, err = os.OpenRoot(st.resolver.canonicalDir())
-				name = filepath.Base(path)
-			case st.resolver.legacyPath(id, kindEvents):
-				root, err = os.OpenRoot(st.resolver.dir)
-				name, _ = st.resolver.legacyName(id, kindEvents)
-			default:
-				return errors.New("event path escaped store roots")
-			}
-			if err != nil {
-				return fmt.Errorf("open event root: %w", err)
-			}
-			defer func() { _ = root.Close() }()
-			f, err = openRegular(root, name)
-			if os.IsNotExist(err) {
-				f = nil
-				return nil
-			}
-			if err != nil {
-				return fmt.Errorf("open event file: %w", err)
-			}
-			completeSize, err = completeRecordSize(f)
-			if err != nil {
-				_ = f.Close()
-				f = nil
-				return fmt.Errorf("inspect event file tail: %w", err)
-			}
-			return nil
+			var err error
+			f, completeSize, err = st.openEventFileLocked(id)
+			return err
 		})
 		if err != nil {
 			yield(session.Event{}, fmt.Errorf("jsonlstore: capture event file: %w", err))
@@ -1112,7 +1077,16 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 				yield(session.Event{}, fmt.Errorf("jsonlstore: decode event record: %w", err))
 				return
 			}
-			if rec.V != eventLogFormat {
+			switch rec.V {
+			case eventLogFormat:
+			case eventLogGenerationTag, eventLogGapTag:
+				// Not events. port.EventLog.Read's shipped contract is that it
+				// returns EVENTS, so the generation header and gap markers are
+				// skipped rather than surfaced — a gap is a fact about delivery,
+				// and the event-sourced fold would choke on a record that is not
+				// an event. Cursor readers see them via ReadAfter.
+				continue
+			default:
 				yield(session.Event{}, fmt.Errorf("jsonlstore: unknown event-log format %q (want %q)", rec.V, eventLogFormat))
 				return
 			}
@@ -1239,12 +1213,28 @@ func (st *Store) requireAppendDurability(policy appendPolicy) error {
 // the replacement is atomic with respect to every supported writer. Strict appends
 // require both sync capabilities; best-effort appends issue every supported sync.
 func (st *Store) appendLine(path string, b []byte, policy appendPolicy) error {
+	_, err := st.appendRecords(path, [][]byte{b}, policy)
+	return err
+}
+
+// appendRecords appends one or more newline-committed records in a single
+// open/write/sync and returns the byte offset immediately after the last one.
+//
+// The multi-record form exists for the event log's generation header: a brand-new
+// log must commit its header and its first record TOGETHER, because a crash
+// between two separate appends would leave a header with no records — a log whose
+// generation is real but whose first cursor was never issued. One write, one sync,
+// one durability decision.
+//
+// The returned offset is the cursor basis: it is the offset of the NEXT record's
+// first byte, which is exactly "everything up to here has been received".
+func (st *Store) appendRecords(path string, lines [][]byte, policy appendPolicy) (int64, error) {
 	if err := st.requireAppendDurability(policy); err != nil {
-		return err
+		return 0, err
 	}
 	root, f, sidecarDir, err := st.openSidecarForAppend(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = root.Close() }()
 	closed := false
@@ -1256,50 +1246,59 @@ func (st *Store) appendLine(path string, b []byte, policy appendPolicy) error {
 
 	end, err := completeRecordSize(f)
 	if err != nil {
-		return fmt.Errorf("jsonlstore: inspect tail for append: %w", err)
+		return 0, fmt.Errorf("jsonlstore: inspect tail for append: %w", err)
 	}
 	info, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("jsonlstore: stat for append: %w", err)
+		return 0, fmt.Errorf("jsonlstore: stat for append: %w", err)
 	}
 	if end != info.Size() {
 		if err := st.snapshot.truncate(f, end); err != nil {
-			return fmt.Errorf("jsonlstore: truncate torn tail: %w", err)
+			return 0, fmt.Errorf("jsonlstore: truncate torn tail: %w", err)
 		}
 	}
 	if _, err := st.snapshot.seek(f, end, io.SeekStart); err != nil {
-		return fmt.Errorf("jsonlstore: seek for append: %w", err)
+		return 0, fmt.Errorf("jsonlstore: seek for append: %w", err)
 	}
-	record := append(append(make([]byte, 0, len(b)+1), b...), '\n')
+	var total int
+	for _, b := range lines {
+		total += len(b) + 1
+	}
+	record := make([]byte, 0, total)
+	for _, b := range lines {
+		record = append(record, b...)
+		record = append(record, '\n')
+	}
 	written, err := st.snapshot.write(f, record)
 	if err != nil {
-		return fmt.Errorf("jsonlstore: append: %w", err)
+		return 0, fmt.Errorf("jsonlstore: append: %w", err)
 	}
 	if written != len(record) {
-		return fmt.Errorf("jsonlstore: append: wrote %d of %d bytes: %w", written, len(record), io.ErrShortWrite)
+		return 0, fmt.Errorf("jsonlstore: append: wrote %d of %d bytes: %w", written, len(record), io.ErrShortWrite)
 	}
+	endOffset := end + int64(len(record))
 	if st.durability.FileSync {
 		if err := st.snapshot.syncFile(f); err != nil {
-			return fmt.Errorf("jsonlstore: sync appended record: %w", err)
+			return 0, fmt.Errorf("jsonlstore: sync appended record: %w", err)
 		}
 	}
 	closeErr := st.snapshot.closeFile(f)
 	closed = true
 	if closeErr != nil {
-		return fmt.Errorf("jsonlstore: close after append: %w", closeErr)
+		return 0, fmt.Errorf("jsonlstore: close after append: %w", closeErr)
 	}
 	if !st.durability.DirectorySync {
-		return nil
+		return endOffset, nil
 	}
 	dir, err := st.snapshot.openDir(sidecarDir) //nolint:gosec // owner-only store directory
 	if err != nil {
-		return fmt.Errorf("jsonlstore: open sidecar directory: %w", err)
+		return 0, fmt.Errorf("jsonlstore: open sidecar directory: %w", err)
 	}
 	defer func() { _ = dir.Close() }()
 	if err := st.snapshot.syncDir(dir); err != nil {
-		return fmt.Errorf("jsonlstore: sync sidecar directory: %w", err)
+		return 0, fmt.Errorf("jsonlstore: sync sidecar directory: %w", err)
 	}
-	return nil
+	return endOffset, nil
 }
 
 // legacySafeName maps a SessionID to the pre-v1 filename-safe token. It is

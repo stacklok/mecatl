@@ -1,11 +1,13 @@
 package jsonlstore_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
 	"github.com/stacklok/mecatl/engine/adapter/storeconformance"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
@@ -80,5 +82,41 @@ func TestJSONLStoreEventLogConformance(t *testing.T) {
 			t.Fatalf("jsonlstore.New: %v", err)
 		}
 		return st
+	})
+}
+
+// TestJSONLStoreCursorEventLogConformance runs the shared CursorEventLog table
+// against the JSONL store — the on-disk half of ADR 0250's cross-process
+// obligation, where cursors are byte offsets and follow is size-polling.
+//
+// NewPair returns two Stores over the SAME directory, which is what makes the
+// cross-reader subtest meaningful: the two share no Go state whatsoever, so the
+// only way the reader can observe the writer's appends is through the durable
+// file. That is precisely the property a second replica needs.
+func TestJSONLStoreCursorEventLogConformance(t *testing.T) {
+	newStore := func(t *testing.T, dir string) port.CursorEventLog {
+		t.Helper()
+		st, err := jsonlstore.New(dir)
+		if err != nil {
+			t.Fatalf("jsonlstore.New: %v", err)
+		}
+		return st
+	}
+	eventlogconformance.RunCursor(t, eventlogconformance.CursorSuite{
+		New: func(t *testing.T) port.CursorEventLog {
+			return newStore(t, t.TempDir())
+		},
+		Reset: func(t *testing.T, log port.CursorEventLog, id session.SessionID) {
+			t.Helper()
+			// Deleting the session removes its event file; the next append mints
+			// a fresh generation, exactly as a rebuilt log would.
+			if err := log.(*jsonlstore.Store).Delete(context.Background(), id); err != nil {
+				t.Fatalf("Delete(%q): %v", id, err)
+			}
+		},
+		NewPair: func(t *testing.T) (port.CursorEventLog, port.CursorEventLog) {
+			dir := t.TempDir()
+			return newStore(t, dir), newStore(t, dir)
+		},
 	})
 }

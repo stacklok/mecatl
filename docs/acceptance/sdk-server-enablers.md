@@ -4,7 +4,7 @@
 **Status:** draft
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADRs:** [ADR-0248](../adr/0248-sdk-compatibility-and-error-contract.md) (compatibility discovery + typed errors), [ADR-0249](../adr/0249-durable-run-identity.md) (durable run identity), [ADR-0250](../adr/0250-durable-cursors-and-watch.md) (durable cursors + watch).
-**Delivery:** a **linear stack of nine PRs**, `sdk/01-…` → `sdk/09-…`, each independently green on `task lint && task test`, each targeting its predecessor.
+**Delivery:** a **linear stack of ten PRs**, `sdk/01-…` → `sdk/09-…`, each independently green on `task lint && task test`, each targeting its predecessor. Scenario 6 lands as two (`sdk/06a`, `sdk/06b`) — see [Why these scope cuts](#why-these-scope-cuts).
 
 This plan covers **only the Go server surface**. No TypeScript is written here — `sdk/typescript/` does not exist at the end of this plan. That cut is deliberate: every invariant risk in #821 lives on this side, where the repo's gates (`task api:check`, the layering DAG, the conformance suites, `docs/lint`) actually have teeth, and every one of these contracts is independently valuable to the existing gRPC and HTTP clients. The SDK follows in a separate plan against a merged, proven server.
 
@@ -12,11 +12,12 @@ The doc is organized scenario-first because acceptance is about what the running
 
 ## Why these scope cuts
 
-- **Nine stacked PRs, not one accumulator.** Six of the nine units edit [`contracts/proto/mecatl/v1/harness.proto`](../../contracts/proto/mecatl/v1/harness.proto) and five edit [`internal/adapter/server/http.go`](../../internal/adapter/server/http.go); `contracts/gen/` is committed generated output, so parallel branches would churn the same generated files. A linear stack serializes those edits for free. Only two real dependencies exist (Scenario 4 → 5, and Scenarios 4+6 → 7); the rest of the ordering is contention management, not logic.
+- **Ten stacked PRs, not one accumulator.** Six of the units edit [`contracts/proto/mecatl/v1/harness.proto`](../../contracts/proto/mecatl/v1/harness.proto) and five edit [`internal/adapter/server/http.go`](../../internal/adapter/server/http.go); `contracts/gen/` is committed generated output, so parallel branches would churn the same generated files. A linear stack serializes those edits for free. Only two real dependencies exist (Scenario 4 → 5, and Scenarios 4+6 → 7); the rest of the ordering is contention management, not logic.
 - **`capabilities` and `features` stay separate.** `ServerCapabilities` answers "what has this operator enabled?"; `features` answers "what does this build implement?". Conflating them makes a `--no-bash` deployment look like version skew. See [ADR-0248](../adr/0248-sdk-compatibility-and-error-contract.md).
 - **Open strings, not proto enums**, for both `features` and error codes — the discipline [`AGENTS.md`](../../AGENTS.md) already settled for `EvNoProgress`/`StopBudget`. A new feature or error code is a minor SDK release, not a proto change.
 - **The run id reuses `RunRequest.AskIDDiscriminator`**, whose [ADR-0044](../adr/0044-host-supplied-askid-discriminator.md) contract is already written in terms of a run id ("A durable host … passes its own RunID") and which nothing supplies today. One identifier, not two with overlapping uniqueness contracts.
 - **Redis moves LIST → Stream.** A LIST cannot express a durable cross-process follow; emulating it with `LLEN` polling is strictly worse than the datatype Redis already ships, and positional cursors become a correctness bug the day anyone adds retention. See [ADR-0250](../adr/0250-durable-cursors-and-watch.md).
+- **Scenario 6 ships as two PRs, `06a` and `06b`.** As one unit it is a new engine port plus a storage-format migration plus a proto change across four backends — a diff in which the additive port and the Redis datatype migration would each be reviewed less carefully than either deserves, and the migration is the call [ADR-0250](../adr/0250-durable-cursors-and-watch.md) itself names as its most expensive. `06a` is the port, the shared conformance suite, memstore, and JSONL; `06b` is the Redis LIST → Stream migration and the gRPC driver. The scenario's acceptance criteria are unchanged and are stated once, for the scenario — the per-AC `verify:` proofs land in whichever of the two PRs owns the backend they name, and **AC6.1 and AC6.5 are complete only at the end of `06b`**, since each is a claim about the full set of backends.
 - **The append-gap guarantee is deliberately weaker than #821 asked for.** Cross-process gap detection is not achievable; the ADR states the residual rather than shipping an absolute that a Redis outage falsifies. #821 explicitly instructs this ("stop and tighten the ADR wording rather than shipping a false guarantee").
 - **`mcp_servers` is listener-scoped and server-enforced**, not an SDK-side check. #821 places the "local daemon only" boundary in the client; a client-side check is not enforcement.
 
@@ -157,30 +158,33 @@ Stale controls fail instead of landing on a newer run. Closes a real current bug
 
 The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0250](../adr/0250-durable-cursors-and-watch.md).
 
-**Work:**
+**Work — `sdk/06a` (the port and the two local backends):**
 - `engine/port`: `CursorEventLog` (append-with-cursor, read-after, generation validation) + `engine/api/*.txt` + `engine/CHANGELOG.md`.
-- `internal/adapter/redisstore`: LIST → Stream migration, including the `eventsKey` references in the delete/rebuild Lua scripts.
+- `engine/adapter/eventlogconformance`: the shared cursor conformance suite every backend runs.
+- `engine/adapter/memstore`: the reference implementation, and the suite's own validation — no I/O, no encoding, no migration, so a failure there is a failure of the contract rather than of a storage detail.
 - `internal/adapter/store/jsonlstore`: byte-offset cursors + size-polled follow.
-- `engine/adapter/memstore`, `internal/adapter/grpcdriver`: the remaining two implementations.
-- A shared conformance suite covering all four.
+
+**Work — `sdk/06b` (the durable/remote backends):**
+- `internal/adapter/redisstore`: LIST → Stream migration, including the `eventsKey` references in the delete/rebuild Lua scripts.
+- `internal/adapter/grpcdriver`: `event_log.proto` additions + opaque token pass-through.
 
 **Acceptance:**
-- AC6.1: All four backends satisfy one shared conformance suite for ordered, at-least-once, resumable delivery.
+- AC6.1: All four backends satisfy one shared conformance suite for ordered, at-least-once, resumable delivery. (Suite and the first two backends in `06a`; the assertion over the full set of four completes in `06b`.)
   - verify: `TestSDKServerEnablers_Scenario6_CursorConformanceAllBackends`
 - AC6.2: Existing `port.EventLog` behaviour is unchanged for every backend — the additive port breaks no consumer.
-  - verify: `TestADR_0246_EventLogContractUnbroken`
+  - verify: `TestADR_0250_EventLogContractUnbroken`
 - AC6.3: A cursor from a prior log generation yields `CursorExpiredError`, never silent degradation or wrong data.
-  - verify: `TestADR_0246_StaleGenerationCursorExpires`
+  - verify: `TestADR_0250_StaleGenerationCursorExpires`
 - AC6.4: A tampered or malformed cursor is rejected, never coerced to a position.
-  - verify: `TestADR_0246_TamperedCursorRejected`
-- AC6.5: A watcher in a second process observes durable appends made by the first — the cross-process obligation, proved over Redis and JSONL.
-  - verify: `TestADR_0246_CrossProcessWatchObservesAppends`
-- AC6.6: Existing Redis LIST event logs are readable after the Stream migration; no session loses its history.
+  - verify: `TestADR_0250_TamperedCursorRejected`
+- AC6.5: A watcher in a second process observes durable appends made by the first — the cross-process obligation, proved over Redis and JSONL. (JSONL in `06a`; Redis in `06b`, which completes the AC.)
+  - verify: `TestADR_0250_CrossProcessWatchObservesAppends`
+- AC6.6: Existing Redis LIST event logs are readable after the Stream migration; no session loses its history. (`06b`.)
   - verify: `TestSDKServerEnablers_Scenario6_LegacyRedisListMigrates`
 - AC6.7: A gap marker occupies an append position and advances cursors, is surfaced by `ReadAfter`, and is **skipped** by the legacy `EventLog.Read`.
-  - verify: `TestADR_0246_GapMarkerIsEnvelopeNotEvent`
+  - verify: `TestADR_0250_GapMarkerIsEnvelopeNotEvent`
 - AC6.8: `session.Event` and the proto `Event` message gain no gap-related field; the event kind-parity surface is unchanged.
-  - verify: `TestADR_0246_GapAddsNoEventKind`
+  - verify: `TestADR_0250_GapAddsNoEventKind`
 
 ---
 

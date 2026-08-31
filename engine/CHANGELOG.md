@@ -13,6 +13,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`port.CursorEventLog`, `port.Cursor`, `port.EncodeCursor`/`DecodeCursor`, `port.LogRecord`/`LogRecordKind`, `port.ReadOptions`, `port.ErrCursorMalformed`/`ErrCursorExpired`** (issue #821, [ADR 0250](../docs/adr/0250-durable-cursors-and-watch.md)) — durable positions over the event log: an append reports WHERE the record landed, and a read resumes from a position rather than always from the start.
+
+  It exists because the two read paths the engine shipped cannot express replay-then-follow as one operation. `port.EventLog.Read` is a complete, ordered, durable replay with no position and no follow — it reads the whole log and stops — so catching up and then watching means reading everything and THEN subscribing, and any event appended between those two steps is silently lost. `CursorEventLog.ReadAfter` closes that window: `ReadOptions.Follow` keeps the iterator open at the tail, and `LogRecord.Live` reports the replay/live boundary a follower needs in order to tell a caller it is caught up.
+
+  **`port.EventLog` is untouched.** `CursorEventLog` EMBEDS it, so every cursor backend is usable anywhere an `EventLog` is expected and no existing consumer changes; a backend opts in by also implementing the cursor half, and one that does not is reported as unsupported rather than silently degraded to replaying the whole log each time.
+
+  A `Cursor` is opaque, stateless, and **generation-scoped**. The generation is why: a positional cursor into a rebuilt log does not fail, it resolves happily to a real record that is not the one the client last saw, so the only symptom is wrong data much later. A mismatch is `ErrCursorExpired` — loud and recoverable — and a token that cannot be decoded at all is the DISTINCT `ErrCursorMalformed`, because an expired cursor is retryable from the beginning while a malformed one indicates a bug or tampering that restarting would hide. Neither is ever coerced to a position. `EncodeCursor`/`DecodeCursor` live in `port` so the envelope and its tamper rejection have ONE implementation rather than one per backend. The **zero `Cursor` means the beginning of the log**, not the latest: a first attach has no cursor, and replaying a session's history is the common case rather than an edge.
+
+  `LogRecordGap` is a log-record ENVELOPE variant, never a `session.Event`. A gap is a fact about delivery rather than something that happened in the run, so `session.Event`, the proto `Event` message, and the event kind-parity surface all gain nothing; a gap occupies a real append position so cursors advance past it correctly, and the legacy `EventLog.Read` SKIPS it, preserving that port's contract of returning only events.
+
+  All additions are **Added = minor**: new types and functions alongside an untouched `EventLog`, with no existing signature changed.
+
 - **`agent.Run.RunID()`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — reports the run's host-minted identity, or `""` when none was supplied.
 
   It exists so a caller holding a `*Run` can ASK which run it holds instead of inferring it from the session aggregate, and that distinction is load-bearing for stale-control refusal: a control addressed at a specific run must be compared against the run it would ACTUALLY affect, and the aggregate names the session's CURRENT run — which, after a terminal race, is precisely the run the caller did NOT mean.
