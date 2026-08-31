@@ -212,14 +212,14 @@ if member then
     redis.call('HINCRBY', KEYS[3], owner_scope, 1)
   end
 end
-redis.call('DEL', KEYS[1], KEYS[4], KEYS[5])
+redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7])
 redis.call('INCR', KEYS[6])
 return 1
 `)
 
 func deleteSessionAndMetadata(ctx context.Context, client redis.UniversalClient, id session.SessionID) error {
 	return deleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey},
+		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id)},
 		metadataGlobalScope, metadataOwnerIndexBase,
 	).Err()
 }
@@ -236,7 +236,7 @@ if owner_scope ~= '' then
   redis.call('ZREM', ARGV[3] .. owner_scope, member)
   redis.call('HINCRBY', KEYS[3], owner_scope, 1)
 end
-redis.call('DEL', KEYS[1], KEYS[4], KEYS[5])
+redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7])
 redis.call('INCR', KEYS[6])
 return 1
 `)
@@ -247,7 +247,7 @@ func deleteSessionIfMetadataUnchanged(ctx context.Context, client redis.Universa
 		return false, err
 	}
 	result, err := conditionalDeleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey},
+		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID)},
 		member, metadataGlobalScope, metadataOwnerIndexBase,
 	).Int()
 	return result == 1, err

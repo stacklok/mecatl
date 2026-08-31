@@ -136,6 +136,21 @@ Bounded paging over a long log becomes possible for the first time.
   so a new key shape threads through those too. [`internal/adapter/redisstore/migration.go`](../../internal/adapter/redisstore/migration.go)
   and [`internal/adapter/redisstore/generation.go`](../../internal/adapter/redisstore/generation.go)
   are precedent, but this is real work with a real crash-safety surface.
+
+- **A blocking `XREAD` occupies a pooled connection for the duration of its block.**
+  This was missed in the original draft and is the cost an operator of Redis Streams at
+  size would raise first. `redisstore` sets no `PoolSize`, so go-redis defaults to
+  `10 × GOMAXPROCS`, and that pool is shared with `Save`/`Append` — so watchers do not
+  merely consume spare capacity, they compete with the write path that keeps runs alive.
+  Follow therefore blocks in BOUNDED slices and re-acquires between them
+  ([`internal/adapter/redisstore/cursoreventlog.go`](../../internal/adapter/redisstore/cursoreventlog.go)),
+  which bounds the hold and makes cancellation prompt but does not make it free: N
+  concurrent watchers still want N connections. A deployment expecting many should size
+  the pool for them, and `mecak8s` — the multi-replica shape that makes cross-process
+  follow a requirement at all — is exactly where they converge. Left as sizing guidance
+  rather than a dedicated connection pool because the right number depends on the
+  deployment, and a second pool would need its own inventory row to buy a bound the
+  operator can already set.
 - **We are shipping a guarantee weaker than the one #821 asked for**, deliberately, and
   the SDK's public documentation must say so. A user who loses a durable backend *and* the
   process holding the watchers has no mechanism to learn that they missed events. We

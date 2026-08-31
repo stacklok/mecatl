@@ -3,14 +3,24 @@ package app
 import (
 	"context"
 	"errors"
+	"net"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+
+	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	"github.com/stacklok/mecatl/engine/adapter/eventlogconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
+	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
@@ -53,6 +63,24 @@ func cursorBackends(t *testing.T) []cursorBackend {
 		}
 		return st
 	}
+	newRedis := func(t *testing.T, addr string) port.CursorEventLog {
+		t.Helper()
+		st, err := redisstore.New(addr)
+		if err != nil {
+			t.Fatalf("redisstore.New: %v", err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		return st
+	}
+	newBroker := func(t *testing.T) string {
+		t.Helper()
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("miniredis: %v", err)
+		}
+		t.Cleanup(mr.Close)
+		return mr.Addr()
+	}
 	return []cursorBackend{
 		{
 			name: "memstore",
@@ -67,16 +95,59 @@ func cursorBackends(t *testing.T) []cursorBackend {
 				return newJSONL(t, dir), newJSONL(t, dir)
 			},
 		},
+		{
+			name:    "redisstore",
+			durable: true,
+			new:     func(t *testing.T) port.CursorEventLog { return newRedis(t, newBroker(t)) },
+			newPair: func(t *testing.T) (port.CursorEventLog, port.CursorEventLog) {
+				addr := newBroker(t)
+				return newRedis(t, addr), newRedis(t, addr)
+			},
+		},
+		{
+			// The remote driver is NOT marked durable: its durability is whatever
+			// backend the driver process runs, so asserting the cross-process
+			// obligation here would be testing the in-process memstore standing in
+			// for it. The obligation is proved against JSONL and Redis, which own
+			// real storage.
+			name: "grpcdriver",
+			new: func(t *testing.T) port.CursorEventLog {
+				return newDriverClient(t, memstore.NewEventLog())
+			},
+		},
 	}
+}
+
+// newDriverClient serves backend over an in-process bufconn and returns a driver
+// client for it — the full client → wire → server-wrapper path, offline.
+func newDriverClient(t *testing.T, backend port.CursorEventLog) port.CursorEventLog {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	srv := grpc.NewServer()
+	driverv1.RegisterEventLogServiceServer(srv, grpcdriver.NewEventLogServer(backend))
+	go func() { _ = srv.Serve(lis) }()
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("grpc.NewClient: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = conn.Close()
+		srv.Stop()
+		_ = lis.Close()
+	})
+	return grpcdriver.NewEventLog(conn)
 }
 
 // requiredDurableCursorBackends is the set ADR 0250 obliges to prove durable,
 // cross-process follow. It is asserted as a SET rather than left implicit so
 // that dropping a backend from the table fails loudly here instead of silently
 // reducing what AC6.5 covers.
-//
-// 6b adds "redisstore" — the entry that makes multi-replica attachment real.
-var requiredDurableCursorBackends = []string{"jsonlstore"}
+var requiredDurableCursorBackends = []string{"jsonlstore", "redisstore"}
 
 // TestADR_0250_EventLogContractUnbroken is AC6.2: existing port.EventLog
 // behaviour is unchanged for every backend — the additive port breaks no
@@ -324,4 +395,82 @@ func readAll(t *testing.T, log port.CursorEventLog, id session.SessionID, after 
 		out = append(out, rec)
 	}
 	return out
+}
+
+// requiredCursorBackends is the full set ADR 0250 obliges to implement the port.
+// Asserted as a SET so that dropping a backend from the table fails loudly here
+// rather than silently narrowing what AC6.1 covers.
+var requiredCursorBackends = []string{"memstore", "jsonlstore", "redisstore", "grpcdriver"}
+
+// TestSDKServerEnablers_Scenario6_CursorConformanceAllBackends is AC6.1: all four
+// backends satisfy ONE shared conformance suite for ordered, at-least-once,
+// resumable delivery.
+//
+// Each backend also runs this suite from its own package, which is where a
+// failure is most readable. This test exists for the part those runs cannot
+// state: that the set is COMPLETE. Four separate green tests look identical
+// whether all four backends are covered or one was quietly dropped, and "all
+// four backends" is the actual claim the acceptance criterion makes.
+//
+// It also proves the suite is genuinely shared rather than four copies that have
+// drifted: one table, one entry point, every backend.
+func TestSDKServerEnablers_Scenario6_CursorConformanceAllBackends(t *testing.T) {
+	covered := map[string]bool{}
+	for _, be := range cursorBackends(t) {
+		covered[be.name] = true
+		t.Run(be.name, func(t *testing.T) {
+			suite := eventlogconformance.CursorSuite{
+				New:              be.new,
+				Reset:            resetCursorBasis,
+				SkipCrossProcess: be.newPair == nil,
+				NewPair:          be.newPair,
+			}
+			eventlogconformance.RunCursor(t, suite)
+		})
+	}
+	for _, name := range requiredCursorBackends {
+		if !covered[name] {
+			t.Errorf("AC6.1 requires %q to satisfy the shared cursor suite, but it is absent from the gate's table", name)
+		}
+	}
+}
+
+// resetCursorBasis is the suite's REQUIRED basis-replacement hook.
+//
+// The suite demands it rather than treating it as optional because the guarantee
+// it proves is the one a positional cursor cannot provide alone: without a
+// generation, a cursor into a rebuilt log does not fail, it silently addresses a
+// DIFFERENT record.
+//
+// It dispatches on the log's concrete type rather than taking a per-backend
+// closure: "replace the positional basis" is a different operation on each
+// backend, and naming them in one switch keeps the four visible together, so a
+// new backend that has no such operation is a compile-time-visible gap here
+// rather than a silently-skipped subtest.
+func resetCursorBasis(t *testing.T, log port.CursorEventLog, id session.SessionID) {
+	t.Helper()
+	{
+		switch impl := log.(type) {
+		case *memstore.EventLog:
+			impl.Reset(id)
+		case *jsonlstore.Store:
+			if err := impl.Delete(context.Background(), id); err != nil {
+				t.Fatalf("jsonlstore Delete(%q): %v", id, err)
+			}
+		case *redisstore.Store:
+			// Delete drops the stream AND its generation key atomically, so the
+			// next append mints a fresh basis.
+			if err := impl.Delete(context.Background(), id); err != nil {
+				t.Fatalf("redisstore Delete(%q): %v", id, err)
+			}
+		case *grpcdriver.EventLog:
+			// The wire cannot carry "replace the positional basis". The driver's
+			// own package covers this with a server-side seam; here the client is
+			// deliberately given no back channel, so the run is skipped rather
+			// than faked.
+			t.Skip("basis replacement is not expressible through the driver client; covered in grpcdriver's own suite run")
+		default:
+			t.Fatalf("no basis-replacement hook for backend %T", log)
+		}
+	}
 }

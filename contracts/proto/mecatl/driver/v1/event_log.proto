@@ -66,6 +66,32 @@ service EventLogService {
   // harness maps an empty stream to an empty sequence (absence is data). A
   // mid-stream infrastructure fault terminates the stream with a non-OK status.
   rpc Read(ReadRequest) returns (stream ReadResponse);
+
+  // AppendGap durably records a gap marker — a position where an append is
+  // KNOWN to have failed — and returns the cursor positioned after it.
+  //
+  // It is the best-effort, cross-process tier of ADR 0250's append-gap
+  // guarantee: if the marker lands, every watcher everywhere learns of the gap
+  // deterministically rather than silently skipping it. A driver that cannot
+  // record it returns a non-OK status; the harness WARNs and continues the run.
+  rpc AppendGap(AppendGapRequest) returns (AppendResponse);
+
+  // ReadAfter streams the records STRICTLY AFTER a cursor, optionally staying
+  // open at the tail.
+  //
+  // It is the remote analogue of port.CursorEventLog.ReadAfter and exists
+  // because Read cannot express resumption: it replays the whole log and stops,
+  // so a client that reconnects must either re-download everything or lose
+  // whatever was appended between its last read and its new subscription.
+  //
+  // The EMPTY cursor means THE BEGINNING of the log — not the latest. A cursor
+  // the driver did not issue, or cannot align to a record boundary, terminates
+  // the stream with INVALID_ARGUMENT and the reason CURSOR_MALFORMED; one from a
+  // superseded log generation terminates it with FAILED_PRECONDITION and the
+  // reason CURSOR_EXPIRED. Neither is EVER coerced to a position: resuming from
+  // approximately the right place is indistinguishable from resuming from the
+  // right one until data is already lost.
+  rpc ReadAfter(ReadAfterRequest) returns (stream ReadAfterResponse);
 }
 
 // LoggedEvent is the opaque event envelope: a format tag plus the encoded
@@ -97,8 +123,19 @@ message AppendRequest {
   LoggedEvent event = 2 [(buf.validate.field).required = true];
 }
 
-// AppendResponse is empty: a successful Append has no payload.
-message AppendResponse {}
+// AppendResponse reports where the appended record landed.
+//
+// The field is additive on a previously-empty message: an older driver that
+// leaves it unset is still a valid port.EventLog, and the harness only requires
+// a cursor when it is using the CursorEventLog half. That keeps the additive
+// property of the engine port intact on the wire as well.
+message AppendResponse {
+  // cursor is the opaque resume token positioned AFTER the appended record.
+  // Handing it back to ReadAfter yields the NEXT record. It is OPAQUE to the
+  // harness on this transport — the driver owns both the encoding and the
+  // generation basis, and the harness round-trips the string verbatim.
+  string cursor = 1;
+}
 
 // ReadRequest asks for the full recorded event stream under a session id.
 message ReadRequest {
@@ -111,4 +148,61 @@ message ReadResponse {
   // event is the envelope exactly as it was appended (format + payload
   // verbatim).
   LoggedEvent event = 1 [(buf.validate.field).required = true];
+}
+
+// AppendGapRequest carries the reason an append failed at this position.
+message AppendGapRequest {
+  // session_id is the storage key the gap is appended under.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+
+  // reason is operator-facing diagnostic text describing why the append failed.
+  // It may be empty, and it is NOT model-facing.
+  string reason = 2;
+}
+
+// ReadAfterRequest asks for the records after a cursor.
+message ReadAfterRequest {
+  // session_id is the id whose records to stream.
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+
+  // cursor is the opaque token to resume strictly after. EMPTY means the
+  // BEGINNING of the log — a first attach has no cursor, and replaying a
+  // session's history is the common case rather than an edge.
+  string cursor = 2;
+
+  // limit caps the number of records streamed. Zero means unbounded. This is
+  // the bounded paging Read cannot express.
+  int32 limit = 3 [(buf.validate.field).int32.gte = 0];
+
+  // follow keeps the stream open at the tail instead of ending there, sending
+  // records as they are appended until the client cancels. A stream that ends
+  // because the client cancelled is NOT an error.
+  bool follow = 4;
+}
+
+// ReadAfterResponse carries one record of the stream, in append order.
+//
+// Unlike ReadResponse it carries a KIND, because a position may hold a gap
+// marker rather than an event. A gap is a delivery-envelope variant and never a
+// harness event (ADR 0250 decision 5), which is why it is a field here rather
+// than a new event type inside the opaque payload.
+message ReadAfterResponse {
+  // kind is the record kind: "event" or "gap". An open string, not an enum, so
+  // a future record kind is a minor release rather than a wire-compat event —
+  // the discipline the event taxonomy already uses for kinds and stop reasons.
+  string kind = 1 [(buf.validate.field).string.min_len = 1];
+
+  // event is the envelope exactly as it was appended. Unset when kind is "gap".
+  LoggedEvent event = 2;
+
+  // gap_reason describes why an append failed, when kind is "gap". May be empty.
+  string gap_reason = 3;
+
+  // cursor is the opaque resume token positioned AFTER this record.
+  string cursor = 4 [(buf.validate.field).string.min_len = 1];
+
+  // live reports whether this record arrived AFTER the stream had drained
+  // everything present when the read started — the replay/live boundary a
+  // follower needs in order to tell its caller it is caught up.
+  bool live = 5;
 }

@@ -155,7 +155,24 @@ func (s *eventLogServer) Append(ctx context.Context, req *driverv1.AppendRequest
 	if err := json.Unmarshal(env.GetPayload(), &ev); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "decode event: %v", err)
 	}
-	if err := s.log.Append(ctx, session.SessionID(req.GetSessionId()), ev); err != nil {
+	id := session.SessionID(req.GetSessionId())
+	// ONE write RPC serves both ports. When the backend implements the cursor
+	// half, append through it so the response can report WHERE the record
+	// landed; otherwise append through the shipped port and leave the cursor
+	// unset, which an EventLog-only client already ignores.
+	//
+	// A second "AppendEvent" RPC was the alternative and is worse: two write
+	// paths would have to agree on ordering and durability for the same log, and
+	// a client calling the wrong one against a cursor-capable driver would get a
+	// silently position-less append.
+	if cursor, ok := s.log.(port.CursorEventLog); ok {
+		at, err := cursor.AppendEvent(ctx, id, ev)
+		if err != nil {
+			return nil, eventLogStatus(err)
+		}
+		return &driverv1.AppendResponse{Cursor: string(at)}, nil
+	}
+	if err := s.log.Append(ctx, id, ev); err != nil {
 		return nil, eventLogStatus(err)
 	}
 	return &driverv1.AppendResponse{}, nil

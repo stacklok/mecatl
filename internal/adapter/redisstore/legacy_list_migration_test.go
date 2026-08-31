@@ -1,0 +1,226 @@
+package redisstore_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/redisstore"
+)
+
+// legacyRecord builds the exact LIST element a pre-ADR-0250 mecatl wrote:
+// the format-tagged envelope, RPUSHed onto mecatl:events:<id>.
+//
+// Hand-built rather than produced by an old binary because the ENCODING is the
+// compatibility surface under test. If a future change alters the envelope, this
+// fixture keeps asserting against what is actually on disk in a deployed
+// keyspace, which a round-trip through current code could not.
+func legacyRecord(t *testing.T, seq int64, text string) string {
+	t.Helper()
+	ev, err := json.Marshal(session.Event{Type: session.EvMessageDelta, Seq: seq, Text: text})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	rec, err := json.Marshal(map[string]any{"v": redisstore.EventLogFormat, "ev": json.RawMessage(ev)})
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
+	}
+	return string(rec)
+}
+
+func legacyStore(t *testing.T) (*miniredis.Miniredis, *redisstore.Store) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	st, err := redisstore.New(mr.Addr())
+	if err != nil {
+		t.Fatalf("redisstore.New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return mr, st
+}
+
+func readAllEvents(t *testing.T, log port.EventLog, id session.SessionID) []string {
+	t.Helper()
+	var out []string
+	for ev, err := range log.Read(context.Background(), id) {
+		if err != nil {
+			t.Fatalf("Read(%q): %v", id, err)
+		}
+		out = append(out, ev.Text)
+	}
+	return out
+}
+
+// TestSDKServerEnablers_Scenario6_LegacyRedisListMigrates is AC6.6: existing
+// Redis LIST event logs are readable after the Stream migration, and no session
+// loses its history.
+//
+// This is the acceptance criterion with a real deployed keyspace behind it. An
+// operator upgrading mecatl has `mecatl:events:*` LIST keys already written, and
+// the migration must be invisible to them in both directions: a log not yet
+// touched by the new binary stays readable, and one that IS touched keeps every
+// record it had.
+func TestSDKServerEnablers_Scenario6_LegacyRedisListMigrates(t *testing.T) {
+	ctx := context.Background()
+	const id session.SessionID = "legacy-list-session"
+	key := "mecatl:events:" + string(id)
+
+	t.Run("an unmigrated LIST stays readable", func(t *testing.T) {
+		// The upgrade case that must not need a migration to work at all: the
+		// new binary reads a log it has never written to.
+		mr, st := legacyStore(t)
+		mr.RPush(key, legacyRecord(t, 0, "one"), legacyRecord(t, 1, "two"))
+
+		if got, want := readAllEvents(t, st, id), []string{"one", "two"}; !equalStrings(got, want) {
+			t.Fatalf("legacy Read = %v, want %v", got, want)
+		}
+		if kind := mr.Type(key); kind != "list" {
+			t.Errorf("reading migrated the key to %q; a READ must never mutate storage", kind)
+		}
+	})
+
+	t.Run("an unmigrated LIST is cursor-readable", func(t *testing.T) {
+		// A watcher must be able to attach to a log that predates the migration
+		// without waiting for an append to convert it.
+		mr, st := legacyStore(t)
+		mr.RPush(key, legacyRecord(t, 0, "one"), legacyRecord(t, 1, "two"))
+
+		recs := collect(t, st, id, "")
+		if len(recs) != 2 || recs[0].Event.Text != "one" || recs[1].Event.Text != "two" {
+			t.Fatalf("ReadAfter over a legacy list = %+v, want the two records in order", recs)
+		}
+		// And its cursor resumes correctly WITHIN the legacy basis.
+		after := collect(t, st, id, recs[0].Cursor)
+		if len(after) != 1 || after[0].Event.Text != "two" {
+			t.Fatalf("ReadAfter(legacy cursor) = %+v, want just the second record", after)
+		}
+	})
+
+	t.Run("appending migrates in place and keeps every record", func(t *testing.T) {
+		// The core of AC6.6: history is CARRIED, not dropped, and the order is
+		// preserved across the datatype change.
+		mr, st := legacyStore(t)
+		mr.RPush(key, legacyRecord(t, 0, "one"), legacyRecord(t, 1, "two"))
+
+		if _, err := st.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 2, Text: "three"}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+		if kind := mr.Type(key); kind != "stream" {
+			t.Fatalf("after an append the key is %q, want %q", kind, "stream")
+		}
+		if got, want := readAllEvents(t, st, id), []string{"one", "two", "three"}; !equalStrings(got, want) {
+			t.Fatalf("after migration Read = %v, want %v — the pre-migration history was lost", got, want)
+		}
+		recs := collect(t, st, id, "")
+		if len(recs) != 3 {
+			t.Fatalf("ReadAfter surfaced %d records after migration, want 3", len(recs))
+		}
+		for i, want := range []string{"one", "two", "three"} {
+			if recs[i].Event.Text != want {
+				t.Errorf("record[%d] = %q, want %q", i, recs[i].Event.Text, want)
+			}
+		}
+	})
+
+	t.Run("a cursor from the legacy basis expires after migration", func(t *testing.T) {
+		// The subtle half, and the reason the migration is safe rather than
+		// merely lossless. Legacy positions are LIST INDICES; migrated positions
+		// are stream IDs. A cursor carried across that change must not resolve —
+		// index 1 and stream id 1-0 are both "valid", and honouring the old one
+		// would silently deliver the wrong records.
+		mr, st := legacyStore(t)
+		mr.RPush(key, legacyRecord(t, 0, "one"), legacyRecord(t, 1, "two"))
+		legacyCursors := collect(t, st, id, "")
+		if len(legacyCursors) != 2 {
+			t.Fatalf("expected 2 legacy records, got %d", len(legacyCursors))
+		}
+		stale := legacyCursors[0].Cursor
+
+		if _, err := st.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 2, Text: "three"}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+		var gotErr error
+		for rec, err := range st.ReadAfter(ctx, id, stale, port.ReadOptions{}) {
+			if err != nil {
+				gotErr = err
+				break
+			}
+			t.Errorf("a pre-migration cursor yielded record %+v; it must not resolve against the migrated log", rec)
+		}
+		if !errors.Is(gotErr, port.ErrCursorExpired) {
+			t.Fatalf("ReadAfter(pre-migration cursor) error = %v, want ErrCursorExpired", gotErr)
+		}
+	})
+
+	t.Run("deleting the log drops its generation so the basis really moves", func(t *testing.T) {
+		// The generation lives in its own key, so the delete path has to drop it
+		// explicitly (the two Lua scripts in metadata_index.go). If it survived a
+		// delete, a recreated log would inherit the old basis and a cursor from
+		// the PREVIOUS log would resolve against the new one — the exact silent
+		// corruption generations exist to convert into a loud failure.
+		mr, st := legacyStore(t)
+		if _, err := st.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 0, Text: "first log"}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+		first := collect(t, st, id, "")
+		if len(first) != 1 {
+			t.Fatalf("expected 1 record, got %d", len(first))
+		}
+		stale := first[0].Cursor
+
+		if err := st.Delete(ctx, id); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if mr.Exists("mecatl:events-gen:" + string(id)) {
+			t.Error("the generation key survived Delete; a recreated log would inherit the old basis")
+		}
+		if _, err := st.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 0, Text: "second log"}); err != nil {
+			t.Fatalf("AppendEvent(after delete): %v", err)
+		}
+
+		var gotErr error
+		for rec, err := range st.ReadAfter(ctx, id, stale, port.ReadOptions{}) {
+			if err != nil {
+				gotErr = err
+				break
+			}
+			t.Errorf("a cursor from the deleted log yielded %+v; it must not resolve against the recreated log", rec)
+		}
+		if !errors.Is(gotErr, port.ErrCursorExpired) {
+			t.Fatalf("a cursor from the deleted log's basis error = %v, want ErrCursorExpired", gotErr)
+		}
+	})
+}
+
+func collect(t *testing.T, log port.CursorEventLog, id session.SessionID, after port.Cursor) []port.LogRecord {
+	t.Helper()
+	var out []port.LogRecord
+	for rec, err := range log.ReadAfter(context.Background(), id, after, port.ReadOptions{}) {
+		if err != nil {
+			t.Fatalf("ReadAfter(after=%q): %v", after, err)
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

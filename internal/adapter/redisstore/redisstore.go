@@ -10,15 +10,23 @@
 //     with jsonlstore and the gRPC driver; and
 //   - the event-log record is the same {"v":<tag>,"ev":<json>} envelope shape as
 //     jsonlstore, with its own format tag (redisstore-eventlog/1) so a
-//     forward-incompatible log fails loud on Read (an unknown tag is an error).
+//     forward-incompatible log fails loud on Read (an unknown tag is an error);
+//     a gap marker is a sibling tag on that same shape, never an event.
 //
 // No client-side mutex is needed: Redis serializes commands single-threaded and
-// HSET/HGET/RPUSH are atomic, so the in-process sync.Mutex that jsonlstore
+// HSET/HGET/XADD are atomic, so the in-process sync.Mutex that jsonlstore
 // carries is absent here. The adapter is validated by the SAME conformance
-// suites as jsonlstore (storeconformance + eventlogconformance), exercised
-// offline against an in-process miniredis so `task test` needs no live broker.
+// suites as jsonlstore (storeconformance + eventlogconformance, including the
+// cursor table), exercised offline against an in-process miniredis so
+// `task test` needs no live broker.
 //
-// DURABILITY CAVEAT: Append/Save call RPUSH/HSET synchronously and return only
+// The event log is a STREAM, not a LIST (ADR 0250): XADD IDs are opaque,
+// monotonic and durable, so they serve as cursors directly, and XREAD BLOCK is a
+// cross-process blocking follow a LIST cannot express. A LIST written before that
+// change stays readable and is migrated in place, atomically, by the next append
+// — see cursoreventlog.go.
+//
+// DURABILITY CAVEAT: Append/Save call XADD/HSET synchronously and return only
 // once Redis acknowledges the command, but Redis's own persistence config
 // (RDB snapshotting vs AOF fsync policy) determines durability-on-crash. An
 // operator selecting this backend must configure Redis persistence to match
@@ -79,7 +87,13 @@ const EventLogFormat = "redisstore-eventlog/1"
 // It mirrors the jsonlstore envelope shape so the two stores are codec-siblings.
 type eventLogRecord struct {
 	V  string          `json:"v"`
-	Ev json.RawMessage `json:"ev"`
+	Ev json.RawMessage `json:"ev,omitempty"`
+	// R is a gap marker's reason, set only when V is EventLogGapFormat. A gap is
+	// an envelope variant rather than an event (ADR 0250 decision 5), so it
+	// shares this record shape instead of becoming a session.Event. Omitted on
+	// an ordinary event so the encoding of an event record is byte-unchanged
+	// from before cursors existed.
+	R string `json:"r,omitempty"`
 }
 
 // compile-time assertions that Store satisfies all four ports it meets.
@@ -490,37 +504,38 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 }
 
 // Append durably records ev under id as a format-tagged JSON record on the
-// per-session event list (RPUSH). It satisfies port.EventLog. The event is
+// per-session event STREAM (XADD). It satisfies port.EventLog. The event is
 // marshalled to its session.Event JSON verbatim (already redacted at the relay)
 // and wrapped in the {"v":"redisstore-eventlog/1","ev":...} envelope so Read
-// can validate the format. RPUSH preserves append order, so Read returns
-// events in the exact order Append received them.
+// can validate the format. XADD preserves append order, so Read returns events
+// in the exact order Append received them.
+//
+// It delegates to AppendEvent and drops the cursor. There is deliberately ONE
+// write path: two would have to agree on the datatype, and the first append
+// through the other one would meet a WRONGTYPE — the failure mode a "leave the
+// old path alone" migration produces. A caller that wants the position calls
+// AppendEvent; this signature exists for the shipped port.
 func (st *Store) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
-	client, release, err := st.clients.acquire()
-	if err != nil {
-		return err
-	}
-	defer release()
-	evJSON, err := json.Marshal(ev)
-	if err != nil {
-		return fmt.Errorf("redisstore: marshal event: %w", err)
-	}
-	rec, err := json.Marshal(eventLogRecord{V: EventLogFormat, Ev: evJSON})
-	if err != nil {
-		return fmt.Errorf("redisstore: marshal event record: %w", err)
-	}
-	if err := client.RPush(ctx, eventsKey(id), rec).Err(); err != nil {
-		return fmt.Errorf("redisstore: append event %q: %w", id, err)
-	}
-	return nil
+	_, err := st.AppendEvent(ctx, id, ev)
+	return err
 }
 
-// Read yields the session's recorded events in APPEND order (RPUSH order =
-// LRANGE 0 -1 order). It satisfies port.EventLog. A MISS (no event key) yields
-// an EMPTY sequence: absence is data, not an error. A genuine fault — an
-// undecodable record, an unknown format tag, or a Redis error — is yielded as
-// the error on a zero-value event and the consumer stops (the standard
-// iter.Seq2 error idiom).
+// Read yields the session's recorded events in APPEND order. It satisfies
+// port.EventLog. A MISS (no event key) yields an EMPTY sequence: absence is
+// data, not an error. A genuine fault — an undecodable record, an unknown format
+// tag, or a Redis error — is yielded as the error on a zero-value event and the
+// consumer stops (the standard iter.Seq2 error idiom).
+//
+// It reads a STREAM (XRANGE) or, for a log written before the Stream migration
+// and not appended to since, a LIST (LRANGE) — chosen by the key's actual type
+// rather than by a stored flag, so no migration bookkeeping can disagree with
+// the keyspace. Reading does NOT migrate: a read must not mutate, and the
+// session's next append migrates it anyway.
+//
+// GAP MARKERS ARE SKIPPED. This port's shipped contract is that it returns
+// EVENTS, and a gap is a delivery envelope (ADR 0250 decision 5) that the
+// event-sourced fold of ADR 0038 would choke on. Cursor readers see gaps via
+// ReadAfter.
 func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
 		client, release, err := st.clients.acquire()
@@ -529,33 +544,66 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			return
 		}
 		defer release()
-		records, err := client.LRange(ctx, eventsKey(id), 0, -1).Result()
+
+		raws, err := rawEventRecords(ctx, client, id)
 		if err != nil {
-			// A missing event key is not an error in Redis (LRANGE on a missing
-			// key returns an empty slice), so any error here is a genuine fault.
-			yield(session.Event{}, fmt.Errorf("redisstore: read events %q: %w", id, err))
+			yield(session.Event{}, err)
 			return
 		}
-		for _, raw := range records {
-			var rec eventLogRecord
-			if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-				yield(session.Event{}, fmt.Errorf("redisstore: decode event record: %w", err))
+		for _, raw := range raws {
+			rec, ok, err := decodeEventLogRecord(raw)
+			if err != nil {
+				yield(session.Event{}, err)
 				return
 			}
-			if rec.V != EventLogFormat {
-				yield(session.Event{}, fmt.Errorf("redisstore: unknown event-log format %q (want %q)", rec.V, EventLogFormat))
-				return
+			if !ok || rec.Kind != port.LogRecordEvent {
+				continue // a gap or a record carrying no event
 			}
-			var ev session.Event
-			if err := json.Unmarshal(rec.Ev, &ev); err != nil {
-				yield(session.Event{}, fmt.Errorf("redisstore: decode event: %w", err))
-				return
-			}
-			if !yield(ev, nil) {
+			if !yield(rec.Event, nil) {
 				return
 			}
 		}
 	}
+}
+
+// rawEventRecords returns the session's raw envelopes in append order from
+// whichever datatype currently holds the log.
+func rawEventRecords(ctx context.Context, client redis.UniversalClient, id session.SessionID) ([][]byte, error) {
+	key := eventsKey(id)
+	kind, err := client.Type(ctx, key).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redisstore: type of event key %q: %w", id, err)
+	}
+	if kind == "list" {
+		records, err := client.LRange(ctx, key, 0, -1).Result()
+		if err != nil {
+			return nil, fmt.Errorf("redisstore: read events %q: %w", id, err)
+		}
+		out := make([][]byte, 0, len(records))
+		for _, rec := range records {
+			out = append(out, []byte(rec))
+		}
+		return out, nil
+	}
+	// A missing key is not an error in Redis (XRANGE on a missing key returns an
+	// empty slice), so any error here is a genuine fault.
+	msgs, err := client.XRange(ctx, key, "-", "+").Result()
+	if err != nil {
+		return nil, fmt.Errorf("redisstore: read events %q: %w", id, err)
+	}
+	out := make([][]byte, 0, len(msgs))
+	for _, msg := range msgs {
+		raw, present := msg.Values[recordField]
+		if !present {
+			continue
+		}
+		text, isString := raw.(string)
+		if !isString {
+			return nil, fmt.Errorf("redisstore: event entry %s field %q has type %T, want string", msg.ID, recordField, raw)
+		}
+		out = append(out, []byte(text))
+	}
+	return out, nil
 }
 
 // toolCallRecord is the structured record written by ToolCall. It mirrors the

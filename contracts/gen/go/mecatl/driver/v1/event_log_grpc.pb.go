@@ -67,8 +67,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	EventLogService_Append_FullMethodName = "/mecatl.driver.v1.EventLogService/Append"
-	EventLogService_Read_FullMethodName   = "/mecatl.driver.v1.EventLogService/Read"
+	EventLogService_Append_FullMethodName    = "/mecatl.driver.v1.EventLogService/Append"
+	EventLogService_Read_FullMethodName      = "/mecatl.driver.v1.EventLogService/Read"
+	EventLogService_AppendGap_FullMethodName = "/mecatl.driver.v1.EventLogService/AppendGap"
+	EventLogService_ReadAfter_FullMethodName = "/mecatl.driver.v1.EventLogService/ReadAfter"
 )
 
 // EventLogServiceClient is the client API for EventLogService service.
@@ -88,6 +90,30 @@ type EventLogServiceClient interface {
 	// harness maps an empty stream to an empty sequence (absence is data). A
 	// mid-stream infrastructure fault terminates the stream with a non-OK status.
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadResponse], error)
+	// AppendGap durably records a gap marker — a position where an append is
+	// KNOWN to have failed — and returns the cursor positioned after it.
+	//
+	// It is the best-effort, cross-process tier of ADR 0250's append-gap
+	// guarantee: if the marker lands, every watcher everywhere learns of the gap
+	// deterministically rather than silently skipping it. A driver that cannot
+	// record it returns a non-OK status; the harness WARNs and continues the run.
+	AppendGap(ctx context.Context, in *AppendGapRequest, opts ...grpc.CallOption) (*AppendResponse, error)
+	// ReadAfter streams the records STRICTLY AFTER a cursor, optionally staying
+	// open at the tail.
+	//
+	// It is the remote analogue of port.CursorEventLog.ReadAfter and exists
+	// because Read cannot express resumption: it replays the whole log and stops,
+	// so a client that reconnects must either re-download everything or lose
+	// whatever was appended between its last read and its new subscription.
+	//
+	// The EMPTY cursor means THE BEGINNING of the log — not the latest. A cursor
+	// the driver did not issue, or cannot align to a record boundary, terminates
+	// the stream with INVALID_ARGUMENT and the reason CURSOR_MALFORMED; one from a
+	// superseded log generation terminates it with FAILED_PRECONDITION and the
+	// reason CURSOR_EXPIRED. Neither is EVER coerced to a position: resuming from
+	// approximately the right place is indistinguishable from resuming from the
+	// right one until data is already lost.
+	ReadAfter(ctx context.Context, in *ReadAfterRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadAfterResponse], error)
 }
 
 type eventLogServiceClient struct {
@@ -127,6 +153,35 @@ func (c *eventLogServiceClient) Read(ctx context.Context, in *ReadRequest, opts 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type EventLogService_ReadClient = grpc.ServerStreamingClient[ReadResponse]
 
+func (c *eventLogServiceClient) AppendGap(ctx context.Context, in *AppendGapRequest, opts ...grpc.CallOption) (*AppendResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AppendResponse)
+	err := c.cc.Invoke(ctx, EventLogService_AppendGap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *eventLogServiceClient) ReadAfter(ctx context.Context, in *ReadAfterRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadAfterResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &EventLogService_ServiceDesc.Streams[1], EventLogService_ReadAfter_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReadAfterRequest, ReadAfterResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type EventLogService_ReadAfterClient = grpc.ServerStreamingClient[ReadAfterResponse]
+
 // EventLogServiceServer is the server API for EventLogService service.
 // All implementations must embed UnimplementedEventLogServiceServer
 // for forward compatibility.
@@ -144,6 +199,30 @@ type EventLogServiceServer interface {
 	// harness maps an empty stream to an empty sequence (absence is data). A
 	// mid-stream infrastructure fault terminates the stream with a non-OK status.
 	Read(*ReadRequest, grpc.ServerStreamingServer[ReadResponse]) error
+	// AppendGap durably records a gap marker — a position where an append is
+	// KNOWN to have failed — and returns the cursor positioned after it.
+	//
+	// It is the best-effort, cross-process tier of ADR 0250's append-gap
+	// guarantee: if the marker lands, every watcher everywhere learns of the gap
+	// deterministically rather than silently skipping it. A driver that cannot
+	// record it returns a non-OK status; the harness WARNs and continues the run.
+	AppendGap(context.Context, *AppendGapRequest) (*AppendResponse, error)
+	// ReadAfter streams the records STRICTLY AFTER a cursor, optionally staying
+	// open at the tail.
+	//
+	// It is the remote analogue of port.CursorEventLog.ReadAfter and exists
+	// because Read cannot express resumption: it replays the whole log and stops,
+	// so a client that reconnects must either re-download everything or lose
+	// whatever was appended between its last read and its new subscription.
+	//
+	// The EMPTY cursor means THE BEGINNING of the log — not the latest. A cursor
+	// the driver did not issue, or cannot align to a record boundary, terminates
+	// the stream with INVALID_ARGUMENT and the reason CURSOR_MALFORMED; one from a
+	// superseded log generation terminates it with FAILED_PRECONDITION and the
+	// reason CURSOR_EXPIRED. Neither is EVER coerced to a position: resuming from
+	// approximately the right place is indistinguishable from resuming from the
+	// right one until data is already lost.
+	ReadAfter(*ReadAfterRequest, grpc.ServerStreamingServer[ReadAfterResponse]) error
 	mustEmbedUnimplementedEventLogServiceServer()
 }
 
@@ -159,6 +238,12 @@ func (UnimplementedEventLogServiceServer) Append(context.Context, *AppendRequest
 }
 func (UnimplementedEventLogServiceServer) Read(*ReadRequest, grpc.ServerStreamingServer[ReadResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Read not implemented")
+}
+func (UnimplementedEventLogServiceServer) AppendGap(context.Context, *AppendGapRequest) (*AppendResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AppendGap not implemented")
+}
+func (UnimplementedEventLogServiceServer) ReadAfter(*ReadAfterRequest, grpc.ServerStreamingServer[ReadAfterResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ReadAfter not implemented")
 }
 func (UnimplementedEventLogServiceServer) mustEmbedUnimplementedEventLogServiceServer() {}
 func (UnimplementedEventLogServiceServer) testEmbeddedByValue()                         {}
@@ -210,6 +295,35 @@ func _EventLogService_Read_Handler(srv interface{}, stream grpc.ServerStream) er
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type EventLogService_ReadServer = grpc.ServerStreamingServer[ReadResponse]
 
+func _EventLogService_AppendGap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppendGapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EventLogServiceServer).AppendGap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EventLogService_AppendGap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EventLogServiceServer).AppendGap(ctx, req.(*AppendGapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _EventLogService_ReadAfter_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReadAfterRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(EventLogServiceServer).ReadAfter(m, &grpc.GenericServerStream[ReadAfterRequest, ReadAfterResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type EventLogService_ReadAfterServer = grpc.ServerStreamingServer[ReadAfterResponse]
+
 // EventLogService_ServiceDesc is the grpc.ServiceDesc for EventLogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -221,11 +335,20 @@ var EventLogService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Append",
 			Handler:    _EventLogService_Append_Handler,
 		},
+		{
+			MethodName: "AppendGap",
+			Handler:    _EventLogService_AppendGap_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Read",
 			Handler:       _EventLogService_Read_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ReadAfter",
+			Handler:       _EventLogService_ReadAfter_Handler,
 			ServerStreams: true,
 		},
 	},

@@ -20,6 +20,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/storeconformance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 )
@@ -233,5 +234,62 @@ func TestGRPCScheduleStoreConformance(t *testing.T) {
 			driverv1.RegisterScheduleOneShotReArmerServiceServer(gs, NewScheduleOneShotReArmerServer(backend))
 		})
 		return NewScheduleStore(conn)
+	})
+}
+
+// TestGRPCCursorEventLogConformance runs the shared CursorEventLog table over
+// grpcdriver → bufconn → NewEventLogServer(memstore.NewEventLog()): the SAME
+// suite the local backends pass, now over the full client → wire →
+// server-wrapper → reference-backend path.
+//
+// It is the one run where the cursor is opaque END TO END — this client neither
+// encodes nor decodes a token, so the suite is checking that the harness can
+// honour the contract while knowing nothing about the position's meaning.
+//
+// NewPair returns two clients over two SERVERS sharing one backing log, which is
+// the wire analogue of two replicas: the clients share no Go state and not even a
+// server, so the only path from writer to reader is the shared store behind them.
+func TestGRPCCursorEventLogConformance(t *testing.T) {
+	// The wire cannot carry "replace the positional basis", so Reset has to reach
+	// the SERVER-side backend. This map is the seam — the same posture as the
+	// lease suite's server-side clock advance, kept test-local rather than a
+	// package global so parallel packages cannot collide through it.
+	var mu sync.Mutex
+	backends := map[*EventLog]*memstore.EventLog{}
+
+	serve := func(t *testing.T, backend *memstore.EventLog) *EventLog {
+		t.Helper()
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterEventLogServiceServer(gs, NewEventLogServer(backend))
+		})
+		client := NewEventLog(conn)
+		mu.Lock()
+		backends[client] = backend
+		mu.Unlock()
+		return client
+	}
+
+	eventlogconformance.RunCursor(t, eventlogconformance.CursorSuite{
+		New: func(t *testing.T) port.CursorEventLog {
+			return serve(t, memstore.NewEventLog())
+		},
+		Reset: func(t *testing.T, log port.CursorEventLog, id session.SessionID) {
+			t.Helper()
+			client, ok := log.(*EventLog)
+			if !ok {
+				t.Fatalf("cursor log is %T, want *EventLog", log)
+			}
+			mu.Lock()
+			backend := backends[client]
+			mu.Unlock()
+			if backend == nil {
+				t.Fatal("no server-side backend registered for this client")
+			}
+			backend.Reset(id)
+		},
+		NewPair: func(t *testing.T) (port.CursorEventLog, port.CursorEventLog) {
+			shared := memstore.NewEventLog()
+			return serve(t, shared), serve(t, shared)
+		},
 	})
 }

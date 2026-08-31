@@ -160,9 +160,11 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 	for _, field := range fields {
 		beforeFields[field] = mr.HGet(sessionKey, field)
 	}
-	beforeEvents, err := mr.List("mecatl:events:" + string(id))
+	// The events sidecar is a STREAM since the ADR 0250 LIST -> Stream
+	// migration; the tools sidecar below is still a LIST.
+	beforeEvents, err := mr.Stream("mecatl:events:" + string(id))
 	if err != nil {
-		t.Fatalf("List(events): %v", err)
+		t.Fatalf("Stream(events): %v", err)
 	}
 	beforeTools, err := mr.List("mecatl:tools:" + string(id))
 	if err != nil {
@@ -178,7 +180,7 @@ func TestRedisCreateCollisionLeavesSnapshotAndSidecarsUntouched(t *testing.T) {
 			t.Errorf("field %s changed: got %q; want %q", field, got, want)
 		}
 	}
-	afterEvents, err := mr.List("mecatl:events:" + string(id))
+	afterEvents, err := mr.Stream("mecatl:events:" + string(id))
 	if err != nil || !reflect.DeepEqual(afterEvents, beforeEvents) {
 		t.Errorf("events changed: got %v, %v; want %v", afterEvents, err, beforeEvents)
 	}
@@ -284,4 +286,58 @@ func TestSessionIDWithColonRoundTrips(t *testing.T) {
 	if !found {
 		t.Errorf("List did not return id %q (got %d entries)", id, len(entries))
 	}
+}
+
+// TestRedisStoreCursorEventLogConformance runs the shared CursorEventLog table
+// against the Redis-backed store — the Stream half of ADR 0250, where the XADD
+// ID IS the cursor.
+//
+// NewPair returns two Stores over the SAME miniredis, which is what makes the
+// cross-reader subtest meaningful: the two share no Go state whatsoever, so the
+// only way the reader can observe the writer's appends is through the broker.
+// That is precisely the property a second replica needs, and the one a LIST
+// could not provide without per-watcher LLEN polling.
+func TestRedisStoreCursorEventLogConformance(t *testing.T) {
+	newOn := func(t *testing.T, addr string) port.CursorEventLog {
+		t.Helper()
+		st, err := redisstore.New(addr)
+		if err != nil {
+			t.Fatalf("redisstore.New: %v", err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		return st
+	}
+	newServer := func(t *testing.T) string {
+		t.Helper()
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("miniredis: %v", err)
+		}
+		t.Cleanup(mr.Close)
+		return mr.Addr()
+	}
+	eventlogconformance.RunCursor(t, eventlogconformance.CursorSuite{
+		New: func(t *testing.T) port.CursorEventLog {
+			return newOn(t, newServer(t))
+		},
+		Reset: func(t *testing.T, log port.CursorEventLog, id session.SessionID) {
+			t.Helper()
+			// Deleting the session drops the stream AND its generation key in one
+			// atomic step, so the next append mints a fresh basis — exactly as a
+			// rebuilt log would. If the generation key survived, this Reset would
+			// silently NOT change the basis and the stale-cursor subtest would
+			// pass for the wrong reason.
+			pruner, ok := log.(port.PrunableStore)
+			if !ok {
+				t.Fatal("redisstore.Store does not satisfy port.PrunableStore")
+			}
+			if err := pruner.Delete(context.Background(), id); err != nil {
+				t.Fatalf("Delete(%q): %v", id, err)
+			}
+		},
+		NewPair: func(t *testing.T) (port.CursorEventLog, port.CursorEventLog) {
+			addr := newServer(t)
+			return newOn(t, addr), newOn(t, addr)
+		},
+	})
 }
