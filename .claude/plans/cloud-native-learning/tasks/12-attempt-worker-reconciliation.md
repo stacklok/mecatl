@@ -2,7 +2,7 @@
 id: 12-attempt-worker-reconciliation
 title: Drive claimed attempts through distinct terminal outcomes
 blocked_by: [11-fenced-reflection-boundary]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
