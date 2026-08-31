@@ -2,7 +2,7 @@
 id: 06-memattempt-adapter
 title: Implement the in-memory AttemptRepository reference adapter
 blocked_by: [05-attempt-conformance]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

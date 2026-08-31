@@ -2,7 +2,7 @@
 id: 07-durable-attempt-store
 title: Implement a crash-safe durable AttemptRepository adapter
 blocked_by: [05-attempt-conformance]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

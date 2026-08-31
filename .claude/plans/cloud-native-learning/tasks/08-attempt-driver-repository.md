@@ -2,7 +2,7 @@
 id: 08-attempt-driver-repository
 title: Add driver-backed AttemptRepository transport
 blocked_by: [05-attempt-conformance]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
