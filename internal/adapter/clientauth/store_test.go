@@ -952,7 +952,7 @@ func TestLogoutReconcilesLocalStateAndRevokesWithoutExposingTokens(t *testing.T)
 // TestRevocationErrorNeverLeaksProviderEndpointURL pins that a genuine
 // *url.Error against a provider-controlled endpoint (here, a connection
 // refused by an unreachable issuer) never reaches LogoutResult.RevocationError
-// verbatim -- url.Error.Error() embeds the full request URL, and ADR 0252
+// verbatim -- url.Error.Error() embeds the full request URL, and ADR 0277
 // excludes provider-controlled discovery endpoint values from errors,
 // diagnostics, and UI state.
 func TestRevocationErrorNeverLeaksProviderEndpointURL(t *testing.T) {

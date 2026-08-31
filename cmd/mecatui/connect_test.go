@@ -257,7 +257,7 @@ func TestRestartConnectActionsAndBrowserBoundary(t *testing.T) {
 
 // TestReauthenticateRestartAlwaysPassesNoBrowser pins that
 // restartFromConnectIntentWith's Reauthenticate branch passes true to the
-// login call unconditionally (ADR 0254: the recovery overlay never opens a
+// login call unconditionally (ADR 0271: the recovery overlay never opens a
 // browser). ConnectRestartIntent carries no NoBrowser field, so there is no
 // producer-supplied value that could reopen the browser path here.
 func TestReauthenticateRestartAlwaysPassesNoBrowser(t *testing.T) {
@@ -285,7 +285,7 @@ func TestReauthenticateRestartAlwaysPassesNoBrowser(t *testing.T) {
 		t.Fatalf("logins = %d, want 1", logins)
 	}
 	if !gotNoBrowser {
-		t.Fatal("login noBrowser = false, want true (ADR 0254)")
+		t.Fatal("login noBrowser = false, want true (ADR 0271)")
 	}
 }
 

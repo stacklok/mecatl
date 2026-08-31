@@ -546,7 +546,7 @@ func restartFromConnectIntentWith(argv []string, intent ui.ConnectRestartIntent,
 		conn, err := ops.connection(intent.Target)
 		if err == nil {
 			ctx, cancel := ops.loginContext(savedLoginCallbackTimeout)
-			// ADR 0254: the recovery overlay never opens a browser. This is
+			// ADR 0271: the recovery overlay never opens a browser. This is
 			// unconditional -- not read from the intent -- so no producer of
 			// ConnectRestartIntent can put the process back in the browser
 			// path for a reauthentication restart.

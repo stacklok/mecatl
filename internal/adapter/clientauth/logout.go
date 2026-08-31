@@ -226,7 +226,7 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 // exhausted-budget run is usually just "context deadline exceeded" again).
 // The recorded string is sanitized: err can originate from an http.Client
 // call against a provider-controlled endpoint (discovery or
-// revocation_endpoint), and ADR 0252 excludes provider-controlled discovery
+// revocation_endpoint), and ADR 0277 excludes provider-controlled discovery
 // endpoint values from errors, diagnostics, and UI state.
 func recordRevocationError(result *LogoutResult, id Identity, err error) {
 	if result.RevocationError == "" {

@@ -58,7 +58,7 @@ func runRemoteLogout(address string, args []string) error {
 		// Called at most once per logout, with every retained connection needing
 		// revocation, so one scoped client (its dial-approval policy spans every
 		// retained issuer) is reused for the whole operation instead of rebuilt
-		// per credential (ADR 0258's bounded-keep-alive intent). Each issuer's
+		// per credential (ADR 0275's bounded-keep-alive intent). Each issuer's
 		// own CA maps ONLY to that issuer's own endpoint -- scopedhttps.NewClient
 		// verifies each connection against its dialed endpoint's own pool only,
 		// never a union, so one retained connection's CA can never authenticate
