@@ -2,7 +2,7 @@
 id: 10-exact-source-evidence
 title: Reconstruct exact-source canonical learning evidence
 blocked_by: [09-durable-attempt-admission]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
