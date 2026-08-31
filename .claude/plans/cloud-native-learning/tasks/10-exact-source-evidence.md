@@ -2,9 +2,9 @@
 id: 10-exact-source-evidence
 title: Reconstruct exact-source canonical learning evidence
 blocked_by: [09-durable-attempt-admission]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/10-exact-source-evidence-repair"
+worktree: ".scratch/worktrees/10-exact-source-evidence-repair"
 issue: ""
 retries: 0
 last_error: ""
