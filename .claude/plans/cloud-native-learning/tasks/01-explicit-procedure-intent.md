@@ -2,7 +2,7 @@
 id: 01-explicit-procedure-intent
 title: Recognize verified affirmative procedure-learning imperatives
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
