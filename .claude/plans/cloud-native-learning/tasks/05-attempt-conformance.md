@@ -2,7 +2,7 @@
 id: 05-attempt-conformance
 title: Build shared AttemptRepository lifecycle conformance
 blocked_by: [04-attempt-repository-contract]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
