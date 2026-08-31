@@ -2,7 +2,7 @@
 id: 02-direct-draft-inactivity
 title: Preserve inactive direct SkillDraft behavior after intent admission
 blocked_by: [01-explicit-procedure-intent]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
