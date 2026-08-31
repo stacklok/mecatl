@@ -92,6 +92,52 @@ func TestExistingOnlyRegistryDoesNotCreateState(t *testing.T) {
 	}
 }
 
+// TestOpenExistingRegistryCanCompleteAWriteWhenRootExists pins that an
+// existing-only Registry's lock is real (not nil), so a write reachable via
+// Enroll -- e.g. a successful TUI reauthentication -- completes instead of
+// nil-pointer panicking on replaceTarget's r.lock.Lock().
+func TestOpenExistingRegistryCanCompleteAWriteWhenRootExists(t *testing.T) {
+	root := t.TempDir()
+	registry, err := OpenExistingRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	id := identity("existing-registry.example:443")
+	token := Token{RefreshToken: "refresh", AccessToken: "access", TokenType: "Bearer"}
+	if err := Enroll(t.Context(), Connection{Identity: id}, token, EnrollmentConfig{Registry: registry, Credentials: creds}); err != nil {
+		t.Fatalf("enroll via existing-only registry = %v", err)
+	}
+	conns, err := registry.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conns) != 1 || !conns[0].Identity.Equal(id) {
+		t.Fatalf("registry entries after enroll = %#v", conns)
+	}
+}
+
+// TestOpenExistingRegistryWriteFailsCleanlyWhenRootMissing pins that a write
+// through an existing-only Registry whose root was never created fails with
+// an ordinary I/O error -- never a nil-pointer panic, and never a silently
+// materialized root directory.
+func TestOpenExistingRegistryWriteFailsCleanlyWhenRootMissing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	registry, err := OpenExistingRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	id := identity("missing-registry.example:443")
+	token := Token{RefreshToken: "refresh", AccessToken: "access", TokenType: "Bearer"}
+	if err := Enroll(t.Context(), Connection{Identity: id}, token, EnrollmentConfig{Registry: registry, Credentials: creds}); err == nil {
+		t.Fatal("enroll against a never-created registry root unexpectedly succeeded")
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed enrollment created the registry root: %v", err)
+	}
+}
+
 func TestExistingOnlyStoreDoesNotCreateReplacementState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	backend := newMemoryKeyring()
@@ -877,7 +923,7 @@ func TestLogoutReconcilesLocalStateAndRevokesWithoutExposingTokens(t *testing.T)
 		t.Fatal(err)
 	}
 
-	result, err := Logout(t.Context(), target, LogoutConfig{Registry: reg, Credentials: creds, HTTPClient: func(context.Context, Connection) (*http.Client, error) { return server.Client(), nil }})
+	result, err := Logout(t.Context(), target, LogoutConfig{Registry: reg, Credentials: creds, HTTPClient: func(context.Context, []Connection) (*http.Client, error) { return server.Client(), nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -900,6 +946,49 @@ func TestLogoutReconcilesLocalStateAndRevokesWithoutExposingTokens(t *testing.T)
 	again, err := Logout(t.Context(), target, LogoutConfig{Registry: reg, Credentials: creds})
 	if err != nil || again.Entries != 0 {
 		t.Fatalf("idempotent logout = %#v, %v", again, err)
+	}
+}
+
+// TestRevocationErrorNeverLeaksProviderEndpointURL pins that a genuine
+// *url.Error against a provider-controlled endpoint (here, a connection
+// refused by an unreachable issuer) never reaches LogoutResult.RevocationError
+// verbatim -- url.Error.Error() embeds the full request URL, and ADR 0252
+// excludes provider-controlled discovery endpoint values from errors,
+// diagnostics, and UI state.
+func TestRevocationErrorNeverLeaksProviderEndpointURL(t *testing.T) {
+	root := t.TempDir()
+	reg, err := OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	const target = "unreachable.example:443"
+	id := identity(target)
+	id.Issuer = "https://127.0.0.1:1" // reserved; nothing listens, connection refused
+	if _, err := reg.Upsert(Connection{Identity: id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Upsert(t.Context(), id, Token{AccessToken: "access", RefreshToken: "refresh", TokenType: "Bearer"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Logout(t.Context(), target, LogoutConfig{Registry: reg, Credentials: creds, HTTPClient: func(context.Context, []Connection) (*http.Client, error) {
+		return &http.Client{Timeout: 2 * time.Second}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RevocationsFailed == 0 {
+		t.Fatal("expected the unreachable issuer to fail revocation")
+	}
+	if result.RevocationError == "" {
+		t.Fatal("expected a recorded revocation cause")
+	}
+	// The issuer prefix is intentionally kept -- it's operator-configured (the
+	// user chose it at login), not provider-controlled endpoint text. What must
+	// never surface is the raw dial/request error, which for a genuine
+	// *url.Error embeds the full discovery/revocation URL (scheme, host, path).
+	if strings.Contains(result.RevocationError, ".well-known") || strings.Contains(result.RevocationError, "dial tcp") || strings.Contains(result.RevocationError, "connection refused") {
+		t.Fatalf("revocation error leaked the raw dial/request error: %q", result.RevocationError)
 	}
 }
 
@@ -1005,7 +1094,7 @@ func TestLogoutReloadsOnceAfterCASConflict(t *testing.T) {
 	if _, err := reg.Upsert(Connection{Identity: id}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Logout(t.Context(), id.Target, LogoutConfig{Registry: reg, Credentials: rotating, HTTPClient: func(context.Context, Connection) (*http.Client, error) { return server.Client(), nil }})
+	result, err := Logout(t.Context(), id.Target, LogoutConfig{Registry: reg, Credentials: rotating, HTTPClient: func(context.Context, []Connection) (*http.Client, error) { return server.Client(), nil }})
 	if err != nil || !result.RegistryDeleted || len(revoked) != 2 {
 		t.Fatalf("result = %#v, err = %v, revoked = %#v", result, err, revoked)
 	}
@@ -1050,6 +1139,28 @@ func TestLogoutCASConflictRetainsRegistry(t *testing.T) {
 	}
 }
 
+// TestLogoutOfNeverCreatedRegistryIsACleanNoOp pins that logging out a target
+// whose registry root was never created (an idempotent destructive operation
+// over already-absent state) returns a clean zero-entry result -- never an
+// "acquire target transaction" lock error, and never creates the root.
+func TestLogoutOfNeverCreatedRegistryIsACleanNoOp(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	registry, err := OpenExistingRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Logout(t.Context(), "never-enrolled.example:443", LogoutConfig{Registry: registry})
+	if err != nil {
+		t.Fatalf("logout of never-created registry = %v", err)
+	}
+	if result.Entries != 0 {
+		t.Fatalf("result = %#v, want zero entries", result)
+	}
+	if _, statErr := os.Stat(root); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("logout created the registry root: %v", statErr)
+	}
+}
+
 func TestLogoutRevocationFailureDoesNotBlockLocalDelete(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1074,8 +1185,8 @@ func TestLogoutRevocationFailureDoesNotBlockLocalDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleaned := false
-	result, err := Logout(t.Context(), id.Target, LogoutConfig{Registry: reg, Credentials: creds, HTTPClient: func(ctx context.Context, conn Connection) (*http.Client, error) {
-		_, loadErr := creds.Load(ctx, conn.Identity)
+	result, err := Logout(t.Context(), id.Target, LogoutConfig{Registry: reg, Credentials: creds, HTTPClient: func(ctx context.Context, conns []Connection) (*http.Client, error) {
+		_, loadErr := creds.Load(ctx, conns[0].Identity)
 		cleaned = IsNotEnrolled(loadErr)
 		return server.Client(), nil
 	}})

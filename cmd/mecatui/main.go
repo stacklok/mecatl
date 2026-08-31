@@ -339,6 +339,9 @@ func runWithOptions(argv []string, options runOptions) error {
 		// non-interactive stdin (the OR lives here so config.go stays pure — it owns
 		// only the flag). The plain prompt hint is still shown in all three cases.
 		NoBanner: cfg.noBanner || cfg.quiet || !term.IsTerminal(int(os.Stdin.Fd())),
+		// Same non-interactive-stdin signal as NoBanner: a Reauthenticate restart
+		// must not attempt a browser launch it cannot complete headlessly.
+		NoBrowser: !term.IsTerminal(int(os.Stdin.Fd())),
 		// First-class opt-out: render inline in the normal buffer (preserving
 		// native scrollback) instead of the alternate screen. Default false.
 		NoAltScreen: cfg.noAltScreen,
@@ -490,12 +493,20 @@ type connectRestartOps struct {
 }
 
 func restartFromConnectIntent(argv []string, intent ui.ConnectRestartIntent, transport restartTransport) error {
-	return restartFromConnectIntentWith(argv, intent, transport, connectRestartOps{
+	return restartFromConnectIntentWith(argv, intent, transport, defaultConnectRestartOps())
+}
+
+// defaultConnectRestartOps is the production connectRestartOps wiring,
+// factored out so a test can assert exactly which functions it wires (e.g.
+// that Reauthenticate uses the existing-only login, never the creating one)
+// without invoking the real run/login side effects.
+func defaultConnectRestartOps() connectRestartOps {
+	return connectRestartOps{
 		run:          runWithOptions,
 		connection:   savedConnection,
-		login:        runSavedRemoteLogin,
+		login:        runExistingSavedRemoteLogin,
 		loginContext: newSavedLoginContext,
-	})
+	}
 }
 
 func connectRecoveryReason(action ui.ConnectAction) client.AuthReason {
@@ -538,7 +549,7 @@ func restartFromConnectIntentWith(argv []string, intent ui.ConnectRestartIntent,
 		conn, err := ops.connection(intent.Target)
 		if err == nil {
 			ctx, cancel := ops.loginContext(savedLoginCallbackTimeout)
-			err = ops.login(ctx, conn, false)
+			err = ops.login(ctx, conn, intent.NoBrowser)
 			cancel()
 		}
 		if err != nil {
@@ -785,9 +796,13 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 				if sourceErr != nil {
 					_ = store.Close()
 					// NewRefreshSource fails with ErrDiscovery when the issuer is
-					// unreachable, its TLS is untrusted, or JWKS will not load.
+					// unreachable, its TLS is untrusted, or JWKS will not load --
+					// an infrastructure/network problem, not evidence the local
+					// keyring/registry/store is broken. Return it unwrapped so it
+					// falls through AuthFailure's deliberate unclassified case
+					// instead of steering the user toward local-storage recovery.
 					if errors.Is(sourceErr, clientauth.ErrDiscovery) {
-						return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
+						return target, client.DialConfig{}, noop, sourceErr
 					}
 					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}

@@ -207,9 +207,6 @@ func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, no
 	})
 	token, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: conn.Identity, Presenter: presenter, PrivateHTTPS: true, TrustedCAPEM: ca})
 	if err != nil {
-		if errors.Is(err, clientauth.ErrDiscovery) {
-			return &client.AuthError{Reason: client.AuthStorageUnavailable}
-		}
 		return signinError(err)
 	}
 	if err := clientauth.Enroll(ctx, conn, token, clientauth.EnrollmentConfig{Registry: prepared.registry, Credentials: prepared.creds}); err != nil {

@@ -48,6 +48,9 @@ type ConnectRestartIntent struct {
 	// ResumeSessionID is retained only for same-target recovery actions. Main
 	// re-checks ownership through GetSession before adopting it.
 	ResumeSessionID string
+	// NoBrowser carries the process's headless posture into a Reauthenticate
+	// restart, so it doesn't attempt a browser launch it can't complete.
+	NoBrowser bool
 }
 
 type connectState struct {
@@ -141,6 +144,9 @@ func (m Model) connectRestartIntent() ConnectRestartIntent {
 	}
 	if intent.Action == Reauthenticate || intent.Action == RetryAfterCleanup {
 		intent.ResumeSessionID = m.connect.resumeSessionID
+	}
+	if intent.Action == Reauthenticate {
+		intent.NoBrowser = m.deps.NoBrowser
 	}
 	return intent
 }

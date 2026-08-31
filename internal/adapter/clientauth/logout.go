@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -58,14 +59,19 @@ type LogoutResult struct {
 
 // LogoutConfig supplies local state and an optional issuer-scoped HTTP client.
 // A nil Credentials repository retains registry metadata rather than making a
-// credential unreachable. HTTPClient failures affect revocation only.
+// credential unreachable. HTTPClient failures affect revocation only. Both
+// client builders are called AT MOST ONCE per Logout call, with every
+// retained connection needing revocation, so a single client (its scopedhttps
+// dial-approval policy spans every retained issuer) is reused across the
+// whole operation instead of rebuilt per credential.
 type LogoutConfig struct {
 	Registry    *Registry
 	Credentials *Credentials
-	HTTPClient  func(context.Context, Connection) (*http.Client, error)
-	// HTTPClientOwned may return a client created for this revocation attempt and
-	// whether Logout owns its idle-connection cleanup. HTTPClient remains caller-owned.
-	HTTPClientOwned func(context.Context, Connection) (*http.Client, bool, error)
+	HTTPClient  func(context.Context, []Connection) (*http.Client, error)
+	// HTTPClientOwned may return one client for this whole revocation attempt
+	// and whether Logout owns its idle-connection cleanup. HTTPClient remains
+	// caller-owned.
+	HTTPClientOwned func(context.Context, []Connection) (*http.Client, bool, error)
 }
 
 type pendingRevocation struct {
@@ -87,6 +93,14 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 		return result, ErrInvalidIdentity
 	}
 	result.Target = canonical
+	// An existing-only registry whose root was never created has no state to log
+	// out of; lockTarget's flock file would otherwise fail with ENOENT trying to
+	// create a lock inside a directory that doesn't exist. Nothing else can have
+	// created it between the two calls below except a genuine enrollment, which
+	// legitimately races with logout the same way any check-then-act would.
+	if _, statErr := os.Stat(cfg.Registry.root); errors.Is(statErr, os.ErrNotExist) {
+		return result, nil
+	}
 	unlock, err := cfg.Registry.lockTarget(ctx, canonical)
 	if err != nil {
 		return result, err
@@ -140,15 +154,51 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 	return result, nil
 }
 
-func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientFor func(context.Context, Connection) (*http.Client, error), ownedClientFor func(context.Context, Connection) (*http.Client, bool, error), result *LogoutResult) {
+func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientFor func(context.Context, []Connection) (*http.Client, error), ownedClientFor func(context.Context, []Connection) (*http.Client, bool, error), result *LogoutResult) {
 	// Revocation is deliberately after local cleanup and outside the target
 	// transaction. One operation-wide budget covers client construction (including
 	// DNS), discovery, and every token; a stalled issuer must not block enrollment.
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, revocationTimeout)
 	defer cancelCleanup()
+
+	var conns []Connection
+	for _, item := range revoke {
+		if revocableTokenCount(item.token) > 0 {
+			conns = append(conns, item.conn)
+		}
+	}
+	if len(conns) == 0 || (clientFor == nil && ownedClientFor == nil) {
+		return
+	}
+
+	var (
+		client *http.Client
+		owned  bool
+		err    error
+	)
+	if ownedClientFor != nil {
+		client, owned, err = ownedClientFor(cleanupCtx, conns)
+	} else {
+		client, err = clientFor(cleanupCtx, conns)
+	}
+	if err != nil {
+		// The one operation-wide client failed to build; every retained
+		// credential's revocation is unattempted.
+		for _, item := range revoke {
+			if remaining := revocableTokenCount(item.token); remaining > 0 {
+				result.RevocationsFailed += remaining
+				recordRevocationError(result, item.conn.Identity, err)
+			}
+		}
+		return
+	}
+	if owned && client != nil {
+		defer client.CloseIdleConnections()
+	}
+
 	for _, item := range revoke {
 		remaining := revocableTokenCount(item.token)
-		if remaining == 0 || (clientFor == nil && ownedClientFor == nil) {
+		if remaining == 0 {
 			continue
 		}
 		if err := cleanupCtx.Err(); err != nil {
@@ -156,28 +206,7 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 			recordRevocationError(result, item.conn.Identity, err)
 			continue
 		}
-		var (
-			client *http.Client
-			err    error
-			owned  bool
-		)
-		if ownedClientFor != nil {
-			client, owned, err = ownedClientFor(cleanupCtx, item.conn)
-		} else if clientFor != nil {
-			client, err = clientFor(cleanupCtx, item.conn)
-		}
-		if err != nil {
-			if owned && client != nil {
-				client.CloseIdleConnections()
-			}
-			result.RevocationsFailed += remaining
-			recordRevocationError(result, item.conn.Identity, err)
-			continue
-		}
 		attempted, failed, err := revokeTokens(cleanupCtx, client, item.conn.Identity, item.token)
-		if owned && client != nil {
-			client.CloseIdleConnections()
-		}
 		result.RevocationsAttempted += attempted
 		result.RevocationsFailed += failed
 		if err != nil {
@@ -189,10 +218,53 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 // recordRevocationError keeps only the first cause, which is almost always
 // the one that actually explains the failure (a later error in the same
 // exhausted-budget run is usually just "context deadline exceeded" again).
+// The recorded string is sanitized: err can originate from an http.Client
+// call against a provider-controlled endpoint (discovery or
+// revocation_endpoint), and ADR 0252 excludes provider-controlled discovery
+// endpoint values from errors, diagnostics, and UI state.
 func recordRevocationError(result *LogoutResult, id Identity, err error) {
 	if result.RevocationError == "" {
-		result.RevocationError = fmt.Sprintf("issuer %s: %v", id.Issuer, err)
+		result.RevocationError = fmt.Sprintf("issuer %s: %s", id.Issuer, sanitizeRevocationError(err))
 	}
+}
+
+// revocationStatusError reports a non-2xx response from a provider's
+// revocation or discovery endpoint. It carries only the token kind (or
+// "discovery") and the status code, both harness-authored -- never the
+// endpoint URL or any provider response body.
+type revocationStatusError struct {
+	stage string
+	code  int
+}
+
+func (e *revocationStatusError) Error() string {
+	return fmt.Sprintf("%s: HTTP %d", e.stage, e.code)
+}
+
+// sanitizeRevocationError classifies a revocation-path error into a closed,
+// harness-authored category. A raw http.Client error is typically a
+// *url.Error whose Error() embeds the request URL verbatim (Op "URL": Err);
+// that URL is provider-controlled (from OIDC discovery), so it must never be
+// echoed. Only recognized, URL-free shapes render their own detail.
+func sanitizeRevocationError(err error) string {
+	var statusErr *revocationStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Error()
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		if urlErr.Timeout() {
+			return "timed out"
+		}
+		return "network unreachable"
+	}
+	return "revocation failed"
 }
 
 func removeLogoutCredentials(ctx context.Context, entries []Connection, creds *Credentials, result *LogoutResult) (bool, []pendingRevocation) {
@@ -322,7 +394,7 @@ func revokeTokens(ctx context.Context, client *http.Client, id Identity, token T
 		_ = res.Body.Close()
 		if res.StatusCode != http.StatusOK {
 			failed++
-			lastErr = fmt.Errorf("%s revocation: HTTP %d", item.hint, res.StatusCode)
+			lastErr = &revocationStatusError{stage: item.hint + " revocation", code: res.StatusCode}
 		}
 	}
 	return attempted, failed, lastErr

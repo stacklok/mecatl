@@ -12,17 +12,26 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+// TestLogoutUsesOneProviderCleanupBudgetOutsideTargetLock pins that the HTTP
+// client is built exactly ONCE per Logout call -- covering every retained
+// connection needing revocation, not once per connection -- and outside the
+// target transaction lock, with a bounded deadline.
 func TestLogoutUsesOneProviderCleanupBudgetOutsideTargetLock(t *testing.T) {
 	reg, creds, target, entries := duplicateLogoutState(t)
-	var deadlines []time.Time
+	builds := 0
+	var deadline time.Time
 	result, err := Logout(t.Context(), target, LogoutConfig{
 		Registry: reg, Credentials: creds,
-		HTTPClient: func(ctx context.Context, _ Connection) (*http.Client, error) {
-			deadline, ok := ctx.Deadline()
+		HTTPClient: func(ctx context.Context, conns []Connection) (*http.Client, error) {
+			builds++
+			if len(conns) != len(entries) {
+				t.Fatalf("client requested for %d connections, want %d", len(conns), len(entries))
+			}
+			var ok bool
+			deadline, ok = ctx.Deadline()
 			if !ok {
 				t.Fatal("HTTP client construction context has no deadline")
 			}
-			deadlines = append(deadlines, deadline)
 			unlock, lockErr := reg.lockTarget(ctx, target)
 			if lockErr != nil {
 				t.Fatalf("provider cleanup ran under target lock: %v", lockErr)
@@ -34,15 +43,10 @@ func TestLogoutUsesOneProviderCleanupBudgetOutsideTargetLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deadlines) != len(entries) {
-		t.Fatalf("HTTP client constructions = %d, want %d", len(deadlines), len(entries))
+	if builds != 1 {
+		t.Fatalf("HTTP client constructions = %d, want 1 (one shared client for the whole operation)", builds)
 	}
-	for _, deadline := range deadlines[1:] {
-		if !deadline.Equal(deadlines[0]) {
-			t.Fatalf("provider cleanup received fresh budgets: %v", deadlines)
-		}
-	}
-	if remaining := time.Until(deadlines[0]); remaining <= 0 || remaining > revocationTimeout {
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > revocationTimeout {
 		t.Fatalf("provider cleanup deadline remaining = %v", remaining)
 	}
 	if result.RevocationsAttempted != 0 || result.RevocationsFailed != 2*len(entries) {
@@ -50,40 +54,44 @@ func TestLogoutUsesOneProviderCleanupBudgetOutsideTargetLock(t *testing.T) {
 	}
 }
 
-func TestLogoutProviderEntriesConsumeOneSharedBudget(t *testing.T) {
+// TestLogoutSharedClientServesEveryEntryUnderOneBudget pins that the single
+// built client (not a fresh one per entry) is reused for every retained
+// connection's revocation requests, and none of those requests observe a
+// renewed deadline.
+func TestLogoutSharedClientServesEveryEntryUnderOneBudget(t *testing.T) {
 	reg, creds, target, entries := duplicateLogoutState(t)
-	parent, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
-	defer cancel()
-	remaining := make([]time.Duration, 0, len(entries))
-	calls := 0
-	result, err := Logout(parent, target, LogoutConfig{
+	builds := 0
+	var deadlines []time.Time
+	result, err := Logout(t.Context(), target, LogoutConfig{
 		Registry: reg, Credentials: creds,
-		HTTPClient: func(ctx context.Context, _ Connection) (*http.Client, error) {
-			deadline, ok := ctx.Deadline()
-			if !ok {
-				t.Fatal("provider work has no operation deadline")
+		HTTPClient: func(_ context.Context, conns []Connection) (*http.Client, error) {
+			builds++
+			if len(conns) != len(entries) {
+				t.Fatalf("client requested for %d connections, want %d", len(conns), len(entries))
 			}
-			remaining = append(remaining, time.Until(deadline))
-			calls++
-			if calls == 1 {
-				timer := time.NewTimer(100 * time.Millisecond)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
+			return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				deadline, ok := req.Context().Deadline()
+				if !ok {
+					t.Fatal("revocation request has no deadline")
 				}
-			}
-			return nil, errors.New("offline")
+				deadlines = append(deadlines, deadline)
+				return nil, errors.New("offline")
+			})}, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != len(entries) || len(remaining) != len(entries) {
-		t.Fatalf("provider calls = %d, remaining samples = %d", calls, len(remaining))
+	if builds != 1 {
+		t.Fatalf("HTTP client constructions = %d, want 1 (one shared client for every entry)", builds)
 	}
-	if remaining[1] >= remaining[0]-75*time.Millisecond {
-		t.Fatalf("later entry received a fresh budget: first=%v later=%v", remaining[0], remaining[1])
+	if len(deadlines) < len(entries) {
+		t.Fatalf("revocation requests observed = %d, want at least one per entry (%d)", len(deadlines), len(entries))
+	}
+	for _, d := range deadlines[1:] {
+		if !d.Equal(deadlines[0]) {
+			t.Fatalf("a later entry's request observed a renewed deadline: %v vs %v", d, deadlines[0])
+		}
 	}
 	if result.RevocationsFailed != 2*len(entries) {
 		t.Fatalf("revocation accounting = %#v", result)
@@ -98,7 +106,7 @@ func TestLogoutShorterCallerDeadlineStopsRemoteWorkWithoutRestoringState(t *test
 	calls := 0
 	result, err := Logout(parent, target, LogoutConfig{
 		Registry: reg, Credentials: creds,
-		HTTPClient: func(ctx context.Context, _ Connection) (*http.Client, error) {
+		HTTPClient: func(ctx context.Context, _ []Connection) (*http.Client, error) {
 			calls++
 			deadline, ok := ctx.Deadline()
 			if !ok || !deadline.Equal(parentDeadline) {

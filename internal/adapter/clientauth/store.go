@@ -690,15 +690,21 @@ func OpenRegistry(root string) (*Registry, error) {
 	return &Registry{path: path, root: root, lock: flock.New(path+".lock", flock.SetPermissions(0600))}, nil
 }
 
-// OpenExistingRegistry opens registry metadata without creating the root,
-// registry file, or lock. It is for saved-target discovery and connection only.
+// OpenExistingRegistry opens registry metadata without creating the root or
+// registry file. The returned Registry's lock is real but inert (flock.New
+// performs no I/O until Lock/TryLock is called), so a subsequent write through
+// Enroll's existing-target transaction can still serialize correctly; a write
+// against a root that was never created still fails cleanly (os.CreateTemp on
+// a missing directory, or the lock file's own missing parent) rather than
+// silently materializing new state.
 func OpenExistingRegistry(root string) (*Registry, error) {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return nil, errors.New("clientauth: registry root must be absolute and clean")
 	}
 	info, err := os.Stat(root)
 	if errors.Is(err, os.ErrNotExist) {
-		return &Registry{path: filepath.Join(root, "clientauth-connections.json"), root: filepath.Clean(root), existingOnly: true}, nil
+		path := filepath.Join(root, "clientauth-connections.json")
+		return &Registry{path: path, root: filepath.Clean(root), existingOnly: true, lock: flock.New(path+".lock", flock.SetPermissions(0600))}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -712,7 +718,7 @@ func OpenExistingRegistry(root string) (*Registry, error) {
 	}
 	root = filepath.Clean(root)
 	path := filepath.Join(root, "clientauth-connections.json")
-	return &Registry{path: path, root: root, existingOnly: true}, nil
+	return &Registry{path: path, root: root, existingOnly: true, lock: flock.New(path+".lock", flock.SetPermissions(0600))}, nil
 }
 
 // List returns all saved connections.

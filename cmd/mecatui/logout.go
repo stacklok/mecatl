@@ -35,13 +35,13 @@ func runRemoteLogout(address string, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	root := filepath.Join(xdg.ConfigHome, "mecatl")
-	registry, err := clientauth.OpenRegistry(root)
+	registry, err := clientauth.OpenExistingRegistry(root)
 	if err != nil {
 		return fmt.Errorf("logout: opening the connection registry failed: %w", err)
 	}
 
 	var creds *clientauth.Credentials
-	keys, keyErr := clientauth.NewKeyringProvider(root)
+	keys, keyErr := clientauth.NewExistingKeyringProvider(root)
 	var store *credentialstore.EncryptedFileStore
 	var storeErr error
 	if keyErr == nil {
@@ -55,12 +55,27 @@ func runRemoteLogout(address string, args []string) error {
 	}
 	result, err := clientauth.Logout(ctx, address, clientauth.LogoutConfig{
 		Registry: registry, Credentials: creds,
-		HTTPClientOwned: func(ctx context.Context, conn clientauth.Connection) (*http.Client, bool, error) {
-			ca, err := os.ReadFile(conn.IssuerCAFile)
-			if err != nil {
-				return nil, false, err
+		// Called at most once per logout, with every retained connection needing
+		// revocation, so one scoped client (its dial-approval policy spans every
+		// retained issuer) is reused for the whole operation instead of rebuilt
+		// per credential (ADR 0258's bounded-keep-alive intent).
+		HTTPClientOwned: func(ctx context.Context, conns []clientauth.Connection) (*http.Client, bool, error) {
+			endpoints := make([]string, 0, len(conns))
+			seen := make(map[string]bool, len(conns))
+			var caPEM []byte
+			for _, conn := range conns {
+				ca, err := os.ReadFile(conn.IssuerCAFile)
+				if err != nil {
+					return nil, false, err
+				}
+				caPEM = append(caPEM, ca...)
+				caPEM = append(caPEM, '\n')
+				if !seen[conn.Identity.Issuer] {
+					seen[conn.Identity.Issuer] = true
+					endpoints = append(endpoints, conn.Identity.Issuer)
+				}
 			}
-			client, err := scopedhttps.NewClient(ctx, []string{conn.Identity.Issuer}, ca)
+			client, err := scopedhttps.NewClient(ctx, endpoints, caPEM)
 			return client, true, err
 		},
 	})

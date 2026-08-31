@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -167,5 +168,28 @@ func TestExistingSavedRemoteLoginMissingStoreDoesNotLaunchBrowserOrCreateState(t
 	}
 	if _, err := os.Stat(filepath.Join(xdg.ConfigHome, "mecatl")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("reauthentication created credential root: %v", err)
+	}
+}
+
+// TestSigninErrorLeavesDiscoveryFailuresUnclassified pins that
+// clientauth.ErrDiscovery (issuer unreachable, untrusted TLS, or unloadable
+// JWKS -- an infrastructure/network problem) is never wrapped into a
+// *client.AuthError. AuthStorageUnavailable's documented contract is a LOCAL
+// dependency reauthentication cannot fix; wrapping a discovery failure in it
+// would steer the user toward resetting local storage for a problem that
+// storage reset can't fix, and would falsely claim reauthentication won't
+// help when it might. signinError must instead return the raw error so
+// client.AuthFailure's deliberate "remain unclassified" fallback applies.
+func TestSigninErrorLeavesDiscoveryFailuresUnclassified(t *testing.T) {
+	err := signinError(fmt.Errorf("dial issuer: %w", clientauth.ErrDiscovery))
+	var authErr *client.AuthError
+	if errors.As(err, &authErr) {
+		t.Fatalf("signinError wrapped a discovery failure in AuthError{%v}", authErr.Reason)
+	}
+	if !errors.Is(err, clientauth.ErrDiscovery) {
+		t.Fatalf("signinError lost the discovery cause: %v", err)
+	}
+	if reason, ok := client.AuthFailure(err, false); ok {
+		t.Fatalf("discovery failure classified as %q, want unclassified", reason)
 	}
 }

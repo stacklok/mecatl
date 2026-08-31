@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -130,6 +132,28 @@ func TestCanonicalSavedTargetFlowsThroughRecoveryRestart(t *testing.T) {
 	}
 }
 
+// TestDefaultConnectRestartOpsUsesExistingOnlyReauthLogin pins that
+// restartFromConnectIntent's production wiring uses the existing-only
+// reauthentication login (runExistingSavedRemoteLogin), never the creating one
+// (runSavedRemoteLogin) -- a missing local keyring/store must not look like
+// corruption and get silently replaced during a Reauthenticate restart.
+// runExistingSavedRemoteLogin's own behavior (existing-only, no state
+// creation) is pinned separately by
+// TestExistingSavedRemoteLoginMissingStoreDoesNotLaunchBrowserOrCreateState in
+// login_test.go; this test closes the loop by proving that function is the
+// one actually wired in.
+func TestDefaultConnectRestartOpsUsesExistingOnlyReauthLogin(t *testing.T) {
+	got := reflect.ValueOf(defaultConnectRestartOps().login).Pointer()
+	want := reflect.ValueOf(runExistingSavedRemoteLogin).Pointer()
+	creating := reflect.ValueOf(runSavedRemoteLogin).Pointer()
+	if got == creating {
+		t.Fatal("restartFromConnectIntent still wires the creating login (runSavedRemoteLogin)")
+	}
+	if got != want {
+		t.Fatal("restartFromConnectIntent does not wire runExistingSavedRemoteLogin")
+	}
+}
+
 func TestRestartTargetSwitchDropsPriorTransportAndResume(t *testing.T) {
 	var gotArgv []string
 	var gotOptions runOptions
@@ -227,6 +251,44 @@ func TestRestartConnectActionsAndBrowserBoundary(t *testing.T) {
 			wantResume := action == ui.Reauthenticate || action == ui.RetryAfterCleanup
 			if (lastOptions.connectResumeSessionID != "") != wantResume {
 				t.Fatalf("action %d: resume=%q, want present=%v", action, lastOptions.connectResumeSessionID, wantResume)
+			}
+		})
+	}
+}
+
+// TestReauthenticateRestartHonorsHeadlessIntent pins that a Reauthenticate
+// restart threads the ORIGINAL invocation's headless posture (intent.NoBrowser,
+// set from the TUI's own non-interactive-stdin detection) into the login call,
+// instead of hardcoding a browser launch attempt that cannot complete in a
+// headless/SSH environment.
+func TestReauthenticateRestartHonorsHeadlessIntent(t *testing.T) {
+	for _, noBrowser := range []bool{false, true} {
+		t.Run(fmt.Sprintf("noBrowser=%v", noBrowser), func(t *testing.T) {
+			var gotNoBrowser bool
+			var logins int
+			ops := connectRestartOps{
+				run: func([]string, runOptions) error { return nil },
+				connection: func(target string) (clientauth.Connection, error) {
+					return clientauth.Connection{Identity: clientauth.Identity{Target: target}}, nil
+				},
+				login: func(_ context.Context, _ clientauth.Connection, headless bool) error {
+					logins++
+					gotNoBrowser = headless
+					return nil
+				},
+				loginContext: func(time.Duration) (context.Context, context.CancelFunc) {
+					return context.WithCancel(context.Background())
+				},
+			}
+			err := restartFromConnectIntentWith([]string{"mecatui"}, ui.ConnectRestartIntent{Target: "canonical.example:443", Action: ui.Reauthenticate, NoBrowser: noBrowser}, restartTransport{Target: "canonical.example:443"}, ops)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if logins != 1 {
+				t.Fatalf("logins = %d, want 1", logins)
+			}
+			if gotNoBrowser != noBrowser {
+				t.Fatalf("login noBrowser = %v, want %v", gotNoBrowser, noBrowser)
 			}
 		})
 	}

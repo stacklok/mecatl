@@ -188,6 +188,11 @@ type Deps struct {
 	// BearerBacked records credential provenance for classifying server auth
 	// responses. It contains no credential material.
 	BearerBacked bool
+	// NoBrowser mirrors the process's own headless detection (a non-interactive
+	// stdin, same signal as NoBanner's auto-force) so a Reauthenticate restart
+	// prints the OIDC authorization URL instead of attempting a browser launch
+	// that cannot succeed in that environment.
+	NoBrowser bool
 	// InitialModel is the persisted selection loaded at launch (composition-side,
 	// from the state file). The picker seeds its active selection from it (the ●
 	// marker) and the startup CreateSession carries it — AFTER the connect-time
