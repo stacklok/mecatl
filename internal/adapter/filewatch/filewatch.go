@@ -87,6 +87,33 @@ func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onEr
 		}
 	}
 	defer stopTimer()
+	arm := func(now time.Time) {
+		if firstAt.IsZero() {
+			firstAt = now
+		}
+		fireAt := now.Add(debounce)
+		deadline := firstAt.Add(maxDebounce)
+		if fireAt.After(deadline) {
+			fireAt = deadline
+		}
+		wait := time.Until(fireAt)
+		if wait < 0 {
+			wait = 0
+		}
+		if timer == nil {
+			timer = time.NewTimer(wait)
+		} else {
+			stopTimer()
+			timer.Reset(wait)
+		}
+		timerC = timer.C
+		if armed != nil {
+			select {
+			case armed <- struct{}{}:
+			default:
+			}
+		}
+	}
 
 	for {
 		select {
@@ -96,36 +123,22 @@ func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onEr
 			if !ok {
 				return
 			}
-			now := time.Now()
-			if firstAt.IsZero() {
-				firstAt = now
-			}
-			fireAt := now.Add(debounce)
-			deadline := firstAt.Add(maxDebounce)
-			if fireAt.After(deadline) {
-				fireAt = deadline
-			}
-			wait := time.Until(fireAt)
-			if wait < 0 {
-				wait = 0
-			}
-			if timer == nil {
-				timer = time.NewTimer(wait)
-			} else {
-				stopTimer()
-				timer.Reset(wait)
-			}
-			timerC = timer.C
-			if armed != nil {
-				select {
-				case armed <- struct{}{}:
-				default:
-				}
-			}
+			arm(time.Now())
 		case <-timerC:
-			timerC = nil
-			firstAt = time.Time{}
-			onChange()
+			// fsnotify may already have queued events when the debounce timer
+			// becomes ready. Drain them before committing a callback: select's
+			// random choice between two ready cases must not split one burst.
+			drained, open := drainEvents(w.watcher.Events)
+			if !open {
+				return
+			}
+			if drained {
+				arm(time.Now())
+			} else {
+				timerC = nil
+				firstAt = time.Time{}
+				onChange()
+			}
 		case err, ok := <-w.watcher.Errors:
 			if !ok {
 				return
@@ -133,6 +146,20 @@ func (w *Watcher) run(debounce, maxDebounce time.Duration, onChange func(), onEr
 			if onError != nil {
 				onError(err)
 			}
+		}
+	}
+}
+
+func drainEvents(events <-chan fsnotify.Event) (drained, open bool) {
+	for {
+		select {
+		case _, ok := <-events:
+			if !ok {
+				return false, false
+			}
+			drained = true
+		default:
+			return drained, true
 		}
 	}
 }
