@@ -475,6 +475,89 @@ func RunCursor(t *testing.T, s CursorSuite) {
 		}
 	})
 
+	t.Run("a reset during a live follow expires the cursor", func(t *testing.T) {
+		// The live-follow sibling of the case above, and a genuinely different
+		// code path: the cold case is caught by the entry-point DecodeCursor,
+		// whereas a follower has ALREADY passed that check and is parked at the
+		// tail when the basis moves under it. A backend that reads the generation
+		// once at entry and then trusts it for the life of the iterator passes
+		// the cold case and silently streams the replacement log's records here.
+		//
+		// Raised in review on #869 against redisstore, which did exactly that.
+		// memstore and jsonlstore both re-checked per cycle already, each with a
+		// comment explaining why — a divergence on a documented contract point
+		// that no backend's own tests could catch, which is precisely what a
+		// shared suite is for.
+		log := s.New(t)
+		const id session.SessionID = "conf-cursor-reset-mid-follow"
+		if _, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 0, Text: "old basis"}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+
+		// One ordered channel rather than separate record and error channels: the
+		// assertion IS which of the two arrives, and a goroutine that closes its
+		// record channel on the way out of an error makes both ready at once, so
+		// a select over two channels would pick between them at random.
+		type outcome struct {
+			rec  port.LogRecord
+			err  error
+			done bool
+		}
+		followCtx, cancel := context.WithTimeout(ctx, followTimeout)
+		defer cancel()
+		outcomes := make(chan outcome, 8)
+		go func() {
+			for rec, err := range log.ReadAfter(followCtx, id, "", port.ReadOptions{Follow: true}) {
+				if err != nil {
+					outcomes <- outcome{err: err}
+					return
+				}
+				outcomes <- outcome{rec: rec}
+			}
+			outcomes <- outcome{done: true}
+		}()
+
+		next := func(what string) outcome {
+			t.Helper()
+			select {
+			case got := <-outcomes:
+				return got
+			case <-time.After(followTimeout):
+				t.Fatalf("timed out waiting for %s", what)
+				return outcome{}
+			}
+		}
+
+		// Drain the pre-reset record first, so the follower is provably parked at
+		// the tail — past its entry-point cursor check — before the basis moves.
+		// Without this the backend could still be inside its initial drain and
+		// the test would prove nothing about the follow path.
+		switch first := next("the record present before the reset"); {
+		case first.err != nil:
+			t.Fatalf("follow yielded error %v before the reset", first.err)
+		case first.done:
+			t.Fatal("follow ended before the reset")
+		case record{first.rec}.Text() != "old basis":
+			t.Fatalf("first followed record = %q, want %q", record{first.rec}.Text(), "old basis")
+		}
+
+		s.Reset(t, log, id)
+		if _, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 0, Text: "new basis"}); err != nil {
+			t.Fatalf("AppendEvent after reset: %v", err)
+		}
+
+		switch got := next("the follower's reaction to its log being reset"); {
+		case got.err != nil:
+			if !errors.Is(got.err, port.ErrCursorExpired) {
+				t.Errorf("a follower whose log was reset got error %v, want ErrCursorExpired; anything else leaves a client unable to tell a moved basis from an infrastructure fault it should retry", got.err)
+			}
+		case got.done:
+			t.Error("a follower whose log was reset ended cleanly, which is indistinguishable from the log simply having no more records; it must yield ErrCursorExpired")
+		default:
+			t.Errorf("a follower whose log was reset was handed record %q from the REPLACEMENT log instead of ErrCursorExpired — this is the silent-wrong-data case generations exist to prevent", record{got.rec}.Text())
+		}
+	})
+
 	t.Run("a malformed cursor is rejected, never coerced", func(t *testing.T) {
 		// AC6.4. Every one of these could plausibly be "helpfully" treated as the
 		// beginning of the log. That help is what loses data: a client whose

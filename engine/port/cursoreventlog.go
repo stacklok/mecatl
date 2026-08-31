@@ -202,6 +202,21 @@ type ReadOptions struct {
 	//
 	// This is the bounded paging the legacy Read cannot express: it reads the
 	// whole log and stops, so a long transcript has no way to arrive in pieces.
+	//
+	// Zero bounds the SEQUENCE, not the FETCH. It means "yield records until the
+	// log ends or the context is cancelled" — it is NOT permission to pull an
+	// unbounded response out of storage in one round trip. A backend may, and for
+	// a large log should, page internally at whatever size it likes while
+	// continuing to yield; that choice is invisible through the iterator, so it
+	// is a backend decision rather than a contract term. Stated because the
+	// natural reading of "unbounded" is to pass the caller's zero straight
+	// through to the storage call, which turns a long transcript into one large
+	// allocation (raised in review on #868).
+	//
+	// When Limit is POSITIVE it is a TOTAL budget for the call, not a per-wake-up
+	// one: reaching it ends the read even with Follow set. A follower wanting an
+	// unbounded tail sets Limit to zero — under the per-wake-up reading a total
+	// cap would be inexpressible, whereas this way both are.
 	Limit int
 
 	// Follow keeps the iterator open at the tail instead of ending there,
@@ -210,6 +225,9 @@ type ReadOptions struct {
 	// A follow that ends because ctx was cancelled returns WITHOUT yielding an
 	// error: cancellation is how a watch is meant to end, and reporting it as a
 	// fault would make every clean detach look like a failure in the logs.
+	//
+	// A positive Limit still applies and still ends the read: Follow means "do
+	// not stop at the tail", not "ignore the budget".
 	Follow bool
 }
 
