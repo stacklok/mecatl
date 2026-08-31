@@ -6,7 +6,19 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 )
+
+func TestVersionInvocationIsExact(t *testing.T) {
+	if !buildinfo.IsVersion([]string{"mecademo", "--version"}) {
+		t.Fatal("exact --version was not recognized")
+	}
+	for _, args := range [][]string{{"--version", "--openai"}, {"-version"}} {
+		if _, err := parseFlags(args); err == nil {
+			t.Errorf("parseFlags(%v) accepted a non-exact version invocation", args)
+		}
+	}
+}
 
 // TestRunScenarioOffline runs the demo's offline scenario against mockllm and
 // asserts the emitted event sequence proves the whole shape of the loop: a turn

@@ -192,7 +192,7 @@ style **known paths** (`skills.ResolveSources`): project-level
 `$XDG_CONFIG_HOME/mecatl/skills` (or `~/.config/mecatl/skills`) and `~/.claude/skills`,
 with precedence **explicit > project > user**. With neither flag set, the resolver
 yields no sources and nothing is read. Discovery (reading files, YAML parsing via
-`go.yaml.in/yaml/v3`) is an adapter concern; nothing in this package is imported
+`github.com/goccy/go-yaml`) is an adapter concern; nothing in this package is imported
 by a domain package — it merely implements the domain `tool.Tool` interface.
 
 ### The engine as an embeddable library
@@ -201,7 +201,7 @@ The extensibility story is not only "swap an adapter inside mecatl" — `engine/
 is **its own Go module** (`github.com/stacklok/mecatl/engine`), so an external
 consumer can import the loop, the domain, and the ports directly without pulling
 in mecatl's full dependency cone. The engine module's standalone closure is
-deliberately tiny — `doublestar` + `robfig/cron` + `go.yaml.in/yaml/v3` +
+deliberately tiny — `doublestar` + `robfig/cron` + `github.com/goccy/go-yaml` +
 `x/sync` (+ test-only `goleak`) — versus the
 toolhive/k8s/OTel/gRPC cone the root module carries; an embedding host brings its
 own adapters. The exported identifiers of the **seven core packages** (`session`,

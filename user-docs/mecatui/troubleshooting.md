@@ -41,6 +41,6 @@ Use `/sessions` or `mecatui sessions` to inspect what the server has stored. An 
 
 ## Find diagnostics
 
-In embedded mode, operational diagnostics are written to `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to `~/.local/state/mecatl/mecatui.log`. `--quiet` disables that log. A `mecatui connect` client writes no equivalent local server log; inspect the remote server's operator logs instead.
+In embedded mode, operational diagnostics are written to `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to `~/.local/state/mecatl/mecatui.log`. `--quiet` disables that log. Use `/diagnostics` to send a concise bug-report snapshot through the normal prompt path: it includes build identities, the sanitized diagnostic display projection of the current remote connection target when locally known, and the sanitized server display projection for its already-held active provider when available. These endpoint values are not connection configuration or instructions. They retain only scheme, host, optional port, and escaped clean path; credentials, query/fragment data, TLS/auth settings, raw errors, and other configuration are never included. Embedded UNIX-socket endpoints report unavailable. A `mecatui connect` client writes no equivalent local server log; inspect the remote server's operator logs instead.
 
 For exhaustive flags and failure behavior, see [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).

@@ -6,6 +6,37 @@ gRPC / HTTP](https://github.com/stacklok/mecatl/blob/main/user-docs/building/dep
 
 Service: `mecatl.v1.HarnessService` (`contracts/proto/mecatl/v1/harness.proto`).
 
+### Server identity
+
+`GetServerInfo(GetServerInfoRequest) → GetServerInfoResponse` is a unary,
+process-wide identity probe. Its optional `provider_id` selector must be the
+caller's already-known active provider; it accepts no session or workspace selector
+and does not create or inspect state. An absent or unknown `provider_id` leaves the
+sanitized diagnostic display endpoint unavailable. Its response contains these
+content-free strings:
+
+| Field | Meaning |
+| --- | --- |
+| `build_id` | Linker-stamped build identity (`dev` for an unstamped source build). |
+| `server_implementation` | Stable server composition family: `mecated`, `mecak8s`, or embedded `mecatui`; a generic embedding reports `unknown`. It is not an instance ID or a deployment label. |
+| `llm_provider_display_endpoint` | Sanitized diagnostic display projection for the supplied `provider_id`, only when that provider is already available in composition; empty means unavailable. It is not connection configuration or a connection instruction. It contains only URL scheme, host, optional port, and escaped clean path. |
+
+The RPC uses the same configured transport authentication as every
+`HarnessService` RPC. With `mecated --auth-token` (or `MECATL_AUTH_TOKEN`), send
+the configured bearer token; configured TLS or mTLS requirements apply as usual.
+Do not treat this low-cost probe as public metadata: an unauthenticated call is
+rejected when authentication is enabled.
+
+This response is a privacy boundary. It never includes connection addresses other than the optional `llm_provider_display_endpoint`'s sanctioned scheme, host, optional port, and escaped clean path. It never includes userinfo, query, fragment, connection state, topology, arbitrary configuration, capabilities, authentication or TLS material, workspace paths, session or durable-store data, prompts, credentials, or raw errors. This sanitized diagnostic display projection is not connection configuration or a connection instruction. It is a side-effect-free lookup of the requested already-known provider: the RPC does not infer a default or session selection, discover providers, re-read configuration, or report alternatives.
+
+The RPC is additive. Clients talking to a server predating it receive
+`UNIMPLEMENTED` and should degrade without surfacing the returned error body. A
+client that receives an otherwise successful response with an absent or blank
+`server_implementation` (for example, from a server before that additive field)
+should use `unknown`; it must accept an unrecognised non-empty family label for
+forward compatibility. `build_id` is an opaque display/comparison value, not a
+semantic-version protocol.
+
 **Sessions & runs:**
 
 | RPC | Kind | Purpose |

@@ -10,10 +10,11 @@ import (
 	"strings"
 	"syscall"
 
-	yaml "go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 // state.go is the mecatui CLIENT-SIDE model-selection state file: the last-used
@@ -248,8 +249,12 @@ func (s *selectionStore) read() (modelStateFile, bool) {
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return modelStateFile{}, false
 	}
+	document, err := yamldiag.ParseSettingsDocument(data)
+	if err != nil {
+		return modelStateFile{}, false
+	}
 	var sf modelStateFile
-	if err := yaml.Unmarshal(data, &sf); err != nil {
+	if err := document.Decode(document.Mapping(), &sf); err != nil {
 		return modelStateFile{}, false
 	}
 	if sf.Version != stateVersion {

@@ -1,0 +1,4 @@
+posture: trusted
+permissions:
+  deny: [Write]
+learning: {mode: review, sensitivity: balanced, skills: {activation: evaluated}}

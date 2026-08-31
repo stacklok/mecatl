@@ -41,7 +41,7 @@
 //
 // # Layering
 //
-// Stdlib + go.yaml.in/yaml/v3 ONLY. No domain, no port, no internal/app, no
+// Stdlib + github.com/goccy/go-yaml ONLY. No domain, no port, no internal/app, no
 // other adapter. The ONE invariant this file (detect.go) holds: NO ToolHive Go
 // import, ever — the OIDC/token-source half lives in tokensource.go, the sole
 // file in this package (and one of two in the tree, alongside
@@ -56,7 +56,7 @@ import (
 	"os"
 	"strconv"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "github.com/goccy/go-yaml"
 )
 
 const (

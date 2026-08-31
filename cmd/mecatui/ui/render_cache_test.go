@@ -17,6 +17,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -898,6 +899,19 @@ func TestRefreshViewLinesMatchString(t *testing.T) {
 	}
 }
 
+// Twenty-five iterations amortize process-wide allocation noise while retaining nearly all calibration speedup.
+func allocatedBytesPerIteration(iterations int, fn func()) uint64 {
+	fn() // Warm caches before forcing GC and opening the measured window.
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range iterations {
+		fn()
+	}
+	runtime.ReadMemStats(&after)
+	return (after.TotalAlloc - before.TotalAlloc) / uint64(iterations)
+}
+
 // TestIncrementalJoinAllocatesOnlySuffix proves the WIN: over a LARGE settled
 // scrollback with a live tail mutated each frame (the streaming shape), the
 // incremental line path allocates dramatically FEWER BYTES than the old string-join
@@ -923,25 +937,14 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 		return r, c
 	}
 
-	bytesPerOp := func(fn func()) uint64 {
-		res := testing.Benchmark(func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				fn()
-			}
-		})
-		if res.N == 0 {
-			return 0
-		}
-		return res.MemBytes / uint64(res.N)
-	}
+	const iterations = 25
 
 	// Reference: the OLD string-join path builds the whole scrollback into a fresh
 	// strings.Builder every frame (the block caches stay warm, so this isolates the
 	// Builder copy this change removes). joinValid is forced false so the whole-join
 	// memo cannot short-circuit it.
 	ref, refConv := build()
-	full := bytesPerOp(func() {
+	full := allocatedBytesPerIteration(iterations, func() {
 		ref.joinValid = false
 		ref.renderConversation(refConv, false)
 	})
@@ -949,7 +952,7 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 	// Measured: the incremental line path reuses the cached prefix verbatim — no
 	// full-scrollback copy.
 	r, c := build()
-	incr := bytesPerOp(func() { r.renderConversationLines(c, false) })
+	incr := allocatedBytesPerIteration(iterations, func() { r.renderConversationLines(c, false) })
 
 	// The string path copies the entire scrollback into a Builder each frame; the line
 	// path reuses the cached prefix slice. Require at least a 4x byte reduction — a
@@ -1087,18 +1090,12 @@ func TestIncrementalJoinSteadyFrameAllocCeiling(t *testing.T) {
 	}
 	nLines := len(r.joinPrefixLines)
 
-	res := testing.Benchmark(func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			// UNCHANGED conversation: the steady interaction-cadence frame. The prefix is
-			// fully cached, so only the per-frame slice header + backing array allocates.
-			r.renderConversationLines(c, false)
-		}
+	const iterations = 25
+	perOp := allocatedBytesPerIteration(iterations, func() {
+		// UNCHANGED conversation: the steady interaction-cadence frame. The prefix is
+		// fully cached, so only the per-frame slice header + backing array allocates.
+		r.renderConversationLines(c, false)
 	})
-	if res.N == 0 {
-		t.Skip("benchmark did not run")
-	}
-	perOp := res.MemBytes / uint64(res.N)
 
 	// Ceiling: the fresh per-frame slice is one []string of ~nLines capacity (16 B per
 	// element on 64-bit). Allow generous headroom (×4) so this is a regression tripwire

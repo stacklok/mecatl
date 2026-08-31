@@ -13,6 +13,30 @@ a private UNIX socket (the default) or an **external** `mecated` it dials via
 start and no TCP port. See [Run](#run).
 
 It is built on the Charm v2 stack (Bubble Tea / Lip Gloss / Bubbles / Glamour).
+
+### Local status lines
+
+Mecatui reads `status_customization:` only from the client-owned
+`$XDG_CONFIG_HOME/mecatui/settings.yaml`. It composes a UI-agnostic
+`statusline.Source`: the UI submits display-safe `Input` snapshots and listens for
+latest `Result` semantic spans, while the source owns template evaluation or the
+optional local direct executable, refresh, cancellation, and fallback. The source
+returns no terminal rendering; the UI applies the active theme, preserves its
+mandatory safety/navigation and activity lanes, then clips and aligns the result.
+
+A configuration selects exactly one source: responsive `templates` or a
+`command` with an absolute `executable` and literal `args`. Templates receive an
+automatically StatusML-escaped projection; a command receives the same raw input
+as JSON on stdin. It is run directly (there is no shell or source configuration
+form); `/bin/sh` is available only when explicitly selected as the executable with
+literal arguments. It uses a constrained environment, local-only CWD selection, a
+one-second deadline, and a combined 4 KiB stdout/stderr limit. StatusML accepts semantic theme tokens and validated
+HTTP(S) link metadata, never raw ANSI or OSC.
+
+See [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md)
+for the complete settings schema, input reference, StatusML grammar, safety limits,
+and copyable template and executable examples.
+
 The render packages (`ui`, `theme`) and the `client` package stay a pure client —
 they never import any `engine/...` or `internal/...` package and render solely from the proto
 `Event` envelope. Hosting the embedded server is confined to the `cmd/mecatui`
@@ -319,6 +343,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--tls-ca` | – | path to a PEM CA bundle for external-server verification |
 | `--insecure` | off | skip TLS verification (testing only) |
 | `--list-themes` | – | print available themes and exit |
+| `--version` | – | print the build identity and exit before normal startup |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |
 | `--no-mouse` | off | keep the alt screen but disable mouse capture and in-app mouse gestures, preserving the terminal's **native** click-drag selection; keyboard prompt selection still works (or `MECATUI_NO_MOUSE=1`; see the selection section) |
 | `--terminal-title` | `on` | dynamic terminal window/tab title: `on` shows `<session title> — <status word> mecatui` (the title is the first prompt, the status word reflects the phase); `off` collapses to the bare `mecatui` (escape hatch for terminals/multiplexers where a set title does more harm than good). Accepts `on`/`off`/`true`/`false`/`1`/`0` (or `MECATUI_NO_TERMINAL_TITLE=1`; see the terminal title section) |
@@ -541,6 +566,17 @@ dirs and even when server slash-command expansion is off. `/clear` creates a new
 empty server session in the current workspace, using the current effective model,
 reasoning-effort, and permission mode, then clears the conversation and scrollback
 only after that session is ready; `/help` opens the keys-&-features overlay.
+`/diagnostics` is an exception to the local-only commands: the exact
+whitespace-trimmed lower-case bare command follows ordinary built-in dispatch,
+generates a concise sanitized report, and submits that report through the normal
+model-facing prompt path. It includes only the runtime platform, client build,
+server mode, server build, server implementation, and already-held
+provider/model/permission-mode state, the sanitized diagnostic display projection of the current remote connection target when locally known, and the sanitized diagnostic display projection for the already-held active provider when supplied by `GetServerInfo`. Neither endpoint value is connection configuration or an instruction to reconnect. Each retains only URL scheme, host, optional port, and escaped clean path; userinfo, query, fragment, controls, TLS/auth settings, and arbitrary server configuration are excluded. Embedded UNIX-socket endpoints report unavailable unless an actual local URL endpoint is already known without lookup. In remote mode it makes one authenticated
+`GetServerInfo` call; its lookup status is only `ok`, `not-supported`,
+`unreachable`, or `invalid-response`. It never includes raw errors, connection or
+authentication details, credentials, workspace paths, session content, or server
+configuration/state. In embedded mode it uses the locally known server identity
+and makes no RPC.
 These commands are *always* available because they are client-owned commands (with
 `/clear` using the existing session-create RPC); `/compact` (force one server-side
 history compaction pass), `/mcp` (browse
@@ -558,7 +594,7 @@ tasks) appear
 only when the connected server advertises those capabilities (and, for
 `/compact`/`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/dream`/`/models`/`/worktrees`/`/schedule`, the matching client
 collaborator is wired). The fixed palette order starts
-`clear, help, session, retry, compact`, then the available inventory, model,
+`clear, help, session, retry, diagnostics, compact`, then the available inventory, model,
 workspace, schedule, and operator-setting commands (locked by a test).
 `/learning` is local embedded-server operator-settings UX: each invocation selects the
 next Off→Review→Auto value in `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving
@@ -579,11 +615,14 @@ palette-only `ListAgents` snapshot, gated on `caps.agents`), while `/team` opens
 the **live overlay** of a team that has actually run (gated on `caps.teams`).
 These never reach the model: a bare built-in line is intercepted locally even
 while a run is streaming, although commands such as `/compact` then enforce their
-own idle-only boundary. Gated-off builtins are hidden from the palette and help
-overlay; typing one anyway blocks the send with a warning. Unknown slash commands
-remain model-facing input so workspace commands keep their server-side expansion.
-A recognized built-in with arguments is also model-facing except `/compact`, whose
-argument form is rejected locally to prevent an accidental prompt-template fallback.
+own idle-only boundary. `/diagnostics` is the exception: its bare form submits the
+generated sanitized report through the ordinary model-facing prompt path. It takes
+no arguments: `/diagnostics` followed by any text or newline remains in the input,
+is not sent, and shows a local argument warning. Gated-off builtins are hidden from
+the palette and help overlay; typing one anyway blocks the send with a warning.
+Unknown slash commands remain model-facing input so workspace commands keep their
+server-side expansion. Recognized built-ins with arguments retain the input, are not
+sent, and show a local argument warning; `/compact` follows the same rule.
 
 **`/compact` (manual model-history compaction).** This built-in appears in the
 palette and help only when `ServerCapabilities.manual_compaction` is true and the
@@ -1796,9 +1835,9 @@ queue to the engine steer path:
 
 - `enter` mid-run sends a `steer` frame on the live Converse stream instead of
   staging locally, **except that a bare recognized TUI built-in** (such as `/help`
-  or `/clear`) still runs locally. Unknown slash commands, workspace commands, and
-  built-ins with arguments remain model-facing input, except `/compact` with arguments,
-  which is rejected locally. Each steer mints a fresh client
+  or `/clear`) still runs locally. Unknown slash commands and workspace commands
+  remain model-facing input. Recognized built-ins with arguments retain the input
+  and show a local argument warning. Each steer mints a fresh client
   `message_id` and the frame carries ONLY that line's text; the engine's single-slot
   inbox **appends** each frame into the one pending bundle (merged with a blank-line
   separator) and drains the bundle at the **next turn boundary**, recording it as an

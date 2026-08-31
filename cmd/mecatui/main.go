@@ -37,6 +37,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/embed"
+	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/port"
@@ -45,6 +46,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -98,6 +100,33 @@ func prepareRun(argv []string) (invocationResolution, error) {
 	return res, nil
 }
 
+func resolveConnectionMode(cfg config) string {
+	if cfg.connectAddress != "" {
+		return "connect"
+	}
+	return "embedded"
+}
+
+func validateRunConfig(cfg config) error {
+	return cfg.validate()
+}
+
+// buildStatusSource constructs a source from already-validated customization.
+func buildStatusSource(customization statusCustomization) statusline.Source {
+	return newSource(customization)
+}
+
+func prepareStatusSource(cfg config) (statusline.Source, error) {
+	if err := validateRunConfig(cfg); err != nil {
+		return nil, err
+	}
+	customization, err := readStatusCustomization()
+	if err != nil {
+		return nil, err
+	}
+	return buildStatusSource(customization), nil
+}
+
 func run(argv []string) error {
 	return runWithOptions(argv, runOptions{})
 }
@@ -143,7 +172,8 @@ func runWithOptions(argv []string, options runOptions) error {
 	if cfg.providerKeys.AuthFileWarning != "" {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
 	}
-	if err := cfg.validate(); err != nil {
+	statusSource, err := prepareStatusSource(cfg)
+	if err != nil {
 		return err
 	}
 
@@ -244,7 +274,9 @@ func runWithOptions(argv []string, options runOptions) error {
 	// "workspace default" from "global default" without a server round-trip.
 	wsDefault, wsDefaultSet := store.LoadWorkspace(uiWorkspace)
 	globalDefault := store.LoadGlobalDefault()
+	defer func() { _ = statusSource.Close(context.Background()) }()
 
+	connectionMode := resolveConnectionMode(cfg)
 	deps := applyLaunchIntent(cfg, ui.Deps{
 		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode},
 		Conv:                   cl,
@@ -283,7 +315,11 @@ func runWithOptions(argv []string, options runOptions) error {
 		GlobalDefault:          globalDefault,
 		Clipboard:              client.NewClipboard(),
 		Theme:                  th,
+		StatusSource:           statusSource,
 		Server:                 target,
+		ConnectionMode:         connectionMode,
+		ClientBuild:            buildinfo.BuildID,
+		Embedded:               cfg.transportMode == modeLocal,
 		// Model is best-effort display only. For an EXTERNAL --server it reflects
 		// the locally-configured --model flag and may NOT match the server's actual
 		// model (the server owns provider config); for an embedded server it is
@@ -298,7 +334,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Resume:    resume,
 		Ctx:       ctx,
 		// Build version for the welcome splash (ldflags-set; "dev" by default).
-		Version: version,
+		Version: buildinfo.BuildID,
 		// Suppress the rich welcome splash under --no-banner, --quiet, or a
 		// non-interactive stdin (the OR lives here so config.go stays pure — it owns
 		// only the flag). The plain prompt hint is still shown in all three cases.
@@ -328,6 +364,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: cliconfig.JoinPromptBody(cfg.prompt, cfg.promptFileBody),
 	})
+	deps.ServerImpl = mecatuiServerImplementation
 	wireManualCompaction(&deps, cl)
 
 	// Apply keymap overrides (CLI for now).
@@ -603,10 +640,6 @@ func setupSignalHandler() (context.Context, chan struct{}) {
 // already bounded to ~40s by tasks #1+#2, so 45s normally lets it complete; on
 // timeout the process exits 1 rather than hang (the signal goroutine stays armed
 // the whole time, so an operator Ctrl+C also force-exits a wedged cleanup).
-func wireManualCompaction(deps *ui.Deps, compactor client.SessionCompactor) {
-	deps.Compactor = compactor
-}
-
 func runCleanup(forceExit chan struct{}, cleanup func()) {
 	cleanupDone := make(chan struct{})
 	go func() {
@@ -621,6 +654,10 @@ func runCleanup(forceExit chan struct{}, cleanup func()) {
 		os.Exit(1)
 	}
 	close(forceExit) // retire the signal handler AFTER cleanup, not during it
+}
+
+func wireManualCompaction(deps *ui.Deps, compactor client.SessionCompactor) {
+	deps.Compactor = compactor
 }
 
 // testSignalHandler is the MECATUI_TEST_SIGNAL_HANDLER test seam: a minimal
@@ -860,16 +897,20 @@ func applyTrustPrompt(cfg config, diag port.Diagnostics) config {
 	return cfg
 }
 
+// mecatuiServerImplementation is the stable family of the embedded server.
+const mecatuiServerImplementation = "mecatui"
+
 // embeddedConfig constructs the embedded server's declarative app.Config. app.Build
 // loads the injected provider credential; connect mode never calls this function.
 func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	cmdDir, enableCmds := resolveCommands(cfg)
 	skillDirs, skillsConv := resolveSkills(cfg)
 	out := app.Config{
-		Workspace:       cfg.workspace,
-		Model:           cfg.model,
-		DefaultProvider: cfg.defaultProvider,
-		DefaultModel:    cfg.defaultModel,
+		Workspace:            cfg.workspace,
+		ServerImplementation: mecatuiServerImplementation,
+		Model:                cfg.model,
+		DefaultProvider:      cfg.defaultProvider,
+		DefaultModel:         cfg.defaultModel,
 		// defaultProviderFlagSet lets CLI out-rank the operator-global settings.yaml
 		// models.default_provider: key (folded by foldOperatorDefaultProvider in app.Build).
 		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,

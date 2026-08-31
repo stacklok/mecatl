@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/goccy/go-yaml"
 )
 
 // writeDef writes a <name>.md file into dir, creating dir if needed.
@@ -58,6 +60,44 @@ Inspect the change and report findings.`)
 	}
 	if !strings.HasPrefix(def.Body, "You are a meticulous code reviewer.") {
 		t.Fatalf("body mismatch: %q", def.Body)
+	}
+}
+
+func TestGoccyYAMLMigration_SemanticMatrixAgentFrontmatter(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/semantic-matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix struct {
+		Cases []struct {
+			Name     string            `yaml:"name"`
+			Category string            `yaml:"category"`
+			Document string            `yaml:"document"`
+			Readers  map[string]string `yaml:"readers"`
+		} `yaml:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, tc := range matrix.Cases {
+		outcome, ok := tc.Readers["agentfs"]
+		if !ok {
+			continue
+		}
+		seen = true
+		if tc.Category != "frontmatter" {
+			t.Fatalf("fixture %q has category %q, want frontmatter", tc.Name, tc.Category)
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			_, parseError, _ := parseAgentDef([]byte(tc.Document), "semantic-matrix.md")
+			if accepted, want := parseError == "", outcome == "accept"; accepted != want {
+				t.Fatalf("parseAgentDef() accepted=%v, want %v (error=%q)", accepted, want, parseError)
+			}
+		})
+	}
+	if !seen {
+		t.Fatal("semantic matrix declares no agentfs frontmatter case")
 	}
 }
 
@@ -626,5 +666,70 @@ func TestParseMemoryFieldAbsentIsUnset(t *testing.T) {
 		if strings.Contains(n, "memory:") {
 			t.Fatalf("absent memory: should produce no memory note, got %q", n)
 		}
+	}
+}
+
+func TestStringOrSliceAcceptsResolvedScalarsAsText(t *testing.T) {
+	t.Parallel()
+
+	for _, scalar := range []string{"true", "42", "2026-08-28T12:00:00Z", "null"} {
+		t.Run(scalar, func(t *testing.T) {
+			def, reason, _ := parseAgentDef([]byte("---\nname: n\ndescription: d\ntools: "+scalar+"\n---\nbody"), "n.md")
+			if reason != "" {
+				t.Fatalf("parseAgentDef(%q) reason = %q", scalar, reason)
+			}
+			if got := strings.Join(def.Tools, ","); got != scalar {
+				t.Fatalf("Tools = %q, want %q", got, scalar)
+			}
+		})
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario3_AgentFrontmatterCompatibility(t *testing.T) {
+	t.Parallel()
+
+	def, reason, _ := parseAgentDef([]byte(`---
+name: reviewer
+description: reviews changes
+tools: Read, Grep
+mcpServers:
+  - github
+  - name: issue-tracker
+    url: https://mcp.example.test
+    headers:
+      Authorization: Bearer token
+unknown-future-field: ignored
+---
+review the change`), "reviewer.md")
+	if reason != "" {
+		t.Fatalf("parse agent frontmatter: %s", reason)
+	}
+	if got, want := strings.Join(def.Tools, ","), "Read,Grep"; got != want {
+		t.Fatalf("tools = %q, want %q", got, want)
+	}
+	if len(def.MCPServers) != 2 || !def.MCPServers[0].IsReference() || def.MCPServers[1].URL != "https://mcp.example.test" {
+		t.Fatalf("mcpServers = %+v, want reference and inline HTTP server", def.MCPServers)
+	}
+
+	_, reason, _ = parseAgentDef([]byte(`---
+name: invalid-header
+description: invalid header type
+mcpServers:
+  - name: remote
+    url: https://mcp.example.test
+    headers:
+      Authorization: [super-secret-token]
+---
+body`), "invalid-header.md")
+	if !strings.Contains(reason, "malformed YAML frontmatter") || strings.Contains(reason, "super-secret-token") {
+		t.Fatalf("invalid header reason = %q, want a value-free malformed-frontmatter diagnostic", reason)
+	}
+
+	_, reason, _ = parseAgentDef([]byte("---\nname: leaked-secret\ndescription: [unterminated\n---\nbody"), "bad.md")
+	if !strings.Contains(reason, "malformed YAML frontmatter at line") {
+		t.Fatalf("malformed frontmatter reason = %q, want safe location", reason)
+	}
+	if strings.Contains(reason, "leaked-secret") || strings.Contains(reason, "unterminated") {
+		t.Fatalf("malformed frontmatter reason leaked YAML source: %q", reason)
 	}
 }

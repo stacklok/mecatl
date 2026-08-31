@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
 
+	"github.com/stacklok/mecatl/engine/adapter/frontmatterdiag"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -47,7 +49,7 @@ const maxDescriptionBytes = MaxDescriptionBytes
 // AllowedTools is the agentskills.io Experimental `allowed-tools` field. The
 // spec form is a SPACE-SEPARATED STRING (e.g. `allowed-tools: "Bash Read Grep"`),
 // parsed by splitting on whitespace; a YAML LIST form (`[Bash, Read]`) is
-// accepted too (yaml.v3 unifies into a []string here) but the string form is
+// accepted too (the parser unifies into a []string here) but the string form is
 // canonical. It is ADVISORY ONLY — surfaced as a note on activation, never a
 // permission grant.
 type frontmatter struct {
@@ -59,36 +61,78 @@ type frontmatter struct {
 	AllowedTools  yamlAllowedTools  `yaml:"allowed-tools"`
 }
 
+func (f *frontmatter) UnmarshalYAML(node ast.Node) error {
+	type decoded frontmatter
+	var value decoded
+	if err := yaml.NodeToValue(node, &value); err != nil {
+		return err
+	}
+	*f = frontmatter(value)
+	if value := frontmatterMappingValue(node, "allowed-tools"); value != nil {
+		return f.AllowedTools.UnmarshalYAML(value)
+	}
+	return nil
+}
+
+func frontmatterMappingValue(node ast.Node, name string) ast.Node {
+	mapping, ok := node.(*ast.MappingNode)
+	if !ok {
+		return nil
+	}
+	for _, value := range mapping.Values {
+		if value.Key.GetToken().Value == name {
+			return value.Value
+		}
+	}
+	return nil
+}
+
 // yamlAllowedTools accepts the `allowed-tools` field as EITHER a
 // space-separated string (the spec form) OR a YAML list of strings, normalizing
-// both into a []string. yaml.v3's default []string unmarshal would reject the
+// both into a []string. The default []string unmarshal would reject the
 // scalar string form, so a custom unmarshaler unifies the two.
 type yamlAllowedTools []string
 
-func (a *yamlAllowedTools) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.ScalarNode {
-		// Reject a non-string scalar (e.g. allowed-tools: 123) — the spec form is
-		// a quoted string, so an integer/bool/float is a malformed value.
-		if value.Tag != "!!str" {
-			return fmt.Errorf("allowed-tools must be a string or a list of strings, got a scalar %s", value.Tag)
-		}
-		var s string
-		if err := value.Decode(&s); err != nil {
-			return err
-		}
-		*a = splitAllowedTools(s)
+func (a *yamlAllowedTools) UnmarshalYAML(node ast.Node) error {
+	if text, ok := frontmatterScalarText(node); ok {
+		*a = splitAllowedTools(text)
 		return nil
 	}
-	var list []string
-	if err := value.Decode(&list); err != nil {
-		return err
+	if node.Type() != ast.SequenceType {
+		return fmt.Errorf("allowed-tools must be a string or a list of strings")
 	}
-	out := make([]string, 0, len(list))
-	for _, t := range list {
-		out = append(out, splitAllowedTools(t)...)
+	sequence, ok := node.(*ast.SequenceNode)
+	if !ok {
+		return fmt.Errorf("allowed-tools must be a string or a list of strings")
+	}
+	out := make([]string, 0, len(sequence.Values))
+	for _, item := range sequence.Values {
+		text, ok := frontmatterScalarText(item)
+		if !ok {
+			return fmt.Errorf("allowed-tools must be a string or a list of strings")
+		}
+		out = append(out, splitAllowedTools(text)...)
 	}
 	*a = out
 	return nil
+}
+
+// frontmatterScalarText preserves yaml.v3's scalar-as-text frontmatter
+// compatibility while avoiding parser-rendered error text at this boundary.
+func frontmatterScalarText(node ast.Node) (string, bool) {
+	switch node.Type() {
+	case ast.StringType, ast.LiteralType:
+		var text string
+		if err := yaml.NodeToValue(node, &text); err != nil {
+			return "", false
+		}
+		return text, true
+	case ast.BoolType, ast.IntegerType, ast.FloatType, ast.NullType, ast.InfinityType, ast.NanType:
+		if parserToken := node.GetToken(); parserToken != nil {
+			return parserToken.Value, true
+		}
+	}
+	return "", false
 }
 
 // splitAllowedTools splits a whitespace-separated allowed-tools string into
@@ -281,7 +325,7 @@ func ParseSkill(raw []byte, path string) (Skill, string, []string) {
 	}
 	var fm frontmatter
 	if err := yaml.Unmarshal([]byte(fmText), &fm); err != nil {
-		return Skill{}, fmt.Sprintf("malformed YAML frontmatter: %v", err), nil
+		return Skill{}, frontmatterdiag.FrontmatterParseError(err), nil
 	}
 	name := strings.TrimSpace(fm.Name)
 	if name == "" {

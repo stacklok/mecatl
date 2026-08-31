@@ -26,7 +26,9 @@ only when explicitly mounted/configured, but contradicts the normal storage-free
 and is not recommended. It drops
 `mecated`'s `skills promote` / `config` / `perf-mcp` subcommands, ACP, and the
 Prometheus/OTel admin surface. It inverts `mecated`'s interactive defaults: `--headless`
-defaults **on** and `--posture` defaults to **`auto`** (an unattended daemon).
+defaults **on** and `--posture` defaults to **`auto`** (an unattended daemon). Like the
+other shipped executables, exact top-level `mecak8s --version` prints its build identity
+and exits before loading normal configuration or starting listeners.
 
 `mecak8s` is always a server-assigned workspace deployment, but its normal
 storage-free pod has no mounted workspace. An omitted or empty wire `profile`

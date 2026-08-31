@@ -131,7 +131,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := builtinNames(tc.caps, tc.w)
-			want := append([]string{"clear", "help", "session", "retry"}, tc.want[2:]...)
+			want := append([]string{"clear", "help", "session", "retry", "diagnostics"}, tc.want[2:]...)
 			if strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("builtinCommands order/filter = %v, want %v", got, want)
 			}
@@ -639,56 +639,37 @@ func TestBuiltinSubmitNeverSends(t *testing.T) {
 	}
 }
 
-// TestBuiltinNameWithArgsFallsThrough guards the intercept against matching the
-// FIRST token regardless of trailing args: a built-in NAME followed by a space +
-// args ("/clear now") has a space, so commandPrefix returns false, the
-// submitPrompt builtin dispatcher does NOT fire, and the line is sent to the
-// model as a normal prompt — NOT swallowed, and the conversation is NOT cleared.
-func TestBuiltinNameWithArgsFallsThrough(t *testing.T) {
+// TestBuiltinNameWithArgsStaysLocal verifies a recognized no-argument builtin
+// keeps its input, warns locally, and never reaches the model.
+func TestBuiltinNameWithArgsStaysLocal(t *testing.T) {
 	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
-
-	// Seed a turn so we can prove /clear's reset did NOT happen.
 	m.conv.addUser("earlier prompt")
 	m.refreshView()
 
 	m = typeText(t, m, "/clear now")
 	m, cmd := pressEnter(t, m)
 
-	// It must have entered the normal send path: a stream opened (non-nil batch
-	// command) and the prompt frame carries the full literal line.
-	if cmd == nil {
-		t.Fatal("'/clear now' should fall through to the normal send (non-nil command), not be intercepted")
+	if cmd != nil {
+		t.Fatal("/clear with arguments must not open a model run")
 	}
-	// Flush the batch's leaf commands so the synchronous SendPrompt closure runs
-	// (the submit returns tea.Batch(send, waitCmd, sp.Tick); running the batch
-	// yields a BatchMsg of leaves, each of which must be invoked).
-	runBatchLeaves(cmd)
-	frames := send.frames()
-	if len(frames) == 0 {
-		t.Fatal("'/clear now' should record a SendPrompt frame (sent, not swallowed)")
+	if len(send.frames()) != 0 {
+		t.Fatalf("/clear with arguments sent %d frames", len(send.frames()))
 	}
-	var sentText string
-	for _, fr := range frames {
-		if p := fr.GetPrompt(); p != nil {
-			sentText = p.GetText()
-		}
+	if m.prompt.Value() != "/clear now" {
+		t.Errorf("input = %q, want unchanged", m.prompt.Value())
 	}
-	if sentText != "/clear now" {
-		t.Errorf("sent prompt = %q, want the literal %q", sentText, "/clear now")
+	if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "does not take arguments") || !strings.Contains(got, "/clear") {
+		t.Errorf("status = %q, want argument warning", got)
 	}
-	// The conversation must NOT have been cleared — the user line is still there,
-	// plus the new "/clear now" user line the normal send appended.
 	if m.conv.isEmpty() {
-		t.Error("'/clear now' must NOT clear the conversation (it is not the bare /clear built-in)")
-	}
-	if m.phase != phaseRunning {
-		t.Errorf("phase = %v, want running after a normal send", m.phase)
+		t.Error("/clear with arguments must not clear the conversation")
 	}
 }
 
 // TestDispatchBareBuiltinWhitespace defines a bare invocation as exactly a
-// builtin name after trimming surrounding Unicode whitespace. Anything remaining
-// after the name is model-facing input.
+// builtin name after trimming surrounding Unicode whitespace. Recognized builtins
+// with arguments are retained locally for correction; unknown slash commands stay
+// model-facing.
 func TestDispatchBareBuiltinWhitespace(t *testing.T) {
 	for _, tc := range []struct {
 		input   string
@@ -697,8 +678,8 @@ func TestDispatchBareBuiltinWhitespace(t *testing.T) {
 		{"/clear", true},
 		{" \u2003/clear\u00a0", true},
 		{"/clear\n", true},
-		{"/clear now", false},
-		{"/clear\nnow", false},
+		{"/clear now", true},
+		{"/clear\nnow", true},
 		{"/foo", false},
 	} {
 		t.Run(strings.ReplaceAll(tc.input, "\n", "\\n"), func(t *testing.T) {
@@ -752,7 +733,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "session", "retry", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"clear", "help", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}

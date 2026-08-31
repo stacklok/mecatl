@@ -177,6 +177,35 @@ func (d *authRecordingDiagnostics) Log(_ context.Context, _ port.Level, msg stri
 
 func (d *authRecordingDiagnostics) With(...any) port.Diagnostics { return d }
 
+func TestServerInfoRequiresConfiguredAuthentication(t *testing.T) {
+	svc := newService(t, mockllm.New(), allowRules())
+	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "secret"})
+	client, cleanup := dialGRPCSecure(t, svc, auth)
+	defer cleanup()
+
+	if _, err := client.GetServerInfo(context.Background(), &mecatlv1.GetServerInfoRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unauthenticated GetServerInfo code = %v, want Unauthenticated", status.Code(err))
+	}
+	info, err := client.GetServerInfo(bearerCtx(context.Background(), "secret"), &mecatlv1.GetServerInfoRequest{ProviderId: "test-provider"})
+	if err != nil || info.GetBuildId() != "test-build" || info.GetServerImplementation() != "unknown" || info.GetLlmProviderDisplayEndpoint() != "https://provider.example:8443/v1" {
+		t.Fatalf("authenticated GetServerInfo = %#v, %v", info, err)
+	}
+
+	h := auth.Middleware(server.NewHTTPHandler(svc))
+	unauthenticated := httptest.NewRecorder()
+	h.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/v1/info", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated GET /v1/info = %d, want 401", unauthenticated.Code)
+	}
+	authenticated := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	h.ServeHTTP(authenticated, req)
+	if authenticated.Code != http.StatusOK || !strings.Contains(authenticated.Body.String(), "test-build") || !strings.Contains(authenticated.Body.String(), `"server_implementation":"unknown"`) {
+		t.Fatalf("authenticated GET /v1/info = %d %q", authenticated.Code, authenticated.Body.String())
+	}
+}
+
 func TestGRPCAuthBearer(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "secret"})

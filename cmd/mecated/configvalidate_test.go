@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-yaml"
 )
 
 const validLearningPatch = `learning:
@@ -25,7 +27,7 @@ const validLearningPatch = `learning:
     max_tokens_per_principal: 50000
 `
 
-func TestValidateSettingsInMemory(t *testing.T) {
+func TestGoccyYAMLMigration_Scenario4_LearningPatchPreservesUnrelatedDocument(t *testing.T) {
 	t.Parallel()
 	base := []byte("permissions:\n  deny:\n    - Bash(rm *)\nlearning:\n  mode: off\n")
 	proposed, err := validateSettingsInMemory(base, []byte(validLearningPatch))
@@ -42,12 +44,31 @@ func TestValidateSettingsInMemory(t *testing.T) {
 	if _, err := validateSettingsInMemory(nil, []byte(validLearningPatch)); err != nil {
 		t.Fatalf("missing base plus patch: %v", err)
 	}
+
+	fixture, err := os.ReadFile(filepath.Join("..", "mecatui", "testdata", "settings-preserve-top-level.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("..", "mecatui", "testdata", "settings-preserve-top-level.mode.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposed, err = validateSettingsInMemory(fixture, []byte("learning:\n  mode: review\n  sensitivity: balanced\n  skills:\n    # preserve this activation comment\n    activation: evaluated\n"))
+	if err != nil {
+		t.Fatalf("patch preservation fixture: %v", err)
+	}
+	if string(proposed) != string(want) {
+		t.Fatalf("preservation fixture mismatch (-want +got):\nwant:\n%s\ngot:\n%s", want, proposed)
+	}
 }
 
-func TestValidateSettingsInMemoryRejectsUnsafeDocuments(t *testing.T) {
+func TestGoccyYAMLMigration_Scenario2_ConfigValidationSafeDocumentContract(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct{ base, patch []byte }{
 		"malformed base":       {base: []byte("learning: [\n")},
+		"nonmapping base":      {base: []byte("- learning\n")},
+		"anchor base":          {base: []byte("learning: &policy {}\n")},
+		"alias base":           {base: []byte("base: &policy {}\nlearning: *policy\n")},
 		"duplicate base":       {base: []byte("learning: {}\nlearning: {}\n")},
 		"multidocument base":   {base: []byte("learning: {}\n---\nlearning: {}\n")},
 		"patch extra key":      {patch: []byte("learning: {}\npermissions: {}\n")},
@@ -69,9 +90,53 @@ func TestValidateSettingsInMemoryRejectsUnsafeDocuments(t *testing.T) {
 			}
 		})
 	}
+
 }
 
-func TestRunConfigValidateReadOnlyAndMissingPatch(t *testing.T) {
+func TestConfigValidateMalformedSyntaxIncludesSafeLocation(t *testing.T) {
+	const secret = "MECATED_CONFIG_SECRET"
+	_, err := validateSettingsInMemory([]byte("learning: ["+secret), nil)
+	if err == nil {
+		t.Fatal("malformed settings unexpectedly validated")
+	}
+	if !strings.Contains(err.Error(), "malformed YAML document at line ") || !strings.Contains(err.Error(), ", column ") {
+		t.Fatalf("validateSettingsInMemory error = %q, want safe line and column", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("validateSettingsInMemory error leaked YAML content: %q", err)
+	}
+}
+
+func TestGoccyYAMLMigration_SemanticMatrixConfigValidate(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "engine", "testdata", "semantic-matrix.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix struct {
+		Cases []struct {
+			Name     string            `yaml:"name"`
+			Document string            `yaml:"document"`
+			Readers  map[string]string `yaml:"readers"`
+		} `yaml:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range matrix.Cases {
+		outcome, ok := tc.Readers["configvalidate"]
+		if !ok {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			_, err := validateSettingsInMemory([]byte(tc.Document), nil)
+			if accepted, want := err == nil, outcome == "accept"; accepted != want {
+				t.Fatalf("validateSettingsInMemory() accepted=%v, want %v (error=%v)", accepted, want, err)
+			}
+		})
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario2_ConfigValidateADR0225Safety(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "settings $draft; name.yaml")
 	patchPath := filepath.Join(dir, "learning patch.yaml")
@@ -108,6 +173,17 @@ func TestRunConfigValidateReadOnlyAndMissingPatch(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("missing base was created: %v", err)
+	}
+
+	link := filepath.Join(dir, "settings-link.yaml")
+	if err := os.Symlink(basePath, link); err == nil {
+		out.Reset()
+		if err := runConfigValidate([]string{"--file", link}, &out); err == nil {
+			t.Fatal("final-component symlink unexpectedly accepted")
+		}
+		if out.Len() != 0 {
+			t.Fatalf("symlink validation wrote output: %q", out.String())
+		}
 	}
 }
 
@@ -168,6 +244,30 @@ func TestRunConfigValidateBoundsFilesAndSanitizesErrors(t *testing.T) {
 	err := runConfigValidate([]string{"--file", malformed}, &out)
 	if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(out.String(), secret) {
 		t.Fatalf("unsanitized result: err=%v out=%q", err, out.String())
+	}
+	if !strings.Contains(err.Error(), "line ") || !strings.Contains(err.Error(), "column ") {
+		t.Fatalf("syntax error = %q, want value-free line and column", err)
+	}
+}
+
+func TestRunConfigValidateSyntaxLocationIsValueFree(t *testing.T) {
+	const sentinel = "CONFIGVALIDATE_SECRET_SENTINEL"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.yaml")
+	if err := os.WriteFile(path, []byte("learning: ["+sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runConfigValidate([]string{"--file", path}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("malformed settings unexpectedly validated")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "line ") || !strings.Contains(message, "column ") {
+		t.Fatalf("syntax error = %q, want line and column", message)
+	}
+	if strings.Contains(message, sentinel) {
+		t.Fatalf("syntax error leaked YAML content: %q", message)
 	}
 }
 

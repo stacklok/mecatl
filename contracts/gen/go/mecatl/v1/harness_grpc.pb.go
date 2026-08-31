@@ -43,6 +43,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	HarnessService_CreateSession_FullMethodName            = "/mecatl.v1.HarnessService/CreateSession"
+	HarnessService_GetServerInfo_FullMethodName            = "/mecatl.v1.HarnessService/GetServerInfo"
 	HarnessService_GetSession_FullMethodName               = "/mecatl.v1.HarnessService/GetSession"
 	HarnessService_GetSessionTranscript_FullMethodName     = "/mecatl.v1.HarnessService/GetSessionTranscript"
 	HarnessService_SetMode_FullMethodName                  = "/mecatl.v1.HarnessService/SetMode"
@@ -114,6 +115,9 @@ const (
 type HarnessServiceClient interface {
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error)
+	// GetServerInfo returns only the composed server build identity. It is authenticated
+	// like every HarnessService operation and does not inspect configuration or state.
+	GetServerInfo(ctx context.Context, in *GetServerInfoRequest, opts ...grpc.CallOption) (*GetServerInfoResponse, error)
 	// GetSession returns a snapshot of an existing session.
 	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error)
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
@@ -407,6 +411,16 @@ func (c *harnessServiceClient) CreateSession(ctx context.Context, in *CreateSess
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateSessionResponse)
 	err := c.cc.Invoke(ctx, HarnessService_CreateSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) GetServerInfo(ctx context.Context, in *GetServerInfoRequest, opts ...grpc.CallOption) (*GetServerInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetServerInfoResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetServerInfo_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1061,6 +1075,9 @@ type HarnessService_ApprovePlanClient = grpc.ServerStreamingClient[Event]
 type HarnessServiceServer interface {
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error)
+	// GetServerInfo returns only the composed server build identity. It is authenticated
+	// like every HarnessService operation and does not inspect configuration or state.
+	GetServerInfo(context.Context, *GetServerInfoRequest) (*GetServerInfoResponse, error)
 	// GetSession returns a snapshot of an existing session.
 	GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error)
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
@@ -1353,6 +1370,9 @@ type UnimplementedHarnessServiceServer struct{}
 func (UnimplementedHarnessServiceServer) CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateSession not implemented")
 }
+func (UnimplementedHarnessServiceServer) GetServerInfo(context.Context, *GetServerInfoRequest) (*GetServerInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetServerInfo not implemented")
+}
 func (UnimplementedHarnessServiceServer) GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSession not implemented")
 }
@@ -1568,6 +1588,24 @@ func _HarnessService_CreateSession_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).CreateSession(ctx, req.(*CreateSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_GetServerInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetServerInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetServerInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetServerInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetServerInfo(ctx, req.(*GetServerInfoRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2623,6 +2661,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateSession",
 			Handler:    _HarnessService_CreateSession_Handler,
+		},
+		{
+			MethodName: "GetServerInfo",
+			Handler:    _HarnessService_GetServerInfo_Handler,
 		},
 		{
 			MethodName: "GetSession",

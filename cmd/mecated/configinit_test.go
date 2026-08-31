@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/configgen"

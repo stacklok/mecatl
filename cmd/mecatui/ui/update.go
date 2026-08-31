@@ -192,6 +192,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// refreshView (height-changed only) re-renders, so a frame is never rendered twice
 		// (the clear path above already refreshed when it fired).
 		mm.relayout()
+		if m.statusLineSnapshot() != mm.statusLineSnapshot() {
+			mm.submitStatusLine()
+		}
 		// Retire the kitty mascot on the empty→non-empty transition (the splash just
 		// left). Reset kittyActive so a later /clear back to the zero-state re-transmits,
 		// and batch the a=d delete out-of-band (tea.Raw) so the terminal frees the image.
@@ -277,8 +280,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case renderTickMsg:
 		return m.onRenderTick()
 
+	case statusLineChangedMsg:
+		m.generatedStatusLine = msg.line
+		return m, m.statusLineWaitCmd()
+
 	case quitDisarmMsg, quitDDisarmMsg, clickDisarmMsg:
 		return m.onDisarmMsg(msg)
+
+	case diagnosticsMsg:
+		return m.handleDiagnostics(msg)
 
 	default:
 		return m.dispatchNonInputMsg(msg)

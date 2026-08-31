@@ -39,9 +39,14 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 )
 
 func main() {
+	if buildinfo.IsVersion(os.Args) {
+		buildinfo.PrintVersion(os.Stdout, "mecatequi")
+		return
+	}
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
 }
 

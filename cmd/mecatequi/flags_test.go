@@ -10,8 +10,20 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
+
+func TestVersionInvocationIsExact(t *testing.T) {
+	if !buildinfo.IsVersion([]string{"mecatequi", "--version"}) {
+		t.Fatal("exact --version was not recognized")
+	}
+	for _, args := range [][]string{{"--version", "--mock"}, {"-version"}} {
+		if _, err := parseFlags(args); err == nil {
+			t.Errorf("parseFlags(%v) accepted a non-exact version invocation", args)
+		}
+	}
+}
 
 func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {

@@ -9,6 +9,37 @@ The HTTP adapter wraps the same service. Every event is emitted as one SSE
 — so field names match the gRPC event shape, while protobuf enums are JSON
 numbers rather than protojson enum names.
 
+### Server identity
+
+`GET /v1/info?provider_id=<active-provider>` is a process-wide, state-free identity
+probe. It takes no request body. `provider_id` is optional but must be the caller's
+already-known active provider; it may appear exactly once. Absent, repeated, or
+unknown selectors leave `llm_provider_display_endpoint` unavailable. It returns `200 OK`
+with this JSON object:
+
+```json
+{"build_id":"dev","server_implementation":"mecated","llm_provider_display_endpoint":"https://api.example/v1"}
+```
+
+`build_id` is the opaque linker-stamped build identity (`dev` in an unstamped
+source build). `server_implementation` is the stable composition family only:
+`mecated`, `mecak8s`, or embedded `mecatui`; a generic embedding uses `unknown`.
+It is neither an instance identifier nor a deployment label.
+
+The optional `llm_provider_display_endpoint` is a sanitized diagnostic display projection for the supplied `provider_id`, or absent when unavailable; it is not connection configuration or a connection instruction. It retains only scheme, host, optional port, and escaped clean path; userinfo, query, fragment, invalid/control data, malformed values, and oversized values are omitted. The route does not infer a default or session selection, discover providers, re-read configuration, inspect session state, or list alternatives.
+
+The route is inside the normal API authentication boundary. When `--auth-token`
+(or `MECATL_AUTH_TOKEN`) is configured, send its bearer token exactly as for the
+other HTTP API routes; configured TLS or mTLS requirements also apply. A caller
+without required authentication receives the normal `401` response. The endpoint
+never reads or returns configuration beyond this sanctioned endpoint projection, capabilities, topology, listener or connection details, authentication or TLS material, workspace paths, session or durable state, prompts, credentials, or raw errors.
+
+The route is additive. An older server returns `404`; clients should reduce that
+to their own safe unsupported status rather than display the response body. Clients
+must tolerate an absent or blank `server_implementation` in an otherwise valid
+response as `unknown`, and preserve an unfamiliar non-empty family for forward
+compatibility. `build_id` is not a semantic-version API.
+
 **Sessions & runs:**
 
 | Method & path | Body | Response |

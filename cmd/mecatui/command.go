@@ -318,6 +318,7 @@ func writeTopLevelHelp(out io.Writer) {
 	writeCommandSummary(out)
 	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
 	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
+	_, _ = fmt.Fprintln(out, "      mecatui --version prints the build version and exits")
 	_, _ = fmt.Fprintln(out, "\nRun 'mecatui --help-flags' for common embedded-mode flags or '--help-all' for the exhaustive bare reference.")
 }
 

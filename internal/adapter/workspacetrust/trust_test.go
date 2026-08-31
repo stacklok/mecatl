@@ -1,11 +1,15 @@
 package workspacetrust
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
@@ -147,11 +151,21 @@ func TestIsDeclaredUnparseable(t *testing.T) {
 	base := t.TempDir()
 	ws := realDir(t, base, "repo")
 	cfg := t.TempDir()
-	settings := []byte("trustedWorkspaces: [unterminated\n  : : :")
-
-	r := NewWithEnv(envWithSettings(cfg, settings))
+	const malformed = "trustedWorkspaces: [credential_key: super-secret-token # parser-looking: :\n  quote: \"never-log-me\"\n"
+	var buf bytes.Buffer
+	r := NewWithEnv(envWithSettings(cfg, []byte(malformed))).
+		WithDiagnostics(slogdiag.New(&buf, false, port.LevelInfo))
 	if r.IsDeclared(ws) {
 		t.Fatal("IsDeclared with unparseable settings.yaml = true, want false (fail-safe)")
+	}
+	output := buf.String()
+	if !strings.Contains(output, "settings.yaml unparseable") {
+		t.Fatalf("missing fail-safe diagnostic: %s", output)
+	}
+	for _, forbidden := range []string{"credential_key", "super-secret-token", "parser-looking", "never-log-me", "quote:"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("diagnostic leaked YAML-derived content %q: %s", forbidden, output)
+		}
 	}
 }
 

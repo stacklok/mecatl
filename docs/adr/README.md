@@ -33,6 +33,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0226 — Session storage separates current state, indexed metadata, and maintenance](./0226-session-storage-maintenance.md)
 - [0239 — Semantic stream retry and failed-step retry transport](./0239-semantic-stream-retry.md)
 - [0243 — Local JSONL durability boundaries](./0243-jsonl-durability.md)
+- [0245 — Safe build diagnostics](./0245-safe-build-diagnostics.md)
 - [0229 — Redis migration uses fenced renewable ownership and indexed coverage](./0229-redis-migration-fencing.md) *(superseded by 0230)*
 - [0230 — Redis migration ownership and coverage are proved before mutation](./0230-redis-migration-atomic-ownership-and-coverage.md) *(superseded by 0231)*
 - [0231 — Redis readiness requires exact owner-index coverage](./0231-redis-owner-index-exact-coverage.md)
@@ -195,6 +196,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0087 — Staged mecatui transport migration](./0087-mecatui-staged-transport-migration.md) *(superseded by 0089)*
 - [0088 — Explicit daemon.yaml (listener topology config)](./0088-daemon-config-file.md)
 - [0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0222-mecatui-ask-args-view.md)
+- [0247 — mecatui generated status lines](./0247-mecatui-status-line.md)
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

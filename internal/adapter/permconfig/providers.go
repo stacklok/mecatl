@@ -1,13 +1,15 @@
 package permconfig
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
 )
 
 const providerHTTPS = "https"
@@ -48,21 +50,22 @@ type ProviderOverride struct {
 }
 
 // UnmarshalYAML decodes a strict map of custom provider definitions.
-func (p *ProviderDefinitions) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
+func (p *ProviderDefinitions) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
 		return errors.New("providers: expected mapping")
 	}
-	out := make(ProviderDefinitions, len(node.Content)/2)
-	for i := 0; i < len(node.Content); i += 2 {
-		id := node.Content[i].Value
-		if !providerIDPattern.MatchString(id) || isReservedProviderID(id) {
+	out := make(ProviderDefinitions, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		id, ok := permconfigMappingKey(entry.Key)
+		if !ok || !providerIDPattern.MatchString(id) || isReservedProviderID(id) {
 			return errors.New("providers: invalid or reserved provider id")
 		}
 		if _, exists := out[id]; exists {
 			return errors.New("providers: duplicate provider id")
 		}
 		var definition ProviderDefinition
-		if err := node.Content[i+1].Decode(&definition); err != nil {
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, &definition); err != nil {
 			return fmt.Errorf("providers: invalid provider definition: %w", err)
 		}
 		definition.ID = id
@@ -73,7 +76,7 @@ func (p *ProviderDefinitions) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // UnmarshalYAML decodes and validates one strict custom provider definition.
-func (p *ProviderDefinition) UnmarshalYAML(node *yaml.Node) error {
+func (p *ProviderDefinition) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "providers entry", map[string]any{
 		"base_url": &p.BaseURL, "default_model": &p.DefaultModel, "api_flavor": &p.APIFlavor, "auth": &p.Auth,
 	}); err != nil {
@@ -94,7 +97,7 @@ func (p *ProviderDefinition) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // UnmarshalYAML decodes the closed custom-provider authentication method.
-func (a *ProviderAuth) UnmarshalYAML(node *yaml.Node) error {
+func (a *ProviderAuth) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "providers entry auth", map[string]any{"method": &a.Method}); err != nil {
 		return err
 	}
@@ -109,13 +112,17 @@ func (a *ProviderAuth) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // UnmarshalYAML decodes a strict map of eligible built-in endpoint overrides.
-func (p *ProviderOverrides) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
+func (p *ProviderOverrides) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
 		return errors.New("provider_overrides: expected mapping")
 	}
-	out := make(ProviderOverrides, len(node.Content)/2)
-	for i := 0; i < len(node.Content); i += 2 {
-		id := node.Content[i].Value
+	out := make(ProviderOverrides, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		id, stringID := permconfigMappingKey(entry.Key)
+		if !stringID {
+			return errors.New("provider_overrides: unsupported built-in provider")
+		}
 		if _, ok := builtinOverrideIDs[id]; !ok {
 			return errors.New("provider_overrides: unsupported built-in provider")
 		}
@@ -123,7 +130,7 @@ func (p *ProviderOverrides) UnmarshalYAML(node *yaml.Node) error {
 			return errors.New("provider_overrides: duplicate provider")
 		}
 		var override ProviderOverride
-		if err := node.Content[i+1].Decode(&override); err != nil {
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, &override); err != nil {
 			return fmt.Errorf("provider_overrides: invalid override: %w", err)
 		}
 		out[id] = override
@@ -133,7 +140,7 @@ func (p *ProviderOverrides) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // UnmarshalYAML decodes and validates one strict endpoint override.
-func (p *ProviderOverride) UnmarshalYAML(node *yaml.Node) error {
+func (p *ProviderOverride) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "provider override", map[string]any{"base_url": &p.BaseURL}); err != nil {
 		return err
 	}

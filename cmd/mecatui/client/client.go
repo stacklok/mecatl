@@ -7,8 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
+	pathpkg "path"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -44,6 +48,9 @@ type Client struct {
 	svc          mecatlv1.HarnessServiceClient
 	scheduleSvc  mecatlv1.ScheduleServiceClient
 	bearerBacked bool
+	// displayServerEndpoint is a sanitized diagnostic projection of the configured
+	// connection target, never a reconnect target, server response, or TLS/auth setting.
+	displayServerEndpoint string
 }
 
 // Dial connects to mecated per cfg. It uses grpc.NewClient (not the deprecated
@@ -105,7 +112,13 @@ func Dial(cfg DialConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %q: %w", cfg.Server, err)
 	}
-	return &Client{conn: conn, svc: mecatlv1.NewHarnessServiceClient(conn), scheduleSvc: mecatlv1.NewScheduleServiceClient(conn), bearerBacked: cfg.AuthToken != "" || cfg.TokenSource != nil}, nil
+	return &Client{
+		conn:                  conn,
+		svc:                   mecatlv1.NewHarnessServiceClient(conn),
+		scheduleSvc:           mecatlv1.NewScheduleServiceClient(conn),
+		bearerBacked:          cfg.AuthToken != "" || cfg.TokenSource != nil,
+		displayServerEndpoint: displayServerEndpoint(cfg),
+	}, nil
 }
 
 // anonymousDialHint annotates a server Unauthenticated rejection received by a
@@ -173,6 +186,45 @@ func tokenSourceStream(source TokenSource) grpc.StreamClientInterceptor {
 		ctx = context.WithValue(ctx, tokenContextKey{}, tokenContextValue{token: token})
 		return streamer(ctx, desc, cc, method, opts...)
 	}
+}
+
+const maxDiagnosticEndpointBytes = 2048
+
+// displayServerEndpoint projects the configured connection target as sanitized
+// diagnostic display data, never as a reconnect target or connection instruction.
+func displayServerEndpoint(cfg DialConfig) string {
+	scheme := "http"
+	if cfg.UseTLS {
+		scheme = "https"
+	}
+	return sanitizeDiagnosticEndpoint(scheme + "://" + cfg.Server)
+}
+
+// sanitizeDiagnosticEndpoint accepts only an absolute URL and retains its
+// scheme, host/port, and escaped clean path. Invalid input becomes unavailable.
+func sanitizeDiagnosticEndpoint(raw string) string {
+	if raw == "" || len(raw) > maxDiagnosticEndpointBytes || !utf8.ValidString(raw) {
+		return ""
+	}
+	for _, r := range raw {
+		if unicode.IsControl(r) {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Hostname() == "" || strings.ContainsAny(u.Host, "\\/?#@") {
+		return ""
+	}
+	escapedPath := u.EscapedPath()
+	if escapedPath == "" {
+		escapedPath = "/"
+	} else {
+		escapedPath = pathpkg.Clean(escapedPath)
+		if !strings.HasPrefix(escapedPath, "/") {
+			escapedPath = "/" + escapedPath
+		}
+	}
+	return strings.ToLower(u.Scheme) + "://" + u.Host + escapedPath
 }
 
 // Close releases the underlying connection.

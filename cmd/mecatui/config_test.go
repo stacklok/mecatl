@@ -14,8 +14,20 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
+
+func TestVersionInvocationIsExact(t *testing.T) {
+	if !buildinfo.IsVersion([]string{"mecatui", "--version"}) {
+		t.Fatal("exact --version was not recognized")
+	}
+	for _, args := range [][]string{{"--version", "--mock"}, {"-version"}} {
+		if _, _, err := parseTransportFlags(modeLocal, io.Discard, args); err == nil {
+			t.Errorf("parseTransportFlags(%v) accepted a non-exact version invocation", args)
+		}
+	}
+}
 
 // TestContextWindowOverrideFlagWiring pins the embedded-only flag's parse, config
 // mapping, and connect-mode rejection.
@@ -40,6 +52,9 @@ func TestContextWindowOverrideFlagWiring(t *testing.T) {
 // <name>.md exists under a conventional dir).
 func TestEmbeddedConfigEnablesAgentDefs(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
+	if ac.ServerImplementation != mecatuiServerImplementation {
+		t.Errorf("embeddedConfig ServerImplementation = %q, want %q", ac.ServerImplementation, mecatuiServerImplementation)
+	}
 	if !ac.AgentsConventional {
 		t.Error("embeddedConfig AgentsConventional = false, want true")
 	}

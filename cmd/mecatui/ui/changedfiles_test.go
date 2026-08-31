@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -108,6 +109,27 @@ func TestRenderChangedFiles(t *testing.T) {
 	}
 	if !strings.Contains(out, "a.go") || !strings.Contains(out, "dir/b.txt") {
 		t.Errorf("missing paths, got %q", out)
+	}
+}
+
+func TestStatusLineHeaderReservationOnlyAddsGapForSystemLane(t *testing.T) {
+	m := Model{width: 80, stuck: true}
+	if got, want := m.statusLineGeometry().headerAvailable, 78; got != want {
+		t.Fatalf("header availability without a right lane = %d, want %d", got, want)
+	}
+
+	m.filesChanged = make([]string, 100)
+	if tail := m.changedFilesIndicator(); tail != "✎ 100 files" {
+		t.Fatalf("100-file indicator = %q", tail)
+	}
+	withLane := m.statusLineGeometry().headerAvailable
+	if got, want := withLane, 80-2-lipgloss.Width(m.changedFilesIndicator())-headerGapPad; got != want {
+		t.Fatalf("header availability with changed-files lane = %d, want %d", got, want)
+	}
+
+	m.filesChanged = make([]string, 10_000)
+	if got, want := m.changedFilesIndicator(), "✎ 999+ files"; got != want {
+		t.Fatalf("changed-files indicator must remain bounded: %q, want %q", got, want)
 	}
 }
 

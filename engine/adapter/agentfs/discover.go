@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
 
+	"github.com/stacklok/mecatl/engine/adapter/frontmatterdiag"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -54,6 +56,43 @@ type frontmatter struct {
 	Memory          string            `yaml:"memory"`
 }
 
+func (f *frontmatter) UnmarshalYAML(node ast.Node) error {
+	type decoded frontmatter
+	var value decoded
+	if err := yaml.NodeToValue(node, &value); err != nil {
+		return err
+	}
+	*f = frontmatter(value)
+	for _, field := range []struct {
+		name string
+		dst  *stringOrSlice
+	}{
+		{"tools", &f.Tools},
+		{"disallowedTools", &f.DisallowedTools},
+		{"skills", &f.Skills},
+	} {
+		if value := frontmatterMappingValue(node, field.name); value != nil {
+			if err := field.dst.UnmarshalYAML(value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func frontmatterMappingValue(node ast.Node, name string) ast.Node {
+	mapping, ok := node.(*ast.MappingNode)
+	if !ok {
+		return nil
+	}
+	for _, value := range mapping.Values {
+		if value.Key.GetToken().Value == name {
+			return value.Value
+		}
+	}
+	return nil
+}
+
 // mcpServerList is the parsed `mcpServers` frontmatter. It accepts THREE forms
 // interchangeably (Claude-Code tolerance, extended for inline servers):
 //
@@ -85,33 +124,45 @@ type rawMCPMapping struct {
 	Command   string            `yaml:"command"`
 }
 
-func (l *mcpServerList) UnmarshalYAML(node *yaml.Node) error {
-	switch node.Kind {
-	case yaml.ScalarNode:
-		for _, name := range splitList(node.Value) {
+func (l *mcpServerList) UnmarshalYAML(node ast.Node) error {
+	switch node.Type() {
+	case ast.StringType:
+		var name string
+		if err := yaml.NodeToValue(node, &name); err != nil {
+			return err
+		}
+		for _, name := range splitList(name) {
 			l.servers = append(l.servers, AgentMCPServer{Name: name})
 		}
 		return nil
-	case yaml.SequenceNode:
-		for _, item := range node.Content {
-			switch item.Kind {
-			case yaml.ScalarNode:
-				for _, name := range splitList(item.Value) {
-					l.servers = append(l.servers, AgentMCPServer{Name: name})
-				}
-			case yaml.MappingNode:
-				var m rawMCPMapping
-				if err := item.Decode(&m); err != nil {
+	case ast.SequenceType:
+		sequence, ok := node.(*ast.SequenceNode)
+		if !ok {
+			return fmt.Errorf("mcpServers: invalid sequence")
+		}
+		for _, item := range sequence.Values {
+			switch item.Type() {
+			case ast.StringType:
+				var name string
+				if err := yaml.NodeToValue(item, &name); err != nil {
 					return err
 				}
-				l.appendMapping(m)
+				for _, name := range splitList(name) {
+					l.servers = append(l.servers, AgentMCPServer{Name: name})
+				}
+			case ast.MappingType:
+				var mapping rawMCPMapping
+				if err := yaml.NodeToValue(item, &mapping); err != nil {
+					return err
+				}
+				l.appendMapping(mapping)
 			default:
-				return fmt.Errorf("mcpServers entry: expected a string or a mapping, got YAML kind %d", item.Kind)
+				return fmt.Errorf("mcpServers entry: expected a string or a mapping")
 			}
 		}
 		return nil
 	default:
-		return fmt.Errorf("mcpServers: expected a string, a list, or a list of mappings, got YAML kind %d", node.Kind)
+		return fmt.Errorf("mcpServers: expected a string, a list, or a list of mappings")
 	}
 }
 
@@ -182,21 +233,46 @@ func NormalizeHeaders(in map[string]string) map[string]string {
 // into a trimmed, empty-free []string.
 type stringOrSlice []string
 
-func (s *stringOrSlice) UnmarshalYAML(node *yaml.Node) error {
-	switch node.Kind {
-	case yaml.SequenceNode:
-		var arr []string
-		if err := node.Decode(&arr); err != nil {
-			return err
-		}
-		*s = splitList(arr...)
+func (s *stringOrSlice) UnmarshalYAML(node ast.Node) error {
+	if text, ok := frontmatterScalarText(node); ok {
+		*s = splitList(text)
 		return nil
-	case yaml.ScalarNode:
-		*s = splitList(node.Value)
-		return nil
-	default:
-		return fmt.Errorf("expected a string or a list, got YAML kind %d", node.Kind)
 	}
+	if node.Type() != ast.SequenceType {
+		return fmt.Errorf("expected a string or a list")
+	}
+	sequence, ok := node.(*ast.SequenceNode)
+	if !ok {
+		return fmt.Errorf("expected a string or a list")
+	}
+	values := make([]string, 0, len(sequence.Values))
+	for _, item := range sequence.Values {
+		text, ok := frontmatterScalarText(item)
+		if !ok {
+			return fmt.Errorf("expected a string or a list of strings")
+		}
+		values = append(values, text)
+	}
+	*s = splitList(values...)
+	return nil
+}
+
+// frontmatterScalarText preserves yaml.v3's scalar-as-text frontmatter
+// compatibility while avoiding parser-rendered error text at this boundary.
+func frontmatterScalarText(node ast.Node) (string, bool) {
+	switch node.Type() {
+	case ast.StringType, ast.LiteralType:
+		var text string
+		if err := yaml.NodeToValue(node, &text); err != nil {
+			return "", false
+		}
+		return text, true
+	case ast.BoolType, ast.IntegerType, ast.FloatType, ast.NullType, ast.InfinityType, ast.NanType:
+		if parserToken := node.GetToken(); parserToken != nil {
+			return parserToken.Value, true
+		}
+	}
+	return "", false
 }
 
 // splitList flattens its inputs, splitting any entry on commas and whitespace,
@@ -352,7 +428,7 @@ func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
 	}
 	var fm frontmatter
 	if err := yaml.Unmarshal([]byte(fmText), &fm); err != nil {
-		return AgentDef{}, fmt.Sprintf("malformed YAML frontmatter: %v", err), nil
+		return AgentDef{}, frontmatterdiag.FrontmatterParseError(err), nil
 	}
 	name := strings.TrimSpace(fm.Name)
 	if name == "" {

@@ -6,11 +6,29 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/internal/buildinfo"
 )
 
 // resolveCommand is a PURE seam (no os.Args, no os.Exit, no I/O), so these tests
 // exercise the REAL production command-resolution logic directly — they do NOT
 // mutate global state, do NOT bind a listener, and do NOT call os.Exit.
+
+// --- Version invocation ------------------------------------------------------
+
+func TestVersionInvocationIsExact(t *testing.T) {
+	if !buildinfo.IsVersion([]string{"mecated", "--version"}) {
+		t.Fatal("exact --version was not recognized")
+	}
+	for _, argv := range [][]string{{"mecated", "--version", "--mock"}, {"mecated", "-version"}} {
+		if res := resolveCommand(argv); res.err == nil {
+			t.Errorf("resolveCommand(%v) accepted a non-exact version invocation", argv)
+		}
+	}
+	if _, err := parseFlagsMode(modeServe, []string{"--version"}); err == nil {
+		t.Fatal("serve --version was accepted")
+	}
+}
 
 // --- Requirement 1: pure resolution seam (mode + remaining) ----------------
 
@@ -148,6 +166,7 @@ func TestResolveLeadingHelpAllRendersExhaustiveReference(t *testing.T) {
 	s := out.String()
 	for _, want := range []string{
 		"Usage: mecated <command> [flags]",
+		"Global: mecated --version prints the build version and exits.",
 		"Exhaustive serve-compatible flag reference",
 		"-workspace",
 		"mecated acp --help-all",

@@ -51,10 +51,11 @@ import (
 	"syscall"
 	"time"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 // userSubdirTrust is the machine-written trust registry relative to the XDG config
@@ -161,8 +162,12 @@ func (r *Reader) registryEntries() map[string]registryEntry {
 	}
 	var rf registryFile
 	if perr := yaml.Unmarshal(data, &rf); perr != nil {
-		r.diag.Log(context.Background(), port.LevelWarn, "workspace trust: trust.yaml unparseable; ignoring remembered trust (fail-safe)",
-			"file", path, "err", perr)
+		yamlDiagnostic := yamldiag.Classify("parse workspace trust registry", perr)
+		args := []any{"file", path, "yaml_operation", yamlDiagnostic.Operation, "yaml_category", yamlDiagnostic.Category}
+		if yamlDiagnostic.HasLocation {
+			args = append(args, "yaml_line", yamlDiagnostic.Line, "yaml_column", yamlDiagnostic.Column)
+		}
+		r.diag.Log(context.Background(), port.LevelWarn, "workspace trust: trust.yaml unparseable; ignoring remembered trust (fail-safe)", args...)
 		return nil
 	}
 	if rf.Version != registryVersion {

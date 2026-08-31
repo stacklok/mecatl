@@ -30,6 +30,12 @@ an editor that spawned it.
 
 ---
 
+## Build identity and safe diagnostics
+
+Every shipped executable accepts exact top-level `--version` and prints its build id without starting normal configuration or services. Authenticated clients can read the server build identity and sanitized diagnostic display endpoint projections through gRPC `GetServerInfo` or HTTP `GET /v1/info`; these are not connection configuration or instructions. The detailed transport contracts are in [the gRPC API](usage/grpc-api.md) and [the HTTP/SSE API](usage/http-sse-api.md). Mecatui's `/diagnostics` behavior is documented in [the TUI guide](tui.md).
+
+---
+
 ## Table of contents
 
 | Section | File |

@@ -11,9 +11,14 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 )
 
 func main() {
+	if buildinfo.IsVersion(os.Args) {
+		buildinfo.PrintVersion(os.Stdout, "mecak8s")
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("mecak8s exited with error", "err", err)
 		os.Exit(1)

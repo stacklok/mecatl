@@ -1,7 +1,10 @@
 package permconfig
 
 import (
+	"os"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/engine/governance"
 )
@@ -51,6 +54,35 @@ permissions:
 	}
 	if !found {
 		t.Fatal("did not find the normalised Bash allow rule")
+	}
+}
+
+func TestGoccyYAMLMigration_SemanticMatrixPermconfig(t *testing.T) {
+	data, err := os.ReadFile("../../../engine/testdata/semantic-matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix struct {
+		Cases []struct {
+			Name     string            `yaml:"name"`
+			Document string            `yaml:"document"`
+			Readers  map[string]string `yaml:"readers"`
+		} `yaml:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range matrix.Cases {
+		outcome, ok := tc.Readers["permconfig"]
+		if !ok {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			_, err := parseYAML([]byte(tc.Document))
+			if accepted, want := err == nil, outcome == "accept"; accepted != want {
+				t.Fatalf("parseYAML() accepted=%v, want %v (error=%v)", accepted, want, err)
+			}
+		})
 	}
 }
 

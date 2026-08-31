@@ -1,10 +1,14 @@
 package permconfig
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
+	"github.com/goccy/go-yaml/parser"
 
 	"github.com/stacklok/mecatl/engine/governance"
 )
@@ -43,63 +47,153 @@ func ValidateYAML(data []byte) error {
 // error the caller surfaces (a config file that cannot be parsed must not be
 // silently ignored — that would hide a typo that disables a deny rule).
 func parseYAML(data []byte) (Config, error) {
-	var cfg Config
 	if len(data) > maxConfigBytes {
 		return Config{}, errConfigTooLarge(len(data))
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return Config{}, nil
 	}
-	// TARGETED unknown-key rejection (the top-level decode is deliberately
-	// lenient — plain yaml.Unmarshal — so removed keys must be named
-	// individually): `output-economy:` was REMOVED (ADR 0089, the clean break
-	// superseding ADR 0086's parse-compat shim; ADR 0041 INTRODUCED the
-	// setting). Error precisely so the invalid-file WARN names the key to
-	// delete.
-	if err := rejectRemovedTopLevelKeys(data); err != nil {
-		return Config{}, err
+
+	file, err := parser.ParseBytes(data, 0)
+	if err != nil {
+		return Config{}, safePermconfigParseError(err)
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse permission config: %w", err)
+	if len(file.Docs) == 0 || (len(file.Docs) == 1 && file.Docs[0] != nil && file.Docs[0].Body == nil) {
+		return Config{}, nil
+	}
+	if len(file.Docs) != 1 || file.Docs[0] == nil || file.Docs[0].Body == nil {
+		return Config{}, fmt.Errorf("invalid permission config document")
+	}
+	root, ok := permconfigMapping(file.Docs[0].Body)
+	if !ok {
+		return Config{}, fmt.Errorf("permission config must be a mapping")
+	}
+	if hasTopLevelMappingKey(root, "output-economy") {
+		return Config{}, fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
+	}
+
+	var cfg Config
+	if err := cfg.UnmarshalYAML(root); err != nil {
+		return Config{}, safePermconfigSchemaError(err)
 	}
 	return cfg, nil
 }
 
-func hasTopLevelKey(data []byte, key string) bool {
-	var node yaml.Node
-	if yaml.Unmarshal(data, &node) != nil || len(node.Content) == 0 {
-		return false
+// permconfigSchemaError carries the fixed section identity and a source location
+// independently of decoder-rendered text. Both fields originate from the mapping
+// entry or typed decoder token, never from YAML scalar content.
+type permconfigSchemaError struct {
+	section  string
+	location permconfigLocation
+	err      error
+}
+
+func (*permconfigSchemaError) Error() string { return "invalid permission config schema" }
+
+func (e *permconfigSchemaError) Unwrap() error { return e.err }
+
+// safePermconfigSchemaError drops every decoder-rendered detail before a schema
+// failure can reach resolver diagnostics. Section identity and location arrive as
+// structured context from UnmarshalYAML and the decoder token.
+func safePermconfigSchemaError(err error) error {
+	section := "permission config"
+	location := permconfigLocation{}
+	var schemaErr *permconfigSchemaError
+	if errors.As(err, &schemaErr) {
+		section = schemaErr.section
+		location = permconfigErrorLocation(schemaErr.err)
+		if !location.HasLocation {
+			location = schemaErr.location
+		}
 	}
-	root := node.Content[0]
-	if root.Kind != yaml.MappingNode {
-		return false
+	if location.HasLocation {
+		return fmt.Errorf("invalid permission config schema at %s (line %d)", section, location.Line)
 	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == key {
+	return fmt.Errorf("invalid permission config schema at %s", section)
+}
+
+// safePermconfigParseError keeps parser output out of returned errors and
+// diagnostics. goccy's typed token is the only input-derived detail allowed.
+func safePermconfigParseError(err error) error {
+	location := permconfigErrorLocation(err)
+	if location.HasLocation {
+		return fmt.Errorf("invalid permission config YAML at line %d, column %d", location.Line, location.Column)
+	}
+	return fmt.Errorf("invalid permission config YAML")
+}
+
+func rejectRemovedTopLevelKeys(data []byte) error {
+	file, err := parser.ParseBytes(data, 0)
+	if err != nil || len(file.Docs) != 1 || file.Docs[0] == nil {
+		return nil // Malformed YAML is reported by the primary parser path.
+	}
+	root, ok := permconfigMapping(file.Docs[0].Body)
+	if ok && hasTopLevelMappingKey(root, "output-economy") {
+		return fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
+	}
+	return nil
+}
+
+func hasTopLevelMappingKey(root *ast.MappingNode, key string) bool {
+	for _, entry := range root.Values {
+		entryKey, ok := permconfigMappingKey(entry.Key)
+		if ok && entryKey == key {
 			return true
 		}
 	}
 	return false
 }
 
-// rejectRemovedTopLevelKeys probes the document for a top-level mapping key
-// that was REMOVED from the schema, with an error naming the key precisely. The
-// probe is a one-field flat struct decode — lenient yaml.Unmarshal ignores
-// unknown keys, so only the top-level `output-economy:` binds (a NESTED
-// `output-economy:` under a section can never trip it: the flat struct has no
-// path to it).
-func rejectRemovedTopLevelKeys(data []byte) error {
-	var probe struct {
-		OutputEconomy *string `yaml:"output-economy"`
+// UnmarshalYAML decodes known top-level sections while preserving the lenient
+// top-level compatibility contract.
+func (c *Config) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
+		return fmt.Errorf("permission config must be a mapping")
 	}
-	if err := yaml.Unmarshal(data, &probe); err != nil {
-		// Malformed YAML: fall through to the real decode, which reports it.
-		return nil
+	known := map[string]any{
+		"providers":              &c.Providers,
+		"provider_overrides":     &c.ProviderOverrides,
+		"permissions":            &c.Permissions,
+		"guardrails":             newPermconfigNodePointer(&c.Guardrails),
+		"posture":                &c.Posture,
+		"models":                 newPermconfigNodePointer(&c.Models),
+		"reasoning-effort":       &c.ReasoningEffort,
+		"plan-mode-auto-approve": &c.PlanModeAutoApprove,
+		"learning":               newPermconfigNodePointer(&c.Learning),
+		"steer":                  newPermconfigNodePointer(&c.Steer),
+		"openrouter":             newPermconfigNodePointer(&c.OpenRouter),
+		"mcp":                    newPermconfigNodePointer(&c.MCP),
+		"retention":              newPermconfigNodePointer(&c.Retention),
+		"storage_management":     newPermconfigNodePointer(&c.StorageManagement),
 	}
-	if probe.OutputEconomy != nil {
-		return fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
+	for _, entry := range mapping.Values {
+		key, ok := permconfigMappingKey(entry.Key)
+		if !ok {
+			continue // Top-level settings remain intentionally lenient.
+		}
+		target, known := known[key]
+		if !known {
+			continue
+		}
+		if err := yaml.NodeToValue(entry.Value, target); err != nil {
+			return &permconfigSchemaError{
+				section:  key,
+				location: permconfigMappingEntryLocation(entry),
+				err:      err,
+			}
+		}
 	}
 	return nil
+}
+
+func hasTopLevelKey(data []byte, key string) bool {
+	file, err := parser.ParseBytes(data, 0)
+	if err != nil || len(file.Docs) != 1 || file.Docs[0] == nil {
+		return false
+	}
+	root, ok := permconfigMapping(file.Docs[0].Body)
+	return ok && hasTopLevelMappingKey(root, key)
 }
 
 // rulesFromConfig converts a parsed Config into governance.Rule values tagged
@@ -228,13 +322,28 @@ type lenientCounts struct {
 // true YAML syntax error the counts are simply unavailable (all zero,
 // ok=false). Top-level and subagent buckets fold per effect.
 func lostRuleCounts(data []byte) (deny, ask, allow int, ok bool) {
-	var lc lenientCounts
-	if err := yaml.Unmarshal(data, &lc); err != nil {
+	file, err := parser.ParseBytes(data, 0)
+	if err != nil || len(file.Docs) != 1 || file.Docs[0] == nil {
 		return 0, 0, 0, false
 	}
-	p := lc.Permissions
-	return len(p.Deny) + len(p.Subagent.Deny),
-		len(p.Ask) + len(p.Subagent.Ask),
-		len(p.Allow) + len(p.Subagent.Allow),
-		true
+	root, mapping := permconfigMapping(file.Docs[0].Body)
+	if !mapping {
+		return 0, 0, 0, false
+	}
+	for _, entry := range root.Values {
+		key, stringKey := permconfigMappingKey(entry.Key)
+		if !stringKey || key != "permissions" {
+			continue
+		}
+		var lc lenientCounts
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, &lc.Permissions); err != nil {
+			return 0, 0, 0, false
+		}
+		p := lc.Permissions
+		return len(p.Deny) + len(p.Subagent.Deny),
+			len(p.Ask) + len(p.Subagent.Ask),
+			len(p.Allow) + len(p.Subagent.Allow),
+			true
+	}
+	return 0, 0, 0, true
 }

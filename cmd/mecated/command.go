@@ -241,6 +241,7 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  config daemon validate  strictly validate a daemon.yaml (--file PATH)\n")
 	_, _ = fmt.Fprintf(out, "  skills promote          promote a model-authored candidate skill out of quarantine\n")
 	_, _ = fmt.Fprintf(out, "  perf-mcp print-config   print a paste-ready client .mcp.json for the perf MCP server\n")
+	_, _ = fmt.Fprintf(out, "\nGlobal: mecated --version prints the build version and exits.\n")
 	_, _ = fmt.Fprintf(out, "\nRun 'mecated <command> --help' for common flags and 'mecated <command> --help-all' for the exhaustive reference.\n")
 }
 

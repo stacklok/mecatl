@@ -17,6 +17,9 @@ import (
 	"syscall"
 )
 
+// Supported reports whether this platform can contain a whole command tree.
+func Supported() bool { return true }
+
 // Configure puts cmd in its own process group and, on context cancellation,
 // kills the entire group rather than just the leader. Signalling the negative
 // PID delivers SIGKILL to every process in the group, so orphaned grandchildren

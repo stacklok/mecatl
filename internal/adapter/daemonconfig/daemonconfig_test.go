@@ -1,9 +1,97 @@
 package daemonconfig
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
+
+func TestGoccyYAMLMigration_Scenario1_StrictDiagnosticsUseTokenLocationWithoutSource(t *testing.T) {
+	const attackerKey = "attacker-controlled-key"
+	const attackerValue = "attacker-controlled-value"
+	_, err := parse([]byte("version: v1\n  "+attackerKey+": "+attackerValue+"\n"), "test.yml")
+	if err == nil {
+		t.Fatal("malformed YAML must fail")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "line 1") || !strings.Contains(message, "column") {
+		t.Fatalf("syntax diagnostic = %q, want goccy token line and column", message)
+	}
+	for _, forbidden := range []string{"  " + attackerKey, attackerKey, attackerValue} {
+		if strings.Contains(message, forbidden) {
+			t.Fatalf("syntax diagnostic leaked YAML content %q: %q", forbidden, message)
+		}
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario2_DaemonConfigStrictContract(t *testing.T) {
+	tests := []struct {
+		name, input, category string
+	}{
+		{"unknown field", "version: v1\nunknown-attacker-key: attacker-value\n", "expected schema"},
+		{"wrong type", "version: v1\nrate_limit: attacker-value\n", "expected schema"},
+		{"malformed syntax", "version: v1\n  attacker-key: attacker-value\n", "invalid YAML syntax"},
+		{"second document", "version: v1\n---\nversion: v1\n", "multiple documents"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parse([]byte(tt.input), "test.yml")
+			if err == nil {
+				t.Fatal("strict daemon configuration must reject input")
+			}
+			message := err.Error()
+			if !strings.Contains(message, tt.category) {
+				t.Fatalf("error = %q, want category %q", message, tt.category)
+			}
+			for _, forbidden := range []string{"unknown-attacker-key", "attacker-key", "attacker-value"} {
+				if strings.Contains(message, forbidden) {
+					t.Fatalf("error leaked YAML content %q: %q", forbidden, message)
+				}
+			}
+		})
+	}
+}
+
+func TestGoccyYAMLMigration_SemanticMatrixDaemonConfig(t *testing.T) {
+	data, err := os.ReadFile("../../../engine/testdata/semantic-matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix struct {
+		Cases []struct {
+			Name     string            `yaml:"name"`
+			Document string            `yaml:"document"`
+			Readers  map[string]string `yaml:"readers"`
+		} `yaml:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range matrix.Cases {
+		outcome, ok := tc.Readers["daemonconfig"]
+		if !ok {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			_, err := parse([]byte(tc.Document), "semantic-matrix.yaml")
+			if accepted, want := err == nil, outcome == "accept"; accepted != want {
+				t.Fatalf("parse() accepted=%v, want %v (error=%v)", accepted, want, err)
+			}
+		})
+	}
+}
+
+func TestParsePreservesAnchorAndAliasCompatibility(t *testing.T) {
+	cfg, err := parse([]byte("version: &version v1\nmetrics_addr: *version\n"), "test.yml")
+	if err != nil {
+		t.Fatalf("parse anchored daemon config: %v", err)
+	}
+	if cfg.MetricsAddr == nil || *cfg.MetricsAddr != SchemaVersionV1 {
+		t.Fatalf("MetricsAddr = %v, want alias value %q", cfg.MetricsAddr, SchemaVersionV1)
+	}
+}
 
 func TestLoadVersionRequired(t *testing.T) {
 	_, err := parse([]byte(``), "test.yml")
@@ -26,15 +114,19 @@ func TestLoadVersionEmpty(t *testing.T) {
 }
 
 func TestLoadVersionUnsupported(t *testing.T) {
-	_, err := parse([]byte(`version: v2`), "test.yml")
+	const unsupported = "yaml-provided-version-must-not-escape"
+	err := func() error {
+		_, err := parse([]byte("version: "+unsupported), "test.yml")
+		return err
+	}()
 	if err == nil {
 		t.Fatal("expected error for unsupported version")
 	}
-	if !strings.Contains(err.Error(), "unsupported version") {
-		t.Errorf("error %q should mention unsupported version", err)
+	if want := `test.yml: unsupported version (only "v1" is supported)`; err.Error() != want {
+		t.Errorf("error = %q, want %q", err, want)
 	}
-	if !strings.Contains(err.Error(), SchemaVersionV1) {
-		t.Errorf("error %q should name supported version %q", err, SchemaVersionV1)
+	if strings.Contains(err.Error(), unsupported) {
+		t.Errorf("unsupported-version error leaked YAML value: %q", err)
 	}
 }
 
@@ -283,7 +375,7 @@ func TestParseVersionIntegerType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for integer version")
 	}
-	// yaml.v3 decodes an integer into a string field as a type error under
+	// The parser decodes an integer into a string field as a type error under
 	// KnownFields, so this is a schema error.
 	if strings.Contains(err.Error(), "version key is required") {
 		t.Errorf("error %q should be a schema/type error for integer version, not a missing-version error", err)

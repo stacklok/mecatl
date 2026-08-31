@@ -1,0 +1,10 @@
+# preserve this header
+posture: trusted
+# preserve this unrelated mapping
+permissions: {deny: [Write]}
+learning:
+  mode: review
+  sensitivity: balanced
+  skills:
+    # preserve this activation comment
+    activation: evaluated

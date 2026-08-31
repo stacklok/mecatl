@@ -25,7 +25,10 @@ session lifecycle. They also expose manual history compaction through gRPC
 `CompactSession` and bodyless HTTP `POST /v1/sessions/{id}/compact`; check the
 additive `manual_compaction` capability before offering it. The server decides which
 optional features are available and returns a capability snapshot when it creates a
-session.
+session. Authenticated callers may also use gRPC `GetServerInfo` or HTTP `GET
+/v1/info` to obtain the server build identity and sanitized diagnostic display
+endpoint projections; these are not connection configuration or instructions. See the detailed gRPC and HTTP
+references for their request, response, privacy, and compatibility contracts.
 
 ## The common lifecycle
 

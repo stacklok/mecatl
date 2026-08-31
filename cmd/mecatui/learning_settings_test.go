@@ -210,7 +210,7 @@ func TestOperatorLearningSettingsAdvanceSensitivityNormalizesAbsentMode(t *testi
 	}
 }
 
-func TestOperatorLearningSettingsRejectsInvalidYAMLWithoutModification(t *testing.T) {
+func TestGoccyYAMLMigration_Scenario4_LearningEditorWriteSafetyUnchanged(t *testing.T) {
 	operations := map[string]func(*operatorLearningSettings) (string, string, string, error){
 		"Advance":            (*operatorLearningSettings).Advance,
 		"AdvanceSensitivity": (*operatorLearningSettings).AdvanceSensitivity,
@@ -349,5 +349,153 @@ func TestOperatorLearningSettingsWriteError(t *testing.T) {
 	dir := canonicalTempDir(t)
 	if _, _, _, err := (&operatorLearningSettings{path: dir}).Advance(); err == nil {
 		t.Fatal("Advance should report a read/write error for a directory path")
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario4_LearningEditorPreservationFixtures(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("learning_settings.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(source), "go.yaml.in/yaml/v3") || !strings.Contains(string(source), "github.com/goccy/go-yaml") {
+		t.Fatal("learning settings editor must use the goccy AST document path")
+	}
+
+	cases := []struct {
+		name     string
+		fixture  string
+		expected string
+		edit     func(*operatorLearningSettings) error
+	}{
+		{
+			name:     "mode preserves top-level comments order and flow style",
+			fixture:  "settings-preserve-top-level.yaml",
+			expected: "settings-preserve-top-level.mode.yaml",
+			edit: func(settings *operatorLearningSettings) error {
+				_, _, _, err := settings.Advance()
+				return err
+			},
+		},
+		{
+			name:     "sensitivity preserves learning flow style",
+			fixture:  "settings-preserve-learning.yaml",
+			expected: "settings-preserve-learning.sensitivity.yaml",
+			edit: func(settings *operatorLearningSettings) error {
+				_, _, _, err := settings.AdvanceSensitivity()
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(canonicalTempDir(t), "settings.yaml")
+			input, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := os.ReadFile(filepath.Join("testdata", tc.expected))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, input, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.edit(&operatorLearningSettings{path: path}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("edited document mismatch (-want +got):\nwant:\n%s\ngot:\n%s", want, got)
+			}
+		})
+	}
+}
+
+func TestOperatorLearningSettingsAcceptsIntegerAutomaticLimits(t *testing.T) {
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
+	body := "learning:\n  mode: off\n  automatic:\n    cooldown: 1m\n    window: 1h\n    max_reflections: 1\n    max_tokens: 1\n    max_reflections_per_principal: 1\n    max_tokens_per_principal: 1\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := (&operatorLearningSettings{path: path}).Advance(); err != nil {
+		t.Fatalf("Advance with integer automatic limits: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "max_tokens: 1") {
+		t.Fatalf("integer automatic limit was not preserved:\n%s", got)
+	}
+}
+
+func TestOperatorLearningSettingsValidationErrorsDoNotLeakMappingKeys(t *testing.T) {
+	const secret = "super-secret-mapping-key"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "unknown learning key",
+			body: "learning:\n  " + secret + ": super-secret-value\n",
+			want: "parse operator settings: unknown learning key",
+		},
+		{
+			name: "invalid learning value",
+			body: "learning:\n  mode: super-secret-value\n",
+			want: "parse operator settings: invalid learning.mode",
+		},
+		{
+			name: "unknown automatic key",
+			body: "learning:\n  automatic:\n    " + secret + ": super-secret-value\n",
+			want: "parse operator settings: unknown learning.automatic key",
+		},
+		{
+			name: "duplicate automatic key",
+			body: "learning:\n  automatic:\n    max_tokens: 1\n    max_tokens: 2\n",
+			want: "parse operator settings: invalid YAML",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(canonicalTempDir(t), "settings.yaml")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, _, _, err := (&operatorLearningSettings{path: path}).Advance()
+			if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+				t.Fatalf("Advance error = %v, want prefix %q", err, tc.want)
+			}
+			for _, forbidden := range []string{secret, "super-secret-value"} {
+				if strings.Contains(err.Error(), forbidden) {
+					t.Fatalf("validation error leaked YAML-derived content %q: %s", forbidden, err)
+				}
+			}
+		})
+	}
+}
+
+func TestOperatorLearningSettingsMalformedSyntaxIncludesSafeLocation(t *testing.T) {
+	const secret = "MECATUI_LEARNING_SECRET"
+	path := filepath.Join(canonicalTempDir(t), "settings.yaml")
+	if err := os.WriteFile(path, []byte("learning: ["+secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&operatorLearningSettings{path: path}).readDocument()
+	if err == nil {
+		t.Fatal("malformed settings unexpectedly parsed")
+	}
+	if !strings.Contains(err.Error(), "parse operator settings: invalid YAML at line ") || !strings.Contains(err.Error(), ", column ") {
+		t.Fatalf("readDocument error = %q, want safe line and column", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("readDocument error leaked YAML content: %q", err)
 	}
 }

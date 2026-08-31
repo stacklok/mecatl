@@ -14,16 +14,18 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
+	"github.com/goccy/go-yaml/parser"
 
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 // maxFileBytes bounds the credentials file before parsing (defense in depth,
@@ -80,21 +82,27 @@ type rawOAuthEntry struct {
 
 type strictString string
 
-func (s *strictString) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+func (s *strictString) UnmarshalYAML(node ast.Node) error {
+	if tagged, ok := node.(*ast.TagNode); ok && tagged.Start != nil && tagged.Start.Value == "!!str" {
+		if parserToken := tagged.Value.GetToken(); parserToken != nil {
+			*s = strictString(parserToken.Value)
+			return nil
+		}
+	}
+	if node.Type() != ast.StringType {
 		return errors.New("expected string")
 	}
-	*s = strictString(node.Value)
+	*s = strictString(node.GetToken().Value)
 	return nil
 }
 
 type expiryString string
 
-func (s *expiryString) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode || (node.Tag != "!!str" && node.Tag != "!!timestamp") {
+func (s *expiryString) UnmarshalYAML(node ast.Node) error {
+	if node.Type() != ast.StringType {
 		return errors.New("expected timestamp string")
 	}
-	*s = expiryString(node.Value)
+	*s = expiryString(node.GetToken().Value)
 	return nil
 }
 
@@ -198,20 +206,20 @@ func Load(path string, explicit bool, env xdgconfig.ResolveEnv, knownProviders [
 	}
 
 	// Strict typed decode: a typo at any supported level rejects the credential
-	// file instead of silently dropping a field. Never surface the decoder error:
-	// YAML type errors can quote the offending scalar, which may itself be a key.
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-	var raw rawFile
-	if err := dec.Decode(&raw); err != nil || raw.Providers == nil {
-		return nil, schemaWarning(path)
+	// file instead of silently dropping a field. Parser and decoder errors remain
+	// value-free because they are never returned to callers. Auth files retain the
+	// parser's anchor and alias semantics; those restrictions belong only to
+	// settings documents that an editor rewrites.
+	file, err := parser.ParseBytes(data, parser.ParseComments)
+	if err != nil {
+		return nil, schemaWarning(path, err)
 	}
-	// Exactly one YAML document is accepted. A second document is ambiguous
-	// credential input even when it is empty or null, so fail closed with the
-	// same generic, value-free warning used for other whole-file shape errors.
-	var trailing yaml.Node
-	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return nil, schemaWarning(path)
+	if len(file.Docs) != 1 || file.Docs[0] == nil || file.Docs[0].Body == nil || len(ast.Filter(ast.NullType, file.Docs[0].Body)) > 0 {
+		return nil, schemaWarning(path, nil)
+	}
+	var raw rawFile
+	if err := yaml.NodeToValue(file.Docs[0].Body, &raw, yaml.DisallowUnknownField()); err != nil || raw.Providers == nil {
+		return nil, schemaWarning(path, nil)
 	}
 	// Count, never the names: an unknown provider name is an arbitrary YAML
 	// key, and a key typed where the provider name belongs (inverted nesting)
@@ -270,7 +278,16 @@ func (f *File) ValidateKnown(knownProviders []string) string {
 	return joinWarnings(append([]string{f.baseWarning}, contentWarnings...)...)
 }
 
-func schemaWarning(path string) string {
+func schemaWarning(path string, parseErr error) string {
+	location := yamldiag.Classify("parse auth file", parseErr)
+	if location.HasLocation {
+		return fmt.Sprintf(
+			"auth file %s: does not match the expected schema at line %d, column %d (providers.<name>.api_key or providers.openai-codex.oauth) — check indentation and field names",
+			path,
+			location.Line,
+			location.Column,
+		)
+	}
 	return fmt.Sprintf(
 		"auth file %s: does not match the expected schema (providers.<name>.api_key or providers.openai-codex.oauth) — check indentation and field names",
 		path,

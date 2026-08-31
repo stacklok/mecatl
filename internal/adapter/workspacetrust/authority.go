@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "github.com/goccy/go-yaml"
 )
 
 // authority.go answers "does this workspace carry a project AUTHORITY SET worth

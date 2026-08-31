@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
@@ -110,10 +111,15 @@ type LearningSettings interface {
 // imports client + theme only — never contracts/gen or any internal/... package;
 // all proto contact happens behind Converser/SessionCreator.
 type Deps struct {
-	Session     SessionCreator
-	Conv        Converser
-	MCP         client.MCP              // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
-	Cmds        client.Commander        // slash-command discovery for the input palette; nil disables it
+	Session SessionCreator
+	Conv    Converser
+	MCP     client.MCP       // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
+	Cmds    client.Commander // slash-command discovery for the input palette; nil disables it
+	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
+	ServerInfo ServerInfoGetter
+	// ServerImpl is the locally-known embedded server family. It is used without
+	// an RPC when Embedded is true.
+	ServerImpl  string
 	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
 	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
 	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
@@ -205,6 +211,9 @@ type Deps struct {
 	// main.go populates it with client.NewClipboard().
 	Clipboard client.Clipboard
 	Theme     theme.Theme
+	// StatusSource is composed outside ui. The UI only submits display facts and
+	// consumes semantic snapshots through one Bubble Tea listener.
+	StatusSource statusline.Source
 
 	// Presentation capability probes are package-private test seams. New replaces
 	// nil values with the production environment detectors.
@@ -212,11 +221,17 @@ type Deps struct {
 	kittyCapable      func() bool
 	scrollKeysMarking func() string
 
+	// ClientBuild is the local mecatui build identity and Embedded selects the
+	// local server identity path for /diagnostics.
+	ClientBuild string
+	Embedded    bool
+
 	// Display-only context for the header bar.
-	Server    string
-	Workspace string
-	Mode      string
-	Model     string
+	Server         string
+	ConnectionMode string
+	Workspace      string
+	Mode           string
+	Model          string
 	// Resume is a statically validated existing chat selected before Bubble Tea
 	// starts. Its authoritative transcript is adopted without CreateSession; nil
 	// preserves the new-session default.
@@ -234,7 +249,7 @@ type Deps struct {
 
 	// Version is the mecatui build version, shown on the first-run welcome splash
 	// (e.g. "v0.3.1" or "dev"). Threaded from the shared
-	// internal/buildinfo.Version (ldflags-set); "" omits the version line.
+	// internal/buildinfo.BuildID (ldflags-set); "" omits the version line.
 	// Display-only.
 	Version string
 
@@ -468,9 +483,10 @@ type Model struct {
 	// already set a title this client never saw. Cleared by resetSession (a
 	// /clear wipes the session-derived state, including the label). The render
 	// path clamps + sanitizes it; this field holds the raw adopted title.
-	sessionTitle string
-	statusMsg    string
-	fatalErr     string
+	sessionTitle        string
+	statusMsg           string
+	generatedStatusLine statusline.Result
+	fatalErr            string
 
 	compactPending      bool
 	compactRequestToken uint64
@@ -1127,7 +1143,7 @@ func (m Model) Init() tea.Cmd {
 		}
 	}
 	if m.deps.BrowseSessions {
-		cmds := []tea.Cmd{m.sp.Tick}
+		cmds := []tea.Cmd{m.sp.Tick, m.statusLineWaitCmd()}
 		if m.deps.Models != nil {
 			cmds = append(cmds, client.ListModelsCmd(m.deps.Ctx, m.deps.Models, m.modelCatalogRequestToken))
 		}
@@ -1137,13 +1153,13 @@ func (m Model) Init() tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 	if m.deps.Resume != nil {
-		return tea.Batch(m.sp.Tick, func() tea.Msg { return startupResumeReadyMsg{} })
+		return tea.Batch(m.sp.Tick, func() tea.Msg { return startupResumeReadyMsg{} }, m.statusLineWaitCmd())
 	}
 	if m.deps.Models != nil {
-		return tea.Batch(m.sp.Tick, client.ListModelsCmd(m.deps.Ctx, m.deps.Models, m.modelCatalogRequestToken))
+		return tea.Batch(m.sp.Tick, client.ListModelsCmd(m.deps.Ctx, m.deps.Models, m.modelCatalogRequestToken), m.statusLineWaitCmd())
 	}
 	// No-lister / old-server path: with no model lister wired there is nothing to
 	// reconcile, so fire CreateSession directly (with the empty selection) — do NOT
 	// wait on a ListModels that will never arrive, which would strand at "connecting…".
-	return tea.Batch(m.sp.Tick, m.createSessionCmd())
+	return tea.Batch(m.sp.Tick, m.createSessionCmd(), m.statusLineWaitCmd())
 }

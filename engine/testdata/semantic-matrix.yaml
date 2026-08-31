@@ -1,0 +1,149 @@
+# Parser behavior captured before the goccy migration. Each entry is reader-labelled
+# so compatibility tests execute the document at its owning parser boundary.
+cases:
+  - name: authfile-implicit-bool-api-key
+    category: implicit-bool
+    document: |
+      providers:
+        openai:
+          api_key: true
+    readers:
+      authfile: reject
+  - name: authfile-quoted-bool-api-key
+    category: quoted-bool
+    document: |
+      providers:
+        openai:
+          api_key: "true"
+    readers:
+      authfile: accept
+  - name: authfile-null-api-key
+    category: "null"
+    document: |
+      providers:
+        openai:
+          api_key: null
+    readers:
+      authfile: reject
+  - name: authfile-timestamp-expiry
+    category: timestamp
+    document: |
+      providers:
+        openai-codex:
+          oauth:
+            access_token: "token"
+            account_id: "account"
+            expires_at: 2026-08-28T12:00:00Z
+    readers:
+      authfile: accept
+  - name: authfile-explicit-string-tag
+    category: tag
+    document: |
+      providers:
+        openai:
+          api_key: !!str 123
+    readers:
+      authfile: accept
+  - name: authfile-anchor-api-key
+    category: anchor
+    document: |
+      providers:
+        openai:
+          api_key: &key safe-key
+    readers:
+      authfile: accept
+  - name: authfile-alias-api-key
+    category: alias
+    document: |
+      providers:
+        openai:
+          api_key: &key safe-key
+        anthropic:
+          api_key: *key
+    readers:
+      authfile: accept
+  - name: daemonconfig-empty-metrics-address
+    category: empty
+    document: |
+      version: v1
+      metrics_addr: ""
+    readers:
+      daemonconfig: accept
+  - name: daemonconfig-hex-rate-burst
+    category: numeric
+    document: |
+      version: v1
+      rate_burst: 0x10
+    readers:
+      daemonconfig: accept
+  - name: daemonconfig-anchor-version
+    category: anchor
+    document: |
+      version: &version v1
+    readers:
+      daemonconfig: accept
+  - name: daemonconfig-alias-metrics-address
+    category: alias
+    document: |
+      version: v1
+      metrics_addr: &address 127.0.0.1:9090
+      grpc_addr: *address
+    readers:
+      daemonconfig: accept
+  - name: permconfig-merge-key
+    category: merge
+    document: |
+      permissions:
+        <<: &defaults
+          allow: [Read]
+    readers:
+      permconfig: reject
+  - name: configvalidate-anchor
+    category: anchor
+    document: |
+      defaults: &defaults
+        mode: strict
+    readers:
+      configvalidate: reject
+  - name: configvalidate-alias
+    category: alias
+    document: |
+      learning: *learning
+    readers:
+      configvalidate: reject
+  - name: configvalidate-alias-through-merge
+    category: alias-through-merge
+    document: |
+      defaults: &defaults
+        learning:
+          mode: strict
+      <<: *defaults
+    readers:
+      configvalidate: reject
+  - name: agentfs-malformed-frontmatter
+    category: frontmatter
+    document: |
+      ---
+      name: [unterminated
+      ---
+      body
+    readers:
+      agentfs: reject
+  - name: skillfs-malformed-frontmatter
+    category: frontmatter
+    document: |
+      ---
+      name: [unterminated
+      ---
+      body
+    readers:
+      skillfs: reject
+  - name: rulesfs-malformed-frontmatter
+    category: frontmatter
+    document: |
+      ---
+      paths: [unterminated
+      ---
+      body
+    readers:
+      rulesfs: reject

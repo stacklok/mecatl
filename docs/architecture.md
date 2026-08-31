@@ -25,6 +25,17 @@ for operators, library consumers, and researchers — see
 [`docs/READING.md`](READING.md). This page covers the big picture and the link
 list below; the reading map owns audience routing.
 
+## Build identity
+
+All shipped commands share the linker-stamped build identity in
+`internal/buildinfo/buildinfo.go`. Exact top-level `--version` exits before normal
+The server exposes its build identity plus sanitized diagnostic display endpoint projections through authenticated gRPC
+`GetServerInfo` and HTTP `GET /v1/info?provider_id=<active-provider>`; neither endpoint reads session or workspace
+state, and the provider display projection is available only when the caller supplies its already-known active provider and never triggers discovery or configuration reads. These values are not connection instructions. Mecatui's palette-visible `/diagnostics` converts the exact
+lower-case command into a sanitized report sent through the normal model prompt path;
+remote identity lookup uses the existing authenticated connection and exposes only fixed
+failure categories.
+
 
 ## The guide
 
@@ -134,7 +145,7 @@ consumers — while the heavy adapters and the composition layer stay under
 `internal/`. `engine/` **is its own Go module**
 (`github.com/stacklok/mecatl/engine`), kept in this repo as a monorepo via a
 committed `go.work`; its standalone dependency closure is just `doublestar` +
-`robfig/cron` + `go.yaml.in/yaml/v3` + `x/net/html` + `x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
+`robfig/cron` + `github.com/goccy/go-yaml` + `x/net/html` + `x/sync` (+ test-only `goleak`), so an external consumer importing `engine/agent`
 pulls in that small set rather than mecatl's full require cone (see
 [ADR 0036](adr/0036-engine-module.md)). The exported identifiers of the **eight
 core packages** (`session`, `governance`, `learning`, `tool`, `prompt`, `port`, `team`,
@@ -372,11 +383,21 @@ from proto `Event`s** and are bound by the inward-only layering rule. The
 `contracts/gen` + grpc + `internal/app` surface lives only in `cmd/mecatui/client`,
 `cmd/mecatui/embed`, and the `cmd/mecatui` main; the `ui` (Bubble Tea
 model/update/view) and `theme` (pure styling) packages import no `engine/...` or `internal/...`
-package and no proto directly. Its `/clear` command uses the existing create-session
-RPC to create a new empty session first (preserving the current workspace, effective
-model/reasoning effort, and permission mode), then rebinds locally and only afterward
-best-effort closes the old session; a failed create leaves the old session and UI
-unchanged. Usage and theming are documented in `docs/tui.md`.
+package and no proto directly. Its local status customization is a separate
+client-owned seam: `cmd/mecatui/statusline.Source` receives display-safe `Input`
+snapshots from the UI and publishes latest semantic `Result` spans. It owns
+responsive template evaluation or a direct local executable, refresh and
+cancellation; the UI owns theme resolution, renderer chrome, clipping, and
+alignment. Settings live only in `$XDG_CONFIG_HOME/mecatui/settings.yaml`; a
+remote server or project never selects a local executable. Templates get a
+StatusML-escaped projection, commands get raw JSON on stdin, and StatusML carries
+semantic tokens rather than ANSI/OSC. This preserves `ui` as a pure render layer
+while allowing autonomous source updates. Its `/clear` command uses the existing
+create-session RPC to create a new empty session first (preserving the current
+workspace, effective model/reasoning effort, and permission mode), then rebinds
+locally and only afterward best-effort closes the old session; a failed create
+leaves the old session and UI unchanged. Usage and configuration are documented in
+`docs/tui.md`.
 
 **Remote mecatui OIDC.** The remote-login path is separate from the ToolHive LLM
 login: `mecatui llm login` remains the ToolHive gateway flow, while `mecatui login

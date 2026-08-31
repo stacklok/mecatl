@@ -157,7 +157,20 @@ func (m Model) renderHeader() string {
 	// never hidden by scrolling.
 	badge, badgeW, hasBadge := m.postureBadgeRender()
 	if hasBadge || tail != "" {
+		if lineSurface := m.generatedStatusLine.Header; lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
+			line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
+			line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
+			return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
+		}
+		if m.deps.StatusSource != nil {
+			line = m.fitHeader("", badge, badgeW, tail, m.widthOr())
+			return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
+		}
 		line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
+	} else if lineSurface := m.generatedStatusLine.Header; lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
+		line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
+	} else if m.deps.StatusSource != nil {
+		line = ""
 	}
 	return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
 }
@@ -418,10 +431,15 @@ func (m Model) scrollIndicator() string {
 // with the hook-modified glyph and avoids "Δ" colliding with the Edit/Write
 // "+N/-N" diff size signals. It is a compact count; the full path list is
 // revealed under ctrl+t (see renderChangedFiles).
+const changedFilesIndicatorLimit = 999
+
 func (m Model) changedFilesIndicator() string {
 	n := len(m.filesChanged)
 	if n == 0 {
 		return ""
+	}
+	if n > changedFilesIndicatorLimit {
+		return "✎ 999+ files"
 	}
 	return "✎ " + plural(n, "file")
 }
@@ -430,6 +448,21 @@ func (m Model) changedFilesIndicator() string {
 // and the right-aligned changed-files indicator so they never touch. Mirrors the
 // footer's footerGapPad but is owned by the header path (naming honesty).
 const headerGapPad = 2
+
+// statusHeaderAvailable is the custom-header budget after renderer-owned system
+// lanes and the header's own padding have been reserved.
+func (m Model) statusHeaderAvailable(badge string, badgeW int, tail string) int {
+	lanes := badgeW
+	if badge != "" && tail != "" {
+		lanes += 2 + lipgloss.Width(tail)
+	} else if tail != "" {
+		lanes += lipgloss.Width(tail)
+	}
+	if lanes > 0 {
+		lanes += headerGapPad
+	}
+	return max(0, m.widthOr()-2-lanes)
+}
 
 // fitHeader right-aligns the indicator (an optional ALREADY-STYLED posture badge plus an
 // optional MUTED scroll/changed-files tail) beside the identity line when there is room
@@ -469,8 +502,9 @@ func (m Model) fitHeader(line, badge string, badgeW int, tail string, width int)
 	return line + strings.Repeat(" ", gap) + styled
 }
 
-// renderFooter is the status bar: spinner + active tool + status + usage.
-func (m Model) renderFooter() string {
+// footerActivity renders only the renderer-owned activity lane. Status sources
+// receive its reserved width but cannot replace this chrome.
+func (m Model) footerActivity() string {
 	approval := approvalFooterProjection{}
 	if m.phase == phaseAwaitingApproval {
 		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
@@ -481,9 +515,6 @@ func (m Model) renderFooter() string {
 		spin := m.sp.View()
 		switch {
 		case m.activeTool != "" && m.toolProgress != "":
-			// A long-running tool forwarded a transient progress line: show it in
-			// place of the bare "Running X…" so the footer reflects live activity
-			// instead of looking frozen. Cleared on the next tool.result/turn boundary.
 			left = fmt.Sprintf("%s %s…", spin, m.toolProgress)
 		case m.activeTool != "":
 			left = fmt.Sprintf("%s Running %s…", spin, m.activeTool)
@@ -502,18 +533,21 @@ func (m Model) renderFooter() string {
 	case phaseConnecting:
 		left = m.sp.View() + " connecting…"
 	default:
-		// The idle/default-phase footer-left (selection count / reconnecting cue /
-		// gateway notice / statusMsg) is extracted to keep renderFooter under the
-		// cyclomatic bound; see idleFooterLeft.
 		left = m.idleFooterLeft()
 	}
-
-	// The mouse-debug overlay (MECATUI_DEBUG_MOUSE=1) takes the footer-left at the
-	// HIGHEST priority — over every phase arm above — so the live raw-coords/mapping
-	// line stays visible even during a drag (the gesture that the diagnostic targets).
 	if m.deps.DebugMouse && m.mouseDebug != "" {
 		left = m.deps.Theme.Style("muted").Render(m.mouseDebug)
 	}
+	return left
+}
+
+// renderFooter is the status bar: spinner + active tool + status + usage.
+func (m Model) renderFooter() string {
+	approval := approvalFooterProjection{}
+	if m.phase == phaseAwaitingApproval {
+		approval = approvalFooterProjectionFor(approvalSurfaceFor(&m))
+	}
+	left := m.footerActivity()
 
 	// The full decompressed chord list now lives in the "?" help overlay, so the
 	// footer leads with its two entry points and carries only the most useful prompt
@@ -551,6 +585,17 @@ func (m Model) renderFooter() string {
 	}
 
 	width := m.widthOr()
+	available := m.statusLineGeometry().footerAvailable
+	if surface := m.generatedStatusLine.Footer; surface.Present && statusSurfaceFits(surface, available) {
+		custom := renderStatusSurface(m.deps.Theme, surface, available, true)
+		line := left + strings.Repeat(" ", footerGapPad) + custom
+		footer := m.deps.Theme.Style("footer").Width(width).Render(line)
+		return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
+	}
+	if m.deps.StatusSource != nil {
+		footer := m.deps.Theme.Style("footer").Width(width).Render(left)
+		return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
+	}
 	line := m.fitFooter(left, width)
 	footer := m.deps.Theme.Style("footer").Width(width).Render(line)
 	return footer + "\n" + m.deps.Theme.Style("muted").Render(help)
