@@ -177,7 +177,7 @@ func (st *Store) appendRecord(ctx context.Context, id session.SessionID, rec []b
 	if err != nil {
 		return "", fmt.Errorf("redisstore: append event %q: %w", id, err)
 	}
-	return port.EncodeCursor(generation, entryID), nil
+	return port.EncodeCursor(id, generation, entryID), nil
 }
 
 // appendResult unpacks the {generation, id} pair the append script returns.
@@ -218,7 +218,7 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			yield(port.LogRecord{}, err)
 			return
 		}
-		position, err := port.DecodeCursor(after, generation)
+		position, err := port.DecodeCursor(after, id, generation)
 		if err != nil {
 			yield(port.LogRecord{}, err)
 			return
@@ -358,7 +358,7 @@ func readStreamAfter(
 				if !ok {
 					continue // an entry occupying a position but carrying no record
 				}
-				rec.Cursor = port.EncodeCursor(generation, msg.ID)
+				rec.Cursor = port.EncodeCursor(id, generation, msg.ID)
 				rec.Live = live
 				if !yield(rec, nil) {
 					return
@@ -451,7 +451,7 @@ func readLegacyListAfter(
 			if !ok {
 				continue
 			}
-			rec.Cursor = port.EncodeCursor("", strconv.FormatInt(next, 10))
+			rec.Cursor = port.EncodeCursor(id, "", strconv.FormatInt(next, 10))
 			rec.Live = live
 			if !yield(rec, nil) {
 				return

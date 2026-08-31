@@ -175,8 +175,8 @@ The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0250
   - verify: `TestADR_0250_EventLogContractUnbroken`
 - AC6.3: A cursor from a prior log generation yields `CursorExpiredError`, never silent degradation or wrong data.
   - verify: `TestADR_0250_StaleGenerationCursorExpires`
-- AC6.4: A tampered or malformed cursor is rejected, never coerced to a position.
-  - verify: `TestADR_0250_TamperedCursorRejected`
+- AC6.4: A tampered or malformed cursor is rejected, never coerced to a position. A cursor is scoped to BOTH the session it was issued for and the log generation, so one presented against a different session is rejected too — including on the legacy path, where every pre-generation log reports the EMPTY generation and so shares a basis value the generation check alone cannot separate. (Session scoping was added after review of [#868](https://github.com/stacklok/mecatl/pull/868); it was reproduced as silent wrong data in both shipped backends first.)
+  - verify: `TestADR_0250_TamperedCursorRejected`, `TestADR_0250_CursorIsSessionScoped`, `TestADR_0250_EncodeFailureIsFailClosed`, `TestLegacyListCursorIsSessionScoped`
 - AC6.5: A watcher in a second process observes durable appends made by the first — the cross-process obligation, proved over Redis and JSONL. (JSONL in `06a`; Redis in `06b`, which completes the AC.)
   - verify: `TestADR_0250_CrossProcessWatchObservesAppends`
 - AC6.6: Existing Redis LIST event logs are readable after the Stream migration; no session loses its history. (`06b`.)

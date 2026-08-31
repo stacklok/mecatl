@@ -213,6 +213,71 @@ func collect(t *testing.T, log port.CursorEventLog, id session.SessionID, after 
 	return out
 }
 
+// TestLegacyListCursorIsSessionScoped is the regression test for the bug review
+// on #868 surfaced and this branch reproduced: a cursor issued for one session
+// resolving against ANOTHER session's legacy LIST.
+//
+// It lives here rather than only in the shared conformance suite because the
+// suite's cross-session case runs over Stream logs, and the LEGACY LIST path is
+// where the bug was actually live. Two legacy logs both report the EMPTY
+// generation — that is the whole point of the empty generation, it is what keeps
+// pre-ADR-0250 logs readable — so the generation check cannot separate them, and
+// a list INDEX needs no boundary alignment to land on a real record. Before the
+// fix this returned session B's records with a nil error:
+//
+//	ReadAfter(sess-bbb, cursor-for-sess-aaa) -> [B-three B-four] err=<nil>
+func TestLegacyListCursorIsSessionScoped(t *testing.T) {
+	ctx := context.Background()
+	mr, st := legacyStore(t)
+
+	const idA session.SessionID = "legacy-scope-a"
+	const idB session.SessionID = "legacy-scope-b"
+
+	mr.RPush("mecatl:events:"+string(idA), legacyRecord(t, 0, "A-one"), legacyRecord(t, 1, "A-two"))
+	// B is deliberately LONGER, so an index carried over from A lands on a real
+	// record instead of failing incidentally past the end of the list.
+	mr.RPush("mecatl:events:"+string(idB),
+		legacyRecord(t, 0, "B-one"), legacyRecord(t, 1, "B-two"),
+		legacyRecord(t, 2, "B-three"), legacyRecord(t, 3, "B-four"))
+
+	// Exactly the cursor form readLegacyListAfter issues for a legacy log: the
+	// empty generation plus a list index.
+	curA := port.EncodeCursor(idA, "", "2")
+
+	var gotErr error
+	var yielded []string
+	for rec, err := range st.ReadAfter(ctx, idB, curA, port.ReadOptions{}) {
+		if err != nil {
+			gotErr = err
+			break
+		}
+		yielded = append(yielded, rec.Event.Text)
+	}
+	if gotErr == nil {
+		t.Fatalf("a cursor issued for %q resolved against %q and yielded %v with no error", idA, idB, yielded)
+	}
+	if !errors.Is(gotErr, port.ErrCursorMalformed) {
+		t.Errorf("cross-session legacy cursor error = %v, want ErrCursorMalformed", gotErr)
+	}
+	if len(yielded) != 0 {
+		t.Errorf("yielded %v before failing; a cross-session cursor must surface no records at all", yielded)
+	}
+
+	// The same log still reads correctly with its OWN cursor — the rejection must
+	// not be a blanket refusal of legacy cursors.
+	curB := port.EncodeCursor(idB, "", "2")
+	var own []string
+	for rec, err := range st.ReadAfter(ctx, idB, curB, port.ReadOptions{}) {
+		if err != nil {
+			t.Fatalf("ReadAfter(B, cursor-for-B): %v", err)
+		}
+		own = append(own, rec.Event.Text)
+	}
+	if !equalStrings(own, []string{"B-three", "B-four"}) {
+		t.Errorf("B read with its own legacy cursor = %v, want [B-three B-four]", own)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
