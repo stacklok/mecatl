@@ -150,7 +150,42 @@ Bounded paging over a long log becomes possible for the first time.
   follow a requirement at all — is exactly where they converge. Left as sizing guidance
   rather than a dedicated connection pool because the right number depends on the
   deployment, and a second pool would need its own inventory row to buy a bound the
-  operator can already set.
+  operator can already set. Reviewers on #869 pushed back on that reasoning and are
+  probably right: bounded slices cap the HOLD time, not the CONTENTION, so N watchers
+  still compete with `Save`/`Append` and raising the shared pool only moves the threshold.
+  The recommended shape, deferred rather than rejected, is an isolated bounded follow pool
+  (roughly one socket per actively blocked watcher, not a client each), a fail-fast
+  admission limit returning a resumable resource-exhausted error rather than waiting on a
+  pool timeout, and store-lifetime cancellation so `Store.Close` can join or force-close
+  followers — safe to force-close precisely because writes use a different client.
+  Consumer groups are NOT the answer: every watcher needs the full event stream, which is
+  the one thing a consumer group is designed not to give. Pub/Sub could serve as a lossy
+  wake-up hint followed by draining the durable Stream, but must never carry authoritative
+  events.
+- **A follower must re-verify the log's basis on every read cycle, not only at attach.**
+  Checking the generation when a read starts catches a cold attach with a stale cursor and
+  says nothing about a follower, which has already passed that check and is parked at the
+  tail when the basis moves. Worse, the check has to run AFTER the read rather than before
+  it: a blocking `XREAD` straddles time, Redis wakes a blocked client on an `XADD` to the
+  key, and because stream IDs are wall-clock derived a replacement log's first entry sorts
+  after the follower's position — so one reply can legitimately carry a record from a log
+  that did not exist when the cycle began, and a pre-read check passes in exactly that
+  case. The cost is a `TYPE` plus a `GET` per cycle, which is not cacheable: a cached
+  basis is precisely the stale basis the check exists to catch. The empty generation makes
+  it fiddlier still, because a log that does not exist yet reports the same value a legacy
+  log does, so a follower attaching before the first append must ADOPT the generation that
+  append mints rather than read it as a reset — see `logBasis` in
+  [`internal/adapter/redisstore/cursoreventlog.go`](../../internal/adapter/redisstore/cursoreventlog.go)
+  and its counterpart in [`internal/adapter/store/jsonlstore/cursoreventlog.go`](../../internal/adapter/store/jsonlstore/cursoreventlog.go).
+  Raised in review on #869 after `memstore` and `jsonlstore` had independently got this
+  right and `redisstore` had not; it is pinned for every backend by a case in
+  [`engine/adapter/eventlogconformance/cursor.go`](../../engine/adapter/eventlogconformance/cursor.go).
+- **`ReadOptions.Limit == 0` bounds the sequence, not the fetch.** It means "yield until
+  the log ends or the context is cancelled", and the natural implementation — passing the
+  caller's zero through to `XREAD`/`LRANGE` — has storage return the entire log in one
+  reply. Backends therefore page internally at a fixed size while continuing to yield.
+  This is invisible through `iter.Seq2`, so it cannot be a conformance case and is
+  asserted at the wire instead (raised in review on #868).
 - **We are shipping a guarantee weaker than the one #821 asked for**, deliberately, and
   the SDK's public documentation must say so. A user who loses a durable backend *and* the
   process holding the watchers has no mechanism to learn that they missed events. We

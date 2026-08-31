@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
@@ -288,4 +289,86 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestLegacyFollowerExpiresWhenMigrationLandsUnderIt covers the migration
+// happening WHILE a follower is parked on the legacy LIST.
+//
+// It is redisstore-specific by necessity: the shared conformance suite's
+// reset-mid-follow case exercises the Stream path, because that is the only
+// datatype a backend-neutral suite can assume. The legacy path is both a
+// different code path and the one with the WORSE trigger — a delete-and-recreate
+// under a live follower is unlikely, whereas this log being migrated is
+// GUARANTEED on its next append, which is exactly the upgrade window the legacy
+// path exists to serve.
+//
+// The failure it pins is a misCLASSIFICATION rather than wrong data: LRANGE
+// against the migrated key returns WRONGTYPE, which reached the consumer wrapped
+// as an infrastructure fault. A client cannot act on that — "restart from the
+// beginning because your positions are now stream IDs" and "Redis is unwell,
+// retry" call for opposite responses. Raised in review on #869.
+func TestLegacyFollowerExpiresWhenMigrationLandsUnderIt(t *testing.T) {
+	t.Parallel()
+	mr, st := legacyStore(t)
+	const id session.SessionID = "legacy-follow-migrate"
+	mr.RPush("mecatl:events:"+string(id), legacyRecord(t, 0, "legacy-one"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	type outcome struct {
+		rec  port.LogRecord
+		err  error
+		done bool
+	}
+	outcomes := make(chan outcome, 8)
+	go func() {
+		for rec, err := range st.ReadAfter(ctx, id, "", port.ReadOptions{Follow: true}) {
+			if err != nil {
+				outcomes <- outcome{err: err}
+				return
+			}
+			outcomes <- outcome{rec: rec}
+		}
+		outcomes <- outcome{done: true}
+	}()
+
+	next := func(what string) outcome {
+		t.Helper()
+		select {
+		case got := <-outcomes:
+			return got
+		case <-time.After(30 * time.Second):
+			t.Fatalf("timed out waiting for %s", what)
+			return outcome{}
+		}
+	}
+
+	// Drain the pre-migration record, so the follower is provably parked on the
+	// LIST path rather than still resolving its cursor.
+	switch first := next("the legacy record present before the migration"); {
+	case first.err != nil:
+		t.Fatalf("legacy follow yielded error %v before the migration", first.err)
+	case first.done:
+		t.Fatal("legacy follow ended before the migration")
+	case first.rec.Event.Text != "legacy-one":
+		t.Fatalf("first legacy record = %q, want %q", first.rec.Event.Text, "legacy-one")
+	}
+
+	// The append migrates the log in place: the LIST becomes a Stream and a real
+	// generation is minted, so list indices stop addressing anything.
+	if _, err := st.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 1, Text: "post-migration"}); err != nil {
+		t.Fatalf("AppendEvent (migrating): %v", err)
+	}
+
+	switch got := next("the legacy follower's reaction to the migration"); {
+	case got.err != nil:
+		if !errors.Is(got.err, port.ErrCursorExpired) {
+			t.Errorf("legacy follower got error %v, want ErrCursorExpired; an infrastructure-shaped error leaves the consumer unable to tell a migrated basis from a broken Redis", got.err)
+		}
+	case got.done:
+		t.Error("legacy follower ended cleanly across the migration, which is indistinguishable from the log having no more records")
+	default:
+		t.Errorf("legacy follower was handed record %q across the migration instead of ErrCursorExpired", got.rec.Event.Text)
+	}
 }

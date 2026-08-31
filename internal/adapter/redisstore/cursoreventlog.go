@@ -75,6 +75,19 @@ const (
 	// prompt response to cancellation.
 	followBlock = time.Second
 
+	// readPageSize bounds ONE storage round trip, independent of the caller's
+	// ReadOptions.Limit.
+	//
+	// ReadOptions.Limit == 0 means "yield until the log ends or the context is
+	// cancelled" — an unbounded SEQUENCE, not permission to pull an unbounded
+	// response out of Redis in one reply. Passing the caller's zero straight
+	// through to XREAD/LRANGE is the natural reading and the wrong one: a
+	// follower attaching to a long transcript would have Redis materialise every
+	// entry server-side and go-redis decode the lot before a single record is
+	// yielded. The read loops already page, so capping each call costs one round
+	// trip per page and bounds peak memory. Raised in review on #868.
+	readPageSize = 256
+
 	// noBlock omits the BLOCK argument entirely. It is NOT zero: go-redis maps
 	// Block==0 to "BLOCK 0", which blocks FOREVER, so a drain that passed zero
 	// would hang on an exhausted stream instead of returning.
@@ -206,19 +219,7 @@ func appendResult(out []any) (generation, entryID string, err error) {
 // resuming from the right one until data is already lost.
 func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port.Cursor, opts port.ReadOptions) iter.Seq2[port.LogRecord, error] {
 	return func(yield func(port.LogRecord, error) bool) {
-		client, release, err := st.clients.acquire()
-		if err != nil {
-			yield(port.LogRecord{}, err)
-			return
-		}
-		defer release()
-
-		generation, legacy, err := logGeneration(ctx, client, id)
-		if err != nil {
-			yield(port.LogRecord{}, err)
-			return
-		}
-		position, err := port.DecodeCursor(after, id, generation)
+		basis, legacy, position, err := st.readAfterBasis(ctx, id, after)
 		if err != nil {
 			yield(port.LogRecord{}, err)
 			return
@@ -231,7 +232,7 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			// empty generation, so a cursor issued here expires the moment that
 			// append mints a real one — which is correct, because the positions
 			// change from list indices to stream IDs.
-			readLegacyListAfter(ctx, client, id, position, opts, yield)
+			st.readLegacyListAfter(ctx, id, position, opts, yield)
 			return
 		}
 
@@ -240,31 +241,114 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			yield(port.LogRecord{}, err)
 			return
 		}
-		readStreamAfter(ctx, client, id, generation, lastID, opts, yield)
+		st.readStreamAfter(ctx, id, basis, lastID, opts, yield)
 	}
+}
+
+// readAfterBasis resolves the log's basis and the cursor's position, holding a
+// client only for the two commands that takes.
+//
+// It is deliberately a SEPARATE, short-lived acquisition from the read loop's.
+// A follower can be parked for hours, and one lease held for the life of the
+// iterator pins a retired credential generation open — clientGenerations cannot
+// close a client while its refs are non-zero — so a credential rotation never
+// completes for as long as anyone is watching. Raised in review on #869.
+func (st *Store) readAfterBasis(ctx context.Context, id session.SessionID, after port.Cursor) (basis logBasis, legacy bool, position string, err error) {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return logBasis{}, false, "", err
+	}
+	defer release()
+
+	generation, present, legacy, err := logGeneration(ctx, client, id)
+	if err != nil {
+		return logBasis{}, false, "", err
+	}
+	position, err = port.DecodeCursor(after, id, generation)
+	if err != nil {
+		return logBasis{}, false, "", err
+	}
+	// A non-zero cursor ANCHORS the basis even when the stored generation is
+	// empty: DecodeCursor has just verified the two agree, so the caller is
+	// resuming a real position and any later basis is a replacement, not a
+	// creation.
+	return logBasis{generation: generation, known: present || after != ""}, legacy, position, nil
+}
+
+// yieldReadError reports err to the consumer, preserving the classification a
+// sentinel already carries.
+//
+// A cursor error is the consumer's cue to restart from the beginning rather than
+// retry, so wrapping it in an infrastructure-shaped "read events" message would
+// bury the one bit that decides what the caller does next.
+func yieldReadError(id session.SessionID, err error, yield func(port.LogRecord, error) bool) {
+	if errors.Is(err, port.ErrCursorExpired) || errors.Is(err, port.ErrCursorMalformed) || errors.Is(err, errStoreClosed) {
+		yield(port.LogRecord{}, err)
+		return
+	}
+	yield(port.LogRecord{}, fmt.Errorf("redisstore: read events %q: %w", id, err))
 }
 
 // logGeneration reports the log's positional basis, and whether the log is still
 // an unmigrated legacy LIST.
-func logGeneration(ctx context.Context, client redis.UniversalClient, id session.SessionID) (generation string, legacy bool, err error) {
+func logGeneration(ctx context.Context, client redis.UniversalClient, id session.SessionID) (generation string, present, legacy bool, err error) {
 	kind, err := client.Type(ctx, eventsKey(id)).Result()
 	if err != nil {
-		return "", false, fmt.Errorf("redisstore: type of event key %q: %w", id, err)
+		return "", false, false, fmt.Errorf("redisstore: type of event key %q: %w", id, err)
 	}
 	if kind == "list" {
-		return "", true, nil
+		return "", false, true, nil
 	}
 	generation, err = client.Get(ctx, eventsGenerationKey(id)).Result()
 	if errors.Is(err, redis.Nil) {
 		// No log yet (or a stream with no basis, which only a hand-edited
 		// keyspace produces). The empty generation is the honest answer: a
-		// first-attach cursor is the zero cursor, which needs no basis.
-		return "", false, nil
+		// first-attach cursor is the zero cursor, which needs no basis. present
+		// is what keeps this DISTINGUISHABLE from a real basis that happens to be
+		// empty — see logBasis.
+		return "", false, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("redisstore: read event generation %q: %w", id, err)
+		return "", false, false, fmt.Errorf("redisstore: read event generation %q: %w", id, err)
 	}
-	return generation, false, nil
+	return generation, true, false, nil
+}
+
+// logBasis is the generation a read is anchored to, plus whether it is anchored
+// at all.
+//
+// The two are distinct because the EMPTY generation is a REAL value, reported by
+// both a log that does not exist yet and a legacy log predating generations. A
+// follower that attaches to an absent log and then watches the first append mint
+// a real generation must ADOPT it — the log was CREATED, not replaced — while one
+// anchored to a real generation that later reads a different one has had its
+// basis replaced underneath it. Conflating the two turns either the creation case
+// into a spurious expiry or the replacement case into a silent pass; the first is
+// what a naive version of this guard did to every follower attaching before the
+// first append. jsonlstore carries the same distinction for the same reason.
+type logBasis struct {
+	generation string
+	known      bool
+}
+
+// observe folds the currently-stored basis into b, reporting ErrCursorExpired if
+// it REPLACED an anchored one.
+func (b *logBasis) observe(current string, legacy bool) error {
+	switch {
+	case legacy:
+		// A stream read finding a list means the log it was following is gone and
+		// something unmigrated stands in its place. Positions are not comparable
+		// across that boundary.
+		return fmt.Errorf("%w: the log was replaced by an unmigrated list while following", port.ErrCursorExpired)
+	case !b.known:
+		if current != "" {
+			b.generation, b.known = current, true
+		}
+		return nil
+	case current != b.generation:
+		return fmt.Errorf("%w: the log was replaced while following", port.ErrCursorExpired)
+	}
+	return nil
 }
 
 // streamPosition validates a cursor's decoded position as a Redis stream ID.
@@ -295,15 +379,14 @@ func streamPosition(position string) (string, error) {
 // "everything after this cursor" and "everything from the beginning" (ID 0-0)
 // are the same call, and following is the same call again with BLOCK set. XRANGE
 // would need an exclusive-range prefix and a separate follow path.
-func readStreamAfter(
+func (st *Store) readStreamAfter(
 	ctx context.Context,
-	client redis.UniversalClient,
 	id session.SessionID,
-	generation, lastID string,
+	basis logBasis,
+	lastID string,
 	opts port.ReadOptions,
 	yield func(port.LogRecord, error) bool,
 ) {
-	key := eventsKey(id)
 	sent := 0
 	// live flips once the stream has been drained of everything present when the
 	// read started — the replay/live boundary a follower reports to its caller.
@@ -318,15 +401,7 @@ func readStreamAfter(
 		if live {
 			block = followBlock
 		}
-		var count int64
-		if opts.Limit > 0 {
-			count = int64(opts.Limit - sent)
-		}
-		streams, err := client.XRead(ctx, &redis.XReadArgs{
-			Streams: []string{key, lastID},
-			Count:   count,
-			Block:   block,
-		}).Result()
+		msgs, err := st.streamCycle(ctx, id, &basis, lastID, readCount(opts, sent), block)
 		switch {
 		case errors.Is(err, redis.Nil):
 			// Nothing more available. A plain read is done; a follower marks the
@@ -343,36 +418,121 @@ func readStreamAfter(
 				// clean detach look like a failure.
 				return
 			}
-			yield(port.LogRecord{}, fmt.Errorf("redisstore: read events %q: %w", id, err))
+			yieldReadError(id, err, yield)
 			return
 		}
 
-		for _, stream := range streams {
-			for _, msg := range stream.Messages {
-				lastID = msg.ID
-				rec, ok, err := decodeStreamMessage(msg)
-				if err != nil {
-					yield(port.LogRecord{}, err)
-					return
-				}
-				if !ok {
-					continue // an entry occupying a position but carrying no record
-				}
-				rec.Cursor = port.EncodeCursor(id, generation, msg.ID)
-				rec.Live = live
-				if !yield(rec, nil) {
-					return
-				}
-				sent++
-				if opts.Limit > 0 && sent >= opts.Limit {
-					return
-				}
+		for _, msg := range msgs {
+			lastID = msg.ID
+			rec, ok, err := decodeStreamMessage(msg)
+			if err != nil {
+				yield(port.LogRecord{}, err)
+				return
+			}
+			if !ok {
+				continue // an entry occupying a position but carrying no record
+			}
+			rec.Cursor = port.EncodeCursor(id, basis.generation, msg.ID)
+			rec.Live = live
+			if !yield(rec, nil) {
+				return
+			}
+			sent++
+			if opts.Limit > 0 && sent >= opts.Limit {
+				return
 			}
 		}
 		if ctx.Err() != nil {
 			return
 		}
 	}
+}
+
+// streamCycle performs ONE bounded XREAD: acquire a client, re-verify the log's
+// basis, read, release — all before the caller yields anything.
+//
+// Three properties, each per-cycle by design:
+//
+// The basis RE-CHECK is what converts "the log was deleted and recreated under a
+// live follower" from silently streaming the replacement log's records into
+// ErrCursorExpired. The cold-attach check in readAfterBasis cannot cover it: a
+// follower has already passed that check and is parked at the tail. memstore and
+// jsonlstore re-checked per cycle already; this backend did not. Raised in review
+// on #869. It runs AFTER the read for the reason given at the call itself.
+//
+// The LEASE is acquired and released here rather than around the whole iterator,
+// so a follower parked for hours cannot pin a retired credential generation.
+//
+// And the release happens BEFORE the caller yields: the batch is decoded out of
+// the reply first, so a slow transport consumer holds no pooled connection.
+//
+// COST, stated honestly: this adds a TYPE and a GET per cycle, so an idle
+// follower issues three commands per followBlock rather than one. That is the
+// price of the guard above, and it is the same trade jsonlstore makes for the
+// same reason. It is NOT a candidate for caching — a cached basis is exactly the
+// stale basis the check exists to catch.
+func (st *Store) streamCycle(
+	ctx context.Context,
+	id session.SessionID,
+	basis *logBasis,
+	lastID string,
+	count int64,
+	block time.Duration,
+) ([]redis.XMessage, error) {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	streams, readErr := client.XRead(ctx, &redis.XReadArgs{
+		Streams: []string{eventsKey(id), lastID},
+		Count:   count,
+		Block:   block,
+	}).Result()
+
+	// The basis is verified AFTER the read, and that ORDERING is the guard. A
+	// blocking XREAD straddles time: Redis wakes a blocked client on an XADD to
+	// the key, and because stream IDs are wall-clock derived, a replacement log's
+	// first entry sorts AFTER the follower's position — so a single reply can
+	// legitimately carry a record from a log that did not exist when the cycle
+	// began. Checking before the read passes in exactly that case, which is how
+	// the first version of this guard still handed over the replacement record.
+	//
+	// Verifying afterwards cannot be raced the same way: if the record came from
+	// the replacement log then the new basis was already stored when it was
+	// written, so this read observes it and refuses. A reset landing after the
+	// check is harmless — the record yielded was genuinely from the log being
+	// followed at the time it was read.
+	current, _, legacy, err := logGeneration(ctx, client, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := basis.observe(current, legacy); err != nil {
+		return nil, err
+	}
+
+	if readErr != nil {
+		return nil, readErr
+	}
+	var msgs []redis.XMessage
+	for _, stream := range streams {
+		msgs = append(msgs, stream.Messages...)
+	}
+	return msgs, nil
+}
+
+// readCount is the size of the next storage round trip: the internal page cap,
+// lowered to whatever remains of a positive ReadOptions.Limit so a bounded read
+// never over-fetches.
+func readCount(opts port.ReadOptions, sent int) int64 {
+	count := int64(readPageSize)
+	if opts.Limit > 0 {
+		if remaining := int64(opts.Limit - sent); remaining < count {
+			count = remaining
+		}
+	}
+	return count
 }
 
 // decodeStreamMessage turns one stream entry into a LogRecord. ok is false for
@@ -416,9 +576,8 @@ func decodeEventLogRecord(raw []byte) (rec port.LogRecord, ok bool, err error) {
 // Follow is honoured by re-reading the index on an interval. It is deliberately
 // simple: this path exists only until the session's next append migrates it, so
 // optimising it would be work spent on a state the log leaves permanently.
-func readLegacyListAfter(
+func (st *Store) readLegacyListAfter(
 	ctx context.Context,
-	client redis.UniversalClient,
 	id session.SessionID,
 	position string,
 	opts port.ReadOptions,
@@ -436,11 +595,20 @@ func readLegacyListAfter(
 	sent := 0
 	live := false
 	for {
-		records, err := client.LRange(ctx, eventsKey(id), next, -1).Result()
+		page := readCount(opts, sent)
+		records, err := st.legacyCycle(ctx, id, next, page)
 		if err != nil {
-			yield(port.LogRecord{}, fmt.Errorf("redisstore: read events %q: %w", id, err))
+			if ctx.Err() != nil {
+				return
+			}
+			yieldReadError(id, err, yield)
 			return
 		}
+		// A full page may not be the end of the list, so drain before parking —
+		// and stay in replay while draining, since a record already present when
+		// the read started is replay however many pages in it lands.
+		full := int64(len(records)) == page
+
 		for _, raw := range records {
 			rec, ok, err := decodeEventLogRecord([]byte(raw))
 			if err != nil {
@@ -461,6 +629,9 @@ func readLegacyListAfter(
 				return
 			}
 		}
+		if full {
+			continue
+		}
 		if !opts.Follow {
 			return
 		}
@@ -471,4 +642,35 @@ func readLegacyListAfter(
 		case <-time.After(followBlock):
 		}
 	}
+}
+
+// legacyCycle performs one bounded LRANGE, re-verifying that the log is STILL an
+// unmigrated LIST before reading it.
+//
+// The re-check is the legacy half of streamCycle's basis guard, and it is the
+// MORE reachable half. A delete-and-recreate under a live follower is unlikely;
+// this log being migrated to a Stream is GUARANTEED to happen on its next
+// append, which is precisely the upgrade window this path exists to serve.
+// Without the check, LRANGE against the migrated key returns WRONGTYPE, which
+// reaches the consumer as an infrastructure fault — leaving it unable to tell
+// "your basis moved, restart from the beginning" from "Redis is broken, retry".
+// Both readings are wrong: the positions changed from list indices to stream
+// IDs, so the only correct answer is ErrCursorExpired.
+//
+// Raised in review on #869 for the stream path; the list path had the same shape
+// with a worse trigger. It is also the same WRONGTYPE that broke the k8s e2e
+// earlier in this stack — code holding a datatype assumption across a migration.
+func (st *Store) legacyCycle(ctx context.Context, id session.SessionID, next, page int64) ([]string, error) {
+	client, release, err := st.clients.acquire()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	if _, _, legacy, err := logGeneration(ctx, client, id); err != nil {
+		return nil, err
+	} else if !legacy {
+		return nil, fmt.Errorf("%w: the log was migrated to a stream while following, so list indices no longer address it", port.ErrCursorExpired)
+	}
+	return client.LRange(ctx, eventsKey(id), next, next+page-1).Result()
 }
