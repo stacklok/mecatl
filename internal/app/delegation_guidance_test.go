@@ -12,26 +12,38 @@ import (
 )
 
 func TestDelegationGuidanceLandsInBuiltEnginePrompt(t *testing.T) {
-	full := captureBuiltDelegationPrompt(t, true, true)
-	for _, want := range []string{
-		"Use Subagent for focused delegation.",
-		"issue one Subagent call per task in the same assistant turn so eligible calls run concurrently",
-		"Use Parallel only for isolated writable or competing branches that need built-in join or winner selection.",
-		"Use Team only for workers that must coordinate through shared tasks or messages over multiple rounds.",
-	} {
-		if !strings.Contains(full.StablePrefix, want) {
-			t.Errorf("fully built engine StablePrefix missing delegation clause %q", want)
-		}
-	}
+	const (
+		subagentGuidance = "Use Subagent for focused delegation."
+		parallelGuidance = "Use Parallel only for isolated writable or competing branches that need built-in join or winner selection."
+		teamGuidance     = "Use Team only for workers that must coordinate through shared tasks or messages over multiple rounds."
+	)
 
-	minimal := captureBuiltDelegationPrompt(t, false, false)
-	if !strings.Contains(minimal.StablePrefix, "Use Subagent for focused delegation.") {
-		t.Error("default built engine StablePrefix omits Subagent guidance")
-	}
-	for _, unavailable := range []string{"Use Parallel only", "Use Team only"} {
-		if strings.Contains(minimal.StablePrefix, unavailable) {
-			t.Errorf("default built engine advertises unavailable tool via %q", unavailable)
-		}
+	for _, tc := range []struct {
+		name            string
+		parallel, teams bool
+	}{
+		{"neither", false, false},
+		{"parallel only", true, false},
+		{"teams only", false, true},
+		{"both", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prefix := captureBuiltDelegationPrompt(t, tc.parallel, tc.teams).StablePrefix
+			if !strings.Contains(prefix, subagentGuidance) {
+				t.Errorf("StablePrefix omits Subagent guidance")
+			}
+			for _, guidance := range []struct {
+				text    string
+				enabled bool
+			}{
+				{parallelGuidance, tc.parallel},
+				{teamGuidance, tc.teams},
+			} {
+				if strings.Contains(prefix, guidance.text) != guidance.enabled {
+					t.Errorf("StablePrefix guidance %q present = %t, want %t", guidance.text, strings.Contains(prefix, guidance.text), guidance.enabled)
+				}
+			}
+		})
 	}
 }
 

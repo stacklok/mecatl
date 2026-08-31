@@ -5,7 +5,7 @@ title: Subagents, teams, and parallel
 
 # Subagents, teams, and parallel
 
-mecatl gives the model three ways to delegate work to a child agent instead of doing everything itself in one long conversation: **Subagent** for a single focused task, **Parallel** for several independent tasks at once, and **Team** for specialists that coordinate. All three are ordinary tools in the catalog. The model decides when to reach for one, based on its own tool descriptions.
+mecatl gives the model three ways to delegate work to a child agent instead of doing everything itself in one long conversation: **Subagent** for focused work, **Parallel** for isolated writable or competing branches with built-in join/winner semantics, and **Team** only for specialists that must coordinate. All three are ordinary tools in the catalog. The model decides when to reach for one, based on its own tool descriptions.
 
 This page covers them from the caller's side: what each one does, the knobs you'll see on the wire (per-call arguments, flags, permission rules), and how to inspect or manage a child once it's running. For how delegation is actually implemented — workspace isolation, permission resolution, the redaction boundary between a child and its parent — see [`docs/architecture/subagents-and-teams.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/subagents-and-teams.md) and [`docs/architecture/parallelism.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/parallelism.md) in the architecture guide.
 
@@ -17,7 +17,7 @@ In `mecatui` a running delegation is watchable at the same fidelity whichever to
 
 ## Subagent — delegate one task
 
-`Subagent` spawns a single child agent with a fresh, empty context (unless you ask it to inherit yours — see `fork` below) and hands it a self-contained instruction. It's the right tool for "go investigate X" or "go make this focused change" when the task doesn't need your current conversation.
+`Subagent` spawns a single child agent with a fresh, empty context (unless you ask it to inherit yours — see `fork` below) and hands it a self-contained instruction. It's the right tool for "go investigate X" or "go make this focused change" when the task doesn't need your current conversation. For multiple independent **read-only** investigations, issue one Subagent call per task in the same assistant turn: eligible calls run concurrently.
 
 By default a subagent is **read-only**: it can Read/Grep/Glob and run build/test/git commands in a throwaway worktree, but it has no `Edit`/`Write` tools, and any file changes it makes along the way (e.g. via Bash) are discarded when the run ends — nothing it does touches your working tree. Ask for `mode: "read-write"` when you want it to actually change files (see below).
 
@@ -59,14 +59,15 @@ A background subagent still running when your run ends is cancelled; its transcr
 
 If a subagent (or a Parallel branch, or a team member) is taking the wrong approach, you don't have to cancel your whole run to stop it. mecatl exposes a per-child cancel — the gRPC `ConverseRequest.cancel_child` field, `POST /v1/sessions/{id}/cancel-child` over HTTP, or the `x` key in `mecatui` — that stops just that one delegation without touching anything else in flight.
 
-## Parallel — fan out independent tasks
+## Parallel — isolated writable or competing branches
 
 `Parallel` accepts up to 16 branches per call, with up to 8 executing concurrently
 by default. Each branch runs in its own isolated forked workspace with a fresh
-context. Use it to explore several approaches at once or split genuinely
-independent work — not for tasks that need to coordinate or share state as they
-go (that's what Team is for; Parallel branches never communicate with each
-other).
+context. Use it for isolated writable branches or competing approaches when you
+need its built-in join or winner selection — not for independent read-only
+investigations (issue separate Subagent calls in the same assistant turn), or for
+tasks that need to coordinate or share state as they go (that's what Team is for;
+Parallel branches never communicate with each other).
 
 Each branch can implement, not just explore: it has the full read-write toolset (Edit, Write, Bash) because its changes land only in its own isolated fork, never in your shared workspace. Since a branch can't see your conversation or the other branches, describe every task as fully self-contained — use the call's `shared` field for context that applies to all of them.
 
@@ -78,9 +79,9 @@ Each branch can implement, not just explore: it has the full read-write toolset 
 | `first` | The first branch that succeeds wins; the rest are cancelled. The winner's fork is **preserved** and its path is reported. |
 | `judge` (or `best`) | An LLM judge picks the single best branch against your `criteria`. Same preservation as `first`. |
 
-A **single-branch** `first`/`judge` winner is auto-merged back into your workspace by default: its diff is applied via `git apply`, and the merge refuses anything that touches `.gitattributes`. A **multi-branch** run never auto-merges, even with `join: first`/`judge`. You inspect the preserved winner's fork path yourself if you want its changes. A conflicting merge is never forced — the tool error preserves the fork so you can resolve it by hand.
+A **single isolated branch** with `join: first` or `join: judge` is the supported conditional-merge case: its winner is auto-merged back into your workspace by default. Its diff is applied via `git apply`, and the merge refuses anything that touches `.gitattributes`. A **multi-branch** run never auto-merges, even with `join: first`/`judge`. You inspect the preserved winner's fork path yourself if you want its changes. A conflicting merge is never forced — the tool error preserves the fork so you can resolve it by hand.
 
-If you want to land a single task's edits, `Subagent` with `mode: "read-write"` is the more direct tool — reach for `Parallel` when you're running two or more independent or competing branches.
+If you want to land a single task's edits without the isolated branch and conditional merge, `Subagent` with `mode: "read-write"` is the direct tool.
 
 Every branch reports a `branch id:` line; pass it to `InspectSubagent` to pull that branch's bounded transcript, e.g. to see why a losing or failed branch went the way it did.
 
