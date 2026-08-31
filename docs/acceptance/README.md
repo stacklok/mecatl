@@ -62,6 +62,7 @@ when the code that satisfies the plan has landed.
 - [Session-load observability](session-load-observability.md) — target-free operator
   classification and metrics for snapshot load failures while preserving ownership
   concealment. Status: landed.
+- [Identity issuer substrate](identity-issuer-substrate.md) — Secret-backed ES256 JWT-SVID issuance, canonical SPIFFE bundle and retained verifier, immutable-key rotation, and shell-isolated combined-broker-host compatibility. Status: draft.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
