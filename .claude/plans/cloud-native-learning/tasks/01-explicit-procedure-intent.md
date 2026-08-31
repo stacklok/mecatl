@@ -2,9 +2,9 @@
 id: 01-explicit-procedure-intent
 title: Recognize verified affirmative procedure-learning imperatives
 blocked_by: []
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/01-explicit-procedure-intent"
+worktree: ".scratch/worktrees/01-explicit-procedure-intent"
 issue: ""
 retries: 0
 last_error: ""
