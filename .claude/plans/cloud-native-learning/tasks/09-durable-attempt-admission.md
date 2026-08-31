@@ -2,7 +2,7 @@
 id: 09-durable-attempt-admission
 title: Bind admitted completions to durable RunID-backed attempts
 blocked_by: [06-memattempt-adapter, 07-durable-attempt-store]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
