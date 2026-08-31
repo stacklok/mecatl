@@ -2,9 +2,9 @@
 id: 02-direct-draft-inactivity
 title: Preserve inactive direct SkillDraft behavior after intent admission
 blocked_by: [01-explicit-procedure-intent]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/02-direct-draft-inactivity"
+worktree: ".scratch/worktrees/02-direct-draft-inactivity"
 issue: ""
 retries: 0
 last_error: ""
