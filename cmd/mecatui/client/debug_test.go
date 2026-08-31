@@ -50,12 +50,12 @@ func (f *debugHarness) CloseSession(_ context.Context, req *mecatlv1.CloseSessio
 func TestCreateDebugSessionProjectsBoundNoFSRequest(t *testing.T) {
 	fake := &debugHarness{caps: &mecatlv1.ServerCapabilities{SessionDebug: true}}
 	cl := &Client{svc: fake}
-	id, caps, _, err := cl.CreateDebugSession(context.Background(), "target-123", mecatlv1.PermissionMode_PERMISSION_MODE_PLAN, ModelSelection{ProviderID: "p", ModelID: "m"})
+	id, target, caps, _, err := cl.CreateDebugSession(context.Background(), "target-123", mecatlv1.PermissionMode_PERMISSION_MODE_PLAN, ModelSelection{ProviderID: "p", ModelID: "m"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "debug-created" || !caps.SessionDebug {
-		t.Fatalf("result = %q %+v", id, caps)
+	if id != "debug-created" || target != "target-123" || !caps.SessionDebug {
+		t.Fatalf("result = %q target=%q %+v", id, target, caps)
 	}
 	if got := fake.request; got.GetProfile() != "no-fs" || got.GetWorkspace() != "" || got.GetDebugTargetSessionId() != "target-123" {
 		t.Fatalf("request = %+v, want no-fs, empty workspace, bound target", got)
@@ -68,7 +68,7 @@ func TestCreateDebugSessionProjectsBoundNoFSRequest(t *testing.T) {
 func TestCreateDebugSessionFailsClosedAndCleansUpUnsupportedCreate(t *testing.T) {
 	fake := &debugHarness{caps: &mecatlv1.ServerCapabilities{}}
 	cl := &Client{svc: fake}
-	id, _, _, err := cl.CreateDebugSession(context.Background(), "target", 0, ModelSelection{})
+	id, _, _, _, err := cl.CreateDebugSession(context.Background(), "target", 0, ModelSelection{})
 	if err == nil || !strings.Contains(err.Error(), "does not support") || id != "" {
 		t.Fatalf("result id=%q err=%v", id, err)
 	}
@@ -95,8 +95,12 @@ func TestCreateDebugSessionResolvesUniqueHeaderID(t *testing.T) {
 		},
 	}
 	cl := &Client{svc: fake}
-	if _, _, _, err := cl.CreateDebugSession(context.Background(), "123456789012", 0, ModelSelection{}); err != nil {
+	_, resolvedTarget, _, _, err := cl.CreateDebugSession(context.Background(), "123456789012", 0, ModelSelection{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if resolvedTarget != "123456789012-full-target" {
+		t.Fatalf("resolved target = %q", resolvedTarget)
 	}
 	if got := fake.request.GetDebugTargetSessionId(); got != "123456789012-full-target" {
 		t.Fatalf("debug target = %q", got)
@@ -113,7 +117,7 @@ func TestCreateDebugSessionExactHeaderWidthIDPrecedesPrefix(t *testing.T) {
 		},
 	}
 	cl := &Client{svc: fake}
-	if _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{}); err != nil {
+	if _, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := fake.request.GetDebugTargetSessionId(); got != target {
@@ -128,7 +132,7 @@ func TestCreateDebugSessionRejectsAmbiguousHeaderIDBeforeCreate(t *testing.T) {
 		{SessionId: target + "-two"},
 	}}
 	cl := &Client{svc: fake}
-	_, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{})
+	_, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{})
 	if err == nil || !strings.Contains(err.Error(), "prefix") || !strings.Contains(err.Error(), "ambiguous") || !strings.Contains(err.Error(), "full session ID") {
 		t.Fatalf("error = %v", err)
 	}
@@ -142,7 +146,7 @@ func TestCreateDebugSessionMissingHeaderIDPreservesServerNotFound(t *testing.T) 
 	notFound := status.Error(codes.NotFound, "session not found")
 	fake := &debugHarness{createErr: notFound}
 	cl := &Client{svc: fake}
-	_, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{})
+	_, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("error = %v, want NotFound", err)
 	}
@@ -154,7 +158,7 @@ func TestCreateDebugSessionMissingHeaderIDPreservesServerNotFound(t *testing.T) 
 func TestCreateDebugSessionListFailurePreventsCreate(t *testing.T) {
 	fake := &debugHarness{listErr: errors.New("inventory unavailable")}
 	cl := &Client{svc: fake}
-	_, _, _, err := cl.CreateDebugSession(context.Background(), "123456789012", 0, ModelSelection{})
+	_, _, _, _, err := cl.CreateDebugSession(context.Background(), "123456789012", 0, ModelSelection{})
 	if err == nil || !strings.Contains(err.Error(), "list sessions") || !strings.Contains(err.Error(), "inventory unavailable") {
 		t.Fatalf("error = %v", err)
 	}
@@ -167,7 +171,7 @@ func TestCreateDebugSessionLongFullIDBypassesInventory(t *testing.T) {
 	const target = "123456789012-full-target"
 	fake := &debugHarness{caps: &mecatlv1.ServerCapabilities{SessionDebug: true}, listErr: errors.New("must not list")}
 	cl := &Client{svc: fake}
-	if _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{}); err != nil {
+	if _, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{}); err != nil {
 		t.Fatal(err)
 	}
 	if fake.listCalls != 0 || fake.request.GetDebugTargetSessionId() != target {

@@ -63,7 +63,9 @@ func (m Model) View() tea.View {
 
 	if m.phase == phaseFatal {
 		if m.deps.DebugTarget != "" {
-			v.Content = m.renderDebugRail() + "\n" + m.renderFatal()
+			header := m.renderHeader()
+			bodyHeight := max(0, m.height-lipgloss.Height(header))
+			v.Content = header + "\n" + m.renderFatalAtHeight(bodyHeight)
 		} else {
 			v.Content = m.renderFatal()
 		}
@@ -139,6 +141,9 @@ func (m Model) renderHeader() string {
 	if nextBadge != "" && lipgloss.Width(line) > m.widthOr()-headerIdentityPad {
 		line = strings.Join(m.headerIdentityParts(sid, ""), "  ·  ")
 	}
+	if m.deps.DebugTarget != "" && lipgloss.Width(line) > m.widthOr()-headerIdentityPad {
+		line = strings.Join(m.debugEssentialHeaderParts(sid), "  ·  ")
+	}
 	// Right-align ONE muted indicator on the header line when it fits beside the
 	// identity segment; otherwise drop it (so the indicator never forces a wrap — the
 	// identity line itself still wraps when it alone exceeds the width). The header is
@@ -161,38 +166,31 @@ func (m Model) renderHeader() string {
 	// never hidden by scrolling.
 	badge, badgeW, hasBadge := m.postureBadgeRender()
 	if hasBadge || tail != "" {
-		if lineSurface := m.generatedStatusLine.Header; lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
+		if lineSurface := m.generatedStatusLine.Header; m.deps.DebugTarget == "" && lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
 			line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
 			line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
 			return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
 		}
-		if m.deps.StatusSource != nil {
+		if m.deps.DebugTarget == "" && m.deps.StatusSource != nil {
 			line = m.fitHeader("", badge, badgeW, tail, m.widthOr())
 			return m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
 		}
 		line = m.fitHeader(line, badge, badgeW, tail, m.widthOr())
-	} else if lineSurface := m.generatedStatusLine.Header; lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
+	} else if lineSurface := m.generatedStatusLine.Header; m.deps.DebugTarget == "" && lineSurface.Present && statusSurfaceFits(lineSurface, m.statusLineGeometry().headerAvailable) {
 		line = renderStatusSurface(m.deps.Theme, lineSurface, m.statusLineGeometry().headerAvailable, false)
-	} else if m.deps.StatusSource != nil {
+	} else if m.deps.DebugTarget == "" && m.deps.StatusSource != nil {
 		line = ""
 	}
 	header := m.deps.Theme.Style("header").Width(m.widthOr()).Render(line)
-	if m.deps.DebugTarget != "" {
-		return m.renderDebugRail() + "\n" + header
-	}
 	return header
 }
 
-func (m Model) renderDebugRail() string {
-	label := "DEBUG"
-	if target := strings.TrimSpace(strings.Join(strings.Fields(sanitizeTerminal(m.deps.DebugTarget)), " ")); target != "" {
-		label += " target: " + target
-	}
-	width := m.widthOr()
-	if width > 0 {
-		label = truncate(label, width)
-	}
-	return m.deps.Theme.Style("warning").Bold(true).Width(width).Render(label)
+func (m Model) debugHeaderTarget() string {
+	return m.deps.Theme.Style("warning").Bold(true).Render("DEBUG target #" + sessionDigest(m.deps.DebugTarget)[:8])
+}
+
+func (m Model) debugEssentialHeaderParts(sid string) []string {
+	return []string{"mecatui", m.debugHeaderTarget(), "session " + client.DisplaySessionID(sid)}
 }
 
 // Operator-posture tier names (the m.caps.Posture vocabulary, server-wide). Named
@@ -302,13 +300,15 @@ func (m Model) headerModelLabel() string {
 const headerIdentityPad = 4
 
 // headerIdentityParts builds the header identity segments. withNext is the next:
-// badge ("" to omit it). Order: mecatui · session · model · [next: …] · mode ·
-// ws: <worktree> · socket. The next: badge sits AFTER the current model so the eye
-// reads "running X, next Y", and is the FIRST segment renderHeader sheds under width
-// pressure. The ws: segment is shown only when the active workspace differs from the
-// launch workspace (Deps.Workspace) — no noise when not switched (issue #102).
+// badge ("" to omit it). Order: mecatui · [DEBUG target] · session · model ·
+// [next: …] · mode · ws: <worktree> · socket. The debug target is immutable,
+// always uses its complete digest, and precedes the debugger session identity.
 func (m Model) headerIdentityParts(sid, withNext string) []string {
-	parts := []string{"mecatui", "session " + client.DisplaySessionID(sid)}
+	parts := []string{"mecatui"}
+	if m.deps.DebugTarget != "" {
+		parts = append(parts, m.debugHeaderTarget())
+	}
+	parts = append(parts, "session "+client.DisplaySessionID(sid))
 	// Model segment: the EFFECTIVE model the server resolved THIS session to (set once
 	// on SessionReadyMsg). The header only CHOOSES which known string to display; it
 	// never resolves a default itself. While connecting there is NO model segment.
@@ -1080,12 +1080,16 @@ func stripTrailingBlank(s string) string {
 
 // renderFatal renders a centred fatal-error panel.
 func (m Model) renderFatal() string {
+	return m.renderFatalAtHeight(m.height)
+}
+
+func (m Model) renderFatalAtHeight(height int) string {
 	msg := m.deps.Theme.Style("errorText").Render("connection failed") + "\n\n" +
 		m.deps.Theme.Style("muted").Render(m.fatalErr) + "\n\n" +
 		m.deps.Theme.Style("muted").Render("press "+m.helpKeyMarkings().quit+" to quit")
 	card := m.deps.Theme.Style("askCard").Render(msg)
-	if m.width > 0 && m.height > 0 {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, card)
+	if m.width > 0 && height > 0 {
+		return lipgloss.Place(m.width, height, lipgloss.Center, lipgloss.Center, card)
 	}
 	return card
 }

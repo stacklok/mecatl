@@ -119,8 +119,11 @@ Use `mecatui debug SESSION_ID` against the embedded store, or
 may be the full opaque ID or the exact 12-byte ID displayed in the TUI header.
 The short form must identify one caller-visible inventory row; an ambiguous prefix
 creates nothing and requires the full ID. The command creates a **separate durable
-debug session** and automatically asks the model to inspect the
-bound target's status and authoritative transcript. The invocation itself is consent:
+debug session** and submits one first user turn containing the sanitized current debugger
+client/server diagnostics baseline plus a request to inspect the bound target's status and
+authoritative transcript. A custom `--prompt` replaces that diagnosis request, not the
+baseline. Remote baseline lookup failures are safely classified and do not block diagnosis.
+The invocation itself is consent:
 mecatui prints a privacy warning because stored prompts, outputs, tool arguments/results,
 paths, and secrets may be sent to the selected model.
 
@@ -129,8 +132,11 @@ read-only tool, `InspectSession`. Its status and transcript views come from the 
 snapshot; activity and performance are optional, incomplete EventLog projections.
 Evidence is bounded and fenced as hostile data. The target ID is fixed by the server,
 not supplied by the model, and the debug run never resumes, mutates, approves, cancels,
-steers, or leases the target. A persistent DEBUG rail and terminal title distinguish the
-analysis session, and model/mode/session-changing affordances are disabled. See
+steers, or leases the target. The normal padded header places amber/bold
+`DEBUG target #<digest>` immediately after `mecatui` and keeps that complete identity when
+less important model/mode/server details are shed. `/session` shows the safely quoted exact
+target ID and copies it with `t`; the target-derived terminal title is unchanged.
+Model/mode/session-changing affordances are disabled. See
 [ADR 0248](adr/0248-session-debugger-admin-transport.md).
 
 ## Scheduled tasks

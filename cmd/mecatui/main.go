@@ -1321,10 +1321,16 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 		if mode == "" {
 			mode = s.mode
 		}
-		return s.cl.CreateDebugSession(ctx, s.debugTarget, client.ModeFromString(mode), sel)
+		id, target, caps, resolved, err := s.cl.CreateDebugSession(ctx, s.debugTarget, client.ModeFromString(mode), sel)
+		if target != "" {
+			s.debugTarget = target
+		}
+		return id, caps, resolved, err
 	}
 	return s.CreateSessionInWorkspace(ctx, s.workspace, sel, mode)
 }
+
+func (s *sessionAdapter) DebugTargetID() string { return s.debugTarget }
 
 func (s *sessionAdapter) CreateSessionInWorkspace(ctx context.Context, workspace string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
 	if mode == "" {

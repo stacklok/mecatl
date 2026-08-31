@@ -383,10 +383,7 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
 		cmd = tea.Batch(cmd, liveCmd)
 	}
-	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
-		m.pendingInitialPrompt = ""
-		m.prompt.Rewrite(p)
-		mm, submitCmd := m.submitPrompt()
+	if mm, submitCmd, ok := m.startInitialPrompt(); ok {
 		return mm, tea.Batch(cmd, submitCmd)
 	}
 	return m, cmd
@@ -398,6 +395,7 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 // warning on top.
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
 	m = m.bindSessionID(msg.SessionID)
+	m = m.syncDebugTarget()
 	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
 	m.closeModal()
@@ -458,10 +456,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// session via resetSession and never reaches this seam).
 	// A "/"-prefixed seed (e.g. -p /clear) is dispatched by submitPrompt's
 	// builtin dispatcher — documented behavior.
-	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
-		m.pendingInitialPrompt = ""
-		m.prompt.Rewrite(p)
-		mm, submitCmd := m.submitPrompt()
+	if mm, submitCmd, ok := m.startInitialPrompt(); ok {
 		return mm, tea.Batch(cmd, submitCmd), true
 	}
 	if m.deps.ConnectOpen {
@@ -619,6 +614,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render(notice)
 		return m, cmd, handled
 	case client.ConnectErrMsg:
+		m = m.syncDebugTarget()
 		if msg.AuthReason != "" {
 			m.phase = phaseIdle
 			m.connect.err = "Authentication needs attention."

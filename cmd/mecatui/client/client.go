@@ -276,10 +276,10 @@ func DisplaySessionID(id string) string {
 // response (the first common response carrying ServerCapabilities); an older server
 // may ignore the new target field, so that accidentally-created ordinary session is
 // closed before this method fails closed.
-func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection) (string, Capabilities, ResolvedModel, error) {
+func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection) (string, string, Capabilities, ResolvedModel, error) {
 	resolvedTarget, err := c.resolveDebugTarget(ctx, targetID)
 	if err != nil {
-		return "", Capabilities{}, ResolvedModel{}, err
+		return "", "", Capabilities{}, ResolvedModel{}, err
 	}
 	id, caps, resolved, err := c.createSession(ctx, &mecatlv1.CreateSessionRequest{
 		Profile:              "no-fs",
@@ -290,15 +290,15 @@ func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode m
 		DebugTargetSessionId: resolvedTarget,
 	})
 	if err != nil {
-		return "", Capabilities{}, ResolvedModel{}, err
+		return "", resolvedTarget, Capabilities{}, ResolvedModel{}, err
 	}
 	if !caps.SessionDebug {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = c.CloseSession(cleanupCtx, id)
-		return "", Capabilities{}, ResolvedModel{}, errors.New("server does not support dedicated session debugging")
+		return "", resolvedTarget, Capabilities{}, ResolvedModel{}, errors.New("server does not support dedicated session debugging")
 	}
-	return id, caps, resolved, nil
+	return id, resolvedTarget, caps, resolved, nil
 }
 
 func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (string, error) {

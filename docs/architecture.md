@@ -388,9 +388,11 @@ payload is fenced as hostile data. Creation conceals absent and unauthorized tar
 the same not-found result, and the debug session never resumes, leases, mutates, approves,
 cancels, or steers its target. Persisted debug sessions rehydrate through the dedicated
 factory and fail closed if their lineage, no-fs metadata, target, or factory is unavailable.
-Mecatui treats invocation as consent, prints the disclosure before launch, submits the
-default diagnostic prompt, and keeps a persistent DEBUG rail/title while hiding binding-
-breaking controls. See [ADR 0248](adr/0248-session-debugger-admin-transport.md). Each
+Mecatui treats invocation as consent, prints the disclosure before launch, and combines
+the sanitized current debugger client/server diagnostics report with the diagnosis request
+in one first user turn. Its normal padded header keeps amber/bold `DEBUG target #<digest>`
+ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
+and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0248](adr/0248-session-debugger-admin-transport.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption

@@ -26,6 +26,72 @@ func (f *fakeServerInfo) GetServerInfo(_ context.Context, providerID string) (cl
 	return f.info, f.err
 }
 
+func TestDebugLaunchPrependsAutomaticRemoteDiagnosticsToFirstTurn(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	info := &fakeServerInfo{info: client.ServerInfo{BuildID: "server-v1", ServerImplementation: "mecated", DisplayServerEndpoint: "https://server.example/rpc", LLMProviderDisplayEndpoint: "https://provider.example/v1"}}
+	m.deps.DebugTarget = "target"
+	m.deps.ServerInfo = info
+	m.deps.ClientBuild = "client-v1"
+	m.pendingInitialPrompt = "Why did it fail?"
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "model"}
+
+	m0, lookup, started := m.startInitialPrompt()
+	if !started || lookup == nil || len(send.frames()) != 0 {
+		t.Fatalf("debug baseline lookup start = %t/%v, frames=%d", started, lookup, len(send.frames()))
+	}
+	m = m0.(Model)
+	msg := lookup().(diagnosticsMsg)
+	m0, submit := m.Update(msg)
+	m = m0.(Model)
+	runBatchLeaves(submit)
+	frames := send.frames()
+	if info.calls != 1 || len(frames) != 1 {
+		t.Fatalf("lookup calls/first turns = %d/%d, want 1/1", info.calls, len(frames))
+	}
+	got := frames[0].GetPrompt().GetText()
+	for _, want := range []string{
+		"Current debugger client/server state (not target evidence):",
+		"Mecatl diagnostics (current client state only):",
+		"server lookup: ok",
+		"Diagnosis request (target evidence must come from InspectSession):\nWhy did it fail?",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("first debugger turn missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDebugLaunchRemoteDiagnosticsFailureIsClassifiedAndNonBlocking(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.deps.DebugTarget = "target"
+	m.deps.ServerInfo = &fakeServerInfo{err: errors.New("Bearer secret at https://private.example")}
+	m.pendingInitialPrompt = "diagnose"
+	m0, lookup, _ := m.startInitialPrompt()
+	m = m0.(Model)
+	m0, submit := m.Update(lookup())
+	_ = m0
+	runBatchLeaves(submit)
+	got := send.frames()[0].GetPrompt().GetText()
+	if !strings.Contains(got, "server lookup: invalid-response") || !strings.Contains(got, "\n\nDiagnosis request") || strings.Contains(got, "secret") || strings.Contains(got, "private.example") {
+		t.Fatalf("failed debugger lookup was unsafe or blocking: %q", got)
+	}
+}
+
+func TestNonDebugInitialPromptRemainsByteIdentical(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	const prompt = "  exact ordinary prompt  "
+	m.pendingInitialPrompt = prompt
+	m0, submit, started := m.startInitialPrompt()
+	_ = m0
+	if !started {
+		t.Fatal("ordinary initial prompt was not started")
+	}
+	runBatchLeaves(submit)
+	if got := send.frames()[0].GetPrompt().GetText(); got != strings.TrimSpace(prompt) {
+		t.Fatalf("ordinary initial prompt = %q", got)
+	}
+}
+
 func TestDiagnosticsCommandSendsSafeRemoteReport(t *testing.T) {
 	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
 	info := &fakeServerInfo{info: client.ServerInfo{BuildID: "server-v1.2.3", ServerImplementation: "future-server", DisplayServerEndpoint: "https://server.example:8443/rpc", LLMProviderDisplayEndpoint: "https://provider.example/v1"}}

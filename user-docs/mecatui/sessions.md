@@ -54,10 +54,13 @@ mecatui debug 01JOPAQUESESSIONID \
    include prompts, model output, tool arguments/results, paths, and secrets—to
    the selected model.
 4. The server authorizes the target and creates a **different**, durable,
-   no-filesystem analysis session. A persistent DEBUG rail and terminal title
-   show the target ID so it cannot be mistaken for the original chat.
-5. The debugger submits the supplied `--prompt`, or starts with a default
-   diagnosis that checks status and the authoritative transcript first.
+   no-filesystem analysis session. The normal padded header shows amber/bold
+   `DEBUG target #<digest>` after `mecatui`, and the terminal title carries the digest.
+   `/session` shows the safely quoted exact target ID and copies it with `t`.
+5. The debugger submits one first user turn containing the sanitized current debugger
+   client/server diagnostics baseline and the supplied `--prompt`, or the default diagnosis
+   request. The baseline is separate from target evidence and remains with a custom prompt;
+   a safely classified remote lookup failure does not block launch or reveal its raw error.
 6. Ask follow-up questions normally. The debugger can inspect bounded status,
    transcript, activity, and performance views for only that target. Activity
    and performance depend on the optional event log and may be incomplete.

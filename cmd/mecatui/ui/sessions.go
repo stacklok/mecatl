@@ -15,19 +15,34 @@ import (
 )
 
 type sessionDetailsView struct {
-	ID         string
-	Title      string
-	State      string
-	Workspace  string
-	CreatedAt  int64
-	ModifiedAt int64
-	ProviderID string
-	ModelID    string
+	ID            string
+	DebugTargetID string
+	Title         string
+	State         string
+	Workspace     string
+	CreatedAt     int64
+	ModifiedAt    int64
+	ProviderID    string
+	ModelID       string
+}
+
+type debugTargetSource interface {
+	DebugTargetID() string
+}
+
+func (m Model) syncDebugTarget() Model {
+	if source, ok := m.deps.Session.(debugTargetSource); ok {
+		if target := source.DebugTargetID(); target != "" {
+			m.deps.DebugTarget = target
+		}
+	}
+	return m
 }
 
 type sessionIDCopyResultMsg struct {
-	id  string
-	err error
+	id          string
+	debugTarget bool
+	err         error
 }
 
 func (m *Model) newSessionsSurface(startup bool) *sessionsState {
@@ -82,7 +97,7 @@ func (m Model) bindSessionID(id string) Model {
 
 func (m Model) sessionDetails() sessionDetailsView {
 	return sessionDetailsView{
-		ID: m.sessionID, Title: m.sessionTitle, State: m.sessionState,
+		ID: m.sessionID, DebugTargetID: m.deps.DebugTarget, Title: m.sessionTitle, State: m.sessionState,
 		Workspace: m.activeWorkspace, CreatedAt: m.sessionCreatedAt,
 		ModifiedAt: m.sessionModifiedAt, ProviderID: m.resolvedSessionModel.ProviderID,
 		ModelID: m.resolvedSessionModel.ModelID,
@@ -123,35 +138,45 @@ func (m Model) onSessionDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, boo
 		m.sessionDetailsOpen = false
 		return m, m.prompt.Focus(), true
 	}
-	if msg.String() != "c" {
+	debugTarget := msg.String() == "t" && m.deps.DebugTarget != ""
+	if msg.String() != "c" && !debugTarget {
 		return m, nil, true
 	}
 	id := m.sessionCopyTarget()
-	if id == "" {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("no active session ID to copy")
+	label := "session ID"
+	if debugTarget {
+		id = m.deps.DebugTarget
+		label = "debug target ID"
+	}
+	if id == "" || !utf8.ValidString(id) {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("no exact " + label + " to copy")
 		return m, nil, true
 	}
 	if m.deps.Clipboard == nil {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: clipboard unavailable")
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy " + label + ": clipboard unavailable")
 		return m, nil, true
 	}
 	cb, ctx := m.deps.Clipboard, m.deps.Ctx
 	return m, func() tea.Msg {
 		err := cb.Write(ctx, "text/plain", []byte(id))
-		return sessionIDCopyResultMsg{id: id, err: err}
+		return sessionIDCopyResultMsg{id: id, debugTarget: debugTarget, err: err}
 	}, true
 }
 
 func (m Model) onSessionIDCopyResult(msg sessionIDCopyResultMsg) Model {
-	if msg.id == "" || msg.id != m.sessionID {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: active session changed")
+	current, label := m.sessionID, "session ID"
+	if msg.debugTarget {
+		current, label = m.deps.DebugTarget, "debug target ID"
+	}
+	if msg.id == "" || msg.id != current {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy " + label + ": active session changed")
 		return m
 	}
 	if msg.err != nil {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy session ID: " + sanitizeTerminal(msg.err.Error()))
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy " + label + ": " + sanitizeTerminal(msg.err.Error()))
 		return m
 	}
-	m.statusMsg = m.deps.Theme.Style("success").Render("copied session ID")
+	m.statusMsg = m.deps.Theme.Style("success").Render("copied " + label)
 	return m
 }
 
@@ -172,6 +197,9 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Active session") + "\n\n")
 	b.WriteString("ID: " + indentWrap(safeSessionID(details.ID), cardTextWidth(width)) + "\n")
+	if details.DebugTargetID != "" {
+		b.WriteString("Debug target ID: " + indentWrap(safeSessionID(details.DebugTargetID), cardTextWidth(width)) + "\n")
+	}
 	b.WriteString("Title: " + unknown(details.Title) + "\n")
 	b.WriteString("State: " + unknown(details.State) + "\n")
 	b.WriteString("Workspace: " + unknown(details.Workspace) + "\n")
@@ -179,7 +207,11 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")
 	b.WriteString("Provider: " + unknown(details.ProviderID) + "\n")
 	b.WriteString("Model: " + unknown(details.ModelID) + "\n\n")
-	b.WriteString(th.Style("muted").Render("c: copy exact ID  " + hk.closeOnly + ": close"))
+	copyHelp := "c: copy exact ID"
+	if details.DebugTargetID != "" {
+		copyHelp += "  t: copy exact target ID"
+	}
+	b.WriteString(th.Style("muted").Render(copyHelp + "  " + hk.closeOnly + ": close"))
 	return centerCard(th, b.String(), width, height)
 }
 

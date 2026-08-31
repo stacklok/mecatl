@@ -18,24 +18,89 @@ func debugUIModel(target string, width int) Model {
 	return m
 }
 
-func TestDebugRailIsPersistentSanitizedAndNarrowRecognizable(t *testing.T) {
+func TestDebugIdentityUsesNormalHeaderAcrossPhases(t *testing.T) {
 	m := debugUIModel("target\x1b[31m\nopaque", 80)
+	want := "DEBUG target #" + sessionDigest(m.deps.DebugTarget)[:8]
 	for _, p := range []phase{phaseConnecting, phaseIdle, phaseRunning, phaseAwaitingApproval, phaseFatal} {
 		m.phase = p
-		var rendered string
+		rendered := m.renderHeader()
 		if p == phaseFatal {
 			rendered = m.View().Content
-		} else {
-			rendered = m.renderHeader()
 		}
 		plain := stripANSIstr(rendered)
-		if !strings.Contains(plain, "DEBUG target: target[31m opaque") || strings.Contains(rendered, "\x1b[31m") {
-			t.Fatalf("phase %v debug identity unsafe/missing: %q", p, plain)
+		if !strings.Contains(plain, "mecatui  ·  "+want+"  ·  session ") || strings.Contains(plain, "target[31m opaque") || strings.Contains(rendered, "\x1b[31m") {
+			t.Fatalf("phase %v debug header identity unsafe/missing: %q", p, plain)
+		}
+		if !strings.Contains(rendered, m.deps.Theme.Style("warning").Bold(true).Render(want)) {
+			t.Fatalf("phase %v debug target lacks amber/bold treatment: %q", p, rendered)
 		}
 	}
+}
+
+func TestDebugHeaderKeepsWholeIdentityAndShedsOptionalSegments(t *testing.T) {
+	m := debugUIModel("target-session", 40)
+	m.sessionID = "debug-session"
+	m.resolvedSessionModel = client.ResolvedModel{ModelID: "large-model", ProviderID: "provider"}
+	m.activeMode = "accept-edits"
+	m.deps.Server = "remote-server"
+	plain := stripANSIstr(m.renderHeader())
+	want := "DEBUG target #" + sessionDigest("target-session")[:8]
+	if !strings.Contains(plain, want) || strings.Contains(plain, "large-model") || strings.Contains(plain, "accept-edits") || strings.Contains(plain, "remote-server") {
+		t.Fatalf("narrow debug header did not preserve target before optional segments: %q", plain)
+	}
 	m.width = 7
-	if got := stripANSIstr(m.renderDebugRail()); !strings.HasPrefix(got, "DEBUG") {
-		t.Fatalf("narrow rail lost debug identity: %q", got)
+	plain = strings.Join(strings.Fields(stripANSIstr(m.renderHeader())), "")
+	if !strings.Contains(plain, "DEBUGtarget#"+sessionDigest("target-session")[:8]) || strings.Contains(plain, "…") {
+		t.Fatalf("very narrow header clipped debug identity: %q", plain)
+	}
+}
+
+func TestDebugFatalHeaderHeightIsAccountedFor(t *testing.T) {
+	m := debugUIModel("target-session", 40)
+	m.phase = phaseFatal
+	if got := strings.Count(m.View().Content, "\n") + 1; got != m.height {
+		t.Fatalf("fatal frame height = %d, want %d", got, m.height)
+	}
+}
+
+type resolvedDebugTargetSession struct {
+	*fakeConv
+	target string
+}
+
+func (s *resolvedDebugTargetSession) DebugTargetID() string { return s.target }
+
+func TestDebugReadyAdoptsResolvedExactTarget(t *testing.T) {
+	m := debugUIModel("123456789012", 80)
+	m.deps.Session = &resolvedDebugTargetSession{fakeConv: &fakeConv{}, target: "123456789012-full-target"}
+	m0, _, _ := m.applySessionReady(client.SessionReadyMsg{SessionID: "debug-session"})
+	m = m0.(Model)
+	if m.deps.DebugTarget != "123456789012-full-target" || m.sessionDetails().DebugTargetID != "123456789012-full-target" {
+		t.Fatalf("resolved debug target was not adopted: %q", m.deps.DebugTarget)
+	}
+}
+
+func TestDebugSessionDetailsShowAndCopyExactTargetID(t *testing.T) {
+	const target = "target with \"quotes\"\nline"
+	m := debugUIModel(target, 100)
+	m.sessionID = "debug-session"
+	m.phase = phaseIdle
+	clip := &fakeClipboard{}
+	m.deps.Clipboard = clip
+	m.sessionDetailsOpen = true
+
+	details := stripANSIstr(renderSessionDetails(m.deps.Theme, m.sessionDetails(), helpKeys{closeOnly: "esc"}, 100, 30))
+	if !strings.Contains(details, safeSessionID(target)) || !strings.Contains(details, "Debug target ID:") || !strings.Contains(details, "t: copy exact target ID") {
+		t.Fatalf("debug session details omit safely quoted target/copy key: %q", details)
+	}
+	m0, cmd, handled := m.onSessionDetailsKey(tea.KeyPressMsg{Code: 't', Text: "t"})
+	if !handled || cmd == nil {
+		t.Fatal("target copy key was not handled")
+	}
+	msg := cmd().(sessionIDCopyResultMsg)
+	m = m0.(Model).onSessionIDCopyResult(msg)
+	if len(clip.wrote) != 1 || string(clip.wrote[0]) != target || stripANSIstr(m.statusMsg) != "copied debug target ID" {
+		t.Fatalf("target copy = payloads:%q status:%q", clip.wrote, stripANSIstr(m.statusMsg))
 	}
 }
 

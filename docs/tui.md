@@ -289,7 +289,12 @@ shown in the TUI header. The short form is resolved from the caller-visible sess
 inventory. If more than one visible session shares it, no debug session is created and
 mecatui asks for the full ID. These commands do not attach to or continue the target.
 They authorize it, create a separate durable no-filesystem debug session, print a privacy
-disclosure, and submit a default diagnostic prompt. The disclosure is load-bearing: target prompts, model output,
+disclosure, and submit one first genuine user turn. That turn contains the same sanitized
+current-client/server report produced by bare `/diagnostics`, clearly labelled as debugger
+runtime state rather than target evidence, followed by the default diagnosis request. A
+custom `--prompt` replaces only the request; the baseline remains. Remote report lookup uses
+the authenticated server-info path, and a safely classified failure leaves unavailable
+fields without blocking diagnosis or exposing the raw error. The disclosure is load-bearing: target prompts, model output,
 tool arguments/results, paths, and secrets can be sent to the selected model. Running the
 command is the consent gesture.
 
@@ -303,8 +308,11 @@ the debugger.
 
 The debug conversation persists independently and can rehydrate after server restart with
 the same exact lineage and narrow catalog. Invalid lineage/no-fs metadata, a missing debug
-factory, or an unavailable target fails closed. The TUI retains a DEBUG rail and a
-`DEBUG <target-digest>` title in every phase. It hides `/clear`, `/sessions`, `/models`,
+factory, or an unavailable target fails closed. The ordinary padded header places amber/bold
+`DEBUG target #<digest>` immediately after `mecatui` in every phase. At narrow widths it
+sheds model/mode/server detail before that complete target identity rather than clipping it;
+`/session` displays the safely quoted exact target ID and copies it with `t`. The
+`DEBUG <target-digest>` terminal title remains unchanged. The TUI hides `/clear`, `/sessions`, `/models`,
 `/effort`, and `/worktrees`, and blocks the mode/effort shortcuts because those controls
 can replace the launch binding. Schedule and learning controls remain available because
 changing those independent settings does not rebind the debug target; harmless inspection
@@ -524,8 +532,8 @@ attention heuristics — the dock bounces / the taskbar flashes on every change)
 The title self-heals across a session switch / fork / carryover (a refetch adopts
 the server's stored title when this client never saw the first prompt). A dedicated
 debugger instead always starts with `DEBUG <target-digest>`, followed by its static
-phase label; the persistent on-screen DEBUG rail carries the same identity even when
-the ordinary header is replaced by a modal or fatal view.
+phase label; the persistent amber/bold `DEBUG target #<digest>` segment in the ordinary
+padded header carries the same identity through every lifecycle and fatal state.
 
 The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prompt
 can't embed an OSC title-injection), and newlines/tabs collapse to single spaces

@@ -205,11 +205,18 @@ target into a run-entry path or acquires its lease. On restart,
 dedicated factory. Invalid no-fs metadata, a missing factory, or unavailable target
 fails closed rather than using the shared or generic no-fs engine.
 
-The mecatui command forms, privacy disclosure, automatic diagnostic prompt, persistent
-DEBUG rail/title, and disabled binding-breaking controls are the client projection.
-Enhanced structured diagnostics, sanitized network-attempt timing, live target
-following, raw audit/tool-record inspection, and support bundles are follow-ups, not
-parts of this shipped boundary. See [ADR 0248](../adr/0248-session-debugger-admin-transport.md).
+The mecatui command forms and privacy disclosure are the client projection. On launch,
+mecatui builds the same sanitized report as bare `/diagnostics` (using authenticated
+`GetServerInfo` remotely), labels it as current debugger client/server state rather than
+target evidence, and combines it with the default or `--prompt` diagnosis request in the
+first genuine user turn. A safely classified lookup failure leaves unavailable fields but
+does not block that turn or expose the raw error. The ordinary padded header carries
+amber/bold `DEBUG target #<digest>` immediately after `mecatui`; width pressure removes
+model/mode/server detail before that complete identity, `/session` shows and copies the
+safely quoted exact target ID, and the target-derived title remains. Binding-breaking
+controls stay disabled. Enhanced structured diagnostics, sanitized network-attempt timing,
+live target following, raw audit/tool-record inspection, and support bundles are
+follow-ups, not parts of this shipped boundary. See [ADR 0248](../adr/0248-session-debugger-admin-transport.md).
 
 ---
 
