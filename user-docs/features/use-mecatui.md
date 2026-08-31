@@ -57,7 +57,9 @@ Debug invocation accepts the full opaque session ID or the exact 12-byte ID show
 in the TUI header; an ambiguous short ID creates nothing and requires the full ID. It
 creates a separate no-filesystem analysis session and is explicit consent
 to send bounded stored-session evidence—which may include secrets—to the selected model.
-It never resumes or mutates the target. See [Sessions](../mecatui/sessions.md#diagnose-a-stored-session).
+It never resumes or mutates the target. Its bounded network view can correlate persisted,
+sanitized retry/transport evidence to that target without exposing raw errors or request data.
+See [Sessions](../mecatui/sessions.md#diagnose-a-stored-session).
 
 Use the dedicated guides for those workflows:
 

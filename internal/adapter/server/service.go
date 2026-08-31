@@ -5217,8 +5217,9 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 //     streaming deltas and durably flushes them before this event when it is a
 //     boundary; client liveness never gates observation, so the post-disconnect
 //     tail still includes the terminal EvResult.
-//  2. skip the client wire for the three log-only kinds (EvApproval,
-//     EvCompactionArchive, EvUserPrompt) — recorded above but NOT forwarded.
+//  2. skip the client wire for the four log-only kinds (EvApproval,
+//     EvCompactionArchive, EvUserPrompt, EvNetworkAttempt) — recorded above but
+//     NOT forwarded.
 //  3. on EvPermissionAsk: Persist (snapshot semantics, gated to the healthy
 //     path — the passed ctx, NOT the cancel-detached one) and — when autoApprove
 //     is true — MaybeAutoApprovePlan (the headless auto-approve observer).
@@ -5245,12 +5246,11 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 		}
 		s.mu.Unlock()
 	}
-	// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt (ADR 0038) are
-	// consumed by the durable log ONLY — appended above but NOT relayed to the
-	// client wire (the verdict record, the pre-compaction archive, and the
-	// user-prompt record are log/audit history, not client events; the client
-	// already holds its own prompt). Skip the client send AFTER the Append.
-	if ev.Type == session.EvApproval || ev.Type == session.EvCompactionArchive || ev.Type == session.EvUserPrompt {
+	// EvApproval (3a), EvCompactionArchive (3b), EvUserPrompt (ADR 0038), and
+	// EvNetworkAttempt (ADR 0255) are consumed by the durable log ONLY — appended
+	// above but NOT relayed to the client wire. Network-attempt evidence is available
+	// only through the target-bound InspectSession tool.
+	if !isPublicEvent(ev) || ev.Type == session.EvApproval || ev.Type == session.EvCompactionArchive || ev.Type == session.EvUserPrompt {
 		return false
 	}
 	if ev.Type == session.EvPermissionAsk {

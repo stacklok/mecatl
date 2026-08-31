@@ -580,7 +580,7 @@ func applyLaunchIntent(cfg config, deps ui.Deps) ui.Deps {
 	return deps
 }
 
-const defaultDebugPrompt = "Diagnose the bound target session. Check its status first, then inspect the authoritative transcript. Use activity or performance evidence only when useful. Base conclusions on cited evidence and explicitly disclose any evidence that is missing or unavailable."
+const defaultDebugPrompt = "Diagnose the bound target session and explain the most likely cause of its reported behavior."
 
 func initialPromptForConfig(cfg config) string {
 	if prompt := cliconfig.JoinPromptBody(cfg.prompt, cfg.promptFileBody); strings.TrimSpace(prompt) != "" {

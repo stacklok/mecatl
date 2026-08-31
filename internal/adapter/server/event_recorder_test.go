@@ -58,6 +58,18 @@ func recorderService(log port.EventLog, diag port.Diagnostics) *Service {
 	return &Service{cfg: Config{EventLog: log, Diagnostics: diag}}
 }
 
+func TestRunEventRecorderPersistsNetworkAttemptPayload(t *testing.T) {
+	log := &countingEventLog{}
+	recorder := NewRunEventRecorder(context.Background(), recorderService(log, port.NopDiagnostics{}), "s1")
+	payload := session.NetworkAttemptPayload{SessionID: "s1", RunSerial: 3, Turn: 2, Attempt: 1, MaxAttempts: 2, RetryDisposition: "retryable", StreamProgress: "precommit", Decision: "retry", FailureClass: "connect"}
+	recorder.Observe(session.Event{Type: session.EvNetworkAttempt, Turn: 2, Seq: 4, NetworkAttempt: &payload})
+	recorder.Close()
+
+	if len(log.recorded) != 1 || log.recorded[0].Type != session.EvNetworkAttempt || log.recorded[0].NetworkAttempt == nil || log.recorded[0].NetworkAttempt.SessionID != "s1" {
+		t.Fatalf("recorded network attempt = %+v", log.recorded)
+	}
+}
+
 func TestRunEventRecorderCoalescesDeltasInFirstObservedOrder(t *testing.T) {
 	log := &countingEventLog{}
 	recorder := NewRunEventRecorder(context.Background(), recorderService(log, port.NopDiagnostics{}), "s1")

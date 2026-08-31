@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 func execute(t *testing.T, inspect tool.Tool, args string) session.ToolResult {
@@ -280,6 +281,115 @@ func (errorLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event
 }
 
 var _ port.EventLog = errorLog{}
+
+func TestNetworkEvidenceIsolationPaginationAndAvailability(t *testing.T) {
+	store, target := seededTarget(t, nil)
+	missing := execute(t, New(target.ID, store, nil), `{"view":"network"}`)
+	for _, want := range []string{`"available":false`, `"complete":false`, `"successful_attempts_timed":false`, "no request bodies"} {
+		if !strings.Contains(missing.Content, want) {
+			t.Fatalf("unavailable network evidence missing %q: %s", want, missing.Content)
+		}
+	}
+
+	log := memstore.NewEventLog()
+	other := session.NetworkAttemptPayload{SessionID: "other", Attempt: 99, Decision: "terminal", FailureClass: "dns"}
+	if err := log.Append(context.Background(), "other", session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &other}); err != nil {
+		t.Fatal(err)
+	}
+	secrets := []string{"sk-live-SECRET", "Bearer-SECRET", "trace-SECRET"}
+	malicious := session.NetworkAttemptPayload{SessionID: target.ID, RunSerial: 1, Attempt: 1, MaxAttempts: 1, Decision: "terminal", SuppressionReason: "permanent", RetryDisposition: secrets[0], StreamProgress: "precommit", FailureClass: "provider", CorrelationKind: "request", CorrelationDigest: secrets[1]}
+	if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &malicious}); err != nil {
+		t.Fatal(err)
+	}
+	mismatched := session.NetworkAttemptPayload{SessionID: "other", RunSerial: 1, Attempt: 1, MaxAttempts: 1, Decision: "terminal", SuppressionReason: "permanent", RetryDisposition: "permanent", StreamProgress: "precommit", FailureClass: "provider"}
+	if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &mismatched}); err != nil {
+		t.Fatal(err)
+	}
+	digest, ok := session.NetworkCorrelationDigest("request", secrets[1])
+	if !ok {
+		t.Fatal("digest rejected test correlation")
+	}
+	for i := 0; i < 3; i++ {
+		observation := session.NetworkAttemptPayload{
+			SessionID: target.ID, RunSerial: 7, Turn: 2, Attempt: i + 1, MaxAttempts: 3,
+			ElapsedMs: int64(10 + i), RetryDisposition: "retryable", StreamProgress: "precommit",
+			Decision: "retry", BackoffMs: int64(i), FailureClass: "connect",
+			CorrelationKind: "request", CorrelationDigest: digest,
+		}
+		if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &observation}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := execute(t, New(target.ID, store, log), `{"view":"network","limit":2}`)
+	for _, want := range []string{`"available":true`, `"complete":false`, `"scan_complete":true`, `"matched_attempts":3`, `"invalid_attempts_omitted":2`, `"next_offset":2`, `"target"`, `"failure_class":"connect"`} {
+		if !strings.Contains(first.Content, want) {
+			t.Fatalf("network first page missing %q: %s", want, first.Content)
+		}
+	}
+	if !strings.Contains(first.Content, digest) {
+		t.Fatalf("network evidence omitted correlation digest: %s", first.Content)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(first.Content, secret) {
+			t.Fatalf("network evidence leaked producer token %q: %s", secret, first.Content)
+		}
+	}
+	if strings.Contains(first.Content, `"attempt":99`) || strings.Contains(first.Content, `"session_id":"other"`) {
+		t.Fatalf("network evidence crossed target boundary: %s", first.Content)
+	}
+	last := execute(t, New(target.ID, store, log), `{"view":"network","offset":2,"limit":2}`)
+	if !strings.Contains(last.Content, `"complete":false`) || !strings.Contains(last.Content, `"invalid_attempts_omitted":2`) || strings.Contains(last.Content, "next_offset") {
+		t.Fatalf("network final page = %s", last.Content)
+	}
+
+	failed := execute(t, New(target.ID, store, errorLog{}), `{"view":"network"}`)
+	if strings.Contains(failed.Content, "secret") || !strings.Contains(failed.Content, `"error":"event log read failed"`) {
+		t.Fatalf("network log failure leaked detail or hid availability: %s", failed.Content)
+	}
+}
+
+func TestNetworkEvidenceScanIsBounded(t *testing.T) {
+	store, target := seededTarget(t, nil)
+	log := memstore.NewEventLog()
+	for range maxNetworkScan + 1 {
+		if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvTurnStart}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := execute(t, New(target.ID, store, log), `{"view":"network"}`)
+	for _, want := range []string{`"scan_complete":false`, `"truncated":true`, `"complete":false`, `"scanned_events":10000`} {
+		if !strings.Contains(got.Content, want) {
+			t.Fatalf("bounded network scan missing %q: %s", want, got.Content)
+		}
+	}
+}
+
+func TestNetworkEvidencePersistsAcrossJSONLStoreRestart(t *testing.T) {
+	dir := t.TempDir()
+	store1, err := jsonlstore.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := session.New("persisted-target", session.ModeDefault, "/target", session.Limits{}, time.Now())
+	if err := store1.Save(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	observation := session.NetworkAttemptPayload{SessionID: target.ID, RunSerial: 1, Turn: 0, Attempt: 1, MaxAttempts: 1, Decision: "terminal", RetryDisposition: "retryable", StreamProgress: "precommit", SuppressionReason: "attempts_exhausted", FailureClass: "timeout", ElapsedMs: 42}
+	if err := store1.Append(context.Background(), target.ID, session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &observation}); err != nil {
+		t.Fatal(err)
+	}
+
+	store2, err := jsonlstore.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := execute(t, New(target.ID, store2, store2), `{"view":"network"}`)
+	for _, want := range []string{`"failure_class":"timeout"`, `"elapsed_ms":42`, `"suppression_reason":"attempts_exhausted"`, `"complete":true`} {
+		if !strings.Contains(got.Content, want) {
+			t.Fatalf("restarted network evidence missing %q: %s", want, got.Content)
+		}
+	}
+}
 
 func TestPerformanceReduction(t *testing.T) {
 	store, target := seededTarget(t, nil)

@@ -49,6 +49,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **`session.SteerPayload.Parts`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — adds the committed media parts to the steer echo. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 
+- **`session.Event.NetworkAttempt`** — adds the log-only sanitized provider-attempt
+  payload used by the dedicated debugger. Adding a field to an exported struct breaks
+  external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+
 - **`session.SessionRelationship.DebugTargetID`** — adds the durable target link
   for dedicated debug sessions. Adding a field to an exported struct breaks
   external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
@@ -80,6 +84,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   equivalents listed below. `agent.StripLoneCodeFence` remains in agent.
 
 ### Added
+
+- **Sanitized provider-attempt observation** — adds `session.EvNetworkAttempt`,
+  `session.NetworkAttemptPayload`, `session.CanonicalNetworkAttempt`,
+  `session.NetworkCorrelationDigest`, `port.AttemptObserver`, `port.WithAttemptObserver`,
+  and `port.ObserveAttempt`. The run-local observer lets provider decorators return
+  typed evidence to the loop, whose canonicalization rejects invalid observations,
+  binds trusted run correlation, omits provider codes, and retains correlation values
+  only as fixed domain-separated SHA-256 digests. Added (minor).
 
 - **Manual session compaction core** — `session.ReplaceHistoryAtBoundary` provides
   the pairing-validated, non-active aggregate rewrite seam; `agent.Engine.CompactSession`

@@ -1210,9 +1210,14 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 	// user prompts (they ARE the transcript). So relay ALL events through toProto,
 	// including the three log-only kinds. They are already metadata-only/redacted by
 	// construction (gauntlet #7). Do NOT copy the live-relay filter here.
+	// NetworkAttempt remains debugger-only even on durable read-back; it has no
+	// public proto projection and is read only by target-bound InspectSession.
 	for ev, iterErr := range events {
 		if iterErr != nil {
 			return status.Error(codes.Internal, iterErr.Error())
+		}
+		if !isPublicEvent(ev) {
+			continue
 		}
 		if err := stream.Send(toProto(ev)); err != nil {
 			return err
@@ -1361,7 +1366,14 @@ func toProtoWatchEnvelope(env WatchEnvelope) *mecatlv1.WatchSessionEventsRespons
 // log-only kinds (EvApproval, EvCompactionArchive) and a non-delivery
 // EvUserPrompt stay skipped (they are persistence-only; the client holds its
 // own verdict/compaction/prompt view).
+func isPublicEvent(ev session.Event) bool {
+	return ev.Type != session.EvNetworkAttempt
+}
+
 func relayLiveEvent(ev session.Event) bool {
+	if !isPublicEvent(ev) {
+		return false
+	}
 	switch ev.Type {
 	case session.EvApproval, session.EvCompactionArchive:
 		return false

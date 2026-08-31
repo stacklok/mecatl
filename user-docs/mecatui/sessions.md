@@ -57,13 +57,16 @@ mecatui debug 01JOPAQUESESSIONID \
    no-filesystem analysis session. The normal padded header shows amber/bold
    `DEBUG target #<digest>` after `mecatui`, and the terminal title carries the digest.
    `/session` shows the safely quoted exact target ID and copies it with `t`.
-5. The debugger submits one first user turn containing the sanitized current debugger
-   client/server diagnostics baseline and the supplied `--prompt`, or the default diagnosis
-   request. The baseline is separate from target evidence and remains with a custom prompt;
-   a safely classified remote lookup failure does not block launch or reveal its raw error.
+5. The debugger submits one first user turn ordered as your diagnosis objective, the required
+   status/transcript/pagination workflow, the expected report sections, and finally a delimited
+   sanitized current-debugger client/server runtime block. `--prompt` replaces only the
+   objective. Runtime context is compatibility/transport context, not target evidence; a
+   safely classified remote lookup failure does not block launch or reveal its raw error.
 6. Ask follow-up questions normally. The debugger can inspect bounded status,
-   transcript, activity, and performance views for only that target. Activity
-   and performance depend on the optional event log and may be incomplete.
+   transcript, activity, performance, and network views for only that target. Event-derived
+   views report availability/completeness. Network includes sanitized failed/interesting
+   attempt decisions and classes, never raw errors, URLs, headers, bodies, prompts, tool
+   arguments, or credentials; successful-attempt and per-phase DNS/TCP/TLS timing are not measured.
 7. Quit normally when finished. The target remains unchanged and unleased; the
    debug conversation is stored separately.
 

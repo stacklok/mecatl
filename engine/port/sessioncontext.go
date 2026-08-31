@@ -11,6 +11,13 @@ type sessionIDContextKey struct{}
 type runSerialContextKey struct{}
 type turnIndexContextKey struct{}
 type runAttemptCarrierContextKey struct{}
+type attemptObserverContextKey struct{}
+
+// AttemptObserver receives producer-controlled provider-attempt evidence. It is
+// a run-local bridge: adapters observe, while the agent loop validates the whole
+// payload and remains the sole event producer; the server relay remains the sole
+// durable-log writer.
+type AttemptObserver func(session.NetworkAttemptPayload)
 
 // runAttemptContext belongs to one engine run. Its identity fields are fixed;
 // only its turn carrier changes while the run is live.
@@ -46,6 +53,25 @@ func runAttemptFromContext(ctx context.Context) (*runAttemptContext, bool) {
 	}
 	correlation, ok := ctx.Value(runAttemptCarrierContextKey{}).(*runAttemptContext)
 	return correlation, ok
+}
+
+// WithAttemptObserver returns a child context carrying a run-local attempt
+// observer. The observer grants no authority. Its input is producer-controlled;
+// consumers must validate it before constructing an event or durable record.
+func WithAttemptObserver(ctx context.Context, observer AttemptObserver) context.Context {
+	return context.WithValue(ctx, attemptObserverContextKey{}, observer)
+}
+
+// ObserveAttempt sends producer-controlled attempt evidence to the observer on
+// ctx, when one is installed. The loop-side observer is responsible for canonical
+// validation before emission.
+func ObserveAttempt(ctx context.Context, observation session.NetworkAttemptPayload) {
+	if ctx == nil {
+		return
+	}
+	if observer, ok := ctx.Value(attemptObserverContextKey{}).(AttemptObserver); ok && observer != nil {
+		observer(observation)
+	}
 }
 
 // WithSessionID returns a child context carrying the exact identity of the

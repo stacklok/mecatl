@@ -1,5 +1,10 @@
 package session
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+)
+
 // EventType is the kind of a domain Event. This is the single event taxonomy
 // shared by the agent loop and the API; the API serializes it to proto and it is
 // never a provider-specific type.
@@ -125,6 +130,12 @@ const (
 	// proto event-type string verbatim (no proto enum; the wire type field is a
 	// string passthrough, like EvNoProgress).
 	EvRecoverNotice EventType = "recover_notice"
+	// EvNetworkAttempt is a log-only, provider-neutral record of one failed or
+	// otherwise interesting LLM transport attempt. The resilience wrapper creates
+	// the sanitized payload through its single decision-classification path; the
+	// loop emits it and the relay persists it. It never carries raw errors, URLs,
+	// headers, request/response bodies, prompts, or credentials.
+	EvNetworkAttempt EventType = "network.attempt"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
 	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
@@ -519,6 +530,115 @@ type ResultPayload struct {
 	Disposition RetryDisposition
 	// Progress records how far the terminal model stream advanced semantically.
 	Progress StreamProgress
+}
+
+// NetworkAttemptPayload is bounded, sanitized evidence about one failed or
+// interesting provider attempt. Durations are whole milliseconds; zero means
+// unavailable/not applicable. Classification values are closed vocabularies
+// produced by the shared resilience decision path. CorrelationDigest is a
+// domain-separated SHA-256 digest, never a raw provider correlation value. No
+// field may contain raw errors or arbitrary transport data.
+type NetworkAttemptPayload struct {
+	SessionID         SessionID `json:"session_id"`
+	RunSerial         int64     `json:"run_serial"`
+	Turn              int       `json:"turn"`
+	Attempt           int       `json:"attempt"`
+	MaxAttempts       int       `json:"max_attempts"`
+	ElapsedMs         int64     `json:"elapsed_ms"`
+	RetryDisposition  string    `json:"retry_disposition"`
+	StreamProgress    string    `json:"stream_progress"`
+	Decision          string    `json:"decision"`
+	SuppressionReason string    `json:"suppression_reason,omitempty"`
+	BackoffMs         int64     `json:"backoff_ms"`
+	FailureClass      string    `json:"failure_class"`
+	HTTPStatus        int       `json:"http_status,omitempty"`
+	InBandStatus      int       `json:"in_band_status,omitempty"`
+	CorrelationKind   string    `json:"correlation_kind,omitempty"`
+	CorrelationDigest string    `json:"correlation_digest,omitempty"`
+}
+
+const maxNetworkCorrelationBytes = 4096
+
+// NetworkCorrelationDigest reduces an arbitrary provider correlation value to
+// a fixed, one-way token. Unsupported kinds, empty values, and oversized input
+// are omitted rather than retained.
+func NetworkCorrelationDigest(kind, value string) (string, bool) {
+	if !validNetworkCorrelationKind(kind) || value == "" || len(value) > maxNetworkCorrelationBytes {
+		return "", false
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte("mecatl.network-attempt.correlation/v1\x00"))
+	_, _ = h.Write([]byte(kind))
+	_, _ = h.Write([]byte{'\x00'})
+	_, _ = h.Write([]byte(value))
+	return hex.EncodeToString(h.Sum(nil)), true
+}
+
+// CanonicalNetworkAttempt validates the complete producer-controlled payload
+// and binds its correlation to trusted loop-owned run identity. Invalid input
+// is rejected as a whole and must not be emitted or persisted.
+func CanonicalNetworkAttempt(in NetworkAttemptPayload, id SessionID, runSerial int64, turn int) (NetworkAttemptPayload, bool) {
+	if id == "" || runSerial < 1 || turn < 0 || !validNetworkAttemptScalars(in) ||
+		!validNetworkAttemptVocabulary(in) || !validNetworkAttemptDecision(in) || !validNetworkAttemptCorrelation(in) {
+		return NetworkAttemptPayload{}, false
+	}
+	in.SessionID = id
+	in.RunSerial = runSerial
+	in.Turn = turn
+	return in, true
+}
+
+func validNetworkAttemptScalars(in NetworkAttemptPayload) bool {
+	return in.Attempt >= 1 && in.MaxAttempts >= in.Attempt && in.ElapsedMs >= 0 && in.BackoffMs >= 0 &&
+		networkAttemptStatusValid(in.HTTPStatus) && networkAttemptStatusValid(in.InBandStatus)
+}
+
+func validNetworkAttemptVocabulary(in NetworkAttemptPayload) bool {
+	return networkAttemptOneOf(in.RetryDisposition, "retryable", "permanent", "unknown") &&
+		networkAttemptOneOf(in.StreamProgress, "precommit", "visible", "complete", "unknown") &&
+		networkAttemptOneOf(in.FailureClass, "dns", "connect", "tls", "timeout", "connection_reset", "stream_idle", "breaker", "rate_limit", "http", "provider", "unknown")
+}
+
+func validNetworkAttemptDecision(in NetworkAttemptPayload) bool {
+	if in.Decision == "retry" {
+		return in.SuppressionReason == ""
+	}
+	return in.Decision == "terminal" && in.BackoffMs == 0 &&
+		networkAttemptOneOf(in.SuppressionReason, "visible_output", "attempts_exhausted", "permanent", "unknown", "classifier_veto", "provider_internal_veto", "breaker_open")
+}
+
+func validNetworkAttemptCorrelation(in NetworkAttemptPayload) bool {
+	if in.CorrelationKind == "" || in.CorrelationDigest == "" {
+		return in.CorrelationKind == "" && in.CorrelationDigest == ""
+	}
+	return validNetworkCorrelationKind(in.CorrelationKind) && validNetworkCorrelationDigest(in.CorrelationDigest)
+}
+
+func validNetworkCorrelationKind(kind string) bool {
+	return networkAttemptOneOf(kind, "request", "response", "trace", "completion", "message")
+}
+
+func validNetworkCorrelationDigest(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, c := range value {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func networkAttemptStatusValid(status int) bool { return status == 0 || status >= 100 && status <= 599 }
+
+func networkAttemptOneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // TurnEndPayload is the payload carried by an EvTurnEnd Event. It is a typed
@@ -1198,6 +1318,9 @@ type Event struct {
 	// ModelRetry is set on EvModelRetry and carries the prior failed terminal's
 	// typed facts for durable reconstruction without parsing Text.
 	ModelRetry *ModelRetryPayload
+	// NetworkAttempt is set on EvNetworkAttempt. It is log-only sanitized
+	// transport/provider evidence emitted by the loop from the resilience observer.
+	NetworkAttempt *NetworkAttemptPayload
 	// Result is set on EvResult.
 	Result *ResultPayload
 	// TurnEnd is set on EvTurnEnd (this turn's usage + elapsed time).

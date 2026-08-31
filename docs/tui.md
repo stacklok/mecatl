@@ -289,20 +289,24 @@ shown in the TUI header. The short form is resolved from the caller-visible sess
 inventory. If more than one visible session shares it, no debug session is created and
 mecatui asks for the full ID. These commands do not attach to or continue the target.
 They authorize it, create a separate durable no-filesystem debug session, print a privacy
-disclosure, and submit one first genuine user turn. That turn contains the same sanitized
-current-client/server report produced by bare `/diagnostics`, clearly labelled as debugger
-runtime state rather than target evidence, followed by the default diagnosis request. A
-custom `--prompt` replaces only the request; the baseline remains. Remote report lookup uses
+disclosure, and submit one first genuine user turn. That turn is ordered as the diagnosis
+objective, the required status/transcript/pagination workflow, the expected report sections,
+and finally the same sanitized current-client/server report produced by bare `/diagnostics`.
+The report is clearly delimited debugger runtime context, never target evidence. A custom
+`--prompt` replaces only the objective; the runtime block remains. Remote report lookup uses
 the authenticated server-info path, and a safely classified failure leaves unavailable
 fields without blocking diagnosis or exposing the raw error. The disclosure is load-bearing: target prompts, model output,
 tool arguments/results, paths, and secrets can be sent to the selected model. Running the
 command is the consent gesture.
 
 The debug model has exactly one tool, `InspectSession`, permanently bound by the server to
-the command's target. The model can request bounded `status`, `transcript`, `activity`, and
-`performance` views, but cannot supply or change the target ID. Snapshot transcript is the
-authoritative history. Activity and performance depend on EventLog availability and are
-marked optional/incomplete; all returned evidence is fenced as untrusted. The target is
+the command's target. The model can request bounded `status`, `transcript`, `activity`,
+`performance`, and `network` views, but cannot supply or change the target ID. Snapshot
+transcript is the authoritative history. Activity, performance, and network depend on EventLog
+availability and report scan/page completeness explicitly. Network contains only sanitized
+failed/interesting resilience-attempt decisions and classifications; no raw error, URL,
+header, body, prompt, tool argument, or credential is retained. Successful-attempt timing and
+per-phase DNS/TCP/TLS timing are not measured. All returned evidence is fenced as untrusted. The target is
 never resumed, reopened, recovered, leased, mutated, approved, cancelled, or steered by
 the debugger.
 

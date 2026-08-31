@@ -129,7 +129,12 @@ paths, and secrets may be sent to the selected model.
 
 The debug engine has an empty workspace, the no-filesystem profile, and exactly one
 read-only tool, `InspectSession`. Its status and transcript views come from the target
-snapshot; activity and performance are optional, incomplete EventLog projections.
+snapshot; activity and performance are optional EventLog projections. The `network` view
+shows bounded failed/interesting resilience attempts with retry/terminal decisions, elapsed
+and safe failure classes, validated provider statuses, and closed correlation kinds with fixed
+SHA-256 digests. It never exposes raw provider codes, correlation IDs, errors, URLs, headers, bodies, prompts,
+tool arguments, or credentials, and states that successful-attempt and DNS/TCP/TLS phase
+timing are unavailable.
 Evidence is bounded and fenced as hostile data. The target ID is fixed by the server,
 not supplied by the model, and the debug run never resumes, mutates, approves, cancels,
 steers, or leases the target. The normal padded header places amber/bold

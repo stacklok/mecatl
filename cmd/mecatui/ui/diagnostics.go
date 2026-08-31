@@ -134,8 +134,19 @@ func (m Model) handleDiagnostics(msg diagnosticsMsg) (tea.Model, tea.Cmd) {
 }
 
 func debuggerInitialPrompt(report, diagnosis string) string {
-	return "Current debugger client/server state (not target evidence):\n" + report +
-		"\n\nDiagnosis request (target evidence must come from InspectSession):\n" + diagnosis
+	return "Objective\n" + diagnosis +
+		"\n\nRequired workflow\n" +
+		"1. Call InspectSession with view=status first.\n" +
+		"2. Read the authoritative transcript next; paginate until scan_complete=true when needed.\n" +
+		"3. Based on symptoms, call activity for tool/lifecycle clues, performance for turn timing/usage, and network for retry/provider/transport clues.\n" +
+		"4. Use the runtime context below only for debugger compatibility/transport context, never as evidence about the target.\n" +
+		"\nExpected report\n" +
+		"- Observed facts, each naming its evidence source\n" +
+		"- Likely root cause and confidence\n" +
+		"- Missing or unavailable evidence\n" +
+		"- Recommended checks or corrective action\n" +
+		"\n<<<CURRENT_DEBUGGER_RUNTIME_CONTEXT (not target evidence)\n" + report +
+		"\nCURRENT_DEBUGGER_RUNTIME_CONTEXT>>>"
 }
 
 func (m Model) startInitialPrompt() (tea.Model, tea.Cmd, bool) {

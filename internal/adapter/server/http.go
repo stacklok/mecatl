@@ -1265,6 +1265,9 @@ func (h *HTTPHandler) runTeam(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 	out, err := h.svc.RunTeam(ctx, id, func(te agent.TeamEvent) {
+		if !isPublicEvent(te.Event) {
+			return
+		}
 		writeFrame(&mecatlv1.TeamEvent{Member: te.Member, Event: toProto(te.Event)})
 	})
 	if err != nil {
@@ -2100,6 +2103,8 @@ func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request
 	// (they ARE the transcript). So relay ALL events through toProto, including the
 	// three log-only kinds. They are already metadata-only/redacted by construction
 	// (gauntlet #7). Do NOT copy the live-relay filter here.
+	// NetworkAttempt remains debugger-only even on durable read-back; it has no
+	// public proto projection and is read only by target-bound InspectSession.
 	enc := json.NewEncoder(w)
 	for ev, iterErr := range events {
 		if iterErr != nil {
@@ -2108,6 +2113,9 @@ func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request
 			// contract.
 			writeSSEError(w, flusher, map[string]string{"error": iterErr.Error()})
 			return
+		}
+		if !isPublicEvent(ev) {
+			continue
 		}
 		if _, err := w.Write([]byte("data: ")); err != nil {
 			return // client disconnected; the iter releases its file handle on break

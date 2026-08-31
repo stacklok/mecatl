@@ -48,9 +48,14 @@ identity, and session ID. A persisted debugger also fails closed after restart i
 bound target or dedicated debug-engine support is unavailable; it never falls back to an
 ordinary chat.
 
-The debugger's activity and performance views require an EventLog and may be incomplete.
-Use the authoritative transcript for conclusions. Enhanced network-attempt timing, live
-target following, raw audit/tool-record views, and support bundles are not yet provided.
+The debugger's activity, performance, and network views require an EventLog and report when
+evidence is unavailable or incomplete. Use the authoritative transcript for conversation
+conclusions. Network evidence covers failed/interesting resilience attempts with sanitized
+retry decisions and DNS/connect/TLS/timeout/reset/rate-limit/breaker classes. It deliberately
+contains no raw errors, URLs, headers, bodies, prompts, tool arguments, or credentials, and
+does not claim successful-attempt or per-phase DNS/TCP/TLS timing. Live target following, raw
+audit/tool-record views, packet capture, raw pprof/log exposure, and support bundles are not
+provided.
 
 ## Find diagnostics
 

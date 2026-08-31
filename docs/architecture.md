@@ -382,17 +382,33 @@ marks binary payloads omitted with metadata, advances past a row that cannot fit
 reporting its index, role, projected size, and omission reason, and reports scan versus
 projection completeness explicitly. UTF-8 repair is likewise disclosed at the affected
 field and page; canonical fencing is included in the final 64 KiB calculation. EventLog
-activity/performance projections are optional, non-authoritative, and always evidentially
-incomplete even when an available log was scanned to EOF. Every evidence
+activity/performance projections are optional and non-authoritative. The sibling `network`
+view exposes only failed or policy-interesting attempts captured by the provider-neutral
+resilience wrapper: run/turn and attempt correlation, elapsed/backoff, retry disposition,
+stream progress, decision/suppression reason, sanitized failure class, validated statuses,
+and a closed correlation kind with a fixed domain-separated SHA-256 digest. Raw provider codes
+and raw correlation IDs are never retained. The loop canonicalizes the entire producer-controlled
+observation before emitting log-only `network.attempt`
+events and the relay persists them, preserving the EventLog ownership rule. They have no
+public protobuf projection and every ordinary client relay suppresses them, including direct
+Team gRPC and HTTP/SSE; only the
+target-bound `InspectSession` network view exposes them to the debug model. Raw errors,
+URLs/queries, headers, bodies, prompts, tool arguments, credentials, cookies, and environment
+values are never retained. Availability, pagination, scan completeness, and truncation are
+explicit; successful-attempt timing and per-phase DNS/TCP/TLS durations are honestly
+unavailable. Every evidence
 payload is fenced as hostile data. Creation conceals absent and unauthorized targets behind
 the same not-found result, and the debug session never resumes, leases, mutates, approves,
 cancels, or steers its target. Persisted debug sessions rehydrate through the dedicated
 factory and fail closed if their lineage, no-fs metadata, target, or factory is unavailable.
-Mecatui treats invocation as consent, prints the disclosure before launch, and combines
-the sanitized current debugger client/server diagnostics report with the diagnosis request
-in one first user turn. Its normal padded header keeps amber/bold `DEBUG target #<digest>`
+Mecatui treats invocation as consent, prints the disclosure before launch, and submits one
+first user turn ordered as objective, required InspectSession workflow, expected report
+structure, then a delimited sanitized debugger-runtime context. The runtime block is
+compatibility/transport context, never target evidence; a custom `--prompt` changes only the
+objective. Durable safety, authority, and source hierarchy stay in the stable system Role.
+Its normal padded header keeps amber/bold `DEBUG target #<digest>`
 ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
-and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0254](adr/0254-session-debugger-admin-transport.md). Each
+and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0254](adr/0254-session-debugger-admin-transport.md) and [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption

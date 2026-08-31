@@ -35,6 +35,8 @@ package llmresilience
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +47,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	oai "github.com/openai/openai-go/v3"
@@ -354,30 +357,67 @@ func (p *resilientProvider) logAttemptDecision(
 	if elapsed < 0 {
 		elapsed = 0
 	}
-	args := []any{
-		"model", attempt.model,
-		"attempt", attempt.attempt,
-		"max_attempts", attempt.maxAttempts,
-		"elapsed", elapsed,
-		"retry_disposition", retryDispositionDiagnostic(dispositionOf(err)),
-		"stream_progress", streamProgressDiagnostic(progress),
-		"decision", string(decision),
+	metadata, metadataOK := attemptMetadata(err)
+	observation := session.NetworkAttemptPayload{
+		Attempt:          attempt.attempt,
+		MaxAttempts:      attempt.maxAttempts,
+		ElapsedMs:        elapsed.Milliseconds(),
+		RetryDisposition: retryDispositionDiagnostic(dispositionOf(err)),
+		StreamProgress:   streamProgressDiagnostic(progress),
+		Decision:         string(decision),
+		FailureClass:     attemptFailureClass(err, metadata),
 	}
-	if id, ok := port.SessionIDFromContext(attempt.ctx); ok && id != "" {
-		args = append(args, "session", id)
+	if id, ok := port.SessionIDFromContext(attempt.ctx); ok {
+		observation.SessionID = id
 	}
 	if serial, ok := port.RunSerialFromContext(attempt.ctx); ok {
-		args = append(args, "run_serial", serial)
+		observation.RunSerial = serial
 	}
 	if turn, ok := port.TurnIndexFromContext(attempt.ctx); ok {
-		args = append(args, "turn", turn)
+		observation.Turn = turn
+	}
+	if decision == decisionRetry {
+		observation.BackoffMs = backoff.Milliseconds()
+	} else {
+		observation.SuppressionReason = string(reason)
+	}
+	if metadataOK {
+		observation.HTTPStatus = metadata.httpStatus
+		observation.InBandStatus = metadata.inBandStatus
+		if digest, ok := session.NetworkCorrelationDigest(metadata.correlationKind, metadata.correlationID); ok {
+			observation.CorrelationKind = metadata.correlationKind
+			observation.CorrelationDigest = digest
+		}
+	}
+
+	args := []any{
+		"model", attempt.model,
+		"attempt", observation.Attempt,
+		"max_attempts", observation.MaxAttempts,
+		"elapsed", elapsed,
+		"retry_disposition", observation.RetryDisposition,
+		"stream_progress", observation.StreamProgress,
+		"decision", observation.Decision,
+		"failure_class", observation.FailureClass,
+	}
+	if observation.SessionID != "" {
+		args = append(args, "session", observation.SessionID)
+	}
+	if _, ok := port.RunSerialFromContext(attempt.ctx); ok {
+		args = append(args, "run_serial", observation.RunSerial)
+	}
+	if _, ok := port.TurnIndexFromContext(attempt.ctx); ok {
+		args = append(args, "turn", observation.Turn)
 	}
 	if decision == decisionRetry {
 		args = append(args, "backoff", backoff)
 	} else {
-		args = append(args, "replay_suppressed_reason", string(reason))
+		args = append(args, "replay_suppressed_reason", observation.SuppressionReason)
 	}
-	args = append(args, attemptMetadataArgs(err)...)
+	if metadataOK {
+		args = append(args, metadata.args()...)
+	}
+	port.ObserveAttempt(attempt.ctx, observation)
 
 	level := port.LevelInfo
 	message := "llm stream attempt failed; retrying"
@@ -435,10 +475,8 @@ type attemptErrorMetadata struct {
 }
 
 func (m attemptErrorMetadata) valid() bool {
-	if !validOptionalStatus(m.httpStatus) || !validOptionalStatus(m.inBandStatus) {
-		return false
-	}
-	if m.providerCode != "" && !validPrintableToken(m.providerCode, 128) {
+	if !validOptionalStatus(m.httpStatus) || !validOptionalStatus(m.inBandStatus) ||
+		m.providerCode != "" && !validPrintableToken(m.providerCode, 128) {
 		return false
 	}
 	if (m.correlationKind == "") != (m.correlationID == "") {
@@ -448,7 +486,7 @@ func (m attemptErrorMetadata) valid() bool {
 	case "":
 		return true
 	case "request", "response", "trace", "completion", "message":
-		return validPrintableToken(m.correlationID, 256)
+		return len(m.correlationID) <= 4096
 	default:
 		return false
 	}
@@ -463,17 +501,21 @@ func validPrintableToken(value string, limit int) bool {
 		return false
 	}
 	for i := 0; i < len(value); i++ {
-		if value[i] < 0x21 || value[i] > 0x7e {
+		c := value[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '-', c == '_', c == '.', c == ':':
+		default:
 			return false
 		}
 	}
 	return true
 }
 
-func attemptMetadataArgs(err error) []any {
+func attemptMetadata(err error) (attemptErrorMetadata, bool) {
 	var carrier port.ProviderErrorMetadataError
 	if !errors.As(err, &carrier) {
-		return nil
+		return attemptErrorMetadata{}, false
 	}
 	metadata := attemptErrorMetadata{
 		httpStatus:      carrier.ProviderHTTPStatus(),
@@ -482,25 +524,81 @@ func attemptMetadataArgs(err error) []any {
 		correlationKind: carrier.ProviderErrorCorrelationKind(),
 		correlationID:   carrier.ProviderErrorCorrelationID(),
 	}
-	if !metadata.valid() {
-		return nil
+	return metadata, metadata.valid()
+}
+
+func (m attemptErrorMetadata) args() []any {
+	args := make([]any, 0, 8)
+	if m.httpStatus != 0 {
+		args = append(args, "http_status", m.httpStatus)
 	}
-	args := make([]any, 0, 10)
-	if metadata.httpStatus != 0 {
-		args = append(args, "http_status", metadata.httpStatus)
+	if m.inBandStatus != 0 {
+		args = append(args, "in_band_status", m.inBandStatus)
 	}
-	if metadata.inBandStatus != 0 {
-		args = append(args, "in_band_status", metadata.inBandStatus)
-	}
-	if metadata.providerCode != "" {
-		args = append(args, "provider_code", metadata.providerCode)
-	}
-	if metadata.correlationKind != "" {
+	if digest, ok := session.NetworkCorrelationDigest(m.correlationKind, m.correlationID); ok {
 		args = append(args,
-			"correlation_kind", metadata.correlationKind,
-			"correlation_id", metadata.correlationID)
+			"correlation_kind", m.correlationKind,
+			"correlation_digest", digest)
 	}
 	return args
+}
+
+func attemptFailureClass(err error, metadata attemptErrorMetadata) string {
+	if class := transportFailureClass(err); class != "" {
+		return class
+	}
+	if metadata.httpStatus == 429 || metadata.inBandStatus == 429 {
+		return "rate_limit"
+	}
+	if metadata.httpStatus != 0 {
+		return "http"
+	}
+	if metadata.inBandStatus != 0 || metadata.providerCode != "" {
+		return "provider"
+	}
+	return "unknown"
+}
+
+func transportFailureClass(err error) string {
+	var breaker *BreakerError
+	if errors.As(err, &breaker) {
+		return "breaker"
+	}
+	if errors.Is(err, errFirstChunkTimeout) {
+		return "timeout"
+	}
+	var idle *StreamIdleError
+	if errors.As(err, &idle) {
+		return "stream_idle"
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return "dns"
+	}
+	if isTLSError(err) {
+		return "tls"
+	}
+	if errors.Is(err, syscall.ECONNRESET) {
+		return "connection_reset"
+	}
+	var op *net.OpError
+	if errors.As(err, &op) && (op.Op == "dial" || op.Op == "connect") {
+		return "connect"
+	}
+	var netErr net.Error
+	if (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return ""
+}
+
+func isTLSError(err error) bool {
+	var recordHeader tls.RecordHeaderError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var certificateInvalid x509.CertificateInvalidError
+	return errors.As(err, &recordHeader) || errors.As(err, &unknownAuthority) ||
+		errors.As(err, &hostname) || errors.As(err, &certificateInvalid)
 }
 
 // logMidStreamError records a failure after semantic visibility. Cancellation

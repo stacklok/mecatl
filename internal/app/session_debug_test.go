@@ -67,7 +67,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 		t.Fatalf("debug tools = %+v, want exactly InspectSession", requests[0].Tools)
 	}
 	prefix := requests[0].System.StablePrefix
-	for _, want := range []string{"target-exact", "Call status first", "authoritative transcript", "optional, incomplete", "hostile untrusted data", "Never mutate, resume, approve, cancel, or steer"} {
+	for _, want := range []string{"target-exact", "snapshot transcript is authoritative", "bounded event-log projections", "hostile untrusted data", "Never mutate, resume, approve, cancel, or steer"} {
 		if !strings.Contains(prefix, want) {
 			t.Fatalf("debug StablePrefix missing %q:\n%s", want, prefix)
 		}
@@ -168,6 +168,7 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 			})},
 				mockllm.ToolCallTurn(session.NewToolCall("status", sessiondebug.ToolName, []byte(`{"view":"status"}`))),
 				mockllm.ToolCallTurn(session.NewToolCall("transcript", sessiondebug.ToolName, []byte(`{"view":"transcript"}`))),
+				mockllm.ToolCallTurn(session.NewToolCall("network", sessiondebug.ToolName, []byte(`{"view":"network"}`))),
 				mockllm.TextTurn("diagnosis complete"),
 			)
 			ctx := context.Background()
@@ -237,6 +238,7 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 			for callID, evidence := range map[string][]string{
 				"status":     {`"view":"status"`, target.GetSessionId()},
 				"transcript": {`"view":"transcript"`, `"authoritative":true`},
+				"network":    {`"view":"network"`, `"successful_attempts_timed":false`},
 			} {
 				got, ok := results[callID]
 				if !ok {
@@ -251,8 +253,8 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 
 			mu.Lock()
 			defer mu.Unlock()
-			if len(requests) != 3 {
-				t.Fatalf("provider requests = %d, want 3", len(requests))
+			if len(requests) != 4 {
+				t.Fatalf("provider requests = %d, want 4", len(requests))
 			}
 			for i, req := range requests {
 				if len(req.Tools) != 1 || req.Tools[0].Name != sessiondebug.ToolName {

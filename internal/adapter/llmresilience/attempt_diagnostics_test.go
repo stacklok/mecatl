@@ -2,10 +2,13 @@ package llmresilience
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -57,15 +60,15 @@ func requireDecisionFields(t *testing.T, record diagRecord, want map[string]any)
 func TestAttemptDecisionRetryFieldsElapsedMetadataAndSession(t *testing.T) {
 	clock := &manualClock{t: time.Unix(10, 0)}
 	diag := &recordingDiag{}
-	secret := "Bearer sk-secret response-body=https://private.example"
+	secretValues := []string{"sk-live-SECRET", "Bearer-SECRET", "trace-SECRET"}
 	failure := &attemptMetadataError{
-		err: &net.OpError{Op: "dial", Err: errors.New(secret)},
+		err: &net.OpError{Op: "dial", Err: errors.New(secretValues[2])},
 		metadata: attemptErrorMetadata{
 			httpStatus:      503,
 			inBandStatus:    429,
-			providerCode:    "rate_limit_exceeded",
+			providerCode:    secretValues[0],
 			correlationKind: "request",
-			correlationID:   "req-123",
+			correlationID:   secretValues[1],
 		},
 	}
 	provider := &fakeProvider{
@@ -83,7 +86,11 @@ func TestAttemptDecisionRetryFieldsElapsedMetadataAndSession(t *testing.T) {
 		Clock:       clock.Now,
 		Diagnostics: diag,
 	}
-	ctx := port.WithTurnIndex(port.WithRunSerial(port.WithSessionID(context.Background(), "session-409"), 17), 3)
+	var observations []session.NetworkAttemptPayload
+	ctx := port.WithAttemptObserver(
+		port.WithTurnIndex(port.WithRunSerial(port.WithSessionID(context.Background(), "session-409"), 17), 3),
+		func(observation session.NetworkAttemptPayload) { observations = append(observations, observation) },
+	)
 	seq, err := Wrap(provider, cfg).Stream(ctx, port.LLMRequest{Model: "model-a"})
 	if err != nil {
 		t.Fatal(err)
@@ -96,17 +103,42 @@ func TestAttemptDecisionRetryFieldsElapsedMetadataAndSession(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("decision records = %d, want 1: %#v", len(records), records)
 	}
+	wantDigest, ok := session.NetworkCorrelationDigest("request", secretValues[1])
+	if !ok {
+		t.Fatal("correlation digest rejected test input")
+	}
 	requireDecisionFields(t, records[0], map[string]any{
 		"model": "model-a", "attempt": 1, "max_attempts": 2,
 		"elapsed": 250 * time.Millisecond, "retry_disposition": "retryable",
 		"stream_progress": "precommit", "decision": "retry",
 		"backoff": time.Duration(0), "session": session.SessionID("session-409"),
 		"run_serial": int64(17), "turn": 3,
-		"http_status": 503, "in_band_status": 429, "provider_code": "rate_limit_exceeded",
-		"correlation_kind": "request", "correlation_id": "req-123",
+		"http_status": 503, "in_band_status": 429,
+		"correlation_kind": "request", "correlation_digest": wantDigest,
 	})
-	if rendered := fmt.Sprint(records[0].args); strings.Contains(rendered, secret) {
-		t.Fatalf("diagnostic leaked raw error text: %q", rendered)
+	for _, secret := range secretValues {
+		if rendered := fmt.Sprint(records[0].args); strings.Contains(rendered, secret) {
+			t.Fatalf("diagnostic leaked producer token %q: %q", secret, rendered)
+		}
+	}
+	if len(observations) != 1 {
+		t.Fatalf("attempt observations = %d, want 1", len(observations))
+	}
+	observation := observations[0]
+	if observation.SessionID != "session-409" || observation.RunSerial != 17 || observation.Turn != 3 ||
+		observation.Attempt != 1 || observation.MaxAttempts != 2 || observation.ElapsedMs != 250 ||
+		observation.Decision != "retry" || observation.FailureClass != "connect" || observation.HTTPStatus != 503 ||
+		observation.InBandStatus != 429 || observation.CorrelationKind != "request" || observation.CorrelationDigest != wantDigest {
+		t.Fatalf("typed observation = %+v", observation)
+	}
+	marshaled, err := json.Marshal(observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range secretValues {
+		if strings.Contains(fmt.Sprintf("%+v %s", observation, marshaled), secret) {
+			t.Fatalf("typed observation leaked producer token %q: %+v / %s", secret, observation, marshaled)
+		}
 	}
 	if argValue(records[0].args, "replay_suppressed_reason") != nil {
 		t.Error("retry decision carried a terminal suppression reason")
@@ -204,6 +236,29 @@ func TestAttemptDecisionVisibleAndBreakerOpen(t *testing.T) {
 	})
 }
 
+func TestAttemptFailureClassUsesSanitizedClosedVocabulary(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		metadata attemptErrorMetadata
+		want     string
+	}{
+		{name: "dns", err: &net.DNSError{Err: "secret", Name: "private.example"}, want: "dns"},
+		{name: "connect", err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, want: "connect"},
+		{name: "tls", err: tls.RecordHeaderError{}, want: "tls"},
+		{name: "timeout", err: context.DeadlineExceeded, want: "timeout"},
+		{name: "connection reset", err: syscall.ECONNRESET, want: "connection_reset"},
+		{name: "rate limit", err: errors.New("secret body"), metadata: attemptErrorMetadata{httpStatus: 429}, want: "rate_limit"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := attemptFailureClass(test.err, test.metadata); got != test.want {
+				t.Fatalf("class = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func connectionFailure() error {
 	return &net.OpError{Op: "dial", Err: errors.New("refused")}
 }
@@ -211,7 +266,7 @@ func connectionFailure() error {
 func TestAttemptDecisionInvalidMetadataIsOmittedAndErrorContractSurvives(t *testing.T) {
 	metadata := attemptErrorMetadata{
 		httpStatus: 503, providerCode: "bad code",
-		correlationKind: "request", correlationID: "req-123",
+		correlationKind: "unsupported", correlationID: "req-123",
 	}
 	failure := &attemptMetadataError{err: errors.New("raw secret"), metadata: metadata}
 	diag := &recordingDiag{}
@@ -226,7 +281,7 @@ func TestAttemptDecisionInvalidMetadataIsOmittedAndErrorContractSurvives(t *test
 	if len(records) != 1 {
 		t.Fatalf("decision records = %d, want 1", len(records))
 	}
-	for _, key := range []string{"http_status", "in_band_status", "provider_code", "correlation_kind", "correlation_id"} {
+	for _, key := range []string{"http_status", "in_band_status", "provider_code", "correlation_kind", "correlation_id", "correlation_digest"} {
 		if got := argValue(records[0].args, key); got != nil {
 			t.Errorf("invalid metadata field %s logged as %#v", key, got)
 		}
@@ -243,6 +298,8 @@ func TestAttemptMetadataValidation(t *testing.T) {
 		{correlationKind: "trace", correlationID: "trace-123"},
 		{correlationKind: "completion", correlationID: "chatcmpl-123"},
 		{correlationKind: "message", correlationID: "msg-123"},
+		{correlationKind: "request", correlationID: "secret id"},
+		{correlationKind: "request", correlationID: "https://private.example/?token=secret"},
 	}
 	for _, metadata := range valid {
 		if !metadata.valid() {
@@ -255,8 +312,7 @@ func TestAttemptMetadataValidation(t *testing.T) {
 		{providerCode: strings.Repeat("x", 129)},
 		{correlationKind: "span", correlationID: "id"},
 		{correlationKind: "request"}, {correlationID: "req-123"},
-		{correlationKind: "request", correlationID: "secret id"},
-		{correlationKind: "request", correlationID: strings.Repeat("x", 257)},
+		{correlationKind: "request", correlationID: strings.Repeat("x", 4097)},
 	}
 	for _, metadata := range invalid {
 		if metadata.valid() {

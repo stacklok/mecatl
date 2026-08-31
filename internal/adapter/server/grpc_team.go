@@ -102,6 +102,9 @@ func (h *HarnessServer) RunTeam(req *mecatlv1.RunTeamRequest, stream mecatlv1.Ha
 		if sendErr != nil {
 			return
 		}
+		if !isPublicEvent(te.Event) {
+			return
+		}
 		if e := stream.Send(&mecatlv1.TeamEvent{Member: te.Member, Event: toProto(te.Event)}); e != nil {
 			sendErr = e
 			cancel()

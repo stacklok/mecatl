@@ -22,6 +22,8 @@ const (
 	maxActivityRows      = 100
 	maxPerformanceRows   = 50
 	maxPerformanceScan   = 10_000
+	maxNetworkRows       = 50
+	maxNetworkScan       = 10_000
 	maxEvidenceBytes     = 64 << 10
 	maxProjectedText     = 8 << 10
 	maxProjectedPartText = 1 << 10
@@ -48,8 +50,8 @@ func New(target session.SessionID, store port.SessionStore, log port.EventLog) t
 func (*inspectTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name:        ToolName,
-		Description: "Inspect read-only evidence for the single session bound to this debug session. Call status first, then transcript; activity and performance are optional incomplete event-log views.",
-		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
+		Description: "Inspect read-only evidence for the single session bound to this debug session. Call status first, then transcript; activity, performance, and network are bounded event-log views. Use network for latency, retry, provider, or transport symptoms.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance","network"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
 	}
 }
 
@@ -78,8 +80,10 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		value = t.activityView(ctx, args.Offset, args.Limit)
 	case "performance":
 		value = t.performanceView(ctx)
+	case "network":
+		value = t.networkView(ctx, args.Offset, args.Limit)
 	default:
-		return session.NewToolError(call.ID, "view must be one of status, transcript, activity, performance"), nil
+		return session.NewToolError(call.ID, "view must be one of status, transcript, activity, performance, network"), nil
 	}
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -590,6 +594,82 @@ func (t *inspectTool) performanceView(ctx context.Context) performanceEvidence {
 		}
 	}
 	return out
+}
+
+type networkEvidence struct {
+	View                    string                          `json:"view"`
+	Available               bool                            `json:"available"`
+	Authoritative           bool                            `json:"authoritative"`
+	Coverage                string                          `json:"coverage"`
+	SuccessfulAttemptsTimed bool                            `json:"successful_attempts_timed"`
+	Complete                bool                            `json:"complete"`
+	ScanComplete            bool                            `json:"scan_complete"`
+	Truncated               bool                            `json:"truncated"`
+	Error                   string                          `json:"error,omitempty"`
+	Offset                  int                             `json:"offset"`
+	Limit                   int                             `json:"limit"`
+	ScannedEvents           int                             `json:"scanned_events"`
+	TotalMatched            int                             `json:"matched_attempts"`
+	InvalidOmitted          int                             `json:"invalid_attempts_omitted,omitempty"`
+	NextOffset              *int                            `json:"next_offset,omitempty"`
+	Attempts                []session.NetworkAttemptPayload `json:"attempts"`
+}
+
+func (t *inspectTool) networkView(ctx context.Context, offset, requested int) networkEvidence {
+	limit := boundedLimit(requested, maxNetworkRows)
+	out := networkEvidence{
+		View: "network", Available: t.log != nil, Authoritative: false,
+		Coverage:                "failed and policy-interesting attempts observed by the shared resilience wrapper; no request bodies, headers, URLs, raw errors, per-phase DNS/TCP/TLS timing, or successful-attempt timing",
+		SuccessfulAttemptsTimed: false, Offset: offset, Limit: limit,
+		Attempts: []session.NetworkAttemptPayload{},
+	}
+	if t.log == nil {
+		out.Error = "event log is not configured"
+		return out
+	}
+	out.ScanComplete = true
+	matched := 0
+	for ev, err := range t.log.Read(ctx, t.target) {
+		if err != nil {
+			out.Error = "event log read failed"
+			out.ScanComplete = false
+			break
+		}
+		if out.ScannedEvents == maxNetworkScan {
+			out.Truncated = true
+			out.ScanComplete = false
+			break
+		}
+		out.ScannedEvents++
+		if ev.Type != session.EvNetworkAttempt || ev.NetworkAttempt == nil {
+			continue
+		}
+		row := *ev.NetworkAttempt
+		if !validNetworkAttempt(row, t.target) {
+			out.InvalidOmitted++
+			continue
+		}
+		if matched >= offset && len(out.Attempts) < limit {
+			out.Attempts = append(out.Attempts, row)
+		}
+		matched++
+	}
+	out.TotalMatched = matched
+	if out.ScanComplete && offset+len(out.Attempts) < matched {
+		next := offset + len(out.Attempts)
+		out.NextOffset = &next
+		out.Truncated = true
+	}
+	out.Complete = out.ScanComplete && out.NextOffset == nil && out.InvalidOmitted == 0
+	return out
+}
+
+func validNetworkAttempt(row session.NetworkAttemptPayload, target session.SessionID) bool {
+	if row.SessionID != target {
+		return false
+	}
+	_, ok := session.CanonicalNetworkAttempt(row, target, row.RunSerial, row.Turn)
+	return ok
 }
 
 func boundedLimit(requested, ceiling int) int {

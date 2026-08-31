@@ -1988,6 +1988,17 @@ func (l *turnLatency) summary() turnTiming {
 // no observable output at all reports no TTFT; a turn with fewer than two
 // streaming content deltas reports no inter-token summary (there is no gap).
 func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnIdx int) (session.Message, session.Usage, session.StopReason, turnTiming, error) {
+	ctx = port.WithAttemptObserver(ctx, func(observation session.NetworkAttemptPayload) {
+		id, ok := port.SessionIDFromContext(r.ctx)
+		if !ok {
+			return
+		}
+		canonical, ok := session.CanonicalNetworkAttempt(observation, id, r.serial, turnIdx)
+		if !ok {
+			return
+		}
+		e.emit(r, session.Event{Type: session.EvNetworkAttempt, Turn: turnIdx, NetworkAttempt: &canonical})
+	})
 	seq, err := e.deps.LLM.Stream(ctx, req)
 	if err != nil {
 		return session.Message{}, session.Usage{}, session.StopNone, turnTiming{}, fmt.Errorf("agent: start stream: %w", err)

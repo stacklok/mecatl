@@ -272,6 +272,10 @@ func TestStreamSessionEventsGRPC(t *testing.T) {
 	defer cleanup()
 
 	driveAskingSessionToCompletion(t, client, cs.GetSessionId())
+	attempt := session.NetworkAttemptPayload{SessionID: session.SessionID(cs.GetSessionId()), RunSerial: 1, Attempt: 1, MaxAttempts: 1, RetryDisposition: "retryable", StreamProgress: "precommit", Decision: "terminal", SuppressionReason: "attempts_exhausted", FailureClass: "connect"}
+	if err := log.Append(context.Background(), session.SessionID(cs.GetSessionId()), session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &attempt}); err != nil {
+		t.Fatal(err)
+	}
 
 	stream, err := client.StreamSessionEvents(context.Background(), &mecatlv1.StreamSessionEventsRequest{SessionId: cs.GetSessionId()})
 	if err != nil {
@@ -328,6 +332,11 @@ func TestStreamSessionEventsGRPC(t *testing.T) {
 	if firstPrompt != "go" {
 		t.Errorf("gRPC replay user_prompt.Text = %q, want %q (payload must survive toProto)", firstPrompt, "go")
 	}
+	for _, kind := range replayed {
+		if kind == string(session.EvNetworkAttempt) {
+			t.Fatal("gRPC replay exposed debugger-only network-attempt evidence")
+		}
+	}
 }
 
 // TestStreamSessionEventsHTTP_SSE replays a fixture session over the HTTP SSE
@@ -337,6 +346,10 @@ func TestStreamSessionEventsHTTP_SSE(t *testing.T) {
 	svc, cs := askingEventLogService(t, log)
 	gclient, gcleanup := dialGRPC(t, svc)
 	driveAskingSessionToCompletion(t, gclient, cs.GetSessionId())
+	attempt := session.NetworkAttemptPayload{SessionID: session.SessionID(cs.GetSessionId()), RunSerial: 1, Attempt: 1, MaxAttempts: 1, RetryDisposition: "retryable", StreamProgress: "precommit", Decision: "terminal", SuppressionReason: "attempts_exhausted", FailureClass: "connect"}
+	if err := log.Append(context.Background(), session.SessionID(cs.GetSessionId()), session.Event{Type: session.EvNetworkAttempt, NetworkAttempt: &attempt}); err != nil {
+		t.Fatal(err)
+	}
 	gcleanup()
 
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
@@ -364,6 +377,9 @@ func TestStreamSessionEventsHTTP_SSE(t *testing.T) {
 		var ev mecatlv1.Event
 		if err := json.Unmarshal(f, &ev); err != nil {
 			t.Fatalf("decode SSE frame: %v (frame=%s)", err, f)
+		}
+		if ev.GetType() == string(session.EvNetworkAttempt) {
+			t.Fatal("HTTP SSE replay exposed debugger-only network-attempt evidence")
 		}
 		if ev.GetType() == "approval" {
 			sawApproval = true

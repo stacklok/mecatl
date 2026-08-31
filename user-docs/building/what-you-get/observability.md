@@ -160,12 +160,17 @@ The token-accounting facets already surface cache activity per-turn: `mecatl_tok
 
 ### Resilience diagnostics
 
-The resilience decorator emits structured diagnostics through the injected diagnostics channel. These are provider-level lifecycle lines, not session-correlated:
+The resilience decorator emits structured diagnostics through the injected diagnostics channel. Failed-attempt decision lines carry session/run/turn correlation when a model call belongs to a run:
 
 - **DEBUG** on each retry and per-attempt-timeout event
 - **INFO** on idle-stall terminal, breaker open/half-open/close transitions, and retry exhaustion
 
-Every line is metadata-only. The decorator sees only the request metadata and errors, not prompt text. Error strings are clamped.
+Decision metadata never includes a raw error. The same sanitized classification feeds a
+log-only `network.attempt` event emitted by the agent loop and persisted by the ordinary
+EventLog relay. A dedicated session debugger can read this target-correlated evidence through
+`InspectSession {"view":"network"}`; it includes bounded retry/terminal decisions and safe
+transport/provider classifications, not request/response content or credentials. No session
+ID is added to metric labels.
 
 ---
 

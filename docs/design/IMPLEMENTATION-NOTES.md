@@ -178,7 +178,7 @@ not-found result.
 Composition's `internal/app/build.go` (`debugSessionEngineFactory`) constructs a fresh
 per-session engine with an exact one-tool catalog. `internal/adapter/sessiondebug/sessiondebug.go`
 (`New`) binds `InspectSession` to the trusted target; its arguments select only
-`status`, `transcript`, `activity`, or `performance`, never a session ID. Snapshot
+`status`, `transcript`, `activity`, `performance`, or `network`, never a session ID. Snapshot
 status and paged transcript use the authoritative snapshot. Transcript rows project
 model-visible `Message.Parts` and preferred `ToolResult.Parts`; bounded textual and
 structured values remain visible, while binary/media bytes become explicit metadata-only
@@ -191,7 +191,24 @@ makes the projection incomplete. Tool arguments remain `json.RawMessage` rather 
 number tokens larger than 2^53; malformed JSON or UTF-8 is explicitly marked omitted.
 EventLog activity and aggregate performance are non-authoritative, optional, and potentially
 incomplete. Performance therefore keeps `complete: false`; `scan_complete` only reports that
-an available log reached EOF. Transcript pages contain at most 20 rows, activity 100,
+an available log reached EOF. `internal/adapter/llmresilience/llmresilience.go`
+(`logAttemptDecision`) also builds one `session.NetworkAttemptPayload` from the same sanitized
+decision and metadata classification used by diagnostics. A run-local `port.AttemptObserver`
+returns it to `engine/agent/loop.go` (`runTurn`), which emits the log-only
+`network.attempt`; the server relay persists it through the ordinary EventLog path. The
+adapter never appends directly. It has no public protobuf projection; every ordinary client
+relay suppresses it, including live, durable read-back, and direct Team gRPC/HTTP streams,
+leaving the target-bound `InspectSession` view as its only
+model-visible path. This evidence contract is [ADR 0255](../adr/0255-sanitized-network-attempt-evidence.md). The payload retains target/run/turn correlation,
+attempt/max, elapsed, backoff, retry disposition, stream progress, decision and suppression,
+a closed failure class (`dns`, `connect`, `tls`, `timeout`, `connection_reset`,
+`stream_idle`, `breaker`, `rate_limit`, `http`, `provider`, or `unknown`), validated statuses,
+and a closed correlation kind plus a domain-separated, fixed SHA-256 digest. Raw provider codes,
+raw correlation IDs, errors, URLs, queries, headers,
+bodies, prompts, tool arguments, cookies, credentials, and environment values never enter it.
+The `network` view pages 50 rows while scanning at most 10,000 events and explicitly reports
+availability, completeness, truncation, and the absence of successful-attempt and DNS/TCP/TLS
+phase timing. Transcript pages contain at most 20 rows, activity 100,
 performance 50 turns/10,000 scanned events, and every response is bounded to 64 KiB after
 canonical fencing and framing neutralisation. All evidence is repaired to valid UTF-8 and wrapped with `governance.FenceUntrusted` before it
 reaches the model.
@@ -205,18 +222,17 @@ target into a run-entry path or acquires its lease. On restart,
 dedicated factory. Invalid no-fs metadata, a missing factory, or unavailable target
 fails closed rather than using the shared or generic no-fs engine.
 
-The mecatui command forms and privacy disclosure are the client projection. On launch,
-mecatui builds the same sanitized report as bare `/diagnostics` (using authenticated
-`GetServerInfo` remotely), labels it as current debugger client/server state rather than
-target evidence, and combines it with the default or `--prompt` diagnosis request in the
-first genuine user turn. A safely classified lookup failure leaves unavailable fields but
-does not block that turn or expose the raw error. The ordinary padded header carries
+The first genuine user turn is ordered objective → required InspectSession workflow →
+expected report sections → delimited debugger-runtime context. The objective is the default
+or custom `--prompt`; the runtime block is compatibility/transport context, never target
+evidence. A safely classified lookup failure leaves unavailable fields but does not block
+that turn or expose the raw error. Durable authority, safety, and source hierarchy remain in
+`applyDebugSessionPosture`'s stable Role rather than dynamic runtime text. The ordinary padded header carries
 amber/bold `DEBUG target #<digest>` immediately after `mecatui`; width pressure removes
 model/mode/server detail before that complete identity, `/session` shows and copies the
 safely quoted exact target ID, and the target-derived title remains. Binding-breaking
-controls stay disabled. Enhanced structured diagnostics, sanitized network-attempt timing,
-live target following, raw audit/tool-record inspection, and support bundles are
-follow-ups, not parts of this shipped boundary. See [ADR 0254](../adr/0254-session-debugger-admin-transport.md).
+controls stay disabled. Live target following, raw audit/tool-record inspection, packet capture,
+raw logs/pprof, and support bundles remain out of scope. See [ADR 0254](../adr/0254-session-debugger-admin-transport.md) and [ADR 0255](../adr/0255-sanitized-network-attempt-evidence.md).
 
 ---
 
@@ -598,10 +614,11 @@ backoff or a closed suppression reason. It never logs `err.Error()`. Optional me
 rides `engine/port/attemptmetadata.go` (`ProviderErrorMetadataError`) as primitive
 structural getters so independently versioned provider modules do not depend on a new
 engine-owned value type. `internal/adapter/llmresilience/llmresilience.go`
-(`attemptMetadataArgs`) assembles and emits it only when the whole value validates:
-HTTP/in-band status, bounded printable provider code, and one closed-kind bounded
-correlation ID. Error bodies, prompts, URLs, headers, and credentials never enter
-these fields.
+(`attemptMetadata`) accepts the structural carrier only when statuses and the closed correlation
+kind are valid and arbitrary values are bounded. Diagnostics retain only numeric HTTP/in-band
+status and the closed correlation kind with the same domain-separated SHA-256 digest used by
+`network.attempt`; raw provider codes and raw correlation IDs are omitted. Error bodies, prompts,
+URLs, headers, and credentials never enter emitted fields.
 
 The three provider modules attach only safe facts exposed by their wire protocols:
 `provider/openai/stream.go`, `provider/openaichat/openaichat.go`, and
