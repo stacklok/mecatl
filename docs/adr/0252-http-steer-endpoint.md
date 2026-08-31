@@ -44,14 +44,19 @@ HTTP entry point, on the same terms the gRPC one already has.
   exactly:**
   - `POST /v1/sessions/{id}/steer` — enqueues (or appends to) the pending
     steer text for the session's active run.
-  - `POST /v1/sessions/{id}/steer-cancel` — cancels the pending steer bundle,
+  - `POST /v1/sessions/{id}/cancel-steer` — cancels the pending steer bundle,
     matching the existing `cancel-child` naming convention
-    (`internal/adapter/server/http.go`).
-- **Same request contract as the gRPC frame.** Body carries the steer text, a
+    (`internal/adapter/server/http.go`): the verb leads, the noun follows.
+- **Same request contract as the gRPC frame, parts included.** Body carries
+  the steer text, the same `parts` array the HTTP prompt body already
+  accepts (`promptContentBody`, `internal/adapter/server/http.go`), a
   client-minted `message_id` (per ADR 0232's watermark correlation), and an
-  optional `expected_run_id` — identical semantics to the gRPC oneof arm and
-  to the existing `approve`/`cancel` HTTP bodies' optional `expected_run_id`
-  (PR #828).
+  optional `expected_run_id` — identical semantics to the gRPC oneof arm
+  (which carries both text and parts per [ADR 0251](./0251-multimodal-steer.md))
+  and to the existing `approve`/`cancel` HTTP bodies' optional
+  `expected_run_id` (PR #828). Dropping parts would regress exactly the
+  browser clients this endpoint exists for to text-only steer, one release
+  behind the gRPC path.
 - **Same outcome vocabulary, over HTTP status + body.** The closed
   `SteerOutcome` enum (`accepted`/`appended`/`retracted`/`none_pending`/
   `too_late`) that already rides the gRPC ack is returned as the HTTP
@@ -59,16 +64,32 @@ HTTP entry point, on the same terms the gRPC one already has.
   `application/problem+json`, code `stale_run_control` — reusing the
   registry from [ADR 0248](./0248-sdk-compatibility-and-error-contract.md),
   not a bespoke error path.
-- **No change to the engine.** `internal/adapter/server` routes directly into
-  the existing `Service.Steer`/`Service.CancelSteer` calls — the same calls
-  the gRPC handler already invokes. The steer inbox, its mutex, its
-  watermark correlation, and the promote-on-terminal-race behaviour in ADR
-  0232 are untouched.
-- **`ServerCapabilities.steer` is unaffected.** The capability bit already
-  means "this server can be steered." It does not encode *which transport*
-  can steer — a client discovers HTTP steer support the same way it
-  discovers any other HTTP route: by it existing (or 404ing) on the version
-  it is talking to.
+- **A promoted follow-up run is drained by the handler, never handed back
+  bare.** `Service.Steer` can return a *registered* `promotedRun` whose
+  caller "must drain + FinishRun" (`service.go`'s own doc comment) — the
+  same contract `StartRunContent` hands every other caller. The HTTP handler
+  follows the `approve` handler's existing REHYDRATE-path precedent
+  (`HTTPHandler.approve`, `internal/adapter/server/http.go`): if the
+  response writer supports flushing, relay the promoted run as SSE
+  (`relayRunSSE`) on this same response; otherwise drain it in the
+  background into the durable event log (`NewRunEventRecorder`) and
+  deregister it, returning an ack. Either way the promoted run's events
+  reach the durable log and the run is not left registered with nothing
+  draining it — steer must never wedge a run the way a bare
+  `{new_run_id}` body would.
+- **No other change to the engine.** `internal/adapter/server` routes
+  directly into the existing `Service.Steer`/`Service.CancelSteer` calls —
+  the same calls the gRPC handler already invokes. The steer inbox, its
+  mutex, its watermark correlation, and the promote-on-terminal-race
+  behaviour in ADR 0232 are untouched.
+- **`ServerCapabilities.steer` is unaffected; the feature registry gets a
+  new row.** The capability bit already means "this server can be
+  steered" and does not encode *which transport* can steer. Discoverability
+  is NOT "404 until you try it" — PR #823's feature registry
+  (`internal/adapter/server/features.go`) exists precisely so #821-family
+  additions self-describe, and its own comment says each PR in this stack
+  "appends its own identifier as it lands." This ADR adds
+  `FeatureHTTPSteer = "http_steer"` to `allFeatures`.
 - **ACP steer stays deferred.** ACP's blocking `session/prompt` still has no
   mid-run channel; this ADR does not touch it. Named again here only so a
   future reader does not read "HTTP steer shipped" as "all deferred
@@ -92,12 +113,14 @@ HTTP entry point, on the same terms the gRPC one already has.
   - HTTP has no persistent connection to hand back a promoted follow-up run
     on, unlike gRPC's Converse-stream handoff (ADR 0232's terminate-window
     promotion). A steer that loses the terminal race over HTTP gets the
-    `SteerOutcome`/promotion result in its own response, not a second frame
-    on a held stream; the client learns the new run id from that response
-    and must poll/attach separately if it wants to follow it. This is a real
-    ergonomic gap versus the gRPC path, accepted here rather than solved —
-    solving it is the SDK's `session.attach()` job (ADR 0250), not this
-    endpoint's.
+    promoted run relayed as SSE on this same response when the client is
+    streaming-capable, or drained to the durable log in the background with
+    an ack otherwise (mirroring `approve`'s existing REHYDRATE path) — never
+    a bare new `run_id` with nothing consuming it. A client that wants to
+    keep *watching* that run past this response still needs to
+    poll/attach separately; that ergonomic gap (not a correctness gap) is
+    accepted here rather than solved — closing it is the SDK's
+    `session.attach()` job (ADR 0250), not this endpoint's.
   - ACP steer remains unsolved; this ADR does not reduce that scope.
 
 ## See also
@@ -109,6 +132,10 @@ HTTP entry point, on the same terms the gRPC one already has.
 - [ADR 0249](./0249-durable-run-identity.md) — durable `run_id` and
   `expected_run_id`, which this endpoint's request contract mirrors from the
   gRPC path.
+- [ADR 0251](./0251-multimodal-steer.md) — multimodal steer parts, which this
+  endpoint's request contract must carry alongside text.
+- [PR #823](https://github.com/stacklok/mecatl/pull/823) — `GetServerInfo`
+  and the feature registry this endpoint's discoverability row lands in.
 - [PR #828](https://github.com/stacklok/mecatl/pull/828) — `expected_run_id`
   on controls, strict steer (gRPC).
 - [Issue #873](https://github.com/stacklok/mecatl/issues/873) — the tracked
