@@ -1,8 +1,8 @@
-# ADR 0244 — SDK compatibility discovery and the typed error contract
+# ADR 0248 — SDK compatibility discovery and the typed error contract
 
 - Status: Proposed
 - Date: 2026-08-28
-- Scope: `GetServerInfo`, the API-major/feature vocabulary, the stable error-code
+- Scope: `GetCompatibilityInfo`, the API-major/feature vocabulary, the stable error-code
   registry, RFC 9457 HTTP errors, gRPC status details, exact-origin CORS.
 
 ## Context
@@ -49,11 +49,29 @@ Two options were rejected for the feature/error vocabularies:
 
 ## Decision
 
-**1. Add `GetServerInfo` as an authenticated RPC on `HarnessService`, with an HTTP peer.**
-It answers the compatibility question without a probe session. #821 sets the floor: a
-server that does not implement it (gRPC `UNIMPLEMENTED`) is below the SDK's compatibility
-floor and yields `IncompatibleServerError`. The SDK never infers a legacy mode and never
-creates a probe session to find out.
+**1. Add `GetCompatibilityInfo` as an authenticated RPC on `HarnessService`, with an
+HTTP peer at `GET /v1/compatibility`.** It answers the compatibility question without a
+probe session. #821 sets the floor: a server that does not implement it (gRPC
+`UNIMPLEMENTED`) is below the SDK's compatibility floor and yields
+`IncompatibleServerError`. The SDK never infers a legacy mode and never creates a probe
+session to find out.
+
+**It is a SEPARATE RPC from `GetServerInfo`, which
+[ADR 0245](./0245-safe-build-diagnostics.md) already shipped.** This ADR originally
+proposed the name `GetServerInfo`; by the time it was implemented, ADR 0245 had taken it
+for build identity (`build_id`, `server_implementation`, an optional sanitized provider
+display endpoint) behind an explicit privacy boundary — that response "must never carry …
+capabilities, authentication or TLS details, arbitrary configuration".
+
+Folding this descriptor into that message was therefore not available: `capabilities` and
+`features` are precisely what the boundary excludes, so doing it would have required
+superseding a shipped privacy contract in order to save one round trip. Overloading the
+name the other way round would have been worse — one message answering both "which build
+is this?" and "what may I do here?" has two audiences and two change cadences.
+
+So the two stay separate resources: `GetServerInfo` / `GET /v1/info` for identity,
+`GetCompatibilityInfo` / `GET /v1/compatibility` for negotiation. A client that wants both
+makes both calls, which is the honest cost of the boundary.
 
 **2. `capabilities` and `features` are separate fields, because they answer different
 questions.**
@@ -63,8 +81,13 @@ questions.**
 | `capabilities` (the existing `ServerCapabilities`, verbatim) | what has this operator enabled? | operator config changes |
 | `features` (new, `repeated string`) | what does this build implement? | mecatl is upgraded |
 
-`GetServerInfoResponse` carries `api_major`, `capabilities`, `features`, an optional
-`build_version`, and an optional `deployment`.
+`GetCompatibilityInfoResponse` carries `api_major`, `capabilities`, `features`, and an
+optional `deployment`.
+
+**It carries no build identity.** An earlier draft had a `build_version` field; ADR 0245's
+ldflags-stamped `internal/buildinfo.BuildID`, surfaced as `build_id` on `GetServerInfo`,
+is the single build-identity mechanism, and a second field derived a second way is exactly
+the drift this repo's single-source discipline exists to prevent.
 
 **3. `features` are open strings, not an enum.** This is the discipline the event
 taxonomy already settled on the same axis — [`AGENTS.md`](../../AGENTS.md) records that
@@ -79,7 +102,7 @@ exist, because these land in `main` incrementally — describes itself honestly.
 without bumping the major is the entire purpose of `features`.
 
 **5. Media capability stays session-authoritative.** `capabilities.image`/`.audio` on
-`GetServerInfo` is a server-wide hint for UI chrome. The per-session
+`GetCompatibilityInfo` is a server-wide hint for UI chrome. The per-session
 `CreateSessionResponse` echo remains the authority, per the existing
 [`AGENTS.md`](../../AGENTS.md) invariant that capability truth is a single
 composition-computed intersection that must not be recomputed per sink. An SDK validates
@@ -92,9 +115,25 @@ is a leak with no consenting author.
 
 **7. Error identity is a stable open-string code, carried identically on both
 transports.** A Go registry is the single source of truth. HTTP returns RFC 9457
-`application/problem+json` with the code in `type`; gRPC returns the same string in a
-status detail alongside its `codes.Code`. The `error` key is retained inside the problem
-body as a compatibility extension during the transition.
+`application/problem+json` with the code in `type` and in a `code` key; gRPC returns the
+same string as the `Reason` of a **`google.rpc.ErrorInfo`** status detail
+(`google.golang.org/genproto/googleapis/rpc/errdetails`) alongside its `codes.Code`. The
+`error` key is retained inside the problem body as a compatibility extension during the
+transition.
+
+`ErrorInfo` rather than a mecatl-authored detail message, for two reasons: it authors no
+new proto in `contracts/proto` (`harness.proto` is already touched by most of the
+implementing stack, and each extra edit is another conflict surface), and it is the
+standard AIP-193 shape — `reason` + `domain` + `metadata` — which generic gRPC tooling can
+decode with no mecatl-specific knowledge. `Domain` is `mecatl.stacklok.com`.
+
+**The code is `lower_snake_case` on BOTH transports, and that is a deliberate departure
+from AIP-193**, which conventionally spells `reason` in `UPPER_SNAKE_CASE`. Parity is the
+stronger obligation here: AC2.2 requires the *identical* string on both transports, and
+honouring the casing convention on one side would mean either two spellings of one
+identity or a case conversion that every SDK has to know about. Stated here rather than
+left to the parity gate, so that two people implementing the two transports do not have
+to discover it as a test failure.
 
 **8. A Go↔TypeScript code-parity gate.** The TS surface is a union of string literals
 plus an `unknown` arm; a CI gate walks the Go registry against it, so a new server code
@@ -118,7 +157,7 @@ reach a dev server without a proxy.
 **Harder — and these are the honest costs.**
 
 - **`features` is listener-dependent, not purely build-dependent.** Per
-  [ADR 0246](./0246-durable-cursors-and-watch.md)'s sibling decision on `mcp_servers`
+  [ADR 0250](./0250-durable-cursors-and-watch.md)'s sibling decision on `mcp_servers`
   (see [ADR 0237](./0237-listener-scoped-workspace-authority.md)), a feature that is only
   reachable on a UDS listener is advertised only on that listener. This muddies the clean
   capabilities/features split above: `features` is really "what this build implements
@@ -138,7 +177,7 @@ reach a dev server without a proxy.
   unusable by the SDK, by design. There is no negotiated downgrade, because a downgrade
   path is a second protocol to maintain and test forever.
 - **One more authenticated RPC on the heartbeat path.** #821 has the SDK poll
-  `GetServerInfo` for connection status while status has subscribers, so this handler is
+  `GetCompatibilityInfo` for connection status while status has subscribers, so this handler is
   on a recurring path and must stay cheap and allocation-light.
 
 ## See also
@@ -148,7 +187,7 @@ reach a dev server without a proxy.
   proposal.
 - [`docs/acceptance/sdk-server-enablers.md`](../acceptance/sdk-server-enablers.md) — the
   scenario-first acceptance contract for this decision.
-- [ADR 0245](./0245-durable-run-identity.md) — durable run identity; [ADR 0246](./0246-durable-cursors-and-watch.md)
+- [ADR 0249](./0249-durable-run-identity.md) — durable run identity; [ADR 0250](./0250-durable-cursors-and-watch.md)
   — durable cursors and the watch transport. The two siblings in the same stack.
 - [ADR 0237](./0237-listener-scoped-workspace-authority.md) — listener-scoped authority,
   the precedent for a per-listener feature.

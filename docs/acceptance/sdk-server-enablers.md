@@ -3,7 +3,7 @@
 **Phase:** capability — the Go-side server contracts the TypeScript SDK is built on
 **Status:** draft
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
-**ADRs:** [ADR-0244](../adr/0244-sdk-compatibility-and-error-contract.md) (compatibility discovery + typed errors), [ADR-0245](../adr/0245-durable-run-identity.md) (durable run identity), [ADR-0246](../adr/0246-durable-cursors-and-watch.md) (durable cursors + watch).
+**ADRs:** [ADR-0248](../adr/0248-sdk-compatibility-and-error-contract.md) (compatibility discovery + typed errors), [ADR-0249](../adr/0249-durable-run-identity.md) (durable run identity), [ADR-0250](../adr/0250-durable-cursors-and-watch.md) (durable cursors + watch).
 **Delivery:** a **linear stack of nine PRs**, `sdk/01-…` → `sdk/09-…`, each independently green on `task lint && task test`, each targeting its predecessor.
 
 This plan covers **only the Go server surface**. No TypeScript is written here — `sdk/typescript/` does not exist at the end of this plan. That cut is deliberate: every invariant risk in #821 lives on this side, where the repo's gates (`task api:check`, the layering DAG, the conformance suites, `docs/lint`) actually have teeth, and every one of these contracts is independently valuable to the existing gRPC and HTTP clients. The SDK follows in a separate plan against a merged, proven server.
@@ -13,10 +13,10 @@ The doc is organized scenario-first because acceptance is about what the running
 ## Why these scope cuts
 
 - **Nine stacked PRs, not one accumulator.** Six of the nine units edit [`contracts/proto/mecatl/v1/harness.proto`](../../contracts/proto/mecatl/v1/harness.proto) and five edit [`internal/adapter/server/http.go`](../../internal/adapter/server/http.go); `contracts/gen/` is committed generated output, so parallel branches would churn the same generated files. A linear stack serializes those edits for free. Only two real dependencies exist (Scenario 4 → 5, and Scenarios 4+6 → 7); the rest of the ordering is contention management, not logic.
-- **`capabilities` and `features` stay separate.** `ServerCapabilities` answers "what has this operator enabled?"; `features` answers "what does this build implement?". Conflating them makes a `--no-bash` deployment look like version skew. See [ADR-0244](../adr/0244-sdk-compatibility-and-error-contract.md).
+- **`capabilities` and `features` stay separate.** `ServerCapabilities` answers "what has this operator enabled?"; `features` answers "what does this build implement?". Conflating them makes a `--no-bash` deployment look like version skew. See [ADR-0248](../adr/0248-sdk-compatibility-and-error-contract.md).
 - **Open strings, not proto enums**, for both `features` and error codes — the discipline [`AGENTS.md`](../../AGENTS.md) already settled for `EvNoProgress`/`StopBudget`. A new feature or error code is a minor SDK release, not a proto change.
 - **The run id reuses `RunRequest.AskIDDiscriminator`**, whose [ADR-0044](../adr/0044-host-supplied-askid-discriminator.md) contract is already written in terms of a run id ("A durable host … passes its own RunID") and which nothing supplies today. One identifier, not two with overlapping uniqueness contracts.
-- **Redis moves LIST → Stream.** A LIST cannot express a durable cross-process follow; emulating it with `LLEN` polling is strictly worse than the datatype Redis already ships, and positional cursors become a correctness bug the day anyone adds retention. See [ADR-0246](../adr/0246-durable-cursors-and-watch.md).
+- **Redis moves LIST → Stream.** A LIST cannot express a durable cross-process follow; emulating it with `LLEN` polling is strictly worse than the datatype Redis already ships, and positional cursors become a correctness bug the day anyone adds retention. See [ADR-0250](../adr/0250-durable-cursors-and-watch.md).
 - **The append-gap guarantee is deliberately weaker than #821 asked for.** Cross-process gap detection is not achievable; the ADR states the residual rather than shipping an absolute that a Redis outage falsifies. #821 explicitly instructs this ("stop and tighten the ADR wording rather than shipping a false guarantee").
 - **`mcp_servers` is listener-scoped and server-enforced**, not an SDK-side check. #821 places the "local daemon only" boundary in the client; a client-side check is not enforcement.
 
@@ -30,29 +30,29 @@ Each is independently demoable; later scenarios assume earlier ones but do not c
 
 ---
 
-### Scenario 1 — `GetServerInfo` and the compatibility floor
+### Scenario 1 — `GetCompatibilityInfo` and the compatibility floor
 
-The SDK's first call. One authenticated RPC answers "what is this server?" without creating a probe session. `ServerCapabilities` already exists and is reused verbatim; `features` is new and open-stringed. See [ADR-0244](../adr/0244-sdk-compatibility-and-error-contract.md).
+The SDK's first call. One authenticated RPC answers "what is this server?" without creating a probe session. `ServerCapabilities` already exists and is reused verbatim; `features` is new and open-stringed. See [ADR-0248](../adr/0248-sdk-compatibility-and-error-contract.md).
 
 **Work:**
-- `contracts/proto`: `GetServerInfo` on `HarnessService`; `GetServerInfoResponse{api_major, capabilities, features, build_version, deployment}`.
-- `internal/adapter/server`: the gRPC handler, the authenticated `GET /v1/server-info` peer, and the feature-registry projection.
+- `contracts/proto`: `GetCompatibilityInfo` on `HarnessService`; `GetCompatibilityInfoResponse{api_major, capabilities, features, deployment}`. Deliberately distinct from ADR 0245's already-shipped `GetServerInfo`, whose privacy boundary excludes capabilities and configuration; build identity stays there as `build_id`.
+- `internal/adapter/server`: the gRPC handler, the authenticated `GET /v1/compatibility` peer, and the feature-registry projection.
 - `cmd/mecated`: `--deployment-id` (opaque, bounded, empty by default).
 
 **Acceptance:**
-- AC1.1: `GetServerInfo` over gRPC returns `api_major == 1` and the same `ServerCapabilities` a `CreateSession` echo would carry for the same build, without creating a session.
-  - verify: `TestSDKServerEnablers_Scenario1_ServerInfoMatchesCapabilities`
-- AC1.2: `GET /v1/server-info` returns the identical projection as the gRPC handler for the same build.
-  - verify: `TestSDKServerEnablers_Scenario1_ServerInfoTransportParity`
-- AC1.3: `GetServerInfo` requires authentication — an unauthenticated call is rejected with the same discipline as every other RPC, and is distinguishable from `UNIMPLEMENTED`.
-  - verify: `TestSDKServerEnablers_Scenario1_ServerInfoRequiresAuth`
+- AC1.1: `GetCompatibilityInfo` over gRPC returns `api_major == 1` and the same `ServerCapabilities` a `CreateSession` echo would carry for the same build, without creating a session.
+  - verify: `TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities`
+- AC1.2: `GET /v1/compatibility` returns the identical projection as the gRPC handler for the same build.
+  - verify: `TestSDKServerEnablers_Scenario1_CompatibilityInfoTransportParity`
+- AC1.3: `GetCompatibilityInfo` requires authentication — an unauthenticated call is rejected with the same discipline as every other RPC, and is distinguishable from `UNIMPLEMENTED`.
+  - verify: `TestSDKServerEnablers_Scenario1_CompatibilityInfoRequiresAuth`
 - AC1.4: `features` contains an identifier for every landed enabler in this stack and none for an unlanded one; the registry is the single source of truth for both transports.
   - verify: `TestADR_0244_FeatureRegistryIsSingleSource`
 - AC1.5: `capabilities` and `features` are independent: a `--no-bash` server reports `capabilities.bash == false` while its `features` set is unchanged.
   - verify: `TestADR_0244_CapabilitiesAreNotFeatures`
 - AC1.6: `deployment` is empty unless `--deployment-id` is set, is length-bounded when set, and is never derived from hostname, pod name, or environment.
   - verify: `TestADR_0244_DeploymentIdentityIsOperatorSetOnly`
-- AC1.7: Media capability remains session-authoritative — the `GetServerInfo` `image`/`audio` hint never overrides the per-session `CreateSessionResponse` echo.
+- AC1.7: Media capability remains session-authoritative — the `GetCompatibilityInfo` `image`/`audio` hint never overrides the per-session `CreateSessionResponse` echo.
   - verify: `TestInvariant_capability_truth_single_intersection`
 
 ---
@@ -71,7 +71,7 @@ One stable machine-readable identity per failure, carried identically on both tr
   - verify: `TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity`
 - AC2.3: Every registered code resolves to exactly one HTTP status and one gRPC code; the registry admits no duplicate or unmapped code.
   - verify: `TestADR_0244_ErrorRegistryIsTotalAndUnambiguous`
-- AC2.4: No problem body carries a secret, a credential, a raw tool argument, or a deny-reason body — the structural no-secret guard walks every registered code's rendered output.
+- AC2.4: No **harness-authored** half of a problem body carries a secret, a credential, a raw tool argument, or a deny-reason body — the structural no-secret guard walks `code`, `title`, and `type` for every registered code. `detail`/`error` carry the server's own `err.Error()` and are bounded and UTF-8-repaired (AC2.6) but deliberately **not** content-scrubbed: sanitising a free-text error would corrupt the diagnostic without being a real control, so the obligation not to put a secret in an error string stays with the backend that raises it, where the sensitive value is actually known.
   - verify: `TestADR_0244_ProblemDetailsCarryNoSecrets`
 - AC2.5: A failure with no registered code degrades to a generic code rather than leaking an unmapped internal error string.
   - verify: `TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades`
@@ -103,7 +103,7 @@ The local-development browser path. Production remains a same-origin BFF.
 
 ### Scenario 4 — Durable run identity
 
-A stable, opaque, host-minted handle for one run, persisted across restart. See [ADR-0245](../adr/0245-durable-run-identity.md).
+A stable, opaque, host-minted handle for one run, persisted across restart. See [ADR-0249](../adr/0249-durable-run-identity.md).
 
 **Work:**
 - `engine/session`: `Event.RunID`; the aggregate accessor/mutator. `engine/agent`: `RunRequest.RunID` + the `Run.emit`/`emitOrAbort` stamp + ask-discriminator derivation. `engine/adapter/sessnap`: `Snapshot.RunID` (`omitempty`).
@@ -154,7 +154,7 @@ Stale controls fail instead of landing on a newer run. Closes a real current bug
 
 ### Scenario 6 — `port.CursorEventLog` and the four backends
 
-The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0246](../adr/0246-durable-cursors-and-watch.md).
+The storage seam. Additive to `port.EventLog`, which is untouched. See [ADR-0250](../adr/0250-durable-cursors-and-watch.md).
 
 **Work:**
 - `engine/port`: `CursorEventLog` (append-with-cursor, read-after, generation validation) + `engine/api/*.txt` + `engine/CHANGELOG.md`.
@@ -252,7 +252,7 @@ The server-side half of callback tools. The boundary is enforced by the listener
   - verify: `TestSDKServerEnablers_Scenario9_UDSSessionMountsMCPServers`
 - AC9.2: The same request over a **TCP** listener is refused with a typed unsupported-feature error — the boundary holds against a client that does not implement the SDK's check.
   - verify: `TestADR_0244_McpServersRejectedOnTCPListener`
-- AC9.3: `mcp_servers_on_create` appears in `GetServerInfo.features` only on a listener that permits it.
+- AC9.3: `mcp_servers_on_create` appears in `GetCompatibilityInfo.features` only on a listener that permits it.
   - verify: `TestADR_0244_ListenerScopedFeatureAdvertisement`
 - AC9.4: A stdio entry and an sse entry are hard-rejected on every listener — the no-stdio invariant is unchanged.
   - verify: `TestInvariant_no_stdio_mcp_ever`

@@ -1,4 +1,4 @@
-# ADR 0245 — Durable run identity: a host-minted `run_id`
+# ADR 0249 — Durable run identity: a host-minted `run_id`
 
 - Status: Proposed
 - Date: 2026-08-28
@@ -49,10 +49,35 @@ through `appendEvent`. Decision 4 below records where that leads and why.
 
 ## Decision
 
-**1. The run id is minted by the host (`Service`), not the engine.** It is opaque and
-colon-free — the askID grammar is `<sessionID>:<n>:<callID>:<discriminator>`, so colons
-are structurally forbidden and a colon-bearing value is already specified to be ignored
-with a WARN.
+**1. The run id is minted by the host (`Service`), not the engine, from
+`crypto/rand`.** It is opaque and colon-free — the askID grammar is
+`<sessionID>:<n>:<callID>:<discriminator>`, so colons are structurally forbidden and a
+colon-bearing value is already specified to be ignored with a WARN.
+
+**Minting is centralised and cryptographic because the run id becomes the askID
+discriminator, and that discriminator is a security control.**
+[ADR 0044](./0044-host-supplied-askid-discriminator.md) requires it to be unique per
+run-attempt to preserve the CWE-863 replay guard: if two attempts can share one, a stale
+verdict from attempt A can resolve an ask in attempt B. Today's process-global `r<serial>`
+counter makes that impossible by construction, and an id that is merely validated as
+colon-free would trade that for caller-trust — a downstream host embedding
+`engine/agent`, or mecatl's own `Service` across a restart or a second replica, would only
+have to reuse one value to reopen the hole.
+
+Two shapes were considered. The first was to split the concerns: keep the host value as a
+client-facing label for `attach()`/`expected_run_id` filtering, which only needs to be
+distinguishable, and derive the discriminator by appending a per-session monotonic counter
+minted by the `Session` aggregate. The second — the one taken — is to mint the whole id
+from 128 bits of `crypto/rand` at **one** call site
+(`runid.go` in the server adapter). It is the stronger of the two: a monotonic counter
+has to survive restarts and replicas to stay monotonic, so it moves the burden onto a
+persistence/CAS scheme that can itself be got wrong, whereas 128 random bits collide with
+negligible probability regardless of how the process is restarted or how many replicas
+mint concurrently. A colliding id therefore is not a security bypass but an arithmetic
+impossibility, and the label and the discriminator can stay the same value.
+
+The public `RunRequest.RunID` field remains settable by an embedder, which is what ADR
+0044 intends; that residual is why the UTF-8 mapper repair extends to `RunId`.
 
 **2. It reaches the engine as a new `RunRequest.RunID` field**, and the engine derives
 the ask discriminator from it when `AskIDDiscriminator` is empty. The host therefore sets
@@ -168,7 +193,7 @@ current bug. Multi-client and reconnecting-client scenarios become expressible. 
 - [ADR 0204](./0204-caller-identity-threading.md) — `Event.Actor`, the derive-at-append
   stamping precedent.
 - [ADR 0038](./0038-event-sourced-rehydration.md) — the fold that ignores `RunID`.
-- [ADR 0244](./0244-sdk-compatibility-and-error-contract.md) and [ADR 0246](./0246-durable-cursors-and-watch.md)
+- [ADR 0248](./0248-sdk-compatibility-and-error-contract.md) and [ADR 0250](./0250-durable-cursors-and-watch.md)
   — the sibling decisions in this stack.
 - [`AGENTS.md`](../../AGENTS.md) — the run-entry seam inventory and the storage-agnostic
   loop invariant.
