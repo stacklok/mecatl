@@ -183,6 +183,155 @@ func RunCursor(t *testing.T, s CursorSuite) {
 		}
 	})
 
+	// B1 (review, #868): the legacy Append path must land in the SAME cursor
+	// position space as AppendEvent.
+	t.Run("a legacy Append is visible and positioned in the cursor space", func(t *testing.T) {
+		// Every backend's doc comment claims its legacy port.EventLog.Append
+		// routes through the same machinery as AppendEvent, but until this case
+		// existed nothing proved it: a backend that special-cased Append into a
+		// side channel passed the whole suite while silently excluding
+		// legacy-path appends from cursor visibility — so a follower would never
+		// see events written by the shipped relay, which calls Append.
+		log := s.New(t)
+		const id session.SessionID = "conf-cursor-legacy-append"
+
+		first, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 0, Text: "via AppendEvent"})
+		if err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+		// The embedded legacy port, exactly as the relay calls it.
+		if err := log.Append(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 1, Text: "via Append"}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+
+		after := collectRecords(t, log, id, first, port.ReadOptions{})
+		if len(after) != 1 {
+			t.Fatalf("ReadAfter(cursor before the legacy Append) returned %d records, want 1 — a legacy Append must occupy a cursor position", len(after))
+		}
+		if got := after[0].Event.Text; got != "via Append" {
+			t.Errorf("record after the AppendEvent cursor = %q, want the legacy-Append record", got)
+		}
+		if after[0].Cursor == "" || after[0].Cursor == first {
+			t.Errorf("legacy-Append record cursor = %q (previous %q); it must advance", after[0].Cursor, first)
+		}
+
+		// And the whole log reads back in append order from the beginning.
+		all := collectRecords(t, log, id, "", port.ReadOptions{})
+		if len(all) != 2 || all[0].Event.Text != "via AppendEvent" || all[1].Event.Text != "via Append" {
+			t.Errorf("full replay = %+v, want the AppendEvent record then the Append record", all)
+		}
+	})
+
+	// B2 (review, #868): a position is only meaningful against ONE log.
+	t.Run("a cursor issued for another session is rejected, never resolved", func(t *testing.T) {
+		// Without this, a cursor for session A applied to session B decodes
+		// cleanly whenever the two share a basis value and resolves to a real —
+		// but WRONG — record. That is reachable in practice on the legacy path,
+		// where a log predating generations reports the EMPTY generation, so two
+		// legacy logs share a basis and the generation check cannot separate them.
+		// The port enforces the session check for every backend; this case is what
+		// keeps a backend from routing around it.
+		log := s.New(t)
+		const idA session.SessionID = "conf-cursor-session-a"
+		const idB session.SessionID = "conf-cursor-session-b"
+
+		curA, err := log.AppendEvent(ctx, idA, session.Event{Type: session.EvMessageDelta, Seq: 0, Text: "A-one"})
+		if err != nil {
+			t.Fatalf("AppendEvent(A): %v", err)
+		}
+		// B is made LONGER than A so a positional cursor from A would land on a
+		// real record in B rather than failing incidentally past the end.
+		for i := range 5 {
+			if _, err := log.AppendEvent(ctx, idB, session.Event{Type: session.EvMessageDelta, Seq: int64(i), Text: "B-record"}); err != nil {
+				t.Fatalf("AppendEvent(B): %v", err)
+			}
+		}
+
+		var gotErr error
+		var yielded int
+		for rec, err := range log.ReadAfter(ctx, idB, curA, port.ReadOptions{}) {
+			if err != nil {
+				gotErr = err
+				break
+			}
+			yielded++
+			t.Errorf("session B yielded %+v for a cursor issued against session A", rec)
+		}
+		if gotErr == nil {
+			t.Fatalf("ReadAfter(B, cursor-for-A) yielded %d records and no error; a cross-session cursor must never resolve", yielded)
+		}
+		if !errors.Is(gotErr, port.ErrCursorMalformed) {
+			t.Errorf("cross-session cursor error = %v, want ErrCursorMalformed (nothing moved underneath the caller — the cursor was never valid here)", gotErr)
+		}
+	})
+
+	// N5 (review, #868): a gap is a record, so it must consume a page slot.
+	t.Run("a gap consumes a Limit slot like an event", func(t *testing.T) {
+		// The port says a gap "occupies a position and advances cursors". If a
+		// backend counted only events against Limit, a page could silently
+		// overrun its budget, and a caller sizing pages against a memory or
+		// message-size bound would have that bound broken by an invisible record.
+		log := s.New(t)
+		const id session.SessionID = "conf-cursor-gap-limit"
+		if _, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 0, Text: "one"}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+		if _, err := log.AppendGap(ctx, id, "append failed here"); err != nil {
+			t.Fatalf("AppendGap: %v", err)
+		}
+		if _, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 1, Text: "two"}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+
+		page := collectRecords(t, log, id, "", port.ReadOptions{Limit: 2})
+		if len(page) != 2 {
+			t.Fatalf("Limit 2 over [event, gap, event] returned %d records, want exactly 2", len(page))
+		}
+		if page[0].Kind != port.LogRecordEvent || page[1].Kind != port.LogRecordGap {
+			t.Errorf("page kinds = [%s %s], want [event gap] — the gap must occupy the second slot, not be skipped", page[0].Kind, page[1].Kind)
+		}
+		// And the page boundary still resumes exactly, gap included.
+		rest := collectRecords(t, log, id, page[1].Cursor, port.ReadOptions{})
+		if len(rest) != 1 || rest[0].Event.Text != "two" {
+			t.Errorf("resume after the gap = %+v, want just the trailing event", rest)
+		}
+	})
+
+	// N3 (review, #868): Limit is a TOTAL, not a per-wake-up budget.
+	t.Run("Limit ends a following read rather than re-arming per wake-up", func(t *testing.T) {
+		// Two readings of Limit+Follow are possible — N records ever, or N per
+		// tail wake-up — and they are indistinguishable until a follower quietly
+		// streams forever. The port documents the total; this pins it, because a
+		// backend implementing the other reading would never terminate here.
+		log := s.New(t)
+		const id session.SessionID = "conf-cursor-limit-follow"
+		for i := range 3 {
+			if _, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: int64(i)}); err != nil {
+				t.Fatalf("AppendEvent: %v", err)
+			}
+		}
+		followCtx, cancel := context.WithTimeout(ctx, followTimeout)
+		defer cancel()
+
+		var got int
+		for rec, err := range log.ReadAfter(followCtx, id, "", port.ReadOptions{Limit: 2, Follow: true}) {
+			if err != nil {
+				t.Fatalf("ReadAfter: %v", err)
+			}
+			_ = rec
+			got++
+			if got > 2 {
+				t.Fatalf("a following read with Limit 2 yielded %d records; Limit must be a total, not a per-wake-up budget", got)
+			}
+		}
+		if got != 2 {
+			t.Errorf("following read with Limit 2 yielded %d records, want 2 and a clean end", got)
+		}
+		if followCtx.Err() != nil {
+			t.Error("the read only ended because the context expired; Limit must end a following read on its own")
+		}
+	})
+
 	t.Run("follow delivers appends made after the read started", func(t *testing.T) {
 		log := s.New(t)
 		const id session.SessionID = "conf-cursor-follow"
@@ -338,32 +487,56 @@ func RunCursor(t *testing.T, s CursorSuite) {
 			t.Fatalf("AppendEvent: %v", err)
 		}
 
-		cases := map[string]port.Cursor{
+		// N1 (review, #868): pure garbage must be MALFORMED specifically, not
+		// "malformed or expired". The two sentinels are a deliberate distinction
+		// the port keeps — a client may restart an expired cursor from the
+		// beginning, whereas a malformed one means a bug or tampering and
+		// restarting silently would hide it — so accepting either here would let
+		// a backend collapse them and still pass. Only a position the backend
+		// cannot align stays ambiguous: whether an unresolvable position reads as
+		// corruption or as a moved basis is genuinely backend-shaped.
+		strict := map[string]port.Cursor{
 			"not base64":         "!!!not-base64!!!",
 			"base64 of non-JSON": port.Cursor(base64.RawURLEncoding.EncodeToString([]byte("hello"))),
 			"unknown version":    tamper(t, issued, func(e *envelope) { e.V = "cur/999" }),
-			"unknown field":      port.Cursor(base64.RawURLEncoding.EncodeToString([]byte(`{"v":"cur/1","g":"x","p":"1","extra":true}`))),
+			"unknown field":      port.Cursor(base64.RawURLEncoding.EncodeToString([]byte(`{"v":"cur/1","s":"x","g":"x","p":"1","extra":true}`))),
+			"foreign session":    tamper(t, issued, func(e *envelope) { e.S = "a-different-session" }),
+		}
+		ambiguous := map[string]port.Cursor{
 			"unresolvable position": tamper(t, issued, func(e *envelope) {
 				e.P = "not-a-position-any-backend-can-resolve"
 			}),
 		}
-		for name, cur := range cases {
+
+		reject := func(t *testing.T, name string, cur port.Cursor) error {
+			t.Helper()
+			var gotErr error
+			var yielded int
+			for rec, err := range log.ReadAfter(ctx, id, cur, port.ReadOptions{}) {
+				if err != nil {
+					gotErr = err
+					break
+				}
+				yielded++
+				t.Errorf("yielded record %+v", rec)
+			}
+			if gotErr == nil {
+				t.Fatalf("ReadAfter(%s) yielded %d records and no error; a cursor that cannot be honoured EXACTLY must fail", name, yielded)
+			}
+			return gotErr
+		}
+
+		for name, cur := range strict {
 			t.Run(name, func(t *testing.T) {
-				var gotErr error
-				var yielded int
-				for rec, err := range log.ReadAfter(ctx, id, cur, port.ReadOptions{}) {
-					if err != nil {
-						gotErr = err
-						break
-					}
-					yielded++
-					t.Errorf("yielded record %+v", rec)
+				if err := reject(t, name, cur); !errors.Is(err, port.ErrCursorMalformed) {
+					t.Errorf("ReadAfter(%s) error = %v, want ErrCursorMalformed exactly", name, err)
 				}
-				if gotErr == nil {
-					t.Fatalf("ReadAfter(%s) yielded %d records and no error; a cursor that cannot be honoured EXACTLY must fail", name, yielded)
-				}
-				if !errors.Is(gotErr, port.ErrCursorMalformed) && !errors.Is(gotErr, port.ErrCursorExpired) {
-					t.Errorf("ReadAfter(%s) error = %v, want ErrCursorMalformed or ErrCursorExpired", name, gotErr)
+			})
+		}
+		for name, cur := range ambiguous {
+			t.Run(name, func(t *testing.T) {
+				if err := reject(t, name, cur); !errors.Is(err, port.ErrCursorMalformed) && !errors.Is(err, port.ErrCursorExpired) {
+					t.Errorf("ReadAfter(%s) error = %v, want ErrCursorMalformed or ErrCursorExpired", name, err)
 				}
 			})
 		}
@@ -474,6 +647,7 @@ func RunCursor(t *testing.T, s CursorSuite) {
 // rather than passing vacuously.
 type envelope struct {
 	V string `json:"v"`
+	S string `json:"s"`
 	G string `json:"g"`
 	P string `json:"p"`
 }

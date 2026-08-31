@@ -85,7 +85,7 @@ func (l *EventLog) appendRecord(id session.SessionID, rec port.LogRecord) port.C
 	lg.records = append(lg.records, rec)
 	close(lg.changed)
 	lg.changed = make(chan struct{})
-	return port.EncodeCursor(lg.generation, strconv.Itoa(len(lg.records)))
+	return port.EncodeCursor(id, lg.generation, strconv.Itoa(len(lg.records)))
 }
 
 // Read yields the EVENTS recorded under id in append order. A miss (no events)
@@ -141,7 +141,7 @@ func (l *EventLog) ReadAfter(ctx context.Context, id session.SessionID, after po
 			}
 			for _, rec := range batch {
 				next++
-				rec.Cursor = port.EncodeCursor(gen, strconv.Itoa(next))
+				rec.Cursor = port.EncodeCursor(id, gen, strconv.Itoa(next))
 				rec.Live = live
 				if !yield(rec, nil) {
 					return
@@ -177,7 +177,7 @@ func (l *EventLog) resolve(id session.SessionID, after port.Cursor) (start int, 
 	gen := l.ensureLocked(id).generation
 	l.mu.Unlock()
 
-	pos, err := port.DecodeCursor(after, gen)
+	pos, err := port.DecodeCursor(after, id, gen)
 	if err != nil {
 		return 0, "", err
 	}

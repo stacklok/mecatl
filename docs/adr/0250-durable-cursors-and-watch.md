@@ -62,10 +62,21 @@ requires and which a LIST structurally cannot provide. `XRANGE … COUNT` gives 
 paging, which the current unbounded `LRANGE 0 -1` cannot. `XTRIM MINID` makes future
 retention safe precisely *because* IDs are not positional.
 
-**3. Cursors are opaque, stateless, and generation-scoped.** The wire form is an opaque
-`base64({generation, position})`; a generation mismatch is `CursorExpiredError`, which
-requires an explicit restart-from-beginning or transcript reload and never degrades
-silently. Per backend: memstore uses a slice index; JSONL uses the **byte offset** of the
+**3. Cursors are opaque, stateless, and scoped to BOTH the session and the log
+generation.** The wire form is an opaque `base64({session, generation, position})`; a
+generation mismatch is `CursorExpiredError`, which requires an explicit
+restart-from-beginning or transcript reload and never degrades silently, and a cursor
+presented against a different session is `CursorMalformedError`.
+
+Session scoping was added during implementation, after review of
+[#868](https://github.com/stacklok/mecatl/pull/868) observed that the generation check
+alone does not carry it. A position is only meaningful inside ONE log, and generation
+cannot separate two logs whenever they share a basis value — which legacy logs
+systematically do, because a log predating generations reports the EMPTY generation. A
+cursor issued for session A then decoded cleanly against session B and resolved to a
+real but WRONG record; that was reproduced against both shipped backends before the fix.
+The check therefore lives in `DecodeCursor` rather than in each backend, so it is
+structural: a backend cannot forget it and a new backend inherits it. Per backend: memstore uses a slice index; JSONL uses the **byte offset** of the
 next record's first byte (`Seek` is O(1); a line index would need a rescan); Redis uses
 the `XADD` ID; the gRPC driver passes the token through opaquely. A server-side cursor
 registry was rejected — it would need eviction and a cloud-inventory row to buy nothing.

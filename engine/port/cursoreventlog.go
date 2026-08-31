@@ -56,13 +56,25 @@ const cursorEnvelopeVersion = "cur/1"
 // "replay everything, then follow" is the common case rather than an edge.
 type Cursor string
 
-// cursorEnvelope is the decoded form: a backend-owned generation plus a
-// backend-owned position, both opaque to this package.
+// cursorEnvelope is the decoded form: the session the cursor was issued for,
+// plus a backend-owned generation and position, both opaque to this package.
 type cursorEnvelope struct {
 	V string `json:"v"`
+	S string `json:"s"`
 	G string `json:"g"`
 	P string `json:"p"`
 }
+
+// cursorEncodeFailed is the value EncodeCursor returns if the envelope ever
+// fails to marshal.
+//
+// It is deliberately NOT the zero Cursor. The zero value means "the beginning of
+// the log", so returning it from a failed encode would convert an
+// unreachable-but-catastrophic bug into a silent full replay that the consumer
+// believes is an increment — the exact failure this whole type exists to
+// prevent. "!" is outside the base64url alphabet, so every DecodeCursor rejects
+// it as malformed: fail-closed, loudly.
+const cursorEncodeFailed Cursor = "!"
 
 // EncodeCursor builds an opaque cursor from a backend's generation and position.
 //
@@ -73,27 +85,41 @@ type cursorEnvelope struct {
 // base64url (unpadded) keeps a cursor safe in a URL path, a query parameter, a
 // JSON string, and an HTTP header without escaping — it is carried by all of
 // those before it reaches a backend.
-func EncodeCursor(generation, position string) Cursor {
-	b, err := json.Marshal(cursorEnvelope{V: cursorEnvelopeVersion, G: generation, P: position})
+func EncodeCursor(id session.SessionID, generation, position string) Cursor {
+	b, err := json.Marshal(cursorEnvelope{V: cursorEnvelopeVersion, S: string(id), G: generation, P: position})
 	if err != nil {
-		// Unreachable: the struct is three strings, which always marshal.
-		return ""
+		// Unreachable: the struct is four strings, which always marshal.
+		return cursorEncodeFailed
 	}
 	return Cursor(base64.RawURLEncoding.EncodeToString(b))
 }
 
-// DecodeCursor recovers the generation and position from cur, and verifies the
-// generation against the log's current one.
+// DecodeCursor recovers the position from cur, verifying BOTH that the cursor
+// was issued for this session and that its generation matches the log's current
+// one.
 //
 // The ZERO cursor decodes to the zero position with no error — "the beginning"
 // is a legitimate request, and forcing every backend to special-case it before
 // calling here would put the same branch in four places.
 //
+// SESSION SCOPING IS ENFORCED HERE, not left to each backend. A position is only
+// meaningful relative to one log, so a cursor issued for session A applied to
+// session B must fail. Checking it in the port rather than per backend is what
+// makes the guarantee structural: a backend cannot forget it, and a new backend
+// inherits it. It also closes the case a generation check CANNOT: a legacy log
+// predating generations reports the EMPTY generation, so two legacy logs share a
+// basis value and a cross-session cursor would decode cleanly and resolve to a
+// real — but wrong — record. Found by review on #868; the mismatch is
+// ErrCursorMalformed rather than ErrCursorExpired because nothing moved
+// underneath the caller: the cursor was never valid here, which is a bug or
+// tampering, not staleness.
+//
 // A generation mismatch is ErrCursorExpired. Passing an EMPTY currentGeneration
-// disables the check, which is what a backend with no generation basis (a legacy
+// disables THAT check, which is what a backend with no generation basis (a legacy
 // log written before generations existed) needs — such a log's cursors carry an
-// empty generation too, so the comparison holds without a special case.
-func DecodeCursor(cur Cursor, currentGeneration string) (position string, err error) {
+// empty generation too, so the comparison holds without a special case. The
+// session check above is never disabled.
+func DecodeCursor(cur Cursor, id session.SessionID, currentGeneration string) (position string, err error) {
 	if cur == "" {
 		return "", nil
 	}
@@ -110,8 +136,15 @@ func DecodeCursor(cur Cursor, currentGeneration string) (position string, err er
 	if env.V != cursorEnvelopeVersion {
 		return "", fmt.Errorf("%w: unknown cursor version %q", ErrCursorMalformed, env.V)
 	}
+	if env.S != string(id) {
+		return "", fmt.Errorf("%w: cursor was issued for session %q, not %q", ErrCursorMalformed, env.S, id)
+	}
 	if env.G != currentGeneration {
-		return "", fmt.Errorf("%w: cursor is from log generation %q, current is %q", ErrCursorExpired, env.G, currentGeneration)
+		// The CURRENT generation is deliberately absent from this message: a
+		// client that can trigger an expiry at will should not be able to read
+		// the live basis value back out of the error. The cursor's own generation
+		// is already in the caller's hands.
+		return "", fmt.Errorf("%w: cursor was issued against log generation %q, which is no longer current", ErrCursorExpired, env.G)
 	}
 	return env.P, nil
 }

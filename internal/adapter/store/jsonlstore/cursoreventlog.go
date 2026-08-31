@@ -36,8 +36,24 @@ const (
 // ADR 0250 chose size-polling over fsnotify deliberately: attachment is not a
 // keystroke-latency path, fsnotify adds dependency surface to a store adapter,
 // and it silently does not work on network filesystems — where polling degrades
-// identically to the local case. 100ms keeps a live tail feeling immediate while
-// costing one Stat per watcher per tenth of a second.
+// identically to the local case. 100ms keeps a live tail feeling immediate.
+//
+// COST, stated honestly (an earlier version of this comment claimed "one Stat per
+// watcher per tenth of a second", which understated it — raised in review on
+// #868): each tick runs readEventPage, which takes the snapshot-family lock,
+// re-reads the generation header (its own open + tail-size probe), and then opens
+// the file again for the page scan. So an idle follower costs roughly two opens,
+// two tail probes and a header scan per tick, not one Stat.
+//
+// That is deliberate rather than merely unfixed. The heavy half is the generation
+// re-check, which is what converts "the log was deleted and recreated under a
+// live follower" from silently-wrong data into ErrCursorExpired, so gating it
+// behind a cheap size/mtime comparison trades a correctness guard for constant
+// factors. It stays unoptimised because jsonlstore is not the many-follower
+// deployment: mecak8s keeps NO local state and follows through redisstore's
+// XREAD (ADR 0048), so jsonlstore followers are local and few. If that changes,
+// the gate to add is a stat comparing size, mtime AND inode — inode being the
+// part that still catches a recreate — never size alone.
 const eventFollowInterval = 100 * time.Millisecond
 
 // compile-time assertion that Store satisfies the cursor port.
@@ -108,7 +124,7 @@ func (st *Store) appendLogRecord(ctx context.Context, id session.SessionID, rec 
 	if err != nil {
 		return "", err
 	}
-	return port.EncodeCursor(generation, strconv.FormatInt(end, 10)), nil
+	return port.EncodeCursor(id, generation, strconv.FormatInt(end, 10)), nil
 }
 
 // ReadAfter yields the log's records strictly after the cursor, optionally
@@ -124,7 +140,7 @@ func (st *Store) ReadAfter(ctx context.Context, id session.SessionID, after port
 			yield(port.LogRecord{}, err)
 			return
 		}
-		pos, err := port.DecodeCursor(after, generation)
+		pos, err := port.DecodeCursor(after, id, generation)
 		if err != nil {
 			yield(port.LogRecord{}, err)
 			return
@@ -242,7 +258,7 @@ func (st *Store) readEventPage(ctx context.Context, id session.SessionID, basis 
 		return nil, offset, basis, nil
 	}
 
-	out, next, err := decodeEventPage(f, basis, offset, completeSize, limit)
+	out, next, err := decodeEventPage(id, f, basis, offset, completeSize, limit)
 	if err != nil {
 		return nil, 0, basis, err
 	}
@@ -257,7 +273,7 @@ func (st *Store) readEventPage(ctx context.Context, id session.SessionID, basis 
 // snapshot-family lock and owns the generation re-check — reads separately from
 // the decode half, which holds no lock and only needs the already-captured
 // committed size.
-func decodeEventPage(f *os.File, basis logBasis, offset, completeSize int64, limit int) ([]port.LogRecord, int64, error) {
+func decodeEventPage(id session.SessionID, f *os.File, basis logBasis, offset, completeSize int64, limit int) ([]port.LogRecord, int64, error) {
 	var out []port.LogRecord
 	next := offset
 	sc := newEventScanner(io.NewSectionReader(f, offset, completeSize-offset))
@@ -273,7 +289,7 @@ func decodeEventPage(f *os.File, basis logBasis, offset, completeSize int64, lim
 		}
 		// Every surfaced record's cursor points PAST it, so handing it back
 		// yields the next record rather than repeating this one.
-		cursor := port.EncodeCursor(basis.generation, strconv.FormatInt(next, 10))
+		cursor := port.EncodeCursor(id, basis.generation, strconv.FormatInt(next, 10))
 		switch rec.V {
 		case eventLogGapTag:
 			out = append(out, port.LogRecord{
