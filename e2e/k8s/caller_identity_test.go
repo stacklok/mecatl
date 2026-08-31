@@ -124,26 +124,51 @@ func sessionOwner(ctx context.Context, addr, bearer, sessionID string) (subject,
 // eventActors returns the actor subjects on a session's DURABLE event log.
 //
 // Redis is the only observation point: Event.Actor is log-only by design (toProto
-// omits it), so no API returns it. Two shapes must be handled and BOTH were got
-// wrong by an earlier draft, which could therefore only ever time out:
+// omits it), so no API returns it. Three shapes must be handled, and the first two
+// were got wrong by an earlier draft, which could therefore only ever time out:
 //   - the record is an ENVELOPE, {"v":"redisstore-eventlog/1","ev":<event>}
 //   - session.Event carries NO json tags, so keys are GO-CASED ("Actor"/"Subject")
+//   - the log is a STREAM, not a LIST (ADR 0250), so the read is XRANGE and
+//     redis-cli's raw (non-TTY) output FLATTENS each entry to three lines:
+//     the entry id, the field name, then the value. LRANGE here returns
+//     WRONGTYPE, whose error text is not JSON.
 //
 // Every parse failure is asserted rather than skipped. A fail-silent parser
 // guarding a security property is worse than no test: the moment this assertion is
 // weakened to a negative, a silent skip makes it pass forever on an empty list.
+// That discipline is why the LIST-to-Stream move surfaced here as an immediate,
+// named parse failure instead of a 90-second Eventually timeout.
 func eventActors(sessionID string) []string {
 	ginkgo.GinkgoHelper()
 	raw := runCmdQuiet("kubectl", "exec", "-n", k8sNamespace, "redis-0", "--",
-		"redis-cli", "LRANGE", "mecatl:events:"+sessionID, "0", "-1")
+		"redis-cli", "XRANGE", "mecatl:events:"+sessionID, "-", "+")
+	// A missing key (nothing appended yet) is an empty result, so the caller's
+	// Eventually keeps polling rather than failing — absence is data here too.
+	lines := splitNonEmptyLines(raw)
+	gomega.ExpectWithOffset(1, len(lines)%3).To(gomega.Equal(0),
+		"XRANGE returned %d lines, not a whole number of 3-line entries: %.200s", len(lines), raw)
 	var subs []string
-	for _, line := range splitNonEmptyLines(raw) {
+	for i := 0; i+2 < len(lines); i += 3 {
+		// Assert the entry shape rather than scanning for JSON-looking lines: a
+		// stride that silently resynchronised would hide exactly the datatype
+		// drift this parse is here to catch.
+		gomega.ExpectWithOffset(1, lines[i+1]).To(gomega.Equal("r"),
+			"stream entry %q field is %q, want \"r\" (redisstore.recordField) — entry shape changed: %.200s",
+			lines[i], lines[i+1], raw)
+		line := lines[i+2]
 		var rec struct {
 			V  string          `json:"v"`
 			Ev json.RawMessage `json:"ev"`
 		}
 		gomega.ExpectWithOffset(1, json.Unmarshal([]byte(line), &rec)).To(gomega.Succeed(),
 			"event-log record is not the expected envelope: %.200s", line)
+		if rec.V == "redisstore-eventlog-gap/1" {
+			// A gap marker (ADR 0250) legitimately carries no event and so no
+			// actor. Nothing calls AppendGap in production yet, but skipping it
+			// here keeps this helper from turning the FIRST failed append on a
+			// healthy cluster into a confusing failure of an identity assertion.
+			continue
+		}
 		gomega.ExpectWithOffset(1, rec.Ev).NotTo(gomega.BeEmpty(),
 			"envelope carried no `ev` payload: %.200s", line)
 

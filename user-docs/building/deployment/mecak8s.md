@@ -228,7 +228,7 @@ process-local; the default fails before refresh network when no writer exists.
 | Session retention / GC | Redis | `internal/adapter/redisstore` | `port.PrunableStore` |
 | Single-writer lease | k8s API server | `internal/adapter/k8slease` | `port.SessionLease` |
 
-The `redisstore` adapter reuses `sessnap.Marshal`/`Unmarshal` — the same snapshot format `jsonlstore` and the gRPC driver use (`sessnap-json/1`). It is a transport alternative, not a new format. Event log records use `RPUSH`/`LRANGE` so append order is preserved. The adapter is validated by the same `storeconformance.Run`, `eventlogconformance.Run`, and `storeconformance.RunPrunable` suites that `jsonlstore` passes, tested offline against `miniredis`.
+The `redisstore` adapter reuses `sessnap.Marshal`/`Unmarshal` — the same snapshot format `jsonlstore` and the gRPC driver use (`sessnap-json/1`). It is a transport alternative, not a new format. Event log records use `XADD`/`XRANGE` on a Redis Stream so append order is preserved, and the entry ID doubles as the durable resume cursor. The adapter is validated by the same `storeconformance.Run`, `eventlogconformance.Run`, and `storeconformance.RunPrunable` suites that `jsonlstore` passes, tested offline against `miniredis`.
 
 ## Production Helm chart
 

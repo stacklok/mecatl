@@ -170,15 +170,16 @@ earlier release stays readable and is converted in place by the next append.
   (same as the gRPC driver contract). No new encoding.
 - **Event log format:** reuses the jsonlstore event record shape
   (`{V: "redisstore-eventlog/1", Ev: <event-json>}`). Append order is preserved
-  by `RPUSH`; `LRANGE` returns in append order (the conformance contract is raw
-  append order, NOT Seq order).
+  by `XADD`; `XRANGE` returns in append order (the conformance contract is raw
+  append order, NOT Seq order). A log still stored as a legacy LIST is read with
+  `LRANGE` until the next append migrates it in place (ADR 0250).
 - **Not-found:** `GET`/`HGET` returns redis.Nil → wrap `port.ErrSessionNotFound`
   (the contract every store adapter must follow).
-- **Durability:** `Append` uses `RPUSH` (synchronous, durable by Redis's
+- **Durability:** `Append` uses `XADD` (synchronous, durable by Redis's
   persistence config — for the MVP, Redis's default RDB/AOF is sufficient; the
   contract is "durable before nil returned," same as jsonlstore's fsync-less
   append).
-- **Concurrency:** Redis is single-threaded for commands; `HSET`/`HGET`/`RPUSH`
+- **Concurrency:** Redis is single-threaded for commands; `HSET`/`HGET`/`XADD`/`RPUSH`
   are atomic. No client-side mutex needed (unlike jsonlstore's in-process
   `sync.Mutex`). The lease serializes writers per session; Redis serializes the
   command execution.
@@ -530,7 +531,7 @@ e2e/k8s/
 
 7. **Redis persistence config.** For the MVP, Redis's default RDB snapshots are
    sufficient. For production, enable AOF (`appendonly yes`) for the EventLog
-   durability contract. The adapter calls `RPUSH` (synchronous); Redis's
+   durability contract. The adapter calls `XADD` (synchronous); Redis's
    persistence config determines durability-on-crash.
 
 ---
