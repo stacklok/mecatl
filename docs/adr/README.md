@@ -34,7 +34,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0239 — Semantic stream retry and failed-step retry transport](./0239-semantic-stream-retry.md)
 - [0243 — Local JSONL durability boundaries](./0243-jsonl-durability.md)
 - [0245 — Safe build diagnostics](./0245-safe-build-diagnostics.md)
-- [0248 — Dedicated session debugger and per-instance admin transport](./0248-session-debugger-admin-transport.md)
+- [0254 — Dedicated session debugger and per-instance admin transport](./0254-session-debugger-admin-transport.md)
 - [0229 — Redis migration uses fenced renewable ownership and indexed coverage](./0229-redis-migration-fencing.md) *(superseded by 0230)*
 - [0230 — Redis migration ownership and coverage are proved before mutation](./0230-redis-migration-atomic-ownership-and-coverage.md) *(superseded by 0231)*
 - [0231 — Redis readiness requires exact owner-index coverage](./0231-redis-owner-index-exact-coverage.md)

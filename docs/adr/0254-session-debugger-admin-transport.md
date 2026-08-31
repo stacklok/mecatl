@@ -1,4 +1,4 @@
-# ADR 0248 — Dedicated session debugger and per-instance admin transport
+# ADR 0254 — Dedicated session debugger and per-instance admin transport
 
 - Status: Accepted
 - Date: 2026-08-30

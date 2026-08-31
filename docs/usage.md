@@ -137,7 +137,7 @@ steers, or leases the target. The normal padded header places amber/bold
 less important model/mode/server details are shed. `/session` shows the safely quoted exact
 target ID and copies it with `t`; the target-derived terminal title is unchanged.
 Model/mode/session-changing affordances are disabled. See
-[ADR 0248](adr/0248-session-debugger-admin-transport.md).
+[ADR 0254](adr/0254-session-debugger-admin-transport.md).
 
 ## Scheduled tasks
 

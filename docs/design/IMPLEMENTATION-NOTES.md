@@ -216,7 +216,7 @@ model/mode/server detail before that complete identity, `/session` shows and cop
 safely quoted exact target ID, and the target-derived title remains. Binding-breaking
 controls stay disabled. Enhanced structured diagnostics, sanitized network-attempt timing,
 live target following, raw audit/tool-record inspection, and support bundles are
-follow-ups, not parts of this shipped boundary. See [ADR 0248](../adr/0248-session-debugger-admin-transport.md).
+follow-ups, not parts of this shipped boundary. See [ADR 0254](../adr/0254-session-debugger-admin-transport.md).
 
 ---
 

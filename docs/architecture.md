@@ -392,7 +392,7 @@ Mecatui treats invocation as consent, prints the disclosure before launch, and c
 the sanitized current debugger client/server diagnostics report with the diagnosis request
 in one first user turn. Its normal padded header keeps amber/bold `DEBUG target #<digest>`
 ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
-and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0248](adr/0248-session-debugger-admin-transport.md). Each
+and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0254](adr/0254-session-debugger-admin-transport.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption
