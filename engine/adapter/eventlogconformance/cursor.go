@@ -362,15 +362,51 @@ func RunCursor(t *testing.T, s CursorSuite) {
 			t.Error("a record that already existed when the follow started is marked Live; it is replay")
 		}
 
-		if _, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: 1, Text: "after"}); err != nil {
-			t.Fatalf("AppendEvent(after): %v", err)
+		// The moment a follower becomes caught up is NOT observable from here, and a
+		// record appended before it reaches the tail is replay by contract however
+		// recently it was written. So the precondition is ESTABLISHED rather than
+		// assumed: keep appending until one comes back Live, with a short pause
+		// between attempts to let the follower reach its tail.
+		//
+		// Asserting on a single append instead makes this case timing-dependent —
+		// it passed thousands of local runs and then failed under -race in CI on a
+		// loaded runner, where the appended record landed before the follower's
+		// second read and was correctly classified as replay. Both directions are
+		// still pinned: a backend that never sets Live exhausts the bound and
+		// fails, and one that sets it during replay fails the assertion above.
+		const liveAttempts = 8
+		var sawLive bool
+		wait := 20 * time.Millisecond
+		for attempt := range liveAttempts {
+			// Let the follower go idle BEFORE appending. This ordering is the whole
+			// point: live flips on the follower's first EMPTY read, so appending
+			// while it is still mid-cycle keeps the stream non-empty and the record
+			// is classified replay — correctly. A loop that appends on every tick
+			// therefore prevents the very transition it is waiting for, which is
+			// what a first version of this loop did.
+			//
+			// The wait DOUBLES because a cycle's length is a backend detail the
+			// suite cannot know — a blocking backend's is orders of magnitude longer
+			// than an in-memory one's. Doubling converges on any of them rather than
+			// encoding one backend's timing as a constant that silently stops
+			// holding for the next.
+			time.Sleep(wait)
+			wait *= 2
+
+			if _, err := log.AppendEvent(ctx, id, session.Event{Type: session.EvMessageDelta, Seq: int64(1 + attempt), Text: "after"}); err != nil {
+				t.Fatalf("AppendEvent(after, attempt %d): %v", attempt, err)
+			}
+			rec := mustRecv(t, recs, "the record appended while following")
+			if rec.Text() != "after" {
+				t.Fatalf("followed record = %q, want %q", rec.Text(), "after")
+			}
+			if rec.Live {
+				sawLive = true
+				break
+			}
 		}
-		second := mustRecv(t, recs, "the record appended while following")
-		if second.Text() != "after" {
-			t.Errorf("second followed record = %q, want %q", second.Text(), "after")
-		}
-		if !second.Live {
-			t.Error("a record appended while following is not marked Live; a client cannot tell replay from live")
+		if !sawLive {
+			t.Errorf("no record appended during the follow was marked Live after %d attempts; a client cannot tell replay from live", liveAttempts)
 		}
 		select {
 		case err := <-errs:
