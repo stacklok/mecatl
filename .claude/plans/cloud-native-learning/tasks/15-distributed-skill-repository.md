@@ -2,7 +2,7 @@
 id: 15-distributed-skill-repository
 title: Add distributed SkillRepository client and server adapters
 blocked_by: [13-explicit-worker-vertical-slice]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
