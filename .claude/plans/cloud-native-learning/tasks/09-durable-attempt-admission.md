@@ -2,9 +2,9 @@
 id: 09-durable-attempt-admission
 title: Bind admitted completions to durable RunID-backed attempts
 blocked_by: [06-memattempt-adapter, 07-durable-attempt-store]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/09-durable-attempt-admission"
+worktree: ".scratch/worktrees/09-durable-attempt-admission"
 issue: ""
 retries: 0
 last_error: ""
