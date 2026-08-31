@@ -372,7 +372,7 @@ type approveBody struct {
 	// ExpectedRunID, when set, scopes this control to ONE run: the request is
 	// refused with a 409 problem (code "stale_run_control") if the session's
 	// current run is a different one. Empty is the legacy behaviour — the control
-	// applies to whatever run is current. See ADR 0245.
+	// applies to whatever run is current. See ADR 0249.
 	ExpectedRunID string `json:"expected_run_id,omitempty"`
 }
 

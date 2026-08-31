@@ -36,7 +36,7 @@ var (
 	ErrCleanupBackend = errors.New("server: storage maintenance failed")
 	// ErrStaleRunControl is returned when a control (approve / cancel / steer)
 	// carries an expected_run_id that does NOT name the run it would affect
-	// (ADR 0245). The control is refused and the current run is left untouched.
+	// (ADR 0249). The control is refused and the current run is left untouched.
 	//
 	// It is a PRECONDITION-class failure, not a bad request: the request is
 	// well-formed and the caller's belief was simply overtaken by events — the run

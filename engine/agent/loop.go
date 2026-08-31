@@ -824,7 +824,7 @@ type RunRequest struct {
 	AskIDDiscriminator string
 }
 
-// RunID reports the opaque, host-minted identity of this run (ADR 0245), or ""
+// RunID reports the opaque, host-minted identity of this run (ADR 0249), or ""
 // when the host supplied none.
 //
 // It exists so a caller holding a *Run can ASK which run it holds, rather than

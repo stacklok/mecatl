@@ -781,7 +781,7 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 }
 
 // staleStreamControl reports whether a Converse control frame names a run that
-// is no longer the active one, refusing it if so (ADR 0245).
+// is no longer the active one, refusing it if so (ADR 0249).
 //
 // The refusal is SILENT to the client, and that asymmetry is deliberate rather
 // than an oversight. Converse's approve and cancel frames are fire-and-forget:

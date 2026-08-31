@@ -72,7 +72,7 @@ func allowsEmptyRunID(t session.EventType) bool {
 	return ok
 }
 
-// checkExpectedRun enforces a control's expected_run_id (ADR 0245).
+// checkExpectedRun enforces a control's expected_run_id (ADR 0249).
 //
 // expected == "" is the legacy path: the control applies to whatever run is
 // current, exactly as before run ids existed. A non-empty value that does not

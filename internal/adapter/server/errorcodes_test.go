@@ -96,7 +96,7 @@ func TestSDKServerEnablers_Scenario2_RegistryPreservesPreRefactorMappings(t *tes
 		}
 	}
 	// The registry may GROW — later work adds sentinels, and ErrStaleRunControl
-	// (ADR 0245) was the first — so this is deliberately NOT a count equality.
+	// (ADR 0249) was the first — so this is deliberately NOT a count equality.
 	// Asserting the count would turn every legitimate addition into a failing
 	// test that the next person "fixes" by bumping a number, which teaches people
 	// to edit the proof instead of reading it.
@@ -107,9 +107,17 @@ func TestSDKServerEnablers_Scenario2_RegistryPreservesPreRefactorMappings(t *tes
 	// row, not to a more general row that happens to share its status. A shadowed
 	// sentinel would pass the loop above by accident and then hand clients the
 	// wrong stable code.
+	//
+	// Compared by IDENTITY, not errors.Is. A specific sentinel WRAPS the general
+	// one, so errors.Is(specific, general) is true — an errors.Is assertion here
+	// would hold both when the row is right and when it has been shadowed by the
+	// very row it wraps, passing in exactly the case it names.
+	// TestADR_0244_NoRegistryRowIsShadowed makes the same check over the whole
+	// registry rather than just the golden subset; this one additionally proves it
+	// for sentinels that predate the registry.
 	for _, want := range preRefactorMappings {
 		got := classifyError(want.sentinel)
-		if got.Sentinel == nil || !errors.Is(want.sentinel, got.Sentinel) {
+		if got.Sentinel != want.sentinel {
 			t.Errorf("%v no longer resolves to its own registry row (got %q); a more general row shadows it",
 				want.sentinel, got.Code)
 		}

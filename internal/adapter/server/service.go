@@ -4634,7 +4634,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 	if run, ok := s.LookupRun(id); ok {
 		// Compare against the run that would ACTUALLY receive the verdict, not the
 		// session's stored id: after a terminal race those can differ, and the
-		// whole point of expected_run_id is to refuse exactly that case (ADR 0245).
+		// whole point of expected_run_id is to refuse exactly that case (ADR 0249).
 		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
 			return nil, err
 		}
@@ -4690,7 +4690,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	}
 	// On this path the persisted session IS the run — it parked awaiting the ask
 	// and no live *agent.Run exists — so the stored id is the authoritative answer
-	// to "which run would this verdict resolve?" (ADR 0245).
+	// to "which run would this verdict resolve?" (ADR 0249).
 	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
 		return nil, err
 	}
