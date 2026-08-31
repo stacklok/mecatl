@@ -148,6 +148,9 @@ when the code that satisfies the plan has landed.
   ownership matrix, `query()`'s one-shot lifecycle, callback `tool()` with local
   schema validation and two-layer collision refusal, the hand-written loopback
   streaming-HTTP MCP host, and the offline Node/Bun e2e. Status: draft.
+- [Cloud-native learning v2](cloud-native-learning.md) — durable authoritative learning
+  attempts, exact source reconstruction, distributed proposal/skill authority, and
+  replica-safe learned-skill hydration; explicit procedure learning lands first. Status: draft.
 
 ## See also
 
