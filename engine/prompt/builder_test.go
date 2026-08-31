@@ -130,13 +130,15 @@ func TestEnvBlockDeterministicAndComplete(t *testing.T) {
 }
 
 // TestToolDisciplineHints exercises the generated tool-discipline guidance: a
-// full catalog emits every clause plus the reserve-Bash and parallel lines; a
-// Bash-absent catalog omits the reserve line; an empty catalog emits only the
-// parallel line with no dangling heading; and output is byte-stable on repeat.
+// full catalog emits every dedicated-tool and delegation clause plus the
+// reserve-Bash and generic parallel lines; a Bash-absent catalog omits the reserve
+// line; an empty catalog emits only the generic parallel line with no dangling
+// heading; and output is byte-stable on repeat.
 func TestToolDisciplineHints(t *testing.T) {
 	full := []tool.ToolSpec{
 		{Name: "Read"}, {Name: "Edit"}, {Name: "Write"}, {Name: "Glob"},
-		{Name: "Grep"}, {Name: "Bash"}, {Name: "Subagent"}, {Name: "Remember"},
+		{Name: "Grep"}, {Name: "Bash"}, {Name: "Subagent"}, {Name: "Parallel"},
+		{Name: "Team"}, {Name: "Remember"},
 	}
 	got := prompt.Build(prompt.Config{Tools: full}).StablePrefix
 	for _, want := range []string{
@@ -147,7 +149,13 @@ func TestToolDisciplineHints(t *testing.T) {
 		"Glob (not find/ls) to locate files",
 		"Grep (not grep/rg) to search contents",
 		"Reserve Bash for real system/terminal commands.",
-		"Use Subagent to delegate independent read-only exploration.",
+		"Use Subagent for focused delegation.",
+		"issue one Subagent call per task in the same assistant turn so eligible calls run concurrently",
+		"wait between calls only when a later task depends on an earlier result.",
+		"Use Parallel only for isolated writable or competing branches that need built-in join or winner selection.",
+		"Do not use Parallel merely for independent read-only investigation; use same-turn Subagent calls instead.",
+		"Use Team only for workers that must coordinate through shared tasks or messages over multiple rounds.",
+		"Use same-turn read-only Subagent calls instead for independent result-only fan-out.",
 		"Use the memory tools to persist or recall durable facts across sessions.",
 		"Make independent tool calls in parallel; never pass placeholder or guessed arguments.",
 	} {
@@ -180,15 +188,82 @@ func TestToolDisciplineHints(t *testing.T) {
 	}
 }
 
-// TestToolDisciplineHintsFixedEmitOrder asserts the dedicated-tool clauses are
-// emitted in the DOCUMENTED order (Read; Edit; Write; Glob; Grep) and that the
-// parallel-calls line is ALWAYS last. A reordering of the internal dedicated table
-// (or moving the unconditional parallel line) must fail this test.
+func TestToolDisciplineHintsDoNotAdvertiseAbsentDelegationTools(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		tools  []tool.ToolSpec
+		wants  []string
+		avoids []string
+	}{
+		{
+			name:   "subagent only",
+			tools:  []tool.ToolSpec{{Name: "Subagent"}},
+			wants:  []string{"Use Subagent for focused delegation."},
+			avoids: []string{"Use Parallel", "Use Team"},
+		},
+		{
+			name:   "parallel only",
+			tools:  []tool.ToolSpec{{Name: "Parallel"}},
+			wants:  []string{"Use Parallel only for isolated writable or competing branches"},
+			avoids: []string{"Subagent", "Use Team"},
+		},
+		{
+			name:   "team only",
+			tools:  []tool.ToolSpec{{Name: "Team"}},
+			wants:  []string{"Use Team only for workers that must coordinate"},
+			avoids: []string{"Subagent", "Use Parallel"},
+		},
+		{
+			name:  "subagent and parallel",
+			tools: []tool.ToolSpec{{Name: "Parallel"}, {Name: "Subagent"}},
+			wants: []string{
+				"Use Subagent for focused delegation.",
+				"Use Parallel only for isolated writable or competing branches",
+				"use same-turn Subagent calls instead",
+			},
+			avoids: []string{"Use Team"},
+		},
+		{
+			name:  "subagent and team",
+			tools: []tool.ToolSpec{{Name: "Team"}, {Name: "Subagent"}},
+			wants: []string{
+				"Use Subagent for focused delegation.",
+				"Use Team only for workers that must coordinate",
+				"Use same-turn read-only Subagent calls instead",
+			},
+			avoids: []string{"Use Parallel"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := prompt.Build(prompt.Config{Tools: tt.tools}).StablePrefix
+			for _, want := range tt.wants {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing guidance %q\nprefix=%q", want, got)
+				}
+			}
+			for _, avoid := range tt.avoids {
+				if strings.Contains(got, avoid) {
+					t.Errorf("advertises absent delegation tool via %q\nprefix=%q", avoid, got)
+				}
+			}
+		})
+	}
+}
+
+// TestToolDisciplineHintsFixedEmitOrder asserts the dedicated-tool clauses and
+// delegation guidance are emitted in their documented order regardless of catalog
+// order, and that the generic parallel-calls line is always last.
 func TestToolDisciplineHintsFixedEmitOrder(t *testing.T) {
 	// Register the tools OUT of documented order to prove the emit order is fixed by
 	// the table, not by the caller's catalog order.
 	tools := []tool.ToolSpec{
-		{Name: "Grep"}, {Name: "Write"}, {Name: "Read"}, {Name: "Glob"}, {Name: "Edit"},
+		{Name: "Team"}, {Name: "Grep"}, {Name: "Parallel"}, {Name: "Write"},
+		{Name: "Subagent"}, {Name: "Read"}, {Name: "Glob"}, {Name: "Edit"},
 	}
 	got := prompt.Build(prompt.Config{Tools: tools}).StablePrefix
 
@@ -198,6 +273,11 @@ func TestToolDisciplineHintsFixedEmitOrder(t *testing.T) {
 		"Write (not heredoc/echo) to create files",
 		"Glob (not find/ls) to locate files",
 		"Grep (not grep/rg) to search contents",
+		"Use Subagent for focused delegation.",
+		"Use Parallel only for isolated writable or competing branches",
+		"Do not use Parallel merely for independent read-only investigation",
+		"Use Team only for workers that must coordinate",
+		"Use same-turn read-only Subagent calls instead for independent result-only fan-out.",
 	}
 	prev := -1
 	for _, clause := range ordered {
@@ -212,7 +292,7 @@ func TestToolDisciplineHintsFixedEmitOrder(t *testing.T) {
 		prev = at
 	}
 
-	// The parallel-calls line must come AFTER every dedicated clause (i.e. last).
+	// The generic parallel-calls line must come AFTER every catalog-aware clause (i.e. last).
 	parallel := strings.Index(got, "Make independent tool calls in parallel")
 	if parallel < 0 {
 		t.Fatalf("parallel-calls line absent\nprefix=%q", got)

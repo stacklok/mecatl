@@ -106,6 +106,11 @@ when the code that satisfies the plan has landed.
   Status: draft.
 
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — network listeners assign one operator-configured filesystem root while embedded and loopback deployments retain client-selected workspaces; mecak8s is no-FS by default. Status: draft.
+- [SDK server enablers](sdk-server-enablers.md) — the Go-side contracts the TypeScript
+  SDK is built on: `GetServerInfo` + an open-string feature vocabulary, RFC 9457 typed
+  errors, exact-origin CORS, a durable host-minted `run_id` with stale-control guards,
+  `port.CursorEventLog` + the Redis LIST→Stream migration, `WatchSessionEvents`, the
+  spawned-daemon UDS/ready-file surface, and listener-scoped `mcp_servers`. Status: draft.
 
 ## See also
 

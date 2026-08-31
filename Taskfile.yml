@@ -700,6 +700,7 @@ tasks:
       - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - task: lint:reusable-pins
       - task: lint:action-templates
+      - bash .github/scripts/lint-vet-workflow_test.sh
 
   lint:reusable-pins:
     desc: |
