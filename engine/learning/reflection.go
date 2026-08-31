@@ -179,6 +179,7 @@ type Input struct {
 // NewInput constructs an owned reflection input from existing session data.
 func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, existing []ExistingFact) Input {
 	ownedTrajectory := NewTrajectory(trajectory.SessionID, trajectory.Workspace, trajectory.Stop, trajectory.Usage, canonicalMessages(trajectory.Messages))
+	ownedTrajectory.RunID = trajectory.RunID
 	ownedTrajectory.Principal = trajectory.Principal.Clone()
 	ownedTrajectory.Kind = trajectory.Kind
 	ownedTrajectory.Counters = trajectory.Counters

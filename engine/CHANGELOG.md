@@ -97,6 +97,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a
   minor bump).
 
+- **`learning.Trajectory.RunID`** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — binds a completed trajectory to the persisted ADR-0249 run identity that durable learning admission verifies before creating an attempt. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
+
 - **`agent.Run.EnqueueSteer`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
 
 - **`session.SteerPayload.Parts`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — adds the committed media parts to the steer echo. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).

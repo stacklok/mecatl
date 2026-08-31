@@ -61,6 +61,7 @@ type reflectionJob struct {
 	// dedupeKey is the canonical trajectory digest shared by automatic and explicit
 	// submissions. reserve runs under coordinator admission after capacity checks.
 	dedupeKey string
+	durableID string
 	reserve   func() bool
 	complete  func(reflectionReceipt)
 }
@@ -258,6 +259,20 @@ func (c *reflectionCoordinator) nextAttemptIDLocked(key string) string {
 	return fmt.Sprintf("%s-%016x", reflectionJobID(key), c.attempt)
 }
 
+func reflectionReceiptID(job reflectionJob, key string) string {
+	if job.durableID != "" {
+		return job.durableID
+	}
+	return reflectionJobID(key)
+}
+
+func (c *reflectionCoordinator) queueIDLocked(job reflectionJob, key string) string {
+	if job.durableID != "" {
+		return job.durableID
+	}
+	return c.nextAttemptIDLocked(key)
+}
+
 // Enqueue admits a job without waiting for model or storage work. An in-flight
 // duplicate joins the original attempt; a rerun after completion gets a fresh id.
 // Capacity rejection records the same content-free id/count receipt that
@@ -282,7 +297,7 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 		digest = job.dedupeKey
 	}
 	key := job.principal + "\x00" + digest
-	baseID := reflectionJobID(key)
+	baseID := reflectionReceiptID(job, key)
 
 	c.mu.Lock()
 	if c.closed {
@@ -303,7 +318,7 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection queue full", "job_id", baseID, "queued", queued, "principal_queued", principalQueued)
 		return receipt, nil
 	}
-	id := c.nextAttemptIDLocked(key)
+	id := c.queueIDLocked(job, key)
 	if !c.reserveReceiptLocked(id) {
 		queued := c.queued
 		receipt := reflectionReceipt{ID: id, Disposition: reflectionQueueFull, Queued: queued, Err: errReflectionQueueFull.Error()}

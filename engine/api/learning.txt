@@ -367,7 +367,7 @@ type SkillValidator interface{Validate(context.Context, SkillValidationRequest) 
 type SkillVersion struct{ID SkillID "json:\"id\""; Version VersionID "json:\"version\""; Revision Revision "json:\"revision\""; State SkillState "json:\"state\""; OwnerAgent string "json:\"owner_agent\""; Partition SkillPartition "json:\"partition\""; Bundle SkillBundle "json:\"bundle\""; Provenance SkillProvenance "json:\"provenance\""; Disposition ValidationDisposition "json:\"validation_disposition,omitempty\""; Evaluations []SkillEvaluation "json:\"evaluations,omitempty\""; Receipts []SkillReceipt "json:\"receipts,omitempty\""; Supersedes VersionID "json:\"supersedes,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
 type ThresholdPolicy struct{Sensitivity Sensitivity}
 type ToolProjection struct{ID session.ToolCallID "json:\"id\""; Name string "json:\"name\""}
-type Trajectory struct{SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Kind session.SessionKind; Counters session.Counters; Current MessageSpan; Principal *session.Principal}
+type Trajectory struct{RunID string; SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Kind session.SessionKind; Counters session.Counters; Current MessageSpan; Principal *session.Principal}
 type ValidatedSkillActivator interface{ActivateValidated(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
 type ValidationDisposition string
 type VersionID string

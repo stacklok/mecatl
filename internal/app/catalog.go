@@ -134,6 +134,7 @@ type catalogAssets struct {
 	learningAdmission     *learningAdmission
 	reflectionCoordinator *reflectionCoordinator
 	reflectionRepository  learning.ProposalRepository
+	attemptRepository     learning.AttemptRepository
 	rootCatalog           *tool.Catalog
 }
 

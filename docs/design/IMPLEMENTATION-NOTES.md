@@ -4225,15 +4225,15 @@ retrieval because the request may already have applied.
 and both reviewed atomic store capabilities exist, and ownership enforcement disables the entire
 manual surface in v1. No provider/model identity is projected.
 
-**Standard coordinator and staged wiring (#509 Chunk C):** `internal/app/reflection_coordinator.go`
-owns one dormant Build-lifetime coordinator in every mode, never one goroutine per completion. Workers start only after first admission, so Off starts none until explicit reflection. Its global and per-principal
+**Standard coordinator and staged wiring (#509 Chunk C; ADR 0254 durable admission):** `internal/app/reflection_coordinator.go`
+owns one dormant Build-lifetime scheduling coordinator in every mode, never one goroutine per completion. Workers start only after first admission, so Off starts none until explicit reflection. Its global and per-principal
 queues are count- and byte-bounded, preserve principal FIFO, and rotate principals fairly; default concurrency is one.
-The effective receipt cap is at least queue capacity plus workers and admission reserves a live receipt first, so completion publication cannot be dropped. Oversized raw trajectory/event input is rejected before projection/marshal and queue allocation.
-Principal+session+input-digest singleflight collapses pending duplicates. Every job has a timeout and
-runs only under the Build lifecycle context, so automatic work detaches from request cancellation only
+The effective receipt cap is at least queue capacity plus workers. Oversized raw trajectory/event input is rejected before projection/marshal and queue allocation.
+`internal/app/reflection_observer.go` (`createDurableAttempt`) now verifies the trajectory's exact non-empty ADR-0249 RunID by reloading the source session from the authoritative `SessionStore`, derives the caller/session/run/canonical-digest attempt ID and current-principal-prompt binding, and idempotently creates the `AttemptRepository` record BEFORE returning `queued`. A create error or absent/mismatched persisted RunID refuses admission without queuing. A duplicate converges to the existing durable attempt; a queued duplicate may rejoin the local coordinator, while running/terminal state remains repository-authoritative.
+Every job has a timeout and runs only under the Build lifecycle context, so automatic work detaches from request cancellation only
 after the observer has copied the verified session principal and bounded trajectory. `Built.Close`
-stops admission, publishes closed receipts for queued waiters, clears pending state, cancels active work, and joins workers. Queue-full, duplicate, completion, and failure diagnostics carry only bounded
-job IDs and counts. Queue/singleflight/receipt state resets by design; proposal state is durable.
+stops local scheduling, publishes closed receipts for queued waiters, clears pending state, cancels active work, and joins workers. Queue-full, duplicate, completion, and failure diagnostics carry only bounded
+attempt IDs and counts. Queue/singleflight/receipt state remains reset-by-design scheduling state; `internal/adapter/attemptstore` persists authoritative queued/running/terminal workflow state and immutable content-free provenance across processes. Skipped/non-admitted decisions emit their immediate content-free activity and never touch the attempt repository.
 
 The observer performs the structural signal gate before the process-wide legacy interval admission, so
 trivial completions spend no provider call and do not consume the debounce cadence. Standard composition

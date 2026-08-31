@@ -7,12 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memattempt"
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memorypromotion"
 	"github.com/stacklok/mecatl/engine/adapter/memproposal"
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -76,9 +79,11 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	automatic := defaultLearningAutomaticConfig()
 	automatic.Cooldown = 0
 	automatic.MaxReflections = 1
+	sourceStore := memstore.New()
 	cfg := Config{
 		Model: "test-model", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
 		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
+		attemptRepository: memattempt.New(wallclock.Clock{}), learningSourceStore: sourceStore,
 	}
 	admission := newLearningAdmission(1)
 	admission.controller = newAutomaticAdmissionController(cfg.LearningAutomatic, cfg.LearningMetricsEmitter)
@@ -94,8 +99,14 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	trajectory := func(id, prompt string) learning.Trajectory {
 		messages := []session.Message{session.NewUserMessage(prompt)}
 		result := learning.NewTrajectory(session.SessionID(id), "/workspace", session.StopEndTurn, session.Usage{}, messages)
+		result.RunID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 		result.Kind = session.SessionKindMain
 		result.Current = learning.MessageSpan{Start: 0, End: len(messages)}
+		source := session.New(result.SessionID, session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+		source.BeginRun(result.RunID)
+		if err := sourceStore.Save(context.Background(), source); err != nil {
+			t.Fatal(err)
+		}
 		return result
 	}
 	first := trajectory("first-private-session", "Please remember that private preference")
@@ -162,8 +173,9 @@ func TestExplicitReflectionRunsWhenAutomaticModeOff(t *testing.T) {
 	t.Cleanup(coordinator.Close)
 	reflector := &testReflector{}
 	repository := memproposal.New()
-	observer := &reflectionObserver{coordinator: coordinator, reflector: reflector, repository: repository, operatorMemory: memmemory.New(), mode: learning.Off}
 	trajectory := learning.NewTrajectory("explicit-off", "", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Please remember concise output")})
+	trajectory.RunID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	observer := &reflectionObserver{coordinator: coordinator, reflector: reflector, repository: repository, attempts: memattempt.New(wallclock.Clock{}), sourceStore: persistedAdmissionSource(t, trajectory), operatorMemory: memmemory.New(), mode: learning.Off}
 	if err := observer.Observe(context.Background(), trajectory); err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +201,13 @@ func TestNonLaunchReflectionDoesNotReadLaunchProjectMemory(t *testing.T) {
 	inputs := make(chan learning.Input, 1)
 	observer := &reflectionObserver{
 		coordinator: coordinator, reflector: captureReflectionInput{input: inputs}, repository: memproposal.New(),
+		attempts:       memattempt.New(wallclock.Clock{}),
 		operatorMemory: memmemory.New(), projectMemory: project, mode: learning.Review,
 		trusted: true, projectWorkspace: "/launch",
 	}
 	trajectory := learning.NewTrajectory("alternate", "/alternate", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember concise output")})
+	trajectory.RunID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	observer.sourceStore = persistedAdmissionSource(t, trajectory)
 	if _, err := observer.Reflect(context.Background(), trajectory, false); err != nil {
 		t.Fatal(err)
 	}

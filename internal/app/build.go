@@ -54,6 +54,7 @@ import (
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
+	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/envscrub"
 	"github.com/stacklok/mecatl/internal/adapter/flocklease"
@@ -583,7 +584,9 @@ type Config struct {
 	// SkillEvaluator is trusted host admission control. Nil deliberately ABSTAINS;
 	// evaluator errors persist as a non-activatable marker, and only generic error
 	// categories reach diagnostics.
-	SkillEvaluator learning.SkillEvaluator
+	SkillEvaluator      learning.SkillEvaluator
+	attemptRepository   learning.AttemptRepository
+	learningSourceStore port.SessionStore
 	// operatorLearningMode retains the pre-project ceiling so per-session engines
 	// can apply their own workspace's tighten-only project setting.
 	operatorLearningMode          learning.Mode
@@ -2052,6 +2055,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			reflectionCfg.Workspace = workspace
 			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity, reflectionCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 			reflectionCfg.Model = sess.ModelID
+			reflectionCfg.attemptRepository = assets.attemptRepository
+			reflectionCfg.learningSourceStore = store
 			if sess.ProviderID != "" {
 				entry, ok := reg.Lookup(sess.ProviderID)
 				if !ok {
@@ -2073,6 +2078,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			stop, _ := sess.StopReason()
 			trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.Usage, sess.Conversation.Messages)
+			trajectory.RunID = sess.RunID()
 			trajectory.Principal = sess.Owner.Clone()
 			trajectory.Kind = sess.Kind
 			trajectory.Counters = sess.Counters
@@ -2776,6 +2782,8 @@ func sessionEngineFactory(
 		learningCfg.Workspace = workspace
 		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
+		learningCfg.attemptRepository = assets.attemptRepository
+		learningCfg.learningSourceStore = store
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, assets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
@@ -3663,6 +3671,8 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		learningAdmission.controller = newAutomaticAdmissionController(cfg.LearningAutomatic, cfg.LearningMetricsEmitter)
 	}
 	assets.learningAdmission = learningAdmission
+	cfg.attemptRepository = assets.attemptRepository
+	cfg.learningSourceStore = store
 	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
@@ -4980,9 +4990,16 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	}
 
 	var reflectionRepository learning.ProposalRepository
+	var attemptRepository learning.AttemptRepository
 	var reflectionCoordinator *reflectionCoordinator
 	if userModelStore != nil && provider != nil {
 		if base := resolveUserModelDir(cfg.UserModelDir); base != "" {
+			attempts, attemptErr := attemptstore.New(filepath.Join(base, "learning-attempts"))
+			if attemptErr != nil {
+				mcpClose()
+				return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build learning attempt store: %w", attemptErr)
+			}
+			attemptRepository = attempts
 			reflectionDir := filepath.Join(base, "reflections")
 			reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
 			previousClose := mcpClose
@@ -5107,6 +5124,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		searchProvider:        buildSearchProvider(ctx, cfg),
 		reflectionCoordinator: reflectionCoordinator,
 		reflectionRepository:  reflectionRepository,
+		attemptRepository:     attemptRepository,
 		// Fire-result delivery queue (ADR 0075): the DURABLE per-session
 		// pending-delivery queue. Built ONCE here so the main engine's Step 2a
 		// drain, the per-session engine factory's drain, and the scheduler's
