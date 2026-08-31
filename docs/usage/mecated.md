@@ -519,10 +519,20 @@ permission on one path.
   `bind` leaves a real window in which the socket is connectable, and on a socket
   carrying an unauthenticated local harness API that window is command execution.
   The parent **directory** is the primary defence and is created `0700` when it
-  does not exist. An **existing** directory is left alone — chmod'ing an
+  does not exist. An **existing** directory is never chmod'ed — doing that to an
   operator's `/tmp`, `XDG_RUNTIME_DIR`, or systemd `RuntimeDirectory` would be a
-  worse outcome than the risk it closes — but a group/world-reachable one draws a
-  startup `WARN` naming the directory.
+  worse outcome than the risk it closes — but it is **judged**, and the two cases
+  are different risks because `unlink(2)` checks the write bit on the *directory*
+  rather than on the file:
+  - **group/world-writable and not sticky** is **refused at startup**. The
+    socket's own mode cannot defend here: any local user with write access can
+    unlink the socket and bind their own listener at the same path, after which
+    the daemon serves an unlinked inode while every new client — the spawning
+    parent included, since it dials the path from the ready file — reaches the
+    impostor. The **sticky** bit is the exemption that keeps `/tmp` usable.
+  - merely group/world-**readable** (`0755` and friends) draws a startup `WARN`
+    naming the directory. Others can `stat` the socket but, since it is
+    owner-only, cannot connect to it, and cannot unlink it either.
 - **Stale vs live.** A socket inode looks identical whether or not anyone is
   listening, so the check is behavioural: mecated **dials** it. A refused connect
   proves the inode is a corpse and it is unlinked (with an `INFO`); a successful

@@ -718,9 +718,14 @@ permission on one path, which is strictly narrower than a loopback port that any
 local process may connect to. Some details worth knowing:
 
 - The socket is created **owner-only**, inside an owner-only (`0700`) directory that
-  mecated creates if it is missing. If the directory already exists mecated leaves
-  its mode alone — it will not chmod your `/tmp` or your systemd `RuntimeDirectory` —
-  but it logs a warning when that directory is reachable beyond you.
+  mecated creates if it is missing. If the directory already exists mecated never
+  chmods it — it will not touch your `/tmp` or your systemd `RuntimeDirectory` — but
+  it does check it. A directory that is **writable by group or other and not sticky**
+  is **refused at startup**: deleting a file needs write permission on the directory,
+  not on the file, so any local user could unlink your socket and put their own
+  listener at that path. A directory that is merely **readable** beyond you is
+  accepted with a warning — others can see the socket but cannot connect to it or
+  remove it.
 - A **stale socket** left behind by a process that was killed is removed on start. A
   socket a **live** process is still accepting on refuses the start instead, because
   removing it would silently steal the running daemon's address.

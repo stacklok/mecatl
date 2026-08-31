@@ -10,14 +10,17 @@ package main
 // starts a run.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +41,39 @@ import (
 // ---------------------------------------------------------------------------
 // harness
 // ---------------------------------------------------------------------------
+
+// captureLogs redirects the slog default for the duration of the test and returns
+// a reader for everything written to it.
+//
+// serve() logs from goroutines, hence the mutex: the handler and the reader race
+// otherwise, and a -race failure in a security assertion is worse than useless.
+// The default is restored on cleanup so a later test is not left writing into a
+// dead buffer.
+func captureLogs(t *testing.T) func() string {
+	t.Helper()
+	buf := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf.String
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // socketPathForTest returns a short, absolute, clean socket path whose parent
 // directory does NOT exist yet, so ensureSocketDir's create-owner-only branch is
@@ -420,6 +456,13 @@ func TestSDKServerEnablers_Scenario8_HTTPDisabledRefusesPerfMCP(t *testing.T) {
 // loopback TCP bind that already grants client-selected authority. Reading an
 // empty --http-addr as "not loopback" would have demanded --workspace from
 // exactly the local spawned daemon that has no network surface at all.
+//
+// The EMPTY-ADDRESS row is the one that has to be read carefully, because the
+// same empty string means opposite things to the two callers. For gRPC it is a
+// WILDCARD bind — net.Listen("tcp", "") binds [::] on a kernel-chosen port — so
+// it must classify as a boundary; the helper answers for gRPC's meaning. HTTP's
+// disabled case is asserted separately below, at the composed decision, because
+// that is where serve()'s skip actually lives.
 func TestSDKServerEnablers_Scenario8_DisabledAndSocketListenersAreNotNetworkBoundaries(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -427,7 +470,7 @@ func TestSDKServerEnablers_Scenario8_DisabledAndSocketListenersAreNotNetworkBoun
 		unixSocket bool
 		want       bool
 	}{
-		{name: "disabled", addr: "", want: false},
+		{name: "empty tcp addr is a wildcard bind", addr: "", want: true},
 		{name: "unix socket", addr: "127.0.0.1:8080", unixSocket: true, want: false},
 		{name: "loopback tcp", addr: "127.0.0.1:8080", want: false},
 		{name: "wildcard tcp", addr: "0.0.0.0:8080", want: true},
@@ -453,6 +496,22 @@ func TestSDKServerEnablers_Scenario8_DisabledAndSocketListenersAreNotNetworkBoun
 	}
 	if err := validateWorkspaceAuthority(cfg); err != nil {
 		t.Fatalf("a socket-only daemon must not require --workspace: %v", err)
+	}
+
+	// An empty --grpc-addr with NO socket is a wildcard-bound, unauthenticated
+	// gRPC listener. It must stay server-assigned: client-selected authority
+	// there would let any reachable caller name an arbitrary absolute workspace
+	// root, and would drop the --workspace requirement that is the backstop.
+	wildcard := config{grpcAddr: "", httpAddr: ""}
+	got, err = workspaceAuthorityForListeners(wildcard)
+	if err != nil {
+		t.Fatalf("workspaceAuthorityForListeners: %v", err)
+	}
+	if got != server.WorkspaceAuthorityServerAssigned {
+		t.Fatalf("authority = %v, want server-assigned: an empty --grpc-addr binds every interface", got)
+	}
+	if err := validateWorkspaceAuthority(wildcard); err == nil {
+		t.Fatal("validateWorkspaceAuthority = nil, want --workspace required for a wildcard-bound gRPC listener")
 	}
 }
 
@@ -609,7 +668,10 @@ func TestSDKServerEnablers_Scenario8_ReadyFilePathIsValidated(t *testing.T) {
 //     The list also records the deliberate omissions (capabilities,
 //     authentication, TLS) that keep it inside ADR 0245's privacy boundary.
 //   - BEHAVIOURAL: a daemon configured with a bearer token publishes a file
-//     containing no trace of it.
+//     containing no trace of it, logs nothing carrying it while starting, and
+//     does not leak it through any of the startup REJECTIONS either. AC8.4 names
+//     all three surfaces — "the ready file, startup logs, and startup errors" —
+//     and the file alone was the narrower claim.
 func TestSDKServerEnablers_Scenario8_ReadinessCarriesNoSecrets(t *testing.T) {
 	wantJSONKeys := map[string]bool{
 		"schema": true, "pid": true, "transport": true, "grpc_address": true,
@@ -633,6 +695,8 @@ func TestSDKServerEnablers_Scenario8_ReadinessCarriesNoSecrets(t *testing.T) {
 	sock := socketPathForTest(t)
 	readyPath := filepath.Join(t.TempDir(), "ready.json")
 
+	logs := captureLogs(t)
+
 	cfg := udsConfig(sock)
 	cfg.readyFile = readyPath
 	cfg.authToken = token
@@ -648,6 +712,111 @@ func TestSDKServerEnablers_Scenario8_ReadinessCarriesNoSecrets(t *testing.T) {
 		if strings.Contains(strings.ToLower(string(raw)), forbidden) {
 			t.Errorf("the ready file mentions %q; it must carry no authentication, TLS, or capability detail (ADR 0245):\n%s", forbidden, raw)
 		}
+	}
+
+	// Surface 2: the startup logs. logListenerPosture and the socket/pipe lines
+	// all run before the ready file appears, so the capture above covers them.
+	if got := logs(); strings.Contains(got, token) {
+		t.Errorf("the startup logs carry the bearer token:\n%s", got)
+	}
+
+	// Surface 3: the startup ERRORS. Every rejection path added by daemon hosting
+	// composes its message from a path, a mode, an fd number, or a syscall error
+	// — never from config. Driving them with a credential in the config is what
+	// keeps that true as the messages grow.
+	t.Run("rejections", func(t *testing.T) {
+		rejectLogs := captureLogs(t)
+		for _, tc := range []struct {
+			name string
+			cfg  func(t *testing.T) config
+		}{
+			{
+				name: "socket path is a regular file",
+				cfg: func(t *testing.T) config {
+					p := filepath.Join(t.TempDir(), "not-a-socket")
+					if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+						t.Fatalf("seed: %v", err)
+					}
+					return udsConfig(p)
+				},
+			},
+			{
+				name: "socket directory is world-writable",
+				cfg: func(t *testing.T) config {
+					dir := t.TempDir()
+					if err := os.Chmod(dir, 0o777); err != nil {
+						t.Fatalf("chmod: %v", err)
+					}
+					return udsConfig(filepath.Join(dir, "g.sock"))
+				},
+			},
+			{
+				name: "socket path is too long for sun_path",
+				cfg: func(_ *testing.T) config {
+					return udsConfig("/" + strings.Repeat("d", sunPathMax) + "/g.sock")
+				},
+			},
+			{
+				name: "lifetime pipe fd is not open",
+				cfg: func(t *testing.T) config {
+					c := udsConfig(socketPathForTest(t))
+					c.lifetimePipeFD = closedDescriptor(t)
+					return c
+				},
+			},
+			{
+				name: "ready file directory does not exist",
+				cfg: func(t *testing.T) config {
+					c := udsConfig(socketPathForTest(t))
+					c.readyFile = filepath.Join(t.TempDir(), "absent", "ready.json")
+					return c
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := tc.cfg(t)
+				c.authToken = token
+				c.rateLimit = 10
+				if c.readyFile == "" {
+					c.readyFile = filepath.Join(t.TempDir(), "ready.json")
+				}
+				err := startupRejection(t, c)
+				if strings.Contains(err.Error(), token) {
+					t.Errorf("the startup error carries the bearer token: %v", err)
+				}
+			})
+		}
+		if got := rejectLogs(); strings.Contains(got, token) {
+			t.Errorf("a rejection path logged the bearer token:\n%s", got)
+		}
+	})
+}
+
+// startupRejection runs the real startup path for a configuration that must not
+// come up, and returns the error it produced.
+//
+// It accepts a rejection from EITHER gate — validateEffectiveConfig or serve()
+// itself — because which one catches a given misconfiguration is an
+// implementation detail, while "it is refused, and the refusal says nothing
+// secret" is the contract under test.
+func startupRejection(t *testing.T, cfg config) error {
+	t.Helper()
+	if err := validateEffectiveConfig(cfg); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serve(ctx, cfg, newOfflineService(t), prometheus.NewRegistry(), nil, nil) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("serve returned nil, want the configuration refused at startup")
+		}
+		return err
+	case <-time.After(20 * time.Second):
+		t.Fatal("serve neither started nor failed within 20s")
+		return nil
 	}
 }
 
@@ -742,6 +911,79 @@ func TestSDKServerEnablers_Scenario8_LifetimePipeIsOptionalAndValidated(t *testi
 		t.Fatalf("openLifetimePipe(%d) = nil for a closed descriptor, want a startup error", closedFD)
 	} else if !strings.Contains(err.Error(), "--lifetime-pipe-fd") {
 		t.Errorf("error %q does not name the flag", err)
+	}
+}
+
+// TestSDKServerEnablers_Scenario8_LifetimePipeRejectsANonPipeDescriptor pins that
+// being OPEN is not enough.
+//
+// openLifetimePipe runs after bindListeners, so a stale or mistyped fd number can
+// name a descriptor the daemon already owns. os.NewFile+Stat accepts a listening
+// socket happily; reading one yields ENOTCONN, which watch() maps to "parent
+// exited". The daemon would publish its ready file, shut down immediately, and
+// close that descriptor out from under its real owner on the way out — the same
+// undiagnosable failure the closed-fd rejection exists to prevent, reached
+// through a different door.
+func TestSDKServerEnablers_Scenario8_LifetimePipeRejectsANonPipeDescriptor(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer lis.Close()
+	dup, err := lis.(*net.TCPListener).File()
+	if err != nil {
+		t.Fatalf("duplicate the listener descriptor: %v", err)
+	}
+	defer dup.Close()
+
+	_, err = openLifetimePipe(int(dup.Fd()))
+	if err == nil {
+		t.Fatal("openLifetimePipe accepted a listening socket, want a startup error: a socket is not a parent-liveness signal")
+	}
+	if !strings.Contains(err.Error(), "--lifetime-pipe-fd") || !strings.Contains(err.Error(), "not a pipe") {
+		t.Errorf("error %q must name the flag and say the descriptor is not a pipe", err)
+	}
+
+	// The descriptor must survive the rejection: openLifetimePipe adopts it only
+	// on success, so a mistyped fd cannot cost the daemon a listener.
+	if _, statErr := dup.Stat(); statErr != nil {
+		t.Errorf("the rejected descriptor was closed by openLifetimePipe (%v); a refusal must not consume the caller's fd", statErr)
+	}
+}
+
+// TestSDKServerEnablers_Scenario8_LifetimePipeIsQuietOnCleanShutdown pins that an
+// ordinary exit does not log a fault.
+//
+// serve() defers p.Close(), so a ctx.Done() shutdown closes the descriptor under
+// the blocked Read and it returns os.ErrClosed rather than io.EOF. Warning there
+// prints "lifetime pipe read failed" on every clean exit of a pipe-configured
+// daemon — and non-deterministically, since Close() does not join the watcher. A
+// line that cries wolf on the happy path is how a real one gets skimmed past.
+func TestSDKServerEnablers_Scenario8_LifetimePipeIsQuietOnCleanShutdown(t *testing.T) {
+	logs := captureLogs(t)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer w.Close() // the "parent" stays alive throughout: only our Close ends the watch
+
+	p, err := openLifetimePipe(int(r.Fd()))
+	if err != nil {
+		t.Fatalf("openLifetimePipe: %v", err)
+	}
+	if !p.Enabled() {
+		t.Fatal("a configured lifetime pipe must report Enabled")
+	}
+	p.Close()
+
+	select {
+	case <-p.Closed():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the watcher did not observe its own Close within 10s")
+	}
+	if got := logs(); strings.Contains(got, "lifetime pipe read failed") {
+		t.Errorf("a clean shutdown logged a read failure:\n%s", got)
 	}
 }
 
@@ -988,8 +1230,10 @@ func TestSDKServerEnablers_Scenario8_SocketPermissionsOwnerOnly(t *testing.T) {
 //
 // A directory that already exists is left alone. Chmod'ing an operator's /tmp,
 // XDG runtime directory, or systemd RuntimeDirectory to 0700 would be a far
-// worse outcome than the risk it closes — so the socket's own 0600 mode carries
-// that case, and the operator gets a WARN naming the directory.
+// worse outcome than the risk it closes — so a merely group/world-READABLE one
+// is accepted with a WARN. Others can stat the socket but, since it is 0700,
+// cannot connect to it, and since unlink(2) checks the DIRECTORY's write bit,
+// cannot remove it either.
 func TestSDKServerEnablers_Scenario8_ExistingSocketDirIsNotChmodded(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o755); err != nil {
@@ -1014,6 +1258,46 @@ func TestSDKServerEnablers_Scenario8_ExistingSocketDirIsNotChmodded(t *testing.T
 	}
 	if err := ensureSocketDir(file); err == nil {
 		t.Error("ensureSocketDir = nil for a non-directory path, want an error")
+	}
+}
+
+// TestSDKServerEnablers_Scenario8_WritableSocketDirIsRefused pins the case where
+// the socket's own mode defends nothing.
+//
+// unlink(2) checks write permission on the DIRECTORY, not on the file. So in a
+// group/world-writable, non-sticky directory any local user can unlink the
+// daemon's socket and bind their own listener at the same path: the daemon keeps
+// serving the now-unlinked inode while every NEW client — the spawning parent
+// included, since it dials the path it read from the ready file — reaches the
+// impostor. On an unauthenticated local API that is interception of prompts,
+// tool calls, and tool output, so it is refused rather than warned about.
+//
+// The sticky bit is the exemption that keeps /tmp usable: with it set, only the
+// owner may unlink their own socket.
+func TestSDKServerEnablers_Scenario8_WritableSocketDirIsRefused(t *testing.T) {
+	for _, mode := range []os.FileMode{0o777, 0o707, 0o770} {
+		dir := t.TempDir()
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatalf("chmod %s: %v", mode, err)
+		}
+		err := ensureSocketDir(dir)
+		if err == nil {
+			t.Errorf("ensureSocketDir(mode %s) = nil, want a refusal: a non-sticky writable directory lets any local user unlink the socket and bind their own", mode)
+			continue
+		}
+		if !strings.Contains(err.Error(), "sticky") || !strings.Contains(err.Error(), "0700") {
+			t.Errorf("refusal %q must name both remedies (an owner-only directory, or a sticky one)", err)
+		}
+	}
+
+	// Sticky is accepted: /tmp is a legitimate socket home precisely because the
+	// sticky bit restores the unlink restriction.
+	sticky := t.TempDir()
+	if err := os.Chmod(sticky, 0o777|os.ModeSticky); err != nil {
+		t.Fatalf("chmod sticky: %v", err)
+	}
+	if err := ensureSocketDir(sticky); err != nil {
+		t.Errorf("ensureSocketDir on a sticky world-writable directory = %v, want nil: the sticky bit is what makes /tmp usable", err)
 	}
 }
 

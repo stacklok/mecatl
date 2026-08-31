@@ -192,10 +192,25 @@ func listenUnixSocket(path string) (net.Listener, error) {
 // A directory this process CREATES is created 0700 (every missing component:
 // os.MkdirAll applies the mode to each one it makes). A directory that already
 // exists is left ALONE — chmod'ing an operator's /tmp, XDG runtime dir, or
-// systemd RuntimeDirectory would be a far worse outcome than the risk it closes
-// — but a group/world-reachable one draws a WARN naming the directory, because
-// the operator is the only party who can fix it and the socket's own 0600 mode
-// is then the sole remaining defence.
+// systemd RuntimeDirectory would be a far worse outcome than the risk it closes.
+//
+// An existing directory is instead JUDGED, and the two cases are not the same
+// risk, because unlink(2) checks write permission on the DIRECTORY and not on
+// the file:
+//
+//   - GROUP/WORLD-WRITABLE and NOT STICKY is refused. The socket's own 0700 mode
+//     does not defend here at all: any local user with write access can unlink
+//     the daemon's socket and bind their own listener at the same path. The
+//     daemon keeps serving the now-unlinked inode while every NEW client — the
+//     spawning parent included, since it dials the path it read from the ready
+//     file — reaches the impostor. On an unauthenticated local harness API that
+//     is interception of prompts, tool calls, and tool output, so it is a
+//     refusal rather than a warning. The sticky bit is the exemption that keeps
+//     /tmp usable: with it, only the owner may unlink their own socket.
+//   - Merely group/world-READABLE (0755 and friends) draws a WARN. Others can
+//     stat the socket but cannot connect to it — the socket really is 0700, so
+//     its own mode IS the defence in this case — and cannot unlink it either.
+//     Owner-only is still the better answer for a spawned daemon.
 func ensureSocketDir(dir string) error {
 	info, err := os.Stat(dir)
 	switch {
@@ -209,9 +224,13 @@ func ensureSocketDir(dir string) error {
 	case !info.IsDir():
 		return fmt.Errorf("socket directory %q exists and is not a directory", dir)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		slog.Warn("gRPC socket directory is reachable beyond its owner; the socket's own 0600 mode is the only remaining restriction — prefer an owner-only directory (0700) for a spawned daemon",
-			"dir", dir, "mode", info.Mode().Perm().String())
+	perm := info.Mode().Perm()
+	switch {
+	case perm&0o022 != 0 && info.Mode()&fs.ModeSticky == 0:
+		return fmt.Errorf("socket directory %q is writable by group or other and is not sticky (mode %s): any local user with write access there can unlink this socket and bind their own in its place, which the socket's own 0700 mode cannot prevent — use an owner-only directory (0700), such as $XDG_RUNTIME_DIR or a systemd RuntimeDirectory, or a sticky one such as /tmp", dir, info.Mode().String())
+	case perm&0o077 != 0:
+		slog.Warn("gRPC socket directory is reachable beyond its owner; the socket itself is 0700 so others cannot connect to it, and cannot unlink it either — but an owner-only directory (0700) is still the better choice for a spawned daemon",
+			"dir", dir, "mode", info.Mode().String())
 	}
 	return nil
 }
@@ -255,6 +274,15 @@ func reclaimStaleSocket(path string) error {
 	if !errors.Is(dialErr, syscall.ECONNREFUSED) {
 		return fmt.Errorf("--grpc-unix-socket %q already exists and could not be probed (%v): refusing to start, because removing a socket a live process may still be accepting on would silently steal its address. Remove it yourself if you are sure it is stale", path, dialErr)
 	}
+	// KNOWN WINDOW: the verdict above and the unlink below are not atomic. Two
+	// mecated processes starting on the same path can interleave — B probes a
+	// genuinely stale inode and gets ECONNREFUSED, A reclaims it and binds, then
+	// B's Remove unlinks A's LIVE socket and binds over it. A would serve an
+	// unreachable inode while clients silently land on B. Closing it needs a lock
+	// held across probe-and-bind (an flock on a sibling file); it is left open
+	// deliberately, because the trigger is two daemons racing for one path, which
+	// is already a misconfiguration, and a lock file is its own lifecycle to get
+	// wrong. Documented rather than silent.
 	if rmErr := os.Remove(path); rmErr != nil {
 		return fmt.Errorf("remove stale socket %q (the connect was refused, so nothing is accepting on it): %w", path, rmErr)
 	}
@@ -340,6 +368,12 @@ const readyDocSchema = "mecated-ready/1"
 // only ever observes the complete document or nothing at all — never a truncated
 // prefix it would have to distinguish from a malformed one.
 //
+// That guarantee is against TORN READS, not against power loss: without an fsync
+// on the containing directory after the rename, a crash immediately afterwards
+// can still lose the rename on some filesystems. For a readiness signal that is
+// the right trade — the parent re-reads the file on its next start and the
+// daemon republishes it — so the directory fsync is deliberately not paid for.
+//
 // The temp file is created 0600 and the final file 0600 (readyFileMode): the
 // rename preserves the temp's mode, so there is no chmod-after-publish window.
 //
@@ -416,13 +450,26 @@ type lifetimePipe struct {
 // as EOF means "the parent died", so the daemon would start, publish its ready
 // file, and vanish milliseconds later with nothing but a WARN — a far harder
 // failure to diagnose than a refusal naming the flag.
+//
+// Being OPEN is not sufficient, because this runs AFTER bindListeners: a stale
+// or simply mistyped fd number can name a descriptor this process already owns.
+// os.NewFile+Stat happily accepts a listening socket, and reading one yields
+// ENOTCONN, which watch() maps to "parent exited" — so the daemon would publish
+// its ready file, shut down immediately, and then close that descriptor out from
+// under its real owner on the way out. Same undiagnosable failure, different
+// door. The flag names a PIPE, so the pipe bit is the test; ModeSocket would
+// still admit the listener above.
 func openLifetimePipe(fd int) (lifetimePipe, error) {
 	if fd == 0 {
 		return lifetimePipe{}, nil
 	}
 	f := os.NewFile(uintptr(fd), fmt.Sprintf("lifetime-pipe-fd-%d", fd))
-	if _, err := f.Stat(); err != nil {
+	fi, err := f.Stat()
+	if err != nil {
 		return lifetimePipe{}, fmt.Errorf("--lifetime-pipe-fd %d is not an open descriptor in this process (%w): the parent must pass the pipe's READ end as an inherited fd", fd, err)
+	}
+	if fi.Mode()&fs.ModeNamedPipe == 0 {
+		return lifetimePipe{}, fmt.Errorf("--lifetime-pipe-fd %d is open but is not a pipe (mode %s): pass the READ end of an inherited pipe — a socket, a regular file, or a descriptor this process already owns is a mistake, not a parent-liveness signal", fd, fi.Mode().String())
 	}
 	p := lifetimePipe{file: f, closed: make(chan struct{})}
 	go p.watch()
@@ -444,13 +491,22 @@ func (p lifetimePipe) Enabled() bool { return p.file != nil }
 // spinning. Anything the parent sends is discarded: this descriptor is a
 // liveness signal, never a control channel — treating bytes on it as commands
 // would hand an unauthenticated local writer a way to steer the daemon.
+//
+// Two error classes are QUIET. io.EOF is the parent going away, which is the
+// whole point. os.ErrClosed is US: serve() defers p.Close(), so an ordinary
+// ctx.Done() shutdown closes this descriptor under the blocked Read and it
+// returns "file already closed" rather than EOF. Warning there would print a
+// fault on every clean exit of a pipe-configured daemon — and only sometimes,
+// since Close() deliberately does not join this goroutine, so whether it lands
+// before process exit is a scheduling matter. A line that cries wolf on the
+// happy path is how operators learn to skim past it when it is real.
 func (p lifetimePipe) watch() {
 	defer close(p.closed)
 	buf := make([]byte, 64)
 	for {
 		n, err := p.file.Read(buf)
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
+			if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
 				slog.Warn("lifetime pipe read failed; treating it as parent exit", "err", err)
 			}
 			return
@@ -470,19 +526,26 @@ func (p lifetimePipe) Close() {
 	}
 }
 
-// listenerIsNetworkBoundary reports whether an API listener puts the harness on
-// a network, which is what decides workspace authority (ADR 0237).
+// listenerIsNetworkBoundary reports whether an ENABLED API listener puts the
+// harness on a network, which is what decides workspace authority (ADR 0237).
 //
-// The three cases are genuinely different and collapsing them was the bug this
-// helper exists to prevent:
-//
-//   - DISABLED (empty address): not a boundary. There is no listener.
 //   - UNIX SOCKET: not a boundary. Reachability is filesystem permission on a
 //     path this host owns — strictly narrower than loopback TCP, which any local
 //     process may connect to.
-//   - TCP: a boundary unless it is loopback, per the existing fail-closed gate.
+//   - TCP: a boundary unless it is loopback. An EMPTY address is a WILDCARD
+//     bind, not an absent listener: net.Listen("tcp", "") binds [::] on a
+//     kernel-chosen port. IsLoopbackAddr("") is false, so it classifies as a
+//     boundary — which is both fail-closed and what the syscall actually does.
+//
+// It deliberately does NOT know about a DISABLED listener. Whether an empty
+// address means "no listener" is the CALLER's fact and the two callers
+// disagree: serve() skips the HTTP listener entirely when --http-addr is empty,
+// while gRPC has no disable path at all (listenGRPC falls through to
+// net.Listen("tcp", cfg.grpcAddr)). Answering "not a boundary" for both is how
+// a wildcard-bound, unauthenticated gRPC listener briefly came to grant
+// client-selected workspace authority — the caller states which it means.
 func listenerIsNetworkBoundary(addr string, unixSocket bool) bool {
-	if unixSocket || addr == "" {
+	if unixSocket {
 		return false
 	}
 	return !cliconfig.IsLoopbackAddr(addr)

@@ -1371,17 +1371,24 @@ func (c config) tcpGRPCConfigured() bool {
 // API listeners. Any listener that is a network boundary wins over a local
 // sibling. An explicit operator selection wins over topology.
 //
-// "Network boundary" is listenerIsNetworkBoundary's three-way decision, not a
-// loopback string test: a UNIX-socket gRPC listener and a DISABLED HTTP listener
-// are both strictly narrower than the loopback TCP bind that already grants
+// "Network boundary" is listenerIsNetworkBoundary's decision, not a loopback
+// string test: a UNIX-socket gRPC listener and a DISABLED HTTP listener are both
+// strictly narrower than the loopback TCP bind that already grants
 // client-selected authority, so a gRPC-over-socket daemon keeps it. Reading an
 // empty --http-addr as "not loopback" would have demanded --workspace from
 // exactly the local spawned daemon that has no network surface at all.
+//
+// DISABLED is asserted here, per listener, and only for HTTP — serve() skips
+// that listener when --http-addr is empty. gRPC has no disable path, so an empty
+// --grpc-addr is a WILDCARD bind and stays a boundary. The two are not
+// interchangeable: treating an empty --grpc-addr as "no listener" would grant
+// client-selected root selection on an unauthenticated listener reachable from
+// every interface.
 func workspaceAuthorityForListeners(cfg config) (server.WorkspaceAuthority, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.workspaceAuthority)) {
 	case "":
 		grpcNetwork := listenerIsNetworkBoundary(cfg.grpcAddr, cfg.grpcUnixSocket != "")
-		httpNetwork := listenerIsNetworkBoundary(cfg.httpAddr, false)
+		httpNetwork := cfg.httpAddr != "" && listenerIsNetworkBoundary(cfg.httpAddr, false)
 		if !grpcNetwork && !httpNetwork {
 			return server.WorkspaceAuthorityClientSelected, nil
 		}
