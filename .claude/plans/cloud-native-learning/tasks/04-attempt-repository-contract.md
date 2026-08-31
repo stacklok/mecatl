@@ -2,7 +2,7 @@
 id: 04-attempt-repository-contract
 title: Add the AttemptRepository CAS and fenced-claim contract
 blocked_by: [03-attempt-domain-values]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
