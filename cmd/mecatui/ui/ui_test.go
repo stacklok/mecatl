@@ -48,6 +48,9 @@ type progress struct {
 	cond *sync.Cond
 	seen map[phase]bool
 	last phase // most recently observed phase
+	// sessionBinds counts phaseConnecting→phaseIdle transitions. Unlike phaseIdle
+	// alone, this proves that an asynchronous session creation completed and bound.
+	sessionBinds int
 	// runDone counts completed runs: a phaseRunning→…→phaseIdle return. It lets a
 	// case wait for a run to FINISH even though phaseIdle was already seen at connect
 	// time (so a plain seen[phaseIdle] can't distinguish "connected" from "run done").
@@ -62,15 +65,20 @@ func newProgress() *progress {
 }
 
 // record is the Deps.onPhase callback: it marks a phase seen, advances the
-// run-completion counter on an active→idle return, and wakes any waiter.
+// session-bind and run-completion counters on their respective transitions, and
+// wakes any waiter.
 func (p *progress) record(ph phase) {
 	p.mu.Lock()
 	p.seen[ph] = true
+	previous := p.last
 	p.last = ph
 	switch ph {
 	case phaseRunning, phaseAwaitingApproval:
 		p.wasActive = true
 	case phaseIdle:
+		if previous == phaseConnecting {
+			p.sessionBinds++
+		}
 		if p.wasActive {
 			p.runDone++
 			p.wasActive = false
@@ -87,6 +95,14 @@ func (p *progress) wait(t *testing.T, target phase, d time.Duration) {
 	t.Helper()
 	p.waitFunc(t, d, func() bool { return p.seen[target] },
 		func() string { return "reach phase " + phaseName(target) })
+}
+
+// waitSessionBinds blocks until at least n asynchronous session creations have
+// completed their phaseConnecting→phaseIdle bind transition.
+func (p *progress) waitSessionBinds(t *testing.T, n int, d time.Duration) {
+	t.Helper()
+	p.waitFunc(t, d, func() bool { return p.sessionBinds >= n },
+		func() string { return "complete a session bind (idle after connecting)" })
 }
 
 // waitRunComplete blocks until at least n runs have completed (phaseRunning →
@@ -120,8 +136,8 @@ func (p *progress) waitFunc(t *testing.T, d time.Duration, ok func() bool, desc 
 	defer p.mu.Unlock()
 	for !ok() {
 		if time.Now().After(deadline) {
-			t.Fatalf("reducer did not %s within %s (last=%s seen=%v runDone=%d)",
-				desc(), scaleWait(d), phaseName(p.last), p.seen, p.runDone)
+			t.Fatalf("reducer did not %s within %s (last=%s seen=%v sessionBinds=%d runDone=%d)",
+				desc(), scaleWait(d), phaseName(p.last), p.seen, p.sessionBinds, p.runDone)
 		}
 		p.cond.Wait()
 	}
@@ -540,6 +556,7 @@ func TestClearBuiltinProgram(t *testing.T) {
 	// the conversation.
 	tm.Type("/clear")
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	pd.prog.waitSessionBinds(t, 2, 5*time.Second)
 
 	// ctrl+c is now a graceful double-press (issue #17): the first arms the quit
 	// guard, the second exits — so the test driver presses it twice to terminate.
