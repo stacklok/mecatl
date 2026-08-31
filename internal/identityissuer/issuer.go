@@ -51,8 +51,35 @@ type Config struct {
 type KeyLoader func(name string) ([]byte, error)
 
 type manifest struct {
-	Version int           `json:"version"`
-	Keys    []manifestKey `json:"keys"`
+	Version             int           `json:"version"`
+	Generation          uint64        `json:"generation,omitempty"`
+	Phase               RotationPhase `json:"phase,omitempty"`
+	Sequence            uint64        `json:"sequence,omitempty"`
+	LastOldIssuanceUnix int64         `json:"last_old_issuance_unix,omitempty"`
+	Keys                []manifestKey `json:"keys"`
+}
+
+// RotationPhase describes the immutable manifest generation's operator-selected
+// rotation step.
+type RotationPhase string
+
+const (
+	RotationPhasePrepublish RotationPhase = "prepublish"
+	RotationPhaseActive     RotationPhase = "active"
+	RotationPhaseRetired    RotationPhase = "retired"
+)
+
+// ReplicaEvidence is the safe readiness evidence required before prepublish can
+// advance. BundleDigest is the base64url SHA-256 digest of the canonical bundle.
+type ReplicaEvidence struct {
+	Ready        bool
+	Generation   uint64
+	BundleDigest string
+}
+
+type issuerKey struct {
+	kid string
+	key *ecdsa.PrivateKey
 }
 
 type manifestKey struct {
@@ -68,13 +95,21 @@ type Issuer struct {
 	clockSkew      time.Duration
 	key            *ecdsa.PrivateKey
 	kid            string
-	bundleMu       sync.Mutex
+	keys           []issuerKey
+	generation     uint64
+	phase          RotationPhase
 	bundleSequence uint64
+	rotating       bool
+	bundleMu       sync.Mutex
 }
 
 // Load validates configuration before reading any key item, then constructs an issuer
 // only after every manifest and key validation succeeds.
 func Load(cfg Config, manifestBytes []byte, loader KeyLoader) (*Issuer, error) {
+	return loadAt(cfg, manifestBytes, loader, time.Now().UTC())
+}
+
+func loadAt(cfg Config, manifestBytes []byte, loader KeyLoader, now time.Time) (*Issuer, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("%w: issuer is disabled", errInvalidConfig)
 	}
@@ -84,13 +119,18 @@ func Load(cfg Config, manifestBytes []byte, loader KeyLoader) (*Issuer, error) {
 	if loader == nil {
 		return nil, errors.New("identity issuer key loader is required")
 	}
-	entries, err := parseManifest(manifestBytes)
+	parsed, err := parseManifest(manifestBytes)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateRotationManifest(parsed, cfg, now); err != nil {
 		return nil, err
 	}
 
 	var active *ecdsa.PrivateKey
-	for _, entry := range entries {
+	var activeKID string
+	keys := make([]issuerKey, 0, len(parsed.Keys))
+	for _, entry := range parsed.Keys {
 		der, err := loader(entry.Name)
 		if err != nil {
 			return nil, fmt.Errorf("load key %q: %w", entry.Name, err)
@@ -99,24 +139,30 @@ func Load(cfg Config, manifestBytes []byte, loader KeyLoader) (*Issuer, error) {
 		if err != nil {
 			return nil, fmt.Errorf("key %q: %w", entry.Name, err)
 		}
+		kid, err := publicJWKThumbprint(&key.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("derive key id: %w", err)
+		}
+		keys = append(keys, issuerKey{kid: kid, key: key})
 		if entry.Active {
-			active = key
+			active, activeKID = key, kid
 		}
 	}
 	if active == nil {
 		return nil, errors.New("identity issuer manifest has no active signer")
 	}
-	kid, err := publicJWKThumbprint(&active.PublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("derive active key id: %w", err)
-	}
 	return &Issuer{
-		trustDomain: cfg.TrustDomain,
-		audience:    cfg.Audience,
-		tokenTTL:    cfg.TokenTTL,
-		clockSkew:   cfg.ClockSkew,
-		key:         active,
-		kid:         kid,
+		trustDomain:    cfg.TrustDomain,
+		audience:       cfg.Audience,
+		tokenTTL:       cfg.TokenTTL,
+		clockSkew:      cfg.ClockSkew,
+		key:            active,
+		kid:            activeKID,
+		keys:           keys,
+		generation:     parsed.Generation,
+		phase:          parsed.Phase,
+		bundleSequence: parsed.Sequence,
+		rotating:       parsed.Version == 2,
 	}, nil
 }
 
@@ -171,30 +217,30 @@ func ValidateTrustDomain(trustDomain string) error {
 	return nil
 }
 
-func parseManifest(data []byte) ([]manifestKey, error) {
+func parseManifest(data []byte) (manifest, error) {
 	if len(data) == 0 || len(data) > MaxManifestBytes {
-		return nil, errors.New("identity issuer manifest size is invalid")
+		return manifest{}, errors.New("identity issuer manifest size is invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var parsed manifest
 	if err := decoder.Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("decode identity issuer manifest: %w", err)
+		return manifest{}, fmt.Errorf("decode identity issuer manifest: %w", err)
 	}
 	if err := ensureEOF(decoder); err != nil {
-		return nil, err
+		return manifest{}, err
 	}
-	if parsed.Version != 1 || len(parsed.Keys) == 0 || len(parsed.Keys) > maxKeyItems {
-		return nil, errors.New("identity issuer manifest shape is invalid")
+	if (parsed.Version != 1 && parsed.Version != 2) || len(parsed.Keys) == 0 || len(parsed.Keys) > maxKeyItems {
+		return manifest{}, errors.New("identity issuer manifest shape is invalid")
 	}
 	names := make(map[string]struct{}, len(parsed.Keys))
 	active := 0
 	for _, key := range parsed.Keys {
 		if !validKeyName(key.Name) {
-			return nil, errors.New("identity issuer key name is invalid")
+			return manifest{}, errors.New("identity issuer key name is invalid")
 		}
 		if _, duplicate := names[key.Name]; duplicate {
-			return nil, errors.New("identity issuer manifest has duplicate key names")
+			return manifest{}, errors.New("identity issuer manifest has duplicate key names")
 		}
 		names[key.Name] = struct{}{}
 		if key.Active {
@@ -202,9 +248,35 @@ func parseManifest(data []byte) ([]manifestKey, error) {
 		}
 	}
 	if active != 1 {
-		return nil, errors.New("identity issuer manifest must contain exactly one active signer")
+		return manifest{}, errors.New("identity issuer manifest must contain exactly one active signer")
 	}
-	return parsed.Keys, nil
+	return parsed, nil
+}
+
+func validateRotationManifest(parsed manifest, cfg Config, now time.Time) error {
+	if parsed.Version == 1 {
+		return nil
+	}
+	if parsed.Generation == 0 || parsed.Sequence == 0 {
+		return errors.New("identity issuer rotation generation or sequence is invalid")
+	}
+	switch parsed.Phase {
+	case RotationPhasePrepublish, RotationPhaseActive:
+		if len(parsed.Keys) != 2 || parsed.LastOldIssuanceUnix != 0 {
+			return errors.New("identity issuer overlap generation is invalid")
+		}
+	case RotationPhaseRetired:
+		if len(parsed.Keys) != 1 || parsed.LastOldIssuanceUnix <= 0 {
+			return errors.New("identity issuer retirement generation is invalid")
+		}
+		retireAfter := time.Unix(parsed.LastOldIssuanceUnix, 0).UTC().Add(cfg.TokenTTL + cfg.ClockSkew + cfg.BundleCacheTTL)
+		if now.UTC().Before(retireAfter) {
+			return errors.New("identity issuer retirement overlap has not elapsed")
+		}
+	default:
+		return errors.New("identity issuer rotation phase is invalid")
+	}
+	return nil
 }
 
 func ensureEOF(decoder *json.Decoder) error {
@@ -262,6 +334,36 @@ func (i *Issuer) TrustDomain() string { return i.trustDomain }
 
 // ActiveKID returns the RFC 7638 public-JWK thumbprint of the active signer.
 func (i *Issuer) ActiveKID() string { return i.kid }
+
+// Generation returns the manifest-declared rotation generation, or zero for a
+// legacy non-rotation manifest.
+func (i *Issuer) Generation() uint64 { return i.generation }
+
+// RotationPhase returns the manifest-declared rotation phase, or empty for a
+// legacy non-rotation manifest.
+func (i *Issuer) RotationPhase() RotationPhase { return i.phase }
+
+// BundleSequence returns the manifest-declared bundle sequence for a rotation
+// manifest, or the most recently published legacy sequence.
+func (i *Issuer) BundleSequence() uint64 {
+	i.bundleMu.Lock()
+	defer i.bundleMu.Unlock()
+	return i.bundleSequence
+}
+
+// ValidatePrepublishEvidence requires every ready replica to report the exact
+// intended generation and identical canonical-bundle digest before activation.
+func ValidatePrepublishEvidence(generation uint64, digest string, evidence []ReplicaEvidence) error {
+	if generation == 0 || digest == "" || len(evidence) == 0 {
+		return errors.New("identity issuer prepublish evidence is incomplete")
+	}
+	for _, replica := range evidence {
+		if !replica.Ready || replica.Generation != generation || replica.BundleDigest != digest {
+			return errors.New("identity issuer prepublish evidence does not agree")
+		}
+	}
+	return nil
+}
 
 // Algorithm returns the only supported signing algorithm.
 func (i *Issuer) Algorithm() string { return jwt.SigningMethodES256.Alg() }

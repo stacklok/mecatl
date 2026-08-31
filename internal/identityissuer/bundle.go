@@ -32,15 +32,20 @@ func (i *Issuer) Bundle(refreshHint time.Duration) ([]byte, error) {
 		return nil, errors.New("identity issuer bundle refresh hint is invalid")
 	}
 	coordinateSize := (elliptic.P256().Params().BitSize + 7) / 8
-	key := publicJWK{
-		KTY: "EC",
-		CRV: "P-256",
-		KID: i.kid,
-		X:   base64.RawURLEncoding.EncodeToString(i.key.X.FillBytes(make([]byte, coordinateSize))),
-		Y:   base64.RawURLEncoding.EncodeToString(i.key.Y.FillBytes(make([]byte, coordinateSize))),
+	keys := make([]publicJWK, 0, len(i.keys))
+	for _, signer := range i.keys {
+		keys = append(keys, publicJWK{
+			KTY: "EC",
+			CRV: "P-256",
+			KID: signer.kid,
+			X:   base64.RawURLEncoding.EncodeToString(signer.key.X.FillBytes(make([]byte, coordinateSize))),
+			Y:   base64.RawURLEncoding.EncodeToString(signer.key.Y.FillBytes(make([]byte, coordinateSize))),
+		})
 	}
 	i.bundleMu.Lock()
 	defer i.bundleMu.Unlock()
-	i.bundleSequence++
-	return json.Marshal(jwtBundle{Sequence: i.bundleSequence, RefreshHint: int64(refreshHint / time.Second), Keys: []publicJWK{key}})
+	if !i.rotating {
+		i.bundleSequence++
+	}
+	return json.Marshal(jwtBundle{Sequence: i.bundleSequence, RefreshHint: int64(refreshHint / time.Second), Keys: keys})
 }

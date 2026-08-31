@@ -150,17 +150,21 @@ complete HTTPS bundle bootstrap URL before it reads a key. The trust domain is n
 inferred from the host, origin, bundle, or Kubernetes metadata.
 
 A bounded strict manifest selects immutable named PKCS#8 P-256 key items and exactly
-one active signer. Any malformed, incomplete, duplicate, unknown, mismatched, or
-non-P-256 generation fails before publication; the package creates no ephemeral key
-fallback. Its `kid` is the RFC 7638 thumbprint of the active public JWK. The sole mint
-operation accepts a local SPIFFE subject, the registered audience, and a configured-bounded
-TTL; it owns ES256 headers, claims, timestamps, and the signing key. `Bundle` exposes only
-canonical public P-256 JWKs, a monotonic sequence, and an advisory refresh hint. A separately
-configured verifier accepts only ES256 JWT-SVIDs with a known active `kid`, local SPIFFE subject,
-exactly one configured audience, and bounded valid times. It retains only its last complete bundle
-through its own cache bound; failed, malformed, duplicate-key, and sequence-regressing refreshes
-never replace the snapshot, and stale or unready verification fails closed. There is no private-key
-projection or JWKS compatibility endpoint. See
+one active signer. Rotation manifests declare prepublish, active, or retired phase,
+generation, and public-bundle sequence: overlap generations retain both public keys
+while retirement rejects until the manifest's final old issuance plus `T+S+R`; the
+manifest remains the sole rotation record. Any malformed, incomplete, duplicate,
+unknown, mismatched, or non-P-256 generation fails before publication; the package
+creates no ephemeral key fallback. Its `kid` is the RFC 7638 thumbprint of the active
+public JWK. The sole mint operation accepts a local SPIFFE subject, the registered
+audience, and a configured-bounded TTL; it owns ES256 headers, claims, timestamps, and
+the signing key. `Bundle` exposes only canonical public P-256 JWKs, a monotonic
+sequence, and an advisory refresh hint. A separately configured verifier accepts only
+ES256 JWT-SVIDs with a known active `kid`, local SPIFFE subject, exactly one configured
+audience, and bounded valid times. It retains only its last complete bundle through its
+own cache bound; failed, malformed, duplicate-key, and sequence-regressing refreshes
+never replace the snapshot, and stale or unready verification fails closed. There is no
+private-key projection or JWKS compatibility endpoint. See
 [ADR 0251](adr/0251-identity-issuer-substrate.md).
 
 A separately constructed issuer-only `Host` is the future combined broker's shell-less
