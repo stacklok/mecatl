@@ -2,9 +2,9 @@
 id: 03-attempt-domain-values
 title: Define content-free learning attempt values and provenance
 blocked_by: [02-direct-draft-inactivity]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/03-attempt-domain-values"
+worktree: ".scratch/worktrees/learning-attempt-domain-values"
 issue: ""
 retries: 0
 last_error: ""
