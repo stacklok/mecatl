@@ -44,8 +44,17 @@ func (i IncarnationID) Valid() bool {
 		if len(s) != 4+26 {
 			return false
 		}
-		decoded, err := incarnationEncoding.DecodeString(strings.ToUpper(s[4:]))
-		return err == nil && len(decoded) == incarnationBytes
+		for _, c := range s[4:] {
+			if (c < 'a' || c > 'z') && (c < '2' || c > '7') {
+				return false
+			}
+		}
+		switch s[len(s)-1] {
+		case 'a', 'e', 'i', 'm', 'q', 'u', 'y', '4':
+			return true
+		default:
+			return false
+		}
 	}
 	if strings.HasPrefix(s, "legacy_") {
 		if len(s) != 7+64 {

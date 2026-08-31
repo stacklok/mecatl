@@ -35,7 +35,7 @@ type Store struct {
 	// port.PrunableStore List/Delete retention seam.
 	savedAt        map[session.SessionID]time.Time
 	estimatedBytes map[session.SessionID]int64
-	lineage        map[string]port.SessionLineageRecord
+	prunedLineage  []port.SessionLineageRecord
 	deleteFailures map[session.SessionID]error
 	now            func() time.Time
 	// generation is a monotonic counter bumped on every Save/Delete, and
@@ -94,7 +94,6 @@ func New(opts ...Option) *Store {
 		sessions:       make(map[session.SessionID]sessnap.Snapshot),
 		savedAt:        make(map[session.SessionID]time.Time),
 		estimatedBytes: make(map[session.SessionID]int64),
-		lineage:        make(map[string]port.SessionLineageRecord),
 		deleteFailures: make(map[session.SessionID]error),
 		now:            time.Now,
 	}
@@ -115,10 +114,13 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	}
 	estimatedBytes := estimateSnapshotBytes(snap)
 	st.mu.Lock()
+	prior, existed := st.sessions[s.ID]
+	if existed && !sameLineageIncarnation(prior, s) {
+		st.prunedLineage = append(st.prunedLineage, lineageSnapshotRecord(s.ID, prior, port.SessionLineagePruned, st.now()))
+	}
 	st.sessions[s.ID] = snap
 	st.savedAt[s.ID] = st.now()
 	st.estimatedBytes[s.ID] = estimatedBytes
-	st.upsertLineageLocked(lineageRecord(s, port.SessionLineageRetained, time.Time{}))
 	st.generation++
 	st.mu.Unlock()
 	return nil
@@ -143,7 +145,6 @@ func (st *Store) Create(_ context.Context, s *session.Session) error {
 	st.sessions[s.ID] = snap
 	st.savedAt[s.ID] = st.now()
 	st.estimatedBytes[s.ID] = estimatedBytes
-	st.upsertLineageLocked(lineageRecord(s, port.SessionLineageRetained, time.Time{}))
 	st.generation++
 	return nil
 }
@@ -267,10 +268,6 @@ func encodedBytesLen(n int) int {
 	return base64.StdEncoding.EncodedLen(n)
 }
 
-func lineageRecord(s *session.Session, state port.SessionLineageState, deletedAt time.Time) port.SessionLineageRecord {
-	return port.SessionLineageRecord{ID: s.ID, Kind: s.Kind, Relationship: s.Relationship, OwnerScope: session.PrincipalScopeHash(s.Owner), Incarnation: string(s.Incarnation()), State: state, DeletedAt: deletedAt}
-}
-
 func lineageSnapshotRecord(id session.SessionID, snap sessnap.Snapshot, state port.SessionLineageState, deletedAt time.Time) port.SessionLineageRecord {
 	kind := snap.Kind
 	if kind == "" {
@@ -279,19 +276,11 @@ func lineageSnapshotRecord(id session.SessionID, snap sessnap.Snapshot, state po
 	return port.SessionLineageRecord{ID: id, Kind: kind, Relationship: snap.Relationship, OwnerScope: session.PrincipalScopeHash(snap.Owner), Incarnation: string(session.PersistedIncarnationID(snap.Incarnation, id, snap.CreatedAt.UnixNano(), snap.Owner)), State: state, DeletedAt: deletedAt}
 }
 
-func lineageKey(id session.SessionID, incarnation string) string {
-	return string(id) + "\x00" + incarnation
-}
-
-func (st *Store) upsertLineageLocked(record port.SessionLineageRecord) {
-	for key, old := range st.lineage {
-		if old.ID == record.ID && old.State == port.SessionLineageRetained && old.Incarnation != record.Incarnation {
-			old.State = port.SessionLineagePruned
-			old.DeletedAt = st.now()
-			st.lineage[key] = old
-		}
+func sameLineageIncarnation(snap sessnap.Snapshot, current *session.Session) bool {
+	if snap.Incarnation != "" {
+		return snap.Incarnation == current.Incarnation()
 	}
-	st.lineage[lineageKey(record.ID, record.Incarnation)] = record
+	return session.PersistedIncarnationID("", snap.ID, snap.CreatedAt.UnixNano(), snap.Owner) == current.Incarnation()
 }
 
 func lineageLess(a, b port.SessionLineageRecord, root session.SessionID) bool {
@@ -307,19 +296,29 @@ func lineageLess(a, b port.SessionLineageRecord, root session.SessionID) bool {
 	return a.Incarnation < b.Incarnation
 }
 
+func lineageMatches(row port.SessionLineageRecord, query port.SessionLineageQuery) bool {
+	rel := row.Relationship
+	return row.ID == query.RootID ||
+		rel.ParentSessionID == query.RootID && rel.ParentIncarnation == query.RootIncarnation ||
+		rel.OriginSessionID == query.RootID && rel.OriginIncarnation == query.RootIncarnation ||
+		rel.DebugTargetID == query.RootID && rel.DebugTargetIncarnation == query.RootIncarnation
+}
+
 // ReadSessionLineage returns the root and its direct children from the content-free index.
 func (st *Store) ReadSessionLineage(_ context.Context, query port.SessionLineageQuery) (port.SessionLineageResult, error) {
 	if err := port.ValidateSessionLineageQuery(query); err != nil {
 		return port.SessionLineageResult{}, err
 	}
 	st.mu.RLock()
-	rows := make([]port.SessionLineageRecord, 0)
-	for _, row := range st.lineage {
-		rel := row.Relationship
-		if row.ID == query.RootID ||
-			rel.ParentSessionID == query.RootID && rel.ParentIncarnation == query.RootIncarnation ||
-			rel.OriginSessionID == query.RootID && rel.OriginIncarnation == query.RootIncarnation ||
-			rel.DebugTargetID == query.RootID && rel.DebugTargetIncarnation == query.RootIncarnation {
+	rows := make([]port.SessionLineageRecord, 0, len(st.sessions)+len(st.prunedLineage))
+	for id, snap := range st.sessions {
+		row := lineageSnapshotRecord(id, snap, port.SessionLineageRetained, time.Time{})
+		if lineageMatches(row, query) {
+			rows = append(rows, row)
+		}
+	}
+	for _, row := range st.prunedLineage {
+		if lineageMatches(row, query) {
 			rows = append(rows, row)
 		}
 	}
@@ -357,7 +356,7 @@ func (st *Store) DeleteSessionIfUnchanged(_ context.Context, expected port.Sessi
 		return false, err
 	}
 	row := lineageSnapshotRecord(expected.ID, snap, port.SessionLineagePruned, st.now())
-	st.lineage[lineageKey(row.ID, row.Incarnation)] = row
+	st.prunedLineage = append(st.prunedLineage, row)
 	delete(st.sessions, expected.ID)
 	delete(st.savedAt, expected.ID)
 	delete(st.estimatedBytes, expected.ID)
@@ -375,7 +374,7 @@ func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 	}
 	if snap, ok := st.sessions[id]; ok {
 		row := lineageSnapshotRecord(id, snap, port.SessionLineagePruned, st.now())
-		st.lineage[lineageKey(row.ID, row.Incarnation)] = row
+		st.prunedLineage = append(st.prunedLineage, row)
 		st.generation++
 	}
 	delete(st.sessions, id)

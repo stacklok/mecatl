@@ -29,6 +29,21 @@ func TestSessionIncarnationIsRandomIdentityNotMetadata(t *testing.T) {
 	}
 }
 
+func TestIncarnationIDValidRejectsNonCanonicalForms(t *testing.T) {
+	valid := session.NewIncarnationID()
+	if !valid.Valid() {
+		t.Fatalf("minted incarnation %q is invalid", valid)
+	}
+	upper := session.IncarnationID(strings.ToUpper(string(valid)))
+	if upper.Valid() {
+		t.Fatalf("uppercase incarnation %q must be rejected", upper)
+	}
+	badTail := session.IncarnationID(string(valid[:len(valid)-1]) + "b")
+	if badTail.Valid() {
+		t.Fatalf("non-canonical tail incarnation %q must be rejected", badTail)
+	}
+}
+
 func TestSessionIncarnationPersistsAndLegacyIsDisjoint(t *testing.T) {
 	created := time.Unix(1700000000, 123).UTC()
 	owner := &session.Principal{Issuer: "issuer", Subject: "subject", GrantType: session.GrantTypeUser}
