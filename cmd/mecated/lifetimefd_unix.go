@@ -31,16 +31,22 @@ func checkLifetimePipeFD(fd int) error {
 	if err := syscall.Fstat(fd, &st); err != nil {
 		return fmt.Errorf("--lifetime-pipe-fd %d is not an open descriptor in this process (%w): the parent must pass the pipe's READ end as an inherited fd", fd, err)
 	}
-	if uint32(st.Mode)&syscall.S_IFMT != syscall.S_IFIFO {
-		return fmt.Errorf("--lifetime-pipe-fd %d is open but is a %s, not a pipe: pass the READ end of an inherited pipe — a socket, a regular file, or a descriptor this process already owns is a mistake, not a parent-liveness signal", fd, fdTypeName(uint32(st.Mode)))
+	if st.Mode&syscall.S_IFMT != syscall.S_IFIFO {
+		return fmt.Errorf("--lifetime-pipe-fd %d is open but is a %s, not a pipe: pass the READ end of an inherited pipe — a socket, a regular file, or a descriptor this process already owns is a mistake, not a parent-liveness signal", fd, fdTypeName(st))
 	}
 	return nil
 }
 
 // fdTypeName names what the descriptor actually is, which is more useful to
 // whoever mistyped the number than a raw mode word.
-func fdTypeName(mode uint32) string {
-	switch mode & syscall.S_IFMT {
+//
+// It takes the whole Stat_t rather than the mode so that no conversion is
+// needed at either end: Stat_t.Mode is uint32 on Linux and uint16 on Darwin, so
+// any fixed parameter type is a redundant conversion on one of them and the
+// unconvert linter is right to reject it. The untyped syscall constants adapt to
+// whichever width the platform uses.
+func fdTypeName(st syscall.Stat_t) string {
+	switch st.Mode & syscall.S_IFMT {
 	case syscall.S_IFSOCK:
 		return "socket"
 	case syscall.S_IFREG:
@@ -54,6 +60,6 @@ func fdTypeName(mode uint32) string {
 	case syscall.S_IFLNK:
 		return "symlink"
 	default:
-		return fmt.Sprintf("descriptor of type %#o", mode&syscall.S_IFMT)
+		return fmt.Sprintf("descriptor of type %#o", st.Mode&syscall.S_IFMT)
 	}
 }
