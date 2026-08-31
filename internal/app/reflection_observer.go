@@ -296,8 +296,8 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	if err != nil {
 		return reflectionReceipt{Disposition: reflectionFailed}, err
 	}
-	if existingAttempt && attempt.State != learning.AttemptQueued {
-		return reflectionReceipt{ID: string(attempt.ID), Disposition: reflectionDuplicate}, nil
+	if existingAttempt && attempt.State.Terminal() {
+		return o.receiptForAttempt(ctx, attempt, input, reflectionPrincipal(owner)), nil
 	}
 	var reserve func() bool
 	var complete func(reflectionReceipt)
@@ -310,7 +310,13 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 			o.emitReflection(receipt)
 		}
 	}
-	receipt, err := o.coordinator.Enqueue(o.job(input, signals, owner, automaticDigest, reserve, complete, string(attempt.ID)))
+	job := o.job(input, signals, owner, automaticDigest, reserve, complete, string(attempt.ID))
+	partition, partitionErr := learning.DeriveAttemptPartition(reflectionPrincipal(owner))
+	if partitionErr != nil {
+		return reflectionReceipt{ID: string(attempt.ID), Disposition: reflectionFailed}, partitionErr
+	}
+	job.attempt = &durableAttemptWork{repository: o.attempts, partition: partition, id: attempt.ID}
+	receipt, err := o.coordinator.Enqueue(job)
 	if automatic && o.metrics != nil {
 		kind := learning.ActivityKind("")
 		reason := learning.AdmissionReason("")
@@ -334,6 +340,41 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 		return receipt, waitErr
 	}
 	return done, nil
+}
+
+func (o *reflectionObserver) receiptForAttempt(ctx context.Context, attempt learning.AttemptRecord, input learning.Input, principal string) reflectionReceipt {
+	receipt := reflectionReceipt{ID: string(attempt.ID), Disposition: reflectionDuplicate, Abstained: attempt.Outcome == learning.AttemptOutcomeAbstained}
+	if attempt.Outcome == learning.AttemptOutcomeFailed {
+		receipt.Err = string(attempt.FailureCode)
+	}
+	if attempt.Outcome == learning.AttemptOutcomeSucceeded {
+		// A successful proposed attempt reaches terminal only after the downstream
+		// proposal checkpoint; preserve that durable fact even if the proposal was
+		// subsequently retired by its independent retention lifecycle.
+		receipt.Staged = 1
+	}
+	if attempt.ProposalID == "" || o.repository == nil {
+		return receipt
+	}
+	partitions := []learning.ProposalPartition{{Principal: principal}}
+	if input.Trajectory.Workspace != "" {
+		partitions = append(partitions, learning.ProposalPartition{Principal: principal, Project: input.Trajectory.Workspace})
+	}
+	for _, partition := range partitions {
+		proposal, found, err := o.repository.Get(ctx, partition, attempt.ProposalID)
+		if err != nil || !found {
+			continue
+		}
+		receipt.Staged = 1
+		switch proposal.Status {
+		case learning.ProposalPromoted:
+			receipt.Promoted = 1
+		case learning.ProposalConflicted:
+			receipt.Conflicted = 1
+		}
+		return receipt
+	}
+	return receipt
 }
 
 func (o *reflectionObserver) emitAdmission(decision learning.AdmissionDecision) {
