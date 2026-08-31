@@ -115,10 +115,9 @@ func TestEditBackIdlePausedPullsMergedQueue(t *testing.T) {
 	}
 }
 
-// TestEscStillClearsAllNotEditBack: esc (the clear-all key) still DROPS the queue
-// outright — edit-back did not steal esc's meaning. Pins the non-regression that ↑
-// and esc are distinct: ↑ preserves, esc destroys.
-func TestEscStillClearsAllNotEditBack(t *testing.T) {
+// TestEscCancelsWithoutDroppingQueue pins that Escape now cancels directly; queued
+// follow-ups remain available for the terminal paused state.
+func TestEscCancelsWithoutDroppingQueue(t *testing.T) {
 	m, _ := newQueueModel(t)
 	m = startRunning(t, m, "first")
 	m = enqueue(t, m, "second")
@@ -126,11 +125,11 @@ func TestEscStillClearsAllNotEditBack(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
 
-	if len(m.queued) != 0 {
-		t.Fatalf("esc must clear the queue outright, got %v", m.queued)
+	if len(m.queued) != 1 || m.queued[0] != "second" {
+		t.Fatalf("esc changed queued follow-up: %v", m.queued)
 	}
 	if strings.TrimSpace(m.prompt.Value()) != "" {
-		t.Errorf("esc-clear must not load the queue into the input, got %q", m.prompt.Value())
+		t.Errorf("esc must not load the queue into the input, got %q", m.prompt.Value())
 	}
 }
 

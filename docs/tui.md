@@ -848,9 +848,9 @@ A **large** bracketed paste — **≥ 2000 characters or ≥ 30 lines**, alone o
 can't rebuild the lag; only the incoming paste is ever staged, typed text never
 converts) — does not enter the input buffer literally. It is staged behind a
 `[Pasted text #N]` placeholder (the text twin of the `[Image #N]` marker), and the
-full payload expands back **in place** when the prompt is sent — or, mid-run, the
-moment `enter` queues it as a follow-up (the queue always holds final text). Below
-the thresholds a paste is byte-identical to the literal-insert behaviour.
+full payload expands back **in place** when the prompt is sent — or, mid-run, when
+`enter` steers it on a steering-capable server or queues it as a fallback follow-up
+(the queue always holds final text). Below the thresholds a paste is byte-identical to the literal-insert behaviour.
 
 Why: the input widget re-wraps every buffered line on every rendered frame, so a huge
 paste sitting in the buffer made **every subsequent keystroke** pay for the paste
@@ -946,14 +946,15 @@ show the plain prompt-hint card.
 | Key | Action |
 |---|---|
 | `enter` (idle) | send the prompt |
-| `enter` (while a run streams) | **queue a follow-up** (staged; the whole queue is **merged into one prompt** and sent when the turn ends) |
+| `enter` (while a run streams) | **steer the current run** when supported (applies at the next turn boundary); otherwise **queue a follow-up** (staged; the whole queue is **merged into one prompt** and sent when the turn ends) |
 | `↑` (empty input, non-empty queue) | **edit queued** — pull the merged staged follow-ups back into the input for revising (non-destructive; the queue is emptied into the textarea, not dropped). Works both mid-run and while a paused queue is held. |
 | `shift+enter` (or `ctrl+j`) | newline in the input |
 | paste (bracketed) | replace the active prompt selection, or insert clipboard text at the caret; a single pasted **media-file path** is staged as an attachment instead, and a **large** paste (≥ 2000 chars — alone or combined with the current input — or ≥ 30 lines) is staged behind a `[Pasted text #N]` placeholder, replacing the active selection before insertion or otherwise appending at the end of the input, expanding on send (ignored while an overlay/modal is open) |
 | `ctrl+v` | read the OS clipboard — a clipboard **image** stages as an `[Image #N]` attachment (when supported), else replace the active prompt selection with clipboard **text** (see below) |
-| `esc` (while a run streams) | clear staged input → else clear the queue → else cancel the in-flight run (sends `Cancel`; waits for the terminal result) |
+| `ctrl+u` | clear the entire unsent draft, including staged attachments and large-paste placeholders (rebindable via `ClearPrompt`) |
+| `esc` (while a run streams) | cancel the in-flight run (sends `Cancel`; waits for the terminal result; leaves the draft and queued follow-ups intact) |
 | `enter` (idle, **paused queue**, empty input) | resume — send the merged staged follow-ups |
-| `esc` (idle, **paused queue**) | clear staged input → else clear the queue |
+| `esc` (idle, **paused queue**) | clear the queue (the current draft remains intact) |
 | `ctrl+c` | graceful quit (double-press): with a non-empty prompt the first press **clears the input**; on an empty prompt it **arms** the guard and shows a footer hint — press `ctrl+c` again within 3s to exit. Any other key disarms. The fatal (dead-connection) screen exits on a single press. |
 | `ctrl+d` | the unix EOF-habit quit (double-press, **empty prompt only**): on an empty prompt it arms its OWN guard and shows a hint — press `ctrl+d` again within 3s to exit. On a populated prompt it stays the textarea's delete-forward, never a quit. Independent of `ctrl+c` (neither key confirms the other). |
 | `ctrl+z` | **suspend the TUI to the shell** (SIGTSTP); `fg` resumes it. Works in every state — idle, mid-run, even the permission modal (the ask stays pending). **Suspending does NOT stop the embedded `mecated` or an in-flight run** — the engine keeps working in the background and the UI re-syncs on `fg`. An in-conversation notice on resume names the session and what was suspended (a pre-suspend terminal notice can't survive the alt-screen teardown, so it's shown on return instead). |
@@ -1081,9 +1082,10 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 
 | Action | Default chord(s) | Scope | What it does |
 |---|---|---|---|
-| `Submit` | `enter` | global | send the prompt; while a run streams, queue a follow-up |
+| `Submit` | `enter` | global | send the prompt; while a run streams, steer when supported or queue a follow-up otherwise |
 | `Newline` | `shift+enter`, `ctrl+j` | global | newline in the input |
-| `Cancel` | `esc` | global | cancel the running turn / clear staged input & queue |
+| `Cancel` | `esc` | global | cancel the running turn; idle Escape leaves the current draft intact |
+| `ClearPrompt` | `ctrl+u` | global | clear the entire unsent draft, including staged attachments and large-paste placeholders |
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
 | `SelectAll` | `ctrl+g` | global | select all prompt text; the `/models` picker keeps its `SetGlobalDefault` binding |
@@ -1136,8 +1138,8 @@ explicit rebind of either must keep the pair disjoint, or startup fails with a
 
 The prompt input is the bubbles `textarea` widget, which ships its **own**
 keymap (`textarea.DefaultKeyMap`). Its editing keys, including upstream keyboard
-selection, are not remappable through `--keymap`; the only client-owned selection
-exceptions are `SelectAll` and `CopySelection` in the action table above:
+selection, are not remappable through `--keymap`; the client-owned exceptions are
+`SelectAll`, `CopySelection`, and `ClearPrompt` in the action table above:
 
 | Chord(s) | Edit |
 |---|---|
@@ -1147,7 +1149,8 @@ exceptions are `SelectAll` and `CopySelection` in the action table above:
 | `down` / `ctrl+n`, `up` / `ctrl+p` | next / previous line |
 | `home` / `ctrl+a`, `end` / `ctrl+e` | line start / line end |
 | `alt+backspace` / `ctrl+w`, `alt+delete` / `alt+d` | delete word backward / forward |
-| `ctrl+k`, `ctrl+u` | kill to line end / line start |
+| `ctrl+k` | kill to line end |
+| `ctrl+u` | clear the entire unsent draft (mecatui intercepts it as `ClearPrompt`) |
 | `backspace` / `ctrl+h`, `delete` / `ctrl+d` | delete character backward / forward |
 | `enter` / `ctrl+m` | insert newline (mecatui intercepts `enter` as Submit first) |
 | `ctrl+v` | paste (mecatui intercepts `ctrl+v` as Paste first) |
@@ -1258,7 +1261,9 @@ single-column left border and is the SINGLE vertical accent cue (the textarea's 
 prompt bar and line-number gutter are suppressed), staying mode-coloured at full strength
 whether the input is focused or blurred. The panel carries a tinted top-pad row inside it so the prompt isn't pressed against
 the top border, and one blank spacer row sits above the panel so it isn't jammed against the
-conversation history.
+conversation history. The editor preserves a three-row minimum, grows and shrinks
+with explicit newlines and soft wraps to eight rows, then scrolls internally to keep
+the caret visible.
 
 **Header bar.** `mecatui · session #<digest> · <model> · mode <mode> · <server>`.
 The session segment uses the same terminal-safe eight-character SHA-256 digest as the
@@ -1643,8 +1648,10 @@ spot cycles back to a plain anchor. A **right-click** or **`ctrl+shift+c`** copi
 the active prompt or conversation selection; with no selection either action is a
 no-op. Conversation selection still copies on release; prompt selection does not.
 **`esc`** clears an active selection **before** its other
-meanings (cancel a run / close an overlay / clear the input or queue); with no
-selection, `esc` behaves exactly as before. Conversation selection is **blocked** while
+meanings (cancel a running turn or close an overlay); with no selection, it cancels
+an active run directly while preserving the draft, queued follow-ups, and steer. At
+idle it leaves the draft intact; the paused-queue case clears only that queue.
+Conversation selection is **blocked** while
 an overlay/modal owns the screen (permission ask, `/mcp`, `/team`, `/agents`,
 `/skills`, `/soul`, `/usermodel`, `/models`, help, the fatal screen) — a press there
 starts nothing, and opening an overlay clears an in-progress conversation selection
@@ -1692,11 +1699,11 @@ and the prompt-text hit bounds. It is off by default (zero cost when unset).
 ### Type-while-running and queued follow-ups
 
 The input stays **focused while a run streams**, so you can compose the next
-request without waiting. Pressing `enter` mid-run **enqueues** the (trimmed,
-non-empty) line rather than starting a second concurrent run — the queue is capped
-at 16; an over-cap `enter` is rejected with a muted `queue full (16)` status and the
-input is kept. A muted card above the input shows `⏳ N queued · ↑ edit` with up to
-three previews (`+K more` over that).
+request without waiting. Pressing `enter` mid-run **steers** the (trimmed,
+non-empty) line when the server supports steering; otherwise it queues the line
+instead of starting a second concurrent run. The fallback queue is capped at 16; an
+over-cap `enter` is rejected with a muted `queue full (16)` status and the input is
+kept. A muted card above the input shows `⏳ N queued · ↑ edit` with up to three previews (`+K more` over that).
 
 When the run ends on a **healthy** stop, the whole queue is **merged into one prompt**
 (the staged lines joined by a blank line) and submitted through the ordinary prompt
@@ -1779,7 +1786,7 @@ queue to the engine steer path:
   the engine is the sole authority on what happened to a steer (the client cannot
   observe the exact drain moment across stream latency), so the card shows what
   the server acked/echoed, never a client-side guess: `⏳ steer: sending…` (sent,
-  ack in flight) → `⏳ steer queued · ↑ edit · esc retract` (acked, parked for the
+  ack in flight) → `⏳ steer queued · ↑ edit · esc cancel` (acked, parked for the
   next boundary) → `↪ steer sent as a follow-up (run had already ended)` (a
   **too-late** race: the run had already gone terminal, so the text was
   auto-promoted to a fresh follow-up run — never silently dropped) or
@@ -1795,11 +1802,11 @@ queue to the engine steer path:
   queue's pending sends back into the input as ONE editable blob; resending sends
   the edited blob as a fresh fragment under a NEW `message_id` (an already-drained
   send is never re-sent — the watermark split keeps the queue honest). A late
-  `none_pending` ack means the drain won — the steer shipped as sent. `esc` on a
-  pending/queued steer **retracts** it (`steer_cancel`) before it would cancel
-  the run. Text and attachment bytes share this lifecycle: `↑` restores both to
-  the draft, the drain watermark releases the landed prefix, and a successful
-  retract drops both.
+  `none_pending` ack means the drain won — the steer shipped as sent. Escape does
+  not retract a pending/queued steer: after selection-clear precedence it cancels the
+  running turn directly and preserves the steer, draft, and queued follow-ups. Text
+  and attachment bytes share this lifecycle: `↑` restores both to the draft, the drain
+  watermark releases the landed prefix, and a successful retract drops both.
 
 When `steer` is **false** because the feature is runtime-disabled, none of this
 engages: all mid-run input, including attachment bytes, stays in the #228 local

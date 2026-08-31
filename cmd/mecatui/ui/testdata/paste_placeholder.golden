@@ -77,4 +77,4 @@
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
-? help · / commands · ctrl+g select all · ctrl+shift+c copy · ctrl+c quit
+? help · / commands · ctrl+g select all · ctrl+shift+c copy · ctrl+u clear · ctrl+c quit

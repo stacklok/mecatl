@@ -14,7 +14,8 @@ Press `?` on an empty prompt to open the live help overlay. It shows the active 
 | `enter` | Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise. |
 | `shift+enter` or `ctrl+j` | Insert a newline. |
 | `↑` | With empty input, bring queued follow-ups back for editing. |
-| `esc` | Clear staged input, then the queue, then cancel the active run. |
+| `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders. |
+| `esc` | Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft. |
 | `ctrl+t` | Expand a tool card or approval details. |
 | `ctrl+g` | Select all prompt text. |
 | `ctrl+shift+c` | Copy the active prompt or conversation selection; no selection is a no-op. |
@@ -49,6 +50,7 @@ keymap:
   Effort: ctrl+f5,ctrl+f6
   SelectAll: ctrl+g
   CopySelection: ctrl+shift+c
+  ClearPrompt: ctrl+u
   Allow: y
   Deny: n
 ```
@@ -65,6 +67,6 @@ Action names are exact. Global actions need a modified or special chord so norma
 
 ### Input editing caveat
 
-The prompt textarea has its own editing keys and they are not remappable through `--keymap`, apart from the client-owned `SelectAll` and `CopySelection` actions. For example, `ctrl+b`/`ctrl+f` move by character, `ctrl+w` deletes a word, and `ctrl+u`/`ctrl+k` kill to the start/end of a line. It supports upstream keyboard selection, including `shift+arrow`; typing, text paste, newline insertion, and deletion act on an active selection. On the alternate screen, drag over prompt text to select it visibly. Starting a prompt selection clears a conversation selection and vice versa. Prompt mouse release does not copy; use `ctrl+shift+c` or right-click to copy the active prompt or conversation selection through Mecatl's clipboard transport. Prompt selection survives permission prompts, overlays, and other non-content changes, and clears when the prompt changes or another surface starts a selection. With `--no-mouse`, mouse gestures are disabled so the terminal retains native selection, while keyboard prompt selection remains available. Some defaults intentionally take precedence: `ctrl+a` opens Agents, `ctrl+e` opens Effort, `ctrl+t` expands details, and `ctrl+v` handles paste. `ctrl+g` selects all only in the prompt; it remains `SetGlobalDefault` in the models picker. Remapping an action away frees its chord for the textarea.
+The prompt textarea has its own editing keys and they are not remappable through `--keymap`, apart from the client-owned `SelectAll`, `CopySelection`, and `ClearPrompt` actions. `ClearPrompt` defaults to `ctrl+u` and clears the entire unsent draft, including staged attachments and large-paste placeholders. For example, `ctrl+b`/`ctrl+f` move by character, `ctrl+w` deletes a word, and `ctrl+k` kills to the end of a line. It supports upstream keyboard selection, including `shift+arrow`; typing, text paste, newline insertion, and deletion act on an active selection. On the alternate screen, drag over prompt text to select it visibly. Starting a prompt selection clears a conversation selection and vice versa. Prompt mouse release does not copy; use `ctrl+shift+c` or right-click to copy the active prompt or conversation selection through Mecatl's clipboard transport. Prompt selection survives permission prompts, overlays, and other non-content changes, and clears when the prompt changes or another surface starts a selection. With `--no-mouse`, mouse gestures are disabled so the terminal retains native selection, while keyboard prompt selection remains available. Some defaults intentionally take precedence: `ctrl+a` opens Agents, `ctrl+e` opens Effort, `ctrl+t` expands details, and `ctrl+v` handles paste. `ctrl+g` selects all only in the prompt; it remains `SetGlobalDefault` in the models picker. Remapping an action away frees its chord for the textarea.
 
 For every action name, editing chord, overlay key, mouse behavior, and validation rule, see the [exhaustive `docs/tui.md` key reference](https://github.com/stacklok/mecatl/blob/main/docs/tui.md#keys).

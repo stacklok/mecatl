@@ -2194,15 +2194,12 @@ func (m Model) pasteGateOpen() bool {
 // stays focused so the user can compose a steer or queued follow-up. It mirrors
 // onIdleKey's precedence so the input behaves the same mid-run as at idle, with
 // two differences — bare local built-ins still run locally, then enter steers or
-// enqueues ordinary input; esc has a layered meaning before it falls through to
-// cancel:
+// enqueues ordinary input; esc cancels the in-flight run directly:
 //
 //	(1) an open palette claims its navigation and completion keys (↑/↓/tab/enter)
 //	    so builtins dispatch through the same path and workspace rows complete;
-//	    esc is handled by the layered cancel path below;
-//	(2) esc/Cancel: non-empty input → clear the input (and resync the palette);
-//	    else non-empty queue → clear the queue (status "queue cleared"); else →
-//	    SendCancel (today's behaviour: the run ends with stop "cancelled");
+//	    esc is handled by the cancel path below;
+//	(2) esc/Cancel sends Cancel and leaves the draft, staged queue, and steer state intact;
 //	(3) shift+enter (Newline) → insert a newline;
 //	(4) enter (Submit) → run a bare local built-in, or enqueuePrompt for model-facing
 //	    input (which steers when supported);
@@ -2221,8 +2218,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	// The @-mention menu, like the palette, claims its navigation/complete keys
 	// while running EXCEPT enter (which reaches the same builtin dispatcher, then
-	// steers or queues) and esc (the Cancel branch layers clear-input/clear-queue/cancel
-	// below).
+	// steers or queues) and esc (the Cancel branch sends Cancel directly).
 	if m.mention.open && !key.Matches(msg, m.keys.Submit) && !key.Matches(msg, m.keys.Cancel) {
 		if mm, handled := m.onMentionKey(msg); handled {
 			return mm, nil
@@ -2231,8 +2227,8 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.wantsEditBack(msg):
 		// ↑ on an EMPTY input line with staged follow-ups pulls the merged queue back
-		// into the textarea for editing (non-destructive; esc clears outright). Placed
-		// before Submit/the textarea default so it wins the empty-input case.
+		// into the textarea for editing. It is distinct from Escape, which cancels
+		// the running turn without changing the queue.
 		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Agents):
 		// ctrl+a opens the unified agents overlay MID-RUN (Gap B): the deep view is
@@ -2259,46 +2255,9 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// onRunningCancel handles esc while a run streams, in layered priority (extracted
-// from onRunningKey to keep its cyclomatic complexity under the bound): clear the
-// staged input first, else clear the staged queue, else retract a pending steer
-// (steer mode), else cancel the in-flight run.
+// onRunningCancel sends Cancel while a run streams without changing any unsent
+// composition state. ClearPrompt is the explicit action for dropping a draft.
 func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
-	if strings.TrimSpace(m.prompt.Value()) != "" {
-		// Staged-but-unsent input: esc clears it first (mirrors a text editor's
-		// "esc clears the line"), leaving the queue and the run untouched.
-		m.prompt.Reset()
-		m.pendingPromptMedia = client.MediaResult{}
-		return m.afterInputEdit(nil)
-	}
-	if len(m.queued) > 0 {
-		// No live input but staged follow-ups: esc drops the queue before it would
-		// cancel the run, so a user who changed their mind can clear the backlog
-		// without killing the in-flight turn.
-		m.queued = nil
-		m.queuedMedia = client.MediaResult{}
-		m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
-		m.refreshView()
-		return m, nil
-	}
-	// Steer mode with a pending/sent (un-drained) steer: esc RETRACTS it via a
-	// steer_cancel frame before it would cancel the run — the mirror of the
-	// clear-the-queue layer above. The authoritative retracted/none_pending ack
-	// drives the lifecycle (applySteerOutcome); a drain that already won reports
-	// none_pending and clears the card.
-	if m.steer != nil && (m.steer.Phase == steerPending || m.steer.Phase == steerSent) {
-		stream := m.stream
-		id := m.steer.watermarkID()
-		m.statusMsg = m.deps.Theme.Style("muted").Render("retracting steer…")
-		return m, func() tea.Msg {
-			if stream != nil {
-				_ = stream.SendSteerCancel(id)
-			}
-			return nil
-		}
-	}
-	// Nothing staged: esc cancels the run (today's behaviour — the run ends with
-	// stop "cancelled"; the stream stays open until that terminal result).
 	stream := m.stream
 	m.statusMsg = "cancelling…"
 	return m, func() tea.Msg {
@@ -2486,8 +2445,9 @@ func (m Model) wantsEditBack(msg tea.KeyPressMsg) bool {
 // editBackQueue is the inverse of enqueuePrompt: it pulls the whole staged queue
 // back into the textarea (merged by queueMergeSep) so the user can revise it, and
 // CLEARS the queue + any pause. It is non-destructive — bound to ↑ on an EMPTY input
-// line with a non-empty queue (see onRunningKey / onIdleKey), distinct from esc,
-// which clears the queue outright. It sends nothing on the queue path: the merged
+// line with a non-empty queue (see onRunningKey / onIdleKey), distinct from Escape:
+// during a run Escape cancels directly, while an idle paused queue may be dropped.
+// It sends nothing on the queue path: the merged
 // text is now an ordinary draft the user edits and (re)submits or (re)enqueues.
 // Callers gate on the empty-input / non-empty-queue precondition, so this assumes
 // m.queued is non-empty.
@@ -2564,9 +2524,9 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case m.wantsEditBack(msg):
 		// ↑ on an EMPTY input line with staged follow-ups (a PAUSED queue held after a
 		// non-clean stop, or a queue lingering at idle) pulls the merged queue back into
-		// the textarea for editing (non-destructive; esc clears outright). Placed before
-		// Submit/the textarea default so it wins the empty-input case in both paused and
-		// idle states.
+		// the textarea for editing (non-destructive; Escape clears a paused queue). Placed
+		// before Submit/the textarea default so it wins the empty-input case in both paused
+		// and idle states.
 		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
 		// "?" is printable: open help only on an empty prompt so "?" in prose still
@@ -2591,13 +2551,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.openEffort()
 	case key.Matches(msg, m.keys.Cancel) && m.queuePaused != "":
 		// A run ended on a non-clean stop with staged follow-ups still queued (the
-		// paused state). Mirror the running-phase esc layering: a non-empty input is
-		// cleared first; otherwise esc drops the paused queue. (With no input and an
-		// empty queue queuePaused is already "", so this branch never strands esc.)
-		if strings.TrimSpace(m.prompt.Value()) != "" {
-			m.prompt.Reset()
-			return m.afterInputEdit(nil)
-		}
+		// paused state). Escape drops that paused queue; it never clears a draft.
 		m.queued = nil
 		m.queuedMedia = client.MediaResult{}
 		m.queuePaused = ""

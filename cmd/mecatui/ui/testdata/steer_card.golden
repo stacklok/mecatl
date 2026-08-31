@@ -14,12 +14,12 @@
 
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                          ┃
-┃  ⏳ steer queued · ↑ edit · esc retract  ┃
-┃    also check b.go                       ┃
-┃                                          ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                         ┃
+┃  ⏳ steer queued · ↑ edit · esc cancel  ┃
+┃    also check b.go                      ┃
+┃                                         ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
@@ -27,4 +27,4 @@
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ⣾  thinking…                                                                ctx 0 · ↑0 ↓0 cache 0%
-enter queue · esc cancel/clear · ? help · / commands · ctrl+g select all · ctrl+shift+c copy · ctrl+c quit
+enter queue · ctrl+u clear · esc cancel · ? help · / commands · ctrl+g select all · ctrl+shift+c copy · ctrl+c quit

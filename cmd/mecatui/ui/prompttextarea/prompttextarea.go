@@ -4,6 +4,7 @@ package prompttextarea
 
 import (
 	"image/color"
+	"math"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
@@ -35,13 +36,18 @@ type Editor struct {
 	mouseSelectionActive bool
 }
 
-// New builds the fixed Mecatl prompt editor.
+// New builds the configured Mecatl prompt editor.
 func New(cfg Config) Editor {
 	model := textarea.New()
 	model.Prompt = ""
 	model.ShowLineNumbers = false
 	model.Placeholder = cfg.Placeholder
-	model.SetHeight(3)
+	model.DynamicHeight = true
+	model.MinHeight = 3
+	model.MaxHeight = 8
+	// MaxHeight is also the legacy input limit when MaxContentHeight is unset.
+	// Keep Bubbles' content limit effectively unbounded while it owns scrolling.
+	model.MaxContentHeight = math.MaxInt
 	model.KeyMap.SelectAll = cfg.SelectAll
 	// Mecatl owns clipboard transport, so CopySelection is intercepted by ui.
 	model.KeyMap.CopySelection = key.NewBinding()
@@ -81,8 +87,9 @@ func (e *Editor) DeleteSelection() {
 
 // InsertNewline replaces any selected text with a user-provided newline.
 func (e *Editor) InsertNewline() {
-	e.model.DeleteSelection()
-	e.model.InsertRune('\n')
+	// Route through the textarea's key update so it recalculates dynamic height and
+	// scrolls its viewport after replacing a selection.
+	e.UpdateKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
 // Rewrite replaces prompt text for a host-owned operation and clears selection first.

@@ -1,6 +1,7 @@
 package prompttextarea
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -58,6 +59,73 @@ func TestKeyUpdatePreservesUpstreamSelectionBehavior(t *testing.T) {
 	editor.UpdateKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if got := editor.Value(); got != "x" {
 		t.Fatalf("key update = %q, want x", got)
+	}
+}
+
+func TestDynamicHeightTracksSoftWrapAndCaps(t *testing.T) {
+	editor := New(Config{})
+	editor.SetWidth(10)
+	if got := editor.Height(); got != 3 {
+		t.Fatalf("empty height = %d, want minimum 3", got)
+	}
+
+	editor.Rewrite("12345678901234567890123456789012345678901234567890123456789012345678901234567890")
+	if got := editor.Height(); got != 8 {
+		t.Fatalf("soft-wrapped height = %d, want capped 8", got)
+	}
+	editor.UpdateKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if editor.ScrollYOffset() == 0 {
+		t.Fatal("capped soft-wrapped editor did not scroll to keep the caret visible")
+	}
+	if info := editor.LineInfo(); info.RowOffset-editor.ScrollYOffset() < 0 || info.RowOffset-editor.ScrollYOffset() >= editor.Height() {
+		t.Fatalf("soft-wrapped cursor visual row = %d, want within viewport height %d", info.RowOffset-editor.ScrollYOffset(), editor.Height())
+	}
+
+	editor.Rewrite("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine")
+	editor.UpdateKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if got := editor.Height(); got != 8 {
+		t.Fatalf("explicit-newline height = %d, want capped 8", got)
+	}
+	if editor.ScrollYOffset() == 0 {
+		t.Fatal("capped explicit-newline editor did not scroll to keep the caret visible")
+	}
+	if info := editor.LineInfo(); editor.Line()+info.RowOffset-editor.ScrollYOffset() < 0 || editor.Line()+info.RowOffset-editor.ScrollYOffset() >= editor.Height() {
+		t.Fatalf("explicit-newline cursor visual row = %d, want within viewport height %d", editor.Line()+info.RowOffset-editor.ScrollYOffset(), editor.Height())
+	}
+
+	editor.Rewrite("short")
+	if got := editor.Height(); got != 3 {
+		t.Fatalf("shrunk height = %d, want minimum 3", got)
+	}
+}
+
+func TestDynamicHeightAcceptsMoreThanEightLogicalLines(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input func(*Editor)
+	}{
+		{"typing", func(editor *Editor) {
+			for range 10 {
+				editor.UpdateKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+				editor.UpdateKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			}
+		}},
+		{"paste", func(editor *Editor) {
+			editor.UpdatePaste(tea.PasteMsg{Content: "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			editor := New(Config{})
+			editor.SetWidth(20)
+			tc.input(&editor)
+			if got := len(strings.Split(strings.TrimSuffix(editor.Value(), "\n"), "\n")); got != 10 {
+				t.Fatalf("logical lines = %d, want 10; input was rejected at the visible-height cap", got)
+			}
+			editor.UpdateKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+			if editor.ScrollYOffset() == 0 {
+				t.Fatal("editor did not scroll after content exceeded the eight-row viewport")
+			}
+		})
 	}
 }
 

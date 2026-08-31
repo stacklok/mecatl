@@ -120,8 +120,9 @@ func TestValidateQuitQuitDDistinct(t *testing.T) {
 // and accepted with valid modified chords.
 func TestValidateNewActionsParse(t *testing.T) {
 	res, err := Parse(map[string][]string{
-		"Suspend": {"ctrl+z"},
-		"QuitD":   {"ctrl+d"},
+		"Suspend":     {"ctrl+z"},
+		"QuitD":       {"ctrl+d"},
+		"ClearPrompt": {"ctrl+u"},
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)

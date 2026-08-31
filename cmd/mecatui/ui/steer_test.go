@@ -397,7 +397,7 @@ func TestSteer_TUIRendersAuthoritativeState(t *testing.T) {
 		}
 	})
 
-	t.Run("esc retracts a pending steer", func(t *testing.T) {
+	t.Run("esc cancels without retracting a pending steer", func(t *testing.T) {
 		m, conv := newSteerModel(t, true)
 		m = startRunning(t, m, "first")
 		m = enqueueSteer(t, m, "second")
@@ -406,14 +406,20 @@ func TestSteer_TUIRendersAuthoritativeState(t *testing.T) {
 		m = mm.(Model)
 		runBatchLeaves(cmd)
 
-		if got := steerCancelCount(conv.send); got != 1 {
-			t.Fatalf("esc on a pending steer must send ONE steer_cancel, got %d", got)
+		if got := steerCancelCount(conv.send); got != 0 {
+			t.Fatalf("esc must not retract a pending steer, got %d steer_cancel frames", got)
 		}
-		// The authoritative retracted ack drives the lifecycle to retracted.
-		mm2, _ := m.Update(client.SteerOutcomeMsg{Outcome: client.SteerRetracted, MessageID: "steer-0001"})
-		m = mm2.(Model)
-		if m.steer == nil || m.steer.Phase != steerRetracted {
-			t.Fatalf("steer state = %+v, want retracted", m.steer)
+		cancelFrames := 0
+		for _, frame := range conv.send.frames() {
+			if frame.GetCancel() != nil {
+				cancelFrames++
+			}
+		}
+		if cancelFrames != 1 {
+			t.Fatalf("esc sent %d Cancel frames, want 1", cancelFrames)
+		}
+		if m.steer == nil || m.steer.Phase != steerPending {
+			t.Fatalf("esc changed pending steer state: %+v", m.steer)
 		}
 	})
 

@@ -460,96 +460,69 @@ func TestEscClearsPausedQueueIdle(t *testing.T) {
 	}
 }
 
-// TestEscWhitespaceInputClearsQueue pins the esc whitespace boundary: a
-// whitespace-only input ("   ") + esc while running with a non-empty queue must NOT
-// be treated as "clear input" — both enqueuePrompt and the esc-clear-input branch
-// gate on strings.TrimSpace(...) != "", so a blank-but-present input falls through
-// to CLEAR THE QUEUE. A second esc (now input and queue both empty) then cancels.
-func TestEscWhitespaceInputClearsQueue(t *testing.T) {
+// TestEscWhitespaceInputCancelsDirectly pins that Escape during a run sends Cancel
+// without clearing either a whitespace draft or queued follow-ups.
+func TestEscWhitespaceInputCancelsDirectly(t *testing.T) {
 	m, conv := newQueueModel(t)
 	m = startRunning(t, m, "first")
 	m = enqueue(t, m, "second")
-	m = typeText(t, m, "   ") // whitespace-only "input"
+	m = typeText(t, m, "   ")
 
-	// First esc: trimmed input is empty → falls through to clear the queue.
-	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
-	if len(m.queued) != 0 {
-		t.Fatalf("whitespace input + esc should clear the queue, got %v", m.queued)
-	}
-	if m.phase != phaseRunning {
-		t.Errorf("clearing the queue must NOT cancel the run, phase=%d", m.phase)
-	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "queue cleared") {
-		t.Errorf("status = %q, want 'queue cleared'", stripANSIstr(m.statusMsg))
-	}
-	for _, fr := range conv.send.frames() {
-		if fr.GetCancel() != nil {
-			t.Fatal("queue-clear esc must not send a Cancel frame")
-		}
-	}
-
-	// Second esc: input is whitespace-only and the queue is now empty → cancel.
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	runBatchLeaves(cmd)
-	var sawCancel bool
+	if len(m.queued) != 1 || m.prompt.Value() != "   " || m.phase != phaseRunning {
+		t.Fatalf("Escape changed running composition: queue=%v text=%q phase=%d", m.queued, m.prompt.Value(), m.phase)
+	}
 	for _, fr := range conv.send.frames() {
 		if fr.GetCancel() != nil {
-			sawCancel = true
+			return
 		}
 	}
-	if !sawCancel {
-		t.Error("a follow-up esc with empty queue + blank input must cancel the run")
-	}
+	t.Fatal("Escape did not send a Cancel frame")
 }
 
-// TestEscClearsQueueWhenInputEmpty: with no live input but a non-empty queue, esc
-// drops the queue (status "queue cleared") and does NOT cancel the run.
-func TestEscClearsQueueWhenInputEmpty(t *testing.T) {
+// TestEscCancelsWhenQueuePresent: Escape during a run sends Cancel and leaves the
+// queue available for the terminal paused state.
+func TestEscCancelsWhenQueuePresent(t *testing.T) {
 	m, conv := newQueueModel(t)
 	m = startRunning(t, m, "first")
 	m = enqueue(t, m, "second")
 
-	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
-
-	if len(m.queued) != 0 {
-		t.Fatalf("esc should clear the queue, got %v", m.queued)
+	runBatchLeaves(cmd)
+	if len(m.queued) != 1 || m.phase != phaseRunning {
+		t.Fatalf("Escape changed queue/run state: queue=%v phase=%d", m.queued, m.phase)
 	}
-	if m.phase != phaseRunning {
-		t.Errorf("esc on a non-empty queue must NOT cancel the run, phase=%d", m.phase)
-	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "queue cleared") {
-		t.Errorf("status = %q, want 'queue cleared'", stripANSIstr(m.statusMsg))
-	}
-	// No Cancel frame should have been sent (only the initial Prompt).
 	for _, fr := range conv.send.frames() {
 		if fr.GetCancel() != nil {
-			t.Error("esc-clears-queue must not send a Cancel frame")
+			return
 		}
 	}
+	t.Fatal("Escape did not send a Cancel frame")
 }
 
-// TestEscClearsInputBeforeQueue: with BOTH live input and a queue, esc clears the
-// input first (the queue and run survive).
-func TestEscClearsInputBeforeQueue(t *testing.T) {
-	m, _ := newQueueModel(t)
+// TestEscCancelsWithoutClearingInput: Escape during a run sends Cancel and preserves
+// the unsent draft and queue.
+func TestEscCancelsWithoutClearingInput(t *testing.T) {
+	m, conv := newQueueModel(t)
 	m = startRunning(t, m, "first")
 	m = enqueue(t, m, "second")
 	m = typeText(t, m, "draft follow-up")
 
-	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mm.(Model)
-
-	if strings.TrimSpace(m.prompt.Value()) != "" {
-		t.Errorf("esc should clear the live input first, got %q", m.prompt.Value())
+	runBatchLeaves(cmd)
+	if m.prompt.Value() != "draft follow-up" || len(m.queued) != 1 || m.phase != phaseRunning {
+		t.Fatalf("Escape changed running composition: text=%q queue=%v phase=%d", m.prompt.Value(), m.queued, m.phase)
 	}
-	if len(m.queued) != 1 {
-		t.Errorf("esc should leave the queue intact when input was non-empty, got %v", m.queued)
+	for _, fr := range conv.send.frames() {
+		if fr.GetCancel() != nil {
+			return
+		}
 	}
-	if m.phase != phaseRunning {
-		t.Errorf("esc must not cancel here, phase=%d", m.phase)
-	}
+	t.Fatal("Escape did not send a Cancel frame")
 }
 
 // TestEscCancelsWhenEmptyEmpty: with no input and no queue, esc cancels the run (a

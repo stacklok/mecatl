@@ -24,6 +24,7 @@ func overrideAll() map[string][]string {
 		"SelectAll":        {"ctrl+f31"},
 		"CopySelection":    {"ctrl+f32"},
 		"Cancel":           {"ctrl+f4"},
+		"ClearPrompt":      {"ctrl+f33"},
 		"Effort":           {"ctrl+f5"},
 		"MCPPanel":         {"ctrl+f6"},
 		"Resources":        {"ctrl+f7"},
@@ -237,10 +238,10 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 		if !strings.Contains(got, "ctrl+f1 queue") {
 			t.Errorf("running footer should carry the overridden submit ctrl+f1: %q", got)
 		}
-		if !strings.Contains(got, "ctrl+f4 cancel/clear") {
-			t.Errorf("running footer should carry the overridden cancel ctrl+f4: %q", got)
+		if !strings.Contains(got, "ctrl+f33 clear") || !strings.Contains(got, "ctrl+f4 cancel") {
+			t.Errorf("running footer should carry the overridden clear/cancel chords: %q", got)
 		}
-		if strings.Contains(got, "enter queue") || strings.Contains(got, "esc cancel") {
+		if strings.Contains(got, "enter queue") || strings.Contains(got, "esc cancel") || strings.Contains(got, "ctrl+u clear") {
 			t.Errorf("running footer still shows a default chord: %q", got)
 		}
 	})
@@ -540,7 +541,7 @@ func TestDefaultFooterHelp(t *testing.T) {
 	)
 	m.phase = phaseIdle
 	got := stripANSIstr(m.renderFooter())
-	if !strings.Contains(got, "? help · / commands · ctrl+g select all · ctrl+shift+c copy · ctrl+c quit") {
+	if !strings.Contains(got, "? help · / commands · ctrl+g select all · ctrl+shift+c copy · ctrl+u clear · ctrl+c quit") {
 		t.Errorf("default footer help line = %q", got)
 	}
 

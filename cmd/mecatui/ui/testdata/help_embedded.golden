@@ -12,11 +12,13 @@
 ┃    ctrl+v                paste a clipboard image as an attachment (when supported), else paste text                                                                             ┃
 ┃    ctrl+g                select all prompt text                                                                                                                                 ┃
 ┃    ctrl+shift+c          copy the active prompt or conversation selection                                                                                                       ┃
+┃    ctrl+u                clear the unsent prompt                                                                                                                                ┃
 ┃    esc                   cancel the running turn                                                                                                                                ┃
 ┃                                                                                                                                                                                 ┃
 ┃  While a run is streaming                                                                                                                                                       ┃
 ┃    enter                 queue a follow-up (sends when the turn ends)                                                                                                           ┃
-┃    esc                   clear staged input / queue, else cancel run                                                                                                            ┃
+┃    ctrl+u                clear the unsent prompt                                                                                                                                ┃
+┃    esc                   cancel run                                                                                                                                             ┃
 ┃                                                                                                                                                                                 ┃
 ┃  While the permission modal is open                                                                                                                                             ┃
 ┃    a                     allow once                                                                                                                                             ┃

@@ -553,7 +553,8 @@ func (m Model) renderFooter() string {
 	// client-side commands (/clear, /help, and the caps-gated /mcp,/agents), so "/"
 	// is a live entry point even when the server has slash-command expansion disabled.
 	// While a run streams the line is extended with the type-while-running affordance
-	// (enter queues a follow-up; esc clears the staged input/queue or cancels the run).
+	// (enter steers when supported or queues a follow-up otherwise; ctrl+u clears the
+	// unsent draft; esc cancels the run without changing draft, queue, or steer state).
 	// Prompt selection affordances appear only while the prompt accepts input. Every
 	// chord is sourced from the LIVE keyMap markings (hk) so a rebinding propagates to
 	// the footer affordances (issue #457, the #455 liveness pattern extended to the
@@ -562,10 +563,13 @@ func (m Model) renderFooter() string {
 	help := hk.help + " help · / commands"
 	if m.pasteGateOpen() {
 		help += " · " + hk.selectAll + " select all · " + hk.copySelection + " copy"
+		if m.phase != phaseRunning {
+			help += " · " + hk.clearPrompt + " clear"
+		}
 	}
 	help += " · " + hk.quit + " quit"
 	if m.phase == phaseRunning {
-		help = hk.submit + " queue · " + hk.cancel + " cancel/clear · " + help
+		help = hk.submit + " queue · " + hk.clearPrompt + " clear · " + hk.cancel + " cancel · " + help
 	}
 	if m.phase == phaseAwaitingApproval && approval.plan {
 		allow, always, deny := approvalMnemonic(hk.allow), approvalMnemonic(hk.allowAlways), approvalMnemonic(hk.deny)
@@ -882,7 +886,7 @@ func (m Model) renderQueue() string {
 // Four honest states:
 //   - PENDING (steerPending): sent, ack not yet back — a muted "⏳ steer: sending…".
 //   - SENT (steerSent): acked accepted/appended, parked for the next turn
-//     boundary — a muted "⏳ steer queued · ↑ edit · esc retract".
+//     boundary — a muted "⏳ steer queued · ↑ edit · esc cancel".
 //   - PROMOTED (steerPromoted): acked too_late — the run had ended, so the text
 //     auto-started a follow-up — a ctxWarn "↪ steer sent as a follow-up (run had
 //     already ended)".
@@ -900,7 +904,7 @@ func (m Model) renderSteer() string {
 	case steerPending:
 		b.WriteString(muted.Render("⏳ steer: sending…"))
 	case steerSent:
-		b.WriteString(muted.Render("⏳ steer queued · " + hk.editBack + " edit · " + hk.cancel + " retract"))
+		b.WriteString(muted.Render("⏳ steer queued · " + hk.editBack + " edit · " + hk.cancel + " cancel"))
 	case steerPromoted:
 		b.WriteString(th.Style("ctxWarn").Render("↪ steer sent as a follow-up (run had already ended)"))
 	case steerRetracted:

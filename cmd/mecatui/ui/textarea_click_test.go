@@ -56,9 +56,9 @@ func TestTextareaClickMapsSoftWrapAndScroll(t *testing.T) {
 		t.Fatalf("soft-wrapped caret = (%d,%d), want (0,19)", line, col)
 	}
 
-	m.prompt.Rewrite("one\ntwo\nthree\nfour\nfive")
+	m.prompt.Rewrite("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
 	_ = m.prompt.UpdateKey(tea.KeyPressMsg{Code: tea.KeyHome})
-	for range 4 {
+	for range 9 {
 		_ = m.prompt.UpdateKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if m.prompt.ScrollYOffset() == 0 {
@@ -86,12 +86,12 @@ func TestTextareaDragSelectionEditsAcrossSoftWrapAndScroll(t *testing.T) {
 		wantFromCol, wantToCol int
 	}{
 		{"abcdefghijklmnopqrst", "abcdefghijklmnopqrs", 0, 0, 0, 19},
-		{"one\ntwo\nthree\nfour\nfive", "three\nfo", 2, 3, 0, 2},
+		{"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten", "three\nfo", 2, 3, 0, 2},
 	} {
 		text := tc.text
 		m.prompt.Rewrite(text)
 		if strings.Contains(text, "\n") {
-			for range 4 {
+			for range 9 {
 				mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 				m = mm.(Model)
 			}

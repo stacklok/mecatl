@@ -5,6 +5,8 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
 func (m *Model) updatePromptKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -73,7 +75,23 @@ func (m Model) copyActiveSelection() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// clearPrompt clears only the unsent draft. Queue, steer, and run state deliberately
+// remain untouched; this action is for abandoning the current composition.
+func (m Model) clearPrompt() (tea.Model, tea.Cmd) {
+	m.prompt.Reset()
+	m.stagedMedia = nil
+	m.stagedPastes = nil
+	// Marker counters remain monotonic: an outstanding steer can restore its staged
+	// maps through EditBack after this draft is cleared.
+	m.pendingPromptMedia = client.MediaResult{}
+	return m.afterInputEdit(nil)
+}
+
 func (m Model) promptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if key.Matches(msg, m.keys.ClearPrompt) && m.pasteGateOpen() {
+		mm, cmd := m.clearPrompt()
+		return mm, cmd, true
+	}
 	if key.Matches(msg, m.keys.SelectAll) && m.pasteGateOpen() {
 		m.promptSelectAll()
 		return m, nil, true

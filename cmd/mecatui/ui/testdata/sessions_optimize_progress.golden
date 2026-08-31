@@ -16,6 +16,9 @@ r: resume  s: refresh status  c: cancel  esc: back
 │ Ask mecatl to do something…
 │ (enter to send · shift+enter for
 │ newline · ? for help)
+│
+│
+│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ⣾  connecting…                                                              ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

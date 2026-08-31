@@ -64,6 +64,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.paste, action: "paste a clipboard image as an attachment (when supported), else paste text"},
 		{key: hk.selectAll, action: "select all prompt text"},
 		{key: hk.copySelection, action: "copy the active prompt or conversation selection"},
+		{key: hk.clearPrompt, action: "clear the unsent prompt"},
 		{key: hk.cancel, action: "cancel the running turn"},
 	})
 
@@ -74,7 +75,8 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	}
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.submit, action: streamingSubmit},
-		{key: hk.cancel, action: "clear staged input / queue, else cancel run"},
+		{key: hk.clearPrompt, action: "clear the unsent prompt"},
+		{key: hk.cancel, action: "cancel run"},
 	})
 
 	b.WriteString("\n" + muted.Render("While the permission modal is open") + "\n")
@@ -193,7 +195,8 @@ type helpKeys struct {
 	paste         string // Paste
 	selectAll     string // SelectAll — select all prompt text
 	copySelection string // CopySelection — copy the active prompt or conversation selection
-	cancel        string // Cancel — cancel the running turn / clear staged input & queue
+	clearPrompt   string // ClearPrompt — clear the unsent prompt
+	cancel        string // Cancel — cancel the running turn
 	editBack      string // EditBack — pull the queued follow-up back into the textarea
 	quit          string // Quit
 	quitD         string // QuitD — the EOF-habit quit (double-press, empty prompt only)
@@ -308,6 +311,7 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		paste:         firstKey(km.Paste, "ctrl+v"),
 		selectAll:     firstKey(km.SelectAll, "ctrl+g"),
 		copySelection: firstKey(km.CopySelection, "ctrl+shift+c"),
+		clearPrompt:   firstKey(km.ClearPrompt, "ctrl+u"),
 		cancel:        firstKey(km.Cancel, "esc"),
 		editBack:      navGlyph(firstKey(km.EditBack, "up")),
 		quit:          firstKey(km.Quit, "ctrl+c"),
