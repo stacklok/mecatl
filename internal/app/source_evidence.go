@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -46,7 +47,7 @@ func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.At
 
 	sess, err := l.sessions.Load(ctx, provenance.Source.SessionID)
 	if err != nil || sess == nil || sess.ID != provenance.Source.SessionID || sess.Owner == nil ||
-		!sess.Owner.IdentityWellFramed() || sess.RunID() != string(provenance.Source.RunID) {
+		!sess.Owner.IdentityWellFramed() {
 		return unavailable()
 	}
 	if l.gaps != nil {
@@ -59,41 +60,63 @@ func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.At
 	if err != nil || ownerPartition != partition {
 		return unavailable()
 	}
-	if len(sess.Conversation.Messages) == 0 || len(sess.Conversation.Messages) > learning.MaxInputMessages {
+
+	runEvents, terminal, _, ok := l.readExactRun(ctx, provenance.Source)
+	if !ok {
+		return unavailable()
+	}
+	reconstructed, err := eventsource.Fold(eventsource.SessionMeta{
+		ID:              sess.ID,
+		Mode:            sess.Mode,
+		Limits:          sess.Limits,
+		Workspace:       sess.Workspace,
+		Profile:         sess.Profile,
+		ProviderID:      sess.ProviderID,
+		ModelID:         sess.ModelID,
+		ReasoningEffort: sess.ReasoningEffort,
+		Kind:            sess.Kind,
+		Relationship:    sess.Relationship,
+		CreatedAt:       sess.CreatedAt,
+	}, func(yield func(session.Event, error) bool) {
+		for _, event := range runEvents {
+			if !yield(event, nil) {
+				return
+			}
+		}
+	})
+	if err != nil || reconstructed == nil || len(reconstructed.Conversation.Messages) == 0 ||
+		len(reconstructed.Conversation.Messages) > learning.MaxInputMessages {
+		return unavailable()
+	}
+	persistedStop, stopRecorded := reconstructed.RecordedStopReason()
+	if !stopRecorded || persistedStop != terminal.Stop {
 		return unavailable()
 	}
 
-	runEvents, terminal, archiveOK, ok := l.readExactRun(ctx, provenance.Source)
-	persistedStop, stopRecorded := sess.RecordedStopReason()
-	if !ok || !stopRecorded || persistedStop != terminal.Stop {
-		return unavailable()
-	}
-	compacted := false
-	for _, message := range sess.Conversation.Messages {
-		if session.IsSynthesisedSummary(message.Text) {
-			compacted = true
-			break
+	trajectory := learning.NewTrajectory(sess.ID, sess.Workspace, terminal.Stop, terminal.Usage, reconstructed.Conversation.Messages)
+	trajectory.RunID = string(provenance.Source.RunID)
+	trajectory.Kind = sess.Kind
+	trajectory.Counters = reconstructed.Counters
+	input := learning.NewInput(trajectory, runEvents, nil, nil)
+	prompt := provenance.CurrentPrompt
+	promptOrdinal := -1
+	for i, message := range trajectory.Messages {
+		if !session.IsGenuineUserPrompt(message) {
+			continue
+		}
+		ref, refErr := learning.MessageEvidenceRef(input, i, "")
+		if refErr == nil && learning.CanonicalDigest(ref.Digest) == prompt.Digest {
+			if promptOrdinal >= 0 {
+				return unavailable()
+			}
+			promptOrdinal = i
 		}
 	}
-	if compacted && !archiveOK {
+	if promptOrdinal < 0 {
 		return unavailable()
 	}
-
-	prompt := provenance.CurrentPrompt
-	if prompt.Ordinal < 0 || prompt.Ordinal >= len(sess.Conversation.Messages) ||
-		!session.IsGenuineUserPrompt(sess.Conversation.Messages[prompt.Ordinal]) {
-		return unavailable()
-	}
-	trajectory := learning.NewTrajectory(sess.ID, sess.Workspace, terminal.Stop, terminal.Usage, sess.Conversation.Messages)
-	trajectory.RunID = sess.RunID()
-	trajectory.Kind = sess.Kind
-	trajectory.Counters = sess.Counters
-	trajectory.Current = learning.MessageSpan{Start: prompt.Ordinal, End: len(trajectory.Messages)}
-	input := learning.NewInput(trajectory, runEvents, nil, nil)
-	promptRef, err := learning.MessageEvidenceRef(input, prompt.Ordinal, "")
-	if err != nil || learning.CanonicalDigest(promptRef.Digest) != prompt.Digest {
-		return unavailable()
-	}
+	trajectory.Current = learning.MessageSpan{Start: promptOrdinal, End: len(trajectory.Messages)}
+	input = learning.NewInput(trajectory, runEvents, nil, nil)
 	digest, err := automaticTrajectoryDigest("", input)
 	if err != nil || learning.CanonicalDigest(digest) != provenance.Source.CanonicalDigest {
 		return unavailable()
@@ -117,15 +140,15 @@ func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learni
 		if err != nil {
 			return nil, session.ResultPayload{}, false, false
 		}
-		read++
-		if read > learning.MaxInputEvents {
-			return nil, session.ResultPayload{}, false, false
-		}
 		if event.RunID != string(source.RunID) {
 			if seenRun && event.RunID != "" {
 				leftRun = true
 			}
 			continue
+		}
+		read++
+		if read > learning.MaxInputEvents {
+			return nil, session.ResultPayload{}, false, false
 		}
 		if leftRun || event.Seq <= 0 || seenRun && event.Seq <= previous || seenTerminal {
 			return nil, session.ResultPayload{}, false, false
@@ -153,9 +176,9 @@ func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learni
 			seenTerminal = true
 		}
 		events = append(events, event)
+		if seenTerminal {
+			return events, terminal, archiveOK, true
+		}
 	}
-	if !seenRun || !seenTerminal || compactionPending {
-		return nil, session.ResultPayload{}, false, false
-	}
-	return events, terminal, archiveOK, true
+	return nil, session.ResultPayload{}, false, false
 }

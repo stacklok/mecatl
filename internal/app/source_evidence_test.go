@@ -97,11 +97,11 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	if code != learning.FailureNone {
 		t.Fatalf("valid exact source code = %q", code)
 	}
-	if len(projection.Messages) != len(source.Conversation.Messages) || len(projection.Events) != 4 {
+	if len(projection.Messages) != 2 || len(projection.Events) != 4 {
 		t.Fatalf("projection shape = %d messages, %d events", len(projection.Messages), len(projection.Events))
 	}
-	if projection.Messages[3].Text != "done" || projection.Messages[3].Text == source.Conversation.Messages[3].Reasoning {
-		t.Fatalf("canonical projection leaked or lost fields: %+v", projection.Messages[3])
+	if projection.Messages[1].Text != "done" || projection.Messages[1].Text == source.Conversation.Messages[3].Reasoning {
+		t.Fatalf("canonical projection leaked or lost fields: %+v", projection.Messages[1])
 	}
 
 	assertUnavailable := func(name string, loader *learningEvidenceLoader, p learning.AttemptPartition, attempt learning.AttemptRecord) {
@@ -196,7 +196,8 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 		{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
 		{Type: session.EvTurnStart, Seq: 2, RunID: runID},
 		{Type: session.EvMessageDelta, Seq: 3, RunID: runID, Text: "done"},
-		{Type: session.EvResult, Seq: 4, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+		{Type: session.EvCompaction, Seq: 4, RunID: runID},
+		{Type: session.EvResult, Seq: 5, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
 	} {
 		if err := compactedEvents.Append(ctx, compacted.ID, event); err != nil {
 			t.Fatal(err)
@@ -228,5 +229,126 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	}
 	if archivedProjection.Events[2].Text != "" {
 		t.Fatalf("raw archive crossed canonical boundary: %+v", archivedProjection.Events[2])
+	}
+}
+
+func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
+	const (
+		runA = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+		runB = "run_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+
+	store := memstore.New()
+	events := memstore.NewEventLog()
+	source := session.New("source-advanced", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	if err := source.RestoreLabels(owner, session.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	source.BeginRun(runA)
+	if err := source.RecordUserPrompt("Create a skill from run A", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.RecordAssistant(session.NewAssistantMessage("run A digest", "private A reasoning", nil)); err != nil {
+		t.Fatal(err)
+	}
+	usageA := session.Usage{InputTokens: 7, OutputTokens: 3}
+	if err := source.RecordUsage(usageA); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Complete(); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []session.Event{
+		{Type: session.EvUserPrompt, Seq: 1, RunID: runA, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from run A"}},
+		{Type: session.EvTurnStart, Seq: 2, RunID: runA},
+		{Type: session.EvMessageDelta, Seq: 3, RunID: runA, Text: "run A digest"},
+		{Type: session.EvResult, Seq: 4, RunID: runA, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usageA}},
+	} {
+		if err := events.Append(ctx, source.ID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	trajectory := learning.NewTrajectory(source.ID, source.Workspace, session.StopEndTurn, usageA, source.Conversation.Messages)
+	trajectory.RunID = runA
+	trajectory.Kind = source.Kind
+	trajectory.Counters = source.Counters
+	trajectory.Current = learning.MessageSpan{Start: 0, End: len(trajectory.Messages)}
+	input := learning.NewInput(trajectory, nil, []learning.Signal{{Kind: learning.SignalHostRequested}}, nil)
+	digest, err := automaticTrajectoryDigest("", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := currentPromptBinding(input, learning.AdmissionHostRequested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance, err := learning.NewAdmissionProvenance(learning.AdmissionHostRequested, learning.AttemptSource{
+		SessionID: source.ID, RunID: runA, CanonicalDigest: learning.CanonicalDigest(digest),
+	}, prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := learning.DeriveAttemptPartition(reflectionPrincipal(owner))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := source.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	source.BeginRun(runB)
+	if err := source.RecordUserPrompt("run B must not appear", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.RecordAssistant(session.NewAssistantMessage("run B contamination", "", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Stop(session.StopBudget); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []session.Event{
+		{Type: session.EvUserPrompt, Seq: 1, RunID: runB, UserPrompt: &session.UserPromptPayload{Text: "run B must not appear"}},
+		{Type: session.EvTurnStart, Seq: 2, RunID: runB},
+		{Type: session.EvMessageDelta, Seq: 3, RunID: runB, Text: "run B contamination"},
+		{Type: session.EvResult, Seq: 4, RunID: runB, Result: &session.ResultPayload{Stop: session.StopBudget}},
+	} {
+		if err := events.Append(ctx, source.ID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	projection, code := newLearningEvidenceLoader(store, events).Load(ctx, partition, learning.AttemptRecord{Provenance: provenance})
+	if code != learning.FailureNone {
+		t.Fatalf("source run A after run B code = %q, want success", code)
+	}
+	if projection.Stop != session.StopEndTurn || len(projection.Messages) != 2 || len(projection.Events) != 4 {
+		t.Fatalf("source run A projection = %+v", projection)
+	}
+	if projection.Messages[0].Text != "Create a skill from run A" || projection.Messages[0].Evidence == nil ||
+		learning.CanonicalDigest(projection.Messages[0].Evidence.Digest) != prompt.Digest || projection.Messages[1].Text != "run A digest" {
+		t.Fatalf("source run A prompt/digest = %+v", projection.Messages)
+	}
+	for _, message := range projection.Messages {
+		if message.Text == "run B must not appear" || message.Text == "run B contamination" {
+			t.Fatalf("run B message contaminated source run A: %+v", message)
+		}
+	}
+	for _, event := range projection.Events {
+		if event.Text == "run B must not appear" || event.Text == "run B contamination" {
+			t.Fatalf("run B event contaminated source run A: %+v", event)
+		}
 	}
 }
