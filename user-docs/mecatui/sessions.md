@@ -43,8 +43,10 @@ mecatui debug 01JOPAQUESESSIONID \
 
 ### What happens
 
-1. Copy the target ID from `/session`, `/sessions`, or the
-   `mecatui: final-session-id=...` line printed when its TUI exits.
+1. Use the full target ID from `/session`, `/sessions`, or the
+   `mecatui: final-session-id=...` line printed when its TUI exits. You can instead
+   type the exact 12-byte ID displayed in the TUI header. If multiple visible
+   sessions share that prefix, mecatui creates nothing and asks for the full ID.
 2. Run `mecatui debug` against the same embedded store, or use
    `mecatui connect ADDRESS debug` against the server that owns the target.
 3. mecatui prints a privacy disclosure before entering the alternate screen.

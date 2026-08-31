@@ -7,17 +7,18 @@ import (
 )
 
 func TestResolveDebugGrammarLocalAndRemote(t *testing.T) {
+	const target = "123456789012"
 	tests := []struct {
 		argv    []string
 		mode    transportMode
 		address string
 	}{
-		{[]string{"mecatui", "debug", "target-1", "--prompt", "why"}, modeLocal, ""},
-		{[]string{"mecatui", "connect", "host:9443", "debug", "target-2", "--tls"}, modeConnect, "host:9443"},
+		{[]string{"mecatui", "debug", target, "--prompt", "why"}, modeLocal, ""},
+		{[]string{"mecatui", "connect", "host:9443", "debug", target, "--tls"}, modeConnect, "host:9443"},
 	}
 	for _, tc := range tests {
 		res := resolveInvocation(tc.argv)
-		if res.err != nil || res.mode != tc.mode || res.address != tc.address || !strings.HasPrefix(res.debugTarget, "target-") {
+		if res.err != nil || res.mode != tc.mode || res.address != tc.address || res.debugTarget != target {
 			t.Fatalf("resolve(%v) = %+v", tc.argv, res)
 		}
 	}
@@ -46,7 +47,12 @@ func TestDebugHelpDocumentsBothCanonicalForms(t *testing.T) {
 	var out bytes.Buffer
 	writeTopLevelHelp(&out)
 	text := out.String()
-	for _, want := range []string{"mecatui debug SESSION_ID [flags]", "mecatui connect ADDRESS debug SESSION_ID [flags]"} {
+	for _, want := range []string{
+		"mecatui debug SESSION_ID [flags]",
+		"mecatui connect ADDRESS debug SESSION_ID [flags]",
+		"full ID or its 12-character header ID",
+		"ambiguous header IDs require the",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q:\n%s", want, text)
 		}

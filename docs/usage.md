@@ -115,8 +115,11 @@ exists, the TUI fails, or a signal interrupts/forces exit; stdout is unchanged. 
 ## Debug a stored session
 
 Use `mecatui debug SESSION_ID` against the embedded store, or
-`mecatui connect ADDRESS debug SESSION_ID` against a running server. This creates a
-**separate durable debug session** and automatically asks the model to inspect the
+`mecatui connect ADDRESS debug SESSION_ID` against a running server. `SESSION_ID`
+may be the full opaque ID or the exact 12-byte ID displayed in the TUI header.
+The short form must identify one caller-visible inventory row; an ambiguous prefix
+creates nothing and requires the full ID. The command creates a **separate durable
+debug session** and automatically asks the model to inspect the
 bound target's status and authoritative transcript. The invocation itself is consent:
 mecatui prints a privacy warning because stored prompts, outputs, tool arguments/results,
 paths, and secrets may be sent to the selected model.

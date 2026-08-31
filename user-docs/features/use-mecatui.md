@@ -51,7 +51,9 @@ mecatui debug SESSION_ID
 mecatui connect ADDRESS debug SESSION_ID
 ```
 
-Debug invocation creates a separate no-filesystem analysis session and is explicit consent
+Debug invocation accepts the full opaque session ID or the exact 12-byte ID shown
+in the TUI header; an ambiguous short ID creates nothing and requires the full ID. It
+creates a separate no-filesystem analysis session and is explicit consent
 to send bounded stored-session evidence—which may include secrets—to the selected model.
 It never resumes or mutates the target. See [Sessions](../mecatui/sessions.md#diagnose-a-stored-session).
 
