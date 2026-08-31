@@ -23,8 +23,15 @@
     ifacemethod func (ValidatedSkillActivator).ActivateValidated(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     method func (ActivityKind).Valid() bool
     method func (AdmissionClass).Valid() bool
+    method func (AdmissionProvenance).Validate(expected AttemptSource, expectedPrompt CurrentPromptBinding) error
     method func (AdmissionReason).Valid() bool
     method func (AlwaysPolicy).Decide(req AdmissionRequest) AdmissionDecision
+    method func (AttemptClaim).Valid() bool
+    method func (AttemptFailureCode).Valid() bool
+    method func (AttemptOutcome).Valid() bool
+    method func (AttemptSource).Valid() bool
+    method func (AttemptState).Terminal() bool
+    method func (AttemptState).Valid() bool
     method func (CandidateKind).Valid() bool
     method func (EvaluationVerdict).Valid() bool
     method func (MessageSpan).Contains(ordinal int) bool
@@ -33,6 +40,7 @@
     method func (Mode).String() string
     method func (NeverPolicy).Decide(AdmissionRequest) AdmissionDecision
     method func (OutcomeKind).Valid() bool
+    method func (PromptOrigin).Valid() bool
     method func (ProposalStatus).Valid() bool
     method func (Sensitivity).Next() Sensitivity
     method func (Sensitivity).String() string
@@ -65,6 +73,16 @@ const AdmissionHard AdmissionClass = "hard"
 const AdmissionHostRequested AdmissionClass = "host_requested"
 const AdmissionSkipped AdmissionClass = "skipped"
 const AdmissionWeighted AdmissionClass = "weighted"
+const AttemptAbandoned AttemptState = "abandoned"
+const AttemptCompleted AttemptState = "completed"
+const AttemptFailed AttemptState = "failed"
+const AttemptOutcomeAbandoned AttemptOutcome = "abandoned"
+const AttemptOutcomeAbstained AttemptOutcome = "abstained"
+const AttemptOutcomeFailed AttemptOutcome = "failed"
+const AttemptOutcomeNone AttemptOutcome = ""
+const AttemptOutcomeSucceeded AttemptOutcome = "succeeded"
+const AttemptQueued AttemptState = "queued"
+const AttemptRunning AttemptState = "running"
 const Auto Mode = 2
 const Balanced Sensitivity = 2
 const CandidateOperatorFact CandidateKind = "operator_fact"
@@ -83,6 +101,18 @@ const EvaluationFail EvaluationVerdict = "fail"
 const EvaluationPass EvaluationVerdict = "pass"
 const EvidenceEvent EvidenceLocator = "event"
 const EvidenceMessage EvidenceLocator = "message"
+const FailureClaimExpired AttemptFailureCode = "claim_expired"
+const FailureEvaluationRejected AttemptFailureCode = "evaluation_rejected"
+const FailureEvidenceUnavailable AttemptFailureCode = "evidence_unavailable"
+const FailureInternal AttemptFailureCode = "internal"
+const FailureNone AttemptFailureCode = ""
+const FailurePublicationFailed AttemptFailureCode = "publication_failed"
+const FailureRetryExhausted AttemptFailureCode = "retry_exhausted"
+const FailureUnavailable AttemptFailureCode = "unavailable"
+const MaxAttemptCallerBytes untyped int = 1024
+const MaxAttemptIDBytes untyped int = 96
+const MaxAttemptLinkIDBytes untyped int = 128
+const MaxAttemptVersionBytes untyped int = 128
 const MaxCandidateBodyBytes untyped int = 8192
 const MaxCandidateDescriptionBytes untyped int = 2048
 const MaxCandidateEvidence untyped int = 16
@@ -90,6 +120,7 @@ const MaxCandidateKeyBytes untyped int = 256
 const MaxCandidateTitleBytes untyped int = 256
 const MaxCandidateValueBytes untyped int = 8192
 const MaxCandidates untyped int = 16
+const MaxDurableRunIDBytes untyped int = 256
 const MaxExistingFacts untyped int = 256
 const MaxInputEvents untyped int = 512
 const MaxInputMessages untyped int = 256
@@ -116,6 +147,8 @@ const MaxSkillsPerPartition untyped int = 1024
 const Off Mode = 0
 const OutcomeAbstained OutcomeKind = "abstained"
 const OutcomeProposed OutcomeKind = "proposed"
+const PromptOriginCurrentPrincipal PromptOrigin = "current_principal"
+const PromptOriginSynthetic PromptOrigin = "synthetic"
 const ProposalConflicted ProposalStatus = "conflicted"
 const ProposalDeferredUnsupported ProposalStatus = "deferred_unsupported"
 const ProposalPromoted ProposalStatus = "promoted"
@@ -178,22 +211,26 @@ const ValidationExactDuplicate ValidationDisposition = "exact_duplicate"
 const ValidationSimilarStageHint ValidationDisposition = "similar_stage_hint"
 func DetectSignals(in Input) []Signal
 func DetectSignalsScoped(in Input, scope DetectionScope) []Signal
+func DeterministicAttemptID(caller string, source AttemptSource) (AttemptID, error)
 func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (ProposalID, error)
 func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func EvidenceHandle(ref EvidenceRef) string
 func EvidencePreview(in Input, ref EvidenceRef) (string, error)
 func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
+func NewAdmissionProvenance(class AdmissionClass, source AttemptSource, prompt CurrentPromptBinding) (AdmissionProvenance, error)
 func NewCandidate(in Input, candidate Candidate) (Candidate, error)
 func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, existing []ExistingFact) Input
 func NewTrajectory(id session.SessionID, workspace string, stop session.StopReason, usage session.Usage, messages []session.Message) Trajectory
 func ParseMode(s string) (Mode, error)
 func ParseSensitivity(value string) (Sensitivity, error)
 func ParseSkillActivationPolicy(value string) (SkillActivationPolicy, error)
+func ProjectAttempt(record AttemptRecord) (AttemptProjection, error)
 func ProjectInput(in Input) (Projection, error)
 func ResolveEvidence(in Input, ref EvidenceRef) error
 func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
 func SkillVersionID(bundle SkillBundle) (VersionID, error)
 func ValidLearnedSkillName(name string) bool
+func ValidateAttemptRecord(record AttemptRecord) error
 func ValidateCandidate(in Input, candidate Candidate) error
 func ValidateDecision(d Decision) error
 func ValidateInput(in Input) error
@@ -209,14 +246,29 @@ type ActivityKind string
 type AdmissionClass string
 type AdmissionDecision struct{Admitted bool; Class AdmissionClass; Score int; Threshold int; Reasons []AdmissionReason; Signals []Signal}
 type AdmissionPolicy interface{Decide(AdmissionRequest) AdmissionDecision}
+type AdmissionProvenance struct{Class AdmissionClass "json:\"class\""; Source AttemptSource "json:\"source\""; CurrentPrompt CurrentPromptBinding "json:\"current_prompt\""; Binding ProvenanceBinding "json:\"binding\""}
 type AdmissionReason string
 type AdmissionRequest struct{Input Input}
 type AlwaysPolicy struct{}
+type AttemptClaim struct{Generation ClaimGeneration "json:\"generation\""; ExpiresAt time.Time "json:\"expires_at\""}
+type AttemptFailureCode string
+type AttemptGeneration uint64
+type AttemptID string
+type AttemptOutcome string
+type AttemptProjection struct{ID AttemptID "json:\"id\""; Version AttemptVersion "json:\"version\""; State AttemptState "json:\"state\""; Outcome AttemptOutcome "json:\"outcome,omitempty\""; FailureCode AttemptFailureCode "json:\"failure_code,omitempty\""; Source AttemptSource "json:\"source\""; AttemptGeneration AttemptGeneration "json:\"attempt_generation\""; ClaimGeneration ClaimGeneration "json:\"claim_generation,omitempty\""; ClaimExpiresAt time.Time "json:\"claim_expires_at,omitempty\""; ProposalID ProposalID "json:\"proposal_id,omitempty\""; SkillID SkillID "json:\"skill_id,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type AttemptRecord struct{ID AttemptID "json:\"id\""; Version AttemptVersion "json:\"version\""; State AttemptState "json:\"state\""; Outcome AttemptOutcome "json:\"outcome,omitempty\""; FailureCode AttemptFailureCode "json:\"failure_code,omitempty\""; Provenance AdmissionProvenance "json:\"provenance\""; AttemptGeneration AttemptGeneration "json:\"attempt_generation\""; ClaimGeneration ClaimGeneration "json:\"claim_generation,omitempty\""; ClaimExpiresAt time.Time "json:\"claim_expires_at,omitempty\""; ProposalID ProposalID "json:\"proposal_id,omitempty\""; SkillID SkillID "json:\"skill_id,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type AttemptSource struct{SessionID session.SessionID "json:\"session_id\""; RunID DurableRunID "json:\"run_id\""; CanonicalDigest CanonicalDigest "json:\"canonical_digest\""}
+type AttemptState string
+type AttemptVersion string
 type Candidate struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key,omitempty\""; Value string "json:\"value,omitempty\""; Description string "json:\"description,omitempty\""; Name string "json:\"name,omitempty\""; Title string "json:\"title,omitempty\""; Body string "json:\"body,omitempty\""; Evidence []EvidenceRef "json:\"evidence\""}
 type CandidateKind string
+type CanonicalDigest string
+type ClaimGeneration uint64
+type CurrentPromptBinding struct{Ordinal int "json:\"ordinal\""; Digest CanonicalDigest "json:\"digest\""; Origin PromptOrigin "json:\"origin\""}
 type Decision struct{Kind DecisionKind "json:\"kind\""; Actor string "json:\"actor,omitempty\""; Reason string "json:\"reason,omitempty\""; At time.Time "json:\"at\""}
 type DecisionKind string
 type DetectionScope struct{Current MessageSpan}
+type DurableRunID string
 type EvaluationVerdict string
 type EventProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Type session.EventType "json:\"type\""; Seq int64 "json:\"seq\""; Turn int "json:\"turn\""; Text string "json:\"text,omitempty\""; ToolCall *ToolProjection "json:\"tool_call,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Stop session.StopReason "json:\"stop,omitempty\""}
 type EvidenceEventData struct{Type session.EventType; Seq int64; Turn int; Text string; ToolCall *ToolProjection; ToolResult *ResultProjection; Stop session.StopReason}
@@ -235,6 +287,7 @@ type OutcomeKind string
 type PartProjection struct{Kind string "json:\"kind,omitempty\""; MIMEType string "json:\"mime_type,omitempty\""; Text string "json:\"text,omitempty\""; Name string "json:\"name,omitempty\""; Title string "json:\"title,omitempty\""; Description string "json:\"description,omitempty\""; Binary bool "json:\"binary,omitempty\""}
 type Projection struct{SessionID session.SessionID "json:\"session_id\""; Stop session.StopReason "json:\"stop,omitempty\""; Messages []MessageProjection "json:\"messages\""; Events []EventProjection "json:\"events,omitempty\""; Signals []SignalProjection "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""}
 type PromotionReceipt struct{MemoryKey string "json:\"memory_key\""; PreviousExists bool "json:\"previous_exists\""; PreviousVersion string "json:\"previous_version,omitempty\""; ResultVersion string "json:\"result_version\""}
+type PromptOrigin string
 type ProposalID string
 type ProposalList struct{After ProposalID; Limit int; Status ProposalStatus}
 type ProposalPage struct{Records []ProposalRecord; Next ProposalID}
@@ -243,6 +296,7 @@ type ProposalRecord struct{ID ProposalID "json:\"id\""; Version ProposalVersion 
 type ProposalRepository interface{ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error); ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error); Finalize(context.Context, ProposalPartition, ProposalID, ProposalVersion, ProposalStatus, *PromotionReceipt, Decision) (ProposalRecord, error); Get(context.Context, ProposalPartition, ProposalID) (ProposalRecord, bool, error); LinkSkillDraft(context.Context, ProposalPartition, ProposalID, ProposalVersion, SkillID, Decision) (ProposalRecord, error); List(context.Context, ProposalPartition, ProposalList) (ProposalPage, error); StageBatch(context.Context, ProposalPartition, string, []Candidate, []Signal) ([]ProposalRecord, error)}
 type ProposalStatus string
 type ProposalVersion string
+type ProvenanceBinding string
 type Reflector interface{Reflect(context.Context, Input) (Outcome, error)}
 type ResultProjection struct{CallID session.ToolCallID "json:\"call_id\""; Content string "json:\"content,omitempty\""; IsError bool "json:\"is_error,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
 type Revision string
@@ -280,6 +334,7 @@ type Trajectory struct{SessionID session.SessionID; Workspace string; Stop sessi
 type ValidatedSkillActivator interface{ActivateValidated(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
 type ValidationDisposition string
 type VersionID string
+var ErrInvalidAttempt error
 var ErrInvalidCandidate error
 var ErrInvalidEvidence error
 var ErrInvalidInput error

@@ -69,6 +69,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   without widening the minimal `SessionStore` or loading transcript content.
   Added (minor).
 
+- **Content-free learning attempt values** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `learning.AttemptRecord`, `AttemptProjection`, `AdmissionProvenance`, exact source/current-prompt bindings, deterministic caller-partitioned IDs, closed lifecycle/outcome/failure vocabularies, fenced claim generations, bounds, and validation establish the storage-neutral domain contract for durable learning attempts. Added (minor).
+
 - **`agent.Run.RunID()`** (issue #821, [ADR 0249](../docs/adr/0249-durable-run-identity.md)) — reports the run's host-minted identity, or `""` when none was supplied.
 
   It exists so a caller holding a `*Run` can ASK which run it holds instead of inferring it from the session aggregate, and that distinction is load-bearing for stale-control refusal: a control addressed at a specific run must be compared against the run it would ACTUALLY affect, and the aggregate names the session's CURRENT run — which, after a terminal race, is precisely the run the caller did NOT mean.
