@@ -173,6 +173,59 @@ func TestSDKServerEnablers_Scenario2_SpecificSentinelsWinOverGeneral(t *testing.
 	}
 }
 
+// TestADR_0244_NoRegistryRowIsShadowed is the GENERIC form of the ordering
+// contract the test above pins for one known pair.
+//
+// TestSDKServerEnablers_Scenario2_SpecificSentinelsWinOverGeneral protects
+// ErrFailedStepRetryIneligible/ErrFailedPrecondition BY NAME, which means
+// correctness for any FUTURE wrapping pair depends on the next author
+// remembering to hand-write another test like it. Nobody remembers. This walks
+// the registry itself, so a new pair inserted in the wrong order fails
+// immediately with no test edit.
+//
+// The assertion is row IDENTITY, deliberately, and this is the subtle part: a
+// specific sentinel WRAPS the general one, so errors.Is(specific, general) is
+// true. An errors.Is assertion would therefore hold both when the row resolves
+// correctly and when it has been shadowed by the very row it wraps — passing in
+// exactly the case it exists to catch. Only pointer identity distinguishes them.
+func TestADR_0244_NoRegistryRowIsShadowed(t *testing.T) {
+	for i, e := range errorRegistry {
+		if e.Sentinel == nil {
+			continue // reported by the totality test
+		}
+		got := classifyError(e.Sentinel)
+		if got.Sentinel == e.Sentinel {
+			continue
+		}
+		t.Errorf("registry row %d (%q) is SHADOWED: its own sentinel classifies as %q.\n"+
+			"classifyError returns the FIRST row whose sentinel matches errors.Is, so a row whose sentinel "+
+			"wraps an earlier row's is unreachable. Move %q above %q in errorRegistry.",
+			i, e.Code, got.Code, e.Code, got.Code)
+	}
+
+	// The check must actually bite, or the loop above is theatre: prove that a
+	// deliberately mis-ordered registry IS caught. This mirrors the real hazard —
+	// a specific sentinel placed after the general one it wraps.
+	specific, general := ErrFailedStepRetryIneligible, ErrFailedPrecondition
+	if !errors.Is(specific, general) {
+		t.Fatal("bite check is vacuous: ErrFailedStepRetryIneligible no longer wraps ErrFailedPrecondition")
+	}
+	misordered := []errorCodeEntry{
+		{Sentinel: general, Code: "general"},
+		{Sentinel: specific, Code: "specific"},
+	}
+	var found errorCodeEntry
+	for _, e := range misordered {
+		if errors.Is(specific, e.Sentinel) {
+			found = e
+			break
+		}
+	}
+	if found.Sentinel == specific {
+		t.Error("bite check failed: a mis-ordered registry did not shadow the specific sentinel, so the loop above proves nothing")
+	}
+}
+
 // TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades is AC2.5.
 func TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades(t *testing.T) {
 	got := classifyError(errors.New("some downstream exploded"))
@@ -193,8 +246,10 @@ func TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades(t *testing.T) {
 //
 // It walks EVERY registered code's rendered problem body — the whole vocabulary,
 // not a sample — over the harness-authored halves (type, title, code). `detail`
-// is the server's own err.Error() and is checked separately for bounding and
-// UTF-8 validity.
+// and its `error` alias are NOT covered by that walk, and the boundary is a
+// deliberate contract rather than a gap in the test: see
+// TestADR_0244_DetailIsPassedThroughNotScrubbed below, which pins what actually
+// happens to them.
 //
 // The two halves get DIFFERENT checks on purpose, and the difference is the
 // point. `code` is a machine vocabulary we author entirely, so a bare-word
@@ -253,6 +308,58 @@ func TestADR_0244_ProblemDetailsCarryNoSecrets(t *testing.T) {
 		if m := secretValue.FindString(ok); m != "" {
 			t.Errorf("secret-value matcher false-positives on %q (matched %q)", ok, m)
 		}
+	}
+}
+
+// TestADR_0244_DetailIsPassedThroughNotScrubbed pins the boundary of the AC2.4
+// guarantee, which the review found was claiming more than the code delivers.
+//
+// The no-secret walk above covers code/title/type — the halves mecatl authors.
+// `detail` and its `error` alias carry the caller's own err.Error(), and are
+// bounded and UTF-8-repaired but NOT content-scrubbed. This test asserts that
+// pass-through EXPLICITLY, so the boundary is a decision on the record instead
+// of an untested assumption, and so a future author who adds scrubbing has to
+// come here and delete an assertion that says why it was not wanted.
+//
+// Not scrubbing is the right call, and not merely the cheap one. A denylist over
+// free-text error prose is the false-positive generator the AC2.4 comment
+// already describes for titles, and the value it would redact is not known to be
+// a secret at this layer — only the backend that raised the error knows which of
+// its own substrings is sensitive. Redacting there is precise; redacting here is
+// a guess that corrupts diagnostics. The obligation therefore sits with the
+// raising backend, which is where today's risky ones (migration, cleanup,
+// storage-health) already discharge it.
+func TestADR_0244_DetailIsPassedThroughNotScrubbed(t *testing.T) {
+	// Shapes the AC2.4 matcher WOULD flag if they appeared in a title.
+	for _, secretish := range []string{
+		"Bearer abcdef1234567890",
+		"token=hunter2",
+		"api_key: sk-01234567890123456789abcdef",
+	} {
+		doc := newProblem(genericErrorEntry, "upstream rejected: "+secretish)
+		if !strings.Contains(doc.Detail, secretish) {
+			t.Errorf("detail = %q; it must carry err.Error() verbatim. If scrubbing was "+
+				"added deliberately, update AC2.4 and this test's rationale together.", doc.Detail)
+		}
+		if doc.Error != doc.Detail {
+			t.Errorf("error alias %q diverged from detail %q", doc.Error, doc.Detail)
+		}
+	}
+
+	// The two protections detail DOES get, on a value that needs both at once.
+	huge := strings.Repeat("s3cr3t", maxProblemDetail)
+	doc := newProblem(genericErrorEntry, huge+"\xe2")
+	if len(doc.Detail) > maxProblemDetail+len("…") {
+		t.Errorf("detail is %d bytes; bounding applies to caller text too", len(doc.Detail))
+	}
+	if !utf8ValidString(doc.Detail) {
+		t.Error("detail is not valid UTF-8; the marshal-killing class must be repaired even when unscrubbed")
+	}
+
+	// And the harness-authored halves stay clean no matter what the caller sent —
+	// a caller cannot reach them.
+	if strings.Contains(doc.Code, "s3cr3t") || strings.Contains(doc.Title, "s3cr3t") || strings.Contains(doc.Type, "s3cr3t") {
+		t.Error("caller-supplied detail leaked into code/title/type, which AC2.4 does guarantee are clean")
 	}
 }
 

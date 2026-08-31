@@ -13,7 +13,7 @@ import (
 // Flipping to it from application/json is observable to a client that
 // pattern-matches on the response Content-Type — but the `error` key is retained
 // inside the body for compatibility, and RFC 9457 compliance that lies about its
-// own media type is not compliance. See ADR 0244.
+// own media type is not compliance. See ADR 0248.
 const problemContentType = "application/problem+json"
 
 // problemTypePrefix builds the RFC 9457 `type` member.

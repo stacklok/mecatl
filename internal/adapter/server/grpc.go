@@ -1506,8 +1506,6 @@ func toProtoCleanupJob(job CleanupJob) *mecatlv1.CleanupJob {
 }
 
 // toStatus maps service sentinel errors to gRPC status codes.
-//
-//nolint:gocyclo // a flat error→code classifier; a switch is the correct shape.
 func toStatus(err error) error {
 	return statusForEntry(classifyError(err), err)
 }
@@ -1533,6 +1531,15 @@ func toStatus(err error) error {
 func statusForEntry(entry errorCodeEntry, err error) error {
 	st := status.New(entry.GRPC, session.ToValidUTF8(err.Error()))
 	withDetail, derr := st.WithDetails(&errdetails.ErrorInfo{
+		// Reason carries entry.Code VERBATIM, in lower_snake_case. AIP-193
+		// conventionally spells Reason in UPPER_SNAKE_CASE; that convention is
+		// deliberately NOT followed, and this is not an oversight to correct.
+		// AC2.2 requires the IDENTICAL string on both transports, and the HTTP
+		// problem body's `code`/`type` are lowercase to match RFC 9457 style.
+		// Upper-casing here would give one error identity two spellings, and
+		// every SDK a case conversion to know about. ADR 0248 decision 7 records
+		// the trade; TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity
+		// fails if the two ever diverge.
 		Reason: entry.Code,
 		Domain: errorDomain,
 	})

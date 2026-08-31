@@ -2135,7 +2135,7 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 // errors.Is chain maintained in parallel with toStatus in grpc.go; the two
 // agreed only by discipline, and a sentinel added to one and forgotten in the
 // other would have reported a different class per transport. Both now read
-// errorRegistry, so they cannot disagree. See ADR 0244.
+// errorRegistry, so they cannot disagree. See ADR 0248.
 func writeServiceError(w http.ResponseWriter, err error) {
 	writeProblem(w, classifyError(err), err.Error())
 }

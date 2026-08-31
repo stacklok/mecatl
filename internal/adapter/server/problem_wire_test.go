@@ -58,7 +58,7 @@ func getProblem(t *testing.T, url string) (*http.Response, problemBody) {
 // detail, and the stable mecatl code — plus the retained `error` compatibility
 // key so a client written against the pre-RFC-9457 body keeps working.
 func TestSDKServerEnablers_Scenario2_ProblemJSONShape(t *testing.T) {
-	svc := serverInfoService(t, "", "", port.ProviderCapabilities{})
+	svc := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
@@ -106,7 +106,7 @@ func TestSDKServerEnablers_Scenario2_ProblemJSONShape(t *testing.T) {
 // a gRPC client could not tell one FailedPrecondition from another — and the
 // SDK's single normalized error surface would be false on the gRPC side.
 func TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity(t *testing.T) {
-	svc := serverInfoService(t, "", "", port.ProviderCapabilities{})
+	svc := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
@@ -150,7 +150,7 @@ func TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity(t *testing.T) {
 // writeError path — failures raised inside a handler that have a status but no
 // service sentinel. They must still be machine-readable.
 func TestSDKServerEnablers_Scenario2_RequestShapeFailuresCarryACode(t *testing.T) {
-	svc := serverInfoService(t, "", "", port.ProviderCapabilities{})
+	svc := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
@@ -183,13 +183,13 @@ func TestSDKServerEnablers_Scenario2_RequestShapeFailuresCarryACode(t *testing.T
 // radius: only ERROR bodies moved to problem+json. A success must still be
 // application/json, or every existing client breaks on the happy path.
 func TestSDKServerEnablers_Scenario2_SuccessResponsesAreUnchanged(t *testing.T) {
-	svc := serverInfoService(t, "", "", port.ProviderCapabilities{})
+	svc := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/v1/server-info") //nolint:noctx // httptest.
+	resp, err := http.Get(srv.URL + "/v1/compatibility") //nolint:noctx // httptest.
 	if err != nil {
-		t.Fatalf("GET /v1/server-info: %v", err)
+		t.Fatalf("GET /v1/compatibility: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {

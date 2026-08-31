@@ -9,7 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-// An error code is a STABLE OPEN STRING, not an enum value (ADR 0244).
+// An error code is a STABLE OPEN STRING, not an enum value (ADR 0248).
 //
 // A closed proto enum would make every added code a wire-compat event needing
 // codegen and a proto review, and would leave an older client decoding new
