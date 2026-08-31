@@ -333,28 +333,29 @@ func NewParallelTool(childEngine *Engine, forker tool.EnvironmentForker, opts ..
 func (*ParallelTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: parallelToolName,
-		Description: "Fan out several independent tasks (up to 16) to run in PARALLEL, each in " +
-			"its own isolated forked workspace and fresh context, then join their results into " +
-			"one summary. Use to explore multiple approaches at once or to split independent " +
-			"work. For a single task just do it yourself or use Subagent; for work where the " +
-			"branches must coordinate or share state, use Team — Parallel branches are fully " +
-			"independent and never communicate. " +
+		Description: "Run a managed fork-join group for one or more isolated writable or competing " +
+			"branches (up to 16), each with its own forked workspace and fresh context, with built-in " +
+			"'all', 'first', or 'judge'/'best' result selection. Do NOT use Parallel merely for " +
+			"independent READ-ONLY investigations; prefer one Subagent call per task in the SAME assistant " +
+			"turn so eligible calls execute concurrently and return separate results. For a direct-write " +
+			"single task, prefer Subagent with mode:\"read-write\". A one-branch Parallel call remains " +
+			"appropriate when implementation must stay isolated until successful selection and conditional " +
+			"merge. For work where branches must coordinate or share state, use Team — Parallel branches " +
+			"are fully independent and never communicate. " +
 			"Each branch runs in an isolated fork, so a branch may IMPLEMENT by editing, " +
 			"writing files, and running shell commands (Bash), not just explore — its changes " +
 			"land in its own fork and never touch this workspace (Bash runs with the fork as its " +
 			"working directory). " +
 			"Each branch cannot see this conversation or the other branches, so make every " +
 			"task in `tasks` self-contained (use `shared` for common context). " +
-			"`join` controls the result: 'all' (default) returns every branch summary so YOU " +
-			"pick — every branch's fork is torn down after the join, so copy any changes you " +
-			"need into your reply before the call returns; 'first' returns the first branch that " +
+			"`join` controls the result: 'all' (default) returns every branch summary, then destroys " +
+			"every branch fork — files cannot later be inspected, copied, or merged, so each branch must " +
+			"include any needed patch or details in its summary; 'first' returns the first branch that " +
 			"SUCCEEDS, cancels the rest, and keeps the winner's fork (path reported); 'judge'/'best' " +
 			"has an LLM pick the single best branch against `criteria` and keeps the winner's fork " +
-			"(path reported). To land a single task's edits, use Subagent with mode:\"read-write\" — " +
-			"Parallel is for running 2+ independent or competing branches; multi-branch runs never " +
-			"auto-merge (inspect a preserved winner's fork path yourself if you need to). " +
-			"Each branch reports a `branch id:` line you can pass to InspectSubagent to pull " +
-			"that branch's bounded transcript (e.g. to debug a failed or not-selected branch).",
+			"(path reported). Multi-branch runs never auto-merge (inspect a preserved winner's fork path " +
+			"yourself if needed). Each branch reports a `branch id:` line you can pass to InspectSubagent " +
+			"to pull that branch's bounded transcript (e.g. to debug a failed or not-selected branch).",
 		Schema: parallelSchema,
 	}
 }

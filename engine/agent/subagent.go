@@ -1452,22 +1452,26 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 	if t.shellDisabledNote != "" {
 		shellClause = "By default the subagent is READ-ONLY — " + t.shellDisabledNote + " — with no Edit/Write"
 	}
-	desc := "Delegate a focused, self-contained task to a subagent with its own fresh context: " +
+	desc := "Delegate ONE focused, self-contained task to a subagent with its own fresh context. " +
+		"For two or more independent READ-ONLY tasks, prefer one Subagent call per task in the SAME " +
+		"assistant turn; eligible calls execute concurrently and return separate results. Do not wait " +
+		"for one before launching the next unless a later task depends on an earlier result. Use it for " +
 		"a multi-step investigation ('search → summarize', 'trace this code path'), build/test/git " +
 		"work ('run the tests and report failures', 'bisect the history'), or an implementation task " +
 		"('implement this fix and edit the files'). " +
 		shellClause + ". " +
 		"Set mode:\"read-write\" to let it edit and write files DIRECTLY in your workspace — exactly " +
 		"as you do — so its edits land immediately, with no copy or merge step. This is how you " +
-		"delegate an implementation task and have the edits LAND. It runs serially (never alongside " +
-		"your other tools) so it cannot race you; there is no isolation, so review its result with " +
-		"`git diff`/`git status` and undo with `git checkout`/`git stash` if needed. " +
+		"delegate an implementation task and have the edits LAND. Serial execution applies only to a " +
+		"mode:\"read-write\" call (it never runs alongside your other tools), so it cannot race you; " +
+		"there is no isolation, so review its result with `git diff`/`git status` and undo with " +
+		"`git checkout`/`git stash` if needed. " +
 		"The subagent cannot delegate further. " +
 		"The subagent's FINAL MESSAGE is its deliverable — you receive only that " +
 		"(see `prompt`; with `background: true` the call instead returns at once and you collect the " +
-		"result later). You may issue several Subagent calls in ONE turn. Do NOT use it when you need " +
-		"the intermediate outputs in this conversation (do the work yourself) or when workers must " +
-		"coordinate (use Team) — and don't delegate a single quick read you can do with Read/Grep." +
+		"result later). Do NOT use it when you need the intermediate outputs in this conversation " +
+		"(do the work yourself) or when workers must coordinate (use Team) — and don't delegate a " +
+		"single quick read you can do with Read/Grep." +
 		" Inline context you already hold (e.g. a diff, file contents, prior findings) directly in " +
 		"`prompt` rather than making the subagent re-fetch it — that saves its limited turn/tool " +
 		"budget for the actual task." +
@@ -1498,16 +1502,18 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 // enumerating any would advertise specialists the `agent` arg cannot honestly
 // serve in this session.
 func (*SubagentTool) noFSDescription() string {
-	desc := "Delegate a focused, self-contained task to a subagent with its own fresh context: " +
+	desc := "Delegate ONE focused, self-contained task to a subagent with its own fresh context. " +
+		"For two or more independent READ-ONLY tasks, prefer one Subagent call per task in the SAME " +
+		"assistant turn; eligible calls execute concurrently and return separate results. Do not wait " +
+		"for one before launching the next unless a later task depends on an earlier result. Use it for " +
 		"a multi-step investigation it can complete WITHOUT any file access ('fetch and cross-check " +
 		"these sources → summarize', 'search memory and report what is already known'). This session " +
 		"has NO filesystem: the subagent has NO file tools and NO shell — it works through MCP tools, " +
 		"memory, and web fetch only, and it cannot delegate further. Delegate only file-free " +
 		"investigations. The subagent's FINAL MESSAGE is its deliverable — you receive only that " +
 		"(see `prompt`; with `background: true` the call instead returns at once and you collect the " +
-		"result later). You may issue several Subagent calls in ONE turn. Do NOT use it when you need " +
-		"the intermediate outputs in this conversation (do the work yourself), or when workers must " +
-		"coordinate (use Team)." +
+		"result later). Do NOT use it when you need the intermediate outputs in this conversation " +
+		"(do the work yourself), or when workers must coordinate (use Team)." +
 		" Inline context you already hold (e.g. prior findings, fetched content) directly in " +
 		"`prompt` rather than making the subagent re-fetch it — that saves its limited turn/tool " +
 		"budget for the actual task." +

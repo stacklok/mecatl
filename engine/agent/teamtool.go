@@ -253,11 +253,11 @@ func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool 
 func (*TeamTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: teamToolName,
-		Description: "Form a team of coordinating subagents when a goal genuinely splits into " +
-			"parallel specialist roles — e.g. an investigator + a fixer, or several role-focused " +
-			"workers sharing a task list and mailbox. You specify the roster: each member has a " +
-			"name, a role (its briefing), and whether it needs to edit files (mutating). The " +
-			"FIRST member is the coordinating lead.\n\n" +
+		Description: "Form a stateful, multi-round team only when workers must coordinate through a " +
+			"shared task list and mailbox and the lead must synthesize the final report. For independent " +
+			"result-only fan-out, prefer one read-only Subagent call per task in the SAME assistant turn. " +
+			"You specify the roster: each member has a name, a role (its briefing), and whether it needs " +
+			"to edit files (mutating). The FIRST member is the coordinating lead.\n\n" +
 			"A team is the MOST EXPENSIVE tool — several long-lived agents over many rounds. For " +
 			"a single focused investigation use Subagent; for something you can do directly, do " +
 			"it directly. Keep the roster small (2-4 members is typical).\n\n" +

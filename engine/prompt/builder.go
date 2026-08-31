@@ -228,9 +228,10 @@ func toolInventory(tools []tool.ToolSpec) string {
 // package stays adapter-agnostic: tool names are matched as plain string
 // literals here (it must not import adapter/tools — that would invert layering).
 //
-// The output is byte-stable for a given tool set: the dedicated-tool clauses are
-// emitted in a fixed order, and the parallel-call line is always appended last.
-// When no dedicated tools match, only the parallel line is returned (no dangling
+// The output is byte-stable for a given tool set: the dedicated-tool clauses and
+// catalog-aware delegation clauses are emitted in a fixed order, and the generic
+// parallel-call line is always appended last. When no dedicated tools match, only
+// applicable delegation clauses and the generic parallel line are returned (no dangling
 // "Use the dedicated tool when one fits:" heading).
 func toolDisciplineHints(tools []tool.ToolSpec) string {
 	present := make(map[string]bool, len(tools))
@@ -267,7 +268,19 @@ func toolDisciplineHints(tools []tool.ToolSpec) string {
 		writeSentence(&b, "Reserve Bash for real system/terminal commands.")
 	}
 	if present["Subagent"] {
-		writeSentence(&b, "Use Subagent to delegate independent read-only exploration.")
+		writeSentence(&b, "Use Subagent for focused delegation. For multiple independent read-only tasks, issue one Subagent call per task in the same assistant turn so eligible calls run concurrently; wait between calls only when a later task depends on an earlier result.")
+	}
+	if present["Parallel"] {
+		writeSentence(&b, "Use Parallel only for isolated writable or competing branches that need built-in join or winner selection.")
+		if present["Subagent"] {
+			writeSentence(&b, "Do not use Parallel merely for independent read-only investigation; use same-turn Subagent calls instead.")
+		}
+	}
+	if present["Team"] {
+		writeSentence(&b, "Use Team only for workers that must coordinate through shared tasks or messages over multiple rounds.")
+		if present["Subagent"] {
+			writeSentence(&b, "Use same-turn read-only Subagent calls instead for independent result-only fan-out.")
+		}
 	}
 	if present["Remember"] || present["Recall"] || present["SearchMemory"] ||
 		present["RememberUser"] || present["RecallUser"] || present["SearchUserModel"] {
