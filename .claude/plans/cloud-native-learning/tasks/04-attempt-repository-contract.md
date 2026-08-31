@@ -2,9 +2,9 @@
 id: 04-attempt-repository-contract
 title: Add the AttemptRepository CAS and fenced-claim contract
 blocked_by: [03-attempt-domain-values]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/04-attempt-repository-contract"
+worktree: ".scratch/worktrees/04-attempt-repository-contract"
 issue: ""
 retries: 0
 last_error: ""
