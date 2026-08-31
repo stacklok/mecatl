@@ -1,10 +1,10 @@
-# ADR 0253 — Activity-gated remote OIDC refresh
+# ADR 0270 — Activity-gated remote OIDC refresh
 
 - Status: Accepted
 - Date: 2026-08-26
 - Scope: `mecatui` remote OIDC credential refresh
 - Supersedes: None
-- Superseded by: ADR 0260
+- Superseded by: ADR 0277
 
 ## Context
 
@@ -64,7 +64,7 @@ existing sentinel-only callers continue to work.
 
 ## See also
 
-- [ADR 0256 — Remote mecatui OIDC client login](./0256-remote-mecatui-oidc-login.md)
+- [ADR 0273 — Remote mecatui OIDC client login](./0273-remote-mecatui-oidc-login.md)
 - [ADR 0218 — Internal encrypted credential-store substrate](./0218-credential-store.md)
 - [ADR 0235 — Scoped private HTTPS OIDC transport](./0235-scoped-private-https-oidc-transport.md)
 - [ADR 0236 — Private HTTPS OIDC issuer](./0236-private-https-oidc-issuer.md)

@@ -1,10 +1,10 @@
-# ADR 0255 — Safe target logout for remote mecatui OIDC
+# ADR 0272 — Safe target logout for remote mecatui OIDC
 
 - Status: Accepted
 - Date: 2026-08-27
 - Scope: remote mecatui target registry deletion, credential cleanup, and provider revocation
 - Supersedes: None
-- Superseded by: ADR 0260
+- Superseded by: ADR 0277
 
 ## Context
 
@@ -57,7 +57,7 @@ enumeration/pruning contract.
 
 ## See also
 
-- [Remote mecatui OIDC client login](./0256-remote-mecatui-oidc-login.md)
+- [Remote mecatui OIDC client login](./0273-remote-mecatui-oidc-login.md)
 - [TUI transport and login](../tui.md)
 - [Architecture](../architecture.md)
 - `user-docs/mecatui/remote-servers.md`

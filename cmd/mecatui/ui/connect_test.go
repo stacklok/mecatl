@@ -102,11 +102,12 @@ func TestConnectListFailureIsSanitized(t *testing.T) {
 	}
 }
 
-// TestReauthenticateIntentIsAlwaysBrowserFree pins ADR 0254's contract that
-// the recovery overlay never opens a browser: a Reauthenticate restart's
-// intent must set NoBrowser regardless of whatever interactive/headless
-// posture the process itself has.
-func TestReauthenticateIntentIsAlwaysBrowserFree(t *testing.T) {
+// TestReauthenticateIntentCarriesNoBrowserState pins that ConnectRestartIntent
+// itself carries no NoBrowser field: ADR 0254's contract that the recovery
+// overlay never opens a browser is now enforced unconditionally at the
+// cmd/mecatui composition boundary (restartFromConnectIntentWith), not by a
+// value threaded through the intent.
+func TestReauthenticateIntentCarriesNoBrowserState(t *testing.T) {
 	m := New(Deps{
 		Connect:       fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
 		Theme:         theme.New("aztec", theme.AztecPalette()),
@@ -126,7 +127,7 @@ func TestReauthenticateIntentIsAlwaysBrowserFree(t *testing.T) {
 		m = mm.(Model)
 	}
 	intent, ok := m.ConnectRestartIntent()
-	if !ok || intent.Action != Reauthenticate || !intent.NoBrowser {
-		t.Fatalf("intent = %#v, ok=%v, want Reauthenticate with NoBrowser=true", intent, ok)
+	if !ok || intent.Action != Reauthenticate {
+		t.Fatalf("intent = %#v, ok=%v, want Reauthenticate", intent, ok)
 	}
 }

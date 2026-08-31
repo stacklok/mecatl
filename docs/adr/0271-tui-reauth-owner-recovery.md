@@ -1,10 +1,10 @@
-# ADR 0254 — Recover remote TUI authentication without replaying ownership-ambiguous work
+# ADR 0271 — Recover remote TUI authentication without replaying ownership-ambiguous work
 
 - Status: Accepted
 - Date: 2026-08-26
 - Scope: `mecatui` remote OIDC transport and session recovery
 - Supersedes: None
-- Superseded by: ADR 0260
+- Superseded by: ADR 0277
 
 ## Context
 
@@ -46,7 +46,7 @@ mapping synchronized with `clientauth`.
 
 ## See also
 
-- [ADR 0256](./0256-remote-mecatui-oidc-login.md)
-- [ADR 0253](./0253-activity-gated-remote-oidc-refresh.md)
+- [ADR 0273](./0273-remote-mecatui-oidc-login.md)
+- [ADR 0270](./0270-activity-gated-remote-oidc-refresh.md)
 - [TUI guide](../tui.md)
 - `user-docs/mecatui/remote-servers.md`

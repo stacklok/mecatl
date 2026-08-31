@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -256,43 +255,37 @@ func TestRestartConnectActionsAndBrowserBoundary(t *testing.T) {
 	}
 }
 
-// TestReauthenticateRestartHonorsHeadlessIntent pins restartFromConnectIntentWith's
-// plumbing in isolation: whatever ConnectRestartIntent.NoBrowser says is passed
-// through to the login call verbatim, regardless of its value. It does NOT claim
-// the real UI ever produces NoBrowser=false for Reauthenticate -- that contract
-// (always true, per ADR 0254) is pinned separately by
-// ui.TestReauthenticateIntentIsAlwaysBrowserFree, which drives the actual
-// connectRestartIntent() method.
-func TestReauthenticateRestartHonorsHeadlessIntent(t *testing.T) {
-	for _, noBrowser := range []bool{false, true} {
-		t.Run(fmt.Sprintf("noBrowser=%v", noBrowser), func(t *testing.T) {
-			var gotNoBrowser bool
-			var logins int
-			ops := connectRestartOps{
-				run: func([]string, runOptions) error { return nil },
-				connection: func(target string) (clientauth.Connection, error) {
-					return clientauth.Connection{Identity: clientauth.Identity{Target: target}}, nil
-				},
-				login: func(_ context.Context, _ clientauth.Connection, headless bool) error {
-					logins++
-					gotNoBrowser = headless
-					return nil
-				},
-				loginContext: func(time.Duration) (context.Context, context.CancelFunc) {
-					return context.WithCancel(context.Background())
-				},
-			}
-			err := restartFromConnectIntentWith([]string{"mecatui"}, ui.ConnectRestartIntent{Target: "canonical.example:443", Action: ui.Reauthenticate, NoBrowser: noBrowser}, restartTransport{Target: "canonical.example:443"}, ops)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if logins != 1 {
-				t.Fatalf("logins = %d, want 1", logins)
-			}
-			if gotNoBrowser != noBrowser {
-				t.Fatalf("login noBrowser = %v, want %v", gotNoBrowser, noBrowser)
-			}
-		})
+// TestReauthenticateRestartAlwaysPassesNoBrowser pins that
+// restartFromConnectIntentWith's Reauthenticate branch passes true to the
+// login call unconditionally (ADR 0254: the recovery overlay never opens a
+// browser). ConnectRestartIntent carries no NoBrowser field, so there is no
+// producer-supplied value that could reopen the browser path here.
+func TestReauthenticateRestartAlwaysPassesNoBrowser(t *testing.T) {
+	var gotNoBrowser bool
+	var logins int
+	ops := connectRestartOps{
+		run: func([]string, runOptions) error { return nil },
+		connection: func(target string) (clientauth.Connection, error) {
+			return clientauth.Connection{Identity: clientauth.Identity{Target: target}}, nil
+		},
+		login: func(_ context.Context, _ clientauth.Connection, headless bool) error {
+			logins++
+			gotNoBrowser = headless
+			return nil
+		},
+		loginContext: func(time.Duration) (context.Context, context.CancelFunc) {
+			return context.WithCancel(context.Background())
+		},
+	}
+	err := restartFromConnectIntentWith([]string{"mecatui"}, ui.ConnectRestartIntent{Target: "canonical.example:443", Action: ui.Reauthenticate}, restartTransport{Target: "canonical.example:443"}, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logins != 1 {
+		t.Fatalf("logins = %d, want 1", logins)
+	}
+	if !gotNoBrowser {
+		t.Fatal("login noBrowser = false, want true (ADR 0254)")
 	}
 }
 

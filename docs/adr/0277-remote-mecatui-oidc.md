@@ -1,10 +1,10 @@
-# ADR 0260 — Remote mecatui OIDC client authentication
+# ADR 0277 — Remote mecatui OIDC client authentication
 
 - Status: Accepted
 - Date: 2026-08-28
 - Scope: `mecatui` remote OIDC enrollment, credential lifecycle, connection recovery, and logout
-- Supersedes: ADR 0253, ADR 0254, ADR 0255, ADR 0256
-- Superseded by: ADR 0257 (logout provider budget only)
+- Supersedes: ADR 0270, ADR 0271, ADR 0272, ADR 0273
+- Superseded by: ADR 0274 (logout provider budget only)
 
 ## Context
 

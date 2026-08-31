@@ -1,4 +1,4 @@
-# ADR 0259 — Count the full request and expose durable manual compaction
+# ADR 0276 — Count the full request and expose durable manual compaction
 
 - Status: Accepted
 - Date: 2026-08-29
