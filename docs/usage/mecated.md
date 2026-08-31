@@ -623,6 +623,13 @@ tolerated rather than mistaken for a dead one. `0` means "not configured", and
 `0`/`1`/`2` are **rejected**: treating stdin's EOF as "the parent died" would stop
 the daemon the moment it was started from any non-interactive shell.
 
+The descriptor is also checked to be **open** and to be an actual **pipe**, both as
+startup errors. Either mistake would otherwise read as EOF or `ENOTCONN`, which the
+watcher reports as "the parent exited" — so the daemon would start, publish its
+ready file, and vanish milliseconds later. A refusal naming the flag is much easier
+to diagnose. The check is a bare `fstat` that takes no ownership of the descriptor,
+so a rejected fd is left exactly as the caller passed it.
+
 ### Observability (the loopback admin listener)
 
 `--metrics-addr` (default `127.0.0.1:9090`, empty disables) serves, **loopback-only and

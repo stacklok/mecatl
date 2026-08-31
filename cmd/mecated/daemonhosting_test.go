@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -833,13 +834,11 @@ func startupRejection(t *testing.T, cfg config) error {
 // graceful path a SIGTERM takes — the in-flight session still persists, which is
 // exactly when a parent crash would otherwise be felt.
 func TestSDKServerEnablers_Scenario8_LifetimePipeEOFStops(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	// r's descriptor is adopted by serve (openLifetimePipe wraps it and Closes
-	// it on return), so the test must not close r itself.
-	fd := int(r.Fd())
+	// The read end is a RAW descriptor with no Go owner, because serve adopts it:
+	// openLifetimePipe wraps it and Closes it on return. An os.Pipe read end would
+	// leave two owners of one fd, and the loser closes that number again later,
+	// after something unrelated may hold it.
+	fd, w := rawPipe(t)
 
 	sock := socketPathForTest(t)
 	cfg := udsConfig(sock)
@@ -944,10 +943,21 @@ func TestSDKServerEnablers_Scenario8_LifetimePipeRejectsANonPipeDescriptor(t *te
 		t.Errorf("error %q must name the flag and say the descriptor is not a pipe", err)
 	}
 
-	// The descriptor must survive the rejection: openLifetimePipe adopts it only
-	// on success, so a mistyped fd cannot cost the daemon a listener.
+	// The descriptor must survive the rejection, and it must survive a GC.
+	//
+	// The GC is the assertion, not a formality. os.NewFile attaches a cleanup that
+	// CLOSES the descriptor when its wrapper is collected, so validating through an
+	// os.File and dropping it on the error path lets the runtime close this fd at
+	// an arbitrary later moment — long after the number has been handed to an
+	// unrelated socket. That is not a visible failure here; it surfaces as some
+	// other component's connection dying for no reason, which is exactly how it
+	// was found (a ten-minute hang in an unrelated http.Get). Without forcing the
+	// collection this assertion passes whether or not the bug is present.
+	for range 5 {
+		runtime.GC()
+	}
 	if _, statErr := dup.Stat(); statErr != nil {
-		t.Errorf("the rejected descriptor was closed by openLifetimePipe (%v); a refusal must not consume the caller's fd", statErr)
+		t.Errorf("the rejected descriptor was closed after a GC (%v); openLifetimePipe must not construct an owning os.File before it commits to adopting the fd", statErr)
 	}
 }
 
@@ -962,13 +972,10 @@ func TestSDKServerEnablers_Scenario8_LifetimePipeRejectsANonPipeDescriptor(t *te
 func TestSDKServerEnablers_Scenario8_LifetimePipeIsQuietOnCleanShutdown(t *testing.T) {
 	logs := captureLogs(t)
 
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
+	fd, w := rawPipe(t)
 	defer w.Close() // the "parent" stays alive throughout: only our Close ends the watch
 
-	p, err := openLifetimePipe(int(r.Fd()))
+	p, err := openLifetimePipe(fd)
 	if err != nil {
 		t.Fatalf("openLifetimePipe: %v", err)
 	}
@@ -1013,11 +1020,8 @@ func closedDescriptor(t *testing.T) int {
 // treating them as commands would hand a local writer a way to steer the daemon
 // with no authentication at all.
 func TestSDKServerEnablers_Scenario8_LifetimePipeIgnoresParentBytes(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	p, err := openLifetimePipe(int(r.Fd()))
+	fd, w := rawPipe(t)
+	p, err := openLifetimePipe(fd)
 	if err != nil {
 		t.Fatalf("openLifetimePipe: %v", err)
 	}

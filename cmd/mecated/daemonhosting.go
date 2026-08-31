@@ -452,25 +452,26 @@ type lifetimePipe struct {
 // failure to diagnose than a refusal naming the flag.
 //
 // Being OPEN is not sufficient, because this runs AFTER bindListeners: a stale
-// or simply mistyped fd number can name a descriptor this process already owns.
-// os.NewFile+Stat happily accepts a listening socket, and reading one yields
-// ENOTCONN, which watch() maps to "parent exited" — so the daemon would publish
-// its ready file, shut down immediately, and then close that descriptor out from
-// under its real owner on the way out. Same undiagnosable failure, different
-// door. The flag names a PIPE, so the pipe bit is the test; ModeSocket would
-// still admit the listener above.
+// or simply mistyped fd number can name a descriptor this process already owns,
+// and reading a listening socket yields ENOTCONN, which watch() maps to "parent
+// exited". Same undiagnosable failure, different door. checkLifetimePipeFD
+// answers both questions.
+//
+// The ORDER matters and is not cosmetic. Validation happens BEFORE os.NewFile,
+// because that wrapper closes its descriptor when garbage collected: building
+// one and then dropping it on the error path lets the runtime close the caller's
+// fd at some arbitrary later moment, after the number may have been reused by an
+// unrelated socket. A rejection must leave the caller's descriptor untouched, so
+// the wrapper is only ever constructed once this function is committed to
+// adopting it.
 func openLifetimePipe(fd int) (lifetimePipe, error) {
 	if fd == 0 {
 		return lifetimePipe{}, nil
 	}
+	if err := checkLifetimePipeFD(fd); err != nil {
+		return lifetimePipe{}, err
+	}
 	f := os.NewFile(uintptr(fd), fmt.Sprintf("lifetime-pipe-fd-%d", fd))
-	fi, err := f.Stat()
-	if err != nil {
-		return lifetimePipe{}, fmt.Errorf("--lifetime-pipe-fd %d is not an open descriptor in this process (%w): the parent must pass the pipe's READ end as an inherited fd", fd, err)
-	}
-	if fi.Mode()&fs.ModeNamedPipe == 0 {
-		return lifetimePipe{}, fmt.Errorf("--lifetime-pipe-fd %d is open but is not a pipe (mode %s): pass the READ end of an inherited pipe — a socket, a regular file, or a descriptor this process already owns is a mistake, not a parent-liveness signal", fd, fi.Mode().String())
-	}
 	p := lifetimePipe{file: f, closed: make(chan struct{})}
 	go p.watch()
 	return p, nil
