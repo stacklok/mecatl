@@ -62,7 +62,7 @@ func TestSteer_IngressRepairCannotBreakCorrelation(t *testing.T) {
 	// The steer text carries invalid UTF-8; its id is tracked via the Service
 	// Steer path (text repaired at the engine inbox, id untracked by text).
 	invalid := string([]byte{0xe2, 0x28})
-	outc, promoted, _, err := svc.Steer(ctx, sess.ID, invalid, "m-repair")
+	outc, promoted, _, err := svc.Steer(ctx, sess.ID, invalid, nil, "m-repair")
 	if err != nil || promoted {
 		t.Fatalf("Steer on a live run = %v / promoted=%v, want accepted/appended enqueued", err, promoted)
 	}

@@ -3,7 +3,7 @@
 **Phase:** capability — mid-run user input (steer)
 **Status:** landed (reworked through review rounds, 2026-08-18). Settled in the #512 design discussion; rounds 2–3 rework landed on the same branch (Ozz review, then ad-hoc live-test findings).
 **Issue:** [stacklok/mecatl#512](https://github.com/stacklok/mecatl/issues/512).
-**ADR:** ADR-0228 (lands with this plan) — the steer **as-shipped** contract: engine append-default single-slot inbox, watermark `message_id` correlation, drain echo, promote-on-terminal-race + sequential active-run handoff, gate.
+**ADR:** ADR-0232 defines the steer timing, inbox, correlation, promotion, and runtime gate; ADR-0251 defines its multimodal payload and attachment lifecycle.
 **Accumulator branch:** `feat/steer-while-running` (PR #570).
 
 The smallest set of work that lets a user inject a message into an **in-flight** run — Claude Code's "steer while running" — instead of waiting for the run to end and submitting a fresh prompt. Today mecatl's queue is purely client-side and turn-terminal ([`cmd/mecatui/ui/update.go`](../../cmd/mecatui/ui/update.go) `m.queued` / `drainQueue`): a typed line is staged and submitted as a brand-new follow-up run only when the current run ends. This plan adds an engine-side steer path so a long multi-tool run can be nudged mid-flight.
@@ -61,8 +61,8 @@ The core: a run-scoped, single-slot mutex inbox on `Run`, drained at the existin
 At most one pending steer *bundle* per run. A second `steer` while one is pending **appends** (`pending += "\n\n"+text`, outcome `SteerAppended`) — supersede/slot_full were dropped in round 3; replacing a pending bundle is explicit **cancel-then-resend** (`steer_cancel` on `↑` edit-back). The client cannot observe the exact drain moment (stream latency), so the engine reports the outcome authoritatively rather than letting the client guess — the drain echo doubles as the recorded-history invariant that [`AGENTS.md` — the recorded == streamed == model-view rule](../../AGENTS.md) pins, and the outcome is an enum, not stacked booleans. Every frame carries a client-minted `message_id` the server echoes verbatim on the ack and the drain echo, so the client correlates by id and ignores a stale ack (id no longer in queue). See the race analysis in #512 + [ADR-0038](../adr/0038-event-sourced-rehydration.md).
 
 **Work:**
-- engine app (`engine/agent`): the inbox's `EnqueueSteer(text) → {accepted | appended | too_late}` / `CancelSteer() → {retracted | none_pending}` / drain transitions; an enum-typed outcome.
-- The drain emits `EvSteer` carrying the committed merged bundle + the watermark `message_id` (the tail of the bundle's ordered id-list at the Service wire-correlation layer — the engine inbox is text-only).
+- engine app (`engine/agent`): the inbox's `EnqueueSteer(text, parts) → {accepted | appended | too_late}` / `CancelSteer() → {retracted | none_pending}` / drain transitions; an enum-typed outcome.
+- The original drain emitted `EvSteer` carrying the committed merged text + the watermark `message_id`; ADR-0251 later added ordered media parts to that same echo. The watermark remains the tail of the Service wire-correlation id list.
 - The Service per-session FIFO (`trackSteerMessageID`/`LookupSteerMessageID`/`dropSteerMessageID`) tracks the ordered id-list; the drain echo pops the tail as the watermark the client splits its queue on.
 
 **Acceptance:**
@@ -76,7 +76,7 @@ At most one pending steer *bundle* per run. A second `steer` while one is pendin
   - verify: `TestSteer_DrainEmitsCommittedEcho`; `TestSteer_MessageIdRoundTrip`; `TestSteer_WatermarkEchoLatestId`; `TestLookupSteerMessageIDExactUnderDuplicateTexts`
 - AC2.5: Enqueue/cancel/drain are safe under concurrent access — no data race, no double-drain.
   - verify: `TestSteer_InboxConcurrentSafe` (run under `-race`); `TestSteer_AppendLinearizable`
-- AC2.6: The recorded steer, the streamed `EvSteer` echo, and the message the model sees are the same text — the recorded == streamed == model-view invariant holds (steer text is UTF-8-repaired at ingress).
+- AC2.6: The recorded steer, the streamed `EvSteer` echo, and the message the model sees have the same text and ordered parts — the recorded == streamed == model-view invariant holds (steer text is UTF-8-repaired at ingress).
   - verify: `TestInvariant_recorded_streamed_model_view`; `TestSteer_IngressUTF8Repaired`
 
 ---
@@ -118,17 +118,17 @@ While a run is parked `awaiting` on a permission or plan ask, the loop is suspen
 
 ### Scenario 5 — Wire: gRPC `Converse` frame + capability advertisement
 
-The steer rides the existing bidi `Converse` stream as a new `ConverseRequest` oneof arm alongside `prompt` / `resume_approval` / `cancel` / `cancel_child` ([`harness.proto`](../../contracts/proto/mecatl/v1/harness.proto)). The server advertises the feature via a new `ServerCapabilities` bit ([`internal/adapter/server.Service.capabilities()`](../../internal/adapter/server/service.go)), following the additive-grow discipline documented on the message (`a new feature adds a new bool field; old clients ignore it, new clients read an old server as false`). See [`AGENTS.md` — capability truth / the ServerCapabilities additive rule](../../AGENTS.md).
+The steer rides the existing bidi `Converse` stream as a `ConverseRequest` oneof arm alongside `prompt` / `resume_approval` / `cancel` / `cancel_child` ([`harness.proto`](../../contracts/proto/mecatl/v1/harness.proto)). The server advertises runtime enablement through the single `ServerCapabilities.steer` bit ([`internal/adapter/server.Service.capabilities()`](../../internal/adapter/server/service.go)).
 
 **Work:**
-- contracts (`contracts/proto`): `Steer` + `SteerCancel` messages, a `steer` / `steer_cancel` oneof arm on `ConverseRequest`, a `ServerCapabilities.steer` bit, and the `EvSteer` echo on the event stream; `task generate` regenerates `contracts/gen`.
-- engine app (`engine/agent`): a `Run`-facing steer entry point the gRPC handler drives (`Engine.Steer`/`Run.EnqueueSteer`), and the `EvSteer` event projection.
+- contracts (`contracts/proto`): `Steer` + `SteerCancel` messages, a `steer` / `steer_cancel` oneof arm on `ConverseRequest`, the `ServerCapabilities.steer` runtime bit, and multimodal `Steer` / `EvSteer` payloads; `task generate` regenerates `contracts/gen`.
+- engine app (`engine/agent`): the canonical `Run.EnqueueSteer(text, parts)` entry point the Service drives, and the `EvSteer` event projection.
 - composition (`internal/adapter/server`): the `Converse` handler routes steer frames to the live run's inbox and relays the outcome back to the client.
 
 **Acceptance:**
 - AC5.1: A client can send a `steer` frame mid-run on the `Converse` stream and observe the injected message + the `EvSteer` echo on the same stream.
   - verify: `TestSteer_ConverseFrameRoundTrip`
-- AC5.2: `ServerCapabilities` advertises `steer` true when the feature is enabled and false/absent when not; an old server (no field) reads as false. The bit is computed **once** in composition (`Service.capabilities()`) and is consistent across every sink that surfaces it (the `CreateSession` echo and any re-hydration path) — the single-composition-computed-intersection invariant ([`AGENTS.md` — capability truth](../../AGENTS.md)); never recomputed per sink.
+- AC5.2: `ServerCapabilities.steer` advertises the complete multimodal steer contract when runtime-enabled and false when disabled. The bit is computed **once** in composition (`Service.capabilities()`) and remains consistent across the CreateSession echo and rehydrated Session snapshot.
   - verify: `TestSteer_CapabilityAdvertised`; `TestSteer_CapabilitySingleSource`
 - AC5.3: `task generate` keeps `contracts/gen` in sync; the new oneof arm does not change the behaviour of existing arms.
   - verify: inspection — `buf generate` output committed; existing Converse control frames unchanged.
@@ -143,13 +143,13 @@ The client-side merge and the engine-side slot are **distinct mechanisms that mu
 
 **Work:**
 - composition (`internal/app` / `cmd/*`): the steer enable knob wired through `app.Build` into the engine deps + the `ServerCapabilities` bit; default on.
-- `cmd/mecatui`: read the `steer` capability; when present, `enter` mid-run sends a `steer` frame instead of only staging locally, and the queue card reflects the authoritative echoed/acked state (pending → sent → too-late-promoted). When absent, keep the #228 local-queue behaviour byte-identical.
+- `cmd/mecatui`: reads `steer`; when true, `enter` mid-run sends a native multimodal frame and renders its acked lifecycle. When runtime-disabled, the #228 local queue owns all mid-run text and media.
 
 **Acceptance:**
 - AC6.1: With steer enabled (default), the capability is advertised and a mid-run input reaches the model without a separate follow-up run.
   - verify: `TestSteer_EnabledByDefaultEndToEnd`
 - AC6.2: With steer disabled, the engine inbox is inert and the TUI falls back to the client-side terminal queue unchanged.
-  - verify: `TestSteer_DisabledFallsBackToLocalQueue`
+  - verify: `TestSteer_RuntimeDisabledFallsBackToLocalQueue`
 - AC6.3: The TUI renders the merged pending message as a single item, reflects the echoed/acked state honestly (queued-until-landed: a pending card at the bottom until the `EvSteer` echo lands it in context at its true position; sent vs promoted-after-race), and `↑` cancels the outstanding bundle and pulls the whole not-yet-drained set back as ONE editable blob (cancel-then-recompose, fresh `message_id` on resend; a late `none_pending` ack means the drain won — the steer shipped).
   - verify: `TestSteer_TUIRendersAuthoritativeState`; `TestSteer_CardGolden`; `TestSteer_TUIQueuedUntilLanded`; `TestSteer_TUIEditCancelThenRecompose`; `TestSteer_TUIEditBackNoDuplicate`
 - AC6.4: `go run ./cmd/mecademo` still prints a full offline session (no behavioural regression with steer unused).
@@ -175,22 +175,22 @@ The client-side merge and the engine-side slot are **distinct mechanisms that mu
 - **`docs/usage/http-sse-api.md`** — a note that steer is gRPC-only in v1 (the HTTP run path has no mid-run client→server channel).
 - **`docs/tui.md`** — the steer-mode queue card (pending / sent / promoted) and the capability-driven flip vs the local queue.
 - **`docs/architecture.md`** — the steer inbox + Step 2a seam under the loop section (living "how it works").
-- **`engine/CHANGELOG.md` + `engine/api/*.txt`** — the new `Engine.Steer` / `Run.EnqueueSteer` (and the `EvSteer` event) are exported engine-module surface, so `task api:update` is **required** (not conditional), with an `engine/CHANGELOG.md` note classified per `engine/COMPATIBILITY.md` (Added = minor).
+- **`engine/CHANGELOG.md` + `engine/api/*.txt`** — the `Run.EnqueueSteer(text, parts)` signature and `EvSteer` media payload are exported engine-module surface, so `task api:update` is **required**, with a breaking Changed note in `engine/CHANGELOG.md`.
 
 ## Sequencing recommendation
 
-Scenario 1 (engine inbox + boundary injection) is the foundation and lands first — everything else builds on the drain seam. Scenario 2 (the slot-full / cancel contract) is the same `Run` structure and pairs naturally with 1. Scenario 3 (auto-promote) and Scenario 4 (awaiting) are independent service/loop behaviours that both depend only on 1. Scenario 5 (wire) depends on 1–2 and unblocks 6. Scenario 6 (composition + TUI) is last and the only client-facing piece. Orchestrate takes over at decomposition; the engine scenarios (1–4) parallelize cleanly once the seam exists.
+Scenario 1 (engine inbox + boundary injection) is the foundation and lands first — everything else builds on the drain seam. Scenario 2 (the append-default / cancel contract) is the same `Run` structure and pairs naturally with 1. Scenario 3 (auto-promote) and Scenario 4 (awaiting) are independent service/loop behaviours that both depend only on 1. Scenario 5 (wire) depends on 1–2 and unblocks 6. Scenario 6 (composition + TUI) is last and the only client-facing piece. Orchestrate takes over at decomposition; the engine scenarios (1–4) parallelize cleanly once the seam exists.
 
 ## Named tests landing in this plan
 
-`TestSteer_AcceptedOnEmpty`, `TestSteer_AppendAckAdvancesPhase`, `TestSteer_AppendedDrainMerged`, `TestSteer_AppendedMerges`, `TestSteer_AppendLinearizable`, `TestSteer_AskStillRequiresVerdict`, `TestSteer_AwaitingAskIsHeld`, `TestSteer_AwaitingResumeDrains`, `TestSteer_BurnedAckStillIgnored`, `TestSteer_CancelRetractsPending`, `TestSteer_CapabilityAdvertised`, `TestSteer_CapabilitySingleSource`, `TestSteer_CardGolden`, `TestSteer_CleanExitContinuesRun`, `TestSteer_ConverseCancelRetracts`, `TestSteer_ConverseFrameRoundTrip`, `TestSteer_DisabledFallsBackToLocalQueue`, `TestSteer_DrainEmitsCommittedEcho`, `TestSteer_EmptyInboxNoOp`, `TestSteer_IdLessEchoClearsQueue`, `TestSteer_InboxConcurrentSafe`, `TestSteer_IngressUTF8Repaired`, `TestSteer_InjectedAtTurnBoundary`, `TestSteer_KeepsPromptPrefixByteStable`, `TestSteer_LiveRunEnqueues`, `TestSteer_MergeThreeIntoOneDrain`, `TestSteer_MessageIdRoundTrip`, `TestSteer_NeverClosedParked`, `TestSteer_NoSupersedePath`, `TestSteer_OutcomeMatrix`, `TestSteer_PendingSteerLostOnRestart`, `TestSteer_PreservesToolPairing`, `TestSteer_PromotedRelaySequential`, `TestSteer_PromotionUsesRunEntryFunnel`, `TestSteer_ProtoEnumAppend`, `TestSteer_RecomposedFragmentRendersPerPart`, `TestSteer_RecordedAndRehydrated`, `TestSteer_SurvivesCompactionBoundary`, `TestSteer_TerminalRacePromotes`, `TestSteer_TooLateNotDrained`, `TestSteer_TUIBurnedIdFreshDraft`, `TestSteer_TUIEditBackNoDuplicate`, `TestSteer_TUIEditCancelThenRecompose`, `TestSteer_TUIIgnoresStaleAck`, `TestSteer_TUIQueuedUntilLanded`, `TestSteer_WatermarkSplitOnQueuedAck`, `TestLookupSteerMessageIDExactUnderDuplicateTexts`, `TestInvariant_recorded_streamed_model_view`.
+`TestSteer_AcceptedOnEmpty`, `TestSteer_AppendAckAdvancesPhase`, `TestSteer_AppendedDrainMerged`, `TestSteer_AppendedMerges`, `TestSteer_AppendLinearizable`, `TestSteer_AskStillRequiresVerdict`, `TestSteer_AwaitingAskIsHeld`, `TestSteer_AwaitingResumeDrains`, `TestSteer_BurnedAckStillIgnored`, `TestSteer_CancelRetractsPending`, `TestSteer_CapabilityAdvertised`, `TestSteer_CapabilitySingleSource`, `TestSteer_CardGolden`, `TestSteer_CleanExitContinuesRun`, `TestSteer_ConverseCancelRetracts`, `TestSteer_ConverseFrameRoundTrip`, `TestSteer_RuntimeDisabledFallsBackToLocalQueue`, `TestSteer_DrainEmitsCommittedEcho`, `TestSteer_EmptyInboxNoOp`, `TestSteer_IdLessEchoClearsQueue`, `TestSteer_InboxConcurrentSafe`, `TestSteer_IngressUTF8Repaired`, `TestSteer_InjectedAtTurnBoundary`, `TestSteer_KeepsPromptPrefixByteStable`, `TestSteer_LiveRunEnqueues`, `TestSteer_MergeThreeIntoOneDrain`, `TestSteer_MessageIdRoundTrip`, `TestSteer_NeverClosedParked`, `TestSteer_NoSupersedePath`, `TestSteer_OutcomeMatrix`, `TestSteer_PendingSteerLostOnRestart`, `TestSteer_PreservesToolPairing`, `TestSteer_PromotedRelaySequential`, `TestSteer_PromotionUsesRunEntryFunnel`, `TestSteer_ProtoEnumAppend`, `TestSteer_RecomposedFragmentRendersPerPart`, `TestSteer_RecordedAndRehydrated`, `TestSteer_SurvivesCompactionBoundary`, `TestSteer_TerminalRacePromotes`, `TestSteer_TooLateNotDrained`, `TestSteer_TUIBurnedIdFreshDraft`, `TestSteer_TUIEditBackNoDuplicate`, `TestSteer_TUIEditCancelThenRecompose`, `TestSteer_TUIIgnoresStaleAck`, `TestSteer_TUIQueuedUntilLanded`, `TestSteer_WatermarkSplitOnQueuedAck`, `TestLookupSteerMessageIDExactUnderDuplicateTexts`, `TestInvariant_recorded_streamed_model_view`.
 
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
 2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
 3. `task generate` — `contracts/gen` regenerated from the proto change and committed.
-4. `task api:update` was run — the engine exported surface changes (new `Engine.Steer`/`Run.EnqueueSteer` + `EvSteer`), so the api-compat gate requires the regenerated `engine/api/*.txt` and an `engine/CHANGELOG.md` note (Added = minor, per `engine/COMPATIBILITY.md`).
+4. `task api:update` was run for the breaking `Run.EnqueueSteer(text, parts)` signature and `EvSteer` media payload; the regenerated `engine/api/*.txt` and Changed note are present.
 5. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is `landed`).
 6. The named tests above are green and grep-locatable by their identifiers.
 7. `go run ./cmd/mecademo` still prints a full offline session.

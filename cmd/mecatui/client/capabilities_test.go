@@ -40,6 +40,7 @@ func TestCapabilitiesFrom(t *testing.T) {
 				ModelSelection:   true,
 				Image:            true,
 				Audio:            true,
+				Steer:            true,
 				ManualCompaction: true,
 			},
 			want: Capabilities{
@@ -55,6 +56,7 @@ func TestCapabilitiesFrom(t *testing.T) {
 				ModelSelection:   true,
 				Image:            true,
 				Audio:            true,
+				Steer:            true,
 				ManualCompaction: true,
 			},
 		},

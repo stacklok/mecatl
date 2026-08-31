@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -1090,6 +1091,26 @@ func orDash(s string) string {
 	return s
 }
 
+func (m *Model) restoreSteerSend(send steerQueuedSend) {
+	draft := send.Draft
+	if current := m.prompt.Value(); strings.TrimSpace(current) != "" {
+		draft = current + queueMergeSep + draft
+	}
+	m.prompt.Rewrite(draft)
+	if len(send.Staged) > 0 {
+		if m.stagedMedia == nil {
+			m.stagedMedia = make(map[string]stagedAttachment)
+		}
+		maps.Copy(m.stagedMedia, send.Staged)
+	}
+	if len(send.Pastes) > 0 {
+		if m.stagedPastes == nil {
+			m.stagedPastes = make(map[string]string)
+		}
+		maps.Copy(m.stagedPastes, send.Pastes)
+	}
+}
+
 func (m Model) applySteerOutcome(msg client.SteerOutcomeMsg) (tea.Model, tea.Cmd) {
 	if m.steer == nil {
 		// A stale ack (drained id, or an id-less legacy ack with nothing live)
@@ -1125,14 +1146,32 @@ func (m Model) applySteerOutcome(msg client.SteerOutcomeMsg) (tea.Model, tea.Cmd
 			m.steer.Phase = steerPromoted
 			m.statusMsg = m.deps.Theme.Style("muted").Render("steer arrived after the run ended — sent as a follow-up")
 		} else {
-			// Promotion failed (routing / run-entry / lease / funnel error): the
-			// text was NOT delivered. Do NOT report a successful follow-up — show an
-			// explicit not-sent so the user can retry (the text is preserved).
-			m.steer.Phase = steerFailed
-			m.statusMsg = m.deps.Theme.Style("warning").Render("steer not sent — promotion failed (try again)")
+			// This exact frame was not delivered. Restore only the correlated send;
+			// earlier accepted sends remain live until their drain echo, and unrelated
+			// later ids retain their own authoritative outcomes.
+			idx := steerSendIndex(m.steer.Sends, msg.MessageID)
+			if msg.MessageID == "" {
+				idx = len(m.steer.Sends) - 1
+			}
+			if idx >= 0 {
+				failed := m.steer.Sends[idx]
+				m.steer.Sends = append(m.steer.Sends[:idx], m.steer.Sends[idx+1:]...)
+				m.restoreSteerSend(failed)
+			}
+			if len(m.steer.Sends) == 0 {
+				m.steer = nil
+			} else {
+				m.steer.Text = joinSteerSends(m.steer.Sends)
+			}
+			m.statusMsg = m.deps.Theme.Style("warning").Render("steer not sent — restored for editing (try again)")
 		}
 	case client.SteerRetracted:
 		m.steer.Phase = steerRetracted
+		for i := range m.steer.Sends {
+			m.steer.Sends[i].Media = client.MediaResult{}
+			m.steer.Sends[i].Staged = nil
+			m.steer.Sends[i].Pastes = nil
+		}
 		m.statusMsg = m.deps.Theme.Style("muted").Render("steer retracted")
 	case client.SteerNonePending:
 		m.steer = nil
@@ -1196,7 +1235,11 @@ func (m Model) applySteerEcho(msg client.SteerEchoMsg) (tea.Model, tea.Cmd) {
 	if landed {
 		// Render the landed line IN CONTEXT (its true stream position — the echo
 		// arrives exactly where the drain committed the user continuation).
-		m.conv.addUser(msg.Text)
+		if media := mediaDescriptors(msg.Parts); len(media) > 0 {
+			m.conv.addUserWithMedia(msg.Text, media)
+		} else {
+			m.conv.addUser(msg.Text)
+		}
 		m.statusMsg = m.deps.Theme.Style("muted").Render("steer applied")
 	}
 	return m.afterEvent()
@@ -1947,6 +1990,7 @@ func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 	// and do NOT arm — a single press to wipe a draft is expected.
 	if strings.TrimSpace(m.prompt.Value()) != "" {
 		m.prompt.Reset()
+		m.pendingPromptMedia = client.MediaResult{}
 		return m.afterInputEdit(nil)
 	}
 	// First ctrl+c on an empty prompt: arm the guard, show the hint, and schedule the
@@ -2250,6 +2294,7 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 		// Staged-but-unsent input: esc clears it first (mirrors a text editor's
 		// "esc clears the line"), leaving the queue and the run untouched.
 		m.prompt.Reset()
+		m.pendingPromptMedia = client.MediaResult{}
 		return m.afterInputEdit(nil)
 	}
 	if len(m.queued) > 0 {
@@ -2257,6 +2302,7 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 		// cancel the run, so a user who changed their mind can clear the backlog
 		// without killing the in-flight turn.
 		m.queued = nil
+		m.queuedMedia = client.MediaResult{}
 		m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
 		m.refreshView()
 		return m, nil
@@ -2305,20 +2351,11 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 // path.
 func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.prompt.Value())
-	if text == "" {
+	if text == "" && len(m.stagedMedia) == 0 && len(m.stagedPastes) == 0 {
 		return m, nil
 	}
-	// Steer mode (Capabilities.Steer): mid-run enter sends a steer FRAME on the
-	// live Converse stream instead of staging locally — the engine drains it at the
-	// next turn boundary. The client-side merge (#228's merge-always) collapses the
-	// typed text into ONE bundle with a fresh message_id; a line typed while a
-	// bundle is still outstanding BATCHES onto it (the single-slot inbox can only
-	// ever hold one, so the wire never carries two at once — the batched line
-	// rides the bundle's Text client-side and the wire frame is the whole merged
-	// text). The ↑ edit-back cancels the outstanding bundle and recomposes. Paste
-	// placeholders expand inside sendSteer (there is no queue-full cap on the
-	// steer path — the engine's single-slot inbox is the bound). When steer is
-	// disabled the #228 local merge-queue below owns mid-run input, byte-identical.
+	// Native multimodal steer is enabled by the single steer capability. When it
+	// is runtime-disabled, the local queue owns all mid-run text and media.
 	if m.caps.Steer && m.stream != nil {
 		return m.sendSteer(text)
 	}
@@ -2326,26 +2363,68 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("queue full (%d)", maxQueued))
 		return m, nil
 	}
-	// Expand staged large-paste placeholders AT ENQUEUE time (past the cap check,
-	// which keeps the input — and so must keep the store). The queue always holds
-	// FINAL text and the staged store stays textarea-scoped: the input is reset
-	// below, so its markers are gone and the store must not outlive them. A
-	// deleted marker's content is silently dropped (the image-marker UX).
-	if len(m.stagedPastes) > 0 {
-		text = strings.TrimSpace(expandPastePlaceholders(text, m.stagedPastes))
+	prepared, media, hadPastes, hadStaged, err := m.preparePromptContent(text)
+	if err != nil {
+		m.conv.addError("attach: " + err.Error())
+		m.refreshView()
+		return m, nil
+	}
+	combined := appendMedia(m.queuedMedia, media)
+	if err := combined.CheckAggregateCaps(); err != nil {
+		m.conv.addError("attach: " + err.Error())
+		m.refreshView()
+		return m, nil
+	}
+	if prepared == "" && len(media.Parts) == 0 {
+		return m, nil
+	}
+	m.queued = append(m.queued, prepared)
+	m.queuedMedia = combined
+	if hadStaged {
+		m.stagedMedia = nil
+		m.nextMediaN = 0
+	}
+	if hadPastes {
 		m.stagedPastes = nil
 		m.nextPasteN = 0
-		if text == "" {
-			// Every marker was deleted and nothing else was typed: nothing to queue.
-			m.prompt.Reset()
-			return m.afterInputEdit(nil)
-		}
 	}
-	m.queued = append(m.queued, text)
 	m.prompt.Reset()
 	m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("queued (%d)", len(m.queued)))
 	m.refreshView()
 	return m.afterInputEdit(nil)
+}
+
+func appendMedia(a, b client.MediaResult) client.MediaResult {
+	out := a
+	out.Parts = append(slices.Clone(a.Parts), b.Parts...)
+	out.Descriptors = append(slices.Clone(a.Descriptors), b.Descriptors...)
+	return out
+}
+
+func filterStaged(draft string, in map[string]stagedAttachment) map[string]stagedAttachment {
+	var out map[string]stagedAttachment
+	for marker, value := range in {
+		if strings.Contains(draft, marker) {
+			if out == nil {
+				out = make(map[string]stagedAttachment)
+			}
+			out[marker] = value
+		}
+	}
+	return out
+}
+
+func filterPastes(draft string, in map[string]string) map[string]string {
+	var out map[string]string
+	for marker, value := range in {
+		if strings.Contains(draft, marker) {
+			if out == nil {
+				out = make(map[string]string)
+			}
+			out[marker] = value
+		}
+	}
+	return out
 }
 
 // sendSteer collapses the textarea text into ONE steer bundle and sends it on
@@ -2358,22 +2437,36 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 // never assumed client-side. The textarea is reset and the card moves to the
 // pending state.
 func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
-	// Expand staged large-paste placeholders so the steer frame carries FINAL text
-	// (mirrors the local-queue path). There is no queue-full cap here — the engine's
-	// single-slot inbox is the bound — so the expansion runs unconditionally. The
-	// staged store is textarea-scoped: the input is reset below, so its markers are
-	// gone and the store must not outlive them. A deleted marker's content is
-	// silently dropped (the image-marker UX).
-	if len(m.stagedPastes) > 0 {
-		text = strings.TrimSpace(expandPastePlaceholders(text, m.stagedPastes))
-		m.stagedPastes = nil
-		m.nextPasteN = 0
-		if text == "" {
-			// Every marker was deleted and nothing else was typed: nothing to steer.
-			m.prompt.Reset()
-			return m.afterInputEdit(nil)
+	draft := m.prompt.Value()
+	prepared, media, hadPastes, hadStaged, err := m.preparePromptContent(text)
+	if err != nil {
+		m.conv.addError("attach: " + err.Error())
+		m.refreshView()
+		return m, nil
+	}
+	if prepared == "" && len(media.Parts) == 0 {
+		return m, nil
+	}
+	combined := media
+	if m.steer != nil {
+		for _, send := range m.steer.Sends {
+			combined = appendMedia(send.Media, combined)
 		}
 	}
+	if err := combined.CheckAggregateCaps(); err != nil {
+		m.conv.addError("attach: " + err.Error())
+		m.refreshView()
+		return m, nil
+	}
+	staged := filterStaged(draft, m.stagedMedia)
+	pastes := filterPastes(draft, m.stagedPastes)
+	if hadStaged {
+		m.stagedMedia = nil
+	}
+	if hadPastes {
+		m.stagedPastes = nil
+	}
+	text = prepared
 	// A new send mints a fresh id and appends to the ordered queue; the WIRE
 	// carries ONLY this line's fragment (the engine appends it to the pending
 	// bundle — re-sending the full merged text would re-append drained text, the
@@ -2382,11 +2475,11 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 	if m.steer == nil {
 		m.steer = &steerState{Phase: steerPending}
 	}
-	m.steer.Sends = append(m.steer.Sends, steerQueuedSend{ID: id, Text: text})
+	m.steer.Sends = append(m.steer.Sends, steerQueuedSend{ID: id, Text: text, Draft: draft, Media: media, Staged: staged, Pastes: pastes})
 	m.steer.Text = joinSteerSends(m.steer.Sends)
 	stream := m.stream
 	sendMsg := func() tea.Msg {
-		if err := stream.SendSteer(text, id); err != nil {
+		if err := stream.SendSteer(text, media, id); err != nil {
 			return authStreamErr(m, err)
 		}
 		return nil
@@ -2435,7 +2528,19 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 	if m.steer != nil && len(m.steer.Sends) > 0 {
 		stream := m.stream
 		id := m.steer.watermarkID()
-		draft := joinSteerSends(m.steer.Sends)
+		parts := make([]string, 0, len(m.steer.Sends))
+		for _, send := range m.steer.Sends {
+			parts = append(parts, send.Draft)
+			if m.stagedMedia == nil && len(send.Staged) > 0 {
+				m.stagedMedia = make(map[string]stagedAttachment)
+			}
+			maps.Copy(m.stagedMedia, send.Staged)
+			if m.stagedPastes == nil && len(send.Pastes) > 0 {
+				m.stagedPastes = make(map[string]string)
+			}
+			maps.Copy(m.stagedPastes, send.Pastes)
+		}
+		draft := strings.Join(parts, queueMergeSep)
 		m.steer = nil
 		m.prompt.Rewrite(draft)
 		m.statusMsg = m.deps.Theme.Style("muted").Render("steer pulled back for editing — resend to replace")
@@ -2450,6 +2555,8 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 	}
 	m.prompt.Rewrite(strings.Join(m.queued, queueMergeSep))
 	m.queued = nil
+	m.pendingPromptMedia = m.queuedMedia
+	m.queuedMedia = client.MediaResult{}
 	m.queuePaused = ""
 	m.statusMsg = m.deps.Theme.Style("muted").Render("queue pulled back for editing")
 	m.refreshView()
@@ -2518,6 +2625,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.afterInputEdit(nil)
 		}
 		m.queued = nil
+		m.queuedMedia = client.MediaResult{}
 		m.queuePaused = ""
 		m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
 		m.refreshView()
@@ -2686,6 +2794,42 @@ func (m Model) failStartupRunEntry() Model {
 	return m
 }
 
+// preparePromptContent expands paste placeholders, file mentions, and staged
+// media without mutating their stores. Callers clear the stores only after this
+// returns successfully, so rejection keeps the draft and attachment bytes intact.
+func (m Model) preparePromptContent(text string) (string, client.MediaResult, bool, bool, error) {
+	hadPastes := len(m.stagedPastes) > 0
+	if hadPastes {
+		text = strings.TrimSpace(expandPastePlaceholders(text, m.stagedPastes))
+	}
+	var media client.MediaResult
+	if files := attachableMentions(m.deps.Workspace, text); len(files) > 0 {
+		res, err := client.ExpandMentions(files, m.caps)
+		if err != nil {
+			return "", client.MediaResult{}, hadPastes, false, err
+		}
+		media = res
+		for _, body := range res.InlineText {
+			text = strings.TrimSpace(text + "\n\n" + body)
+		}
+	}
+	hadStaged := len(m.stagedMedia) > 0
+	for _, marker := range survivingMarkers(text, m.stagedMedia) {
+		sa := m.stagedMedia[marker]
+		part, desc, err := client.StageClipboardImage(sa.mime, sa.data, m.caps)
+		if err != nil {
+			return "", client.MediaResult{}, hadPastes, hadStaged, err
+		}
+		media.Parts = append(media.Parts, part)
+		media.Descriptors = append(media.Descriptors, desc)
+		text = stripMarker(text, marker)
+	}
+	if err := media.CheckAggregateCaps(); err != nil {
+		return "", client.MediaResult{}, hadPastes, hadStaged, err
+	}
+	return strings.TrimSpace(text), media, hadPastes, hadStaged, nil
+}
+
 // submitPrompt opens a fresh Converse run for the textarea text, sends the
 // mandatory prompt frame, starts the reader goroutine, and arms WaitForMsg.
 func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
@@ -2706,94 +2850,25 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("wait for session compaction to finish before sending a prompt")
 		return m, nil
 	}
-	// Expand staged large-paste placeholders IN PLACE first, so the mention
-	// expansion and the media reconcile below run on the FINAL text (a pasted
-	// "@path" or "[Image #N]" inside the payload behaves exactly as if typed —
-	// including an "[Image #N]" token embedded in a paste PAYLOAD: the media
-	// reconcile pass below sees it like a typed marker, attaches the staged image
-	// and strips the token from the payload's quoted text; typed-marker semantics,
-	// accepted). The builtin dispatcher above ran on the RAW value — a placeholder
-	// is never a bare "/command", so it is unaffected. The staged store is cleared
-	// further down, AFTER the loud-reject early returns, so a failed submit keeps
-	// it for retry.
-	hadPastes := len(m.stagedPastes) > 0
-	if hadPastes {
-		text = strings.TrimSpace(expandPastePlaceholders(text, m.stagedPastes))
+	text, media, hadPastes, hadStaged, err := m.preparePromptContent(text)
+	if err == nil {
+		media = appendMedia(m.pendingPromptMedia, media)
+		err = media.CheckAggregateCaps()
 	}
-	// Expand any @-mentions that resolve to an existing REGULAR FILE into media
-	// parts (image/audio) and inlined text-file bodies. attachableMentions is the
-	// stat-filter gate: a token that is not a real file (prose like "@oncall", a
-	// directory, a dangling link) is left as literal text and never reaches
-	// ExpandMentions. The remaining filesystem + proto work lives behind
-	// client.ExpandMentions (the ui passes only resolved path strings + the
-	// proto-free caps, and reads back proto-free Descriptors/InlineText — the proto
-	// Parts stay opaque, kept in the MediaResult and handed straight to SendPrompt,
-	// so the ui never names a proto type). ANY error LOUD-rejects: surface it in the
-	// transcript, keep the input intact, send NOTHING.
-	var media client.MediaResult
-	if files := attachableMentions(m.deps.Workspace, text); len(files) > 0 {
-		res, err := client.ExpandMentions(files, m.caps)
-		if err != nil {
-			m.conv.addError("attach: " + err.Error())
-			m.refreshView()
-			return m, nil
-		}
-		media = res
-		for _, body := range res.InlineText {
-			text = strings.TrimSpace(text + "\n\n" + body)
-		}
-	}
-	// Reconcile staged clipboard / pasted-path image attachments. A "[Image #N]"
-	// marker that still survives in the prompt text (the user did not delete it
-	// while editing) becomes an inline media part; markers ascending by N → parts in
-	// display order. Each is rebuilt at submit time via client.StageClipboardImage
-	// (the same cap-gate + size-cap choke point), so a cap that flipped or an
-	// oversize blob LOUD-rejects here too: surface it, keep the input, send nothing.
-	// The markers are UI tokens, so they are STRIPPED from the sent text.
-	hadStaged := len(m.stagedMedia) > 0
-	for _, marker := range survivingMarkers(text, m.stagedMedia) {
-		sa := m.stagedMedia[marker]
-		part, desc, err := client.StageClipboardImage(sa.mime, sa.data, m.caps)
-		if err != nil {
-			m.conv.addError("attach: " + err.Error())
-			m.refreshView()
-			return m, nil
-		}
-		media.Parts = append(media.Parts, part)
-		media.Descriptors = append(media.Descriptors, desc)
-		text = stripMarker(text, marker)
-	}
-	// Re-check the COMBINED media aggregate (mention parts + clipboard parts):
-	// ExpandMentions capped its own parts, but the clipboard reconciliation appended
-	// more, so a mention-heavy + clipboard-heavy prompt could cross the per-prompt
-	// caps. Loud-reject client-side (keep input, send nothing) exactly like the
-	// mention over-cap path, rather than letting the server reject post-send. This
-	// is the LAST loud-reject, and it runs BEFORE the staged stores are dropped
-	// below, so an aggregate-cap refusal keeps both stores (media AND pastes) for
-	// the retry — the input still holds every marker.
-	if hadStaged {
-		if err := media.CheckAggregateCaps(); err != nil {
-			m.conv.addError("attach: " + err.Error())
-			m.refreshView()
-			return m, nil
-		}
+	if err != nil {
+		m.conv.addError("attach: " + err.Error())
+		m.refreshView()
+		return m, nil
 	}
 	if hadStaged {
-		// Drop the staged set (whether sent or — for deleted markers — discarded);
-		// trim the whole text (stripMarker already removed the stray spaces around
-		// each marker, so multi-line structure and inner newlines are preserved).
-		text = strings.TrimSpace(text)
 		m.stagedMedia = nil
 		m.nextMediaN = 0
 	}
 	if hadPastes {
-		// Drop the staged pastes (expanded above; a deleted marker's content is
-		// silently discarded — the image-marker UX). Past ALL the loud-reject
-		// returns (incl. the aggregate-cap one above), so an aborted submit kept
-		// the store for retry.
 		m.stagedPastes = nil
 		m.nextPasteN = 0
 	}
+	m.pendingPromptMedia = client.MediaResult{}
 	// A media-only prompt (empty text but at least one part) still sends — the proto
 	// allows text OR parts, and the server enforces "at least one non-empty". A
 	// truly empty submit (no text AND no parts) is the no-op early-return.
@@ -4036,6 +4111,8 @@ func (m Model) popAndSubmit() (tea.Model, tea.Cmd) {
 	m.queuePaused = ""
 	merged := strings.Join(m.queued, queueMergeSep)
 	m.queued = nil
+	m.pendingPromptMedia = m.queuedMedia
+	m.queuedMedia = client.MediaResult{}
 	m.prompt.Rewrite(merged)
 	if m.pendingMode != "" {
 		submit := firstKey(m.keys.Submit, "enter")

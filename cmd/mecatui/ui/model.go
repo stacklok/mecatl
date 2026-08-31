@@ -372,11 +372,6 @@ const (
 	// steerPromoted: the server acked too_late+promoted — the run had already gone
 	// terminal, so the text was auto-promoted to a fresh follow-up run.
 	steerPromoted
-	// steerFailed: the server acked too_late WITHOUT promoted — the promotion
-	// failed (routing / run-entry / lease / funnel error) and the text was NOT
-	// delivered. Distinct from promoted so the ui does NOT report a successful
-	// follow-up. The text is preserved (it may be re-sent or dropped explicitly).
-	steerFailed
 	// steerRetracted: a steer_cancel won — the pending steer was retracted before
 	// it drained (the run drains nothing for it).
 	steerRetracted
@@ -388,8 +383,12 @@ const (
 // "still pending after it" on each drain echo, instead of collapsing everything
 // into one re-minted bundle (the duplication bug the append model exposed).
 type steerQueuedSend struct {
-	ID   string
-	Text string
+	ID     string
+	Text   string
+	Draft  string
+	Media  client.MediaResult
+	Staged map[string]stagedAttachment
+	Pastes map[string]string
 }
 
 // steerState is the ONE-ELEMENT steer-mode mid-run state: the pending bundle —
@@ -529,24 +528,26 @@ type Model struct {
 	// thus its known ~1/3 -race flake — no worse than before.
 	tickArmed bool
 
-	activeTool                   string         // tool name in flight, shown beside the spinner
-	toolProgress                 string         // transient progress line for the in-flight tool (cleared on result/turn boundary)
-	skillsEpoch                  uint64         // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
-	skillChangeLast              string         // newest bounded lifecycle receipt already announced
-	palette                      paletteState   // slash-command palette (open when the input starts with "/")
-	mention                      mentionState   // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
-	queued                       []string       // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
-	queuePaused                  string         // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
-	failedStepRetryTried         bool           // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
-	failedStepRetryRun           bool           // current Converse stream was opened with RetryStart
-	failedStepRetryAuthoritative bool           // current retry emitted turn.start and therefore called the model
-	team                         teamState      // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
-	agentsTab                    agentsTab      // active tab in the unified agents overlay (Subagents | Parallel | Teams)
-	subagents                    subagentState  // Subagents-tab state of the unified agents overlay (roster | focus)
-	parallel                     parallelState  // Parallel-tab state of the unified agents overlay (roster | group focus)
-	agentsInv                    agentsInvState // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	userModel                    userModelState // user-model inspection overlay state (view==userModelNone when closed)
-	userModelGen                 uint64         // monotonic request generation; invalidates delayed detail/index responses
+	activeTool                   string             // tool name in flight, shown beside the spinner
+	toolProgress                 string             // transient progress line for the in-flight tool (cleared on result/turn boundary)
+	skillsEpoch                  uint64             // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
+	skillChangeLast              string             // newest bounded lifecycle receipt already announced
+	palette                      paletteState       // slash-command palette (open when the input starts with "/")
+	mention                      mentionState       // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
+	queued                       []string           // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
+	queuedMedia                  client.MediaResult // media owned by the local merge queue; sent with the merged follow-up
+	pendingPromptMedia           client.MediaResult // prepared queue media handed to submitPrompt without reconstructing markers
+	queuePaused                  string             // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
+	failedStepRetryTried         bool               // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
+	failedStepRetryRun           bool               // current Converse stream was opened with RetryStart
+	failedStepRetryAuthoritative bool               // current retry emitted turn.start and therefore called the model
+	team                         teamState          // unified ctrl+a agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
+	agentsTab                    agentsTab          // active tab in the unified agents overlay (Subagents | Parallel | Teams)
+	subagents                    subagentState      // Subagents-tab state of the unified agents overlay (roster | focus)
+	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
+	agentsInv                    agentsInvState     // agent-definition inventory overlay state (view==agentsInvNone when closed)
+	userModel                    userModelState     // user-model inspection overlay state (view==userModelNone when closed)
+	userModelGen                 uint64             // monotonic request generation; invalidates delayed detail/index responses
 	reflections                  reflectionsState
 	reflectionsGen               uint64
 	dream                        dreamState
@@ -556,7 +557,8 @@ type Model struct {
 	// merged operator steer text + its client-minted message_id) with its
 	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,
 	// awaiting drain) → promoted (too_late; the server auto-started a follow-up
-	// run) → failed (too_late without promoted) → retracted (steer_cancel won). nil
+	// run) → retracted (steer_cancel won). A non-promoted too_late removes only
+	// the correlated send and restores its draft/attachments for retry. nil
 	// when no steer is in flight (the common case) OR steer is disabled (the #228
 	// local merge-queue then owns mid-run input, byte-identical). A ONE-BUNDLE
 	// state — the client-side merge collapses staged lines into ONE text BEFORE
@@ -1072,6 +1074,8 @@ func (m Model) resetSessionDerived() Model {
 	// plan ask may have been open), as is the full-screen ask-args view.
 	m.closeModal()
 	m.queued = nil
+	m.queuedMedia = client.MediaResult{}
+	m.pendingPromptMedia = client.MediaResult{}
 	m.queuePaused = ""
 	m.failedStepRetryTried = false
 	m.failedStepRetryRun = false

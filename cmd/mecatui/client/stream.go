@@ -263,17 +263,18 @@ func (s *Stream) SendCancelChild(childID string) error {
 }
 
 // SendSteer sends a mid-run operator steer frame on the bidi Converse stream
-// (steer-while-running, issue #512). The server routes it to the live run's
-// single-slot inbox; the AUTHORITATIVE outcome (accepted / appended /
-// too_late+promoted) arrives on the SAME stream as a SteerOutcomeMsg — never
-// assumed client-side, since the client cannot observe the exact drain moment
-// across stream latency. The ui only calls this when Capabilities.Steer is true
-// (a disabled/old server falls back to the client-side merge-queue instead).
-// messageID is the client-minted correlation key the server echoes verbatim on
-// the ack and the drain echo; empty degrades to text-order matching.
-func (s *Stream) SendSteer(text, messageID string) error {
+// (steer-while-running, issue #512). The server routes its text and media to
+// the live run's single-slot inbox; the AUTHORITATIVE outcome (accepted /
+// appended / too_late+promoted) arrives on the SAME stream as a
+// SteerOutcomeMsg — never assumed client-side, since the client cannot observe
+// the exact drain moment across stream latency. The ui only calls this when
+// Capabilities.Steer is true; a runtime-disabled server falls back to the
+// client-side merge queue. messageID is the client-minted correlation key the
+// server echoes verbatim on the ack and the drain echo; empty degrades to
+// text-order matching.
+func (s *Stream) SendSteer(text string, media MediaResult, messageID string) error {
 	return s.sendFrame(&mecatlv1.ConverseRequest{
-		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: text, MessageId: messageID}},
+		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: text, MessageId: messageID, Parts: media.Parts}},
 	})
 }
 

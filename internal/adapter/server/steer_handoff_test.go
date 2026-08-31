@@ -192,13 +192,13 @@ func TestSteer_WatermarkEchoLatestId(t *testing.T) {
 	go func() {
 		<-block.started
 		if err := stream.Send(&mecatlv1.ConverseRequest{
-			Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "parked", MessageId: "m-1"}},
+			Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "parked", MessageId: "m-1", Parts: []*mecatlv1.Content{{Kind: mecatlv1.Content_KIND_IMAGE, MimeType: "image/png", Data: []byte("one")}}}},
 		}); err != nil {
 			framesSent <- err
 			return
 		}
 		framesSent <- stream.Send(&mecatlv1.ConverseRequest{
-			Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "appended", MessageId: "m-2"}},
+			Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "appended", MessageId: "m-2", Parts: []*mecatlv1.Content{{Kind: mecatlv1.Content_KIND_AUDIO, MimeType: "audio/wav", Data: []byte("two")}}}},
 		})
 	}()
 
@@ -255,6 +255,9 @@ func TestSteer_WatermarkEchoLatestId(t *testing.T) {
 	if echo.GetText() != "parked\n\nappended" || echo.GetMessageId() != "m-2" {
 		t.Fatalf("steer echo = (%q, %q), want (%q, %q) — the appended bundle drains as one merged continuation",
 			echo.GetText(), echo.GetMessageId(), "parked\n\nappended", "m-2")
+	}
+	if len(echo.GetParts()) != 2 || string(echo.GetParts()[0].GetData()) != "one" || string(echo.GetParts()[1].GetData()) != "two" {
+		t.Fatalf("steer echo parts lost append order: %#v", echo.GetParts())
 	}
 }
 
@@ -313,7 +316,10 @@ func TestSteer_PromotedRelaySequential(t *testing.T) {
 		t.Fatal("original run is not registered in its terminal drain window")
 	}
 	if err := stream.Send(&mecatlv1.ConverseRequest{
-		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "late steer", MessageId: "m-late"}},
+		Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "late steer", MessageId: "m-late", Parts: []*mecatlv1.Content{
+			{Kind: mecatlv1.Content_KIND_IMAGE, MimeType: "image/png", Data: []byte("late-image")},
+			{Kind: mecatlv1.Content_KIND_AUDIO, MimeType: "audio/wav", Data: []byte("late-audio")},
+		}}},
 	}); err != nil {
 		t.Fatalf("Send steer: %v", err)
 	}
@@ -382,6 +388,20 @@ func TestSteer_PromotedRelaySequential(t *testing.T) {
 	}
 	if promotedAck.GetMessageId() != "m-late" {
 		t.Fatalf("promoted ack message_id = %q, want %q", promotedAck.GetMessageId(), "m-late")
+	}
+	loaded, err := svc.GetSession(context.Background(), session.SessionID(cs.GetSessionId()))
+	if err != nil {
+		t.Fatalf("GetSession after promoted media steer: %v", err)
+	}
+	var promotedInput *session.Message
+	for i := len(loaded.Conversation.Messages) - 1; i >= 0; i-- {
+		if loaded.Conversation.Messages[i].Role == session.RoleUser && loaded.Conversation.Messages[i].Text == "late steer" {
+			promotedInput = &loaded.Conversation.Messages[i]
+			break
+		}
+	}
+	if promotedInput == nil || len(promotedInput.Parts) != 2 || promotedInput.Parts[0].Kind != session.MediaImage || promotedInput.Parts[0].MIMEType != "image/png" || string(promotedInput.Parts[0].Data) != "late-image" || promotedInput.Parts[1].Kind != session.MediaAudio || promotedInput.Parts[1].MIMEType != "audio/wav" || string(promotedInput.Parts[1].Data) != "late-audio" {
+		t.Fatalf("promoted gRPC steer media = %#v", promotedInput)
 	}
 
 	// Ordering: the promoted run's terminal EvResult precedes its ack (causal

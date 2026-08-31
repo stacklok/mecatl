@@ -23,6 +23,13 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+func assertWireSteerParts(t *testing.T, parts []*mecatlv1.Content) {
+	t.Helper()
+	if len(parts) != 2 || parts[0].GetKind() != mecatlv1.Content_KIND_IMAGE || parts[0].GetMimeType() != "image/png" || string(parts[0].GetData()) != string([]byte{0x01, 0x02}) || parts[1].GetKind() != mecatlv1.Content_KIND_AUDIO || parts[1].GetMimeType() != "audio/wav" || string(parts[1].GetData()) != string([]byte{0x03, 0x04, 0x05}) {
+		t.Fatalf("wire steer parts = %#v", parts)
+	}
+}
+
 // TestSteer_ConverseFrameRoundTrip is AC5.1: a client sends a `steer` frame
 // mid-run on the Converse stream and observes (a) the authoritative
 // accepted-outcome ack, (b) the EvSteer drain echo carrying the committed text,
@@ -73,7 +80,13 @@ func TestSteer_ConverseFrameRoundTrip(t *testing.T) {
 	go func() {
 		<-block.started
 		steerSent <- stream.Send(&mecatlv1.ConverseRequest{
-			Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "also check b.go"}},
+			Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{
+				Text: "also check b.go",
+				Parts: []*mecatlv1.Content{
+					{Kind: mecatlv1.Content_KIND_IMAGE, MimeType: "image/png", Data: []byte{0x01, 0x02}},
+					{Kind: mecatlv1.Content_KIND_AUDIO, MimeType: "audio/wav", Data: []byte{0x03, 0x04, 0x05}},
+				},
+			}},
 		})
 	}()
 
@@ -126,6 +139,7 @@ func TestSteer_ConverseFrameRoundTrip(t *testing.T) {
 	if got := steerEv.GetSteer().GetText(); got != "also check b.go" {
 		t.Fatalf("steer echo text = %q, want %q", got, "also check b.go")
 	}
+	assertWireSteerParts(t, steerEv.GetSteer().GetParts())
 
 	// (c) The injected message reached the model as an ordinary user turn on
 	// the following turn (recorded == streamed == model-view).
@@ -138,6 +152,9 @@ func TestSteer_ConverseFrameRoundTrip(t *testing.T) {
 	final := msgs[len(msgs)-1]
 	if final.Role != session.RoleUser || final.Text != "also check b.go" {
 		t.Fatalf("final replayed message = (%q, %q), want (user, %q)", final.Role, final.Text, "also check b.go")
+	}
+	if len(final.Parts) != 2 || final.Parts[0].Kind != session.MediaImage || final.Parts[0].MIMEType != "image/png" || string(final.Parts[0].Data) != string([]byte{0x01, 0x02}) || final.Parts[1].Kind != session.MediaAudio || final.Parts[1].MIMEType != "audio/wav" || string(final.Parts[1].Data) != string([]byte{0x03, 0x04, 0x05}) {
+		t.Fatalf("provider-facing steer parts = %#v", final.Parts)
 	}
 
 	res := lastResult(t, events)
@@ -232,22 +249,19 @@ func TestSteer_ConverseCancelRetracts(t *testing.T) {
 	}
 }
 
-// TestSteer_CapabilityAdvertised is AC5.2 half one: ServerCapabilities.steer is
-// true when the engine's steer knob is armed, false when it is not — read over
-// the gRPC CreateSession echo, the same surface every client reads. An old
-// server (no field) reads as false by the proto3 default.
+// TestSteer_CapabilityAdvertised verifies ServerCapabilities.steer is true
+// when the engine's steer knob is armed and false when runtime-disabled, read
+// over the gRPC CreateSession echo used by clients.
 func TestSteer_CapabilityAdvertised(t *testing.T) {
 	on := capsFromCreate(t, newSteerService(t, mockllm.New(mockllm.TextTurn("x")), nil))
 	if !on.GetSteer() {
-		t.Fatalf("steer cap = false, want true (EnableSteer armed)")
+		t.Fatal("steer capability = false, want true (EnableSteer armed)")
 	}
 
-	// Steer knob OFF: the bit reads false (newSteerService always arms it, so
-	// build a plain service here — EnableSteer unset is the byte-identical
-	// no-steer posture).
+	// Steer knob OFF: newSteerService always arms it, so build a plain service.
 	off := capsFromCreate(t, newService(t, mockllm.New(mockllm.TextTurn("x")), allowRules()))
 	if off.GetSteer() {
-		t.Fatalf("steer cap = true, want false (EnableSteer off)")
+		t.Fatal("steer capability = true, want false (EnableSteer off)")
 	}
 }
 

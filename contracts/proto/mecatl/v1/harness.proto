@@ -600,17 +600,16 @@ message ServerCapabilities {
   // health and this deployment has a management authorizer.
   bool storage_health = 23;
   // steer is true when the server's engines arm the mid-run steer inbox
-  // (steer-while-running, issue #512): a client may then send `steer` /
-  // `steer_cancel` frames on the live Converse stream and render the EvSteer
-  // drain echo. When false (an older server, or steer disabled in
-  // composition), the client keeps its local merge-queue behaviour — a steer
-  // frame sent to such a server is promoted to a fresh follow-up run (the
-  // engine reports too_late on its disarmed inbox), never silently dropped.
-  // Additive: an older server leaves it false.
+  // (steer-while-running, issue #512): a client may then send multimodal
+  // `steer` / `steer_cancel` frames on the live Converse stream and render the
+  // EvSteer drain echo. When false because steer is disabled in composition,
+  // the client keeps its local merge-queue behaviour — a steer frame sent to
+  // such a server is promoted to a fresh follow-up run (the engine reports
+  // too_late on its disarmed inbox), never silently dropped.
   bool steer = 24;
   // manual_compaction is true when the server can apply an out-of-band
-  // compaction pass to an idle owned session. Gates the client's /compact action.
-  // Additive: an older server leaves it false.
+  // session compaction pass to an idle owned session. Gates the client's
+  // /compact action.
   bool manual_compaction = 25;
 }
 
@@ -1366,8 +1365,9 @@ message CancelChild {
 // behind the client's "still running" belief) the text is PROMOTED to a fresh
 // follow-up run, never silently dropped.
 message Steer {
-  // text is the operator instruction to inject at the next turn boundary.
-  string text = 1 [(buf.validate.field).string.min_len = 1];
+  // text and parts form the operator instruction to inject at the next turn
+  // boundary. At least one must be non-empty.
+  string text = 1;
   // message_id is the CLIENT-MINTED correlation key for THIS frame (unique per
   // send; empty means uncorrelated). The server echoes the frame's own id
   // verbatim on its steer.outcome ack. On the EvSteer drain echo it carries a
@@ -1376,6 +1376,9 @@ message Steer {
   // after it are still pending, so the client splits its ordered queue on it.
   // text is NOT a safe correlation key (two sends can carry the same text).
   string message_id = 2;
+  // parts carries image/audio content alongside text, using the same validated
+  // wire shape as Prompt.parts. A media-only steer is valid.
+  repeated Content parts = 3;
 }
 
 // SteerCancel retracts the run's PENDING (un-drained) steer, if any. It is
@@ -1526,6 +1529,9 @@ message SteerEcho {
   // on it: sends up to and including the watermark drained (they land in
   // context here), sends after it are still pending.
   string message_id = 2;
+  // parts is the committed media bundle, byte-identical to the user message
+  // recorded into history and replayed to the model.
+  repeated Content parts = 3;
 }
 
 // SteerAck is the proto projection of a steer-frame outcome: the server's

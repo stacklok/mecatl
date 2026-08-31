@@ -312,24 +312,30 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
 - **The run-scoped mutex inbox** (`engine/agent/steer.go` (`steerInbox`)). Each
   `Run` carries a single-slot pending-steer box guarded by one mutex
   (`{closed, pending, has}`); every transition is one critical section.
-  `engine/agent/steer.go` (`Run.EnqueueSteer`) parks the steer when the slot is
-  empty (`accepted`), and **appends** into the pending bundle when one is already
-  pending (`appended` — `pending += "\n\n" + text`, merged with a blank-line
-  separator; the merged bundle still drains as ONE user message). Replacing a
-  pending bundle is an explicit `Run.CancelSteer`-then-resend. The inbox reports
-  `too_late` once it closes at run terminal. Steer text is repaired to valid
-  UTF-8 at ingress (`session.ToValidUTF8`) so recorded history, the echo, and
-  the model view stay byte-identical. The outcome is the closed enum
+  `engine/agent/steer.go` (`Run.EnqueueSteer`) parks text and/or validated
+  `session.Content` media when the slot is empty (`accepted`), and **appends** into
+  the pending bundle when one is already pending (`appended`): a blank-line
+  separator is added only when both text fragments are non-empty, while parts
+  append in fragment order. The combined media bundle is validated atomically.
+  Replacing a pending bundle is an explicit `Run.CancelSteer`-then-resend. The
+  inbox reports `too_late` once it closes at run terminal. Steer text is repaired
+  to valid UTF-8 at ingress (`session.ToValidUTF8`) so recorded history, the echo,
+  and the model view stay byte-identical. The outcome is the closed enum
   `engine/agent/steer.go` (`SteerOutcome`): `accepted` / `appended` /
   `retracted` / `none_pending` / `too_late`.
 - **The Step 2a drain** (`engine/agent/steer.go` (`drainPendingSteer`)) runs in
   `runBoundaryInjections` (step 3 above), the same provider-legal seam as the
   background-completion notice and the delivery drain — history there always
   ends on a user prompt / tool result / nudge, never inside a `tool_use` pair.
-  The drained steer is recorded as an ordinary harness-authored user
-  continuation (`recordContinuation`: `RecordUserPrompt` + the log-only
-  `EvUserPrompt`), persisted, then echoed to the client as `EvSteer` carrying
-  the committed text — the engine is the sole authority on what landed.
+  The drained steer is recorded as an ordinary user continuation through
+  `RecordUserPromptWithParts` (plus the log-only `EvUserPrompt`), persisted, then
+  echoed to the client as `EvSteer` carrying the committed text and media parts —
+  the engine is the sole authority on what landed. This multimodal extension is
+  specified by [ADR 0251](../adr/0251-multimodal-steer.md).
+- **Capability gate.** `ServerCapabilities.steer` says the multimodal inbox is
+  enabled. Mecatui uses native steer when it is true and otherwise retains all
+  mid-run text and media in its local merge queue; this supports runtime feature
+  disabling without duplicating capability state.
 - **The clean-exit continue-run rule** (`engine/agent/loop.go`
   (`finishTurnNoTools`)). A would-be clean end (meaningful text, benign stop)
   while a steer is still parked does NOT terminate: the loop re-enters step 2
@@ -364,7 +370,7 @@ never mid-stream, never aborting an in-flight model call — and rides the gRPC
   (`promoted=true`) — never an orphaned relay, never an ack after close.
 - **The `message_id` watermark correlation.** Steer frames carry a
   client-minted `message_id` (`contracts/proto/mecatl/v1/harness.proto`). The
-  engine inbox parks text only, so the Service keeps a small per-session FIFO
+  engine inbox parks text plus media while the Service keeps a small per-session FIFO
   (`internal/adapter/server/service.go` (`trackSteerMessageID`)) of the ordered
   frame ids appended into the pending bundle. On drain, the relay pops the
   whole list and stamps the `EvSteer` echo with the LATEST (tail) id — the

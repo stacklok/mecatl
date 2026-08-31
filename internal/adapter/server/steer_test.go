@@ -149,7 +149,11 @@ func TestSteer_LiveRunEnqueues(t *testing.T) {
 	}
 	<-block.started // the run is genuinely mid-dispatch → live.
 
-	outc, promoted, _, err := svc.Steer(ctx, sess.ID, "steer mid-flight", "")
+	image, err := session.NewImageContent("image/png", []byte("pixels"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outc, promoted, _, err := svc.Steer(ctx, sess.ID, "steer mid-flight", []session.Content{image}, "")
 	if err != nil {
 		t.Fatalf("Steer on a live run: %v", err)
 	}
@@ -168,6 +172,9 @@ func TestSteer_LiveRunEnqueues(t *testing.T) {
 	stop := session.StopReason("")
 	for ev := range run.Events() {
 		if ev.Type == session.EvSteer && ev.Steer != nil && ev.Steer.Text == "steer mid-flight" {
+			if len(ev.Steer.Parts) != 1 || string(ev.Steer.Parts[0].Data) != "pixels" {
+				t.Fatalf("steer echo parts = %#v", ev.Steer.Parts)
+			}
 			sawSteerEcho = true
 		}
 		if ev.Type == session.EvResult && ev.Result != nil {
@@ -189,6 +196,10 @@ func TestSteer_LiveRunEnqueues(t *testing.T) {
 	texts := steerUserTexts(got)
 	if len(texts) != 2 || texts[0] != "look at a.go" || texts[1] != "steer mid-flight" {
 		t.Fatalf("user messages = %v, want [look at a.go, steer mid-flight] (steer recorded into the SAME live run)", texts)
+	}
+	messages := got.Conversation.Messages
+	if len(messages) < 3 || len(messages[len(messages)-2].Parts) != 1 || string(messages[len(messages)-2].Parts[0].Data) != "pixels" {
+		t.Fatalf("recorded steer media missing: %#v", messages)
 	}
 }
 
@@ -214,7 +225,11 @@ func TestSteer_TerminalRacePromotes(t *testing.T) {
 	assertSteerState(t, svc, sess.ID, session.StateCompleted)
 
 	// The user's "still running" belief lagged: no run is live now.
-	outc, promoted, run2, err := svc.Steer(ctx, sess.ID, "follow-up steer", "")
+	image, err := session.NewImageContent("image/png", []byte("late-pixels"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outc, promoted, run2, err := svc.Steer(ctx, sess.ID, "", []session.Content{image}, "")
 	if err != nil {
 		t.Fatalf("Steer: %v", err)
 	}
@@ -241,8 +256,12 @@ func TestSteer_TerminalRacePromotes(t *testing.T) {
 		t.Fatalf("GetSession: %v", err)
 	}
 	texts := steerUserTexts(got)
-	if len(texts) != 2 || texts[0] != "hello" || texts[1] != "follow-up steer" {
-		t.Fatalf("user messages = %v, want [hello, follow-up steer] (steer promoted, not dropped)", texts)
+	if len(texts) != 2 || texts[0] != "hello" || texts[1] != "" {
+		t.Fatalf("user messages = %v, want [hello, media-only] (steer promoted, not dropped)", texts)
+	}
+	messages := got.Conversation.Messages
+	if len(messages) < 2 || len(messages[len(messages)-2].Parts) != 1 || string(messages[len(messages)-2].Parts[0].Data) != "late-pixels" {
+		t.Fatalf("promoted media missing: %#v", messages)
 	}
 }
 
@@ -275,7 +294,7 @@ func TestSteer_PromotionUsesRunEntryFunnel(t *testing.T) {
 	promote := func(t *testing.T, f fixture) {
 		t.Helper()
 		ctx := context.Background()
-		outc, promoted, run, err := f.svc.Steer(ctx, f.sess.ID, "promoted follow-up", "")
+		outc, promoted, run, err := f.svc.Steer(ctx, f.sess.ID, "promoted follow-up", nil, "")
 		if err != nil {
 			t.Fatalf("Steer: %v", err)
 		}

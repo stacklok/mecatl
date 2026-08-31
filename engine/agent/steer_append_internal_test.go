@@ -50,22 +50,22 @@ func TestSteer_AppendLinearizable(t *testing.T) {
 	// Deterministic sequencing: v1 parks (accepted), v2 appends (appended) into
 	// the SAME single slot — one merged bundle, never a second slot.
 	r := &Run{steer: newSteerInbox()}
-	if outcome, _ := r.enqueueSteer("steer: v1"); outcome != SteerAccepted {
+	if outcome, _ := r.EnqueueSteer("steer: v1", nil); outcome != SteerAccepted {
 		t.Fatalf("first enqueue = %q, want %q", outcome, SteerAccepted)
 	}
-	if outcome, _ := r.enqueueSteer("steer: v2"); outcome != SteerAppended {
+	if outcome, _ := r.EnqueueSteer("steer: v2", nil); outcome != SteerAppended {
 		t.Fatalf("enqueue on an occupied slot = %q, want %q (append-default)", outcome, SteerAppended)
 	}
 	// The drain commits the merged bundle ONCE, whole.
-	text, ok := r.drainSteer()
-	if !ok || text != "steer: v1\n\nsteer: v2" {
-		t.Fatalf("drain = (%q, %v), want (%q, true) — the merged bundle commits exactly once, whole", text, ok, "steer: v1\n\nsteer: v2")
+	content, ok := r.drainSteer()
+	if !ok || content.text != "steer: v1\n\nsteer: v2" {
+		t.Fatalf("drain = (%q, %v), want (%q, true) — the merged bundle commits exactly once, whole", content.text, ok, "steer: v1\n\nsteer: v2")
 	}
 	// The drained slot is EMPTY: a second drain commits nothing (no
 	// double-commit) and a cancel finds nothing (no resurrection of the merged
 	// bundle or either half).
-	if text, ok := r.drainSteer(); ok {
-		t.Fatalf("second drain = (%q, %v), want empty — drain must take+clear atomically", text, ok)
+	if content, ok := r.drainSteer(); ok {
+		t.Fatalf("second drain = (%q, %v), want empty — drain must take+clear atomically", content.text, ok)
 	}
 	if outcome, _ := r.cancelSteer(); outcome != SteerNonePending {
 		t.Fatalf("cancel after the drain = %q, want %q", outcome, SteerNonePending)
@@ -73,14 +73,14 @@ func TestSteer_AppendLinearizable(t *testing.T) {
 	// A post-drain enqueue parks a FRESH bundle (accepted — the slot re-emptied);
 	// an append onto it merges; close then flips too_late / none_pending
 	// deterministically.
-	if outcome, _ := r.enqueueSteer("steer: v3"); outcome != SteerAccepted {
+	if outcome, _ := r.EnqueueSteer("steer: v3", nil); outcome != SteerAccepted {
 		t.Fatalf("post-drain enqueue = %q, want %q", outcome, SteerAccepted)
 	}
-	if outcome, _ := r.enqueueSteer("steer: v4"); outcome != SteerAppended {
+	if outcome, _ := r.EnqueueSteer("steer: v4", nil); outcome != SteerAppended {
 		t.Fatalf("append onto v3 = %q, want %q", outcome, SteerAppended)
 	}
 	r.closeSteer()
-	if outcome, _ := r.enqueueSteer("steer: too late"); outcome != SteerTooLate {
+	if outcome, _ := r.EnqueueSteer("steer: too late", nil); outcome != SteerTooLate {
 		t.Fatalf("enqueue after close = %q, want %q", outcome, SteerTooLate)
 	}
 	// close does NOT drain: the close-parked merged bundle is still there for the
@@ -111,9 +111,9 @@ func TestSteer_AppendLinearizable(t *testing.T) {
 				return
 			default:
 			}
-			if text, ok := r.drainSteer(); ok {
+			if content, ok := r.drainSteer(); ok {
 				mu.Lock()
-				bundles = append(bundles, text)
+				bundles = append(bundles, content.text)
 				mu.Unlock()
 			}
 		}
@@ -128,7 +128,7 @@ func TestSteer_AppendLinearizable(t *testing.T) {
 			defer producersWG.Done()
 			for i := 0; i < 40; i++ {
 				marker := fmt.Sprintf("m-%d-%d", g, i)
-				outcome, err := r.enqueueSteer(marker)
+				outcome, err := r.EnqueueSteer(marker, nil)
 				if err != nil {
 					t.Errorf("enqueue returned error %v", err)
 					return
@@ -161,9 +161,9 @@ func TestSteer_AppendLinearizable(t *testing.T) {
 	consumerWG.Wait()
 	// Terminal deterministic drain: whatever is still parked after the producers
 	// finished and the consumer stopped is ONE final observation.
-	if text, ok := r.drainSteer(); ok {
+	if content, ok := r.drainSteer(); ok {
 		mu.Lock()
-		bundles = append(bundles, text)
+		bundles = append(bundles, content.text)
 		mu.Unlock()
 	}
 
