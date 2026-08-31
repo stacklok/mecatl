@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -98,5 +99,34 @@ func TestConnectListFailureIsSanitized(t *testing.T) {
 		if !handled || cmd != nil || m.connect.confirm || m.connectIntent != nil {
 			t.Fatalf("enter must not confirm unavailable targets: connect=%#v intent=%#v cmd=%v", m.connect, m.connectIntent, cmd)
 		}
+	}
+}
+
+// TestReauthenticateIntentIsAlwaysBrowserFree pins ADR 0254's contract that
+// the recovery overlay never opens a browser: a Reauthenticate restart's
+// intent must set NoBrowser regardless of whatever interactive/headless
+// posture the process itself has.
+func TestReauthenticateIntentIsAlwaysBrowserFree(t *testing.T) {
+	m := New(Deps{
+		Connect:       fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
+		Theme:         theme.New("aztec", theme.AztecPalette()),
+		Ctx:           context.Background(),
+		NoAltScreen:   true,
+		ConnectOpen:   true,
+		ConnectReason: client.AuthSessionExpired,
+		ConnectTarget: "remote.example:443",
+	})
+	model, _ := m.Update(m.Init()())
+	m = model.(Model)
+	for range 2 {
+		mm, _, handled := m.onConnectKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if !handled {
+			t.Fatal("enter not handled")
+		}
+		m = mm.(Model)
+	}
+	intent, ok := m.ConnectRestartIntent()
+	if !ok || intent.Action != Reauthenticate || !intent.NoBrowser {
+		t.Fatalf("intent = %#v, ok=%v, want Reauthenticate with NoBrowser=true", intent, ok)
 	}
 }

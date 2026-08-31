@@ -48,8 +48,11 @@ type ConnectRestartIntent struct {
 	// ResumeSessionID is retained only for same-target recovery actions. Main
 	// re-checks ownership through GetSession before adopting it.
 	ResumeSessionID string
-	// NoBrowser carries the process's headless posture into a Reauthenticate
-	// restart, so it doesn't attempt a browser launch it can't complete.
+	// NoBrowser is always true for a Reauthenticate restart: ADR 0254 requires
+	// the recovery overlay to never open a browser, so main prints the OIDC
+	// authorization URL instead (the same posture as an explicit
+	// `mecatui login ADDRESS --no-browser`), regardless of whether the
+	// process itself is interactive.
 	NoBrowser bool
 }
 
@@ -145,8 +148,13 @@ func (m Model) connectRestartIntent() ConnectRestartIntent {
 	if intent.Action == Reauthenticate || intent.Action == RetryAfterCleanup {
 		intent.ResumeSessionID = m.connect.resumeSessionID
 	}
+	// ADR 0254: the recovery overlay never opens a browser. Reauthentication
+	// reached from here always prints the OIDC authorization URL instead,
+	// same as an explicit `mecatui login ADDRESS --no-browser` -- never the
+	// process's own interactive/headless posture (that governs a FRESH
+	// `mecatui login`, a different, deliberate action outside recovery).
 	if intent.Action == Reauthenticate {
-		intent.NoBrowser = m.deps.NoBrowser
+		intent.NoBrowser = true
 	}
 	return intent
 }

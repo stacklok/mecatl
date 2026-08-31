@@ -339,9 +339,6 @@ func runWithOptions(argv []string, options runOptions) error {
 		// non-interactive stdin (the OR lives here so config.go stays pure — it owns
 		// only the flag). The plain prompt hint is still shown in all three cases.
 		NoBanner: cfg.noBanner || cfg.quiet || !term.IsTerminal(int(os.Stdin.Fd())),
-		// Same non-interactive-stdin signal as NoBanner: a Reauthenticate restart
-		// must not attempt a browser launch it cannot complete headlessly.
-		NoBrowser: !term.IsTerminal(int(os.Stdin.Fd())),
 		// First-class opt-out: render inline in the normal buffer (preserving
 		// native scrollback) instead of the alternate screen. Default false.
 		NoAltScreen: cfg.noAltScreen,
@@ -459,11 +456,7 @@ func connectRestartIntent(final tea.Model) (ui.ConnectRestartIntent, bool) {
 }
 
 func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, options runOptions) error {
-	// Same non-interactive-stdin signal as the ordinary ui.Deps construction
-	// (line ~344): this path is reached from a disconnected/non-interactive
-	// startup failure before that construction ever runs, so it must compute
-	// its own headless posture rather than default to false (browser launch).
-	deps := ui.Deps{Ctx: ctx, Theme: th, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID, NoBrowser: !term.IsTerminal(int(os.Stdin.Fd()))}
+	deps := ui.Deps{Ctx: ctx, Theme: th, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
 	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
 	finalModel, runErr := prog.Run()
 	if intent, ok := connectRestartIntent(finalModel); ok {

@@ -175,8 +175,11 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 	case errors.Is(loadErr, credentialstore.ErrNotFound):
 		expectedCredential = &clientauth.ExpectedCredentialState{Found: false}
 	case errors.Is(loadErr, clientauth.ErrCorrupt):
-		// Leave nil: Enroll's existing corrupt-record repair path is
-		// unconstrained by this precondition.
+		// Enroll's corrupt-record repair path may still run, but only if the
+		// record is STILL corrupt at commit time -- if another process
+		// repaired or replaced it while this sign-in's browser flow was
+		// open, this stale sign-in must not overwrite that.
+		expectedCredential = &clientauth.ExpectedCredentialState{Corrupt: true}
 	default:
 		closeStore()
 		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}

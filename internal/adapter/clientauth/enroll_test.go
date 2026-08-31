@@ -107,6 +107,65 @@ func TestEnrollRecoversCorruptCurrentCredentialWithoutStrandingRegistry(t *testi
 	}
 }
 
+// TestEnrollDetectsCredentialRepairedDuringCorruptSignIn pins the corrupt
+// half of the same reauthentication CAS precondition: a preflight that saw a
+// corrupt record (ExpectedCredential.Corrupt) may only proceed through
+// Enroll's repair path if the record is STILL corrupt at commit time. If
+// another process repairs (or replaces) it while the browser flow is still
+// open, the stale sign-in must not overwrite that healthy replacement.
+func TestEnrollDetectsCredentialRepairedDuringCorruptSignIn(t *testing.T) {
+	root := t.TempDir()
+	reg, err := OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := credentialstore.NewEncryptedFile(root, "corrupt-repaired-during-signin", bytesOf(15))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	creds, _ := NewCredentials(store)
+	id := identity("corrupt-repaired-during-signin.example:443")
+	conn := Connection{Identity: id, IssuerCAFile: "/issuer-ca.pem"}
+	if _, err := reg.Upsert(conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Upsert(t.Context(), id, Token{AccessToken: "old", TokenType: "Bearer"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the record -- this is what the stale reauth's preflight saw.
+	rec, err := creds.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := id.recordKey()
+	if _, err := store.Put(t.Context(), key, []byte("{"), &rec.Version); err != nil {
+		t.Fatal(err)
+	}
+	staleCred := &ExpectedCredentialState{Corrupt: true}
+
+	// Another process repairs it with a healthy credential while the stale
+	// sign-in's browser flow is still open.
+	repaired := Token{AccessToken: "repaired", TokenType: "Bearer"}
+	if err := Enroll(t.Context(), conn, repaired, EnrollmentConfig{Registry: reg, Credentials: creds}); err != nil {
+		t.Fatalf("repair enroll: %v", err)
+	}
+
+	// The stale, slower sign-in finally completes; its Enroll call runs with
+	// the OLD (corrupt) preflight snapshot as its precondition.
+	err = Enroll(t.Context(), conn, Token{AccessToken: "stale", TokenType: "Bearer"}, EnrollmentConfig{
+		Registry: reg, Credentials: creds, ExpectedCredential: staleCred,
+	})
+	if !errors.Is(err, ErrTargetChanged) {
+		t.Fatalf("Enroll error = %v, want ErrTargetChanged", err)
+	}
+	got, err := creds.Load(t.Context(), id)
+	if err != nil || !sameToken(got.Token, repaired) {
+		t.Fatalf("repaired credential was clobbered: %#v, %v", got.Token, err)
+	}
+}
+
 func TestEnrollPreservesQuarantinedRegistryRows(t *testing.T) {
 	root := t.TempDir()
 	reg, err := OpenRegistry(root)

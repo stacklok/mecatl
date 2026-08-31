@@ -200,6 +200,42 @@ func TestClientRejectsCertSignedByADifferentApprovedEndpointsCA(t *testing.T) {
 	}
 }
 
+// TestClientRejectsCertSignedByADifferentPortsCAOnTheSameHost reproduces the
+// narrower union-of-CAs shape a fix keyed by hostname alone (rather than the
+// full host:port authority) would still miss: two approved endpoints share a
+// HOSTNAME but differ only by PORT, each with its own CA. A cert for one
+// port signed by the OTHER port's CA must still be rejected.
+func TestClientRejectsCertSignedByADifferentPortsCAOnTheSameHost(t *testing.T) {
+	caAKey, caACert := generateTestCA(t, "port-a CA")
+	_, caBCert := generateTestCA(t, "port-b CA")
+	const sharedHost = "shared-host.test"
+
+	// The server for port B presents a leaf certificate signed by port A's
+	// CA, not its own CA B -- the forged shape a hostname-only pool would
+	// accept, since both authorities share a hostname.
+	forged := httptest.NewUnstartedServer(http.NotFoundHandler())
+	forged.TLS = &tls.Config{Certificates: []tls.Certificate{issueLeafCert(t, caAKey, caACert, sharedHost)}}
+	forged.StartTLS()
+	t.Cleanup(forged.Close)
+	_, portB, err := net.SplitHostPort(strings.TrimPrefix(forged.URL, "https://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const portA = "1" // never dialed; only its CA registration matters
+	lookup := func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("127.0.0.1")}, nil }
+
+	p, err := newPolicy(context.Background(), map[string][]byte{
+		"https://" + sharedHost + ":" + portA: certPEM(caACert),
+		"https://" + sharedHost + ":" + portB: certPEM(caBCert), // port B's OWN correct CA -- never port A's
+	}, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.dialTLS(context.Background(), "tcp", sharedHost+":"+portB); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("dialTLS to %s:%s accepted a cert signed by the other port's CA: %v", sharedHost, portB, err)
+	}
+}
+
 // generateTestCA returns a self-signed CA key and certificate.
 func generateTestCA(t *testing.T, commonName string) (*rsa.PrivateKey, *x509.Certificate) {
 	t.Helper()

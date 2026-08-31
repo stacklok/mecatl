@@ -256,11 +256,13 @@ func TestRestartConnectActionsAndBrowserBoundary(t *testing.T) {
 	}
 }
 
-// TestReauthenticateRestartHonorsHeadlessIntent pins that a Reauthenticate
-// restart threads the ORIGINAL invocation's headless posture (intent.NoBrowser,
-// set from the TUI's own non-interactive-stdin detection) into the login call,
-// instead of hardcoding a browser launch attempt that cannot complete in a
-// headless/SSH environment.
+// TestReauthenticateRestartHonorsHeadlessIntent pins restartFromConnectIntentWith's
+// plumbing in isolation: whatever ConnectRestartIntent.NoBrowser says is passed
+// through to the login call verbatim, regardless of its value. It does NOT claim
+// the real UI ever produces NoBrowser=false for Reauthenticate -- that contract
+// (always true, per ADR 0254) is pinned separately by
+// ui.TestReauthenticateIntentIsAlwaysBrowserFree, which drives the actual
+// connectRestartIntent() method.
 func TestReauthenticateRestartHonorsHeadlessIntent(t *testing.T) {
 	for _, noBrowser := range []bool{false, true} {
 		t.Run(fmt.Sprintf("noBrowser=%v", noBrowser), func(t *testing.T) {

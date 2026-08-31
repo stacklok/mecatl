@@ -26,7 +26,11 @@ var ErrTargetChanged = errors.New("clientauth: target changed during sign-in")
 // see EnrollmentConfig.ExpectedTarget for that), captured before an
 // interactive step that can run arbitrarily long.
 type ExpectedCredentialState struct {
-	Found   bool
+	Found bool
+	// Corrupt records that the preflight read hit ErrCorrupt for this
+	// identity. Version is meaningless when Corrupt is true -- see
+	// checkExpectedCredential.
+	Corrupt bool
 	Version credentialstore.Version
 }
 
@@ -50,8 +54,9 @@ type EnrollmentConfig struct {
 	// store's version moved), so this closes that half of the same race:
 	// Enroll rejects with ErrTargetChanged rather than overwrite a credential
 	// newer than the one the caller preflighted against. A credential that
-	// was corrupt at preflight time is deliberately left unconstrained here
-	// (nil) -- Enroll's existing corrupt-record repair path handles that.
+	// was corrupt at preflight time (ExpectedCredentialState.Corrupt) still
+	// constrains the repair path -- see checkExpectedCredential -- rather
+	// than leaving it entirely unconstrained.
 	ExpectedCredential *ExpectedCredentialState
 }
 
@@ -65,13 +70,26 @@ func (cfg EnrollmentConfig) checkExpectedTarget(current []Connection) bool {
 // cfg.ExpectedCredential (or whether no such precondition was requested, or
 // the credential is under repair -- see ExpectedCredential's doc comment).
 func (cfg EnrollmentConfig) checkExpectedCredential(current credentialSnapshot) bool {
-	if cfg.ExpectedCredential == nil || current.unusable {
+	expected := cfg.ExpectedCredential
+	if expected == nil {
 		return true
 	}
-	if current.found != cfg.ExpectedCredential.Found {
+	if expected.Corrupt {
+		// The preflight saw an unusable record for this identity. Enroll's
+		// repair path may proceed only if it is STILL unusable at commit
+		// time -- if another process already repaired or replaced it, this
+		// stale sign-in must not overwrite that healthy replacement.
+		return current.unusable
+	}
+	if current.unusable {
+		// The preflight saw either a healthy record or none; a record that
+		// is corrupt NOW was changed by something else since preflight.
 		return false
 	}
-	return !current.found || current.record.Version.Equal(cfg.ExpectedCredential.Version)
+	if current.found != expected.Found {
+		return false
+	}
+	return !current.found || current.record.Version.Equal(expected.Version)
 }
 
 type credentialSnapshot struct {

@@ -125,11 +125,11 @@ Service-DNS host aliases and export the public fixture CA to `.scratch/`; then e
 with:
 
 ```sh
-mecatui login <mecak8s-host>:18081 --issuer <fixture-https-issuer> --client-id mecatui-kind --audience http://127.0.0.1:18080/mcp \
-  --tls-ca <exported-fixture-ca> --scopes openid,profile,mcp:read,offline_access
+mecatui login mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local:18081 --issuer https://keycloak.mecatl-vmcp.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience http://127.0.0.1:18080/mcp \
+  --tls-ca .scratch/mecak8s-vmcp-ca.crt --scopes openid,profile,mcp:read,offline_access
 ```
 
-Then connect with `mecatui connect <mecak8s-host>:18081 --tls --tls-ca <exported-fixture-ca>`.
+Then connect with `mecatui connect mecak8s-mecak8s.mecatl-vmcp.svc.cluster.local:18081 --tls --tls-ca .scratch/mecak8s-vmcp-ca.crt`.
 The login uses Authorization Code + PKCE, not device flow. `offline_access` is optional on
 `mecatui-kind`, and the fixture users hold Keycloak's `offline_access` realm role, so this
 explicit request receives a refresh token. Mecatui stores it with the login and uses it to
