@@ -4,7 +4,7 @@
 - Date: 2026-08-24
 - Scope: `mecatui` remote connection enrollment, OIDC credentials, and the Kind remote-client qualification flow
 - Supersedes: None
-- Superseded by: ADR 0252
+- Superseded by: ADR 0260
 
 ## Context
 

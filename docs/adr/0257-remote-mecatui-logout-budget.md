@@ -3,12 +3,12 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Scope: Remote mecatui OIDC logout provider communication
-- Supersedes: ADR 0252 (logout provider budget only)
+- Supersedes: ADR 0260 (logout provider budget only)
 - Superseded by: None
 
 ## Context
 
-ADR 0252 set a five-second operation-wide budget for best-effort issuer discovery
+ADR 0260 set a five-second operation-wide budget for best-effort issuer discovery
 and RFC 7009 revocation after local logout. On macOS, a Kubernetes
 `cluster.local` hostname can spend about five seconds in mDNS before falling
 back to `/etc/hosts`. The scoped private-HTTPS client resolves the hostname at
@@ -36,7 +36,7 @@ without waiting for a provider success.
 
 ## See also
 
-- [ADR 0252 — Remote mecatui OIDC client authentication](./0252-remote-mecatui-oidc.md)
+- [ADR 0260 — Remote mecatui OIDC client authentication](./0260-remote-mecatui-oidc.md)
 - `internal/adapter/clientauth/logout.go` (`revocationTimeout`)
 - [TUI guide](../tui.md)
 - [Architecture guide](../architecture.md)

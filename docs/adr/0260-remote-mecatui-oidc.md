@@ -1,4 +1,4 @@
-# ADR 0252 — Remote mecatui OIDC client authentication
+# ADR 0260 — Remote mecatui OIDC client authentication
 
 - Status: Accepted
 - Date: 2026-08-28

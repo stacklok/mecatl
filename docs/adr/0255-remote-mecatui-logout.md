@@ -4,7 +4,7 @@
 - Date: 2026-08-27
 - Scope: remote mecatui target registry deletion, credential cleanup, and provider revocation
 - Supersedes: None
-- Superseded by: ADR 0252
+- Superseded by: ADR 0260
 
 ## Context
 

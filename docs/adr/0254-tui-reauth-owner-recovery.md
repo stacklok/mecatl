@@ -4,7 +4,7 @@
 - Date: 2026-08-26
 - Scope: `mecatui` remote OIDC transport and session recovery
 - Supersedes: None
-- Superseded by: ADR 0252
+- Superseded by: ADR 0260
 
 ## Context
 
