@@ -2,8 +2,8 @@
 id: 11-fenced-reflection-boundary
 title: Fence canonical evidence at restarted model boundaries
 blocked_by: [10-exact-source-evidence]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-cloud-native-learning/11-fenced-reflection-boundary"
 worktree: ""
 issue: ""
 retries: 0
