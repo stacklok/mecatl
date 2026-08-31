@@ -2,9 +2,9 @@
 id: 08-attempt-driver-repository
 title: Add driver-backed AttemptRepository transport
 blocked_by: [05-attempt-conformance]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/08-attempt-driver-repository"
+worktree: ".scratch/worktrees/08-attempt-driver-repository"
 issue: ""
 retries: 0
 last_error: ""

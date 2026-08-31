@@ -2,9 +2,9 @@
 id: 07-durable-attempt-store
 title: Implement a crash-safe durable AttemptRepository adapter
 blocked_by: [05-attempt-conformance]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/07-durable-attempt-store"
+worktree: ".scratch/worktrees/07-durable-attempt-store"
 issue: ""
 retries: 0
 last_error: ""

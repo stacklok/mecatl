@@ -2,9 +2,9 @@
 id: 06-memattempt-adapter
 title: Implement the in-memory AttemptRepository reference adapter
 blocked_by: [05-attempt-conformance]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/06-memattempt-adapter"
+worktree: ".scratch/worktrees/06-memattempt-adapter"
 issue: ""
 retries: 0
 last_error: ""
