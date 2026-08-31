@@ -2,9 +2,9 @@
 id: 05-attempt-conformance
 title: Build shared AttemptRepository lifecycle conformance
 blocked_by: [04-attempt-repository-contract]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/05-attempt-conformance"
+worktree: ".scratch/worktrees/05-attempt-conformance"
 issue: ""
 retries: 0
 last_error: ""
