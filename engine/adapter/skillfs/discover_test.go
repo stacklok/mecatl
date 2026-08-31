@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 // writeSkill creates <dir>/<name>/SKILL.md with the given content. It is an
@@ -67,6 +69,44 @@ Look for correctness, then style.
 	}
 	if got[0].Path == "" {
 		t.Error("Path not populated")
+	}
+}
+
+func TestGoccyYAMLMigration_SemanticMatrixSkillFrontmatter(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/semantic-matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix struct {
+		Cases []struct {
+			Name     string            `yaml:"name"`
+			Category string            `yaml:"category"`
+			Document string            `yaml:"document"`
+			Readers  map[string]string `yaml:"readers"`
+		} `yaml:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, tc := range matrix.Cases {
+		outcome, ok := tc.Readers["skillfs"]
+		if !ok {
+			continue
+		}
+		seen = true
+		if tc.Category != "frontmatter" {
+			t.Fatalf("fixture %q has category %q, want frontmatter", tc.Name, tc.Category)
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			_, parseError, _ := ParseSkill([]byte(tc.Document), "semantic-matrix.md")
+			if accepted, want := parseError == "", outcome == "accept"; accepted != want {
+				t.Fatalf("ParseSkill() accepted=%v, want %v (error=%q)", accepted, want, parseError)
+			}
+		})
+	}
+	if !seen {
+		t.Fatal("semantic matrix declares no skillfs frontmatter case")
 	}
 }
 
@@ -557,6 +597,22 @@ func TestParseSkillCarriesOptionalFrontmatter(t *testing.T) {
 	})
 }
 
+func TestParseSkillAllowedToolsAcceptsResolvedScalarsAsText(t *testing.T) {
+	t.Parallel()
+
+	for _, scalar := range []string{"true", "42", "2026-08-28T12:00:00Z", "null"} {
+		t.Run(scalar, func(t *testing.T) {
+			skill, reason, _ := ParseSkill([]byte("---\nname: tooling\ndescription: d\nallowed-tools: "+scalar+"\n---\nbody"), "tooling/SKILL.md")
+			if reason != "" {
+				t.Fatalf("ParseSkill(%q) reason = %q", scalar, reason)
+			}
+			if got := strings.Join(skill.AllowedTools, ","); got != scalar {
+				t.Fatalf("AllowedTools = %q, want %q", got, scalar)
+			}
+		})
+	}
+}
+
 // TestParseSkillAllowedTools pins the ADVISORY `allowed-tools` frontmatter
 // (agentskills.io, Experimental; issue #419): the spec's space-separated STRING
 // form splits into the SkillMeta field, extra whitespace is tolerated, a
@@ -694,18 +750,46 @@ func TestParseSkillAllowedTools(t *testing.T) {
 		}
 	})
 
-	t.Run("non-string scalar is a YAML parse failure (fail-closed)", func(t *testing.T) {
+	t.Run("resolved scalar is preserved as text", func(t *testing.T) {
 		dir := t.TempDir()
-		writeSkill(t, dir, "bad-scalar", "---\nname: bad-scalar\ndescription: int scalar\nallowed-tools: 123\n---\nbody\n")
+		writeSkill(t, dir, "scalar", "---\nname: scalar\ndescription: int scalar\nallowed-tools: 123\n---\nbody\n")
 		got, skips, err := Discover(dir)
 		if err != nil {
 			t.Fatalf("Discover: %v", err)
 		}
-		if len(got) != 0 {
-			t.Fatalf("a skill with a non-string allowed-tools scalar must be SKIPPED, got %d: %+v", len(got), got)
-		}
-		if !hasReasonContaining(skips, "malformed YAML") {
-			t.Errorf("expected a malformed-YAML skip reason, got %v", skips)
+		if len(skips) != 0 || len(got) != 1 || !reflect.DeepEqual(got[0].AllowedTools, []string{"123"}) {
+			t.Fatalf("resolved scalar = skills=%+v skips=%v, want allowed-tools [123] without skips", got, skips)
 		}
 	})
+}
+
+func TestGoccyYAMLMigration_Scenario3_SkillFrontmatterCompatibility(t *testing.T) {
+	t.Parallel()
+
+	skill, reason, _ := ParseSkill([]byte(`---
+name: review
+description: review changes
+allowed-tools: [Read, "Grep Bash"]
+metadata:
+  audience: engineers
+unknown-future-field: ignored
+---
+review the change`), "review/SKILL.md")
+	if reason != "" {
+		t.Fatalf("parse skill frontmatter: %s", reason)
+	}
+	if got, want := strings.Join(skill.AllowedTools, ","), "Read,Grep,Bash"; got != want {
+		t.Fatalf("allowed-tools = %q, want %q", got, want)
+	}
+	if skill.Metadata["audience"] != "engineers" {
+		t.Fatalf("metadata = %#v, want normalized metadata", skill.Metadata)
+	}
+
+	_, reason, _ = ParseSkill([]byte("---\nname: leaked-secret\ndescription: [unterminated\n---\nbody"), "bad/SKILL.md")
+	if !strings.Contains(reason, "malformed YAML frontmatter at line") {
+		t.Fatalf("malformed frontmatter reason = %q, want safe location", reason)
+	}
+	if strings.Contains(reason, "leaked-secret") || strings.Contains(reason, "unterminated") {
+		t.Fatalf("malformed frontmatter reason leaked YAML source: %q", reason)
+	}
 }

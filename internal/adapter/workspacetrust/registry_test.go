@@ -32,6 +32,48 @@ func realConfigEnv(configDir string) xdgconfig.ResolveEnv {
 	}
 }
 
+func TestGoccyYAMLMigration_Scenario1_FailSafeDiagnosticsNeverEchoYAML(t *testing.T) {
+	t.Parallel()
+
+	const malformed = "version: [credential: super-secret-token # parser-looking: :\n  quote: \"never-log-me\"\n"
+	base := t.TempDir()
+	ws := realDir(t, base, "repo")
+	var buf bytes.Buffer
+	r := NewWithEnv(envWithTrustYAML(t.TempDir(), []byte(malformed))).
+		WithDiagnostics(slogdiag.New(&buf, false, port.LevelInfo))
+
+	if remembered, drifted := r.Remembered(ws, "anchor"); remembered || drifted {
+		t.Fatalf("Remembered(malformed registry) = (%v, %v), want (false, false)", remembered, drifted)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "trust.yaml unparseable") {
+		t.Fatalf("missing fail-safe diagnostic: %s", output)
+	}
+	for _, forbidden := range []string{"credential", "super-secret-token", "parser-looking", "never-log-me", "quote:"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("diagnostic leaked YAML-derived content %q: %s", forbidden, output)
+		}
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario5_WorkspaceTrustFailsSafeAndValueFree(t *testing.T) {
+	t.Parallel()
+
+	const malformed = "version: [credential: workspace-secret\n"
+	base := t.TempDir()
+	ws := realDir(t, base, "repo")
+	var buf bytes.Buffer
+	r := NewWithEnv(envWithTrustYAML(t.TempDir(), []byte(malformed))).
+		WithDiagnostics(slogdiag.New(&buf, false, port.LevelInfo))
+
+	if remembered, _ := r.Remembered(ws, "anchor"); remembered {
+		t.Fatal("malformed workspace-trust YAML granted remembered trust")
+	}
+	if output := buf.String(); strings.Contains(output, "workspace-secret") || strings.Contains(output, "credential") {
+		t.Fatalf("workspace-trust diagnostic leaked YAML content: %s", output)
+	}
+}
+
 // TestRegistryRoundTrip writes an entry then reads it back: the workspace is
 // remembered, undrifted when the live anchor matches what was stored.
 func TestRegistryRoundTrip(t *testing.T) {

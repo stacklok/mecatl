@@ -20,6 +20,27 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
+func TestGoccyYAMLMigration_Scenario5_ToolHiveUnknownFieldsFallbackAndLoopbackBaseURL(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, "llm:\n  gateway_url: https://upstream.example/gateway\n  future_option: ignored\n  proxy:\n    listen_port: 15551\n    future_option: ignored\nfuture_top_level: ignored\n")
+	cfg, ok := DetectConfig(path)
+	if !ok {
+		t.Fatal("config with unknown fields was not detected")
+	}
+	if got, want := cfg.BaseURL(), "http://127.0.0.1:15551/v1"; got != want {
+		t.Fatalf("BaseURL() = %q, want %q", got, want)
+	}
+
+	malformed := writeConfig(t, "llm: [credential: super-secret-token\n")
+	if _, ok := DetectConfig(malformed); ok {
+		t.Fatal("malformed optional config was detected instead of failing soft")
+	}
+	if _, ok := DetectConfig(filepath.Join(t.TempDir(), "missing.yaml")); ok {
+		t.Fatal("missing optional config was detected instead of failing soft")
+	}
+}
+
 func TestDetectConfig_MissingFile(t *testing.T) {
 	if _, ok := DetectConfig(filepath.Join(t.TempDir(), "nope.yaml")); ok {
 		t.Fatal("expected false for a missing file")

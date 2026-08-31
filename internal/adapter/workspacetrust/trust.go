@@ -50,10 +50,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 // userSubdirMecatl is the user-level YAML config under the XDG config dir,
@@ -195,8 +196,12 @@ func (r *Reader) declaredEntries() []string {
 	}
 	var s schema
 	if perr := yaml.Unmarshal(data, &s); perr != nil {
-		r.diag.Log(context.Background(), port.LevelWarn, "workspace trust: user settings.yaml unparseable; ignoring trustedWorkspaces",
-			"file", path, "err", perr)
+		yamlDiagnostic := yamldiag.Classify("parse workspace trust settings", perr)
+		args := []any{"file", path, "yaml_operation", yamlDiagnostic.Operation, "yaml_category", yamlDiagnostic.Category}
+		if yamlDiagnostic.HasLocation {
+			args = append(args, "yaml_line", yamlDiagnostic.Line, "yaml_column", yamlDiagnostic.Column)
+		}
+		r.diag.Log(context.Background(), port.LevelWarn, "workspace trust: user settings.yaml unparseable; ignoring trustedWorkspaces", args...)
 		return nil
 	}
 	// Drop empty/blank entries (a malformed list item is ignored, the rest kept).

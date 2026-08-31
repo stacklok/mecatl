@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
+
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
@@ -31,6 +33,103 @@ func writeFile(t *testing.T, dir, contents string, mode os.FileMode) string {
 		t.Fatalf("write %s: %v", path, err)
 	}
 	return path
+}
+
+func TestGoccyYAMLMigration_Scenario2_AuthFileWholeFileVsEntryLocalFailure(t *testing.T) {
+	const validKey = "valid-sibling-key"
+	const invalidMaterial = "invalid-entry-material"
+
+	t.Run("whole-file schema failure rejects snapshot without YAML content", func(t *testing.T) {
+		dir := t.TempDir()
+		path := writeFile(t, dir, "providers:\n  anthropic:\n    api_key: "+validKey+"\n  openai:\n    unexpected-attacker-key: "+invalidMaterial+"\n", 0o600)
+		file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+		if file != nil || warning == "" {
+			t.Fatalf("Load(schema failure) = (%v, %q), want (nil, value-free warning)", file, warning)
+		}
+		for _, forbidden := range []string{validKey, invalidMaterial, "unexpected-attacker-key"} {
+			if strings.Contains(warning, forbidden) {
+				t.Fatalf("whole-file warning leaked YAML content %q: %q", forbidden, warning)
+			}
+		}
+	})
+
+	t.Run("entry-local invalid OAuth retains valid sibling", func(t *testing.T) {
+		dir := t.TempDir()
+		path := writeFile(t, dir, "providers:\n  anthropic:\n    api_key: "+validKey+"\n  openai:\n    oauth:\n      access_token: "+invalidMaterial+"\n", 0o600)
+		file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+		if warning == "" || file == nil {
+			t.Fatalf("Load(entry-local failure) = (%v, %q), want retained file and warning", file, warning)
+		}
+		if got := file.APIKey("anthropic"); got != validKey {
+			t.Fatalf("valid sibling API key = %q, want %q", got, validKey)
+		}
+		if got := file.OAuth("openai"); got != (OAuthEntry{}) {
+			t.Fatalf("invalid OAuth material = %#v, want dropped", got)
+		}
+		if strings.Contains(warning, invalidMaterial) {
+			t.Fatalf("entry-local warning leaked credential material: %q", warning)
+		}
+	})
+}
+
+func TestLoadMalformedSyntaxWarningIncludesLocationWithoutYAML(t *testing.T) {
+	const sentinel = "AUTHFILE_SECRET_SENTINEL"
+	dir := t.TempDir()
+	path := writeFile(t, dir, "providers: ["+sentinel, 0o600)
+
+	file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+	if file != nil || warning == "" {
+		t.Fatalf("Load(malformed syntax) = (%v, %q), want (nil, warning)", file, warning)
+	}
+	if !strings.Contains(warning, "line ") || !strings.Contains(warning, "column ") {
+		t.Fatalf("warning = %q, want line and column", warning)
+	}
+	if strings.Contains(warning, sentinel) {
+		t.Fatalf("warning leaked YAML content: %q", warning)
+	}
+}
+
+func TestGoccyYAMLMigration_SemanticMatrixAuthfile(t *testing.T) {
+	data, err := os.ReadFile("../../../engine/testdata/semantic-matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix struct {
+		Cases []struct {
+			Name     string            `yaml:"name"`
+			Document string            `yaml:"document"`
+			Readers  map[string]string `yaml:"readers"`
+		} `yaml:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range matrix.Cases {
+		outcome, ok := tc.Readers["authfile"]
+		if !ok {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			path := writeFile(t, t.TempDir(), tc.Document, 0o600)
+			file, warning := Load(path, false, fakeEnv(t.TempDir()), testKnownProviders)
+			accepted := file != nil && warning == ""
+			if want := outcome == "accept"; accepted != want {
+				t.Fatalf("Load() accepted=%v, want %v (warning=%q)", accepted, want, warning)
+			}
+		})
+	}
+}
+
+func TestLoadPreservesAnchorAndAliasCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "providers:\n  openai:\n    api_key: &key safe-key\n  anthropic:\n    api_key: *key\n", 0o600)
+	file, warning := Load(path, false, fakeEnv(dir), testKnownProviders)
+	if warning != "" {
+		t.Fatalf("Load warning = %q", warning)
+	}
+	if file == nil || file.APIKey("openai") != "safe-key" || file.APIKey("anthropic") != "safe-key" {
+		t.Fatalf("Load aliases = %#v, want both API keys", file)
+	}
 }
 
 func TestDefaultPathIsSettingsYAMLSibling(t *testing.T) {

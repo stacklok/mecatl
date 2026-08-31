@@ -33,6 +33,7 @@
 package permconfig
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -45,7 +46,8 @@ import (
 	"time"
 	"unicode"
 
-	yaml "go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
 
 	"github.com/stacklok/mecatl/engine/learning"
 )
@@ -181,7 +183,7 @@ type StorageManagementPrincipal struct {
 
 // UnmarshalYAML strictly validates storage-management authority. An empty list
 // grants nobody; there is no wildcard or grant-type shortcut.
-func (s *StorageManagementSection) UnmarshalYAML(node *yaml.Node) error {
+func (s *StorageManagementSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "storage_management", map[string]any{
 		"version": &s.Version, "principals": &s.Principals,
 	}); err != nil {
@@ -208,7 +210,7 @@ func (s *StorageManagementSection) UnmarshalYAML(node *yaml.Node) error {
 
 // UnmarshalYAML keeps each principal mapping closed to prevent a misspelled
 // identity field from silently removing the management boundary.
-func (p *StorageManagementPrincipal) UnmarshalYAML(node *yaml.Node) error {
+func (p *StorageManagementPrincipal) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "storage_management principal", map[string]any{
 		"issuer": &p.Issuer, "subject": &p.Subject,
 	})
@@ -241,7 +243,7 @@ type RetentionLimitSection struct {
 }
 
 // UnmarshalYAML strictly decodes and validates the versioned retention policy.
-func (s *RetentionSection) UnmarshalYAML(node *yaml.Node) error {
+func (s *RetentionSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "retention", map[string]any{
 		"version": &s.Version, "main": &s.Main, "child": &s.Child,
 		"scheduled": &s.Scheduled, "sweep_cadence": &s.SweepCadence,
@@ -268,7 +270,7 @@ func (s *RetentionSection) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // UnmarshalYAML strictly decodes one retention partition.
-func (s *RetentionLimitSection) UnmarshalYAML(node *yaml.Node) error {
+func (s *RetentionLimitSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "retention limit", map[string]any{"max_age": &s.MaxAge, "max_count": &s.MaxCount}); err != nil {
 		return err
 	}
@@ -421,7 +423,7 @@ const modeKey = "mode"
 func (s *MCPSection) strictFields() map[string]any { return map[string]any{"servers": &s.Servers} }
 
 // UnmarshalYAML strictly decodes and validates an MCP operator section.
-func (s *MCPSection) UnmarshalYAML(node *yaml.Node) error {
+func (s *MCPSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp", s.strictFields()); err != nil {
 		return err
 	}
@@ -441,7 +443,7 @@ func (s *MCPServerProfile) strictFields() map[string]any {
 }
 
 // UnmarshalYAML strictly decodes and validates one MCP server profile.
-func (s *MCPServerProfile) UnmarshalYAML(node *yaml.Node) error {
+func (s *MCPServerProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[]", s.strictFields()); err != nil {
 		return err
 	}
@@ -479,11 +481,11 @@ func (s *MCPServerProfile) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (a *MCPAuthProfile) strictFields() map[string]any {
-	return map[string]any{modeKey: &a.Mode, "static_bearer": &a.StaticBearer, "oauth": &a.OAuth}
+	return map[string]any{modeKey: &a.Mode, "static_bearer": newPermconfigNodePointer(&a.StaticBearer), "oauth": newPermconfigNodePointer(&a.OAuth)}
 }
 
 // UnmarshalYAML strictly decodes the closed MCP authentication union.
-func (a *MCPAuthProfile) UnmarshalYAML(node *yaml.Node) error {
+func (a *MCPAuthProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth", a.strictFields()); err != nil {
 		return err
 	}
@@ -511,7 +513,7 @@ func (s *MCPStaticBearerProfile) strictFields() map[string]any {
 }
 
 // UnmarshalYAML strictly decodes a static bearer secret reference.
-func (s *MCPStaticBearerProfile) UnmarshalYAML(node *yaml.Node) error {
+func (s *MCPStaticBearerProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.static_bearer", s.strictFields()); err != nil {
 		return err
 	}
@@ -519,11 +521,11 @@ func (s *MCPStaticBearerProfile) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (o *MCPOAuthProfile) strictFields() map[string]any {
-	return map[string]any{"profile": &o.Profile, "principal": &o.Principal, "issuer": &o.Issuer, "client": &o.Client, "scopes": &o.Scopes, "request_refresh_token": &o.RequestRefreshToken, "credentials": &o.Credentials, "network": &o.Network}
+	return map[string]any{"profile": &o.Profile, "principal": &o.Principal, "issuer": &o.Issuer, "client": &o.Client, "scopes": &o.Scopes, "request_refresh_token": &o.RequestRefreshToken, "credentials": &o.Credentials, "network": newPermconfigNodePointer(&o.Network)}
 }
 
 // UnmarshalYAML strictly decodes and validates OAuth profile metadata.
-func (o *MCPOAuthProfile) UnmarshalYAML(node *yaml.Node) error {
+func (o *MCPOAuthProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth", o.strictFields()); err != nil {
 		return err
 	}
@@ -557,11 +559,11 @@ func (o *MCPOAuthProfile) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (c *MCPOAuthClientProfile) strictFields() map[string]any {
-	return map[string]any{modeKey: &c.Mode, "preregistered": &c.Preregistered, "cimd": &c.CIMD}
+	return map[string]any{modeKey: &c.Mode, "preregistered": newPermconfigNodePointer(&c.Preregistered), "cimd": newPermconfigNodePointer(&c.CIMD)}
 }
 
 // UnmarshalYAML strictly decodes the closed preregistered/CIMD client union.
-func (c *MCPOAuthClientProfile) UnmarshalYAML(node *yaml.Node) error {
+func (c *MCPOAuthClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client", c.strictFields()); err != nil {
 		return err
 	}
@@ -585,7 +587,7 @@ func (c *MCPPreregisteredClientProfile) strictFields() map[string]any {
 }
 
 // UnmarshalYAML strictly decodes preregistered client metadata.
-func (c *MCPPreregisteredClientProfile) UnmarshalYAML(node *yaml.Node) error {
+func (c *MCPPreregisteredClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client.preregistered", c.strictFields()); err != nil {
 		return err
 	}
@@ -600,7 +602,7 @@ func (c *MCPCIMDClientProfile) strictFields() map[string]any {
 }
 
 // UnmarshalYAML strictly decodes CIMD client metadata.
-func (c *MCPCIMDClientProfile) UnmarshalYAML(node *yaml.Node) error {
+func (c *MCPCIMDClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.client.cimd", c.strictFields()); err != nil {
 		return err
 	}
@@ -615,11 +617,11 @@ func (c *MCPCIMDClientProfile) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (c *MCPOAuthCredentialProfile) strictFields() map[string]any {
-	return map[string]any{modeKey: &c.Mode, "local": &c.Local, "environment": &c.Environment}
+	return map[string]any{modeKey: &c.Mode, "local": newPermconfigNodePointer(&c.Local), "environment": newPermconfigNodePointer(&c.Environment)}
 }
 
 // UnmarshalYAML strictly decodes the closed local/environment credential union.
-func (c *MCPOAuthCredentialProfile) UnmarshalYAML(node *yaml.Node) error {
+func (c *MCPOAuthCredentialProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials", c.strictFields()); err != nil {
 		return err
 	}
@@ -643,7 +645,7 @@ func (c *MCPLocalCredentialProfile) strictFields() map[string]any {
 }
 
 // UnmarshalYAML strictly decodes local credential-store metadata.
-func (c *MCPLocalCredentialProfile) UnmarshalYAML(node *yaml.Node) error {
+func (c *MCPLocalCredentialProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.local", c.strictFields()); err != nil {
 		return err
 	}
@@ -658,7 +660,7 @@ func (c *MCPEnvironmentCredentialProfile) strictFields() map[string]any {
 }
 
 // UnmarshalYAML strictly decodes environment credential metadata.
-func (c *MCPEnvironmentCredentialProfile) UnmarshalYAML(node *yaml.Node) error {
+func (c *MCPEnvironmentCredentialProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.credentials.environment", c.strictFields()); err != nil {
 		return err
 	}
@@ -670,7 +672,7 @@ func (n *MCPOAuthNetworkProfile) strictFields() map[string]any {
 }
 
 // UnmarshalYAML strictly decodes immutable OAuth network policy metadata.
-func (n *MCPOAuthNetworkProfile) UnmarshalYAML(node *yaml.Node) error {
+func (n *MCPOAuthNetworkProfile) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.network", n.strictFields()); err != nil {
 		return err
 	}
@@ -820,7 +822,7 @@ type LearningSkillsSection struct {
 }
 
 // UnmarshalYAML strictly decodes learning.skills.activation.
-func (s *LearningSkillsSection) UnmarshalYAML(node *yaml.Node) error {
+func (s *LearningSkillsSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "learning.skills", map[string]any{"activation": &s.Activation}); err != nil {
 		return err
 	}
@@ -847,11 +849,12 @@ type LearningAutomaticSection struct {
 	MaxTokensPerPrincipal int `yaml:"max_tokens_per_principal"`
 }
 
-func durationScalar(node *yaml.Node, name string) (time.Duration, error) {
-	if node == nil || node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+func durationScalar(node ast.Node, name string) (time.Duration, error) {
+	valueNode, ok := node.(*ast.StringNode)
+	if !ok {
 		return 0, fmt.Errorf("%s: must be a duration string", name)
 	}
-	value, err := time.ParseDuration(node.Value)
+	value, err := time.ParseDuration(valueNode.Value)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", name, err)
 	}
@@ -859,11 +862,11 @@ func durationScalar(node *yaml.Node, name string) (time.Duration, error) {
 }
 
 // UnmarshalYAML strictly decodes and bounds the automatic-admission policy.
-func (s *LearningAutomaticSection) UnmarshalYAML(node *yaml.Node) error {
+func (s *LearningAutomaticSection) UnmarshalYAML(node ast.Node) error {
 	s.Cooldown, s.Window = 10*time.Minute, time.Hour
 	s.MaxReflections, s.MaxTokens = 8, 100000
 	s.MaxReflectionsPerPrincipal, s.MaxTokensPerPrincipal = 4, 50000
-	var cooldown, window yaml.Node
+	var cooldown, window permconfigNodeValue
 	if err := decodeStrictMapping(node, "learning.automatic", map[string]any{
 		"cooldown": &cooldown, "window": &window,
 		"max_reflections": &s.MaxReflections, "max_tokens": &s.MaxTokens,
@@ -873,16 +876,16 @@ func (s *LearningAutomaticSection) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 	var err error
-	if cooldown.Kind != 0 {
-		if s.Cooldown, err = durationScalar(&cooldown, "learning.automatic.cooldown"); err != nil {
+	if cooldown.Node != nil {
+		if s.Cooldown, err = durationScalar(cooldown.Node, "learning.automatic.cooldown"); err != nil {
 			return err
 		}
 		if s.Cooldown < 0 {
 			return fmt.Errorf("learning.automatic.cooldown: must be nonnegative")
 		}
 	}
-	if window.Kind != 0 {
-		if s.Window, err = durationScalar(&window, "learning.automatic.window"); err != nil {
+	if window.Node != nil {
+		if s.Window, err = durationScalar(window.Node, "learning.automatic.window"); err != nil {
 			return err
 		}
 		if s.Window < time.Minute || s.Window > 24*time.Hour {
@@ -898,8 +901,8 @@ func (s *LearningAutomaticSection) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // UnmarshalYAML strictly decodes learning.mode and validates its closed vocabulary.
-func (s *LearningSection) UnmarshalYAML(node *yaml.Node) error {
-	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "sensitivity": &s.Sensitivity, "skills": &s.Skills, "automatic": &s.Automatic}); err != nil {
+func (s *LearningSection) UnmarshalYAML(node ast.Node) error {
+	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "sensitivity": &s.Sensitivity, "skills": newPermconfigNodePointer(&s.Skills), "automatic": newPermconfigNodePointer(&s.Automatic)}); err != nil {
 		return err
 	}
 	if s.Mode != "" {
@@ -952,19 +955,19 @@ func (s *OpenRouterSection) strictFields() map[string]any {
 // UnmarshalYAML decodes the openrouter: mapping STRICTLY (issue #480): an
 // unknown key inside the subtree is a parse error — a typo like `moddels:` must
 // not silently drop the routing preferences. Same rationale as GuardrailsSection.
-func (s *OpenRouterSection) UnmarshalYAML(node *yaml.Node) error {
+func (s *OpenRouterSection) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "openrouter", s.strictFields())
 }
 
 func (m *OpenRouterModelRoute) strictFields() map[string]any {
 	return map[string]any{
 		"order":           &m.Order,
-		"allow_fallbacks": &m.AllowFallbacks,
+		"allow_fallbacks": newPermconfigNodePointer(&m.AllowFallbacks),
 	}
 }
 
 // UnmarshalYAML decodes an openrouter.models.<id> entry STRICTLY.
-func (m *OpenRouterModelRoute) UnmarshalYAML(node *yaml.Node) error {
+func (m *OpenRouterModelRoute) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "openrouter.models[]", m.strictFields())
 }
 
@@ -1045,34 +1048,33 @@ type ModelsSection struct {
 type ContextWindows map[string]map[string]int
 
 // UnmarshalYAML decodes and validates each configured context window with its full path.
-func (c *ContextWindows) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
+func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
 		return fmt.Errorf("models.context_windows: must be a mapping")
 	}
-	out := make(ContextWindows, len(node.Content)/2)
-	for i := 0; i < len(node.Content); i += 2 {
-		providerNode := node.Content[i]
-		if providerNode.Kind != yaml.ScalarNode || providerNode.Tag != "!!str" {
+	out := make(ContextWindows, len(mapping.Values))
+	for _, providerEntry := range mapping.Values {
+		provider, stringProvider := permconfigMappingKey(providerEntry.Key)
+		if !stringProvider {
 			return fmt.Errorf("models.context_windows: provider key must be a string")
 		}
-		provider := providerNode.Value
 		if strings.TrimSpace(provider) == "" {
 			return fmt.Errorf("models.context_windows: provider key must not be empty")
 		}
 		if _, duplicate := out[provider]; duplicate {
 			return fmt.Errorf("models.context_windows.%s: duplicate provider key", provider)
 		}
-		modelsNode := node.Content[i+1]
-		if modelsNode.Kind != yaml.MappingNode {
+		modelsNode, mappingModels := permconfigMapping(providerEntry.Value)
+		if !mappingModels {
 			return fmt.Errorf("models.context_windows.%s: must be a model-to-token mapping", provider)
 		}
-		models := make(map[string]int, len(modelsNode.Content)/2)
-		for j := 0; j < len(modelsNode.Content); j += 2 {
-			modelNode := modelsNode.Content[j]
-			if modelNode.Kind != yaml.ScalarNode || modelNode.Tag != "!!str" {
+		models := make(map[string]int, len(modelsNode.Values))
+		for _, modelEntry := range modelsNode.Values {
+			model, stringModel := permconfigMappingKey(modelEntry.Key)
+			if !stringModel {
 				return fmt.Errorf("models.context_windows.%s: model key must be a string", provider)
 			}
-			model := modelNode.Value
 			path := fmt.Sprintf("models.context_windows.%s.%s", provider, model)
 			if strings.TrimSpace(model) == "" {
 				return fmt.Errorf("%s: model key must not be empty", path)
@@ -1080,12 +1082,11 @@ func (c *ContextWindows) UnmarshalYAML(node *yaml.Node) error {
 			if _, duplicate := models[model]; duplicate {
 				return fmt.Errorf("%s: duplicate model key", path)
 			}
-			valueNode := modelsNode.Content[j+1]
-			if valueNode.Kind != yaml.ScalarNode || valueNode.Tag != "!!int" {
+			if _, integer := modelEntry.Value.(*ast.IntegerNode); !integer {
 				return fmt.Errorf("%s: context window must be an integer", path)
 			}
 			var tokens int
-			if err := valueNode.Decode(&tokens); err != nil {
+			if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(modelEntry.Value, &tokens); err != nil {
 				return fmt.Errorf("%s: context window must be a runtime-representable integer: %w", path, err)
 			}
 			if tokens <= 0 || tokens > MaxContextWindowTokens {
@@ -1154,7 +1155,7 @@ func (r *RouterSection) strictFields() map[string]any {
 
 // UnmarshalYAML decodes the models.router: mapping STRICTLY (ADR 0031): an unknown key
 // inside the router subtree is a parse error (same rationale as ModelsSection).
-func (r *RouterSection) UnmarshalYAML(node *yaml.Node) error {
+func (r *RouterSection) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "models.router", r.strictFields())
 }
 
@@ -1167,7 +1168,7 @@ func (c *RouterCategory) strictFields() map[string]any {
 }
 
 // UnmarshalYAML decodes a router category mapping STRICTLY.
-func (c *RouterCategory) UnmarshalYAML(node *yaml.Node) error {
+func (c *RouterCategory) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "models.router.categories[]", c.strictFields())
 }
 
@@ -1179,7 +1180,7 @@ func (m *ModelsSection) strictFields() map[string]any {
 		"subagent":         &m.Subagent,
 		"default_provider": &m.DefaultProvider,
 		"allowlist":        &m.Allowlist,
-		"router":           &m.Router,
+		"router":           newPermconfigNodePointer(&m.Router),
 		"context_windows":  &m.ContextWindows,
 	}
 }
@@ -1187,10 +1188,11 @@ func (m *ModelsSection) strictFields() map[string]any {
 // UnmarshalYAML decodes the models: mapping STRICTLY (ADR 0030): an unknown key
 // inside the models subtree is a parse error — a typo like `slotz:` or `aliasez:`
 // must not silently drop a whole binding map. Same rationale as GuardrailsSection.
-func (m *ModelsSection) UnmarshalYAML(node *yaml.Node) error {
-	if node != nil && node.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			if node.Content[i].Value == "context_windows" && node.Content[i+1].Tag == "!!null" {
+func (m *ModelsSection) UnmarshalYAML(node ast.Node) error {
+	if mapping, ok := permconfigMapping(node); ok {
+		for _, entry := range mapping.Values {
+			key, stringKey := permconfigMappingKey(entry.Key)
+			if stringKey && key == "context_windows" && permconfigNull(entry.Value) {
 				return fmt.Errorf("models.context_windows: must be a mapping")
 			}
 		}
@@ -1250,7 +1252,7 @@ type GuardrailRuleSpec struct {
 // UnmarshalYAML decodes the guardrails: mapping STRICTLY (issue #27): an unknown key
 // inside the guardrails subtree is a parse error — a typo like `moddel:` or `rulez:`
 // must not silently disable a guardrail. Same rationale as Permissions.UnmarshalYAML.
-func (g *GuardrailsSection) UnmarshalYAML(node *yaml.Node) error {
+func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "guardrails", g.strictFields())
 }
 
@@ -1277,18 +1279,13 @@ func (r *GuardrailRuleSpec) strictFields() map[string]any {
 }
 
 // UnmarshalYAML decodes a guardrails rule mapping STRICTLY.
-func (r *GuardrailRuleSpec) UnmarshalYAML(node *yaml.Node) error {
+func (r *GuardrailRuleSpec) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "guardrails.rules[]", r.strictFields()); err != nil {
 		return err
 	}
 	// Track whether failClosed was explicitly present so the global onCheckerDown
 	// toggle can distinguish a per-rule opt-out from an unset rule.
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == "failClosed" {
-			r.FailClosedPresent = true
-			break
-		}
-	}
+	r.FailClosedPresent = mappingHasKey(node, "failClosed")
 	return nil
 }
 
@@ -1337,7 +1334,7 @@ type SubagentPermissions struct {
 // through the existing per-file fail-soft log-and-skip — rather than silently
 // ignored config (a typo like `alow:` or `subagnet:` would otherwise disable a
 // whole rule list without a trace). The top level of Config stays lenient.
-func (p *Permissions) UnmarshalYAML(node *yaml.Node) error {
+func (p *Permissions) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "permissions", p.strictFields())
 }
 
@@ -1360,16 +1357,18 @@ func (s *SubagentPermissions) strictFields() map[string]any {
 
 // UnmarshalYAML decodes the permissions.subagent: mapping STRICTLY — same
 // rationale as Permissions.UnmarshalYAML.
-func (s *SubagentPermissions) UnmarshalYAML(node *yaml.Node) error {
+func (s *SubagentPermissions) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "permissions.subagent", s.strictFields())
 }
 
-func mappingHasKey(node *yaml.Node, key string) bool {
-	if node == nil || node.Kind != yaml.MappingNode {
+func mappingHasKey(node ast.Node, key string) bool {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
 		return false
 	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
+	for _, entry := range mapping.Values {
+		entryKey, ok := permconfigMappingKey(entry.Key)
+		if ok && entryKey == key {
 			return true
 		}
 	}
@@ -1381,27 +1380,31 @@ func mappingHasKey(node *yaml.Node, key string) bool {
 // the operator). A null/absent node (e.g. a bare `permissions:` line) decodes
 // to the zero value. A non-mapping node is an error — the subtree's shape is
 // part of the strict contract.
-func decodeStrictMapping(node *yaml.Node, where string, known map[string]any) error {
-	if node == nil || node.Tag == "!!null" {
+func decodeStrictMapping(node ast.Node, where string, known map[string]any) error {
+	if node == nil || permconfigNull(node) {
 		return nil
 	}
-	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("%s: expected a mapping (line %d)", where, node.Line)
+	mapping, ok := permconfigMapping(node)
+	if !ok {
+		return fmt.Errorf("%s: expected a mapping (line %d)", where, permconfigNodeLocation(node).Line)
 	}
-	seen := make(map[string]struct{}, len(node.Content)/2)
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		keyNode, valNode := node.Content[i], node.Content[i+1]
-		if _, duplicate := seen[keyNode.Value]; duplicate {
-			return fmt.Errorf("%s: duplicate key %q (line %d)", where, keyNode.Value, keyNode.Line)
+	seen := make(map[string]struct{}, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		key, stringKey := permconfigMappingKey(entry.Key)
+		if !stringKey {
+			return fmt.Errorf("%s: expected a string key (line %d)", where, permconfigMappingEntryLocation(entry).Line)
 		}
-		seen[keyNode.Value] = struct{}{}
-		target, ok := known[keyNode.Value]
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("%s: duplicate key %q (line %d)", where, key, permconfigMappingEntryLocation(entry).Line)
+		}
+		seen[key] = struct{}{}
+		target, ok := known[key]
 		if !ok {
 			return fmt.Errorf("%s: unknown key %q (line %d); known keys: %s",
-				where, keyNode.Value, keyNode.Line, knownKeyList(known))
+				where, key, permconfigMappingEntryLocation(entry).Line, knownKeyList(known))
 		}
-		if err := valNode.Decode(target); err != nil {
-			return fmt.Errorf("%s.%s: %w", where, keyNode.Value, err)
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, target); err != nil {
+			return fmt.Errorf("%s.%s: %w", where, key, err)
 		}
 	}
 	return nil

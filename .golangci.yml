@@ -78,6 +78,27 @@ linters:
           deny:
             - pkg: io/ioutil
               desc: deprecated; use io and os
+        yaml-parser-imports:
+          # Direct production YAML parsing is standardized on goccy. This is
+          # deliberately a per-file import guard: transitive dependencies may retain
+          # their own parser and are outside this policy.
+          list-mode: lax
+          files:
+            - $all
+            - '!$test'
+          deny:
+            - pkg: go.yaml.in/yaml/v2
+              desc: 'direct production YAML parsing must use github.com/goccy/go-yaml'
+            - pkg: go.yaml.in/yaml/v3
+              desc: 'direct production YAML parsing must use github.com/goccy/go-yaml'
+            - pkg: gopkg.in/yaml.v2
+              desc: 'direct production YAML parsing must use github.com/goccy/go-yaml'
+            - pkg: gopkg.in/yaml.v3
+              desc: 'direct production YAML parsing must use github.com/goccy/go-yaml'
+            - pkg: sigs.k8s.io/yaml
+              desc: 'direct production YAML parsing must use github.com/goccy/go-yaml'
+            - pkg: github.com/ghodss/yaml
+              desc: 'direct production YAML parsing must use github.com/goccy/go-yaml'
         oauthlogin-stdlib-only:
           list-mode: strict
           files:
@@ -307,8 +328,9 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/adapter/frontmatterdiag
             - github.com/stacklok/mecatl/engine/tool
-            - go.yaml.in/yaml/v3
+            - github.com/goccy/go-yaml
           deny:
             - pkg: os/exec
               desc: 'agentfs discovers agent-def files via os.ReadDir/ReadFile; it must never spawn processes'
@@ -319,11 +341,12 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/adapter/frontmatterdiag
             - github.com/stacklok/mecatl/engine/learning
             - github.com/stacklok/mecatl/engine/prompt
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/engine/tool
-            - go.yaml.in/yaml/v3
+            - github.com/goccy/go-yaml
           deny:
             - pkg: os/exec
               desc: 'skillfs discovers SKILL.md trees via os.ReadDir/ReadFile; it must never spawn processes'
@@ -334,11 +357,23 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/adapter/frontmatterdiag
             - github.com/stacklok/mecatl/engine/prompt
-            - go.yaml.in/yaml/v3
+            - github.com/goccy/go-yaml
           deny:
             - pkg: os/exec
               desc: 'rulesfs discovers <name>.md rule files via os.ReadDir/ReadFile; it must never spawn processes'
+        engine-adapter-frontmatterdiag:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/frontmatterdiag/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/goccy/go-yaml
+          deny:
+            - pkg: os
+              desc: 'frontmatterdiag formats parser diagnostics; it must not touch the real OS'
         engine-adapter-nofs:
           list-mode: strict
           files:

@@ -24,11 +24,13 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 
-	yaml "go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/parser"
+
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 // SchemaVersionV1 is the only supported config version.
@@ -146,48 +148,49 @@ func Load(path string) (*Config, error) {
 // "" are rejected identically by the required-version check — so the mirror
 // would have been pure duplication.
 func parse(data []byte, path string) (*Config, error) {
-	// Strict (KnownFields) decode: an unrecognized key in the document is a
-	// parse error, not a silently-ignored typo. Both error paths deliberately
-	// do NOT echo raw YAML content: a *yaml.TypeError (unknown key / wrong type)
-	// carries only the key name by construction; a plain decode error (syntax /
-	// bad indentation / stray marker) embeds the offending source line in its
-	// message, so it must NOT be passed through with %w (CWE-209). Both paths
-	// name only the path and the operator-visible resolution.
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-
-	var cfg Config
-	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		// Distinguish a schema error (unknown key / wrong type) from a YAML
-		// syntax error so operator guidance is accurate. yaml.v3 returns a
-		// *yaml.TypeError for unknown-key/type mismatches and a plain error
-		// (carrying line/column AND the offending source text) for malformed-
-		// document syntax problems. The syntax-equals-failure branch below must
-		// NOT wrap the raw error: its message embeds the source line, which
-		// leaks file content to a caller (CWE-209).
-		var typeErr *yaml.TypeError
-		if errors.As(err, &typeErr) {
-			return nil, fmt.Errorf("parsing daemon config %s: does not match the expected schema (unknown key or type); the only recognized keys are version, grpc_addr, http_addr, metrics_addr, tls_cert, tls_key, client_ca, rate_limit, and rate_burst", path)
-		}
-		return nil, fmt.Errorf("parsing daemon config %s: invalid YAML syntax (the document must be valid YAML matching the v1 schema)", path)
+	if emptyDaemonDocument(data) {
+		return nil, fmt.Errorf("%s: version key is required and must be %q", path, SchemaVersionV1)
+	}
+	file, err := parser.ParseBytes(data, parser.ParseComments)
+	if err != nil {
+		return nil, daemonSyntaxError(path, err)
+	}
+	if len(file.Docs) != 1 {
+		return nil, fmt.Errorf("parsing daemon config %s: multiple documents are not supported (the v1 schema is a single document)", path)
+	}
+	if file.Docs[0] == nil || file.Docs[0].Body == nil {
+		return nil, daemonSyntaxError(path, nil)
 	}
 
-	// Reject a multi-document file or trailing content. A single decode above
-	// consumed the first (or only) document; a second decode MUST hit io.EOF —
-	// the v1 schema is a single document. A nil return (a second document
-	// decoded) or any non-EOF error (a second document with an unknown key, or
-	// trailing garbage) means the file carries more than one document, so refuse
-	// rather than silently drop the rest.
-	if err := dec.Decode(&Config{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parsing daemon config %s: multiple documents are not supported (the v1 schema is a single document)", path)
+	var cfg Config
+	if err := yaml.NodeToValue(file.Docs[0].Body, &cfg, yaml.DisallowUnknownField()); err != nil {
+		return nil, fmt.Errorf("parsing daemon config %s: does not match the expected schema (unknown key or type); the only recognized keys are version, grpc_addr, http_addr, metrics_addr, tls_cert, tls_key, client_ca, rate_limit, and rate_burst", path)
 	}
 
 	if cfg.Version == "" {
 		return nil, fmt.Errorf("%s: version key is required and must be %q", path, SchemaVersionV1)
 	}
 	if cfg.Version != SchemaVersionV1 {
-		return nil, fmt.Errorf("%s: unsupported version %q (only %q is supported)", path, cfg.Version, SchemaVersionV1)
+		return nil, fmt.Errorf("%s: unsupported version (only %q is supported)", path, SchemaVersionV1)
 	}
 
 	return &cfg, nil
+}
+
+func emptyDaemonDocument(data []byte) bool {
+	for line := range bytes.Lines(data) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) != 0 && !bytes.HasPrefix(trimmed, []byte("#")) {
+			return false
+		}
+	}
+	return true
+}
+
+func daemonSyntaxError(path string, err error) error {
+	diagnostic := yamldiag.Classify("parse daemon config", err)
+	if diagnostic.HasLocation {
+		return fmt.Errorf("parsing daemon config %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the v1 schema)", path, diagnostic.Line, diagnostic.Column)
+	}
+	return fmt.Errorf("parsing daemon config %s: invalid YAML syntax (the document must be valid YAML matching the v1 schema)", path)
 }

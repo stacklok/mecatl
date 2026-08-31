@@ -32,14 +32,14 @@ If you landed on **mecated** but want multi-replica support without affinity rou
 
 | Shape | When to choose | State model | Key dependency |
 |-------|---------------|-------------|----------------|
-| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | `doublestar` + `robfig/cron/v3` + `go.yaml.in/yaml/v3` + `x/net` + `x/sync` at runtime; `goleak` is test-only |
+| **Embed the engine** | You own the binary and want the loop in-process | You own it — implement the ports | `doublestar` + `robfig/cron/v3` + `github.com/goccy/go-yaml` + `x/net` + `x/sync` at runtime; `goleak` is test-only |
 | **mecated** | Single server, interactive clients (TUI, IDE), or a controlled service deployment | In-memory, JSONL on disk, or gRPC driver | A running process; durable local sessions need a PV or shared storage |
 | **mecak8s** | Kubernetes, no persistent volumes, multi-replica | Redis + Kubernetes `coordination.k8s.io` lease | Redis StatefulSet + k8s RBAC for `leases` |
 | **mecatequi** | GitHub Actions (or any CI): label/comment → patch → PR | None — stateless per run | LLM provider key; GitHub Actions runner |
 
 ## Embed the engine
 
-Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's runtime dependency closure is `doublestar`, `robfig/cron/v3`, `go.yaml.in/yaml/v3`, `golang.org/x/net`, and `golang.org/x/sync`; `goleak` is test-only. Nothing from mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
+Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's runtime dependency closure is `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`; `goleak` is test-only. Nothing from mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
 
 You implement `port.LLMProvider`, `port.SessionStore`, and the rest using the reference adapters under `engine/adapter/` as a starting point, or bring your own. You get the agent loop, the full tool catalog, the permission model, hooks, subagent delegation, and compaction with no binary dependency.
 

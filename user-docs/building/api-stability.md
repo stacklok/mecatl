@@ -5,7 +5,7 @@ title: API stability
 
 # API stability
 
-`github.com/stacklok/mecatl/engine` is the importable core of mecatl (ADR 0036). It ships as its own Go module with a small dependency closure (`doublestar`, `robfig/cron/v3`, `go.yaml.in/yaml/v3`, `x/net`, and `x/sync`; test-only `goleak`) so external consumers do not pull mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
+`github.com/stacklok/mecatl/engine` is the importable core of mecatl (ADR 0036). It ships as its own Go module with a small dependency closure (`doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `x/net`, and `x/sync`; test-only `goleak`) so external consumers do not pull mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
 
 ---
 

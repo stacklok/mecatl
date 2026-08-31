@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -282,6 +283,181 @@ func TestResolveEmitsFailSafeWarnThroughInjectedSink(t *testing.T) {
 	}
 	if !strings.Contains(out, "level=WARN") {
 		t.Fatalf("fail-safe parse-skip line must be WARN (no silent downgrade); got: %s", out)
+	}
+}
+
+// TestGoccyYAMLMigration_Scenario5_PermissionReloadFailsSafeWithoutPartialPolicy
+// pins the fail-safe reload boundary: a strict nested-schema failure discards the
+// complete file, reports preserved lost-rule counts, and never reflects YAML data.
+func TestGoccyYAMLMigration_Scenario5_PermissionReloadFailsSafeWithoutPartialPolicy(t *testing.T) {
+	var buf bytes.Buffer
+	diag := slogdiag.New(&buf, false, port.LevelInfo)
+	r := newWithEnv(Options{Conventional: true, TrustProject: true, Diagnostics: diag}, fakeEnv())
+	const secret = "attacker-controlled-secret-should-not-leak"
+	ws := newProjectWS(t, "/repo", "permissions:\n  deny: [Bash(rm:*)]\n  "+secret+": [credential-shaped-value]\n")
+
+	if rules := r.Resolve(context.Background(), ws); len(rules) != 0 {
+		t.Fatalf("strict-invalid config applied partial policy: %+v", rules)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "project YAML invalid; skipping") || !strings.Contains(out, "lost_deny=1") || !strings.Contains(out, "counts_known=true") {
+		t.Fatalf("reload warning = %q, want value-free skip with known lost count", out)
+	}
+	for _, forbidden := range []string{secret, "credential-shaped-value"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("reload warning leaked YAML-derived content %q: %q", forbidden, out)
+		}
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario6_SourceMatrixSafeErrorsAndLogAttributes(t *testing.T) {
+	const yamlSecret = "yaml-content-secret-should-not-leak"
+	const explicitPath = "/operator/token=path-identifier-is-permitted.yaml"
+	const userConfigDir = "/user/token=path-identifier-is-permitted"
+	config := "permissions:\n  deny: [Read]\n  allow: [\"Bash(" + yamlSecret + "\"]\nposture: " + yamlSecret + "\n"
+
+	for _, tc := range []struct {
+		name      string
+		new       func(port.Diagnostics) (*Resolver, *countingWS)
+		wantScope governance.Scope
+	}{
+		{
+			name: "explicit CLI file",
+			new: func(diag port.Diagnostics) (*Resolver, *countingWS) {
+				env := fakeEnv()
+				env.ReadFile = func(string) ([]byte, error) { return []byte(config), nil }
+				return newWithEnv(Options{ExplicitFiles: []string{explicitPath}, Diagnostics: diag}, env), nil
+			},
+			wantScope: governance.ScopeCLI,
+		},
+		{
+			name: "user-global XDG settings",
+			new: func(diag port.Diagnostics) (*Resolver, *countingWS) {
+				env := fakeEnv()
+				env.Getenv = func(string) string { return userConfigDir }
+				env.ReadFile = func(string) ([]byte, error) { return []byte(config), nil }
+				return newWithEnv(Options{Conventional: true, Diagnostics: diag}, env), nil
+			},
+			wantScope: governance.ScopeUser,
+		},
+		{
+			name: "shared-project settings",
+			new: func(diag port.Diagnostics) (*Resolver, *countingWS) {
+				r := newWithEnv(Options{Conventional: true, Diagnostics: diag}, fakeEnv())
+				return r, newProjectWS(t, "/repo", config)
+			},
+			wantScope: governance.ScopeSharedProject,
+		},
+		{
+			name: "local-project settings",
+			new: func(diag port.Diagnostics) (*Resolver, *countingWS) {
+				r := newWithEnv(Options{Conventional: true, Diagnostics: diag}, fakeEnv())
+				ws := newProjectWS(t, "/repo", "")
+				ws.seed(t, projectFileMecatlLocal, config)
+				return r, ws
+			},
+			wantScope: governance.ScopeLocalProject,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			diag := slogdiag.New(&buf, false, port.LevelInfo)
+			r, ws := tc.new(diag)
+			if r == nil {
+				t.Fatal("resolver is nil")
+			}
+
+			var rules []governance.Rule
+			if ws == nil {
+				rules = r.Resolve(context.Background(), nil)
+			} else {
+				rules = r.Resolve(context.Background(), ws)
+			}
+			if got := findRule(rules, "Read", ""); got == nil || got.Scope != tc.wantScope || got.Effect != governance.Deny {
+				t.Fatalf("rules = %#v, want the %v deny from this source", rules, tc.wantScope)
+			}
+
+			out := buf.String()
+			if strings.Contains(out, yamlSecret) {
+				t.Fatalf("diagnostics leaked YAML-derived content %q: %q", yamlSecret, out)
+			}
+		})
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario6_SourceTierTrustAndOperatorOnlyMatrix(t *testing.T) {
+	const configDir = "/config"
+	const explicitPath = "/operator/permissions.yaml"
+	userPath := filepath.Join(configDir, userSubdirMecatl)
+	env := fakeEnv()
+	env.Getenv = func(string) string { return configDir }
+	env.ReadFile = func(path string) ([]byte, error) {
+		switch path {
+		case explicitPath:
+			return []byte("permissions:\n  deny: [Bash(cli-deny:*)]\n  allow: [Read]\nposture: strict\n"), nil
+		case userPath:
+			return []byte("permissions:\n  deny: [Bash(user-deny:*)]\n  allow: [Grep]\nposture: yolo\n"), nil
+		default:
+			return nil, errors.New("not found")
+		}
+	}
+
+	r := newWithEnv(Options{Conventional: true, ExplicitFiles: []string{explicitPath}}, env)
+	ws := newProjectWS(t, "/repo", "permissions:\n  deny: [Bash(shared-deny:*)]\n  allow: [Write]\nposture: yolo\n")
+	ws.seed(t, projectFileMecatlLocal, "permissions:\n  deny: [Bash(local-deny:*)]\n  allow: [Edit]\nposture: yolo\n")
+
+	rules := r.Resolve(context.Background(), ws)
+	for _, want := range []struct {
+		tool    string
+		pattern string
+		scope   governance.Scope
+	}{
+		{"Bash", "cli-deny*", governance.ScopeCLI},
+		{"Bash", "user-deny*", governance.ScopeUser},
+		{"Bash", "shared-deny*", governance.ScopeSharedProject},
+		{"Bash", "local-deny*", governance.ScopeLocalProject},
+	} {
+		got := findRule(rules, want.tool, want.pattern)
+		if got == nil || got.Effect != governance.Deny || got.Scope != want.scope {
+			t.Fatalf("rules = %#v, want deny %#v", rules, want)
+		}
+	}
+	for _, toolName := range []string{"Read", "Grep"} {
+		if got := findRule(rules, toolName, ""); got == nil || got.Effect != governance.Allow {
+			t.Fatalf("operator allow %q missing from %#v", toolName, rules)
+		}
+	}
+	for _, toolName := range []string{"Write", "Edit"} {
+		if got := findRule(rules, toolName, ""); got != nil {
+			t.Fatalf("untrusted project allow %q was honoured: %#v", toolName, rules)
+		}
+	}
+	if got := r.OperatorPosture(); got != "strict" {
+		t.Fatalf("operator posture = %q, want CLI posture %q; project values must be ignored", got, "strict")
+	}
+}
+
+// TestGoccyYAMLMigration_Scenario6_CredentialShapedPathnameIsPermittedButContentIsNot
+// pins the diagnostic boundary: a source pathname may identify the file, but a
+// credential-shaped YAML scalar must not cross into its warning.
+func TestGoccyYAMLMigration_Scenario6_CredentialShapedPathnameIsPermittedButContentIsNot(t *testing.T) {
+	const path = "/operator/token=path-identifier-is-permitted.yaml"
+	const secret = "token=yaml-content-must-not-leak"
+	var buf bytes.Buffer
+	diag := slogdiag.New(&buf, false, port.LevelInfo)
+	env := fakeEnv()
+	env.ReadFile = func(string) ([]byte, error) {
+		return []byte("permissions: [" + secret), nil
+	}
+	_ = newWithEnv(Options{ExplicitFiles: []string{path}, Diagnostics: diag}, env)
+
+	out := buf.String()
+	if !strings.Contains(out, path) {
+		t.Fatalf("diagnostics = %q, want supplied source path %q", out, path)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("diagnostics leaked YAML-derived content %q: %q", secret, out)
 	}
 }
 

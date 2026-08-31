@@ -44,7 +44,7 @@ func writeFixtureTree(t *testing.T) string {
 		// Compose the YAML frontmatter: name + description (required) plus the
 		// optional advisory license/compatibility/metadata fields, in the same
 		// shape ParseSkill reads. The metadata map is emitted as a YAML block
-		// map so go.yaml.in/yaml/v3 parses it back into a map[string]string.
+		// map so goccy parses it back into a map[string]string.
 		front := "---\nname: " + f.Name + "\ndescription: " + f.Description + "\n"
 		if f.License != "" {
 			front += "license: " + f.License + "\n"

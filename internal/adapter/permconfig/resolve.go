@@ -623,7 +623,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 		if strings.TrimSpace(cfg.Posture) != "" {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"posture: IGNORING a project-tier posture: scalar (operator-tier only — a project repo cannot raise the automation posture; set posture in your user-global settings.yaml or via --posture)",
-				"file", src.path, "root", ws.Root(), "ignored_value", strings.TrimSpace(cfg.Posture))
+				"file", src.path, "root", ws.Root())
 		}
 		// ReasoningEffort is OPERATOR-TIER ONLY (ADR 0055), for consistency with
 		// posture: a project file's reasoning-effort: scalar is IGNORED
@@ -633,7 +633,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 		if strings.TrimSpace(cfg.ReasoningEffort) != "" {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"reasoning-effort: IGNORING a project-tier reasoning-effort: scalar (operator-tier only — set reasoning-effort in your user-global settings.yaml or via --reasoning-effort)",
-				"file", src.path, "root", ws.Root(), "ignored_value", strings.TrimSpace(cfg.ReasoningEffort))
+				"file", src.path, "root", ws.Root())
 		}
 		// PlanModeAutoApprove is OPERATOR-TIER ONLY (issue #206 Wave 6a), for
 		// consistency with posture/guardrails: a project file's plan-mode-auto-approve:
@@ -1098,20 +1098,19 @@ func specOf(rule governance.Rule) string {
 	return rule.Tool + "(" + rule.Pattern + ")"
 }
 
-// logReport logs the lossy outcomes (demoted/inert/dropped specs) of a load at the
-// given origin, so an operator can see exactly what was weakened or ignored. A
-// clean report logs nothing.
+// logReport logs the lossy outcome category and harness-authored reason without
+// forwarding a rule spec from configuration into diagnostics.
 func (r *Resolver) logReport(report *Report, origin string) {
 	if report.Empty() {
 		return
 	}
 	for _, e := range report.Demoted {
-		r.diag.Log(context.Background(), port.LevelWarn, "permission config: rule demoted", "origin", origin, "spec", e.Spec, "reason", e.Reason)
+		r.diag.Log(context.Background(), port.LevelWarn, "permission config: rule demoted", "origin", origin, "reason", e.Reason)
 	}
 	for _, e := range report.Inert {
-		r.diag.Log(context.Background(), port.LevelWarn, "permission config: rule inert", "origin", origin, "spec", e.Spec, "reason", e.Reason)
+		r.diag.Log(context.Background(), port.LevelWarn, "permission config: rule inert", "origin", origin, "reason", e.Reason)
 	}
 	for _, e := range report.Dropped {
-		r.diag.Log(context.Background(), port.LevelWarn, "permission config: rule dropped", "origin", origin, "spec", e.Spec, "reason", e.Reason)
+		r.diag.Log(context.Background(), port.LevelWarn, "permission config: rule dropped", "origin", origin, "reason", e.Reason)
 	}
 }

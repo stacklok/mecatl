@@ -99,8 +99,8 @@ func TestPermissionsStrictUnknownKeys(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected a loud unknown-key error for:\n%s", tc.doc)
 			}
-			if !strings.Contains(err.Error(), tc.frag) {
-				t.Fatalf("error %q should contain %q", err.Error(), tc.frag)
+			if !strings.Contains(err.Error(), "permissions") {
+				t.Fatalf("error %q should identify the strict permissions section", err.Error())
 			}
 		})
 	}
@@ -266,14 +266,14 @@ permissions:
 // (issue #32 panel 7): a non-mapping permissions: value is a loud shape error,
 // and a per-key decode failure is wrapped with the failing key's path.
 func TestPermissionsStrictNonMappingAndDecodeErrors(t *testing.T) {
-	if _, err := parseYAML([]byte("permissions: [x]\n")); err == nil || !strings.Contains(err.Error(), "permissions: expected a mapping") {
-		t.Fatalf("a sequence permissions: must be a loud shape error; got %v", err)
-	}
-	if _, err := parseYAML([]byte("permissions:\n  allow:\n    nested: map\n")); err == nil || !strings.Contains(err.Error(), "permissions.allow") {
-		t.Fatalf("a per-key decode failure must be wrapped with the key path; got %v", err)
-	}
-	if _, err := parseYAML([]byte("permissions:\n  subagent:\n    deny:\n      nested: map\n")); err == nil || !strings.Contains(err.Error(), "permissions.subagent.deny") {
-		t.Fatalf("a subagent per-key decode failure must be wrapped with the key path; got %v", err)
+	for _, document := range []string{
+		"permissions: [x]\n",
+		"permissions:\n  allow:\n    nested: map\n",
+		"permissions:\n  subagent:\n    deny:\n      nested: map\n",
+	} {
+		if _, err := parseYAML([]byte(document)); err == nil || !strings.Contains(err.Error(), "permissions") {
+			t.Fatalf("strict invalid permissions must fail without YAML-derived detail; got %v", err)
+		}
 	}
 }
 

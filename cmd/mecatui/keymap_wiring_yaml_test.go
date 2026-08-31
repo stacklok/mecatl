@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -57,6 +58,42 @@ func captureStderr(t *testing.T, fn func()) string {
 		t.Fatal(err)
 	}
 	return buf.String()
+}
+
+func TestGoccyYAMLMigration_Scenario5_MecatuiReadersRetainFallbacks(t *testing.T) {
+	const attackerKey = "attacker-key"
+	const attackerValue = "attacker-value"
+
+	t.Run("malformed state falls back to zero selection", func(t *testing.T) {
+		stateHome := t.TempDir()
+		store := newSelectionStore(fakeStateEnv(stateHome))
+		if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(store.path, []byte("version: 1\n  "+attackerKey+": "+attackerValue+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := store.Load(t.TempDir()); got != (client.ModelSelection{}) {
+			t.Fatalf("Load(malformed state) = %+v, want zero fallback", got)
+		}
+	})
+
+	t.Run("malformed client keymap remains a value-free startup error", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		writeSettings(t, "mecatui", "keymap:\n  "+attackerKey+": [unterminated\n")
+		_, _, err := readClientKeymap()
+		if err == nil {
+			t.Fatal("malformed client keymap must remain a startup error")
+		}
+		for _, forbidden := range []string{attackerKey, attackerValue, "[unterminated"} {
+			if strings.Contains(err.Error(), forbidden) {
+				t.Fatalf("keymap error leaked YAML content %q: %q", forbidden, err)
+			}
+		}
+		if !strings.Contains(err.Error(), "line ") || !strings.Contains(err.Error(), "column ") {
+			t.Fatalf("keymap syntax error = %q, want line and column", err)
+		}
+	})
 }
 
 func TestClientSettingsPathResolvesUnderXDG(t *testing.T) {
@@ -149,9 +186,9 @@ func TestKeymapReadersAbsentFiles(t *testing.T) {
 	if err != nil || legacy != nil || legacySet {
 		t.Errorf("readLegacyKeymap absent = (%v, %v, %v), want (nil, false, nil)", legacy, legacySet, err)
 	}
-	client, clientSet, err := readClientKeymap()
-	if err != nil || client != nil || clientSet {
-		t.Errorf("readClientKeymap absent = (%v, %v, %v), want (nil, false, nil)", client, clientSet, err)
+	clientMap, clientSet, err := readClientKeymap()
+	if err != nil || clientMap != nil || clientSet {
+		t.Errorf("readClientKeymap absent = (%v, %v, %v), want (nil, false, nil)", clientMap, clientSet, err)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 // writeRule writes a <name>.md file into dir, creating dir if needed.
@@ -47,6 +49,44 @@ func TestParseRulePathsForms(t *testing.T) {
 				t.Fatalf("paths = %v, want %v", r.Paths, tc.want)
 			}
 		})
+	}
+}
+
+func TestGoccyYAMLMigration_SemanticMatrixRuleFrontmatter(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/semantic-matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matrix struct {
+		Cases []struct {
+			Name     string            `yaml:"name"`
+			Category string            `yaml:"category"`
+			Document string            `yaml:"document"`
+			Readers  map[string]string `yaml:"readers"`
+		} `yaml:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, tc := range matrix.Cases {
+		outcome, ok := tc.Readers["rulesfs"]
+		if !ok {
+			continue
+		}
+		seen = true
+		if tc.Category != "frontmatter" {
+			t.Fatalf("fixture %q has category %q, want frontmatter", tc.Name, tc.Category)
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			_, parseError, _ := parseRule([]byte(tc.Document), "semantic-matrix")
+			if accepted, want := parseError == "", outcome == "accept"; accepted != want {
+				t.Fatalf("parseRule() accepted=%v, want %v (error=%q)", accepted, want, parseError)
+			}
+		})
+	}
+	if !seen {
+		t.Fatal("semantic matrix declares no rulesfs frontmatter case")
 	}
 }
 
@@ -185,5 +225,49 @@ func TestDirSourceIgnoresNonMarkdown(t *testing.T) {
 	}
 	if len(discovered) != 1 || discovered[0].Rule.Name != "a" {
 		t.Fatalf("want only a.md, got %+v", discovered)
+	}
+}
+
+func TestRulePathsAcceptResolvedScalarsAsText(t *testing.T) {
+	t.Parallel()
+
+	for _, scalar := range []string{"true", "42", "2026-08-28T12:00:00Z", "null"} {
+		t.Run(scalar, func(t *testing.T) {
+			rule, reason, _ := parseRule([]byte("---\npaths: "+scalar+"\n---\nbody"), "compatibility")
+			if reason != "" {
+				t.Fatalf("parseRule(%q) reason = %q", scalar, reason)
+			}
+			if got := strings.Join(rule.Paths, ","); got != scalar {
+				t.Fatalf("Paths = %q, want %q", got, scalar)
+			}
+		})
+	}
+}
+
+func TestGoccyYAMLMigration_Scenario3_RuleFrontmatterCompatibility(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"---\npaths: \"**/*.go, **/*_test.go\"\nunknown-future-field: ignored\n---\nbody",
+		"---\npaths: [\"**/*.go\", \"**/*_test.go\"]\nunknown-future-field: ignored\n---\nbody",
+	} {
+		rule, reason, _ := parseRule([]byte(raw), "compatibility")
+		if reason != "" {
+			t.Fatalf("parse rule frontmatter: %s", reason)
+		}
+		if got, want := strings.Join(rule.Paths, ","), "**/*.go,**/*_test.go"; got != want {
+			t.Fatalf("paths = %q, want %q", got, want)
+		}
+	}
+
+	dir := t.TempDir()
+	writeRule(t, dir, "good.md", "---\npaths: [\"**/*.go\"]\n---\nbody")
+	writeRule(t, dir, "bad.md", "---\npaths: [leaked-secret\n---\nbody")
+	discovered, skips, err := DirSource{Dir: dir}.Rules(t.Context())
+	if err != nil || len(discovered) != 1 || len(skips) != 1 {
+		t.Fatalf("per-file failure isolation: discovered=%+v skips=%+v err=%v", discovered, skips, err)
+	}
+	if reason := skips[0].Reason; !strings.Contains(reason, "malformed YAML frontmatter at line") || strings.Contains(reason, "leaked-secret") {
+		t.Fatalf("malformed frontmatter reason = %q, want safe location without YAML source", reason)
 	}
 }

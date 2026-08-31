@@ -4169,7 +4169,7 @@ overrides — a root-less test can't chown a fixture; SPLIT BY BUILD TAG (F8 fix
 `detect_other.go` (`//go:build !unix`, an unconditional `(0, false)` fail-closed
 stub) — the prior unconstrained `syscall.Stat_t` use broke a `GOOS=windows` build
 outright, mirroring `hookexec`'s `_unix.go` convention) → `io.LimitReader` read →
-typed `go.yaml.in/yaml/v3` decode into a struct with EXACTLY `llm.gateway_url` +
+typed `github.com/goccy/go-yaml` decode into a struct with EXACTLY `llm.gateway_url` +
 `llm.proxy.listen_port` (no `KnownFields`; unknown keys ignored so a config-schema
 evolution never breaks detection) — there is LITERALLY NO field for
 `tls_skip_verify`/`oidc`, so a config setting either has nowhere to land, provably.

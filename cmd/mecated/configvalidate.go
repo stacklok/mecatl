@@ -10,10 +10,11 @@ import (
 	"path/filepath"
 	"syscall"
 
-	yaml "go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml/ast"
 
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 const maxSettingsConfigBytes = 256 * 1024
@@ -52,7 +53,7 @@ func runConfigValidate(argv []string, out io.Writer) error {
 		}
 	}
 	if _, err := validateSettingsInMemory(base, patch); err != nil {
-		return fmt.Errorf("%q: settings validation failed", path)
+		return fmt.Errorf("%q: %w", path, err)
 	}
 	if missing {
 		_, err = fmt.Fprintln(out, "valid (new file)")
@@ -110,15 +111,20 @@ func validateSettingsInMemory(base, patch []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("learning patch is not a single safe YAML document")
 	}
-	mapping := patchDoc.Content[0]
-	if len(mapping.Content) != 2 || mapping.Content[0].Kind != yaml.ScalarNode || mapping.Content[0].Value != "learning" || mapping.Content[1].Kind != yaml.MappingNode {
+	patchMapping := patchDoc.Mapping()
+	if len(patchMapping.Values) != 1 || patchMapping.Values[0].Key.String() != "learning" {
 		return nil, errors.New("learning patch must contain exactly one top-level learning mapping")
 	}
-	replaceMappingValue(doc.Content[0], "learning", mapping.Content[1])
-	proposed, err := yaml.Marshal(doc)
-	if err != nil {
-		return nil, errors.New("cannot marshal proposed settings")
+	learning := patchMapping.Values[0]
+	if _, ok := learning.Value.(*ast.MappingNode); !ok {
+		return nil, errors.New("learning patch must contain exactly one top-level learning mapping")
 	}
+	if len(bytes.TrimSpace(base)) == 0 {
+		doc = patchDoc
+	} else {
+		replaceMappingValue(doc.Mapping(), learning)
+	}
+	proposed := []byte(doc.String())
 	if len(proposed) > maxSettingsConfigBytes {
 		return nil, errors.New("proposed settings exceed the size limit")
 	}
@@ -128,61 +134,52 @@ func validateSettingsInMemory(base, patch []byte) ([]byte, error) {
 	return proposed, nil
 }
 
-func parseSettingsDocument(data []byte, allowEmpty bool) (*yaml.Node, error) {
+func parseSettingsDocument(data []byte, allowEmpty bool) (*yamldiag.Document, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		if !allowEmpty {
 			return nil, errors.New("empty YAML document")
 		}
-		return &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}, nil
+		data = []byte("{}\n")
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	var doc yaml.Node
-	if err := dec.Decode(&doc); err != nil {
+	doc, err := yamldiag.ParseSettingsDocument(data)
+	if err != nil {
+		var documentError *yamldiag.DocumentError
+		if errors.As(err, &documentError) && documentError.Location.HasLocation {
+			return nil, fmt.Errorf("malformed YAML document at line %d, column %d", documentError.Location.Line, documentError.Location.Column)
+		}
 		return nil, errors.New("malformed YAML document")
 	}
-	var extra yaml.Node
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("multiple YAML documents are not supported")
-	}
-	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, errors.New("settings must be a top-level mapping")
-	}
-	if err := validateYAMLTree(doc.Content[0]); err != nil {
+	if err := validateYAMLTree(doc.Mapping()); err != nil {
 		return nil, err
 	}
-	return &doc, nil
+	return doc, nil
 }
 
-func validateYAMLTree(node *yaml.Node) error {
-	if node.Kind == yaml.AliasNode || node.Alias != nil || node.Anchor != "" {
-		return errors.New("YAML aliases and anchors are not supported")
+func validateYAMLTree(node ast.Node) error {
+	mapping, ok := node.(*ast.MappingNode)
+	if !ok {
+		return nil
 	}
-	if node.Kind == yaml.MappingNode {
-		seen := make(map[string]struct{}, len(node.Content)/2)
-		for i := 0; i < len(node.Content); i += 2 {
-			key := node.Content[i]
-			id := key.Tag + "\x00" + key.Value
-			if _, ok := seen[id]; ok {
-				return errors.New("duplicate YAML mapping key")
-			}
-			seen[id] = struct{}{}
+	seen := make(map[string]struct{}, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		key := entry.Key.String()
+		if _, ok := seen[key]; ok {
+			return errors.New("duplicate YAML mapping key")
 		}
-	}
-	for _, child := range node.Content {
-		if err := validateYAMLTree(child); err != nil {
+		seen[key] = struct{}{}
+		if err := validateYAMLTree(entry.Value); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func replaceMappingValue(mapping *yaml.Node, key string, value *yaml.Node) {
-	for i := 0; i < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			mapping.Content[i+1] = value
+func replaceMappingValue(mapping *ast.MappingNode, replacement *ast.MappingValueNode) {
+	for _, entry := range mapping.Values {
+		if entry.Key.String() == replacement.Key.String() {
+			_ = entry.Replace(replacement.Value)
 			return
 		}
 	}
-	mapping.Content = append(mapping.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+	mapping.Values = append(mapping.Values, replacement)
 }

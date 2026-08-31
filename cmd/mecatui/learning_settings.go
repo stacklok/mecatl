@@ -4,29 +4,24 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-yaml/ast"
 	"github.com/gofrs/flock"
-	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
-)
-
-const (
-	yamlStringTag  = "!!str"
-	yamlMappingTag = "!!map"
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 type operatorLearningSettings struct {
 	path   string
 	remote bool
 
-	// beforeLock/afterRead are test-only synchronization seams. Production leaves them nil.
 	beforeLock func()
 	afterRead  func()
 }
@@ -56,7 +51,7 @@ func (s *operatorLearningSettings) Advance() (fromLabel, toLabel, restart string
 	if s.path == "" {
 		return "", "", "", errors.New("operator settings path is unavailable")
 	}
-	if err := s.withLockedDocument(func(doc *yaml.Node) error {
+	if err := s.withLockedDocument(func(doc *yamldiag.Document) error {
 		current, err := learningMode(doc)
 		if err != nil {
 			return err
@@ -94,7 +89,7 @@ func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, res
 	if s.path == "" {
 		return "", "", "", errors.New("operator settings path is unavailable")
 	}
-	if err := s.withLockedDocument(func(doc *yaml.Node) error {
+	if err := s.withLockedDocument(func(doc *yamldiag.Document) error {
 		current, err := learningSensitivity(doc)
 		if err != nil {
 			return err
@@ -122,7 +117,7 @@ func (s *operatorLearningSettings) AdvanceSensitivity() (fromLabel, toLabel, res
 	return fromLabel, toLabel, "saved; restart mecatui for it to take effect", nil
 }
 
-func (s *operatorLearningSettings) withLockedDocument(mutate func(*yaml.Node) error) (err error) {
+func (s *operatorLearningSettings) withLockedDocument(mutate func(*yamldiag.Document) error) (err error) {
 	if err := rejectSymlinkPath(s.path); err != nil {
 		return err
 	}
@@ -149,7 +144,6 @@ func (s *operatorLearningSettings) withLockedDocument(mutate func(*yaml.Node) er
 		}
 		_ = lock.Close()
 	}()
-
 	doc, err := s.readDocument()
 	if err != nil {
 		return err
@@ -170,7 +164,6 @@ func learningSensitivityLabel(value learning.Sensitivity) string {
 		return "Balanced"
 	}
 }
-
 func learningModeLabel(mode learning.Mode) string {
 	switch mode {
 	case learning.Review:
@@ -182,7 +175,7 @@ func learningModeLabel(mode learning.Mode) string {
 	}
 }
 
-func (s *operatorLearningSettings) readDocument() (*yaml.Node, error) {
+func (s *operatorLearningSettings) readDocument() (*yamldiag.Document, error) {
 	if err := rejectSymlinkPath(s.path); err != nil {
 		return nil, err
 	}
@@ -191,126 +184,116 @@ func (s *operatorLearningSettings) readDocument() (*yaml.Node, error) {
 		return nil, fmt.Errorf("read operator settings: %w", err)
 	}
 	if errors.Is(err, os.ErrNotExist) || len(bytes.TrimSpace(b)) == 0 {
-		return &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: yamlMappingTag}}}, nil
+		b = []byte("{}\n")
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	var doc yaml.Node
-	if err := dec.Decode(&doc); err != nil {
-		return nil, errors.New("parse operator settings: invalid YAML")
+	doc, err := yamldiag.ParseSettingsDocument(b)
+	if err != nil {
+		return nil, errors.New(yamldiag.FormatDocumentError("parse operator settings: invalid YAML", err))
 	}
-	var extra yaml.Node
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("parse operator settings: multiple documents are not supported")
-	}
-	if err := validateSettingsDocument(&doc); err != nil {
+	if err := validateSettingsDocument(doc); err != nil {
 		return nil, err
 	}
-	return &doc, nil
+	return doc, nil
 }
 
-// validateSettingsDocument rejects ambiguous YAML before the atomic mutation.
-// The branches mirror the strict nested schema and intentionally remain visible.
-//
 //nolint:gocyclo
-func validateSettingsDocument(doc *yaml.Node) error {
-	if doc == nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
+func validateSettingsDocument(doc *yamldiag.Document) error {
+	if doc == nil || doc.Mapping() == nil {
 		return errors.New("parse operator settings: expected one YAML document")
 	}
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode || root.Tag != yamlMappingTag {
-		return errors.New("parse operator settings: top level must be a mapping")
-	}
-	if hasAlias(root) {
-		return errors.New("parse operator settings: YAML aliases are not supported")
-	}
+	root := doc.Mapping()
 	learningNode, err := uniqueMappingValue(root, "learning", false)
 	if err != nil || learningNode == nil {
 		return err
 	}
-	if learningNode.Kind != yaml.MappingNode || learningNode.Tag != yamlMappingTag {
+	learningMap, ok := learningNode.(*ast.MappingNode)
+	if !ok {
 		return errors.New("parse operator settings: learning must be a mapping")
 	}
-	for i := 0; i < len(learningNode.Content); i += 2 {
-		key := learningNode.Content[i].Value
-		if key != "mode" && key != "sensitivity" && key != "skills" && key != "automatic" {
-			return fmt.Errorf("parse operator settings: unknown learning key %q", key)
+	for _, entry := range learningMap.Values {
+		key, ok := scalarValue(entry.Key)
+		if !ok || (key != "mode" && key != "sensitivity" && key != "skills" && key != "automatic") {
+			return errors.New("parse operator settings: unknown learning key")
 		}
 	}
-	modeNode, err := uniqueMappingValue(learningNode, "mode", false)
+	mode, err := uniqueMappingValue(learningMap, "mode", false)
 	if err != nil {
 		return err
 	}
-	if modeNode != nil {
-		if modeNode.Kind != yaml.ScalarNode || modeNode.Tag != yamlStringTag {
+	if mode != nil {
+		if value, ok := scalarValue(mode); !ok {
 			return errors.New("parse operator settings: learning.mode must be a string scalar")
-		}
-		if _, err := learning.ParseMode(modeNode.Value); err != nil {
-			return fmt.Errorf("parse operator settings: %w", err)
+		} else if _, err := learning.ParseMode(value); err != nil {
+			return errors.New("parse operator settings: invalid learning.mode")
 		}
 	}
-	sensitivityNode, err := uniqueMappingValue(learningNode, "sensitivity", false)
+	sensitivity, err := uniqueMappingValue(learningMap, "sensitivity", false)
 	if err != nil {
 		return err
 	}
-	if sensitivityNode != nil {
-		if sensitivityNode.Kind != yaml.ScalarNode || sensitivityNode.Tag != yamlStringTag {
+	if sensitivity != nil {
+		if value, ok := scalarValue(sensitivity); !ok {
 			return errors.New("parse operator settings: learning.sensitivity must be a string scalar")
-		}
-		if _, err := learning.ParseSensitivity(sensitivityNode.Value); err != nil {
-			return fmt.Errorf("parse operator settings: %w", err)
+		} else if _, err := learning.ParseSensitivity(value); err != nil {
+			return errors.New("parse operator settings: invalid learning.sensitivity")
 		}
 	}
-	skillsNode, err := uniqueMappingValue(learningNode, "skills", false)
+	skills, err := uniqueMappingValue(learningMap, "skills", false)
 	if err != nil {
 		return err
 	}
-	if skillsNode != nil {
-		if skillsNode.Kind != yaml.MappingNode || skillsNode.Tag != yamlMappingTag {
+	if skills != nil {
+		skillsMap, ok := skills.(*ast.MappingNode)
+		if !ok {
 			return errors.New("parse operator settings: learning.skills must be a mapping")
 		}
-		activationNode, activationErr := uniqueMappingValue(skillsNode, "activation", true)
-		if activationErr != nil {
-			return activationErr
+		activation, err := uniqueMappingValue(skillsMap, "activation", true)
+		if err != nil {
+			return err
 		}
-		if activationNode != nil {
-			if activationNode.Kind != yaml.ScalarNode || activationNode.Tag != yamlStringTag {
+		if activation != nil {
+			if value, ok := scalarValue(activation); !ok {
 				return errors.New("parse operator settings: learning.skills.activation must be a string scalar")
-			}
-			if _, parseErr := learning.ParseSkillActivationPolicy(activationNode.Value); parseErr != nil {
-				return fmt.Errorf("parse operator settings: %w", parseErr)
+			} else if _, err := learning.ParseSkillActivationPolicy(value); err != nil {
+				return errors.New("parse operator settings: invalid learning.skills.activation")
 			}
 		}
 	}
-	automaticNode, err := uniqueMappingValue(learningNode, "automatic", false)
+	automatic, err := uniqueMappingValue(learningMap, "automatic", false)
 	if err != nil {
 		return err
 	}
-	if automaticNode != nil {
-		return validateLearningAutomatic(automaticNode)
+	if automatic != nil {
+		return validateLearningAutomatic(automatic)
 	}
 	return nil
 }
 
-func validateLearningAutomatic(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode || node.Tag != yamlMappingTag {
+func validateLearningAutomatic(node ast.Node) error {
+	mapping, ok := node.(*ast.MappingNode)
+	if !ok {
 		return errors.New("parse operator settings: learning.automatic must be a mapping")
 	}
 	allowed := map[string]bool{"cooldown": true, "window": true, "max_reflections": true, "max_tokens": true, "max_reflections_per_principal": true, "max_tokens_per_principal": true}
 	seen := map[string]bool{}
-	for i := 0; i < len(node.Content); i += 2 {
-		key, value := node.Content[i].Value, node.Content[i+1]
+	for _, entry := range mapping.Values {
+		key, ok := scalarValue(entry.Key)
+		if !ok {
+			return errors.New("parse operator settings: mapping keys must be strings")
+		}
 		if seen[key] {
-			return fmt.Errorf("parse operator settings: duplicate key %q", key)
+			return errors.New("parse operator settings: duplicate learning.automatic key")
 		}
 		seen[key] = true
 		if !allowed[key] {
-			return fmt.Errorf("parse operator settings: unknown learning.automatic key %q", key)
+			return errors.New("parse operator settings: unknown learning.automatic key")
+		}
+		value, ok := automaticScalarValue(entry.Value)
+		if !ok {
+			return fmt.Errorf("parse operator settings: learning.automatic.%s must be a bounded nonnegative integer", key)
 		}
 		if key == "cooldown" || key == "window" {
-			if value.Kind != yaml.ScalarNode || value.Tag != yamlStringTag {
-				return fmt.Errorf("parse operator settings: learning.automatic.%s must be a duration string", key)
-			}
-			d, err := time.ParseDuration(value.Value)
+			d, err := time.ParseDuration(value)
 			if err != nil || d < 0 {
 				return fmt.Errorf("parse operator settings: invalid learning.automatic.%s", key)
 			}
@@ -319,150 +302,169 @@ func validateLearningAutomatic(node *yaml.Node) error {
 			}
 			continue
 		}
-		var maximum int
-		if err := value.Decode(&maximum); err != nil || maximum < 0 || maximum > 1_000_000_000 {
+		maximum, err := strconv.Atoi(value)
+		if err != nil || maximum < 0 || maximum > 1_000_000_000 {
 			return fmt.Errorf("parse operator settings: learning.automatic.%s must be a bounded nonnegative integer", key)
 		}
 	}
 	return nil
 }
 
-func uniqueMappingValue(mapping *yaml.Node, wanted string, rejectUnknown bool) (*yaml.Node, error) {
-	var found *yaml.Node
-	seen := make(map[string]struct{}, len(mapping.Content)/2)
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		key := mapping.Content[i]
-		if key.Kind != yaml.ScalarNode || key.Tag != yamlStringTag {
+func automaticScalarValue(node ast.Node) (string, bool) {
+	if value, ok := scalarValue(node); ok {
+		return value, true
+	}
+	integer, ok := node.(*ast.IntegerNode)
+	if !ok {
+		return "", false
+	}
+	switch value := integer.Value.(type) {
+	case int64:
+		return strconv.FormatInt(value, 10), true
+	case uint64:
+		return strconv.FormatUint(value, 10), true
+	default:
+		return "", false
+	}
+}
+
+func scalarValue(node ast.Node) (string, bool) {
+	value, ok := node.(*ast.StringNode)
+	if !ok {
+		return "", false
+	}
+	return value.Value, true
+}
+
+func uniqueMappingValue(mapping *ast.MappingNode, wanted string, rejectUnknown bool) (ast.Node, error) {
+	var found ast.Node
+	seen := make(map[string]struct{}, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		key, ok := scalarValue(entry.Key)
+		if !ok {
 			return nil, errors.New("parse operator settings: mapping keys must be strings")
 		}
-		if _, ok := seen[key.Value]; ok {
-			return nil, fmt.Errorf("parse operator settings: duplicate key %q", key.Value)
+		if _, ok := seen[key]; ok {
+			return nil, errors.New("parse operator settings: duplicate mapping key")
 		}
-		seen[key.Value] = struct{}{}
-		if rejectUnknown && key.Value != wanted {
-			return nil, fmt.Errorf("parse operator settings: unknown learning key %q", key.Value)
+		seen[key] = struct{}{}
+		if rejectUnknown && key != wanted {
+			return nil, errors.New("parse operator settings: unknown learning key")
 		}
-		if key.Value == wanted {
-			found = mapping.Content[i+1]
+		if key == wanted {
+			found = entry.Value
 		}
 	}
 	return found, nil
 }
 
-func hasAlias(node *yaml.Node) bool {
-	if node == nil {
-		return false
-	}
-	if node.Kind == yaml.AliasNode || node.Anchor != "" {
-		return true
-	}
-	for _, child := range node.Content {
-		if hasAlias(child) {
-			return true
-		}
-	}
-	return false
-}
-
-func learningMode(doc *yaml.Node) (learning.Mode, error) {
-	root := doc.Content[0]
-	learningNode, err := uniqueMappingValue(root, "learning", false)
-	if err != nil {
+func learningMode(doc *yamldiag.Document) (learning.Mode, error) {
+	learningNode, err := uniqueMappingValue(doc.Mapping(), "learning", false)
+	if err != nil || learningNode == nil {
 		return learning.Off, err
 	}
-	if learningNode == nil {
-		return learning.Off, nil
+	mapping, ok := learningNode.(*ast.MappingNode)
+	if !ok {
+		return learning.Off, errors.New("parse operator settings: learning must be a mapping")
 	}
-	modeNode, err := uniqueMappingValue(learningNode, "mode", false)
-	if err != nil || modeNode == nil {
+	node, err := uniqueMappingValue(mapping, "mode", false)
+	if err != nil || node == nil {
 		return learning.Off, err
 	}
-	return learning.ParseMode(modeNode.Value)
+	value, ok := scalarValue(node)
+	if !ok {
+		return learning.Off, errors.New("parse operator settings: learning.mode must be a string scalar")
+	}
+	return learning.ParseMode(value)
 }
-
-func learningSensitivity(doc *yaml.Node) (learning.Sensitivity, error) {
-	root := doc.Content[0]
-	learningNode, err := uniqueMappingValue(root, "learning", false)
+func learningSensitivity(doc *yamldiag.Document) (learning.Sensitivity, error) {
+	learningNode, err := uniqueMappingValue(doc.Mapping(), "learning", false)
 	if err != nil || learningNode == nil {
 		return learning.Balanced, err
 	}
-	node, err := uniqueMappingValue(learningNode, "sensitivity", false)
+	mapping, ok := learningNode.(*ast.MappingNode)
+	if !ok {
+		return learning.Balanced, errors.New("parse operator settings: learning must be a mapping")
+	}
+	node, err := uniqueMappingValue(mapping, "sensitivity", false)
 	if err != nil || node == nil {
 		return learning.Balanced, err
 	}
-	return learning.ParseSensitivity(node.Value)
+	value, ok := scalarValue(node)
+	if !ok {
+		return learning.Balanced, errors.New("parse operator settings: learning.sensitivity must be a string scalar")
+	}
+	return learning.ParseSensitivity(value)
 }
-
-func learningActivation(doc *yaml.Node, mode learning.Mode) (learning.SkillActivationPolicy, error) {
-	root := doc.Content[0]
-	learningNode, err := uniqueMappingValue(root, "learning", false)
+func learningActivation(doc *yamldiag.Document, mode learning.Mode) (learning.SkillActivationPolicy, error) {
+	fallback := learning.SkillActivationEvaluated
+	if mode == learning.Auto {
+		fallback = learning.SkillActivationValidated
+	}
+	learningNode, err := uniqueMappingValue(doc.Mapping(), "learning", false)
 	if err != nil || learningNode == nil {
-		if mode == learning.Auto {
-			return learning.SkillActivationValidated, err
-		}
-		return learning.SkillActivationEvaluated, err
+		return fallback, err
 	}
-	skillsNode, err := uniqueMappingValue(learningNode, "skills", false)
-	if err != nil || skillsNode == nil {
-		if mode == learning.Auto {
-			return learning.SkillActivationValidated, err
-		}
-		return learning.SkillActivationEvaluated, err
+	mapping, ok := learningNode.(*ast.MappingNode)
+	if !ok {
+		return fallback, errors.New("parse operator settings: learning must be a mapping")
 	}
-	node, err := uniqueMappingValue(skillsNode, "activation", true)
+	skills, err := uniqueMappingValue(mapping, "skills", false)
+	if err != nil || skills == nil {
+		return fallback, err
+	}
+	skillsMap, ok := skills.(*ast.MappingNode)
+	if !ok {
+		return fallback, errors.New("parse operator settings: learning.skills must be a mapping")
+	}
+	node, err := uniqueMappingValue(skillsMap, "activation", true)
 	if err != nil || node == nil {
-		if mode == learning.Auto {
-			return learning.SkillActivationValidated, err
+		return fallback, err
+	}
+	value, ok := scalarValue(node)
+	if !ok {
+		return fallback, errors.New("parse operator settings: learning.skills.activation must be a string scalar")
+	}
+	return learning.ParseSkillActivationPolicy(value)
+}
+
+func parsedMappingValue(data string) *ast.MappingValueNode {
+	doc, err := yamldiag.ParseSettingsDocument([]byte(data))
+	if err != nil || len(doc.Mapping().Values) != 1 {
+		panic("invalid static YAML")
+	}
+	return doc.Mapping().Values[0]
+}
+func setLearningSensitivity(doc *yamldiag.Document, value learning.Sensitivity) {
+	setLearningValue(doc, "sensitivity", value.String())
+}
+func setLearningMode(doc *yamldiag.Document, mode learning.Mode) {
+	setLearningValue(doc, "mode", mode.String())
+}
+func setLearningValue(doc *yamldiag.Document, key, value string) {
+	learningNode, _ := uniqueMappingValue(doc.Mapping(), "learning", false)
+	if learningNode == nil {
+		entry := parsedMappingValue("learning: {}\n")
+		doc.Mapping().Values = append(doc.Mapping().Values, entry)
+		learningNode = entry.Value
+	}
+	mapping := learningNode.(*ast.MappingNode)
+	replacement := parsedMappingValue(key + ": " + value + "\n")
+	for _, entry := range mapping.Values {
+		existing, _ := scalarValue(entry.Key)
+		if existing == key {
+			_ = entry.Replace(replacement.Value)
+			return
 		}
-		return learning.SkillActivationEvaluated, err
 	}
-	return learning.ParseSkillActivationPolicy(node.Value)
+	mapping.Values = append(mapping.Values, replacement)
 }
 
-func setLearningSensitivity(doc *yaml.Node, value learning.Sensitivity) {
-	root := doc.Content[0]
-	learningNode, _ := uniqueMappingValue(root, "learning", false)
-	if learningNode == nil {
-		learningNode = &yaml.Node{Kind: yaml.MappingNode, Tag: yamlMappingTag}
-		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: "learning"}, learningNode)
-	}
-	node, _ := uniqueMappingValue(learningNode, "sensitivity", false)
-	if node == nil {
-		learningNode.Content = append(learningNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: "sensitivity"}, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: value.String()})
-		return
-	}
-	node.Value, node.Tag = value.String(), yamlStringTag
-}
-
-func setLearningMode(doc *yaml.Node, mode learning.Mode) {
-	root := doc.Content[0]
-	learningNode, _ := uniqueMappingValue(root, "learning", false)
-	if learningNode == nil {
-		learningNode = &yaml.Node{Kind: yaml.MappingNode, Tag: yamlMappingTag}
-		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: "learning"}, learningNode)
-	}
-	modeNode, _ := uniqueMappingValue(learningNode, "mode", false)
-	if modeNode == nil {
-		learningNode.Content = append(learningNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: "mode"}, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: mode.String()})
-		return
-	}
-	modeNode.Value = mode.String()
-	modeNode.Tag = yamlStringTag
-}
-
-func (s *operatorLearningSettings) writeDocument(doc *yaml.Node) error {
+func (s *operatorLearningSettings) writeDocument(doc *yamldiag.Document) error {
 	if err := rejectSymlinkPath(s.path); err != nil {
 		return err
 	}
-	var out bytes.Buffer
-	enc := yaml.NewEncoder(&out)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil {
-		return fmt.Errorf("encode operator settings: %w", err)
-	}
-	if err := enc.Close(); err != nil {
-		return fmt.Errorf("encode operator settings: %w", err)
-	}
+	out := []byte(doc.String())
 	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".settings-*.yaml")
 	if err != nil {
 		return fmt.Errorf("create operator settings temp file: %w", err)
@@ -473,7 +475,7 @@ func (s *operatorLearningSettings) writeDocument(doc *yaml.Node) error {
 		_ = tmp.Close()
 		return fmt.Errorf("write operator settings: %w", err)
 	}
-	if _, err := tmp.Write(out.Bytes()); err != nil {
+	if _, err := tmp.Write(out); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("write operator settings: %w", err)
 	}
@@ -493,8 +495,6 @@ func (s *operatorLearningSettings) writeDocument(doc *yaml.Node) error {
 	return nil
 }
 
-// rejectSymlinkPath rejects a symlink at the settings file or any existing parent
-// component. The mutation never follows a user-controlled link or replaces one.
 func rejectSymlinkPath(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {

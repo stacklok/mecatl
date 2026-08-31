@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/parser"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adapter/yamldiag"
 )
 
 // clientSettings is the STRICT top-level schema of the client-owned settings
@@ -98,27 +99,30 @@ func readClientKeymap() (map[string][]string, bool, error) {
 		}
 		return nil, false, fmt.Errorf("read %s: %w", path, err)
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	dec.KnownFields(true)
-	var s clientSettings
-	if err := dec.Decode(&s); err != nil && !errors.Is(err, io.EOF) {
-		var typeErr *yaml.TypeError
-		if errors.As(err, &typeErr) {
-			return nil, false, fmt.Errorf("parsing %s: does not match the expected schema (unknown key or type); the only recognized key is keymap", path)
+	document, err := yamldiag.ParseSettingsDocument(b)
+	if err != nil {
+		if errors.Is(err, yamldiag.ErrMultipleDocuments) {
+			return nil, false, fmt.Errorf("parsing %s: multiple documents are not supported (the client settings schema is a single document)", path)
 		}
-		return nil, false, fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema)", path)
+		return nil, false, clientKeymapSyntaxError(path, err)
 	}
-	// Single-document schema: a second decode MUST hit io.EOF — a decoded
-	// second document or trailing garbage means the file carries more than one
-	// document, so refuse rather than silently drop the rest.
-	if err := dec.Decode(&clientSettings{}); !errors.Is(err, io.EOF) {
-		return nil, false, fmt.Errorf("parsing %s: multiple documents are not supported (the client settings schema is a single document)", path)
+	var s clientSettings
+	if err := yaml.NewDecoder(bytes.NewReader(nil), yaml.DisallowUnknownField()).DecodeFromNode(document.Mapping(), &s); err != nil {
+		return nil, false, fmt.Errorf("parsing %s: does not match the expected schema (unknown key or type); the only recognized key is keymap", path)
 	}
 	out := splitKeymap(s.Keymap)
 	if out == nil {
 		return nil, false, nil
 	}
 	return out, true, nil
+}
+
+func clientKeymapSyntaxError(path string, err error) error {
+	var documentError *yamldiag.DocumentError
+	if errors.As(err, &documentError) && documentError.Location.HasLocation {
+		return fmt.Errorf("parsing %s: invalid YAML syntax at line %d, column %d (the document must be valid YAML matching the client settings schema)", path, documentError.Location.Line, documentError.Location.Column)
+	}
+	return fmt.Errorf("parsing %s: invalid YAML syntax (the document must be valid YAML matching the client settings schema)", path)
 }
 
 // readLegacyKeymap reads the keymap: key out of the SERVER-owned operator-tier
@@ -143,17 +147,13 @@ func readLegacyKeymap() (map[string][]string, bool, error) {
 	}
 	var s legacySettings
 	if err := yaml.Unmarshal(b, &s); err != nil {
-		// Same CWE-209 discipline as the strict client reader: a *yaml.TypeError
-		// (here always "keymap: isn't a mapping of action -> chord(s)") embeds a
-		// truncated slice of the offending VALUE, so it is NOT wrapped through —
-		// the operator needs the line, not the value. A syntax (scanner) error
-		// carries only a line number, no source text, but is kept generic for
-		// symmetry with the client reader.
-		var typeErr *yaml.TypeError
-		if errors.As(err, &typeErr) {
-			return nil, false, fmt.Errorf("parse %s: the keymap: key must be a mapping of action -> chord(s) (wrong type under keymap)", path)
+		// Parser failures and decode failures remain opaque: parser-rendered
+		// messages can contain YAML-derived content. A successful parse proves
+		// this is the historical wrong-keymap-shape path; otherwise it is syntax.
+		if _, parseErr := parser.ParseBytes(b, 0); parseErr != nil {
+			return nil, false, fmt.Errorf("parse %s: invalid YAML syntax (check the file's line structure)", path)
 		}
-		return nil, false, fmt.Errorf("parse %s: invalid YAML syntax (check the file's line structure)", path)
+		return nil, false, fmt.Errorf("parse %s: the keymap: key must be a mapping of action -> chord(s) (wrong type under keymap)", path)
 	}
 	out := splitKeymap(s.Keymap)
 	if out == nil {

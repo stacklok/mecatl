@@ -51,6 +51,10 @@ when the code that satisfies the plan has landed.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
+- [goccy/go-yaml migration](goccy-yaml-migration.md) — replace direct root and
+  engine yaml.v3 parsing with goccy/go-yaml while preserving safe diagnostics,
+  strict/lenient contracts, frontmatter parsing, and standalone engine closure.
+  Status: draft.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.

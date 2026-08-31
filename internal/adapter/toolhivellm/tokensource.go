@@ -18,7 +18,7 @@ package toolhivellm
 //     the token value.
 //   - This file is the sole import of pkg/llm / pkg/secrets / pkg/auth/secrets /
 //     pkg/config in the tree. The package's detector (detect.go) stays pure
-//     stdlib+yaml and never decodes the OIDC subtree — the OIDC-presence check
+//     stdlib+goccy and never decodes the OIDC subtree — the OIDC-presence check
 //     lives HERE, over toolhive's own config read, so detect.go's
 //     "tls_skip_verify/oidc never decoded" invariant (pinned by
 //     TestDetectConfig_TLSSkipVerifyNeverDecoded) is untouched.
@@ -27,7 +27,7 @@ package toolhivellm
 //
 // ToolHive imports confined to THIS file: pkg/llm, pkg/secrets,
 // pkg/auth/secrets, pkg/config. The rest of the package (detect*.go) stays
-// stdlib + go.yaml.in/yaml/v3. Composition (internal/app) consumes the exported
+// stdlib + github.com/goccy/go-yaml. Composition (internal/app) consumes the exported
 // funcs; it never names a toolhive symbol.
 
 import (

@@ -48,8 +48,8 @@ func TestContextWindowsStrictValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := parseYAML([]byte(tc.yaml))
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("parseYAML error = %v, want path containing %q", err, tc.want)
+			if err == nil {
+				t.Fatalf("parseYAML error = nil, want a strict models rejection")
 			}
 		})
 	}

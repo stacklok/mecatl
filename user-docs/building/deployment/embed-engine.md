@@ -28,13 +28,13 @@ Choose a pre-built binary (`mecated`, `mecak8s`, `mecatequi`) when you want the 
 
 ## Dependency footprint
 
-The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its runtime dependency closure includes `doublestar`, `robfig/cron/v3`, `go.yaml.in/yaml/v3`, `golang.org/x/net`, and `golang.org/x/sync`; `go.uber.org/goleak` is test-only:
+The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its runtime dependency closure includes `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`; `go.uber.org/goleak` is test-only:
 
 | Package | Role |
 |---|---|
 | `golang.org/x/sync` | `errgroup` for concurrent tool dispatch |
 | `github.com/bmatcuk/doublestar/v4` | Glob matching for permission patterns in `engine/adapter/memfs` |
-| `go.yaml.in/yaml/v3` | YAML parsing used by core configuration/value handling |
+| `github.com/goccy/go-yaml` | YAML parsing used by core configuration/value handling |
 | `golang.org/x/net` | HTML parsing used by core web-content handling |
 | `github.com/robfig/cron/v3` | Cron expression parsing in `engine/adapter/cronparse` |
 | `go.uber.org/goleak` | Test-only leaked-goroutine detection; never enters a production build |
