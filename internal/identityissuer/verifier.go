@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +28,7 @@ type BundleFetcher interface {
 // BundleFetcherFunc adapts a function into a BundleFetcher.
 type BundleFetcherFunc func(context.Context, string) ([]byte, error)
 
+// FetchBundle calls f to obtain one complete bundle.
 func (f BundleFetcherFunc) FetchBundle(ctx context.Context, url string) ([]byte, error) {
 	return f(ctx, url)
 }
@@ -180,7 +180,8 @@ func (v *Verifier) validateClaims(claims *jwt.RegisteredClaims) error {
 	if claims.IssuedAt == nil || claims.NotBefore == nil || claims.ExpiresAt == nil {
 		return errors.New("identity issuer token times are incomplete")
 	}
-	if !claims.ExpiresAt.Time.After(claims.IssuedAt.Time) || claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time) > v.cfg.TokenTTL || claims.NotBefore.Time.After(claims.IssuedAt.Time.Add(v.cfg.ClockSkew)) || claims.NotBefore.Time.After(claims.ExpiresAt.Time) {
+	issuedAt, notBefore, expiresAt := claims.IssuedAt.Time, claims.NotBefore.Time, claims.ExpiresAt.Time
+	if !expiresAt.After(issuedAt) || expiresAt.Sub(issuedAt) > v.cfg.TokenTTL || notBefore.After(issuedAt.Add(v.cfg.ClockSkew)) || notBefore.After(expiresAt) {
 		return errors.New("identity issuer token lifetime is invalid")
 	}
 	return nil
@@ -259,8 +260,12 @@ func parsePublicJWK(jwk publicJWK) (*ecdsa.PublicKey, error) {
 	if err != nil || len(y) != 32 {
 		return nil, errors.New("identity issuer bundle key coordinate is invalid")
 	}
-	key := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
-	if !key.Curve.IsOnCurve(key.X, key.Y) {
+	encoded := make([]byte, 1, 65)
+	encoded[0] = 4
+	encoded = append(encoded, x...)
+	encoded = append(encoded, y...)
+	key, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encoded)
+	if err != nil {
 		return nil, errors.New("identity issuer bundle key is not on P-256")
 	}
 	kid, err := publicJWKThumbprint(key)

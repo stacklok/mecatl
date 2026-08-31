@@ -117,7 +117,13 @@ func TestInvariant_identity_bundle_freshness_bound(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	fetchErr := errors.New("bundle unavailable")
-	fetch := func(context.Context, string) ([]byte, error) { return bundle, nil }
+	fetchFails := false
+	fetch := func(context.Context, string) ([]byte, error) {
+		if fetchFails {
+			return nil, fetchErr
+		}
+		return bundle, nil
+	}
 	verifier, err := NewVerifier(VerifierConfig{TrustDomain: "example.org", Audience: testConfig().Audience, ClockSkew: time.Second, TokenTTL: 5 * time.Minute, BundleCacheTTL: time.Minute, HTTPSBootstrapURL: testConfig().HTTPSBootstrapURL, Now: func() time.Time { return now }}, BundleFetcherFunc(fetch))
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +132,7 @@ func TestInvariant_identity_bundle_freshness_bound(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := signedToken(t, issuer.key, issuer.ActiveKID(), jwt.SigningMethodES256, testClaims("spiffe://example.org/workload/api", jwt.ClaimStrings{testConfig().Audience}, now))
-	fetch = func(context.Context, string) ([]byte, error) { return nil, fetchErr }
+	fetchFails = true
 	now = now.Add(30 * time.Second)
 	if err := verifier.Refresh(context.Background()); err == nil {
 		t.Fatal("Refresh() succeeded after fetch failure")

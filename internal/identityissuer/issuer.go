@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net"
 	"net/url"
 	"strings"
@@ -64,9 +63,12 @@ type manifest struct {
 type RotationPhase string
 
 const (
+	// RotationPhasePrepublish publishes old and new verification keys before new-key issuance.
 	RotationPhasePrepublish RotationPhase = "prepublish"
-	RotationPhaseActive     RotationPhase = "active"
-	RotationPhaseRetired    RotationPhase = "retired"
+	// RotationPhaseActive issues with the new key while retaining the old verification key.
+	RotationPhaseActive RotationPhase = "active"
+	// RotationPhaseRetired removes the old key after the overlap window elapses.
+	RotationPhaseRetired RotationPhase = "retired"
 )
 
 // ReplicaEvidence is the safe readiness evidence required before prepublish can
@@ -209,7 +211,7 @@ func ValidateTrustDomain(trustDomain string) error {
 			return errors.New("must be a DNS trust domain")
 		}
 		for _, r := range label {
-			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 				return errors.New("must be a DNS trust domain")
 			}
 		}
@@ -295,7 +297,7 @@ func validKeyName(name string) bool {
 		return false
 	}
 	for i, r := range name {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') || (i == 0 && (r == '-' || r == '_')) {
+		if ((r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_') || (i == 0 && (r == '-' || r == '_')) {
 			return false
 		}
 	}
@@ -311,20 +313,24 @@ func parseP256PKCS8(der []byte) (*ecdsa.PrivateKey, error) {
 		return nil, errors.New("must be a PKCS#8 private key")
 	}
 	key, ok := parsed.(*ecdsa.PrivateKey)
-	if !ok || key.Curve != elliptic.P256() || key.D == nil || !key.Curve.IsOnCurve(key.X, key.Y) {
+	if !ok || key.Curve != elliptic.P256() {
+		return nil, errors.New("must be a P-256 private key")
+	}
+	if _, err := key.Bytes(); err != nil {
 		return nil, errors.New("must be a P-256 private key")
 	}
 	return key, nil
 }
 
 func publicJWKThumbprint(key *ecdsa.PublicKey) (string, error) {
-	if key == nil || key.Curve != elliptic.P256() || key.X == nil || key.Y == nil || !key.Curve.IsOnCurve(key.X, key.Y) {
+	if key == nil || key.Curve != elliptic.P256() {
 		return "", errors.New("invalid P-256 public key")
 	}
-	coordinateSize := (key.Curve.Params().BitSize + 7) / 8
-	x := key.X.FillBytes(make([]byte, coordinateSize))
-	y := key.Y.FillBytes(make([]byte, coordinateSize))
-	canonical := `{"crv":"P-256","kty":"EC","x":"` + base64.RawURLEncoding.EncodeToString(x) + `","y":"` + base64.RawURLEncoding.EncodeToString(y) + `"}`
+	encoded, err := key.Bytes()
+	if err != nil || len(encoded) != 65 || encoded[0] != 4 {
+		return "", errors.New("invalid P-256 public key")
+	}
+	canonical := `{"crv":"P-256","kty":"EC","x":"` + base64.RawURLEncoding.EncodeToString(encoded[1:33]) + `","y":"` + base64.RawURLEncoding.EncodeToString(encoded[33:]) + `"}`
 	digest := sha256.Sum256([]byte(canonical))
 	return base64.RawURLEncoding.EncodeToString(digest[:]), nil
 }
@@ -366,11 +372,19 @@ func ValidatePrepublishEvidence(generation uint64, digest string, evidence []Rep
 }
 
 // Algorithm returns the only supported signing algorithm.
-func (i *Issuer) Algorithm() string { return jwt.SigningMethodES256.Alg() }
+func (*Issuer) Algorithm() string { return jwt.SigningMethodES256.Alg() }
 
 // PublicKey returns a copy of the active public verification key.
 func (i *Issuer) PublicKey() *ecdsa.PublicKey {
-	return &ecdsa.PublicKey{Curve: i.key.Curve, X: new(big.Int).Set(i.key.X), Y: new(big.Int).Set(i.key.Y)}
+	encoded, err := i.key.PublicKey.Bytes()
+	if err != nil {
+		return nil
+	}
+	key, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encoded)
+	if err != nil {
+		return nil
+	}
+	return key
 }
 
 // IssueJWTSubject mints a JWT-SVID only for the configured local subject, audience,
