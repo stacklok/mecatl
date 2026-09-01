@@ -54,6 +54,19 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   result usage, and conversation. Snapshot and event-source metadata round-trip
   the title-specific state. Added (minor).
 
+- **Safe external-authorization events** — `session.EvAuthorizationRequired`,
+  `session.EvAuthorizationResolved`, `session.AuthorizationStatus`, and
+  `session.AuthorizationPayload` add a provider-neutral durable lifecycle grammar;
+  `AuthorizationPayload.Valid` centralizes its bounded identifier, optional
+  human-facing authority/service label, expiry, and status validation.
+  The payload otherwise carries only an authorization id, tool-call id, expiry,
+  and closed status; it omits private continuation state, routing/configuration
+  labels, URLs, arguments, and credentials. `session.ValidAuthorizationID` exports the canonical
+  bounded correlation grammar for transport trust boundaries.
+  `eventsource.Fold` reconstructs fully resolved historical lifecycles, rejects
+  malformed ordering, and requires private state only while a well-formed
+  lifecycle remains open. Added (minor).
+
 - **Generic external authorization continuation** — `session.ExternalAuthorization`,
   `session.PendingAuthorization`, and `session.StateAuthorizing` add a durable,
   provider-neutral aggregate park/claim/abort lifecycle with exact tool-pairing
@@ -182,6 +195,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   default loop; composition enables it only alongside durable EventLog retention. Adding a field
   to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a
   minor bump).
+
+- **`session.Event.Authorization`** — adds the safe external-authorization payload
+  arm to the domain event envelope. The field is required for durable authorization
+  lifecycle reconstruction and intentionally carries no binding, route, URL,
+  arguments, or credentials. Adding a field breaks external unkeyed `Event` struct
+  literals. Changed/breaking (pre-v1 a minor bump).
 
 - **`agent.Run.EnqueueSteer`** (issue #861, [ADR 0251](../docs/adr/0251-multimodal-steer.md)) — changes from `EnqueueSteer(text string)` to `EnqueueSteer(text string, parts []session.Content)`, making one canonical text, media, or mixed steer entry point. Changed/breaking (pre-v1 a minor bump).
 

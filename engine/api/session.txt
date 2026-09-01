@@ -67,6 +67,7 @@
     method func (*Session).ValidateAuthorizationState() error
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
+    method func (AuthorizationPayload).Valid() bool
     method func (EnvironmentRef).Valid() bool
     method func (GrantType).Valid() bool
     method func (IncarnationID).Valid() bool
@@ -82,6 +83,14 @@
 const AskOriginHook AskOrigin = 1
 const AskOriginNone AskOrigin = 0
 const AskOriginPlan AskOrigin = 2
+const AuthorizationCancelled AuthorizationStatus = "cancelled"
+const AuthorizationClosed AuthorizationStatus = "closed"
+const AuthorizationDenied AuthorizationStatus = "denied"
+const AuthorizationExpired AuthorizationStatus = "expired"
+const AuthorizationFailed AuthorizationStatus = "failed"
+const AuthorizationGranted AuthorizationStatus = "granted"
+const AuthorizationInterrupted AuthorizationStatus = "interrupted"
+const AuthorizationPending AuthorizationStatus = "pending"
 const BlockAudio BlockKind = "audio"
 const BlockEmbeddedResource BlockKind = "embedded_resource"
 const BlockImage BlockKind = "image"
@@ -93,6 +102,8 @@ const EnvKindLocal EnvironmentKind = "local"
 const EnvKindMem EnvironmentKind = "mem"
 const EnvKindNoFS EnvironmentKind = "nofs"
 const EvApproval EventType = "approval"
+const EvAuthorizationRequired EventType = "authorization.required"
+const EvAuthorizationResolved EventType = "authorization.resolved"
 const EvCompaction EventType = "compaction"
 const EvCompactionArchive EventType = "compaction.archive"
 const EvHook EventType = "hook"
@@ -297,6 +308,8 @@ type ApprovalVerdict int
 type AskOrigin int
 type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""}
 type AuthorizationBinding string
+type AuthorizationPayload struct{AuthorizationID string; DisplayName string; Call ToolCallID; ExpiresAt time.Time; Status AuthorizationStatus}
+type AuthorizationStatus string
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
@@ -304,7 +317,7 @@ type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string
 type EnvironmentRef struct{Kind EnvironmentKind; ID string; Revision string}
-type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Authorization *AuthorizationPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
 type EventType string
 type ExternalAuthorization struct{ID string; DisplayName string; Binding AuthorizationBinding; ExpiresAt time.Time}
 type GrantType string

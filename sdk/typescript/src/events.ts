@@ -8,6 +8,8 @@ import { getRawJson } from "./raw.js";
 /** Stable event kinds, kept in parity with the Go server vocabulary. @public */
 export const MECATL_EVENT_KINDS = [
   "approval",
+  "authorization.required",
+  "authorization.resolved",
   "compaction",
   "compaction.archive",
   "hook",
@@ -339,6 +341,8 @@ export interface EventCommon {
 /** Maps every known wire kind to its hand-crafted payload contract. @public */
 export interface EventPayloads {
   readonly approval: ApprovalEventPayload;
+  readonly "authorization.required": undefined;
+  readonly "authorization.resolved": undefined;
   readonly compaction: undefined;
   readonly "compaction.archive": CompactionArchiveEventPayload;
   readonly hook: HookEventPayload;
@@ -504,6 +508,8 @@ function payload(
       return required(event.turnEnd, kind, transport);
     case "user_prompt":
       return required(event.userPrompt, kind, transport);
+    case "authorization.required":
+    case "authorization.resolved":
     case "compaction":
     case "message.delta":
     case "network.attempt":

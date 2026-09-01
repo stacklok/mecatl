@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"time"
 )
 
 // EventType is the kind of a domain Event. This is the single event taxonomy
@@ -145,6 +146,12 @@ const (
 	// loop emits it and the relay persists it. It never carries raw errors, URLs,
 	// headers, request/response bodies, prompts, or credentials.
 	EvNetworkAttempt EventType = "network.attempt"
+	// EvAuthorizationRequired records that a tool call is parked on an external
+	// authorization lifecycle. Authorization carries only safe correlation data.
+	EvAuthorizationRequired EventType = "authorization.required"
+	// EvAuthorizationResolved closes a previously required authorization lifecycle
+	// after its matching tool result has been durably recorded.
+	EvAuthorizationResolved EventType = "authorization.resolved"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
 	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
@@ -1365,6 +1372,65 @@ type TeamPayload struct {
 	Cause string
 }
 
+// AuthorizationStatus is the closed external-authorization lifecycle grammar.
+// Pending is valid only on EvAuthorizationRequired; all other values are terminal.
+type AuthorizationStatus string
+
+const (
+	// AuthorizationPending marks an open authorization lifecycle.
+	AuthorizationPending AuthorizationStatus = "pending"
+	// AuthorizationGranted records a successful authorization grant.
+	AuthorizationGranted AuthorizationStatus = "granted"
+	// AuthorizationDenied records a denied authorization request.
+	AuthorizationDenied AuthorizationStatus = "denied"
+	// AuthorizationCancelled records cancellation.
+	AuthorizationCancelled AuthorizationStatus = "cancelled"
+	// AuthorizationExpired records expiry.
+	AuthorizationExpired AuthorizationStatus = "expired"
+	// AuthorizationInterrupted records interruption before completion.
+	AuthorizationInterrupted AuthorizationStatus = "interrupted"
+	// AuthorizationFailed records an authorization failure.
+	AuthorizationFailed AuthorizationStatus = "failed"
+	// AuthorizationClosed records closure without another terminal outcome.
+	AuthorizationClosed AuthorizationStatus = "closed"
+)
+
+// AuthorizationPayload is the safe correlation carried by authorization events.
+// DisplayName is an optional bounded human-facing authority or service label.
+type AuthorizationPayload struct {
+	AuthorizationID string
+	DisplayName     string
+	Call            ToolCallID
+	ExpiresAt       time.Time
+	Status          AuthorizationStatus
+}
+
+// Valid reports whether the payload uses the bounded authorization identifier
+// grammar, has a non-zero expiry, and carries a closed lifecycle status.
+func (p AuthorizationPayload) Valid() bool {
+	return validAuthorizationID(p.AuthorizationID) &&
+		(p.DisplayName == "" || validAuthorizationDisplayName(p.DisplayName)) &&
+		validAuthorizationID(string(p.Call)) &&
+		!p.ExpiresAt.IsZero() &&
+		p.Status.valid()
+}
+
+func (s AuthorizationStatus) valid() bool {
+	switch s {
+	case AuthorizationPending,
+		AuthorizationGranted,
+		AuthorizationDenied,
+		AuthorizationCancelled,
+		AuthorizationExpired,
+		AuthorizationInterrupted,
+		AuthorizationFailed,
+		AuthorizationClosed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Event is the domain-owned, provider-neutral unit of the streaming model. The
 // loop runs as a producer writing Events to a channel; server adapters relay
 // them to the gRPC server-stream or HTTP SSE.
@@ -1395,6 +1461,10 @@ type Event struct {
 	// NetworkAttempt is set on EvNetworkAttempt. It is log-only sanitized
 	// transport/provider evidence emitted by the loop from the resilience observer.
 	NetworkAttempt *NetworkAttemptPayload
+	// Authorization is set on EvAuthorizationRequired and EvAuthorizationResolved.
+	// It contains only safe lifecycle correlation; private continuation state and
+	// sensitive tool or backend data never enter the event.
+	Authorization *AuthorizationPayload
 	// Result is set on EvResult.
 	Result *ResultPayload
 	// TurnEnd is set on EvTurnEnd (this turn's usage + elapsed time).

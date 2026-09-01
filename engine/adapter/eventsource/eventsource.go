@@ -141,6 +141,10 @@ var (
 	// ErrReconstruct is returned when the folded events cannot be reconstructed into
 	// a valid Session (an unpairable conversation, an inconsistent terminal state).
 	ErrReconstruct = errors.New("eventsource: cannot reconstruct session")
+	// ErrPrivateStateRequired is returned when an otherwise well-formed external
+	// authorization lifecycle remains open. Safe events deliberately omit the
+	// private continuation state required to resume it.
+	ErrPrivateStateRequired = errors.New("eventsource: private state required")
 )
 
 // Fold reconstructs a *session.Session by folding the durable event stream back
@@ -153,8 +157,9 @@ var (
 // ProviderPhase / ReasoningItemID / ItemID are not event-carried).
 //
 // It returns ErrStream (wrapping the per-item error) if the iterator yields an
-// error, and ErrReconstruct if the reconstructed history is not provider-replayable
-// or the derived state is inconsistent. It never panics.
+// error, ErrReconstruct if the reconstructed history or authorization lifecycle is
+// inconsistent, and ErrPrivateStateRequired if a well-formed authorization lifecycle
+// remains open after the final event. It never panics.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
 	f := &folder{}
 	for ev, err := range events {
@@ -162,6 +167,12 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 			return nil, fmt.Errorf("%w: %w", ErrStream, err)
 		}
 		f.consume(ev)
+		if f.reconstructErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
+		}
+	}
+	if len(f.authorizations) != 0 {
+		return nil, ErrPrivateStateRequired
 	}
 	f.finalizeOpenTurn()
 
@@ -312,6 +323,13 @@ func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*ses
 	return s, nil
 }
 
+type authorizationLifecycle struct {
+	call        session.ToolCallID
+	displayName string
+	expiresAt   time.Time
+	answered    bool
+}
+
 // folder accumulates the per-turn reconstruction state as it walks the stream.
 //
 // The loop emits, per turn: EvTurnStart → EvMessageDelta* (assistant text) →
@@ -360,6 +378,16 @@ type folder struct {
 	retryDisposition session.RetryDisposition
 	retryProgress    session.StreamProgress
 
+	// authorizations contains only currently open lifecycles. The seen sets retain
+	// full-stream uniqueness after resolution; openAuthorizationCalls gives each
+	// durable tool.result at most one open lifecycle to answer.
+	authorizations         map[string]authorizationLifecycle
+	openAuthorizationCalls map[session.ToolCallID]string
+	seenAuthorizationIDs   map[string]struct{}
+	seenAuthorizationCalls map[session.ToolCallID]struct{}
+	toolResultCalls        map[session.ToolCallID]struct{}
+	reconstructErr         error
+
 	// counters of the CURRENT run segment (reset on each terminal, so the final
 	// values reflect the latest run — mirroring resetToIdle on Reopen).
 	curTurns      int
@@ -374,6 +402,10 @@ type folder struct {
 // consume folds one event into the accumulator.
 func (f *folder) consume(ev session.Event) {
 	switch ev.Type {
+	case session.EvAuthorizationRequired:
+		f.requireAuthorization(ev.Authorization)
+	case session.EvAuthorizationResolved:
+		f.resolveAuthorization(ev.Authorization)
 	case session.EvCompactionArchive, session.EvUserPrompt:
 		f.consumeHistoryEvent(ev)
 	case session.EvModelRetry:
@@ -418,6 +450,7 @@ func (f *folder) consume(ev session.Event) {
 		// then append the tool-role message. Mirrors RecordToolResults' counter updates.
 		f.flushTurn()
 		if ev.ToolResult != nil {
+			f.recordAuthorizationResult(ev.ToolResult.CallID)
 			f.messages = append(f.messages, session.NewToolMessage(*ev.ToolResult))
 			f.curToolCalls++
 			if ev.ToolResult.IsError {
@@ -443,6 +476,89 @@ func (f *folder) consume(ev session.Event) {
 		// no_progress, hook, the delegation families) carry no conversation or lifecycle
 		// state a fold needs — ignore them.
 	}
+}
+
+func (f *folder) requireAuthorization(p *session.AuthorizationPayload) {
+	if f.reconstructErr != nil {
+		return
+	}
+	if p == nil || !p.Valid() || p.Status != session.AuthorizationPending {
+		f.reconstructErr = errors.New("malformed authorization.required event")
+		return
+	}
+	if _, exists := f.seenAuthorizationIDs[p.AuthorizationID]; exists {
+		f.reconstructErr = errors.New("reused authorization id")
+		return
+	}
+	if _, exists := f.seenAuthorizationCalls[p.Call]; exists {
+		f.reconstructErr = errors.New("reused authorization call id")
+		return
+	}
+	if _, exists := f.toolResultCalls[p.Call]; exists {
+		f.reconstructErr = errors.New("authorization.required follows matching tool.result")
+		return
+	}
+	if f.authorizations == nil {
+		f.authorizations = make(map[string]authorizationLifecycle)
+		f.openAuthorizationCalls = make(map[session.ToolCallID]string)
+		f.seenAuthorizationIDs = make(map[string]struct{})
+		f.seenAuthorizationCalls = make(map[session.ToolCallID]struct{})
+	}
+	f.seenAuthorizationIDs[p.AuthorizationID] = struct{}{}
+	f.seenAuthorizationCalls[p.Call] = struct{}{}
+	f.authorizations[p.AuthorizationID] = authorizationLifecycle{
+		call:        p.Call,
+		displayName: p.DisplayName,
+		expiresAt:   p.ExpiresAt,
+	}
+	f.openAuthorizationCalls[p.Call] = p.AuthorizationID
+}
+
+func (f *folder) resolveAuthorization(p *session.AuthorizationPayload) {
+	if f.reconstructErr != nil {
+		return
+	}
+	if p == nil || !p.Valid() || p.Status == session.AuthorizationPending {
+		f.reconstructErr = errors.New("malformed authorization.resolved event")
+		return
+	}
+	open, exists := f.authorizations[p.AuthorizationID]
+	if !exists {
+		f.reconstructErr = errors.New("authorization.resolved has no matching open lifecycle")
+		return
+	}
+	if open.call != p.Call {
+		f.reconstructErr = errors.New("authorization.resolved call does not match required call")
+		return
+	}
+	if open.displayName != p.DisplayName {
+		f.reconstructErr = errors.New("authorization.resolved display name does not match required display name")
+		return
+	}
+	if !open.expiresAt.Equal(p.ExpiresAt) {
+		f.reconstructErr = errors.New("authorization.resolved expiry does not match required expiry")
+		return
+	}
+	if !open.answered {
+		f.reconstructErr = errors.New("authorization.resolved precedes matching tool.result")
+		return
+	}
+	delete(f.authorizations, p.AuthorizationID)
+	delete(f.openAuthorizationCalls, p.Call)
+}
+
+func (f *folder) recordAuthorizationResult(call session.ToolCallID) {
+	if f.toolResultCalls == nil {
+		f.toolResultCalls = make(map[session.ToolCallID]struct{})
+	}
+	f.toolResultCalls[call] = struct{}{}
+	id, exists := f.openAuthorizationCalls[call]
+	if !exists {
+		return
+	}
+	open := f.authorizations[id]
+	open.answered = true
+	f.authorizations[id] = open
 }
 
 func (f *folder) consumeHistoryEvent(ev session.Event) {
